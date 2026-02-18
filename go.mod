@@ -1,4 +1,4 @@
-module github.com/whykusanagi/celesteCLI
+module github.com/whykusanagi/celeste-cli
 
 go 1.24.13
 
