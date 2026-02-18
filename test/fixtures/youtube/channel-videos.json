@@ -1,0 +1,69 @@
+{
+  "kind": "youtube#searchListResponse",
+  "etag": "test-etag-12345",
+  "regionCode": "US",
+  "pageInfo": {
+    "totalResults": 50,
+    "resultsPerPage": 5
+  },
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "etag": "video-1-etag",
+      "id": {
+        "kind": "youtube#video",
+        "videoId": "dQw4w9WgXcQ"
+      },
+      "snippet": {
+        "publishedAt": "2024-12-01T10:00:00Z",
+        "channelId": "UC_test_channel_id",
+        "title": "Test Video 1 - Mock Response",
+        "description": "This is a test video description for the mock API server.",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg",
+            "width": 120,
+            "height": 90
+          },
+          "medium": {
+            "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+            "width": 320,
+            "height": 180
+          },
+          "high": {
+            "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            "width": 480,
+            "height": 360
+          }
+        },
+        "channelTitle": "Test Channel",
+        "liveBroadcastContent": "none",
+        "publishTime": "2024-12-01T10:00:00Z"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "video-2-etag",
+      "id": {
+        "kind": "youtube#video",
+        "videoId": "test_vid_002"
+      },
+      "snippet": {
+        "publishedAt": "2024-11-28T15:30:00Z",
+        "channelId": "UC_test_channel_id",
+        "title": "Test Video 2 - Another Mock",
+        "description": "Second test video for unit testing.",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/test_vid_002/default.jpg",
+            "width": 120,
+            "height": 90
+          }
+        },
+        "channelTitle": "Test Channel",
+        "liveBroadcastContent": "none",
+        "publishTime": "2024-11-28T15:30:00Z"
+      }
+    }
+  ]
+}

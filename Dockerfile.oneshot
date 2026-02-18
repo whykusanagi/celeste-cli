@@ -1,0 +1,57 @@
+# Celeste CLI One-Shot Commands Test Container
+# Tests all CLI commands in an isolated environment without TUI
+
+FROM golang:1.21-alpine AS builder
+
+LABEL maintainer="whykusanagi"
+LABEL description="Celeste CLI one-shot command test environment"
+
+# Install build dependencies
+RUN apk add --no-cache git make bash ca-certificates
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary
+RUN go build -o celeste cmd/celeste/*.go
+
+# Test stage - runs the actual tests
+FROM builder AS tester
+
+# Make test script executable
+RUN chmod +x test/test_oneshot_commands.sh
+
+# Create minimal config for testing
+RUN mkdir -p /root/.celeste && \
+    echo '{"base_url":"https://api.openai.com/v1","model":"gpt-4o-mini"}' > /root/.celeste/config.json
+
+# Set binary location for test script
+ENV CELESTE_BIN=/app/celeste
+
+# Run the test suite
+CMD ["./test/test_oneshot_commands.sh"]
+
+# Runtime image for manual testing
+FROM alpine:latest AS runtime
+
+# Install runtime dependencies
+RUN apk --no-cache add bash ca-certificates
+
+WORKDIR /root/
+
+# Copy the binary from builder
+COPY --from=builder /app/celeste .
+
+# Create minimal config
+RUN mkdir -p /root/.celeste && \
+    echo '{"base_url":"https://api.openai.com/v1","model":"gpt-4o-mini"}' > /root/.celeste/config.json
+
+# Default command shows help
+CMD ["./celeste", "--help"]

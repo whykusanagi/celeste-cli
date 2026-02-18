@@ -1,0 +1,90 @@
+# CelesteCLI .gitignore
+
+# === CRITICAL: API Keys and Secrets ===
+# Claude Code settings (contains API keys - MUST BE IGNORED)
+.claude/
+.claude/**
+*.local.json
+
+# Environment files
+.env
+.env.local
+.env.*.local
+secrets.json
+config.*.json
+!config.example.json
+
+# === Build Artifacts ===
+celeste
+celestecli
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+build/
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS Files ===
+.DS_Store
+Thumbs.db
+
+# === Sensitive Documentation ===
+AGENT_CONFIGURATION.md
+*_CONFIGURATION.md
+*_SECRETS.md
+*_KEYS.md
+CLAUDE.md
+
+# === Test/Validation Files (May Contain IDs/Keys) ===
+test_collections_*.go
+validate_*.sh
+LIVE_TEST_RESULTS.md
+VALIDATED_OUTPUTS.md
+PROPER_GITIGNORE.txt
+*_test_output.*
+
+# === Temporary Files ===
+*.tmp
+*.temp
+*.log
+tmp/
+temp/
+
+# === Coverage Reports ===
+*.coverprofile
+coverage.txt
+coverage.out
+coverage.html
+
+# === Certificates/Keys ===
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# === Local Development ===
+.dev/
+.celesteAI
+.celeste.cfg
+*.cfg
+*.config
+
+# === External References ===
+../corrupted-theme/

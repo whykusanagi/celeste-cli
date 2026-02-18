@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # Test runner service
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: celestecli-test-runner
+    environment:
+      # Mock API endpoints (point to mock-api service)
+      - CELESTE_API_KEY=test-key-12345
+      - CELESTE_API_ENDPOINT=http://mock-api:8080/v1
+      - VENICE_API_KEY=test-venice-key
+      - TAROT_AUTH_TOKEN=Basic test-token
+      - GO_ENV=test
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    # Note: No volume mounts for reports/coverage - use container's internal directories
+    # This preserves the celeste:celeste ownership set in Dockerfile
+    networks:
+      - test-network
+    command: ["/bin/bash", "/app/scripts/run-all-tests.sh"]
+
+  # Mock API server (simulates OpenAI, Venice.ai, etc.)
+  mock-api:
+    build:
+      context: ./test/mock-server
+      dockerfile: Dockerfile
+    container_name: celestecli-mock-api
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./test/fixtures:/app/fixtures:ro
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    environment:
+      - PORT=8080
+      - FIXTURES_DIR=/app/fixtures
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  test-reports:
+  test-coverage:

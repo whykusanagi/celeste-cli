@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  # Run one-shot command tests
+  oneshot-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.oneshot
+      target: tester
+    container_name: celeste-oneshot-test
+    environment:
+      - CELESTE_BIN=/app/celeste
+    volumes:
+      # Mount test results (optional)
+      - ./test-results:/app/test-results:rw
+
+  # Interactive container for manual testing
+  oneshot-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.oneshot
+      target: runtime
+    container_name: celeste-oneshot-runtime
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/sh"]
+    volumes:
+      # Mount local config if needed
+      - ./test-config:/root/.celeste:rw

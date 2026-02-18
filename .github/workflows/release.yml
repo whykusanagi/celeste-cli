@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.11'
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Build binaries
+      run: |
+        # Linux
+        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-linux-amd64 ./cmd/celeste
+        GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-linux-arm64 ./cmd/celeste
+
+        # macOS
+        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-darwin-amd64 ./cmd/celeste
+        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-darwin-arm64 ./cmd/celeste
+
+        # Windows
+        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-windows-amd64.exe ./cmd/celeste
+
+    - name: Create archives
+      run: |
+        cd dist
+        tar czf celeste-linux-amd64.tar.gz celeste-linux-amd64
+        tar czf celeste-linux-arm64.tar.gz celeste-linux-arm64
+        tar czf celeste-darwin-amd64.tar.gz celeste-darwin-amd64
+        tar czf celeste-darwin-arm64.tar.gz celeste-darwin-arm64
+        zip celeste-windows-amd64.zip celeste-windows-amd64.exe
+
+    - name: Generate checksums
+      run: |
+        cd dist
+        sha256sum *.tar.gz *.zip > checksums.txt
+
+    - name: Generate manifest
+      run: |
+        chmod +x scripts/generate-manifest.sh
+        ./scripts/generate-manifest.sh \
+          --version "${{ steps.get_version.outputs.VERSION }}" \
+          --commit "${{ github.sha }}" \
+          --tag "v${{ steps.get_version.outputs.VERSION }}" \
+          --go-version "1.24.11" \
+          --dist-dir dist \
+          --output dist/manifest.json
+
+    - name: Import GPG key
+      run: |
+        echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 -d | gpg --import --batch
+        echo "GPG key imported successfully"
+
+    - name: Sign manifest and checksums
+      env:
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      run: |
+        cd dist
+
+        # Configure GPG for non-interactive use
+        export GPG_TTY=$(tty)
+        echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+        gpg-connect-agent reloadagent /bye
+
+        # Sign manifest (passing passphrase via stdin)
+        echo "$GPG_PASSPHRASE" | gpg --detach-sign --armor --batch --yes --passphrase-fd 0 --pinentry-mode loopback --local-user 940490EF09DA31322BF7FD83875849AB1D541C55 manifest.json
+
+        # Sign checksums
+        echo "$GPG_PASSPHRASE" | gpg --detach-sign --armor --batch --yes --passphrase-fd 0 --pinentry-mode loopback --local-user 940490EF09DA31322BF7FD83875849AB1D541C55 checksums.txt
+
+        # Create signatures info file
+        cat > SIGNATURES.txt << 'EOF'
+        GPG Signatures for Celeste CLI v${{ steps.get_version.outputs.VERSION }}
+
+        Signed by: whykusanagi <me@whykusanagi.xyz>
+        Key ID: 940490EF09DA31322BF7FD83875849AB1D541C55
+
+        Files:
+        - manifest.json.asc (signature for manifest.json)
+        - checksums.txt.asc (signature for checksums.txt)
+
+        Verification:
+        See VERIFICATION.md in the repository for verification instructions.
+        https://github.com/whykusanagi/celesteCLI/blob/main/VERIFICATION.md
+        EOF
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/*.tar.gz
+          dist/*.zip
+          dist/manifest.json
+          dist/manifest.json.asc
+          dist/checksums.txt
+          dist/checksums.txt.asc
+          dist/SIGNATURES.txt
+        body: |
+          ## CelesteCLI ${{ steps.get_version.outputs.VERSION }}
+
+          ### Installation
+
+          Download the appropriate binary for your platform:
+
+          **Linux (amd64)**:
+          ```bash
+          wget https://github.com/whykusanagi/celesteCLI/releases/download/v${{ steps.get_version.outputs.VERSION }}/celeste-linux-amd64.tar.gz
+          tar xzf celeste-linux-amd64.tar.gz
+          sudo mv celeste-linux-amd64 /usr/local/bin/celeste
+          ```
+
+          **macOS (Apple Silicon)**:
+          ```bash
+          wget https://github.com/whykusanagi/celesteCLI/releases/download/v${{ steps.get_version.outputs.VERSION }}/celeste-darwin-arm64.tar.gz
+          tar xzf celeste-darwin-arm64.tar.gz
+          sudo mv celeste-darwin-arm64 /usr/local/bin/celeste
+          ```
+
+          **Windows**:
+          Download `celeste-windows-amd64.zip` and extract to a directory in your PATH.
+
+          ### Verify Installation
+          ```bash
+          celeste --version
+          ```
+
+          ### Changes
+          See [CHANGELOG.md](https://github.com/whykusanagi/celesteCLI/blob/main/CHANGELOG.md) for details.
+        draft: false
+        prerelease: false

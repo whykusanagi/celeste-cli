@@ -1,0 +1,19 @@
+# Gitleaks configuration for Celeste CLI
+#
+# This file configures Gitleaks to ignore false positives in our codebase.
+# Documentation files contain example blockchain addresses (public contracts)
+# that are not secrets and should not trigger security alerts.
+
+[allowlist]
+description = "Allow public blockchain addresses and example data in documentation"
+
+# Exclude documentation files with example API responses
+paths = [
+    '''docs/ALCHEMY_SETUP\.md''',
+    '''docs/.*\.md'''
+]
+
+# Public contract addresses that are not secrets
+stopwords = [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC token contract (public)
+]

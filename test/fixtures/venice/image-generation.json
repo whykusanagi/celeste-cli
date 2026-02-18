@@ -1,0 +1,20 @@
+{
+  "id": "venice-img-test-001",
+  "object": "image.generation",
+  "created": 1701648000,
+  "model": "fluently-xl",
+  "data": [
+    {
+      "url": "https://example.com/mock-image-001.png",
+      "revised_prompt": "A cyberpunk city at night with neon lights",
+      "b64_json": null
+    }
+  ],
+  "metadata": {
+    "seed": 42,
+    "steps": 30,
+    "guidance_scale": 7.5,
+    "width": 1024,
+    "height": 1024
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "current_condition": [
+    {
+      "FeelsLikeC": "3",
+      "FeelsLikeF": "37",
+      "cloudcover": "75",
+      "humidity": "65",
+      "observation_time": "02:30 PM",
+      "precipMM": "0.0",
+      "pressure": "1015",
+      "temp_C": "7",
+      "temp_F": "45",
+      "uvIndex": "2",
+      "visibility": "10",
+      "weatherCode": "116",
+      "weatherDesc": [
+        {
+          "value": "Partly cloudy"
+        }
+      ],
+      "weatherIconUrl": [
+        {
+          "value": "http://cdn.worldweatheronline.net/images/wsymbols01_png_64/wsymbol_0002_sunny_intervals.png"
+        }
+      ],
+      "winddir16Point": "NW",
+      "winddirDegree": "310",
+      "windspeedKmph": "15",
+      "windspeedMiles": "9"
+    }
+  ],
+  "nearest_area": [
+    {
+      "areaName": [
+        {
+          "value": "New York"
+        }
+      ],
+      "country": [
+        {
+          "value": "United States of America"
+        }
+      ],
+      "latitude": "40.714",
+      "longitude": "-74.006",
+      "population": "8175133",
+      "region": [
+        {
+          "value": "New York"
+        }
+      ],
+      "weatherUrl": [
+        {
+          "value": "https://www.worldweatheronline.com/new-york-weather/new-york/us.aspx"
+        }
+      ]
+    }
+  ],
+  "request": [
+    {
+      "query": "10001",
+      "type": "Zipcode"
+    }
+  ],
+  "weather": [
+    {
+      "date": "2024-12-03",
+      "maxtempC": "10",
+      "maxtempF": "50",
+      "mintempC": "3",
+      "mintempF": "37",
+      "hourly": [
+        {
+          "time": "0",
+          "tempC": "5",
+          "tempF": "41",
+          "weatherDesc": [{"value": "Clear"}]
+        },
+        {
+          "time": "600",
+          "tempC": "7",
+          "tempF": "45",
+          "weatherDesc": [{"value": "Partly cloudy"}]
+        },
+        {
+          "time": "1200",
+          "tempC": "10",
+          "tempF": "50",
+          "weatherDesc": [{"value": "Partly cloudy"}]
+        },
+        {
+          "time": "1800",
+          "tempC": "6",
+          "tempF": "43",
+          "weatherDesc": [{"value": "Clear"}]
+        }
+      ]
+    }
+  ]
+}

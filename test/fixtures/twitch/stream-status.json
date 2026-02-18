@@ -1,0 +1,21 @@
+{
+  "data": [
+    {
+      "id": "123456789",
+      "user_id": "987654321",
+      "user_login": "teststreamer",
+      "user_name": "TestStreamer",
+      "game_id": "509658",
+      "game_name": "Just Chatting",
+      "type": "live",
+      "title": "Test Stream - Mock API Response",
+      "viewer_count": 1234,
+      "started_at": "2024-12-03T14:30:00Z",
+      "language": "en",
+      "thumbnail_url": "https://static-cdn.jtvnw.net/previews-ttv/live_user_teststreamer-{width}x{height}.jpg",
+      "tag_ids": [],
+      "is_mature": false
+    }
+  ],
+  "pagination": {}
+}

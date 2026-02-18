@@ -1,0 +1,31 @@
+{
+  "id": "chatcmpl-test-tarot",
+  "object": "chat.completion",
+  "created": 1701648000,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_test_tarot_456",
+            "type": "function",
+            "function": {
+              "name": "tarot_reading",
+              "arguments": "{\"spread_type\": \"three_card\", \"question\": \"What does my future hold?\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 40,
+    "completion_tokens": 30,
+    "total_tokens": 70
+  }
+}

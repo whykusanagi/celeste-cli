@@ -1,0 +1,71 @@
+run:
+  timeout: 5m
+  go: '1.23'
+
+linters:
+  enable:
+    - errcheck
+    - gofmt
+    - goimports
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  disable:
+    - gosec  # Security checks handled by govulncheck
+    - structcheck
+    - varcheck
+    - deadcode
+
+linters-settings:
+  errcheck:
+    check-type-assertions: false
+    check-blank: false
+    ignore: fmt:.*,io/ioutil:^Read.*
+    exclude-functions:
+      # Allow ignoring errors for these common patterns
+      - (os.File).Close
+      - (encoding/json.Encoder).Encode
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - (bufio.Writer).Flush
+      - (config.SessionManager).Save
+      - rand.Read
+      - os.MkdirAll
+      - os.WriteFile
+      - json.Unmarshal
+      - (os.File).Sync
+      - flag.FlagSet.Parse
+      - (skills.Registry).LoadSkills
+
+  staticcheck:
+    checks: ["all"]
+
+  unused:
+    check-exported: false
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests
+    - path: _test\.go
+      linters:
+        - errcheck
+        - unused
+
+    # Allow unused code in animation.go (legacy features)
+    - path: cmd/Celeste/tui/animation.go
+      linters:
+        - unused
+
+    # Allow unused scaffolding code
+    - path: cmd/Celeste/commands/scaffolding.go
+      linters:
+        - unused
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
