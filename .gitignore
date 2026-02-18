@@ -15,8 +15,8 @@ config.*.json
 !config.example.json
 
 # === Build Artifacts ===
-celeste
-celestecli
+/celeste
+/celestecli
 *.exe
 *.exe~
 *.dll
