@@ -27,6 +27,7 @@ build/
 
 # Test binaries
 *.test
+!Dockerfile.test
 *.out
 
 # Go workspace
