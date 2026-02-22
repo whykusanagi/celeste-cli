@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-02-19
+
 ### Added
 - **Collections Support (xAI RAG)** - Upload custom documents for semantic search during chat
   - Create and manage collections via CLI and TUI
@@ -278,11 +280,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Release Links
 
-- [Unreleased](https://github.com/whykusanagi/celesteCLI/compare/v1.3.0...HEAD)
-- [1.3.0](https://github.com/whykusanagi/celesteCLI/compare/v1.1.0...v1.3.0)
-- [1.1.0](https://github.com/whykusanagi/celesteCLI/compare/v1.0.2...v1.1.0)
-- [1.0.2](https://github.com/whykusanagi/celesteCLI/releases/tag/v1.0.2)
-- [1.0.0](https://github.com/whykusanagi/celesteCLI/releases/tag/v1.0.0)
+- [Unreleased](https://github.com/whykusanagi/celeste-cli/compare/v1.5.1...HEAD)
+- [1.5.1](https://github.com/whykusanagi/celeste-cli/compare/v1.4.0...v1.5.1)
+- [1.4.0](https://github.com/whykusanagi/celeste-cli/compare/v1.3.0...v1.4.0)
+- [1.3.0](https://github.com/whykusanagi/celeste-cli/compare/v1.1.0...v1.3.0)
+- [1.1.0](https://github.com/whykusanagi/celeste-cli/compare/v1.0.2...v1.1.0)
+- [1.0.2](https://github.com/whykusanagi/celeste-cli/releases/tag/v1.0.2)
+- [1.0.0](https://github.com/whykusanagi/celeste-cli/releases/tag/v1.0.0)
 
 ## How to Update
 
@@ -327,6 +331,6 @@ base_url=https://api.openai.com/v1
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/whykusanagi/celesteCLI/issues)
+- **Issues**: [GitHub Issues](https://github.com/whykusanagi/celeste-cli/issues)
 - **Security**: See [SECURITY.md](SECURITY.md)
 - **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md)
