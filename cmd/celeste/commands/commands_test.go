@@ -215,6 +215,35 @@ func TestExecuteHelp(t *testing.T) {
 	assert.Contains(t, result.Message, "/safe")
 }
 
+func TestExecuteNSFWToggle(t *testing.T) {
+	t.Run("enable when off", func(t *testing.T) {
+		cmd := &Command{Name: "nsfw"}
+		ctx := &CommandContext{NSFWMode: false}
+		result := Execute(cmd, ctx)
+		require.NotNil(t, result.StateChange)
+		require.NotNil(t, result.StateChange.NSFWMode)
+		assert.True(t, *result.StateChange.NSFWMode, "should enable NSFW when currently off")
+	})
+
+	t.Run("disable when on (toggle)", func(t *testing.T) {
+		cmd := &Command{Name: "nsfw"}
+		ctx := &CommandContext{NSFWMode: true}
+		result := Execute(cmd, ctx)
+		require.NotNil(t, result.StateChange)
+		require.NotNil(t, result.StateChange.NSFWMode)
+		assert.False(t, *result.StateChange.NSFWMode, "should disable NSFW when already on")
+		assert.Contains(t, result.Message, "Safe Mode Enabled")
+	})
+}
+
+func TestExecuteTools(t *testing.T) {
+	cmd := &Command{Name: "tools"}
+	ctx := &CommandContext{}
+	result := Execute(cmd, ctx)
+	assert.True(t, result.Success, "tools command should not return unknown command error")
+	assert.NotContains(t, result.Message, "Unknown command")
+}
+
 func TestExecuteUnknownCommand(t *testing.T) {
 	cmd := &Command{Name: "unknown"}
 	ctx := &CommandContext{}
