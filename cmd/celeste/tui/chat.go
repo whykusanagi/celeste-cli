@@ -221,9 +221,21 @@ func (m ChatModel) UpdateFunctionResult(name, result string) ChatModel {
 	return m
 }
 
-// GetMessages returns all chat messages.
+// GetMessages returns all chat messages (including UI-only system messages).
 func (m ChatModel) GetMessages() []ChatMessage {
 	return m.messages
+}
+
+// GetLLMMessages returns only messages that should be sent to the LLM,
+// filtering out UI-only system messages (notifications, command results, etc.).
+func (m ChatModel) GetLLMMessages() []ChatMessage {
+	filtered := make([]ChatMessage, 0, len(m.messages))
+	for _, msg := range m.messages {
+		if msg.Role != "system" {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
 }
 
 // Clear clears all messages and function calls.

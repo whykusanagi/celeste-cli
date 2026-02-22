@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
-    container_name: celestecli-test-runner
+    container_name: celeste-cli-test-runner
     environment:
       # Mock API endpoints (point to mock-api service)
       - CELESTE_API_KEY=test-key-12345
@@ -28,7 +28,7 @@ services:
     build:
       context: ./test/mock-server
       dockerfile: Dockerfile
-    container_name: celestecli-mock-api
+    container_name: celeste-cli-mock-api
     ports:
       - "8080:8080"
     volumes:

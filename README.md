@@ -18,9 +18,9 @@
 
 ---
 
-## ✨ What is CelesteCLI?
+## ✨ What is Celeste CLI?
 
-CelesteCLI is the **official command-line interface** for CelesteAI, featuring:
+Celeste CLI is the **official command-line interface** for CelesteAI, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
 - 🔮 **21 AI-Powered Skills** - Function calling for weather, tarot, conversions, and more
 - 🗂️ **Collections** - Upload documents for RAG (xAI only)
@@ -207,7 +207,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 
 ## 🔮 Skills System (21 Skills)
 
-CelesteCLI uses **OpenAI function calling** to power its skills. You don't invoke skills directly—you chat naturally, and the AI decides when to call them.
+Celeste CLI uses **OpenAI function calling** to power its skills. You don't invoke skills directly—you chat naturally, and the AI decides when to call them.
 
 ### Divination & Entertainment
 
@@ -321,7 +321,7 @@ celeste config --set-tarot-token <token>
 
 ## 🌐 LLM Provider Compatibility
 
-CelesteCLI requires **OpenAI-style function calling** for skills to work. Not all LLM providers support this feature.
+Celeste CLI requires **OpenAI-style function calling** for skills to work. Not all LLM providers support this feature.
 
 ### Quick Reference Matrix
 
@@ -363,14 +363,14 @@ celeste chat
 **Limitation:** DigitalOcean AI Agent requires **cloud-hosted functions**. Skills cannot execute locally.
 
 **Why skills won't work:**
-- CelesteCLI executes skills locally (unit converter, QR generator, etc.)
+- Celeste CLI executes skills locally (unit converter, QR generator, etc.)
 - DigitalOcean expects HTTP endpoints in the cloud
 - No way to bridge local execution with DigitalOcean's architecture
 
 **Workarounds:**
 1. Use OpenAI or Grok instead
 2. Deploy skills as cloud functions (advanced)
-3. Use CelesteCLI without skills (chat only)
+3. Use Celeste CLI without skills (chat only)
 
 ### Testing Provider Compatibility
 
@@ -413,7 +413,7 @@ Here's how skills work under the hood:
 %%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#4a90e2','primaryTextColor':'#fff','primaryBorderColor':'#357abd','lineColor':'#6c757d','secondaryColor':'#7c3aed','tertiaryColor':'#10b981','noteBkgColor':'#fef3c7','noteTextColor':'#92400e'}}}%%
 sequenceDiagram
     actor User
-    participant CLI as CelesteCLI
+    participant CLI as Celeste CLI
     participant LLM as LLM Provider
     participant Skill as Skill Handler
     participant API as External API
@@ -447,7 +447,7 @@ sequenceDiagram
 
 ### Configuration Files
 
-CelesteCLI uses three config files in `~/.celeste/`:
+Celeste CLI uses three config files in `~/.celeste/`:
 
 | File | Purpose | Example |
 |------|---------|---------|
@@ -650,7 +650,7 @@ celeste -config grok chat
 /export json
 ```
 
-**Note:** When using providers without token tracking (Anthropic native API, ElevenLabs), CelesteCLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
+**Note:** When using providers without token tracking (Anthropic native API, ElevenLabs), Celeste CLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
 
 ### Single Message Mode (Non-Interactive)
 
@@ -1243,11 +1243,11 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## 🔗 Related Projects
 
-CelesteCLI is part of the larger **CelesteAI Ecosystem**:
+Celeste CLI is part of the larger **CelesteAI Ecosystem**:
 
 | Project | Description | Link |
 |---------|-------------|------|
-| **CelesteCLI** | Command-line interface (this project) | [GitHub](https://github.com/whykusanagi/celeste-cli) |
+| **Celeste CLI** | Command-line interface (this project) | [GitHub](https://github.com/whykusanagi/celeste-cli) |
 | **Union Raid** | NIKKE game companion web app | [raid.whykusanagi.xyz](https://raid.whykusanagi.xyz) |
 | **Web Widget** | Chat widget for whykusanagi.xyz | Integrated |
 | **Twitch Bot** | Live chat moderation & interaction | Integrated |

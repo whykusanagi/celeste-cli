@@ -1,11 +1,23 @@
 # Changelog
 
-All notable changes to CelesteCLI will be documented in this file.
+All notable changes to Celeste CLI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.5.2] - 2026-02-22
+
+### Fixed
+- `/tools` command from menu now correctly opens the skills browser instead of returning "Unknown command"
+- `/nsfw` now toggles — typing it a second time disables NSFW mode (previously required `/safe` to exit)
+- Context rot: UI notification messages (`role=system`) were being sent to the LLM on every request, bloating context with phantom system messages per session; LLM requests now only include user/assistant/tool messages
+- Menu item selection now correctly executes the selected command (value-type `InputModel` mutation was being discarded)
+- Skill browser selection now correctly populates the input field
+
+### Changed
+- Renamed project references from `CelesteCLI` to `Celeste CLI` across all documentation, scripts, and workflows
 
 ## [1.5.1] - 2026-02-19
 
@@ -280,7 +292,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Release Links
 
-- [Unreleased](https://github.com/whykusanagi/celeste-cli/compare/v1.5.1...HEAD)
+- [Unreleased](https://github.com/whykusanagi/celeste-cli/compare/v1.5.2...HEAD)
+- [1.5.2](https://github.com/whykusanagi/celeste-cli/compare/v1.5.1...v1.5.2)
 - [1.5.1](https://github.com/whykusanagi/celeste-cli/compare/v1.4.0...v1.5.1)
 - [1.4.0](https://github.com/whykusanagi/celeste-cli/compare/v1.3.0...v1.4.0)
 - [1.3.0](https://github.com/whykusanagi/celeste-cli/compare/v1.1.0...v1.3.0)

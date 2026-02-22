@@ -2,7 +2,7 @@
 
 **Translation-Failure Corruption Aesthetic - Official Style Documentation**
 
-This document defines the visual and textual styling standards for CelesteCLI. These rules MUST be followed for all UI components, dashboard outputs, and user-facing text to maintain Celeste's brand identity.
+This document defines the visual and textual styling standards for Celeste CLI. These rules MUST be followed for all UI components, dashboard outputs, and user-facing text to maintain Celeste's brand identity.
 
 > **Based on**: `@whykusanagi/corrupted-theme` official npm package
 > **Updated**: 2025-12-12 - Corrected to remove leet speak entirely

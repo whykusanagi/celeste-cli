@@ -1,6 +1,6 @@
-# CelesteCLI Roadmap
+# Celeste CLI Roadmap
 
-This document tracks planned features, enhancements, and potential migrations for CelesteCLI.
+This document tracks planned features, enhancements, and potential migrations for Celeste CLI.
 
 ## Current Status (December 2025)
 

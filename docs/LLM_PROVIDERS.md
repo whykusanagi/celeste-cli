@@ -1,6 +1,6 @@
 # LLM Provider Compatibility Matrix
 
-CelesteCLI uses OpenAI's function calling feature to power its skills system. This document explains which LLM providers support skills and which ones require alternative setups.
+Celeste CLI uses OpenAI's function calling feature to power its skills system. This document explains which LLM providers support skills and which ones require alternative setups.
 
 **📊 For comprehensive test results and validation status, see [PROVIDER_AUDIT_MATRIX.md](./PROVIDER_AUDIT_MATRIX.md)**
 
@@ -22,7 +22,7 @@ CelesteCLI uses OpenAI's function calling feature to power its skills system. Th
 
 ## How Skills Work
 
-CelesteCLI's skills system relies on **OpenAI function calling** (also known as tool calling). Here's how it works:
+Celeste CLI's skills system relies on **OpenAI function calling** (also known as tool calling). Here's how it works:
 
 1. **User asks a question**: "What's the weather in NYC?"
 2. **Skills are sent to LLM**: The list of available skills is sent as "tools" in the API request
@@ -150,7 +150,7 @@ Celeste will now search your documents automatically when relevant!
 3. The agent calls these URLs directly (not your local machine)
 
 **Why skills won't work**:
-- CelesteCLI executes skills locally (unit converter, QR code generator, etc.)
+- Celeste CLI executes skills locally (unit converter, QR code generator, etc.)
 - DigitalOcean expects HTTP endpoints in the cloud
 - No way to bridge local execution with DigitalOcean's architecture
 
@@ -282,7 +282,7 @@ celeste -config openai chat
 
 ### Option 2: Use Skills Separately
 
-While CelesteCLI v3.0 doesn't have direct skill invocation flags, you could:
+While Celeste CLI v3.0 doesn't have direct skill invocation flags, you could:
 - Use skills via the chat interface with compatible providers only
 - Request manual skill invocation flags (contribute to the project!)
 
@@ -323,7 +323,7 @@ If you test a provider not listed here, please contribute your findings:
 
 ### OpenAI Function Calling Format
 
-CelesteCLI sends skills in this format:
+Celeste CLI sends skills in this format:
 
 ```json
 {
@@ -491,7 +491,7 @@ go test -coverprofile=coverage.out ./cmd/celeste/... && go tool cover -html=cove
 ## FAQ
 
 **Q: Can I use skills without function calling?**
-A: No, CelesteCLI v3.0 requires function calling. Skills are AI-driven, not manually invoked.
+A: No, Celeste CLI v3.0 requires function calling. Skills are AI-driven, not manually invoked.
 
 **Q: Will you add support for providers without function calling?**
 A: This would require a different architecture (prompt-based skill invocation, which is less reliable). Open an issue to discuss!
@@ -503,10 +503,10 @@ A: Run the provider tests to diagnose. The provider might have partial support o
 A: Not currently. Skills are deeply integrated with the chat flow. You'd need custom code to route requests.
 
 **Q: Does streaming work with function calling?**
-A: Yes! CelesteCLI uses streaming for all responses, including function calls. The LLM streams the function call data, then streams the final response after skill execution.
+A: Yes! Celeste CLI uses streaming for all responses, including function calls. The LLM streams the function call data, then streams the final response after skill execution.
 
 ---
 
 **Last Updated**: December 14, 2024
-**CelesteCLI Version**: v1.2.0-dev
+**Celeste CLI Version**: v1.2.0-dev
 **Test Coverage**: Unit tests complete, integration tests ready

@@ -1,4 +1,4 @@
-// Package main provides a mock API server for testing CelesteCLI
+// Package main provides a mock API server for testing Celeste CLI
 // Simulates OpenAI, Venice.ai, Weather, and other external APIs
 package main
 
@@ -46,7 +46,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Ignore encoding error as this is a simple test server health check
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "healthy",
-		"service": "celestecli-mock-api",
+		"service": "celeste-cli-mock-api",
 		"time":    time.Now().Format(time.RFC3339),
 	})
 }

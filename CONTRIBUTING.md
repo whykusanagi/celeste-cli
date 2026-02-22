@@ -1,6 +1,6 @@
-# Contributing to CelesteCLI
+# Contributing to Celeste CLI
 
-Thank you for your interest in contributing to CelesteCLI! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Celeste CLI! This document provides guidelines and instructions for contributing.
 
 ## Table of Contents
 
@@ -396,4 +396,4 @@ Contributors will be acknowledged in:
 - README contributors section
 - GitHub contributors graph
 
-Thank you for contributing to CelesteCLI!
+Thank you for contributing to Celeste CLI!

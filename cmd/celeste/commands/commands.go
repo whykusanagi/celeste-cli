@@ -108,7 +108,9 @@ func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 
 	switch strings.ToLower(cmd.Name) {
 	case "nsfw":
-		return handleNSFW(cmd)
+		return handleNSFW(cmd, ctx)
+	case "tools":
+		return handleSkills(cmd, ctx)
 	case "safe":
 		return handleSafe(cmd)
 	case "endpoint":
@@ -164,13 +166,17 @@ func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 	}
 }
 
-// handleNSFW handles the /nsfw command.
-func handleNSFW(cmd *Command) *CommandResult {
+// handleNSFW handles the /nsfw command. Toggles NSFW mode on/off.
+func handleNSFW(cmd *Command, ctx *CommandContext) *CommandResult {
+	if ctx != nil && ctx.NSFWMode {
+		// Already in NSFW mode — toggle off
+		return handleSafe(cmd)
+	}
 	enabled := true
 	defaultImageModel := "lustify-sdxl"
 	return &CommandResult{
 		Success:      true,
-		Message:      "🔥 NSFW Mode Enabled\n\nSwitched to Venice.ai endpoint for uncensored content.\nImage Model: lustify-sdxl\n\nUse /set-model <model> to change image model.\nUse /help to see available models and commands.",
+		Message:      "🔥 NSFW Mode Enabled\n\nSwitched to Venice.ai endpoint for uncensored content.\nImage Model: lustify-sdxl\n\nUse /set-model <model> to change image model.\nUse /nsfw again or /safe to exit.",
 		ShouldRender: true,
 		StateChange: &StateChange{
 			NSFWMode:   &enabled,

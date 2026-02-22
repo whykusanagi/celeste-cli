@@ -205,11 +205,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case menuItemSelectedMsg:
 			// User selected a menu item, execute it
 			m.viewMode = "chat"
-			m.input.SetValue("/" + msg.command)
-			// Trigger the command by simulating Enter
-			return m, tea.Batch(
-				func() tea.Msg { return tea.KeyMsg{Type: tea.KeyEnter} },
-			)
+			return m, SendMessage("/" + msg.command)
 		}
 
 		// Update menu model
@@ -234,8 +230,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case skillSelectedMsg:
 			// User selected a skill, show it in input for them to add parameters
 			m.viewMode = "chat"
-			m.input.SetValue(msg.skillName + " ")
-			m.input.Focus()
+			m.input = m.input.SetValue(msg.skillName + " ")
+			m.input = m.input.Focus()
 			return m, nil
 		}
 
@@ -374,6 +370,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.menuModel.Init()
 				}
 				return m, nil
+
+			case "tools", "skills":
+				// Switch to interactive skills browser
+				m.viewMode = "skills"
+				skillsList := []SkillDefinition{}
+				if m.llmClient != nil {
+					skillsList = m.llmClient.GetSkills()
+				}
+				model := NewSkillsBrowserModel(skillsList)
+				m.skillsBrowser = &model
+				return m, m.skillsBrowser.Init()
 			}
 
 			// For other commands, use normal execution flow
@@ -700,7 +707,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				toolsToSend = m.skills.GetDefinitions()
 			}
 
-			cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetMessages(), toolsToSend))
+			cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
 			// Start animation tick for waiting state
 			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 				return TickMsg{Time: t}
@@ -951,7 +958,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !m.nsfwMode {
 					toolsToSend = m.skills.GetDefinitions()
 				}
-				cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetMessages(), toolsToSend))
+				cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
 
 				// Start animation tick
 				cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
@@ -992,7 +999,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !m.nsfwMode {
 					toolsToSend = m.skills.GetDefinitions()
 				}
-				cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetMessages(), toolsToSend))
+				cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
 
 				// Start animation tick
 				cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {

@@ -1,6 +1,6 @@
 # Future Work & TODO List
 
-This document tracks planned features, incomplete integrations, and improvement opportunities for CelesteCLI.
+This document tracks planned features, incomplete integrations, and improvement opportunities for Celeste CLI.
 
 ---
 

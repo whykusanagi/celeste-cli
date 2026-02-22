@@ -95,7 +95,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Build mock API server
-      run: docker build -t celestecli-mock-api -f test/mock-server/Dockerfile test/mock-server
+      run: docker build -t celeste-cli-mock-api -f test/mock-server/Dockerfile test/mock-server
 
     - name: Run Docker tests
       run: |

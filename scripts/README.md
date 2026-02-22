@@ -1,6 +1,6 @@
 # scripts/ - Build and Installation Utilities
 
-This directory contains user-facing scripts for building and installing CelesteCLI.
+This directory contains user-facing scripts for building and installing Celeste CLI.
 
 ## Available Scripts
 

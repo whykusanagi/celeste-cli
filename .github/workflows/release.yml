@@ -116,7 +116,7 @@ jobs:
           dist/checksums.txt.asc
           dist/SIGNATURES.txt
         body: |
-          ## CelesteCLI ${{ steps.get_version.outputs.VERSION }}
+          ## Celeste CLI ${{ steps.get_version.outputs.VERSION }}
 
           ### Installation
 

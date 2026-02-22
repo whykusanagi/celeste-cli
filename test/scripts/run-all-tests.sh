@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test runner script for CelesteCLI Docker testing
+# Test runner script for Celeste CLI Docker testing
 # Runs all test binaries and generates reports
 
 set -e
@@ -24,7 +24,7 @@ PASSED_TESTS=0
 FAILED_TESTS=0
 
 echo "════════════════════════════════════════════════════════════════"
-echo "  CelesteCLI Test Suite"
+echo "  Celeste CLI Test Suite"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 

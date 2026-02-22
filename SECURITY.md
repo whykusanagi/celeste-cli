@@ -95,7 +95,7 @@ If signature verification fails:
 
 ## Reporting a Vulnerability
 
-We take the security of CelesteCLI seriously. If you believe you have found a security vulnerability, please report it to us as described below.
+We take the security of Celeste CLI seriously. If you believe you have found a security vulnerability, please report it to us as described below.
 
 ### Where to Report
 
@@ -140,7 +140,7 @@ Please include the following information in your report:
    chmod 600 ~/.celeste/secrets.json
    ```
 
-3. **Update Regularly**: Keep CelesteCLI up to date
+3. **Update Regularly**: Keep Celeste CLI up to date
    ```bash
    git pull origin main
    make install
@@ -181,7 +181,7 @@ Please include the following information in your report:
 
 ### API Key Exposure
 
-CelesteCLI handles multiple API keys:
+Celeste CLI handles multiple API keys:
 - OpenAI API key
 - Venice.ai API key
 - Tarot function auth token
@@ -194,7 +194,7 @@ CelesteCLI handles multiple API keys:
 
 ### LLM Prompt Injection
 
-As an LLM-based tool, CelesteCLI may be vulnerable to prompt injection attacks.
+As an LLM-based tool, Celeste CLI may be vulnerable to prompt injection attacks.
 
 **Mitigation**:
 - System prompts are isolated from user input
@@ -203,7 +203,7 @@ As an LLM-based tool, CelesteCLI may be vulnerable to prompt injection attacks.
 
 ### Third-Party Dependencies
 
-CelesteCLI relies on several third-party libraries.
+Celeste CLI relies on several third-party libraries.
 
 **Mitigation**:
 - Dependencies are pinned in `go.mod`
@@ -248,10 +248,10 @@ We follow **coordinated disclosure**:
 
 ## Recognition
 
-We appreciate security researchers who help keep CelesteCLI safe. Contributors will be:
+We appreciate security researchers who help keep Celeste CLI safe. Contributors will be:
 
 - Credited in security advisories (with permission)
 - Acknowledged in release notes
 - Listed in a Security Hall of Fame (if desired)
 
-Thank you for helping keep CelesteCLI and its users safe!
+Thank you for helping keep Celeste CLI and its users safe!
