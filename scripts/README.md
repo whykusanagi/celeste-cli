@@ -45,7 +45,7 @@ make clean
 
 For Go users, install directly:
 ```bash
-go install github.com/whykusanagi/celesteCLI/cmd/celeste@latest
+go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
 ```
 
 See [README.md](../README.md) for full installation instructions.

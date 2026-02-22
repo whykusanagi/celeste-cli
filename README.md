@@ -38,7 +38,7 @@ CelesteCLI is the **official command-line interface** for CelesteAI, featuring:
 If you have Go 1.23+ installed:
 
 ```bash
-go install github.com/whykusanagi/celesteCLI/cmd/celeste@latest
+go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
 ```
 
 The `celeste` binary will be installed to `$GOPATH/bin` (or `~/go/bin` by default).
@@ -58,8 +58,8 @@ Alternatively, build from source:
 
 ```bash
 # Clone the repository
-git clone https://github.com/whykusanagi/celesteCLI.git
-cd celesteCLI
+git clone https://github.com/whykusanagi/celeste-cli.git
+cd celeste-cli
 
 # Build the binary
 go build -o celeste ./cmd/celeste
@@ -90,7 +90,7 @@ Before using a downloaded binary, verify its authenticity:
 
 ```bash
 # Download verification script
-curl -O https://raw.githubusercontent.com/whykusanagi/celesteCLI/main/scripts/verify.sh
+curl -O https://raw.githubusercontent.com/whykusanagi/celeste-cli/main/scripts/verify.sh
 chmod +x verify.sh
 
 # Verify your download
@@ -813,7 +813,7 @@ Add Venice.ai API key to `~/.celeste/skills.json`:
 ### Project Structure
 
 ```
-celesteCLI/
+celeste-cli/
 ├── cmd/celeste/               # Main application
 │   ├── main.go               # CLI entry point
 │   ├── tui/                  # Bubble Tea TUI components
@@ -977,7 +977,7 @@ Colors pulse between magenta (`#d94f90`) and red (`#dc2626`) to show "corruption
 ### Building from Source
 
 ```bash
-cd celesteCLI
+cd celeste-cli
 go mod tidy
 go build -o celeste ./cmd/celeste
 ```
@@ -1208,7 +1208,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for
 - 📚 **Documentation** - Improve guides, add examples, translate to other languages
 - 🎨 **Themes** - Alternative color schemes, terminal themes
 - 🔮 **Skills** - New skill implementations (requires function calling support)
-- 🐛 **Bug Fixes** - See [GitHub Issues](https://github.com/whykusanagi/celesteCLI/issues)
+- 🐛 **Bug Fixes** - See [GitHub Issues](https://github.com/whykusanagi/celeste-cli/issues)
 - ⚡ **Performance** - Optimize streaming, reduce memory usage
 
 ### Testing Your Changes
@@ -1247,7 +1247,7 @@ CelesteCLI is part of the larger **CelesteAI Ecosystem**:
 
 | Project | Description | Link |
 |---------|-------------|------|
-| **CelesteCLI** | Command-line interface (this project) | [GitHub](https://github.com/whykusanagi/celesteCLI) |
+| **CelesteCLI** | Command-line interface (this project) | [GitHub](https://github.com/whykusanagi/celeste-cli) |
 | **Union Raid** | NIKKE game companion web app | [raid.whykusanagi.xyz](https://raid.whykusanagi.xyz) |
 | **Web Widget** | Chat widget for whykusanagi.xyz | Integrated |
 | **Twitch Bot** | Live chat moderation & interaction | Integrated |
@@ -1271,7 +1271,7 @@ See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for complete ecosystem document
 
 ## 📞 Support
 
-- **Issues:** [GitHub Issues](https://github.com/whykusanagi/celesteCLI/issues)
+- **Issues:** [GitHub Issues](https://github.com/whykusanagi/celeste-cli/issues)
 - **Security:** See [SECURITY.md](SECURITY.md)
 - **Documentation:** [docs/](docs/)
 - **Community:** [Discord](https://discord.gg/whykusanagi) (coming soon)

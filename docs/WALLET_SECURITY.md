@@ -635,5 +635,5 @@ Planned features for future releases:
 ## Support
 
 For issues or questions:
-- GitHub Issues: [https://github.com/whykusanagi/celesteCLI/issues](https://github.com/whykusanagi/celesteCLI/issues)
-- Documentation: [https://github.com/whykusanagi/celesteCLI/blob/main/README.md](https://github.com/whykusanagi/celesteCLI/blob/main/README.md)
+- GitHub Issues: [https://github.com/whykusanagi/celeste-cli/issues](https://github.com/whykusanagi/celeste-cli/issues)
+- Documentation: [https://github.com/whykusanagi/celeste-cli/blob/main/README.md](https://github.com/whykusanagi/celeste-cli/blob/main/README.md)

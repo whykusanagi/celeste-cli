@@ -484,8 +484,8 @@ celeste collections enable <id>
 ## Support
 
 For issues or feature requests:
-- GitHub Issues: https://github.com/whykusanagi/celesteCLI/issues
-- Documentation: https://github.com/whykusanagi/celesteCLI/docs
+- GitHub Issues: https://github.com/whykusanagi/celeste-cli/issues
+- Documentation: https://github.com/whykusanagi/celeste-cli/docs
 
 ---
 

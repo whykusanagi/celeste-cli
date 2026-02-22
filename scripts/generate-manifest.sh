@@ -101,7 +101,7 @@ for file in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/*.zip; do
     sha512=$(shasum -a 512 "$file" | awk '{print $1}')
 
     # Build download URL
-    download_url="https://github.com/whykusanagi/celesteCLI/releases/download/${TAG}/${filename}"
+    download_url="https://github.com/whykusanagi/celeste-cli/releases/download/${TAG}/${filename}"
 
     # Add comma if not first artifact
     if [ "$FIRST" = false ]; then
@@ -131,7 +131,7 @@ cat >> "$OUTPUT" << 'EOF'
     "pgp_key_fingerprint": "940490EF09DA31322BF7FD83875849AB1D541C55",
     "keybase_profile": "whykusanagi",
     "github_keys_url": "https://github.com/whykusanagi.gpg",
-    "verification_guide": "https://github.com/whykusanagi/celesteCLI/blob/main/VERIFICATION.md"
+    "verification_guide": "https://github.com/whykusanagi/celeste-cli/blob/main/VERIFICATION.md"
   }
 }
 EOF

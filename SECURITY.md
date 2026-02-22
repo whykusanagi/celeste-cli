@@ -52,7 +52,7 @@ All sources serve the identical key with fingerprint `9404 90EF 09DA 3132 2BF7  
 **Quick Verification**:
 ```bash
 # Download verification script
-curl -O https://raw.githubusercontent.com/whykusanagi/celesteCLI/main/scripts/verify.sh
+curl -O https://raw.githubusercontent.com/whykusanagi/celeste-cli/main/scripts/verify.sh
 chmod +x verify.sh
 
 # Verify your download
@@ -79,7 +79,7 @@ chmod +x verify.sh
 If signature verification fails:
 
 1. ❌ **DO NOT use the downloaded file**
-2. Re-download from official GitHub releases: https://github.com/whykusanagi/celesteCLI/releases
+2. Re-download from official GitHub releases: https://github.com/whykusanagi/celeste-cli/releases
 3. Verify you imported the correct key (check fingerprint)
 4. If verification still fails, report immediately to security@whykusanagi.xyz
 

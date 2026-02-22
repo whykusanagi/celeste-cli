@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 EXPECTED_KEY="940490EF09DA31322BF7FD83875849AB1D541C55"
 KEYBASE_URL="https://keybase.io/whykusanagi/pgp_keys.asc"
 GITHUB_URL="https://github.com/whykusanagi.gpg"
-REPO_URL="https://github.com/whykusanagi/celesteCLI"
+REPO_URL="https://github.com/whykusanagi/celeste-cli"
 
 # Output functions
 print_success() { echo -e "${GREEN}✓${NC} $1"; }
@@ -248,5 +248,5 @@ echo "  2. Install: sudo mv celeste-* /usr/local/bin/celeste"
 echo "  3. Verify:  celeste --version"
 echo ""
 echo "Documentation:"
-echo "  https://github.com/whykusanagi/celesteCLI/blob/main/VERIFICATION.md"
+echo "  https://github.com/whykusanagi/celeste-cli/blob/main/VERIFICATION.md"
 echo ""

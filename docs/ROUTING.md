@@ -133,11 +133,11 @@ NIKKE_AGENT_KEY=sk-nikke-xxxxx
 
 ## Web Widget Integration
 
-The `celeste-widget.js` loads routing rules from celesteCLI repo:
+The `celeste-widget.js` loads routing rules from celeste-cli repo:
 
 ```javascript
 const CELESTE_CONFIG = {
-  routingRulesUrl: 'https://raw.githubusercontent.com/whykusanagi/celesteCLI/main/routing/routing_rules.json'
+  routingRulesUrl: 'https://raw.githubusercontent.com/whykusanagi/celeste-cli/main/routing/routing_rules.json'
 };
 
 async function sendToCeleste(message) {

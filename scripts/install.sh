@@ -11,7 +11,7 @@ echo "🚀 Installing Celeste..."
 # Check if Celeste binary exists
 if [ ! -f "./Celeste" ]; then
     echo "❌ Error: Celeste binary not found in current directory"
-    echo "Please run this script from the celesteCLI directory"
+    echo "Please run this script from the celeste-cli directory"
     exit 1
 fi
 

@@ -36,13 +36,13 @@ This project adheres to a simple code of conduct:
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/celesteCLI.git
-   cd celesteCLI
+   git clone https://github.com/YOUR_USERNAME/celeste-cli.git
+   cd celeste-cli
    ```
 
 3. Add upstream remote:
    ```bash
-   git remote add upstream https://github.com/whykusanagi/celesteCLI.git
+   git remote add upstream https://github.com/whykusanagi/celeste-cli.git
    ```
 
 4. Create a branch for your work:
@@ -351,7 +351,7 @@ docs: update README with new skill system
 ## Project Structure
 
 ```
-celesteCLI/
+celeste-cli/
 ├── cmd/Celeste/           # Main application
 │   ├── main.go            # Entry point
 │   ├── tui/               # TUI components

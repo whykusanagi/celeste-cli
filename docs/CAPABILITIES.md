@@ -188,7 +188,7 @@ Celeste is implemented across 7 different projects and platforms. Here's what yo
 4. Join the Discord for custom commands
 
 **Want to use her in your own project?**
-1. Check out `celesteCLI` on GitHub
+1. Check out `celeste-cli` on GitHub
 2. Review the API contracts in docs
 3. Deploy to your own infrastructure
 4. Use environment variables for API keys (never hardcode!)

@@ -84,7 +84,7 @@ go test -tags=integration ./cmd/celeste/tui -v -timeout 30s
 === RUN   TestCollectionsModel_ErrorState
 --- PASS: TestCollectionsModel_ErrorState (0.00s)
 PASS
-ok      github.com/whykusanagi/celesteCLI/cmd/celeste/tui       2.451s
+ok      github.com/whykusanagi/celeste-cli/cmd/celeste/tui       2.451s
 ```
 
 ### Skipped Tests

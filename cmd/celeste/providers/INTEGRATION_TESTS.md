@@ -248,7 +248,7 @@ Fix: Get key from https://aistudio.google.com/
 --- PASS: TestGrokIntegration (4.12s)
 
 PASS
-ok  	github.com/whykusanagi/celesteCLI/cmd/celeste/providers	7.892s
+ok  	github.com/whykusanagi/celeste-cli/cmd/celeste/providers	7.892s
 ```
 
 ### Partial Pass (Some API Keys Missing)
@@ -262,7 +262,7 @@ ok  	github.com/whykusanagi/celesteCLI/cmd/celeste/providers	7.892s
     SKIP: Skipping Gemini integration test: GEMINI_API_KEY not set
 
 PASS
-ok  	github.com/whykusanagi/celesteCLI/cmd/celeste/providers	3.452s
+ok  	github.com/whykusanagi/celeste-cli/cmd/celeste/providers	3.452s
 ```
 
 ## Continuous Monitoring
