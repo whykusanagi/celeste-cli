@@ -101,7 +101,7 @@ jobs:
 
         Verification:
         See VERIFICATION.md in the repository for verification instructions.
-        https://github.com/whykusanagi/celesteCLI/blob/main/VERIFICATION.md
+        https://github.com/whykusanagi/celeste-cli/blob/main/VERIFICATION.md
         EOF
 
     - name: Create Release
@@ -124,14 +124,14 @@ jobs:
 
           **Linux (amd64)**:
           ```bash
-          wget https://github.com/whykusanagi/celesteCLI/releases/download/v${{ steps.get_version.outputs.VERSION }}/celeste-linux-amd64.tar.gz
+          wget https://github.com/whykusanagi/celeste-cli/releases/download/v${{ steps.get_version.outputs.VERSION }}/celeste-linux-amd64.tar.gz
           tar xzf celeste-linux-amd64.tar.gz
           sudo mv celeste-linux-amd64 /usr/local/bin/celeste
           ```
 
           **macOS (Apple Silicon)**:
           ```bash
-          wget https://github.com/whykusanagi/celesteCLI/releases/download/v${{ steps.get_version.outputs.VERSION }}/celeste-darwin-arm64.tar.gz
+          wget https://github.com/whykusanagi/celeste-cli/releases/download/v${{ steps.get_version.outputs.VERSION }}/celeste-darwin-arm64.tar.gz
           tar xzf celeste-darwin-arm64.tar.gz
           sudo mv celeste-darwin-arm64 /usr/local/bin/celeste
           ```
@@ -145,6 +145,6 @@ jobs:
           ```
 
           ### Changes
-          See [CHANGELOG.md](https://github.com/whykusanagi/celesteCLI/blob/main/CHANGELOG.md) for details.
+          See [CHANGELOG.md](https://github.com/whykusanagi/celeste-cli/blob/main/CHANGELOG.md) for details.
         draft: false
         prerelease: false
