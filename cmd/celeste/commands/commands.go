@@ -659,9 +659,6 @@ Media Generation Commands:
   image[model]: <prompt>       Use specific model for one generation
                                Example: image[nano-banana-pro]: futuristic city
 
-  upscale: <path>              Upscale and enhance existing image
-                               Example: upscale: ~/photo.jpg
-
 Model Management:
   /set-model <model>           Set default image generation model
                                Example: /set-model wai-Illustrious

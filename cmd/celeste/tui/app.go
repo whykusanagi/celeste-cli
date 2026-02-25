@@ -763,12 +763,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				response, genErr = venice.GenerateImage(config, msg.Prompt, msg.Params)
 			case "video":
 				response, genErr = venice.GenerateVideo(config, msg.Prompt, msg.Params)
-			case "upscale":
-				if path, ok := msg.Params["path"].(string); ok {
-					response, genErr = venice.UpscaleImage(config, path, msg.Params)
-				} else {
-					genErr = fmt.Errorf("no image path provided for upscale")
-				}
 			case "image-to-video":
 				if path, ok := msg.Params["path"].(string); ok {
 					response, genErr = venice.ImageToVideo(config, path, msg.Params)
