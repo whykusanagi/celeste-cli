@@ -530,6 +530,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if result.StateChange.ClearHistory {
 					m.chat = m.chat.Clear()
 				}
+				if result.StateChange.NewSession {
+					m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
+				}
 
 				if result.StateChange.MenuState != nil {
 					m.skills = m.skills.SetMenuState(*result.StateChange.MenuState)
@@ -760,12 +763,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				response, genErr = venice.GenerateImage(config, msg.Prompt, msg.Params)
 			case "video":
 				response, genErr = venice.GenerateVideo(config, msg.Prompt, msg.Params)
-			case "upscale":
-				if path, ok := msg.Params["path"].(string); ok {
-					response, genErr = venice.UpscaleImage(config, path, msg.Params)
-				} else {
-					genErr = fmt.Errorf("no image path provided for upscale")
-				}
 			case "image-to-video":
 				if path, ok := msg.Params["path"].(string); ok {
 					response, genErr = venice.ImageToVideo(config, path, msg.Params)

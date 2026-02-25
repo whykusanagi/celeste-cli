@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
 )
 
 // RegisterBuiltinSkills registers all built-in skills with the registry.
@@ -44,6 +45,7 @@ func RegisterBuiltinSkills(registry *Registry, configLoader ConfigLoader) {
 	registry.RegisterSkill(SaveNoteSkill())
 	registry.RegisterSkill(GetNoteSkill())
 	registry.RegisterSkill(ListNotesSkill())
+	registry.RegisterSkill(UpscaleImageSkill())
 
 	// Register handlers
 	registry.RegisterHandler("tarot_reading", func(args map[string]interface{}) (interface{}, error) {
@@ -99,6 +101,9 @@ func RegisterBuiltinSkills(registry *Registry, configLoader ConfigLoader) {
 	})
 	registry.RegisterHandler("list_notes", func(args map[string]interface{}) (interface{}, error) {
 		return ListNotesHandler(args)
+	})
+	registry.RegisterHandler("upscale_image", func(args map[string]interface{}) (interface{}, error) {
+		return UpscaleImageHandler(args, configLoader)
 	})
 
 	// Register crypto skills (IPFS, Alchemy, Blockchain Monitoring)
@@ -2338,4 +2343,87 @@ func CreateDefaultSkillFiles() error {
 	}
 
 	return nil
+}
+
+// UpscaleImageSkill returns the skill definition for image upscaling.
+func UpscaleImageSkill() Skill {
+	return Skill{
+		Name:        "upscale_image",
+		Description: "Upscale and enhance an image using Venice.ai. Provide the file path to the image. Returns the path to the upscaled file.",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"image_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the image file to upscale (e.g. ~/Pictures/photo.png)",
+				},
+				"scale": map[string]interface{}{
+					"type":        "integer",
+					"description": "Upscale factor, e.g. 2 for 2x resolution (default: 2)",
+					"default":     2,
+				},
+				"creativity": map[string]interface{}{
+					"type":        "number",
+					"description": "Enhancement creativity level from 0.0 to 1.0 (default: 0.5)",
+					"default":     0.5,
+				},
+			},
+			"required": []string{"image_path"},
+		},
+	}
+}
+
+// UpscaleImageHandler handles the upscale_image skill execution.
+func UpscaleImageHandler(args map[string]interface{}, configLoader ConfigLoader) (interface{}, error) {
+	veniceConfig, err := configLoader.GetVeniceConfig()
+	if err != nil {
+		return nil, fmt.Errorf("Venice.ai not configured: %w", err)
+	}
+
+	imagePath, ok := args["image_path"].(string)
+	if !ok || imagePath == "" {
+		return nil, fmt.Errorf("image_path is required")
+	}
+
+	scale := 2
+	if s, ok := args["scale"].(float64); ok {
+		scale = int(s)
+	}
+
+	creativity := 0.5
+	if c, ok := args["creativity"].(float64); ok {
+		creativity = c
+	}
+
+	config := venice.Config{
+		APIKey:  veniceConfig.APIKey,
+		BaseURL: veniceConfig.BaseURL,
+	}
+
+	params := map[string]interface{}{
+		"scale":      scale,
+		"creativity": creativity,
+	}
+
+	response, err := venice.UpscaleImage(config, imagePath, params)
+	if err != nil {
+		return nil, fmt.Errorf("upscale failed: %w", err)
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("upscale failed: %s", response.Error)
+	}
+
+	result := map[string]interface{}{
+		"message": fmt.Sprintf("Image upscaled %dx successfully", scale),
+	}
+	if response.Path != "" {
+		result["output_path"] = response.Path
+		result["message"] = fmt.Sprintf("Image upscaled %dx and saved to %s", scale, response.Path)
+	} else if response.URL != "" {
+		result["url"] = response.URL
+		result["message"] = fmt.Sprintf("Image upscaled %dx, available at: %s", scale, response.URL)
+	}
+
+	return result, nil
 }

@@ -61,6 +61,7 @@ type StateChange struct {
 	Model          *string
 	ImageModel     *string
 	ClearHistory   bool
+	NewSession     bool           // signals the TUI to create a new session after clearing chat
 	MenuState      *string        // "status", "commands", "skills"
 	SessionAction  *SessionAction // Session management operations
 	ShowSelector   *SelectorData  // Show interactive selector
@@ -618,10 +619,11 @@ func listAvailableConfigs() *CommandResult {
 func handleClear(cmd *Command) *CommandResult {
 	return &CommandResult{
 		Success:      true,
-		Message:      "🗑️  Conversation cleared",
+		Message:      "Session cleared, new session started.",
 		ShouldRender: false,
 		StateChange: &StateChange{
 			ClearHistory: true,
+			NewSession:   true,
 		},
 	}
 }
@@ -656,9 +658,6 @@ Media Generation Commands:
 
   image[model]: <prompt>       Use specific model for one generation
                                Example: image[nano-banana-pro]: futuristic city
-
-  upscale: <path>              Upscale and enhance existing image
-                               Example: upscale: ~/photo.jpg
 
 Model Management:
   /set-model <model>           Set default image generation model

@@ -201,6 +201,7 @@ func TestExecuteClear(t *testing.T) {
 	assert.False(t, result.ShouldRender)
 	require.NotNil(t, result.StateChange)
 	assert.True(t, result.StateChange.ClearHistory)
+	assert.True(t, result.StateChange.NewSession) // NEW assertion
 }
 
 func TestExecuteHelp(t *testing.T) {

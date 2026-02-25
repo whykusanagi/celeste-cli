@@ -25,7 +25,7 @@ type Config struct {
 
 // MediaRequest represents a media generation request.
 type MediaRequest struct {
-	Type   string // "image", "video", "upscale", "image-to-video"
+	Type   string // "image", "video", "image-to-video"
 	Prompt string
 	Params map[string]interface{}
 }
@@ -557,8 +557,7 @@ func ParseMediaCommand(message string) (string, string, map[string]interface{}, 
 
 	// Check for standard media prefixes
 	prefixes := map[string]string{
-		"image:":   "image",
-		"upscale:": "upscale",
+		"image:": "image",
 	}
 
 	for prefix, mediaType := range prefixes {
@@ -566,19 +565,6 @@ func ParseMediaCommand(message string) (string, string, map[string]interface{}, 
 			// Extract prompt/path after prefix
 			content := strings.TrimSpace(message[len(prefix):])
 			params := make(map[string]interface{})
-
-			// For upscale, first word is file path
-			if mediaType == "upscale" {
-				parts := strings.SplitN(content, " ", 2)
-				if len(parts) > 0 {
-					params["path"] = parts[0]
-					if len(parts) > 1 {
-						content = parts[1] // Rest is additional params
-					} else {
-						content = ""
-					}
-				}
-			}
 
 			return mediaType, content, params, true
 		}
