@@ -530,6 +530,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if result.StateChange.ClearHistory {
 					m.chat = m.chat.Clear()
 				}
+				if result.StateChange.NewSession {
+					m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
+				}
 
 				if result.StateChange.MenuState != nil {
 					m.skills = m.skills.SetMenuState(*result.StateChange.MenuState)

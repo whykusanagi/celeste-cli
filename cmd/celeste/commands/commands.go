@@ -61,7 +61,7 @@ type StateChange struct {
 	Model          *string
 	ImageModel     *string
 	ClearHistory   bool
-	NewSession     bool           // NEW: also start a fresh session
+	NewSession bool // signals the TUI to create a new session after clearing chat
 	MenuState      *string        // "status", "commands", "skills"
 	SessionAction  *SessionAction // Session management operations
 	ShowSelector   *SelectorData  // Show interactive selector
