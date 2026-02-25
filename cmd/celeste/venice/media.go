@@ -25,7 +25,7 @@ type Config struct {
 
 // MediaRequest represents a media generation request.
 type MediaRequest struct {
-	Type   string // "image", "video", "upscale", "image-to-video"
+	Type   string // "image", "video", "image-to-video"
 	Prompt string
 	Params map[string]interface{}
 }
