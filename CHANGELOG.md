@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-02-25
+
+### Added
+- `upscale_image` tool call skill — upscale and enhance images via Venice.ai, now available as an LLM-callable tool in all modes (not limited to NSFW)
+
+### Changed
+- `/clear` now performs a full session reset — clears chat history **and** starts a fresh session (equivalent to `/clear` + `/session new` in one command)
+- Removed `upscale:` as an NSFW-mode media command; upscaling is now handled exclusively by the `upscale_image` tool call
+
 ## [1.5.2] - 2026-02-22
 
 ### Fixed
