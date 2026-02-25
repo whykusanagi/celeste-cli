@@ -61,6 +61,7 @@ type StateChange struct {
 	Model          *string
 	ImageModel     *string
 	ClearHistory   bool
+	NewSession     bool           // NEW: also start a fresh session
 	MenuState      *string        // "status", "commands", "skills"
 	SessionAction  *SessionAction // Session management operations
 	ShowSelector   *SelectorData  // Show interactive selector
@@ -618,10 +619,11 @@ func listAvailableConfigs() *CommandResult {
 func handleClear(cmd *Command) *CommandResult {
 	return &CommandResult{
 		Success:      true,
-		Message:      "🗑️  Conversation cleared",
+		Message:      "Session cleared, new session started.",
 		ShouldRender: false,
 		StateChange: &StateChange{
 			ClearHistory: true,
+			NewSession:   true,
 		},
 	}
 }
