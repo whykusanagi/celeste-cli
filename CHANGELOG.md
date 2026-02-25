@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-02-25
+
+### Security
+- Upgraded `go-ethereum` v1.16.8 → v1.17.0 to remediate GO-2026-4508 (DoS via malicious p2p message)
+
 ## [1.5.3] - 2026-02-25
 
 ### Added

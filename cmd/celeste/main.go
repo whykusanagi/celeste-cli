@@ -27,7 +27,7 @@ import (
 
 // Version information
 const (
-	Version = "1.5.3"
+	Version = "1.5.4"
 	Build   = "bubbletea-tui"
 )
 
