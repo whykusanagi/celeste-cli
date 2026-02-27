@@ -76,6 +76,20 @@ type SkillCallMsg struct {
 	ToolCalls        []ToolCallInfo // All tool calls from the assistant message
 }
 
+// SkillCallRequest represents one tool call request in a batch.
+type SkillCallRequest struct {
+	Call       FunctionCall
+	ToolCallID string // OpenAI tool call ID for sending result back
+	ParseError string // Non-empty when arguments failed to parse
+}
+
+// SkillCallBatchMsg is sent when the LLM requests one or more skill/function calls.
+type SkillCallBatchMsg struct {
+	Calls            []SkillCallRequest
+	AssistantContent string         // Assistant message content (may be empty if only tool calls)
+	ToolCalls        []ToolCallInfo // Raw tool call payloads from assistant message
+}
+
 // SkillResultMsg is sent when a skill execution completes.
 type SkillResultMsg struct {
 	Name       string

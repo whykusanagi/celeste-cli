@@ -370,11 +370,14 @@ func (b *GoogleBackend) convertSchemaToGenAI(params map[string]interface{}) *gen
 	}
 
 	// Extract required fields
-	if required, ok := params["required"].([]interface{}); ok {
-		requiredStrs := make([]string, len(required))
-		for i, v := range required {
-			if str, ok := v.(string); ok {
-				requiredStrs[i] = str
+	switch required := params["required"].(type) {
+	case []string:
+		schema.Required = required
+	case []interface{}:
+		requiredStrs := make([]string, 0, len(required))
+		for _, v := range required {
+			if str, ok := v.(string); ok && str != "" {
+				requiredStrs = append(requiredStrs, str)
 			}
 		}
 		schema.Required = requiredStrs

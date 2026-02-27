@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/sashabaranov/go-openai"
@@ -347,7 +348,11 @@ func (b *OpenAIBackend) convertTools(tools []tui.SkillDefinition) []openai.Tool 
 
 	// Add user-defined function tools
 	for _, tool := range tools {
-		params, _ := json.Marshal(tool.Parameters)
+		params, err := json.Marshal(tool.Parameters)
+		if err != nil {
+			tui.LogInfo(fmt.Sprintf("Skipping invalid tool '%s': failed to marshal parameters: %v", tool.Name, err))
+			continue
+		}
 
 		result = append(result, openai.Tool{
 			Type: "function",

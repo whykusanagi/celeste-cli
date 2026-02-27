@@ -334,7 +334,11 @@ func (b *XAIBackend) convertTools(tools []tui.SkillDefinition) []xAITool {
 	var result []xAITool
 
 	for _, tool := range tools {
-		params, _ := json.Marshal(tool.Parameters)
+		params, err := json.Marshal(tool.Parameters)
+		if err != nil {
+			tui.LogInfo(fmt.Sprintf("Skipping invalid tool '%s': failed to marshal parameters: %v", tool.Name, err))
+			continue
+		}
 
 		xaiTool := xAITool{
 			Type: "function",
