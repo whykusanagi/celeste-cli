@@ -90,6 +90,10 @@ func (r *Registry) loadSkillFile(path string) error {
 		return fmt.Errorf("skill name is required")
 	}
 
+	if err := ValidateSkillDefinition(skill); err != nil {
+		return fmt.Errorf("invalid skill definition: %w", err)
+	}
+
 	r.skills[skill.Name] = skill
 	return nil
 }
@@ -157,6 +161,10 @@ func (r *Registry) HasHandler(name string) bool {
 
 // SaveSkill saves a skill definition to the skills directory.
 func (r *Registry) SaveSkill(skill Skill) error {
+	if err := ValidateSkillDefinition(skill); err != nil {
+		return fmt.Errorf("invalid skill definition: %w", err)
+	}
+
 	// Ensure directory exists
 	if err := os.MkdirAll(r.skillsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create skills directory: %w", err)

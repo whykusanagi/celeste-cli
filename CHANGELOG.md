@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-02-27
+
+### Fixed
+- Restored tool definition delivery in chat mode so skill/function metadata is sent from the live LLM client instead of the TUI skills panel stub.
+- Added multi-tool execution flow support: all tool calls returned in a single assistant turn are now executed and replied with matching `tool_call_id` results before continuation.
+- Hardened tool argument parsing so malformed JSON arguments surface as explicit tool errors rather than silently falling back to empty argument maps.
+
+### Changed
+- Added schema validation for disk-loaded custom skills to reject malformed function definitions before they reach provider APIs.
+- Hardened OpenAI/xAI tool serialization by skipping invalid tool payloads gracefully instead of sending malformed definitions.
+- Improved Google/Vertex schema conversion compatibility for `required` fields across both `[]string` and `[]interface{}` input forms.
+
+### Testing
+- Added regression coverage for:
+  - custom skill schema validation pass/fail paths
+  - OpenAI and xAI tool serialization skip-on-error behavior
+  - Google/Vertex `required` schema conversion compatibility
+  - multi-tool TUI execution sequencing and single follow-up request semantics
+
 ## [1.5.4] - 2026-02-25
 
 ### Security

@@ -52,6 +52,8 @@ type AppModel struct {
 
 	// Pending tool call tracking
 	pendingToolCallID string // Track tool call ID for sending result back to LLM
+	pendingToolCalls  []pendingToolCall
+	toolBatchActive   bool
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -75,6 +77,13 @@ type AppModel struct {
 	menuModel        *MenuModel
 	skillsBrowser    *SkillsBrowserModel
 	viewMode         string // "chat", "collections", "menu", "skills"
+}
+
+type pendingToolCall struct {
+	name       string
+	args       map[string]any
+	toolCallID string
+	parseError string
 }
 
 // LLMClient interface for sending messages to the LLM.
@@ -601,7 +610,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "debug":
 			// Show tools/skills debug info (old behavior for debug command)
-			skills := m.skills.GetDefinitions()
+			skills := m.getAvailableSkills()
 			debugMsg := fmt.Sprintf("📋 Available Tools (%d):\n", len(skills))
 			for _, s := range skills {
 				debugMsg += fmt.Sprintf("  • %s: %s\n", s.Name, s.Description)
@@ -704,12 +713,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Send to LLM and start animation
 		if m.llmClient != nil {
-			// In NSFW mode, don't send skills (Venice uncensored doesn't support function calling)
-			var toolsToSend []SkillDefinition
-			if !m.nsfwMode {
-				toolsToSend = m.skills.GetDefinitions()
-			}
-
+			toolsToSend := m.getToolsForDispatch()
 			cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
 			// Start animation tick for waiting state
 			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
@@ -906,65 +910,44 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
 
 	case SkillCallMsg:
-		// Log the skill call for debugging
-		LogSkillCall(msg.Call.Name, msg.Call.Arguments)
-		LogInfo(fmt.Sprintf("Starting execution of skill: %s", msg.Call.Name))
-		m.skills = m.skills.SetExecuting(msg.Call.Name)
-		m.chat = m.chat.AddFunctionCall(msg.Call)
-		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", msg.Call.Name))
-
-		// Store tool call ID for sending result back to LLM
-		m.pendingToolCallID = msg.ToolCallID
-
-		// Add assistant message with tool_calls to conversation (required by OpenAI API)
-		// The assistant message must precede the tool result message
-		// Convert ToolCallInfo to the format needed
-		m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
-
-		// Execute the skill asynchronously
-		if m.llmClient != nil {
-			cmds = append(cmds, m.llmClient.ExecuteSkill(msg.Call.Name, msg.Call.Arguments, msg.ToolCallID))
+		batchMsg := SkillCallBatchMsg{
+			Calls: []SkillCallRequest{
+				{
+					Call:       msg.Call,
+					ToolCallID: msg.ToolCallID,
+				},
+			},
+			AssistantContent: msg.AssistantContent,
+			ToolCalls:        msg.ToolCalls,
 		}
+		var batchCmds []tea.Cmd
+		m, batchCmds = m.handleSkillCallBatch(batchMsg)
+		cmds = append(cmds, batchCmds...)
+
+	case SkillCallBatchMsg:
+		var batchCmds []tea.Cmd
+		m, batchCmds = m.handleSkillCallBatch(msg)
+		cmds = append(cmds, batchCmds...)
 
 	case SkillResultMsg:
 		// Log the skill result
 		LogSkillResult(msg.Name, msg.Result, msg.Err)
+
+		isBatchResult := m.toolBatchActive
+		shouldFollowUp := msg.ToolCallID != ""
+		if isBatchResult {
+			m.popPendingToolCall(msg.ToolCallID)
+		}
+
+		resultForLLM := msg.Result
 		if msg.Err != nil {
 			m.skills = m.skills.SetError(msg.Name, msg.Err)
 			m.chat = m.chat.UpdateFunctionResult(msg.Name, fmt.Sprintf("Error: %v", msg.Err))
 
-			// IMPORTANT: Send error result back to LLM so conversation can continue
-			// The LLM needs to receive a tool result message even for errors
-			if m.llmClient != nil && msg.ToolCallID != "" {
-				// Format error as JSON for LLM to interpret
-				// Escape quotes and newlines in error message
-				errorMsg := strings.ReplaceAll(msg.Err.Error(), `"`, `\"`)
-				errorMsg = strings.ReplaceAll(errorMsg, "\n", "\\n")
-				errorResult := fmt.Sprintf(`{"error": true, "message": "%s", "skill": "%s"}`, errorMsg, msg.Name)
-
-				// Add tool result as a "tool" message to chat (even for errors)
-				m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, errorResult)
-
-				// Send updated conversation back to LLM for interpretation
-				m.streaming = true
-				m.status = m.status.SetStreaming(true)
-				m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
-
-				// In NSFW mode, don't send skills
-				var toolsToSend []SkillDefinition
-				if !m.nsfwMode {
-					toolsToSend = m.skills.GetDefinitions()
-				}
-				cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
-
-				// Start animation tick
-				cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
-
-				// Clear pending tool call ID
-				m.pendingToolCallID = ""
-			}
+			// Format error as JSON for LLM to interpret
+			errorMsg := strings.ReplaceAll(msg.Err.Error(), `"`, `\"`)
+			errorMsg = strings.ReplaceAll(errorMsg, "\n", "\\n")
+			resultForLLM = fmt.Sprintf(`{"error": true, "message": "%s", "skill": "%s"}`, errorMsg, msg.Name)
 		} else {
 			m.skills = m.skills.SetCompleted(msg.Name)
 			m.chat = m.chat.UpdateFunctionResult(msg.Name, msg.Result)
@@ -979,32 +962,39 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.header = m.header.SetNSFWMode(false)
 				m.persistSession()
 			}
+		}
 
-			// For successful skill results, send result back to LLM for interpretation
-			// Add tool result message to conversation and send to LLM
-			if m.llmClient != nil && msg.ToolCallID != "" {
-				// Add tool result as a "tool" message to chat
-				m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, msg.Result)
+		if m.llmClient != nil && msg.ToolCallID != "" {
+			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, resultForLLM)
+		}
 
-				// Send updated conversation back to LLM for interpretation
-				m.streaming = true
-				m.status = m.status.SetStreaming(true)
-				m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
-
-				// In NSFW mode, don't send skills
-				var toolsToSend []SkillDefinition
-				if !m.nsfwMode {
-					toolsToSend = m.skills.GetDefinitions()
+		if isBatchResult {
+			if len(m.pendingToolCalls) > 0 {
+				nextCall := m.pendingToolCalls[0]
+				m.skills = m.skills.SetExecuting(nextCall.name)
+				m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", nextCall.name))
+				nextCmd := m.executePendingToolCall(nextCall)
+				if nextCmd != nil {
+					cmds = append(cmds, nextCmd)
+				} else {
+					m.pendingToolCalls = nil
+					m.toolBatchActive = false
 				}
-				cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
-
-				// Start animation tick
-				cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
-
-				// Clear pending tool call ID
+			} else {
 				m.pendingToolCallID = ""
+				m.toolBatchActive = false
+				if shouldFollowUp {
+					var followCmds []tea.Cmd
+					m, followCmds = m.buildToolFollowUpCmds()
+					cmds = append(cmds, followCmds...)
+				}
+			}
+		} else {
+			m.pendingToolCallID = ""
+			if shouldFollowUp {
+				var followCmds []tea.Cmd
+				m, followCmds = m.buildToolFollowUpCmds()
+				cmds = append(cmds, followCmds...)
 			}
 		}
 
@@ -1191,7 +1181,7 @@ func (m AppModel) View() string {
 
 	// Skills panel (fixed, 5 lines) - update config before rendering
 	// Calculate skills count and disabled reason
-	skillsCount := len(m.skills.GetDefinitions())
+	skillsCount := len(m.getAvailableSkills())
 	disabledReason := ""
 	if !m.skillsEnabled {
 		if m.nsfwMode {
@@ -1216,6 +1206,115 @@ func (m AppModel) SetLLMClient(client LLMClient) AppModel {
 	// Reset skills panel (stub for now)
 	m.skills = NewSkillsModel()
 	return m
+}
+
+func (m AppModel) getAvailableSkills() []SkillDefinition {
+	if m.llmClient == nil {
+		return nil
+	}
+	return m.llmClient.GetSkills()
+}
+
+func (m AppModel) getToolsForDispatch() []SkillDefinition {
+	if m.nsfwMode || !m.skillsEnabled {
+		return nil
+	}
+	return m.getAvailableSkills()
+}
+
+func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
+	if len(msg.Calls) == 0 {
+		return m, nil
+	}
+
+	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
+	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
+	m.toolBatchActive = true
+
+	for _, call := range msg.Calls {
+		LogSkillCall(call.Call.Name, call.Call.Arguments)
+		m.chat = m.chat.AddFunctionCall(call.Call)
+		m.pendingToolCalls = append(m.pendingToolCalls, pendingToolCall{
+			name:       call.Call.Name,
+			args:       call.Call.Arguments,
+			toolCallID: call.ToolCallID,
+			parseError: call.ParseError,
+		})
+	}
+
+	firstCall := m.pendingToolCalls[0]
+	m.pendingToolCallID = firstCall.toolCallID
+	m.skills = m.skills.SetExecuting(firstCall.name)
+	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", firstCall.name))
+	LogInfo(fmt.Sprintf("Starting execution of %d skill call(s)", len(m.pendingToolCalls)))
+
+	nextCmd := m.executePendingToolCall(firstCall)
+	if nextCmd == nil {
+		m.pendingToolCalls = nil
+		m.toolBatchActive = false
+		return m, nil
+	}
+
+	return m, []tea.Cmd{nextCmd}
+}
+
+func (m AppModel) executePendingToolCall(call pendingToolCall) tea.Cmd {
+	if call.parseError != "" {
+		parseErr := call.parseError
+		return func() tea.Msg {
+			return SkillResultMsg{
+				Name:       call.name,
+				Result:     "",
+				Err:        fmt.Errorf("failed to parse tool arguments: %s", parseErr),
+				ToolCallID: call.toolCallID,
+			}
+		}
+	}
+
+	if m.llmClient == nil {
+		return nil
+	}
+
+	return m.llmClient.ExecuteSkill(call.name, call.args, call.toolCallID)
+}
+
+func (m *AppModel) popPendingToolCall(toolCallID string) {
+	if len(m.pendingToolCalls) == 0 {
+		return
+	}
+
+	if toolCallID == "" {
+		m.pendingToolCalls = m.pendingToolCalls[1:]
+		return
+	}
+
+	for i, call := range m.pendingToolCalls {
+		if call.toolCallID == toolCallID {
+			m.pendingToolCalls = append(m.pendingToolCalls[:i], m.pendingToolCalls[i+1:]...)
+			return
+		}
+	}
+
+	// Fallback: dequeue the head if the ID wasn't found.
+	m.pendingToolCalls = m.pendingToolCalls[1:]
+}
+
+func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
+	if m.llmClient == nil {
+		return m, nil
+	}
+
+	m.streaming = true
+	m.status = m.status.SetStreaming(true)
+	m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
+
+	toolsToSend := m.getToolsForDispatch()
+	return m, []tea.Cmd{
+		m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend),
+		tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+			return TickMsg{Time: t}
+		}),
+	}
 }
 
 // SessionManager interface for session persistence (avoid circular import).

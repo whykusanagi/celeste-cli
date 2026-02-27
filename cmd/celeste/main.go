@@ -27,7 +27,7 @@ import (
 
 // Version information
 const (
-	Version = "1.5.4"
+	Version = "1.5.5"
 	Build   = "bubbletea-tui"
 )
 
@@ -467,16 +467,32 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 
 		// Handle tool calls
 		if len(toolCalls) > 0 {
-			tc := toolCalls[0]
-			tui.LogInfo(fmt.Sprintf("LLM requested tool call: %s (ID: %s)", tc.Name, tc.ID))
-
 			// Convert all tool calls to ToolCallInfo
 			toolCallInfos := make([]tui.ToolCallInfo, len(toolCalls))
+			callRequests := make([]tui.SkillCallRequest, len(toolCalls))
 			for i, t := range toolCalls {
+				tui.LogInfo(fmt.Sprintf("LLM requested tool call: %s (ID: %s)", t.Name, t.ID))
+				args, parseErr := parseArgs(t.Arguments)
+				if parseErr != nil {
+					tui.LogInfo(fmt.Sprintf("Tool argument parse error for '%s' (ID: %s): %v", t.Name, t.ID, parseErr))
+				}
+
 				toolCallInfos[i] = tui.ToolCallInfo{
 					ID:        t.ID,
 					Name:      t.Name,
 					Arguments: t.Arguments,
+				}
+				callRequests[i] = tui.SkillCallRequest{
+					Call: tui.FunctionCall{
+						Name:      t.Name,
+						Arguments: args,
+						Status:    "executing",
+						Timestamp: time.Now(),
+					},
+					ToolCallID: t.ID,
+				}
+				if parseErr != nil {
+					callRequests[i].ParseError = parseErr.Error()
 				}
 			}
 
@@ -488,14 +504,8 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 				tui.LogInfo(fmt.Sprintf("No assistant content with tool call, using thinking phrase: %s", displayContent))
 			}
 
-			return tui.SkillCallMsg{
-				Call: tui.FunctionCall{
-					Name:      tc.Name,
-					Arguments: parseArgs(tc.Arguments),
-					Status:    "executing",
-					Timestamp: time.Now(),
-				},
-				ToolCallID:       tc.ID,          // Store tool call ID for sending result back
+			return tui.SkillCallBatchMsg{
+				Calls:            callRequests,
 				AssistantContent: displayContent, // Show thinking phrase if empty
 				ToolCalls:        toolCallInfos,
 			}
@@ -700,14 +710,19 @@ func (a *TUIClientAdapter) ChangeModel(model string) error {
 	return nil
 }
 
-func parseArgs(argsJSON string) map[string]any {
+func parseArgs(argsJSON string) (map[string]any, error) {
 	var args map[string]any
-	// Ignore unmarshal error - if invalid JSON, return empty map
-	_ = json.Unmarshal([]byte(argsJSON), &args)
+	if strings.TrimSpace(argsJSON) == "" {
+		return make(map[string]any), nil
+	}
+
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return make(map[string]any), err
+	}
 	if args == nil {
 		args = make(map[string]any)
 	}
-	return args
+	return args, nil
 }
 
 // runConfigCommand handles configuration commands.
