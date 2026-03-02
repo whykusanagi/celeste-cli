@@ -4,6 +4,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -332,15 +333,9 @@ func (s *ModelService) getModelDescription(modelID string) string {
 
 // sortModelsByCapability sorts models with tool support first.
 func sortModelsByCapability(models []ModelInfo) {
-	// Simple bubble sort: tool models first
-	for i := 0; i < len(models)-1; i++ {
-		for j := 0; j < len(models)-i-1; j++ {
-			// If current doesn't support tools but next does, swap
-			if !models[j].SupportsTools && models[j+1].SupportsTools {
-				models[j], models[j+1] = models[j+1], models[j]
-			}
-		}
-	}
+	sort.SliceStable(models, func(i, j int) bool {
+		return models[i].SupportsTools && !models[j].SupportsTools
+	})
 }
 
 // FormatModelList returns a formatted string for display.

@@ -106,23 +106,6 @@ type SkillDefinition struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
-// SkillsModel represents the skills panel (shows execution status, not browser)
-// TODO: This is a stub - needs proper implementation for skills panel
-type SkillsModel struct{}
-
-func NewSkillsModel() SkillsModel                                 { return SkillsModel{} }
-func (s SkillsModel) SetCurrentInput(input string) SkillsModel    { return s }
-func (s SkillsModel) SetSize(width, height int) SkillsModel       { return s }
-func (s SkillsModel) SetMenuState(state string) SkillsModel       { return s }
-func (s SkillsModel) GetDefinitions() []SkillDefinition           { return []SkillDefinition{} }
-func (s SkillsModel) SetExecuting(name string) SkillsModel        { return s }
-func (s SkillsModel) SetError(name string, err error) SkillsModel { return s }
-func (s SkillsModel) SetCompleted(name string) SkillsModel        { return s }
-func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, count int, reason string) SkillsModel {
-	return s
-}
-func (s SkillsModel) View() string { return "" }
-
 // VeniceConfigData holds Venice.ai configuration from skills.json.
 type VeniceConfigData struct {
 	APIKey     string
@@ -1203,7 +1186,7 @@ func (m AppModel) View() string {
 // SetLLMClient sets the LLM client.
 func (m AppModel) SetLLMClient(client LLMClient) AppModel {
 	m.llmClient = client
-	// Reset skills panel (stub for now)
+	// Reset skills panel runtime state when swapping clients.
 	m.skills = NewSkillsModel()
 	return m
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestProviderRegistryExists verifies the registry is populated
@@ -64,6 +65,17 @@ func TestListProviders(t *testing.T) {
 
 	assert.NotEmpty(t, providers, "ListProviders should return providers")
 	assert.Equal(t, 9, len(providers), "Should return all 9 providers")
+	assert.Equal(t, []string{
+		"anthropic",
+		"digitalocean",
+		"elevenlabs",
+		"gemini",
+		"grok",
+		"openai",
+		"openrouter",
+		"venice",
+		"vertex",
+	}, providers, "Provider list should be deterministic and sorted")
 
 	// Verify all expected providers are in the list
 	providerMap := make(map[string]bool)
@@ -83,11 +95,19 @@ func TestGetToolCallingProviders(t *testing.T) {
 	toolProviders := GetToolCallingProviders()
 
 	assert.NotEmpty(t, toolProviders, "Should return at least one tool-capable provider")
+	assert.Equal(t, []string{
+		"anthropic",
+		"gemini",
+		"grok",
+		"openai",
+		"openrouter",
+		"vertex",
+	}, toolProviders, "Tool provider list should be deterministic and sorted")
 
 	// Verify all returned providers actually support function calling
 	for _, name := range toolProviders {
 		caps, ok := GetProvider(name)
-		assert.True(t, ok, "Provider %s should exist", name)
+		require.True(t, ok, "Provider %s should exist", name)
 		assert.True(t, caps.SupportsFunctionCalling,
 			"Provider %s should support function calling", name)
 	}

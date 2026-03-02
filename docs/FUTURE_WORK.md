@@ -11,11 +11,11 @@ This document tracks planned features, incomplete integrations, and improvement 
 - [x] Fix mermaid diagrams in README
 - [x] Fix image display size
 
-### 🔄 IN PROGRESS
-- [ ] Remove unused functions:
-  - [ ] `ListProviders()` in `providers/registry.go` (line 158)
-  - [ ] `GetToolCallingProviders()` in `providers/registry.go` (line 167)
-  - [ ] `DeleteSkill()` in `skills/registry.go` (line 184)
+### ✅ COMPLETED (Recent)
+- [x] `/providers` command family implemented and wired in command layer
+- [x] `ListProviders()` and `GetToolCallingProviders()` are actively used
+- [x] Skills package has schema validation tests
+- [x] TUI has tool-call batch flow tests
 
 ---
 
@@ -82,14 +82,13 @@ This document tracks planned features, incomplete integrations, and improvement 
 
 ### CLI Commands
 
-#### `/providers` Command
-- **Purpose**: List available providers and their capabilities
-- **Would enable**: `ListProviders()` and `GetToolCallingProviders()` functions
-- **Tasks**:
-  - [ ] Add `/providers list` - Show all providers
-  - [ ] Add `/providers list --tools` - Show only tool-capable providers
-  - [ ] Add `/providers info <name>` - Show provider details
-  - [ ] Update commands/commands.go with new handlers
+#### Provider UX Refinement
+- **Status**: PARTIALLY COMPLETE
+- **Current**: `/providers`, `/providers --tools`, `/providers info <name>`, `/providers current`
+- **Next Tasks**:
+  - [ ] Improve provider output ordering and consistency
+  - [ ] Add richer provider capability metadata in output
+  - [ ] Add provider health diagnostics command output
 
 #### Model Step Validation (Venice.ai)
 - **Purpose**: Enforce model-specific step limits for image generation
@@ -112,18 +111,18 @@ This document tracks planned features, incomplete integrations, and improvement 
 
 ### Code Coverage
 - [ ] Increase test coverage above 40% threshold
-- [ ] Add unit tests for skills package
-- [ ] Add integration tests for TUI interactions
+- [x] Add unit tests for skills package
+- [x] Add integration-style tests for TUI tool-call interactions
+- [ ] Add deterministic-ordering regression tests for provider/skill output surfaces
 
 ---
 
 ## 📚 Priority 5: Documentation
 
 ### Provider Documentation
-- [ ] Create `docs/PROVIDERS.md` with detailed provider comparison
-- [ ] Document setup instructions for each provider
+- [x] Maintain `docs/LLM_PROVIDERS.md` as provider compatibility source
 - [ ] Add troubleshooting guides for common provider issues
-- [ ] Update README with provider limitations
+- [ ] Keep provider matrix synchronized with integration test outcomes
 
 ### Architecture Documentation
 - [ ] Create detailed function call flow diagram
@@ -177,7 +176,7 @@ When working on items from this list:
 
 - This document is maintained as part of the codebase cleanup initiative
 - Dead code audit performed: 2025-12-06
-- Last updated: 2025-12-06
+- Last updated: 2026-03-01
 - See `CLAUDE.md` for development guidelines
 - See `ROADMAP.md` for strategic direction
 
