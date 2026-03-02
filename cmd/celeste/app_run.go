@@ -23,6 +23,7 @@ type commandRunner interface {
 	RunProviders(args []string)
 	RunSession(args []string)
 	RunCollections(args []string)
+	RunAgent(args []string)
 }
 
 type defaultCommandRunner struct{}
@@ -43,6 +44,7 @@ func (defaultCommandRunner) RunSkills(args []string)        { runSkillsCommand(a
 func (defaultCommandRunner) RunProviders(args []string)     { runProvidersCommand(args) }
 func (defaultCommandRunner) RunSession(args []string)       { runSessionCommand(args) }
 func (defaultCommandRunner) RunCollections(args []string)   { runCollectionsCommand(args) }
+func (defaultCommandRunner) RunAgent(args []string)         { runAgentCommand(args) }
 
 func main() {
 	os.Exit(run(os.Args[1:], defaultCommandRunner{}, os.Stdout, os.Stderr))
@@ -92,6 +94,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunSession(cmdArgs)
 	case "collections":
 		runner.RunCollections(cmdArgs)
+	case "agent":
+		runner.RunAgent(cmdArgs)
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":

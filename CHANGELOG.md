@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New autonomous `agent` command family for multi-turn task execution:
+  - `celeste agent --goal ...`
+  - `celeste agent --resume <run-id>`
+  - `celeste agent --list-runs`
+  - `celeste agent --eval <cases.json>`
+- Agent runtime loop package (`cmd/celeste/agent`) with:
+  - max-turn and max-tool safety controls
+  - completion-marker controls (default `TASK_COMPLETE:`)
+  - no-progress stop behavior
+- Checkpointed long-horizon run persistence under `~/.celeste/agent/runs`.
+- Agent-only development skills for coding/content workflows:
+  - `dev_list_files`, `dev_read_file`, `dev_write_file`, `dev_search_files`, `dev_run_command`
+- Eval harness for JSON-defined scenarios with pass/fail scoring.
+
+### Testing
+- Added new unit coverage for:
+  - checkpoint save/load/list behavior
+  - workspace path traversal guards
+  - development skill execution paths
+  - eval file parsing and result scoring
+
 ## [1.5.5] - 2026-02-27
 
 ### Fixed

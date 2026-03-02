@@ -62,6 +62,10 @@ func (f *fakeRunner) RunCollections(args []string) {
 	f.lastCall = "collections"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunAgent(args []string) {
+	f.lastCall = "agent"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_ShowsUsageAndTipWhenDefaultConfigExists(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}
@@ -104,6 +108,7 @@ func TestRun_DispatchesKnownCommands(t *testing.T) {
 		{name: "providers", args: []string{"providers", "current"}, wantCall: "providers", wantArgs: []string{"current"}},
 		{name: "session", args: []string{"session", "--list"}, wantCall: "session", wantArgs: []string{"--list"}},
 		{name: "collections", args: []string{"collections", "list"}, wantCall: "collections", wantArgs: []string{"list"}},
+		{name: "agent", args: []string{"agent", "--goal", "do work"}, wantCall: "agent", wantArgs: []string{"--goal", "do work"}},
 	}
 
 	for _, tt := range tests {

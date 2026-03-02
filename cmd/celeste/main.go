@@ -104,6 +104,7 @@ Commands:
   config                  View/modify configuration
   skills                  List and manage skills
   providers               List and query AI providers
+  agent                   Run autonomous agent loops for complex tasks
   session                 Manage conversation sessions
   context                 Show context/token usage
   stats                   Show usage statistics
@@ -156,6 +157,12 @@ Sessions:
   celeste session --load <id>            Load a session
   celeste session --clear                Clear all sessions
 
+Agent:
+  celeste agent --goal "<task>"          Run autonomous task loop
+  celeste agent --resume <run-id>        Resume checkpointed run
+  celeste agent --list-runs              List recent runs
+  celeste agent --eval <cases.json>      Run eval harness cases
+
 Environment Variables:
   CELESTE_API_KEY         API key (overrides config)
   CELESTE_API_ENDPOINT    API endpoint (overrides config)
@@ -167,6 +174,7 @@ Examples:
   celeste -config openai chat            Start with OpenAI config
   celeste -config grok chat              Start with Grok/xAI config
   celeste -mode claw chat                Start chat in claw runtime mode
+  celeste agent --goal "refactor this package and add tests"
   celeste config --list                  List available configs
   celeste config --init openai           Create OpenAI config template
   celeste config --init celeste-claw     Create claw profile template

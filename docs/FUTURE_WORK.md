@@ -90,6 +90,19 @@ This document tracks planned features, incomplete integrations, and improvement 
   - [ ] Add richer provider capability metadata in output
   - [ ] Add provider health diagnostics command output
 
+#### Autonomous Agent Mode (Claw-style foundation)
+- **Status**: PHASE 1 COMPLETE (runtime loop + checkpoints + eval harness)
+- **Current**:
+  - `celeste agent` command supports autonomous multi-turn execution
+  - Run checkpointing + resume/list flows implemented
+  - Agent-focused development skills added (`dev_*` file/search/command tools)
+  - Basic eval harness for scenario JSON files implemented
+- **Next Tasks**:
+  - [ ] Add explicit planner state machine (plan -> execute -> verify)
+  - [ ] Add stronger completion/verifier stage (tests/lint/build gating)
+  - [ ] Add artifact bundles per run (plan/actions/diff/validation)
+  - [ ] Add benchmark suites for coding/content tasks with CI scoring
+
 #### Model Step Validation (Venice.ai)
 - **Purpose**: Enforce model-specific step limits for image generation
 - **Issue**: Some models have lower limits (e.g., wai-Illustrious max is 30)
