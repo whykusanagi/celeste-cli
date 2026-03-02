@@ -153,18 +153,40 @@ func TestRun_ConfigFlagParsing(t *testing.T) {
 		name       string
 		args       []string
 		wantConfig string
+		wantMode   string
+		wantClaw   int
 		wantCall   string
 	}{
 		{
 			name:       "spaced flag",
 			args:       []string{"-config", "openai", "chat"},
 			wantConfig: "openai",
+			wantMode:   "",
+			wantClaw:   0,
 			wantCall:   "chat",
 		},
 		{
 			name:       "equals flag",
 			args:       []string{"-config=grok", "chat"},
 			wantConfig: "grok",
+			wantMode:   "",
+			wantClaw:   0,
+			wantCall:   "chat",
+		},
+		{
+			name:       "mode and claw flags",
+			args:       []string{"-mode", "claw", "-claw-max-iterations", "6", "chat"},
+			wantConfig: "",
+			wantMode:   "claw",
+			wantClaw:   6,
+			wantCall:   "chat",
+		},
+		{
+			name:       "equals mode and claw flags",
+			args:       []string{"-mode=claw", "-claw-max-iterations=3", "chat"},
+			wantConfig: "",
+			wantMode:   "claw",
+			wantClaw:   3,
 			wantCall:   "chat",
 		},
 	}
@@ -179,6 +201,8 @@ func TestRun_ConfigFlagParsing(t *testing.T) {
 			assert.Equal(t, 0, code)
 			assert.Equal(t, tt.wantCall, r.lastCall)
 			assert.Equal(t, tt.wantConfig, configName)
+			assert.Equal(t, tt.wantMode, runtimeModeOverride)
+			assert.Equal(t, tt.wantClaw, clawMaxToolIterationsOverride)
 		})
 	}
 }
@@ -191,9 +215,20 @@ func TestRun_ConfigNameResetsPerInvocation(t *testing.T) {
 	code := run([]string{"-config", "openai", "chat"}, r, &out, &errBuf)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "openai", configName)
+	assert.Empty(t, runtimeModeOverride)
+	assert.Equal(t, 0, clawMaxToolIterationsOverride)
+
+	r = &fakeRunner{}
+	code = run([]string{"-mode", "claw", "-claw-max-iterations", "5", "chat"}, r, &out, &errBuf)
+	assert.Equal(t, 0, code)
+	assert.Empty(t, configName)
+	assert.Equal(t, "claw", runtimeModeOverride)
+	assert.Equal(t, 5, clawMaxToolIterationsOverride)
 
 	r = &fakeRunner{}
 	code = run([]string{"chat"}, r, &out, &errBuf)
 	assert.Equal(t, 0, code)
 	assert.Empty(t, configName)
+	assert.Empty(t, runtimeModeOverride)
+	assert.Equal(t, 0, clawMaxToolIterationsOverride)
 }

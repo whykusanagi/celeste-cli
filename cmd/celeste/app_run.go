@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -48,9 +49,8 @@ func main() {
 }
 
 func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
-	// Reset per-invocation global config so flags from previous runs do not leak.
-	configName = ""
-	args = extractConfigFlag(args)
+	resetGlobalFlags()
+	args = extractGlobalFlags(args)
 
 	if len(args) < 1 {
 		runner.PrintUsage()
@@ -104,16 +104,51 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func extractConfigFlag(args []string) []string {
+func resetGlobalFlags() {
+	configName = ""
+	runtimeModeOverride = ""
+	clawMaxToolIterationsOverride = 0
+}
+
+func extractGlobalFlags(args []string) []string {
+	filtered := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		if args[i] == "-config" && i+1 < len(args) {
 			configName = args[i+1]
-			return append(args[:i], args[i+2:]...)
+			i++
+			continue
 		}
 		if strings.HasPrefix(args[i], "-config=") {
 			configName = strings.TrimPrefix(args[i], "-config=")
-			return append(args[:i], args[i+1:]...)
+			continue
 		}
+
+		if args[i] == "-mode" && i+1 < len(args) {
+			runtimeModeOverride = strings.ToLower(strings.TrimSpace(args[i+1]))
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "-mode=") {
+			runtimeModeOverride = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(args[i], "-mode=")))
+			continue
+		}
+
+		if args[i] == "-claw-max-iterations" && i+1 < len(args) {
+			if n, err := strconv.Atoi(args[i+1]); err == nil {
+				clawMaxToolIterationsOverride = n
+				i++
+				continue
+			}
+		}
+		if strings.HasPrefix(args[i], "-claw-max-iterations=") {
+			raw := strings.TrimPrefix(args[i], "-claw-max-iterations=")
+			if n, err := strconv.Atoi(raw); err == nil {
+				clawMaxToolIterationsOverride = n
+				continue
+			}
+		}
+
+		filtered = append(filtered, args[i])
 	}
-	return args
+	return filtered
 }
