@@ -9,6 +9,7 @@ Shift Celeste from primarily one-shot chat/tool calls into a reusable autonomous
 3. Checkpoint persistence and resume/list workflows.
 4. Agent-oriented development tools (workspace file/search/command skills).
 5. Eval harness for repeatable scenario testing.
+6. Phase 2 orchestration with explicit `plan -> execute -> verify` stages.
 
 ## Why This Matters
 These additions establish the minimum viable agent substrate:
@@ -67,12 +68,23 @@ Constraints:
   - completion status
   - required / forbidden output text assertions
 
+### 6) Phase 2: Planner + Verification Gate
+- Added planning stage that asks the model for a short numbered execution plan.
+- Extracts plan steps and tracks active/completed status during execution.
+- Added execution progress marker parsing: `STEP_DONE: <n>`.
+- Added verification stage before accepting completion:
+  - repeatable CLI `--verify-cmd` commands
+  - `--require-verify` gate to enforce passing checks before final completion
+  - on verification failure, loop returns to execution with a structured failure summary.
+
 ## Validation Added
 Unit tests in `cmd/celeste/agent`:
 1. Checkpoint save/load/list.
 2. Workspace traversal guard.
 3. Dev skills read/write/search/command flow.
 4. Eval file parsing and case scoring.
+5. Planner step parsing/progress marker handling.
+6. Verification command execution and failure-to-execution fallback.
 
 Also updated dispatcher tests for command routing to `agent`.
 
@@ -99,4 +111,3 @@ Also updated dispatcher tests for command routing to `agent`.
 2. Add `agent verify` stage using tests/lint/build checks before completion.
 3. Add run artifact bundle export (`plan`, `actions`, `diff`, `validation`).
 4. Add benchmark suite for coding/content tasks with CI gating.
-

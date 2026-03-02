@@ -12,6 +12,21 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return nil
+	}
+	*s = append(*s, v)
+	return nil
+}
+
 func runAgentCommand(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	goal := fs.String("goal", "", "Task goal text")
@@ -27,6 +42,12 @@ func runAgentCommand(args []string) {
 	completionMarker := fs.String("completion-marker", "TASK_COMPLETE:", "Completion marker token")
 	requestTimeout := fs.Int("request-timeout", 0, "LLM request timeout in seconds")
 	toolTimeout := fs.Int("tool-timeout", 0, "Tool execution timeout in seconds")
+	verifyTimeout := fs.Int("verify-timeout", 0, "Verification command timeout in seconds")
+	enablePlanning := fs.Bool("planner", true, "Enable explicit planning phase")
+	planMaxSteps := fs.Int("plan-max-steps", 0, "Maximum steps extracted from planning phase")
+	requireVerification := fs.Bool("require-verify", false, "Require verification commands to pass before completion")
+	var verifyCommands stringSliceFlag
+	fs.Var(&verifyCommands, "verify-cmd", "Verification command to run before completion (repeatable)")
 	verbose := fs.Bool("verbose", true, "Print turn-by-turn output")
 	noCheckpoint := fs.Bool("no-checkpoint", false, "Disable checkpoint persistence for this run")
 
@@ -75,6 +96,10 @@ func runAgentCommand(args []string) {
 	opts.Workspace = *workspace
 	opts.RequireCompletionMarker = *requireMarker
 	opts.CompletionMarker = strings.TrimSpace(*completionMarker)
+	opts.EnablePlanning = *enablePlanning
+	opts.PlanMaxSteps = *planMaxSteps
+	opts.RequireVerification = *requireVerification
+	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)
 	opts.DisableCheckpoints = *noCheckpoint
 	opts.Verbose = *verbose
 	if *maxTurns > 0 {
@@ -91,6 +116,9 @@ func runAgentCommand(args []string) {
 	}
 	if *toolTimeout > 0 {
 		opts.ToolTimeout = time.Duration(*toolTimeout) * time.Second
+	}
+	if *verifyTimeout > 0 {
+		opts.VerifyTimeout = time.Duration(*verifyTimeout) * time.Second
 	}
 
 	runner, err := agent.NewRunner(cfg, opts, os.Stdout, os.Stderr)

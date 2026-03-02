@@ -14,6 +14,18 @@ const (
 	StatusNoProgressStopped = "no_progress_stopped"
 )
 
+const (
+	PhasePlanning     = "planning"
+	PhaseExecution    = "execution"
+	PhaseVerification = "verification"
+)
+
+const (
+	PlanStatusPending    = "pending"
+	PlanStatusInProgress = "in_progress"
+	PlanStatusCompleted  = "completed"
+)
+
 type Options struct {
 	Workspace                 string        `json:"workspace"`
 	MaxTurns                  int           `json:"max_turns"`
@@ -23,6 +35,11 @@ type Options struct {
 	ToolTimeout               time.Duration `json:"tool_timeout"`
 	RequireCompletionMarker   bool          `json:"require_completion_marker"`
 	CompletionMarker          string        `json:"completion_marker"`
+	EnablePlanning            bool          `json:"enable_planning"`
+	PlanMaxSteps              int           `json:"plan_max_steps"`
+	RequireVerification       bool          `json:"require_verification"`
+	VerificationCommands      []string      `json:"verification_commands,omitempty"`
+	VerifyTimeout             time.Duration `json:"verify_timeout"`
 	DisableCheckpoints        bool          `json:"disable_checkpoints"`
 	Verbose                   bool          `json:"verbose"`
 }
@@ -36,9 +53,29 @@ func DefaultOptions() Options {
 		ToolTimeout:               45 * time.Second,
 		RequireCompletionMarker:   true,
 		CompletionMarker:          "TASK_COMPLETE:",
+		EnablePlanning:            true,
+		PlanMaxSteps:              8,
+		RequireVerification:       false,
+		VerificationCommands:      nil,
+		VerifyTimeout:             120 * time.Second,
 		DisableCheckpoints:        false,
 		Verbose:                   true,
 	}
+}
+
+type PlanStep struct {
+	Index  int    `json:"index"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+type VerificationCheck struct {
+	Command   string    `json:"command"`
+	Passed    bool      `json:"passed"`
+	ExitCode  int       `json:"exit_code"`
+	Output    string    `json:"output,omitempty"`
+	TimedOut  bool      `json:"timed_out,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type Step struct {
@@ -51,33 +88,40 @@ type Step struct {
 }
 
 type RunState struct {
-	RunID                  string            `json:"run_id"`
-	Goal                   string            `json:"goal"`
-	Status                 string            `json:"status"`
-	CreatedAt              time.Time         `json:"created_at"`
-	UpdatedAt              time.Time         `json:"updated_at"`
-	CompletedAt            *time.Time        `json:"completed_at,omitempty"`
-	Turn                   int               `json:"turn"`
-	ConsecutiveNoToolTurns int               `json:"consecutive_no_tool_turns"`
-	ToolCallCount          int               `json:"tool_call_count"`
-	Messages               []tui.ChatMessage `json:"messages"`
-	Steps                  []Step            `json:"steps"`
-	LastAssistantResponse  string            `json:"last_assistant_response,omitempty"`
-	Error                  string            `json:"error,omitempty"`
-	Options                Options           `json:"options"`
+	RunID                  string              `json:"run_id"`
+	Goal                   string              `json:"goal"`
+	Status                 string              `json:"status"`
+	CreatedAt              time.Time           `json:"created_at"`
+	UpdatedAt              time.Time           `json:"updated_at"`
+	CompletedAt            *time.Time          `json:"completed_at,omitempty"`
+	Turn                   int                 `json:"turn"`
+	ConsecutiveNoToolTurns int                 `json:"consecutive_no_tool_turns"`
+	ToolCallCount          int                 `json:"tool_call_count"`
+	Messages               []tui.ChatMessage   `json:"messages"`
+	Steps                  []Step              `json:"steps"`
+	Phase                  string              `json:"phase"`
+	Plan                   []PlanStep          `json:"plan,omitempty"`
+	ActivePlanStep         int                 `json:"active_plan_step,omitempty"`
+	Verification           []VerificationCheck `json:"verification,omitempty"`
+	LastAssistantResponse  string              `json:"last_assistant_response,omitempty"`
+	Error                  string              `json:"error,omitempty"`
+	Options                Options             `json:"options"`
 }
 
 func NewRunState(goal string, options Options) *RunState {
 	now := time.Now()
 	return &RunState{
-		RunID:     generateRunID(now),
-		Goal:      goal,
-		Status:    StatusRunning,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Messages:  []tui.ChatMessage{},
-		Steps:     []Step{},
-		Options:   options,
+		RunID:        generateRunID(now),
+		Goal:         goal,
+		Status:       StatusRunning,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Messages:     []tui.ChatMessage{},
+		Steps:        []Step{},
+		Phase:        PhasePlanning,
+		Plan:         []PlanStep{},
+		Verification: []VerificationCheck{},
+		Options:      options,
 	}
 }
 

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,25 +51,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		return nil, fmt.Errorf("resolve workspace path: %w", err)
 	}
 	options.Workspace = filepath.Clean(absWorkspace)
-
-	if options.MaxTurns <= 0 {
-		options.MaxTurns = DefaultOptions().MaxTurns
-	}
-	if options.MaxToolCallsPerTurn <= 0 {
-		options.MaxToolCallsPerTurn = DefaultOptions().MaxToolCallsPerTurn
-	}
-	if options.MaxConsecutiveNoToolTurns <= 0 {
-		options.MaxConsecutiveNoToolTurns = DefaultOptions().MaxConsecutiveNoToolTurns
-	}
-	if options.RequestTimeout <= 0 {
-		options.RequestTimeout = cfg.GetTimeout()
-	}
-	if options.ToolTimeout <= 0 {
-		options.ToolTimeout = 45 * time.Second
-	}
-	if strings.TrimSpace(options.CompletionMarker) == "" {
-		options.CompletionMarker = DefaultOptions().CompletionMarker
-	}
+	normalizeOptions(&options)
 
 	registry := skills.NewRegistry()
 	if err := registry.LoadSkills(); err != nil {
@@ -124,12 +108,7 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	if err != nil {
 		return nil, err
 	}
-	if state.Options.Workspace == "" {
-		state.Options.Workspace = r.options.Workspace
-	}
-	if state.Options.CompletionMarker == "" {
-		state.Options.CompletionMarker = r.options.CompletionMarker
-	}
+	normalizeStateOptions(state, r.options)
 	return r.runState(ctx, state)
 }
 
@@ -140,6 +119,11 @@ func (r *Runner) RunGoal(ctx context.Context, goal string) (*RunState, error) {
 	}
 
 	state := NewRunState(goal, r.options)
+	normalizeStateOptions(state, r.options)
+	if !state.Options.EnablePlanning {
+		state.Phase = PhaseExecution
+	}
+
 	state.Messages = append(state.Messages, tui.ChatMessage{
 		Role:      "user",
 		Content:   goal,
@@ -159,16 +143,35 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	if state == nil {
 		return nil, fmt.Errorf("run state is nil")
 	}
+	normalizeStateOptions(state, r.options)
 
-	if !state.Options.DisableCheckpoints {
-		if err := r.store.Save(state); err != nil {
-			fmt.Fprintf(r.errOut, "Warning: failed to save checkpoint: %v\n", err)
+	if state.Phase == "" {
+		if state.Options.EnablePlanning {
+			state.Phase = PhasePlanning
+		} else {
+			state.Phase = PhaseExecution
+		}
+	}
+
+	if state.Phase == PhasePlanning {
+		if err := r.runPlanningPhase(ctx, state); err != nil {
+			state.Status = StatusFailed
+			state.Error = err.Error()
+			state.UpdatedAt = time.Now()
+			_ = r.store.Save(state)
+			return state, err
+		}
+		if !state.Options.DisableCheckpoints {
+			if err := r.store.Save(state); err != nil {
+				fmt.Fprintf(r.errOut, "Warning: failed to save checkpoint: %v\n", err)
+			}
 		}
 	}
 
 	for state.Turn < state.Options.MaxTurns {
 		state.Turn++
 		state.Status = StatusRunning
+		state.Phase = PhaseExecution
 
 		if state.Options.Verbose {
 			fmt.Fprintf(r.out, "\n[agent] turn %d/%d\n", state.Turn, state.Options.MaxTurns)
@@ -206,12 +209,23 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 		if len(result.ToolCalls) == 0 {
 			state.ConsecutiveNoToolTurns++
+			updatePlanProgressFromAssistant(state, state.LastAssistantResponse, false)
+
 			if isCompletionResponse(state.LastAssistantResponse, state.Options) {
-				completeState(state)
-				if !state.Options.DisableCheckpoints {
+				completed, err := r.handleCompletionCandidate(ctx, state)
+				if err != nil {
+					state.Status = StatusFailed
+					state.Error = err.Error()
+					state.UpdatedAt = time.Now()
 					_ = r.store.Save(state)
+					return state, err
 				}
-				return state, nil
+				if completed {
+					if !state.Options.DisableCheckpoints {
+						_ = r.store.Save(state)
+					}
+					return state, nil
+				}
 			}
 
 			if state.ConsecutiveNoToolTurns >= state.Options.MaxConsecutiveNoToolTurns {
@@ -226,7 +240,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 			state.Messages = append(state.Messages, tui.ChatMessage{
 				Role:      "user",
-				Content:   buildContinuePrompt(state.Options),
+				Content:   buildContinuePrompt(state),
 				Timestamp: time.Now(),
 			})
 
@@ -237,6 +251,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 
 		state.ConsecutiveNoToolTurns = 0
+		updatePlanProgressFromAssistant(state, state.LastAssistantResponse, true)
 		toolCalls := result.ToolCalls
 		if len(toolCalls) > state.Options.MaxToolCallsPerTurn {
 			toolCalls = toolCalls[:state.Options.MaxToolCallsPerTurn]
@@ -260,6 +275,125 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		_ = r.store.Save(state)
 	}
 	return state, nil
+}
+
+func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
+	if !state.Options.EnablePlanning {
+		state.Phase = PhaseExecution
+		return nil
+	}
+	if len(state.Plan) > 0 {
+		state.Phase = PhaseExecution
+		markPlanStepInProgress(state, state.ActivePlanStep)
+		return nil
+	}
+
+	state.Phase = PhasePlanning
+	prompt := buildPlanningPrompt(state)
+	state.Messages = append(state.Messages, tui.ChatMessage{
+		Role:      "user",
+		Content:   prompt,
+		Timestamp: time.Now(),
+	})
+
+	requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
+	result, err := r.client.SendMessageSync(requestCtx, state.Messages, nil)
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	planResponse := strings.TrimSpace(result.Content)
+	state.Messages = append(state.Messages, tui.ChatMessage{
+		Role:      "assistant",
+		Content:   planResponse,
+		Timestamp: time.Now(),
+	})
+	state.Steps = append(state.Steps, Step{
+		Turn:      state.Turn,
+		Type:      "plan",
+		Content:   truncateForStep(planResponse),
+		Timestamp: time.Now(),
+	})
+
+	state.Plan = parsePlanSteps(planResponse, state.Options.PlanMaxSteps)
+	if len(state.Plan) == 0 {
+		state.Plan = []PlanStep{{Index: 1, Title: "Complete the requested goal", Status: PlanStatusPending}}
+	}
+	state.ActivePlanStep = 0
+	markPlanStepInProgress(state, state.ActivePlanStep)
+	state.Phase = PhaseExecution
+
+	state.Messages = append(state.Messages, tui.ChatMessage{
+		Role:      "user",
+		Content:   buildExecutionKickoffPrompt(state),
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+func (r *Runner) handleCompletionCandidate(ctx context.Context, state *RunState) (bool, error) {
+	if !state.Options.RequireVerification || len(state.Options.VerificationCommands) == 0 {
+		markAllPlanStepsCompleted(state)
+		completeState(state)
+		return true, nil
+	}
+
+	return r.runVerificationPhase(ctx, state)
+}
+
+func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (bool, error) {
+	state.Phase = PhaseVerification
+	state.Steps = append(state.Steps, Step{
+		Turn:      state.Turn,
+		Type:      "verification_start",
+		Timestamp: time.Now(),
+	})
+
+	allPassed := true
+	checks := make([]VerificationCheck, 0, len(state.Options.VerificationCommands))
+	for _, cmd := range state.Options.VerificationCommands {
+		check := executeVerificationCommand(ctx, state.Options.Workspace, cmd, state.Options.VerifyTimeout)
+		checks = append(checks, check)
+		state.Steps = append(state.Steps, Step{
+			Turn:      state.Turn,
+			Type:      "verification_check",
+			Name:      cmd,
+			Content:   truncateForStep(check.Output),
+			Timestamp: time.Now(),
+		})
+		if !check.Passed {
+			allPassed = false
+		}
+	}
+	state.Verification = append(state.Verification, checks...)
+
+	if allPassed {
+		markAllPlanStepsCompleted(state)
+		completeState(state)
+		state.Steps = append(state.Steps, Step{
+			Turn:      state.Turn,
+			Type:      "verification_passed",
+			Timestamp: time.Now(),
+		})
+		return true, nil
+	}
+
+	failureSummary := buildVerificationFailurePrompt(checks, state.Options)
+	state.Messages = append(state.Messages, tui.ChatMessage{
+		Role:      "user",
+		Content:   failureSummary,
+		Timestamp: time.Now(),
+	})
+	state.Steps = append(state.Steps, Step{
+		Turn:      state.Turn,
+		Type:      "verification_failed",
+		Content:   truncateForStep(failureSummary),
+		Timestamp: time.Now(),
+	})
+	state.ConsecutiveNoToolTurns = 0
+	state.Phase = PhaseExecution
+	return false, nil
 }
 
 func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) tui.ChatMessage {
@@ -299,6 +433,88 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 	}
 }
 
+func executeVerificationCommand(parent context.Context, workspace, command string, timeout time.Duration) VerificationCheck {
+	if timeout <= 0 {
+		timeout = DefaultOptions().VerifyTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+
+	outputStr := string(output)
+	if len(outputStr) > maxCommandOutput {
+		outputStr = outputStr[:maxCommandOutput]
+	}
+
+	exitCode := 0
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+
+	timedOut := ctx.Err() == context.DeadlineExceeded
+	passed := err == nil && !timedOut
+
+	return VerificationCheck{
+		Command:   command,
+		Passed:    passed,
+		ExitCode:  exitCode,
+		Output:    outputStr,
+		TimedOut:  timedOut,
+		Timestamp: time.Now(),
+	}
+}
+
+func normalizeOptions(options *Options) {
+	defaults := DefaultOptions()
+	if options.MaxTurns <= 0 {
+		options.MaxTurns = defaults.MaxTurns
+	}
+	if options.MaxToolCallsPerTurn <= 0 {
+		options.MaxToolCallsPerTurn = defaults.MaxToolCallsPerTurn
+	}
+	if options.MaxConsecutiveNoToolTurns <= 0 {
+		options.MaxConsecutiveNoToolTurns = defaults.MaxConsecutiveNoToolTurns
+	}
+	if options.RequestTimeout <= 0 {
+		options.RequestTimeout = defaults.RequestTimeout
+	}
+	if options.ToolTimeout <= 0 {
+		options.ToolTimeout = defaults.ToolTimeout
+	}
+	if strings.TrimSpace(options.CompletionMarker) == "" {
+		options.CompletionMarker = defaults.CompletionMarker
+	}
+	if options.PlanMaxSteps <= 0 {
+		options.PlanMaxSteps = defaults.PlanMaxSteps
+	}
+	if options.VerifyTimeout <= 0 {
+		options.VerifyTimeout = defaults.VerifyTimeout
+	}
+}
+
+func normalizeStateOptions(state *RunState, fallback Options) {
+	if state.Options.Workspace == "" {
+		state.Options.Workspace = fallback.Workspace
+	}
+	if state.Options.VerificationCommands == nil && fallback.VerificationCommands != nil {
+		state.Options.VerificationCommands = fallback.VerificationCommands
+	}
+	if len(state.Options.VerificationCommands) == 0 && len(fallback.VerificationCommands) > 0 {
+		state.Options.VerificationCommands = fallback.VerificationCommands
+	}
+	if !state.Options.EnablePlanning && fallback.EnablePlanning {
+		state.Options.EnablePlanning = fallback.EnablePlanning
+	}
+	if !state.Options.RequireVerification && fallback.RequireVerification {
+		state.Options.RequireVerification = fallback.RequireVerification
+	}
+	normalizeOptions(&state.Options)
+}
+
 func completeState(state *RunState) {
 	state.Status = StatusCompleted
 	now := time.Now()
@@ -317,12 +533,40 @@ func isCompletionResponse(content string, options Options) bool {
 	return !options.RequireCompletionMarker
 }
 
-func buildContinuePrompt(options Options) string {
-	marker := options.CompletionMarker
+func buildPlanningPrompt(state *RunState) string {
+	return fmt.Sprintf("Create a concise execution plan for this goal with 3-7 numbered steps. Include technical validation steps. Goal: %s", state.Goal)
+}
+
+func buildExecutionKickoffPrompt(state *RunState) string {
+	planLines := make([]string, 0, len(state.Plan))
+	for _, step := range state.Plan {
+		planLines = append(planLines, fmt.Sprintf("%d. %s", step.Index, step.Title))
+	}
+	return fmt.Sprintf("Begin executing this plan now. Use tools as needed and emit STEP_DONE: <n> when a step is completed.\n\nPlan:\n%s", strings.Join(planLines, "\n"))
+}
+
+func buildContinuePrompt(state *RunState) string {
+	marker := state.Options.CompletionMarker
 	if marker == "" {
 		marker = "TASK_COMPLETE:"
 	}
-	return fmt.Sprintf("Continue working toward the goal. Use tools when needed. If you are done, respond with '%s' followed by final deliverables and validation notes.", marker)
+
+	stepHint := ""
+	if len(state.Plan) > 0 && state.ActivePlanStep >= 0 && state.ActivePlanStep < len(state.Plan) {
+		stepHint = fmt.Sprintf(" Focus on plan step %d: %s.", state.Plan[state.ActivePlanStep].Index, state.Plan[state.ActivePlanStep].Title)
+	}
+	return fmt.Sprintf("Continue working toward the goal.%s Use tools when needed. If you are done, respond with '%s' followed by final deliverables and validation notes.", stepHint, marker)
+}
+
+func buildVerificationFailurePrompt(checks []VerificationCheck, options Options) string {
+	failed := make([]string, 0)
+	for _, c := range checks {
+		if c.Passed {
+			continue
+		}
+		failed = append(failed, fmt.Sprintf("- `%s` (exit=%d, timed_out=%v)\n%s", c.Command, c.ExitCode, c.TimedOut, truncateForStep(c.Output)))
+	}
+	return fmt.Sprintf("Verification failed. Fix the issues and continue execution. Re-run validations before completion.\n\nFailed checks:\n%s\n\nWhen complete, respond with '%s'.", strings.Join(failed, "\n"), options.CompletionMarker)
 }
 
 func buildAgentSystemPrompt(options Options) string {
@@ -331,19 +575,176 @@ func buildAgentSystemPrompt(options Options) string {
 		marker = "TASK_COMPLETE:"
 	}
 
+	verificationInstruction := ""
+	if options.RequireVerification && len(options.VerificationCommands) > 0 {
+		verificationInstruction = "Before final completion, ensure verification commands pass."
+	}
+
 	return fmt.Sprintf(`You are Celeste Agent, an autonomous execution loop for software and content tasks.
 
 Execution contract:
 1. Work iteratively until the objective is complete.
 2. Prefer using available tools to inspect files, search code, modify files, and validate outcomes.
 3. Keep responses concise and action-focused.
-4. When complete, begin your final response with %q and include:
+4. Use explicit progress markers: STEP_DONE: <n> when you complete plan step n.
+5. When complete, begin your final response with %q and include:
    - what changed
    - what validations ran
    - any remaining risks/open items
-5. If blocked, clearly describe the blocker and the next required user action.
+6. If blocked, clearly describe the blocker and the next required user action.
+7. %s
 
-Current workspace root: %s`, marker, options.Workspace)
+Current workspace root: %s`, marker, verificationInstruction, options.Workspace)
+}
+
+func parsePlanSteps(content string, maxSteps int) []PlanStep {
+	if maxSteps <= 0 {
+		maxSteps = DefaultOptions().PlanMaxSteps
+	}
+
+	lines := strings.Split(content, "\n")
+	steps := make([]PlanStep, 0, maxSteps)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		title := ""
+		if isNumberedStep(line) {
+			title = stripStepPrefix(line)
+		} else if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+			title = strings.TrimSpace(line[2:])
+		}
+
+		if title == "" {
+			continue
+		}
+		steps = append(steps, PlanStep{
+			Index:  len(steps) + 1,
+			Title:  title,
+			Status: PlanStatusPending,
+		})
+		if len(steps) >= maxSteps {
+			break
+		}
+	}
+	return steps
+}
+
+func isNumberedStep(line string) bool {
+	if len(line) < 3 {
+		return false
+	}
+	i := 0
+	for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	if i == 0 || i >= len(line) {
+		return false
+	}
+	if line[i] != '.' && line[i] != ')' && line[i] != ':' {
+		return false
+	}
+	if i+1 >= len(line) {
+		return false
+	}
+	return line[i+1] == ' '
+}
+
+func stripStepPrefix(line string) string {
+	i := 0
+	for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	if i >= len(line) {
+		return strings.TrimSpace(line)
+	}
+	if (line[i] == '.' || line[i] == ')' || line[i] == ':') && i+1 < len(line) {
+		return strings.TrimSpace(line[i+1:])
+	}
+	return strings.TrimSpace(line)
+}
+
+func extractStepDoneMarker(content string) int {
+	upper := strings.ToUpper(content)
+	idx := strings.Index(upper, "STEP_DONE:")
+	if idx < 0 {
+		return -1
+	}
+	rest := strings.TrimSpace(content[idx+len("STEP_DONE:"):])
+	numBuf := strings.Builder{}
+	for _, r := range rest {
+		if r >= '0' && r <= '9' {
+			numBuf.WriteRune(r)
+		} else {
+			break
+		}
+	}
+	if numBuf.Len() == 0 {
+		return -1
+	}
+	n, err := strconv.Atoi(numBuf.String())
+	if err != nil || n <= 0 {
+		return -1
+	}
+	return n
+}
+
+func updatePlanProgressFromAssistant(state *RunState, content string, hadTools bool) {
+	if len(state.Plan) == 0 {
+		return
+	}
+
+	if step := extractStepDoneMarker(content); step > 0 {
+		markPlanStepsCompletedThrough(state, step-1)
+		next := step
+		if next >= len(state.Plan) {
+			next = len(state.Plan) - 1
+		}
+		state.ActivePlanStep = next
+		if state.ActivePlanStep >= 0 && state.ActivePlanStep < len(state.Plan) {
+			if state.Plan[state.ActivePlanStep].Status != PlanStatusCompleted {
+				state.Plan[state.ActivePlanStep].Status = PlanStatusInProgress
+			}
+		}
+		return
+	}
+
+	if hadTools {
+		markPlanStepInProgress(state, state.ActivePlanStep)
+	}
+}
+
+func markPlanStepsCompletedThrough(state *RunState, idx int) {
+	if idx < 0 {
+		return
+	}
+	if idx >= len(state.Plan) {
+		idx = len(state.Plan) - 1
+	}
+	for i := 0; i <= idx; i++ {
+		state.Plan[i].Status = PlanStatusCompleted
+	}
+}
+
+func markPlanStepInProgress(state *RunState, idx int) {
+	if len(state.Plan) == 0 {
+		return
+	}
+	if idx < 0 || idx >= len(state.Plan) {
+		idx = 0
+		state.ActivePlanStep = 0
+	}
+	if state.Plan[idx].Status == PlanStatusPending {
+		state.Plan[idx].Status = PlanStatusInProgress
+	}
+}
+
+func markAllPlanStepsCompleted(state *RunState) {
+	for i := range state.Plan {
+		state.Plan[i].Status = PlanStatusCompleted
+	}
 }
 
 func convertToolCalls(calls []llm.ToolCallResult) []tui.ToolCallInfo {

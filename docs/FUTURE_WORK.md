@@ -91,15 +91,18 @@ This document tracks planned features, incomplete integrations, and improvement 
   - [ ] Add provider health diagnostics command output
 
 #### Autonomous Agent Mode (Claw-style foundation)
-- **Status**: PHASE 1 COMPLETE (runtime loop + checkpoints + eval harness)
+- **Status**: PHASE 2 COMPLETE (planner + execute + verify orchestration)
 - **Current**:
   - `celeste agent` command supports autonomous multi-turn execution
   - Run checkpointing + resume/list flows implemented
   - Agent-focused development skills added (`dev_*` file/search/command tools)
   - Basic eval harness for scenario JSON files implemented
+  - Explicit planning phase with extracted plan steps
+  - Execution phase progress markers (`STEP_DONE: <n>`)
+  - Verification gate with repeatable `--verify-cmd` controls
 - **Next Tasks**:
-  - [ ] Add explicit planner state machine (plan -> execute -> verify)
-  - [ ] Add stronger completion/verifier stage (tests/lint/build gating)
+  - [ ] Add richer plan lifecycle controls (step-level retries, blockers, dependencies)
+  - [ ] Add standard verification presets (go/js/content) and stricter gating policies
   - [ ] Add artifact bundles per run (plan/actions/diff/validation)
   - [ ] Add benchmark suites for coding/content tasks with CI scoring
 

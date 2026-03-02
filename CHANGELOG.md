@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent-only development skills for coding/content workflows:
   - `dev_list_files`, `dev_read_file`, `dev_write_file`, `dev_search_files`, `dev_run_command`
 - Eval harness for JSON-defined scenarios with pass/fail scoring.
+- Phase 2 agent controls:
+  - explicit planning phase with extracted plan steps
+  - execution progress markers via `STEP_DONE: <n>`
+  - verification gate via repeatable `--verify-cmd` commands and `--require-verify`
 
 ### Testing
 - Added new unit coverage for:
