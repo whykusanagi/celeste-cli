@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -34,7 +35,10 @@ func runAgentCommand(args []string) {
 	resume := fs.String("resume", "", "Resume an existing run by run id")
 	listRuns := fs.Bool("list-runs", false, "List recent agent runs")
 	evalFile := fs.String("eval", "", "Run evaluation cases from JSON file")
+	benchmarkFile := fs.String("benchmark", "", "Run benchmark suite JSON file")
+	benchmarkOut := fs.String("benchmark-out", "", "Write benchmark report JSON to this path")
 	workspace := fs.String("workspace", "", "Workspace root for agent development tools (defaults to current directory)")
+	artifactDir := fs.String("artifact-dir", "", "Directory where run artifact bundles are written")
 	maxTurns := fs.Int("max-turns", 0, "Maximum agent turns")
 	maxToolCalls := fs.Int("max-tool-calls", 0, "Maximum tool calls per turn")
 	maxNoToolTurns := fs.Int("max-no-tool-turns", 0, "Maximum consecutive no-tool turns before stopping")
@@ -48,6 +52,7 @@ func runAgentCommand(args []string) {
 	requireVerification := fs.Bool("require-verify", false, "Require verification commands to pass before completion")
 	var verifyCommands stringSliceFlag
 	fs.Var(&verifyCommands, "verify-cmd", "Verification command to run before completion (repeatable)")
+	noArtifacts := fs.Bool("no-artifacts", false, "Disable per-run artifact bundle output")
 	verbose := fs.Bool("verbose", true, "Print turn-by-turn output")
 	noCheckpoint := fs.Bool("no-checkpoint", false, "Disable checkpoint persistence for this run")
 
@@ -100,6 +105,8 @@ func runAgentCommand(args []string) {
 	opts.PlanMaxSteps = *planMaxSteps
 	opts.RequireVerification = *requireVerification
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)
+	opts.ArtifactDir = strings.TrimSpace(*artifactDir)
+	opts.EmitArtifacts = !*noArtifacts
 	opts.DisableCheckpoints = *noCheckpoint
 	opts.Verbose = *verbose
 	if *maxTurns > 0 {
@@ -157,6 +164,53 @@ func runAgentCommand(args []string) {
 		return
 	}
 
+	if *benchmarkFile != "" {
+		suite, err := agent.LoadBenchmarkSuite(*benchmarkFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading benchmark suite: %v\n", err)
+			os.Exit(1)
+		}
+		report, err := runner.RunBenchmark(ctx, suite)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Benchmark failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Benchmark: %s\n", report.SuiteName)
+		for _, result := range report.Results {
+			fmt.Printf("- %s pass=%d/%d (%.2f%%) avg_turns=%.2f avg_tools=%.2f avg_ms=%.2f\n",
+				result.CaseName,
+				result.PassedIterations,
+				result.Iterations,
+				result.PassRate*100.0,
+				result.AverageTurns,
+				result.AverageToolCalls,
+				result.AverageDurationMS)
+			if len(result.FailureReasons) > 0 {
+				fmt.Printf("  failures: %s\n", strings.Join(result.FailureReasons, "; "))
+			}
+		}
+		fmt.Printf("\nBenchmark Summary: cases passed %d/%d\n", report.PassedCases, report.TotalCases)
+
+		if strings.TrimSpace(*benchmarkOut) != "" {
+			data, err := json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error serializing benchmark report: %v\n", err)
+				os.Exit(1)
+			}
+			if err := os.WriteFile(*benchmarkOut, data, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing benchmark report: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Benchmark report written: %s\n", *benchmarkOut)
+		}
+
+		if report.FailedCases > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
 	if *resume != "" {
 		state, err := runner.Resume(ctx, *resume)
 		if err != nil {
@@ -191,6 +245,7 @@ func runAgentCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "       celeste agent --resume <run-id>")
 		fmt.Fprintln(os.Stderr, "       celeste agent --list-runs")
 		fmt.Fprintln(os.Stderr, "       celeste agent --eval <cases.json>")
+		fmt.Fprintln(os.Stderr, "       celeste agent --benchmark <suite.json>")
 		os.Exit(1)
 	}
 
@@ -217,6 +272,9 @@ func printRunSummary(state *agent.RunState) {
 	fmt.Printf("Status: %s\n", state.Status)
 	fmt.Printf("Turns: %d\n", state.Turn)
 	fmt.Printf("Tool Calls: %d\n", state.ToolCallCount)
+	if strings.TrimSpace(state.ArtifactBundlePath) != "" {
+		fmt.Printf("Artifacts: %s\n", state.ArtifactBundlePath)
+	}
 	if state.LastAssistantResponse != "" {
 		fmt.Printf("\nFinal Response:\n%s\n", state.LastAssistantResponse)
 	}

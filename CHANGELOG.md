@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - explicit planning phase with extracted plan steps
   - execution progress markers via `STEP_DONE: <n>`
   - verification gate via repeatable `--verify-cmd` commands and `--require-verify`
+- Phase 3 agent deliverables:
+  - per-run artifact bundles (`summary`, `run_state`, `plan`, `steps`, `verification`, optional git status/diff)
+  - benchmark suite scaffolding via `celeste agent --benchmark <suite.json>`
+  - optional benchmark JSON report export via `--benchmark-out`
 
 ### Testing
 - Added new unit coverage for:

@@ -40,6 +40,8 @@ type Options struct {
 	RequireVerification       bool          `json:"require_verification"`
 	VerificationCommands      []string      `json:"verification_commands,omitempty"`
 	VerifyTimeout             time.Duration `json:"verify_timeout"`
+	EmitArtifacts             bool          `json:"emit_artifacts"`
+	ArtifactDir               string        `json:"artifact_dir,omitempty"`
 	DisableCheckpoints        bool          `json:"disable_checkpoints"`
 	Verbose                   bool          `json:"verbose"`
 }
@@ -58,6 +60,8 @@ func DefaultOptions() Options {
 		RequireVerification:       false,
 		VerificationCommands:      nil,
 		VerifyTimeout:             120 * time.Second,
+		EmitArtifacts:             true,
+		ArtifactDir:               "",
 		DisableCheckpoints:        false,
 		Verbose:                   true,
 	}
@@ -104,6 +108,7 @@ type RunState struct {
 	ActivePlanStep         int                 `json:"active_plan_step,omitempty"`
 	Verification           []VerificationCheck `json:"verification,omitempty"`
 	LastAssistantResponse  string              `json:"last_assistant_response,omitempty"`
+	ArtifactBundlePath     string              `json:"artifact_bundle_path,omitempty"`
 	Error                  string              `json:"error,omitempty"`
 	Options                Options             `json:"options"`
 }

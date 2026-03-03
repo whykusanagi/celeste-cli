@@ -91,7 +91,7 @@ This document tracks planned features, incomplete integrations, and improvement 
   - [ ] Add provider health diagnostics command output
 
 #### Autonomous Agent Mode (Claw-style foundation)
-- **Status**: PHASE 2 COMPLETE (planner + execute + verify orchestration)
+- **Status**: PHASE 3 COMPLETE (artifacts + benchmark scaffolding)
 - **Current**:
   - `celeste agent` command supports autonomous multi-turn execution
   - Run checkpointing + resume/list flows implemented
@@ -100,11 +100,13 @@ This document tracks planned features, incomplete integrations, and improvement 
   - Explicit planning phase with extracted plan steps
   - Execution phase progress markers (`STEP_DONE: <n>`)
   - Verification gate with repeatable `--verify-cmd` controls
+  - Per-run artifact bundle output (plan/actions/validation/git diff where available)
+  - Benchmark suite scaffolding (`celeste agent --benchmark`)
 - **Next Tasks**:
   - [ ] Add richer plan lifecycle controls (step-level retries, blockers, dependencies)
   - [ ] Add standard verification presets (go/js/content) and stricter gating policies
-  - [ ] Add artifact bundles per run (plan/actions/diff/validation)
-  - [ ] Add benchmark suites for coding/content tasks with CI scoring
+  - [ ] Add CI benchmark scoring and regression thresholds
+  - [ ] Add benchmark fixture repos and deterministic grading rubric
 
 #### Model Step Validation (Venice.ai)
 - **Purpose**: Enforce model-specific step limits for image generation

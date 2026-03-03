@@ -144,6 +144,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		return nil, fmt.Errorf("run state is nil")
 	}
 	normalizeStateOptions(state, r.options)
+	defer r.persistArtifacts(state)
 
 	if state.Phase == "" {
 		if state.Options.EnablePlanning {
@@ -500,6 +501,9 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	if state.Options.Workspace == "" {
 		state.Options.Workspace = fallback.Workspace
 	}
+	if state.Options.ArtifactDir == "" && fallback.ArtifactDir != "" {
+		state.Options.ArtifactDir = fallback.ArtifactDir
+	}
 	if state.Options.VerificationCommands == nil && fallback.VerificationCommands != nil {
 		state.Options.VerificationCommands = fallback.VerificationCommands
 	}
@@ -511,6 +515,9 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	}
 	if !state.Options.RequireVerification && fallback.RequireVerification {
 		state.Options.RequireVerification = fallback.RequireVerification
+	}
+	if !state.Options.EmitArtifacts && fallback.EmitArtifacts {
+		state.Options.EmitArtifacts = fallback.EmitArtifacts
 	}
 	normalizeOptions(&state.Options)
 }

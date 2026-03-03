@@ -10,6 +10,7 @@ Shift Celeste from primarily one-shot chat/tool calls into a reusable autonomous
 4. Agent-oriented development tools (workspace file/search/command skills).
 5. Eval harness for repeatable scenario testing.
 6. Phase 2 orchestration with explicit `plan -> execute -> verify` stages.
+7. Phase 3 artifact bundles and benchmark scaffolding.
 
 ## Why This Matters
 These additions establish the minimum viable agent substrate:
@@ -85,6 +86,21 @@ Unit tests in `cmd/celeste/agent`:
 4. Eval file parsing and case scoring.
 5. Planner step parsing/progress marker handling.
 6. Verification command execution and failure-to-execution fallback.
+
+### 7) Phase 3: Artifacts + Benchmarks
+- Added per-run artifact bundle generation:
+  - `run_state.json`
+  - `plan.json`
+  - `steps.json`
+  - `verification.json`
+  - `summary.md`
+  - optional `git_status.txt` and `git_diff.patch` when workspace is a git repo
+- Added benchmark suite scaffolding:
+  - `celeste agent --benchmark <suite.json>`
+  - optional benchmark report output: `--benchmark-out <path>`
+- Added benchmark and artifact unit coverage:
+  - benchmark suite parser and case aggregation
+  - artifact bundle file emission and summary output
 
 Also updated dispatcher tests for command routing to `agent`.
 

@@ -162,6 +162,7 @@ Agent:
   celeste agent --resume <run-id>        Resume checkpointed run
   celeste agent --list-runs              List recent runs
   celeste agent --eval <cases.json>      Run eval harness cases
+  celeste agent --benchmark <suite.json> Run benchmark suite scaffolding
   celeste agent --planner=true --verify-cmd "go test ./..." --require-verify
                                           Enable plan->execute->verify gating
 
