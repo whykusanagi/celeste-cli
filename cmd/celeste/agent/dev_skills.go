@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	maxReadBytes     = 200_000
-	maxCommandOutput = 12_000
+	maxReadBytes      = 200_000
+	maxCommandOutput  = 12_000
+	maxCommandTimeout = 300
 )
 
 func RegisterDevSkills(registry *skills.Registry, workspace string) error {
@@ -162,7 +163,7 @@ func devSearchFilesSkill() skills.Skill {
 func devRunCommandSkill() skills.Skill {
 	return skills.Skill{
 		Name:        "dev_run_command",
-		Description: "Execute a shell command from workspace root and return combined output.",
+		Description: "Execute a shell command from workspace root and return combined output. Risky commands require explicit allow_risky=true.",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -172,7 +173,11 @@ func devRunCommandSkill() skills.Skill {
 				},
 				"timeout_seconds": map[string]interface{}{
 					"type":        "number",
-					"description": "Execution timeout in seconds. Defaults to 20.",
+					"description": "Execution timeout in seconds. Defaults to 20, max 300.",
+				},
+				"allow_risky": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Required to run risky shell commands (chained commands, sudo, destructive git/rm patterns, etc).",
 				},
 			},
 			"required": []string{"command"},
@@ -438,12 +443,18 @@ func devRunCommandHandler(workspace string, args map[string]interface{}) (interf
 	if strings.TrimSpace(command) == "" {
 		return nil, fmt.Errorf("command is required")
 	}
+	allowRisky := getBoolArg(args, "allow_risky", false)
+	risky, reason := classifyCommandRisk(command)
+	if risky && !allowRisky {
+		return nil, fmt.Errorf("command blocked by safety policy (%s). Re-run with allow_risky=true if this is intentional", reason)
+	}
+
 	timeoutSeconds := getIntArg(args, "timeout_seconds", 20)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 20
 	}
-	if timeoutSeconds > 300 {
-		timeoutSeconds = 300
+	if timeoutSeconds > maxCommandTimeout {
+		timeoutSeconds = maxCommandTimeout
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
@@ -523,7 +534,92 @@ func resolveWorkspacePath(workspace, input string) (string, error) {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path escapes workspace: %s", input)
 	}
+
+	if err := validatePathIsWithinWorkspace(workspace, candidate, input); err != nil {
+		return "", err
+	}
+
 	return candidate, nil
+}
+
+func validatePathIsWithinWorkspace(workspace, candidate, input string) error {
+	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return fmt.Errorf("resolve workspace symlinks: %w", err)
+	}
+	resolvedCandidate, err := resolvePathUsingExistingAncestor(candidate)
+	if err != nil {
+		return err
+	}
+
+	rel, err := filepath.Rel(resolvedWorkspace, resolvedCandidate)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("path escapes workspace via symlink: %s", input)
+	}
+	return nil
+}
+
+func resolvePathUsingExistingAncestor(path string) (string, error) {
+	current := filepath.Clean(path)
+
+	for {
+		_, err := os.Lstat(current)
+		if err == nil {
+			resolved, evalErr := filepath.EvalSymlinks(current)
+			if evalErr != nil {
+				return "", evalErr
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("unable to resolve existing path ancestor: %s", path)
+		}
+		current = parent
+	}
+}
+
+func classifyCommandRisk(command string) (bool, string) {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	if lower == "" {
+		return false, ""
+	}
+
+	if strings.Contains(lower, "&&") || strings.Contains(lower, "||") || strings.Contains(lower, ";") {
+		return true, "chained command"
+	}
+
+	riskyFragments := map[string]string{
+		" sudo ":           "sudo escalation",
+		"sudo ":            "sudo escalation",
+		"rm -rf":           "destructive delete",
+		"mkfs":             "filesystem formatting",
+		"shutdown":         "system shutdown",
+		"reboot":           "system reboot",
+		"poweroff":         "system poweroff",
+		"halt":             "system halt",
+		"dd if=":           "raw disk write/copy",
+		":(){":             "fork bomb signature",
+		"git reset --hard": "destructive git reset",
+		"git clean -fd":    "destructive git clean",
+		"chown -r":         "recursive ownership change",
+		"chmod -r":         "recursive permission change",
+	}
+
+	for fragment, reason := range riskyFragments {
+		if strings.Contains(lower, fragment) {
+			return true, reason
+		}
+	}
+
+	return false, ""
 }
 
 func getStringArg(args map[string]interface{}, key, fallback string) string {

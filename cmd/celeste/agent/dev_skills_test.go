@@ -88,3 +88,50 @@ func TestDevRunCommandExecutesInWorkspace(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(workspace, ".."))
 	assert.NoError(t, statErr)
 }
+
+func TestResolveWorkspacePathBlocksSymlinkEscape(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+
+	outsideTarget := filepath.Join(outside, "outside.txt")
+	require.NoError(t, os.WriteFile(outsideTarget, []byte("outside"), 0644))
+
+	linkPath := filepath.Join(workspace, "leak.txt")
+	if err := os.Symlink(outsideTarget, linkPath); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	_, err := resolveWorkspacePath(workspace, "leak.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes workspace via symlink")
+}
+
+func TestDevRunCommandBlocksRiskyByDefault(t *testing.T) {
+	workspace := t.TempDir()
+	registry := skills.NewRegistry()
+	require.NoError(t, RegisterDevSkills(registry, workspace))
+
+	_, err := registry.Execute("dev_run_command", map[string]interface{}{
+		"command": "pwd && echo hi",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "blocked by safety policy")
+}
+
+func TestDevRunCommandAllowsRiskyWhenExplicit(t *testing.T) {
+	workspace := t.TempDir()
+	registry := skills.NewRegistry()
+	require.NoError(t, RegisterDevSkills(registry, workspace))
+
+	result, err := registry.Execute("dev_run_command", map[string]interface{}{
+		"command":     "pwd && echo hi",
+		"allow_risky": true,
+	})
+	require.NoError(t, err)
+
+	resMap, ok := result.(map[string]interface{})
+	require.True(t, ok)
+	output, _ := resMap["output"].(string)
+	assert.Contains(t, output, workspace)
+	assert.Contains(t, output, "hi")
+}
