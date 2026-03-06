@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,7 @@ func TestResolveWorkspacePathBlocksTraversal(t *testing.T) {
 
 	inside, err := resolveWorkspacePath(workspace, "subdir/file.txt")
 	require.NoError(t, err)
-	assert.True(t, filepath.HasPrefix(inside, workspace))
+	assert.True(t, strings.HasPrefix(inside, workspace+string(os.PathSeparator)) || inside == workspace)
 }
 
 func TestDevSkillsReadWriteSearchFlow(t *testing.T) {

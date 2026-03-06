@@ -8,6 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCheckpointLoadRejectsPathTraversal(t *testing.T) {
+	store, err := NewCheckpointStore(t.TempDir())
+	require.NoError(t, err)
+
+	_, err = store.Load("../../etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid run id")
+
+	_, err = store.Load("../sibling-dir/sneaky")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid run id")
+}
+
 func TestCheckpointSaveLoadAndList(t *testing.T) {
 	store, err := NewCheckpointStore(t.TempDir())
 	require.NoError(t, err)

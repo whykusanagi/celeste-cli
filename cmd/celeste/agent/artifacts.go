@@ -168,7 +168,7 @@ func runShellCommand(workdir string, timeout time.Duration, command string) (str
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = workdir
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {

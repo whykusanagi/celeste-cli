@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
@@ -134,7 +136,8 @@ func runAgentCommand(args []string) {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	if *evalFile != "" {
 		cases, err := agent.LoadEvalCases(*evalFile)

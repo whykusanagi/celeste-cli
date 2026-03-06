@@ -449,7 +449,7 @@ func devRunCommandHandler(workspace string, args map[string]interface{}) (interf
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = workspace
 	output, err := cmd.CombinedOutput()
 

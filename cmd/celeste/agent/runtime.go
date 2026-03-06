@@ -442,7 +442,7 @@ func executeVerificationCommand(parent context.Context, workspace, command strin
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = workspace
 	output, err := cmd.CombinedOutput()
 

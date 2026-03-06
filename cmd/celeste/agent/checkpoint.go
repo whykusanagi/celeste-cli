@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -63,6 +64,10 @@ func (s *CheckpointStore) Load(runID string) (*RunState, error) {
 	}
 
 	path := filepath.Join(s.runsDir, runID+".json")
+	rel, err := filepath.Rel(s.runsDir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid run id: %s", runID)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
