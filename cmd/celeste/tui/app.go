@@ -44,6 +44,7 @@ type AppModel struct {
 	skillsEnabled bool   // Whether skills/function calling is available
 	version       string // Application version (e.g., "1.0.1")
 	build         string // Build identifier (e.g., "bubbletea-tui")
+	runtimeMode   string // Runtime orchestration mode (classic or claw)
 
 	// Simulated typing state
 	typingContent string // Full content to type
@@ -51,9 +52,11 @@ type AppModel struct {
 	animFrame     int    // Animation frame counter
 
 	// Pending tool call tracking
-	pendingToolCallID string // Track tool call ID for sending result back to LLM
-	pendingToolCalls  []pendingToolCall
-	toolBatchActive   bool
+	pendingToolCallID  string // Track tool call ID for sending result back to LLM
+	pendingToolCalls   []pendingToolCall
+	toolBatchActive    bool
+	clawToolIterations int // Assistant tool-call turns in the current user turn
+	clawMaxIterations  int // Safety cap for claw mode tool loops
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -93,6 +96,11 @@ type LLMClient interface {
 	ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd
 }
 
+// AgentCommandRunner is an optional extension for handling /agent from TUI.
+type AgentCommandRunner interface {
+	RunAgentCommand(args []string) tea.Cmd
+}
+
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
 type EndpointSwitcher interface {
 	SwitchEndpoint(endpoint string) error
@@ -105,23 +113,6 @@ type SkillDefinition struct {
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
 }
-
-// SkillsModel represents the skills panel (shows execution status, not browser)
-// TODO: This is a stub - needs proper implementation for skills panel
-type SkillsModel struct{}
-
-func NewSkillsModel() SkillsModel                                 { return SkillsModel{} }
-func (s SkillsModel) SetCurrentInput(input string) SkillsModel    { return s }
-func (s SkillsModel) SetSize(width, height int) SkillsModel       { return s }
-func (s SkillsModel) SetMenuState(state string) SkillsModel       { return s }
-func (s SkillsModel) GetDefinitions() []SkillDefinition           { return []SkillDefinition{} }
-func (s SkillsModel) SetExecuting(name string) SkillsModel        { return s }
-func (s SkillsModel) SetError(name string, err error) SkillsModel { return s }
-func (s SkillsModel) SetCompleted(name string) SkillsModel        { return s }
-func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, count int, reason string) SkillsModel {
-	return s
-}
-func (s SkillsModel) View() string { return "" }
 
 // VeniceConfigData holds Venice.ai configuration from skills.json.
 type VeniceConfigData struct {
@@ -159,13 +150,15 @@ func loadVeniceConfig() (VeniceConfigData, error) {
 // NewApp creates a new TUI application model.
 func NewApp(llmClient LLMClient) AppModel {
 	return AppModel{
-		header:    NewHeaderModel(),
-		chat:      NewChatModel(),
-		input:     NewInputModel(),
-		skills:    NewSkillsModel(),
-		status:    NewStatusModel(),
-		llmClient: llmClient,
-		viewMode:  "chat",
+		header:            NewHeaderModel(),
+		chat:              NewChatModel(),
+		input:             NewInputModel(),
+		skills:            NewSkillsModel(),
+		status:            NewStatusModel(),
+		llmClient:         llmClient,
+		viewMode:          "chat",
+		runtimeMode:       config.RuntimeModeClassic,
+		clawMaxIterations: config.DefaultClawMaxToolIterations,
 	}
 }
 
@@ -320,6 +313,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := commands.Parse(content); cmd != nil {
 			// Handle Phase 4 commands that require app state (contextTracker, currentSession)
 			switch cmd.Name {
+			case "agent":
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Usage: /agent <goal>\n       /agent list-runs\n       /agent resume <run-id>")
+					return m, nil
+				}
+				agentRunner, ok := m.llmClient.(AgentCommandRunner)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("❌ /agent is unavailable for this client.")
+					return m, nil
+				}
+
+				m.streaming = true
+				m.status = m.status.SetStreaming(true)
+				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
+				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
+
+				agentArgs := append([]string{}, cmd.Args...)
+				return m, tea.Batch(
+					agentRunner.RunAgentCommand(agentArgs),
+					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+						return TickMsg{Time: t}
+					}),
+				)
+
 			case "stats":
 				// Pass animation frame for flickering corruption effects
 				argsWithFrame := append([]string{"--frame", fmt.Sprintf("%d", m.animFrame)}, cmd.Args...)
@@ -693,6 +710,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Add user message to chat
 		m.chat = m.chat.AddUserMessage(content)
+		m.clawToolIterations = 0
 		m.streaming = true
 		m.status = m.status.SetStreaming(true)
 		m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
@@ -908,6 +926,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
+
+	case AgentCommandResultMsg:
+		m.streaming = false
+		m.status = m.status.SetStreaming(false)
+
+		if strings.TrimSpace(msg.Output) != "" {
+			m.chat = m.chat.AddSystemMessage(msg.Output)
+		}
+
+		if msg.Err != nil {
+			m.status = m.status.SetText(fmt.Sprintf("Agent error: %v", msg.Err))
+			if strings.TrimSpace(msg.Output) == "" {
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %v", msg.Err))
+			}
+		} else {
+			m.status = m.status.SetText("Agent run complete")
+		}
+
+		m.persistSession()
 
 	case SkillCallMsg:
 		batchMsg := SkillCallBatchMsg{
@@ -1203,7 +1240,7 @@ func (m AppModel) View() string {
 // SetLLMClient sets the LLM client.
 func (m AppModel) SetLLMClient(client LLMClient) AppModel {
 	m.llmClient = client
-	// Reset skills panel (stub for now)
+	// Reset skills panel runtime state when swapping clients.
 	m.skills = NewSkillsModel()
 	return m
 }
@@ -1222,10 +1259,25 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 	return m.getAvailableSkills()
 }
 
+func (m AppModel) isClawMode() bool {
+	return m.runtimeMode == config.RuntimeModeClaw
+}
+
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
 		return m, nil
 	}
+	if m.isClawMode() && m.clawToolIterations >= m.clawMaxIterations {
+		LogInfo(fmt.Sprintf("Claw safety stop reached (%d tool-call turns)", m.clawMaxIterations))
+		m.streaming = false
+		m.status = m.status.SetStreaming(false)
+		m.status = m.status.SetText(fmt.Sprintf("Claw safety stop reached (%d)", m.clawMaxIterations))
+		m.chat = m.chat.AddSystemMessage(
+			fmt.Sprintf("⚠️ Claw mode stopped repeated tool calls after %d turn(s). Start a new prompt or raise --set-claw-max-iterations.", m.clawMaxIterations),
+		)
+		return m, nil
+	}
+	m.clawToolIterations++
 
 	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
 	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
@@ -1410,6 +1462,18 @@ func (m AppModel) SetVersion(version, build string) AppModel {
 // SetConfig sets the configuration for accessing context limits and other settings.
 func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 	m.config = cfg
+	if cfg == nil {
+		m.runtimeMode = config.RuntimeModeClassic
+		m.clawMaxIterations = config.DefaultClawMaxToolIterations
+		return m
+	}
+
+	m.runtimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
+	if cfg.ClawMaxToolIterations > 0 {
+		m.clawMaxIterations = cfg.ClawMaxToolIterations
+	} else {
+		m.clawMaxIterations = config.DefaultClawMaxToolIterations
+	}
 	return m
 }
 

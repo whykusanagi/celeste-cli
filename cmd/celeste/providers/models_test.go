@@ -255,6 +255,9 @@ func TestSortModelsByCapability(t *testing.T) {
 	assert.True(t, models[1].SupportsTools, "Second model should support tools")
 	assert.False(t, models[2].SupportsTools, "Third model should not support tools")
 	assert.False(t, models[3].SupportsTools, "Fourth model should not support tools")
+	assert.Equal(t, []string{"with-tools-1", "with-tools-2", "no-tools-1", "no-tools-2"},
+		[]string{models[0].ID, models[1].ID, models[2].ID, models[3].ID},
+		"models with same capability should preserve input order")
 }
 
 // TestFormatModelList tests model list formatting

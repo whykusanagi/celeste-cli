@@ -98,6 +98,12 @@ type SkillResultMsg struct {
 	ToolCallID string // OpenAI tool call ID for sending result back
 }
 
+// AgentCommandResultMsg is sent when a TUI /agent command completes.
+type AgentCommandResultMsg struct {
+	Output string
+	Err    error
+}
+
 // SendMessageMsg is sent when the user submits a message.
 type SendMessageMsg struct {
 	Content string

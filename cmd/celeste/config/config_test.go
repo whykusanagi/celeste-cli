@@ -22,8 +22,21 @@ func TestDefaultConfig(t *testing.T) {
 	assert.False(t, config.SkipPersonaPrompt)
 	assert.True(t, config.SimulateTyping)
 	assert.Equal(t, 40, config.TypingSpeed)
+	assert.Equal(t, RuntimeModeClassic, config.RuntimeMode)
+	assert.Equal(t, DefaultClawMaxToolIterations, config.ClawMaxToolIterations)
 	assert.Equal(t, "https://api.venice.ai/api/v1", config.VeniceBaseURL)
 	assert.Equal(t, "venice-uncensored", config.VeniceModel)
+}
+
+func TestRuntimeModeHelpers(t *testing.T) {
+	assert.True(t, IsValidRuntimeMode("classic"))
+	assert.True(t, IsValidRuntimeMode("claw"))
+	assert.True(t, IsValidRuntimeMode("  CLAW  "))
+	assert.False(t, IsValidRuntimeMode("experimental"))
+
+	assert.Equal(t, RuntimeModeClassic, NormalizeRuntimeMode(""))
+	assert.Equal(t, RuntimeModeClassic, NormalizeRuntimeMode("invalid"))
+	assert.Equal(t, RuntimeModeClaw, NormalizeRuntimeMode("CLAW"))
 }
 
 // TestPaths tests config path generation
@@ -109,13 +122,15 @@ func TestSaveAndLoad(t *testing.T) {
 
 	// Create config
 	config := &Config{
-		APIKey:            "test-api-key",
-		BaseURL:           "https://test.example.com",
-		Model:             "test-model",
-		Timeout:           120,
-		SkipPersonaPrompt: true,
-		SimulateTyping:    false,
-		TypingSpeed:       50,
+		APIKey:                "test-api-key",
+		BaseURL:               "https://test.example.com",
+		Model:                 "test-model",
+		Timeout:               120,
+		SkipPersonaPrompt:     true,
+		SimulateTyping:        false,
+		TypingSpeed:           50,
+		RuntimeMode:           RuntimeModeClaw,
+		ClawMaxToolIterations: 7,
 	}
 
 	// Save config
@@ -135,6 +150,8 @@ func TestSaveAndLoad(t *testing.T) {
 	assert.Equal(t, config.SkipPersonaPrompt, loaded.SkipPersonaPrompt)
 	assert.Equal(t, config.SimulateTyping, loaded.SimulateTyping)
 	assert.Equal(t, config.TypingSpeed, loaded.TypingSpeed)
+	assert.Equal(t, config.RuntimeMode, loaded.RuntimeMode)
+	assert.Equal(t, config.ClawMaxToolIterations, loaded.ClawMaxToolIterations)
 }
 
 // TestLoadSkillsConfig tests loading skills configuration

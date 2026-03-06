@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -115,13 +116,16 @@ func (r *Registry) GetAllSkills() []Skill {
 	for _, skill := range r.skills {
 		skills = append(skills, skill)
 	}
+	sort.Slice(skills, func(i, j int) bool {
+		return skills[i].Name < skills[j].Name
+	})
 	return skills
 }
 
 // GetToolDefinitions returns skills in OpenAI tool format for API calls.
 func (r *Registry) GetToolDefinitions() []map[string]interface{} {
 	tools := make([]map[string]interface{}, 0, len(r.skills))
-	for _, skill := range r.skills {
+	for _, skill := range r.GetAllSkills() {
 		tool := map[string]interface{}{
 			"type": "function",
 			"function": map[string]interface{}{

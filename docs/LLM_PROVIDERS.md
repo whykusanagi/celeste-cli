@@ -86,7 +86,7 @@ Using xAI backend with Collections support
 
 **Testing**: Run provider tests to verify:
 ```bash
-GROK_API_KEY=your-key go test ./cmd/Celeste/llm -run TestGrok_FunctionCalling -v
+GROK_API_KEY=your-key go test ./cmd/celeste/providers -run TestGrokIntegration -v
 ```
 
 ### Collections Support (RAG)
@@ -163,34 +163,31 @@ Celeste will now search your documents automatically when relevant!
 
 ---
 
-### ❓ ElevenLabs (Needs Testing)
+### ❓ ElevenLabs (Validation Pending)
 
 **API Endpoint**: `https://api.elevenlabs.io/v1`
 **Function Calling**: Unknown
 **Models**: Various (conversational AI models)
 
-**Status**: Not yet tested. ElevenLabs focuses on voice AI, so function calling support is unclear.
+**Status**: No dedicated integration test exists yet in this repository. ElevenLabs focuses on voice AI, so function-calling behavior for local CLI skills remains uncertain.
 
 **To test**:
-```bash
-ELEVENLABS_API_KEY=your-key go test ./cmd/Celeste/llm -run TestElevenLabs_FunctionCalling -v
-```
-
-If you test this, please contribute findings!
+1. Run baseline provider unit tests: `go test ./cmd/celeste/providers -v`
+2. Run a live manual check in chat mode with an ElevenLabs endpoint/profile.
 
 ---
 
-### ❓ Venice.ai (Needs Testing)
+### ⚠️ Venice.ai (Model-Dependent, Integration Covered)
 
 **API Endpoint**: `https://api.venice.ai/api/v1`
-**Function Calling**: Unknown (possibly OpenAI-compatible)
+**Function Calling**: Model-dependent
 **Models**: venice-uncensored, various uncensored models
 
-**Status**: Not yet tested. Venice.ai may or may not support OpenAI-style function calling.
+**Status**: Integration test exists for Venice and confirms model-specific behavior. `venice-uncensored` does not support function calling; tool-capable Venice models can.
 
 **To test**:
 ```bash
-VENICE_API_KEY=your-key go test ./cmd/Celeste/llm -run TestVeniceAI_FunctionCalling -v
+VENICE_API_KEY=your-key go test ./cmd/celeste/providers -run TestVeniceIntegration -v
 ```
 
 Venice.ai is already used for NSFW skill and image generation, but those use direct API calls, not function calling.
@@ -210,7 +207,7 @@ Venice.ai is already used for NSFW skill and image generation, but those use dir
   celeste config --set-url http://localhost:11434/v1
   celeste config --set-model llama3.1
   ```
-- Test if it works: `go test ./cmd/Celeste/llm -run TestOpenAI_FunctionCalling -v`
+- Test baseline compatibility paths: `go test ./cmd/celeste/llm -v`
 
 **LM Studio**:
 - Supports OpenAI-compatible API
@@ -232,13 +229,13 @@ To verify if your provider supports skills:
 
 ```bash
 # Test OpenAI
-OPENAI_API_KEY=your-key go test ./cmd/Celeste/llm -run TestOpenAI_FunctionCalling -v
+OPENAI_API_KEY=your-key go test ./cmd/celeste/providers -run TestOpenAIIntegration -v
 
 # Test Grok
-GROK_API_KEY=your-key go test ./cmd/Celeste/llm -run TestGrok_FunctionCalling -v
+GROK_API_KEY=your-key go test ./cmd/celeste/providers -run TestGrokIntegration -v
 
 # Test Venice.ai
-VENICE_API_KEY=your-key go test ./cmd/Celeste/llm -run TestVeniceAI_FunctionCalling -v
+VENICE_API_KEY=your-key go test ./cmd/celeste/providers -run TestVeniceIntegration -v
 ```
 
 ### 2. Manual Test
@@ -302,7 +299,7 @@ This is complex and requires infrastructure setup.
 
 If you test a provider not listed here, please contribute your findings:
 
-1. Run the provider test (see cmd/Celeste/llm/providers_test.go)
+1. Run provider tests (see `cmd/celeste/providers/integration_test.go` and `cmd/celeste/providers/registry_test.go`)
 2. Document the results (works, doesn't work, partial support)
 3. Create a pull request updating this file
 4. Include setup instructions and any gotchas
@@ -385,7 +382,7 @@ If any of these fail, skills won't work properly.
 
 ---
 
-## Provider Test Results (v1.2.0)
+## Provider Test Results (v1.5.x)
 
 ### Unit Test Coverage ✅ COMPLETE
 

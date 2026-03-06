@@ -158,16 +158,34 @@ func TestGetAllSkills(t *testing.T) {
 
 	skills = registry.GetAllSkills()
 	assert.Len(t, skills, 3, "should have 3 registered skills")
+	assert.Equal(t, []string{"skill1", "skill2", "skill3"},
+		[]string{skills[0].Name, skills[1].Name, skills[2].Name},
+		"skills should be returned in deterministic name order")
+}
 
-	// Verify all skills are present
-	skillNames := make(map[string]bool)
-	for _, skill := range skills {
-		skillNames[skill.Name] = true
-	}
+func TestGetToolDefinitions_DeterministicOrder(t *testing.T) {
+	registry := NewRegistry()
+	registry.RegisterSkill(Skill{
+		Name:        "zzz_skill",
+		Description: "last skill",
+		Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+	})
+	registry.RegisterSkill(Skill{
+		Name:        "aaa_skill",
+		Description: "first skill",
+		Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+	})
 
-	assert.True(t, skillNames["skill1"])
-	assert.True(t, skillNames["skill2"])
-	assert.True(t, skillNames["skill3"])
+	tools := registry.GetToolDefinitions()
+	require.Len(t, tools, 2)
+
+	firstFn, ok := tools[0]["function"].(map[string]interface{})
+	require.True(t, ok)
+	secondFn, ok := tools[1]["function"].(map[string]interface{})
+	require.True(t, ok)
+
+	assert.Equal(t, "aaa_skill", firstFn["name"])
+	assert.Equal(t, "zzz_skill", secondFn["name"])
 }
 
 // TestSkillOverwrite tests that registering a skill with the same name overwrites

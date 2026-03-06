@@ -6,9 +6,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+)
+
+const (
+	RuntimeModeClassic           = "classic"
+	RuntimeModeClaw              = "claw"
+	DefaultClawMaxToolIterations = 4
 )
 
 // Config holds all configuration for Celeste CLI.
@@ -33,6 +40,10 @@ type Config struct {
 	// Streaming settings
 	SimulateTyping bool `json:"simulate_typing"`
 	TypingSpeed    int  `json:"typing_speed"` // chars per second
+
+	// Runtime mode settings
+	RuntimeMode           string `json:"runtime_mode,omitempty"`             // "classic" or "claw"
+	ClawMaxToolIterations int    `json:"claw_max_tool_iterations,omitempty"` // Safety cap for repeated tool loops in claw mode
 
 	// Venice.ai settings (for NSFW mode)
 	VeniceAPIKey     string `json:"venice_api_key,omitempty"`
@@ -109,14 +120,34 @@ type XAIFeaturesConfig struct {
 // DefaultConfig returns a config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		BaseURL:           "https://api.openai.com/v1",
-		Model:             "gpt-4o-mini",
-		Timeout:           60,
-		SkipPersonaPrompt: false,
-		SimulateTyping:    true,
-		TypingSpeed:       40,
-		VeniceBaseURL:     "https://api.venice.ai/api/v1",
-		VeniceModel:       "venice-uncensored",
+		BaseURL:               "https://api.openai.com/v1",
+		Model:                 "gpt-4o-mini",
+		Timeout:               60,
+		SkipPersonaPrompt:     false,
+		SimulateTyping:        true,
+		TypingSpeed:           40,
+		RuntimeMode:           RuntimeModeClassic,
+		ClawMaxToolIterations: DefaultClawMaxToolIterations,
+		VeniceBaseURL:         "https://api.venice.ai/api/v1",
+		VeniceModel:           "venice-uncensored",
+	}
+}
+
+func IsValidRuntimeMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case RuntimeModeClassic, RuntimeModeClaw:
+		return true
+	default:
+		return false
+	}
+}
+
+func NormalizeRuntimeMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case RuntimeModeClaw:
+		return RuntimeModeClaw
+	default:
+		return RuntimeModeClassic
 	}
 }
 

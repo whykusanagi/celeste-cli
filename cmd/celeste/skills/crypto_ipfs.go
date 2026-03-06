@@ -1,4 +1,4 @@
-// Package skills provides IPFS skill implementation using official go-ipfs-http-client
+// Package skills provides IPFS skill implementation using Kubo RPC client.
 package skills
 
 import (
@@ -14,9 +14,60 @@ import (
 	ipath "github.com/ipfs/boxo/coreiface/path"
 	"github.com/ipfs/boxo/files"
 	"github.com/ipfs/go-cid"
-	rpc "github.com/ipfs/go-ipfs-http-client" //nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
+	rpc "github.com/ipfs/kubo/client/rpc"
 	"github.com/multiformats/go-multiaddr"
 )
+
+type ipfsClient interface {
+	Add(ctx context.Context, file files.Node) (string, error)
+	Get(ctx context.Context, path ipath.Path) (files.Node, error)
+	PinAdd(ctx context.Context, path ipath.Path) error
+	PinRm(ctx context.Context, path ipath.Path) error
+	ListPins(ctx context.Context) ([]string, error)
+}
+
+type kuboIPFSClient struct {
+	api *rpc.HttpApi
+}
+
+func (c *kuboIPFSClient) Add(ctx context.Context, file files.Node) (string, error) {
+	resolvedPath, err := c.api.Unixfs().Add(ctx, file)
+	if err != nil {
+		return "", err
+	}
+	return resolvedPath.Cid().String(), nil
+}
+
+func (c *kuboIPFSClient) Get(ctx context.Context, path ipath.Path) (files.Node, error) {
+	return c.api.Unixfs().Get(ctx, path)
+}
+
+func (c *kuboIPFSClient) PinAdd(ctx context.Context, path ipath.Path) error {
+	return c.api.Pin().Add(ctx, path)
+}
+
+func (c *kuboIPFSClient) PinRm(ctx context.Context, path ipath.Path) error {
+	return c.api.Pin().Rm(ctx, path)
+}
+
+func (c *kuboIPFSClient) ListPins(ctx context.Context) ([]string, error) {
+	pins, err := c.api.Pin().Ls(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var cidList []string
+	for pin := range pins {
+		if pin.Err() != nil {
+			continue
+		}
+		cidList = append(cidList, pin.Path().Cid().String())
+	}
+
+	return cidList, nil
+}
+
+var newIPFSClient = createIPFSClient
 
 // IPFSSkill returns the IPFS skill definition
 func IPFSSkill() Skill {
@@ -80,7 +131,7 @@ func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interf
 	}
 
 	// Create IPFS client
-	client, err := createIPFSClient(config)
+	client, err := newIPFSClient(config)
 	if err != nil {
 		return formatErrorResponse(
 			"connection_error",
@@ -121,22 +172,9 @@ func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interf
 	}
 }
 
-// createIPFSClient creates an IPFS HTTP API client with authentication
-//
-//nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
-func createIPFSClient(config IPFSConfig) (*rpc.HttpApi, error) {
-	// Determine endpoint based on provider
-	endpoint := config.GatewayURL
-	if endpoint == "" {
-		switch config.Provider {
-		case "infura":
-			endpoint = "/dns/ipfs.infura.io/tcp/5001/https"
-		case "pinata":
-			endpoint = "/dns/api.pinata.cloud/tcp/443/https"
-		default:
-			endpoint = "/ip4/127.0.0.1/tcp/5001" // Local IPFS node
-		}
-	}
+// createIPFSClient creates an IPFS client with provider-aware endpoint and auth.
+func createIPFSClient(config IPFSConfig) (ipfsClient, error) {
+	endpoint := resolveIPFSEndpoint(config)
 
 	// Parse multiaddr
 	addr, err := multiaddr.NewMultiaddr(endpoint)
@@ -150,29 +188,45 @@ func createIPFSClient(config IPFSConfig) (*rpc.HttpApi, error) {
 		return nil, fmt.Errorf("failed to create IPFS client: %w", err)
 	}
 
+	applyIPFSAuthHeaders(config, client.Headers.Add)
+	return &kuboIPFSClient{api: client}, nil
+}
+
+func resolveIPFSEndpoint(config IPFSConfig) string {
+	if config.GatewayURL != "" {
+		return config.GatewayURL
+	}
+
+	switch config.Provider {
+	case "infura":
+		return "/dns/ipfs.infura.io/tcp/5001/https"
+	case "pinata":
+		return "/dns/api.pinata.cloud/tcp/443/https"
+	default:
+		return "/ip4/127.0.0.1/tcp/5001"
+	}
+}
+
+func applyIPFSAuthHeaders(config IPFSConfig, addHeader func(key, value string)) {
 	// Set authentication for Infura
 	if config.Provider == "infura" && config.ProjectID != "" && config.APISecret != "" {
 		auth := base64.StdEncoding.EncodeToString(
 			[]byte(fmt.Sprintf("%s:%s", config.ProjectID, config.APISecret)),
 		)
-		client.Headers.Add("Authorization", "Basic "+auth)
+		addHeader("Authorization", "Basic "+auth)
 	}
 
 	// Set API key for Pinata
 	if config.Provider == "pinata" && config.APIKey != "" {
-		client.Headers.Add("pinata_api_key", config.APIKey)
+		addHeader("pinata_api_key", config.APIKey)
 		if config.APISecret != "" {
-			client.Headers.Add("pinata_secret_api_key", config.APISecret)
+			addHeader("pinata_secret_api_key", config.APISecret)
 		}
 	}
-
-	return client, nil
 }
 
 // handleIPFSUpload uploads content to IPFS
-//
-//nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
-func handleIPFSUpload(ctx context.Context, client *rpc.HttpApi, args map[string]interface{}, config IPFSConfig) (interface{}, error) {
+func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]interface{}, config IPFSConfig) (interface{}, error) {
 	// Check for file_path first, then content
 	filePath, hasFile := args["file_path"].(string)
 	content, hasContent := args["content"].(string)
@@ -257,7 +311,7 @@ func handleIPFSUpload(ctx context.Context, client *rpc.HttpApi, args map[string]
 	}
 
 	// Upload to IPFS
-	path, err := client.Unixfs().Add(ctx, fileNode)
+	cidStr, err := client.Add(ctx, fileNode)
 	if err != nil {
 		return formatErrorResponse(
 			"upload_error",
@@ -274,14 +328,14 @@ func handleIPFSUpload(ctx context.Context, client *rpc.HttpApi, args map[string]
 	// Build gateway URL
 	gatewayURL := ""
 	if config.GatewayURL != "" {
-		gatewayURL = fmt.Sprintf("%s/ipfs/%s", config.GatewayURL, path.Cid().String())
+		gatewayURL = fmt.Sprintf("%s/ipfs/%s", config.GatewayURL, cidStr)
 	} else {
-		gatewayURL = fmt.Sprintf("https://ipfs.io/ipfs/%s", path.Cid().String())
+		gatewayURL = fmt.Sprintf("https://ipfs.io/ipfs/%s", cidStr)
 	}
 
 	return map[string]interface{}{
 		"success":     true,
-		"cid":         path.Cid().String(),
+		"cid":         cidStr,
 		"size":        size,
 		"filename":    filename,
 		"type":        uploadType,
@@ -291,9 +345,7 @@ func handleIPFSUpload(ctx context.Context, client *rpc.HttpApi, args map[string]
 }
 
 // handleIPFSDownload downloads content from IPFS by CID
-//
-//nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
-func handleIPFSDownload(ctx context.Context, client *rpc.HttpApi, args map[string]interface{}) (interface{}, error) {
+func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]interface{}) (interface{}, error) {
 	// Get CID
 	cidStr, ok := args["cid"].(string)
 	if !ok || cidStr == "" {
@@ -325,7 +377,7 @@ func handleIPFSDownload(ctx context.Context, client *rpc.HttpApi, args map[strin
 
 	// Download content
 	path := ipath.New("/ipfs/" + parsedCID.String())
-	node, err := client.Unixfs().Get(ctx, path)
+	node, err := client.Get(ctx, path)
 	if err != nil {
 		return formatErrorResponse(
 			"download_error",
@@ -377,9 +429,7 @@ func handleIPFSDownload(ctx context.Context, client *rpc.HttpApi, args map[strin
 }
 
 // handleIPFSPin pins content on IPFS
-//
-//nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
-func handleIPFSPin(ctx context.Context, client *rpc.HttpApi, args map[string]interface{}) (interface{}, error) {
+func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]interface{}) (interface{}, error) {
 	// Get CID
 	cidStr, ok := args["cid"].(string)
 	if !ok || cidStr == "" {
@@ -411,7 +461,7 @@ func handleIPFSPin(ctx context.Context, client *rpc.HttpApi, args map[string]int
 
 	// Pin content
 	path := ipath.New("/ipfs/" + parsedCID.String())
-	err = client.Pin().Add(ctx, path)
+	err = client.PinAdd(ctx, path)
 	if err != nil {
 		return formatErrorResponse(
 			"pin_error",
@@ -433,9 +483,7 @@ func handleIPFSPin(ctx context.Context, client *rpc.HttpApi, args map[string]int
 }
 
 // handleIPFSUnpin unpins content from IPFS
-//
-//nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
-func handleIPFSUnpin(ctx context.Context, client *rpc.HttpApi, args map[string]interface{}) (interface{}, error) {
+func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]interface{}) (interface{}, error) {
 	// Get CID
 	cidStr, ok := args["cid"].(string)
 	if !ok || cidStr == "" {
@@ -467,7 +515,7 @@ func handleIPFSUnpin(ctx context.Context, client *rpc.HttpApi, args map[string]i
 
 	// Unpin content
 	path := ipath.New("/ipfs/" + parsedCID.String())
-	err = client.Pin().Rm(ctx, path)
+	err = client.PinRm(ctx, path)
 	if err != nil {
 		return formatErrorResponse(
 			"unpin_error",
@@ -489,11 +537,9 @@ func handleIPFSUnpin(ctx context.Context, client *rpc.HttpApi, args map[string]i
 }
 
 // handleIPFSListPins lists all pinned content
-//
-//nolint:staticcheck // Library deprecated, migration to Kubo planned for future version
-func handleIPFSListPins(ctx context.Context, client *rpc.HttpApi) (interface{}, error) {
+func handleIPFSListPins(ctx context.Context, client ipfsClient) (interface{}, error) {
 	// List pins
-	pins, err := client.Pin().Ls(ctx)
+	cidList, err := client.ListPins(ctx)
 	if err != nil {
 		return formatErrorResponse(
 			"list_error",
@@ -504,15 +550,6 @@ func handleIPFSListPins(ctx context.Context, client *rpc.HttpApi) (interface{}, 
 				"operation": "list_pins",
 			},
 		), nil
-	}
-
-	// Convert to string array
-	var cidList []string
-	for pin := range pins {
-		if pin.Err() != nil {
-			continue
-		}
-		cidList = append(cidList, pin.Path().Cid().String())
 	}
 
 	return map[string]interface{}{

@@ -27,12 +27,14 @@ import (
 
 // Version information
 const (
-	Version = "1.5.5"
+	Version = "1.6.0"
 	Build   = "bubbletea-tui"
 )
 
 // Global config name (set by -config flag)
 var configName string
+var runtimeModeOverride string
+var clawMaxToolIterationsOverride int
 
 // Thinking phrases - shown when LLM makes tool calls without accompanying text
 // Similar to Claude Code's random words during thinking
@@ -76,76 +78,6 @@ func getRandomThinkingPhrase() string {
 	return thinkingPhrases[time.Now().UnixNano()%int64(len(thinkingPhrases))]
 }
 
-func main() {
-	// Check for -config flag before command
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-config" && i+1 < len(args) {
-			configName = args[i+1]
-			// Remove -config and its value from args
-			args = append(args[:i], args[i+2:]...)
-			break
-		} else if strings.HasPrefix(args[i], "-config=") {
-			configName = strings.TrimPrefix(args[i], "-config=")
-			args = append(args[:i], args[i+1:]...)
-			break
-		}
-	}
-
-	// Parse command line
-	if len(args) < 1 {
-		printUsage()
-		// Check if default config exists and suggest chat command
-		if hasDefaultConfig() {
-			fmt.Println("\n💡 Tip: You have a default configuration. Maybe you meant `celeste chat`?")
-		}
-		os.Exit(0)
-	}
-
-	command := args[0]
-	cmdArgs := args[1:]
-
-	switch command {
-	case "chat":
-		runChatTUI()
-	case "config":
-		runConfigCommand(cmdArgs)
-	case "message", "msg":
-		if len(cmdArgs) < 1 {
-			fmt.Fprintln(os.Stderr, "Usage: celeste message <text>")
-			os.Exit(1)
-		}
-		runSingleMessage(strings.Join(cmdArgs, " "))
-	case "context":
-		runContextCommand(cmdArgs)
-	case "stats":
-		runStatsCommand(cmdArgs)
-	case "export":
-		runExportCommand(cmdArgs)
-	case "skill":
-		// Execute a single skill: celeste skill <name> [args...]
-		runSkillExecuteCommand(cmdArgs)
-	case "wallet-monitor":
-		// Manage wallet monitoring daemon: celeste wallet-monitor <start|stop|status|run>
-		runWalletMonitorCommand(cmdArgs)
-	case "skills":
-		runSkillsCommand(cmdArgs)
-	case "providers":
-		runProvidersCommand(cmdArgs)
-	case "session", "sessions":
-		runSessionCommand(cmdArgs)
-	case "collections":
-		runCollectionsCommand(cmdArgs)
-	case "help", "-h", "--help":
-		printUsage()
-	case "version", "-v", "--version":
-		fmt.Printf("Celeste CLI %s (%s)\n", Version, Build)
-	default:
-		// Treat unknown command as a message
-		runSingleMessage(strings.Join(args, " "))
-	}
-}
-
 // hasDefaultConfig checks if a default configuration file exists.
 func hasDefaultConfig() bool {
 	configPath := config.NamedConfigPath("") // Empty name = default config
@@ -163,6 +95,8 @@ Usage:
 
 Global Flags:
   -config <name>          Use named config (loads ~/.celeste/config.<name>.json)
+  -mode <classic|claw>    Override runtime mode for this invocation
+  -claw-max-iterations N  Override claw tool-loop safety cap for this invocation
 
 Commands:
   chat                    Launch interactive TUI mode
@@ -170,6 +104,7 @@ Commands:
   config                  View/modify configuration
   skills                  List and manage skills
   providers               List and query AI providers
+  agent                   Run autonomous agent loops for complex tasks
   session                 Manage conversation sessions
   context                 Show context/token usage
   stats                   Show usage statistics
@@ -198,6 +133,9 @@ Configuration:
   celeste config --set-key <key>         Set API key
   celeste config --set-url <url>         Set API URL
   celeste config --set-model <model>     Set model
+  celeste config --set-mode <mode>       Set runtime mode (classic/claw)
+  celeste config --set-claw-max-iterations <n>
+                                          Set claw tool-loop safety cap
   celeste config --skip-persona <bool>   Skip persona prompt injection
 
 Skills:
@@ -219,6 +157,15 @@ Sessions:
   celeste session --load <id>            Load a session
   celeste session --clear                Clear all sessions
 
+Agent:
+  celeste agent --goal "<task>"          Run autonomous task loop
+  celeste agent --resume <run-id>        Resume checkpointed run
+  celeste agent --list-runs              List recent runs
+  celeste agent --eval <cases.json>      Run eval harness cases
+  celeste agent --benchmark <suite.json> Run benchmark suite scaffolding
+  celeste agent --planner=true --verify-cmd "go test ./..." --require-verify
+                                          Enable plan->execute->verify gating
+
 Environment Variables:
   CELESTE_API_KEY         API key (overrides config)
   CELESTE_API_ENDPOINT    API endpoint (overrides config)
@@ -229,8 +176,11 @@ Examples:
   celeste chat                           Start with default config
   celeste -config openai chat            Start with OpenAI config
   celeste -config grok chat              Start with Grok/xAI config
+  celeste -mode claw chat                Start chat in claw runtime mode
+  celeste agent --goal "refactor this package and add tests"
   celeste config --list                  List available configs
   celeste config --init openai           Create OpenAI config template
+  celeste config --init celeste-claw     Create claw profile template
 `)
 }
 
@@ -241,6 +191,17 @@ func runChatTUI() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
+	}
+
+	if runtimeModeOverride != "" {
+		cfg.RuntimeMode = config.NormalizeRuntimeMode(runtimeModeOverride)
+	}
+	if clawMaxToolIterationsOverride > 0 {
+		cfg.ClawMaxToolIterations = clawMaxToolIterationsOverride
+	}
+	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
+	if cfg.ClawMaxToolIterations <= 0 {
+		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
 	}
 
 	// Show which config is being used
@@ -730,10 +691,12 @@ func runConfigCommand(args []string) {
 	fs := flag.NewFlagSet("config", flag.ExitOnError)
 	showConfig := fs.Bool("show", false, "Show current configuration")
 	listConfigs := fs.Bool("list", false, "List all config profiles")
-	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice)")
+	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice, celeste-classic, celeste-claw)")
 	setKey := fs.String("set-key", "", "Set API key")
 	setURL := fs.String("set-url", "", "Set API URL")
 	setModel := fs.String("set-model", "", "Set model")
+	setMode := fs.String("set-mode", "", "Set runtime mode (classic|claw)")
+	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Set claw max tool-loop iterations")
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
 	simulateTyping := fs.String("simulate-typing", "", "Simulate typing (true/false)")
@@ -789,6 +752,10 @@ func runConfigCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
+	if cfg.ClawMaxToolIterations <= 0 {
+		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
+	}
 
 	changed := false
 
@@ -806,6 +773,25 @@ func runConfigCommand(args []string) {
 		cfg.Model = *setModel
 		changed = true
 		fmt.Printf("Model set to: %s\n", *setModel)
+	}
+	if *setMode != "" {
+		mode := strings.ToLower(strings.TrimSpace(*setMode))
+		if !config.IsValidRuntimeMode(mode) {
+			fmt.Fprintf(os.Stderr, "Error: invalid mode '%s' (valid: classic, claw)\n", *setMode)
+			os.Exit(1)
+		}
+		cfg.RuntimeMode = mode
+		changed = true
+		fmt.Printf("Runtime mode set to: %s\n", cfg.RuntimeMode)
+	}
+	if *setClawMaxIterations == 0 {
+		fmt.Fprintf(os.Stderr, "Error: --set-claw-max-iterations must be greater than zero\n")
+		os.Exit(1)
+	}
+	if *setClawMaxIterations > 0 {
+		cfg.ClawMaxToolIterations = *setClawMaxIterations
+		changed = true
+		fmt.Printf("Claw max iterations set to: %d\n", cfg.ClawMaxToolIterations)
 	}
 	if *setManagementKey != "" {
 		cfg.XAIManagementAPIKey = *setManagementKey
@@ -929,6 +915,8 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  Skip Persona:      %v\n", cfg.SkipPersonaPrompt)
 		fmt.Printf("  Simulate Typing:   %v\n", cfg.SimulateTyping)
 		fmt.Printf("  Typing Speed:      %d chars/sec\n", cfg.TypingSpeed)
+		fmt.Printf("  Runtime Mode:      %s\n", cfg.RuntimeMode)
+		fmt.Printf("  Claw Max Iter:     %d\n", cfg.ClawMaxToolIterations)
 		fmt.Printf("  Venice API Key:    %s\n", maskKey(cfg.VeniceAPIKey))
 		fmt.Printf("  Tarot Configured:  %v\n", cfg.TarotAuthToken != "")
 		fmt.Printf("  Twitter Configured:%v\n", cfg.TwitterBearerToken != "")
@@ -964,50 +952,80 @@ func runConfigCommand(args []string) {
 func createConfigTemplate(name string) error {
 	templates := map[string]*config.Config{
 		"openai": {
-			BaseURL:           "https://api.openai.com/v1",
-			Model:             "gpt-4o-mini",
-			Timeout:           60,
-			SkipPersonaPrompt: false, // OpenAI needs persona injection
-			SimulateTyping:    true,
-			TypingSpeed:       25,
+			BaseURL:               "https://api.openai.com/v1",
+			Model:                 "gpt-4o-mini",
+			Timeout:               60,
+			SkipPersonaPrompt:     false, // OpenAI needs persona injection
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
 		"grok": {
-			BaseURL:           "https://api.x.ai/v1",
-			Model:             "grok-4-latest",
-			Timeout:           60,
-			SkipPersonaPrompt: false, // Grok needs persona injection
-			SimulateTyping:    true,
-			TypingSpeed:       25,
+			BaseURL:               "https://api.x.ai/v1",
+			Model:                 "grok-4-latest",
+			Timeout:               60,
+			SkipPersonaPrompt:     false, // Grok needs persona injection
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
 		"elevenlabs": {
-			BaseURL:           "https://api.elevenlabs.io/v1",
-			Model:             "eleven_multilingual_v2",
-			Timeout:           60,
-			SkipPersonaPrompt: false,
-			SimulateTyping:    true,
-			TypingSpeed:       25,
+			BaseURL:               "https://api.elevenlabs.io/v1",
+			Model:                 "eleven_multilingual_v2",
+			Timeout:               60,
+			SkipPersonaPrompt:     false,
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
 		"venice": {
-			BaseURL:           "https://api.venice.ai/api/v1",
-			Model:             "venice-uncensored",
-			Timeout:           60,
-			SkipPersonaPrompt: false, // Venice needs persona injection
-			SimulateTyping:    true,
-			TypingSpeed:       25,
+			BaseURL:               "https://api.venice.ai/api/v1",
+			Model:                 "venice-uncensored",
+			Timeout:               60,
+			SkipPersonaPrompt:     false, // Venice needs persona injection
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
 		"digitalocean": {
-			BaseURL:           "https://your-agent.ondigitalocean.app/api/v1",
-			Model:             "gpt-4o-mini",
-			Timeout:           60,
-			SkipPersonaPrompt: true, // DO agents have built-in persona
-			SimulateTyping:    true,
-			TypingSpeed:       25,
+			BaseURL:               "https://your-agent.ondigitalocean.app/api/v1",
+			Model:                 "gpt-4o-mini",
+			Timeout:               60,
+			SkipPersonaPrompt:     true, // DO agents have built-in persona
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
+		},
+		"celeste-classic": {
+			BaseURL:               "https://api.openai.com/v1",
+			Model:                 "gpt-4o-mini",
+			Timeout:               60,
+			SkipPersonaPrompt:     false,
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
+		},
+		"celeste-claw": {
+			BaseURL:               "https://api.openai.com/v1",
+			Model:                 "gpt-4o-mini",
+			Timeout:               60,
+			SkipPersonaPrompt:     false,
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClaw,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
 	}
 
 	tmpl, ok := templates[strings.ToLower(name)]
 	if !ok {
-		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, digitalocean", name)
+		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, digitalocean, celeste-classic, celeste-claw", name)
 	}
 
 	configPath := config.NamedConfigPath(name)

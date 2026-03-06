@@ -1,6 +1,8 @@
 // Package providers handles LLM provider capabilities and model management.
 package providers
 
+import "sort"
+
 // ProviderCapabilities defines what a provider supports.
 type ProviderCapabilities struct {
 	Name                    string
@@ -170,6 +172,7 @@ func ListProviders() []string {
 	for name := range Registry {
 		providers = append(providers, name)
 	}
+	sort.Strings(providers)
 	return providers
 }
 
@@ -181,6 +184,7 @@ func GetToolCallingProviders() []string {
 			providers = append(providers, name)
 		}
 	}
+	sort.Strings(providers)
 	return providers
 }
 
