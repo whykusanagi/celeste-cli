@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - per-run artifact bundles (`summary`, `run_state`, `plan`, `steps`, `verification`, optional git status/diff)
   - benchmark suite scaffolding via `celeste agent --benchmark <suite.json>`
   - optional benchmark JSON report export via `--benchmark-out`
+- Phase 6 safety hardening (initial slice):
+  - dev command policy blocks risky shell commands unless `allow_risky=true`
+  - stronger workspace path guard rejects symlink escapes for dev file tools
 
 ### Testing
 - Added new unit coverage for:

@@ -102,5 +102,5 @@ Evolve Celeste from one-shot chat + tools into a production-ready autonomous ass
 
 ## Current Status
 - Phase 5: IN PROGRESS on `codex/celeste-phase5-product-core`.
-- Phases 6-10: Planned.
-
+- Phase 6: IN PROGRESS (command policy + workspace symlink guard baseline).
+- Phases 7-10: Planned.
