@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -251,9 +252,10 @@ func runChatTUI() {
 
 	// Create TUI client adapter
 	tuiClient := &TUIClientAdapter{
-		client:     client,
-		registry:   registry,
-		baseConfig: cfg,
+		client:      client,
+		registry:    registry,
+		baseConfig:  cfg,
+		agentEvents: make(chan tui.AgentEventMsg, 256),
 	}
 
 	// Initialize logging for skill calls
@@ -359,9 +361,13 @@ func runChatTUI() {
 
 // TUIClientAdapter adapts the LLM client for the TUI.
 type TUIClientAdapter struct {
-	client     *llm.Client
-	registry   *skills.Registry
-	baseConfig *config.Config // Store base config for loading named configs
+	client            *llm.Client
+	registry          *skills.Registry
+	baseConfig        *config.Config // Store base config for loading named configs
+	agentEvents       chan tui.AgentEventMsg
+	agentRunMu        sync.Mutex
+	activeAgentCancel context.CancelFunc
+	activeAgentRunID  string
 }
 
 // SendMessage implements tui.LLMClient.

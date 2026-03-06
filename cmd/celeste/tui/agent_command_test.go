@@ -12,6 +12,7 @@ import (
 
 type fakeAgentLLMClient struct {
 	agentArgs [][]string
+	waitCalls int
 }
 
 func (f *fakeAgentLLMClient) SendMessage(messages []ChatMessage, tools []SkillDefinition) tea.Cmd {
@@ -29,6 +30,11 @@ func (f *fakeAgentLLMClient) ExecuteSkill(name string, args map[string]any, tool
 func (f *fakeAgentLLMClient) RunAgentCommand(args []string) tea.Cmd {
 	copied := append([]string{}, args...)
 	f.agentArgs = append(f.agentArgs, copied)
+	return nil
+}
+
+func (f *fakeAgentLLMClient) WaitAgentEvent() tea.Cmd {
+	f.waitCalls++
 	return nil
 }
 
@@ -93,6 +99,32 @@ func TestAgentCommandResultErrorSetsStatus(t *testing.T) {
 	assert.False(t, m.streaming)
 	assert.True(t, strings.Contains(m.status.text, "Agent error:"))
 	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Status: failed"))
+}
+
+func TestAgentEventPollingReschedulesUntilTerminal(t *testing.T) {
+	client := &fakeAgentLLMClient{}
+	m := NewApp(client)
+
+	model, _ := m.Update(SendMessageMsg{Content: "/agent implement phase 5"})
+	m = model.(AppModel)
+	require.Equal(t, 1, client.waitCalls)
+
+	model, _ = m.Update(AgentEventMsg{
+		Type:    "turn_start",
+		Message: "Turn 1 started",
+	})
+	m = model.(AppModel)
+	require.Equal(t, 2, client.waitCalls, "non-terminal events should keep polling")
+
+	model, _ = m.Update(AgentEventMsg{
+		Type:     "run_completed",
+		Message:  "Agent run completed",
+		Terminal: true,
+		Status:   "completed",
+	})
+	m = model.(AppModel)
+	assert.False(t, m.streaming)
+	assert.Equal(t, 2, client.waitCalls, "terminal events should stop polling")
 }
 
 func hasSystemMessageContaining(messages []ChatMessage, needle string) bool {
