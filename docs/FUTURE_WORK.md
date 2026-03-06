@@ -91,7 +91,7 @@ This document tracks planned features, incomplete integrations, and improvement 
   - [ ] Add provider health diagnostics command output
 
 #### Autonomous Agent Mode (Claw-style foundation)
-- **Status**: PHASE 3 COMPLETE (artifacts + benchmark scaffolding)
+- **Status**: PHASE 5 IN PROGRESS (runtime lifecycle + live events)
 - **Current**:
   - `celeste agent` command supports autonomous multi-turn execution
   - Run checkpointing + resume/list flows implemented
@@ -103,10 +103,13 @@ This document tracks planned features, incomplete integrations, and improvement 
   - Per-run artifact bundle output (plan/actions/validation/git diff where available)
   - Benchmark suite scaffolding (`celeste agent --benchmark`)
 - **Next Tasks**:
-  - [ ] Add richer plan lifecycle controls (step-level retries, blockers, dependencies)
-  - [ ] Add standard verification presets (go/js/content) and stricter gating policies
-  - [ ] Add CI benchmark scoring and regression thresholds
-  - [ ] Add benchmark fixture repos and deterministic grading rubric
+  - [ ] Complete Phase 5 lifecycle controls (`/agent show`, `/agent stop`, live progress stream)
+  - [ ] Phase 6 safety controls (workspace jail, command policy, approval gates)
+  - [ ] Phase 7 planner/executor/verifier hardening (retries, dependencies, blocker handling)
+  - [ ] Phase 8 long-horizon memory and checkpoint continuity
+  - [ ] Phase 9 provider eval-gate matrix (OpenAI/xAI/Vertex)
+  - [ ] Phase 10 release productization and operational tooling
+  - [ ] See plan: `docs/plans/2026-03-06-agent-productization-phases-5-10.md`
 
 #### Model Step Validation (Venice.ai)
 - **Purpose**: Enforce model-specific step limits for image generation
@@ -194,7 +197,7 @@ When working on items from this list:
 
 - This document is maintained as part of the codebase cleanup initiative
 - Dead code audit performed: 2025-12-06
-- Last updated: 2026-03-01
+- Last updated: 2026-03-06
 - See `CLAUDE.md` for development guidelines
 - See `ROADMAP.md` for strategic direction
 

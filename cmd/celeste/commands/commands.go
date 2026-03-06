@@ -717,7 +717,9 @@ Session Control:
 Agent:
   /agent <goal>      Run autonomous task loop from TUI
   /agent list-runs   List checkpointed agent runs
+  /agent show <id>   Show run details
   /agent resume <id> Resume an existing agent run
+  /agent stop [id]   Stop the active run
 
 Examples:
   /nsfw              → Enable uncensored mode with media generation

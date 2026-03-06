@@ -99,6 +99,7 @@ type LLMClient interface {
 // AgentCommandRunner is an optional extension for handling /agent from TUI.
 type AgentCommandRunner interface {
 	RunAgentCommand(args []string) tea.Cmd
+	WaitAgentEvent() tea.Cmd
 }
 
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
@@ -315,7 +316,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch cmd.Name {
 			case "agent":
 				if len(cmd.Args) == 0 {
-					m.chat = m.chat.AddSystemMessage("Usage: /agent <goal>\n       /agent list-runs\n       /agent resume <run-id>")
+					m.chat = m.chat.AddSystemMessage("Usage: /agent <goal>\n       /agent list-runs\n       /agent show <run-id>\n       /agent resume <run-id>\n       /agent stop [run-id]")
 					return m, nil
 				}
 				agentRunner, ok := m.llmClient.(AgentCommandRunner)
@@ -324,17 +325,29 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				m.streaming = true
-				m.status = m.status.SetStreaming(true)
-				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
-				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
-
 				agentArgs := append([]string{}, cmd.Args...)
-				return m, tea.Batch(
+				subscribeEvents := shouldSubscribeAgentEvents(agentArgs)
+				if subscribeEvents {
+					m.streaming = true
+					m.status = m.status.SetStreaming(true)
+					m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
+				}
+				m.chat = m.chat.AddSystemMessage("🤖 Agent command: " + strings.Join(cmd.Args, " "))
+
+				batchCmds := []tea.Cmd{
 					agentRunner.RunAgentCommand(agentArgs),
-					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-						return TickMsg{Time: t}
-					}),
+				}
+				if subscribeEvents {
+					batchCmds = append(batchCmds,
+						agentRunner.WaitAgentEvent(),
+						tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+							return TickMsg{Time: t}
+						}),
+					)
+				}
+
+				return m, tea.Batch(
+					batchCmds...,
 				)
 
 			case "stats":
@@ -927,6 +940,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
 
+	case AgentEventMsg:
+		if strings.TrimSpace(msg.Message) != "" {
+			eventLine := fmt.Sprintf("🤖 [%s] %s", msg.Type, msg.Message)
+			m.chat = m.chat.AddSystemMessage(eventLine)
+		}
+
+		if msg.Terminal {
+			m.streaming = false
+			m.status = m.status.SetStreaming(false)
+			if msg.Status != "" {
+				m.status = m.status.SetText("Agent " + msg.Status)
+			}
+		} else if m.streaming {
+			if agentRunner, ok := m.llmClient.(AgentCommandRunner); ok {
+				cmds = append(cmds, agentRunner.WaitAgentEvent())
+			}
+		}
+
 	case AgentCommandResultMsg:
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
@@ -1257,6 +1288,20 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 		return nil
 	}
 	return m.getAvailableSkills()
+}
+
+func shouldSubscribeAgentEvents(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+
+	first := strings.ToLower(strings.TrimSpace(args[0]))
+	switch first {
+	case "help", "--help", "-h", "list", "list-runs", "--list-runs", "show", "stop":
+		return false
+	default:
+		return true
+	}
 }
 
 func (m AppModel) isClawMode() bool {

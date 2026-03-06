@@ -18,6 +18,7 @@ type agentRunnerAPI interface {
 	ListRuns(limit int) ([]agent.RunSummary, error)
 	Resume(ctx context.Context, runID string) (*agent.RunState, error)
 	RunGoal(ctx context.Context, goal string) (*agent.RunState, error)
+	SetEventSink(sink agent.EventSink)
 }
 
 var newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
@@ -36,9 +37,64 @@ func (a *TUIClientAdapter) RunAgentCommand(args []string) tea.Cmd {
 	}
 }
 
+// WaitAgentEvent waits for the next live event from an active agent run.
+func (a *TUIClientAdapter) WaitAgentEvent() tea.Cmd {
+	return func() tea.Msg {
+		if a.agentEvents == nil {
+			return nil
+		}
+		return <-a.agentEvents
+	}
+}
+
 func (a *TUIClientAdapter) executeAgentCommand(args []string) (string, error) {
 	if len(args) == 0 {
 		return agentUsage(), fmt.Errorf("missing agent command arguments")
+	}
+
+	sub := strings.ToLower(strings.TrimSpace(args[0]))
+	switch sub {
+	case "help", "--help", "-h":
+		return agentUsage(), nil
+	case "list", "list-runs", "--list-runs":
+		store, err := agent.NewCheckpointStore("")
+		if err != nil {
+			return "", fmt.Errorf("open run store: %w", err)
+		}
+		runs, err := store.List(20)
+		if err != nil {
+			return "", fmt.Errorf("list runs: %w", err)
+		}
+		return formatAgentRunList(runs), nil
+	case "show":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			return agentUsage(), fmt.Errorf("usage: /agent show <run-id>")
+		}
+		store, err := agent.NewCheckpointStore("")
+		if err != nil {
+			return "", fmt.Errorf("open run store: %w", err)
+		}
+		state, err := store.Load(strings.TrimSpace(args[1]))
+		if err != nil {
+			return "", fmt.Errorf("load run: %w", err)
+		}
+		return formatAgentRunSummary(state), nil
+	case "stop":
+		targetID := ""
+		if len(args) > 1 {
+			targetID = strings.TrimSpace(args[1])
+		}
+		output, err := a.stopActiveAgentRun(targetID)
+		if err != nil {
+			return output, err
+		}
+		a.publishAgentEvent(tui.AgentEventMsg{
+			Type:     "run_stopped",
+			Message:  output,
+			Status:   "stopped",
+			Terminal: true,
+		})
+		return output, nil
 	}
 
 	cfg := a.currentAgentConfig()
@@ -52,28 +108,31 @@ func (a *TUIClientAdapter) executeAgentCommand(args []string) (string, error) {
 	}
 	opts.Verbose = false
 
+	runCtx, cancel := context.WithCancel(context.Background())
+	if !a.beginActiveAgentRun(cancel) {
+		cancel()
+		return "", fmt.Errorf("another agent run is already active; use /agent stop first")
+	}
+	defer a.endActiveAgentRun()
+
 	runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
 	if err != nil {
 		return "", fmt.Errorf("create agent runner: %w", err)
 	}
 
-	sub := strings.ToLower(strings.TrimSpace(args[0]))
-	ctx := context.Background()
+	runner.SetEventSink(func(event agent.RunEvent) {
+		if event.RunID != "" {
+			a.setActiveAgentRunID(event.RunID)
+		}
+		a.publishAgentEvent(convertRunEvent(event))
+	})
 
 	switch sub {
-	case "help", "--help", "-h":
-		return agentUsage(), nil
-	case "list", "list-runs", "--list-runs":
-		runs, err := runner.ListRuns(20)
-		if err != nil {
-			return "", fmt.Errorf("list runs: %w", err)
-		}
-		return formatAgentRunList(runs), nil
 	case "resume", "--resume":
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
 			return agentUsage(), fmt.Errorf("usage: /agent resume <run-id>")
 		}
-		state, runErr := runner.Resume(ctx, strings.TrimSpace(args[1]))
+		state, runErr := runner.Resume(runCtx, strings.TrimSpace(args[1]))
 		output := formatAgentRunSummary(state)
 		if runErr != nil {
 			return output, fmt.Errorf("resume failed: %w", runErr)
@@ -87,10 +146,10 @@ func (a *TUIClientAdapter) executeAgentCommand(args []string) (string, error) {
 		if goal == "" {
 			return agentUsage(), fmt.Errorf("usage: /agent %s <goal>", sub)
 		}
-		return runAgentGoal(ctx, runner, goal)
+		return runAgentGoal(runCtx, runner, goal)
 	default:
 		goal := strings.TrimSpace(strings.Join(args, " "))
-		return runAgentGoal(ctx, runner, goal)
+		return runAgentGoal(runCtx, runner, goal)
 	}
 }
 
@@ -140,7 +199,7 @@ func (a *TUIClientAdapter) currentAgentConfig() *config.Config {
 }
 
 func agentUsage() string {
-	return "Usage: /agent <goal>\n       /agent list-runs\n       /agent resume <run-id>"
+	return "Usage: /agent <goal>\n       /agent list-runs\n       /agent show <run-id>\n       /agent resume <run-id>\n       /agent stop [run-id]"
 }
 
 func formatAgentRunList(runs []agent.RunSummary) string {
@@ -191,4 +250,103 @@ func previewText(value string, limit int) string {
 		return text
 	}
 	return text[:limit] + "\n...(truncated)"
+}
+
+func convertRunEvent(event agent.RunEvent) tui.AgentEventMsg {
+	terminal := false
+	switch event.Type {
+	case "run_completed", "run_failed", "run_stopped":
+		terminal = true
+	}
+
+	return tui.AgentEventMsg{
+		RunID:    event.RunID,
+		Type:     event.Type,
+		Message:  event.Message,
+		Turn:     event.Turn,
+		Status:   event.Status,
+		Terminal: terminal,
+	}
+}
+
+func (a *TUIClientAdapter) publishAgentEvent(msg tui.AgentEventMsg) {
+	if a == nil || a.agentEvents == nil {
+		return
+	}
+	select {
+	case a.agentEvents <- msg:
+	default:
+		// Drop excess events to avoid blocking interactive UI flow.
+	}
+}
+
+func (a *TUIClientAdapter) beginActiveAgentRun(cancel context.CancelFunc) bool {
+	if a == nil {
+		return false
+	}
+	a.agentRunMu.Lock()
+	defer a.agentRunMu.Unlock()
+
+	if a.activeAgentCancel != nil {
+		return false
+	}
+
+	a.activeAgentCancel = cancel
+	a.activeAgentRunID = ""
+	for {
+		select {
+		case <-a.agentEvents:
+		default:
+			return true
+		}
+	}
+}
+
+func (a *TUIClientAdapter) setActiveAgentRunID(runID string) {
+	if a == nil || strings.TrimSpace(runID) == "" {
+		return
+	}
+
+	a.agentRunMu.Lock()
+	defer a.agentRunMu.Unlock()
+	a.activeAgentRunID = strings.TrimSpace(runID)
+}
+
+func (a *TUIClientAdapter) endActiveAgentRun() {
+	if a == nil {
+		return
+	}
+	a.agentRunMu.Lock()
+	defer a.agentRunMu.Unlock()
+	a.activeAgentCancel = nil
+	a.activeAgentRunID = ""
+}
+
+func (a *TUIClientAdapter) stopActiveAgentRun(targetID string) (string, error) {
+	if a == nil {
+		return "", fmt.Errorf("agent runner unavailable")
+	}
+
+	targetID = strings.TrimSpace(targetID)
+
+	a.agentRunMu.Lock()
+	defer a.agentRunMu.Unlock()
+
+	if a.activeAgentCancel == nil {
+		return "No active agent run to stop.", fmt.Errorf("no active agent run")
+	}
+
+	if targetID != "" && a.activeAgentRunID != "" && targetID != a.activeAgentRunID {
+		return fmt.Sprintf("Active run is %s; requested stop for %s", a.activeAgentRunID, targetID), fmt.Errorf("active run id mismatch")
+	}
+
+	a.activeAgentCancel()
+	runID := a.activeAgentRunID
+	a.activeAgentCancel = nil
+	a.activeAgentRunID = ""
+
+	if runID == "" {
+		return "Sent stop signal to active agent run.", nil
+	}
+	return fmt.Sprintf("Sent stop signal to active run %s.", runID), nil
 }

@@ -20,12 +20,13 @@ import (
 )
 
 type Runner struct {
-	client   *llm.Client
-	registry *skills.Registry
-	store    *CheckpointStore
-	options  Options
-	out      io.Writer
-	errOut   io.Writer
+	client    *llm.Client
+	registry  *skills.Registry
+	store     *CheckpointStore
+	options   Options
+	out       io.Writer
+	errOut    io.Writer
+	eventSink EventSink
 }
 
 func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Writer) (*Runner, error) {
@@ -145,6 +146,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	}
 	normalizeStateOptions(state, r.options)
 	defer r.persistArtifacts(state)
+	r.emitEvent(state, "run_started", "Agent run started", nil)
 
 	if state.Phase == "" {
 		if state.Options.EnablePlanning {
@@ -159,6 +161,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			state.Status = StatusFailed
 			state.Error = err.Error()
 			state.UpdatedAt = time.Now()
+			r.emitEvent(state, "run_failed", fmt.Sprintf("Planning failed: %v", err), nil)
 			_ = r.store.Save(state)
 			return state, err
 		}
@@ -173,6 +176,10 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		state.Turn++
 		state.Status = StatusRunning
 		state.Phase = PhaseExecution
+		r.emitEvent(state, "turn_start", fmt.Sprintf("Turn %d started", state.Turn), map[string]any{
+			"turn":      state.Turn,
+			"max_turns": state.Options.MaxTurns,
+		})
 
 		if state.Options.Verbose {
 			fmt.Fprintf(r.out, "\n[agent] turn %d/%d\n", state.Turn, state.Options.MaxTurns)
@@ -185,6 +192,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			state.Status = StatusFailed
 			state.Error = err.Error()
 			state.UpdatedAt = time.Now()
+			r.emitEvent(state, "run_failed", fmt.Sprintf("LLM request failed: %v", err), nil)
 			_ = r.store.Save(state)
 			return state, err
 		}
@@ -207,10 +215,20 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		if state.Options.Verbose && state.LastAssistantResponse != "" {
 			fmt.Fprintf(r.out, "[assistant]\n%s\n", state.LastAssistantResponse)
 		}
+		if state.LastAssistantResponse != "" {
+			r.emitEvent(state, "assistant_response", truncateForStep(state.LastAssistantResponse), map[string]any{
+				"turn": state.Turn,
+			})
+		}
 
 		if len(result.ToolCalls) == 0 {
 			state.ConsecutiveNoToolTurns++
 			updatePlanProgressFromAssistant(state, state.LastAssistantResponse, false)
+			r.emitEvent(state, "no_tool_turn", "Assistant returned no tool calls", map[string]any{
+				"turn":                         state.Turn,
+				"consecutive_no_tool_turns":    state.ConsecutiveNoToolTurns,
+				"max_consecutive_no_tool_turn": state.Options.MaxConsecutiveNoToolTurns,
+			})
 
 			if isCompletionResponse(state.LastAssistantResponse, state.Options) {
 				completed, err := r.handleCompletionCandidate(ctx, state)
@@ -218,10 +236,12 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 					state.Status = StatusFailed
 					state.Error = err.Error()
 					state.UpdatedAt = time.Now()
+					r.emitEvent(state, "run_failed", fmt.Sprintf("Completion handling failed: %v", err), nil)
 					_ = r.store.Save(state)
 					return state, err
 				}
 				if completed {
+					r.emitEvent(state, "run_completed", "Agent run completed", nil)
 					if !state.Options.DisableCheckpoints {
 						_ = r.store.Save(state)
 					}
@@ -233,6 +253,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 				state.Status = StatusNoProgressStopped
 				now := time.Now()
 				state.CompletedAt = &now
+				r.emitEvent(state, "run_stopped", "Stopped due to repeated no-progress turns", nil)
 				if !state.Options.DisableCheckpoints {
 					_ = r.store.Save(state)
 				}
@@ -257,6 +278,10 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		if len(toolCalls) > state.Options.MaxToolCallsPerTurn {
 			toolCalls = toolCalls[:state.Options.MaxToolCallsPerTurn]
 		}
+		r.emitEvent(state, "tool_batch_start", fmt.Sprintf("Executing %d tool call(s)", len(toolCalls)), map[string]any{
+			"turn":       state.Turn,
+			"tool_calls": len(toolCalls),
+		})
 
 		for _, tc := range toolCalls {
 			toolMsg := r.executeToolCall(ctx, state, tc)
@@ -272,6 +297,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	state.Status = StatusMaxTurnsReached
 	now := time.Now()
 	state.CompletedAt = &now
+	r.emitEvent(state, "run_stopped", "Reached max turns", nil)
 	if !state.Options.DisableCheckpoints {
 		_ = r.store.Save(state)
 	}
@@ -290,6 +316,7 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	}
 
 	state.Phase = PhasePlanning
+	r.emitEvent(state, "planning_start", "Planning phase started", nil)
 	prompt := buildPlanningPrompt(state)
 	state.Messages = append(state.Messages, tui.ChatMessage{
 		Role:      "user",
@@ -324,6 +351,9 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	state.ActivePlanStep = 0
 	markPlanStepInProgress(state, state.ActivePlanStep)
 	state.Phase = PhaseExecution
+	r.emitEvent(state, "planning_complete", fmt.Sprintf("Plan ready with %d step(s)", len(state.Plan)), map[string]any{
+		"plan_steps": len(state.Plan),
+	})
 
 	state.Messages = append(state.Messages, tui.ChatMessage{
 		Role:      "user",
@@ -345,6 +375,9 @@ func (r *Runner) handleCompletionCandidate(ctx context.Context, state *RunState)
 
 func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (bool, error) {
 	state.Phase = PhaseVerification
+	r.emitEvent(state, "verification_start", "Verification phase started", map[string]any{
+		"checks": len(state.Options.VerificationCommands),
+	})
 	state.Steps = append(state.Steps, Step{
 		Turn:      state.Turn,
 		Type:      "verification_start",
@@ -356,6 +389,12 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 	for _, cmd := range state.Options.VerificationCommands {
 		check := executeVerificationCommand(ctx, state.Options.Workspace, cmd, state.Options.VerifyTimeout)
 		checks = append(checks, check)
+		r.emitEvent(state, "verification_check", fmt.Sprintf("Verification %s (passed=%v)", cmd, check.Passed), map[string]any{
+			"command":  cmd,
+			"passed":   check.Passed,
+			"exitCode": check.ExitCode,
+			"timedOut": check.TimedOut,
+		})
 		state.Steps = append(state.Steps, Step{
 			Turn:      state.Turn,
 			Type:      "verification_check",
@@ -372,6 +411,8 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 	if allPassed {
 		markAllPlanStepsCompleted(state)
 		completeState(state)
+		r.emitEvent(state, "verification_passed", "Verification checks passed", nil)
+		r.emitEvent(state, "run_completed", "Agent run completed", nil)
 		state.Steps = append(state.Steps, Step{
 			Turn:      state.Turn,
 			Type:      "verification_passed",
@@ -392,6 +433,7 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 		Content:   truncateForStep(failureSummary),
 		Timestamp: time.Now(),
 	})
+	r.emitEvent(state, "verification_failed", "Verification failed; continuing execution", nil)
 	state.ConsecutiveNoToolTurns = 0
 	state.Phase = PhaseExecution
 	return false, nil
@@ -399,6 +441,11 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 
 func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) tui.ChatMessage {
 	toolName := tc.Name
+	r.emitEvent(state, "tool_start", fmt.Sprintf("Executing tool: %s", toolName), map[string]any{
+		"turn":         state.Turn,
+		"tool_name":    toolName,
+		"tool_call_id": tc.ID,
+	})
 	if state.Options.Verbose {
 		fmt.Fprintf(r.out, "[tool] %s\n", toolName)
 	}
@@ -423,6 +470,11 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		Content:   truncateForStep(resultContent),
 		ToolCall:  tc.ID,
 		Timestamp: time.Now(),
+	})
+	r.emitEvent(state, "tool_result", fmt.Sprintf("Tool completed: %s", toolName), map[string]any{
+		"turn":         state.Turn,
+		"tool_name":    toolName,
+		"tool_call_id": tc.ID,
 	})
 
 	return tui.ChatMessage{

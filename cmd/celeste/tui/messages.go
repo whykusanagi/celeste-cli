@@ -104,6 +104,16 @@ type AgentCommandResultMsg struct {
 	Err    error
 }
 
+// AgentEventMsg is a live event emitted from agent runtime execution.
+type AgentEventMsg struct {
+	RunID    string
+	Type     string
+	Message  string
+	Turn     int
+	Status   string
+	Terminal bool
+}
+
 // SendMessageMsg is sent when the user submits a message.
 type SendMessageMsg struct {
 	Content string
