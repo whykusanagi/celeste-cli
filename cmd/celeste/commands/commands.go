@@ -714,10 +714,16 @@ Session Control:
   /clear             Clear conversation history
   /help              Show this help message
 
+Agent:
+  /agent <goal>      Run autonomous task loop from TUI
+  /agent list-runs   List checkpointed agent runs
+  /agent resume <id> Resume an existing agent run
+
 Examples:
   /nsfw              → Enable uncensored mode with media generation
   /endpoint google   → Switch to Google Vertex AI
   /model gpt-4o      → Use GPT-4o model
+  /agent fix tests   → Run autonomous code-fix loop
   /safe              → Return to safe mode
 
 Skills Available: 18 function-calling tools

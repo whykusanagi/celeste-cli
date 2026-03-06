@@ -96,6 +96,11 @@ type LLMClient interface {
 	ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd
 }
 
+// AgentCommandRunner is an optional extension for handling /agent from TUI.
+type AgentCommandRunner interface {
+	RunAgentCommand(args []string) tea.Cmd
+}
+
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
 type EndpointSwitcher interface {
 	SwitchEndpoint(endpoint string) error
@@ -308,6 +313,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := commands.Parse(content); cmd != nil {
 			// Handle Phase 4 commands that require app state (contextTracker, currentSession)
 			switch cmd.Name {
+			case "agent":
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Usage: /agent <goal>\n       /agent list-runs\n       /agent resume <run-id>")
+					return m, nil
+				}
+				agentRunner, ok := m.llmClient.(AgentCommandRunner)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("❌ /agent is unavailable for this client.")
+					return m, nil
+				}
+
+				m.streaming = true
+				m.status = m.status.SetStreaming(true)
+				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
+				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
+
+				agentArgs := append([]string{}, cmd.Args...)
+				return m, tea.Batch(
+					agentRunner.RunAgentCommand(agentArgs),
+					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+						return TickMsg{Time: t}
+					}),
+				)
+
 			case "stats":
 				// Pass animation frame for flickering corruption effects
 				argsWithFrame := append([]string{"--frame", fmt.Sprintf("%d", m.animFrame)}, cmd.Args...)
@@ -897,6 +926,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
+
+	case AgentCommandResultMsg:
+		m.streaming = false
+		m.status = m.status.SetStreaming(false)
+
+		if strings.TrimSpace(msg.Output) != "" {
+			m.chat = m.chat.AddSystemMessage(msg.Output)
+		}
+
+		if msg.Err != nil {
+			m.status = m.status.SetText(fmt.Sprintf("Agent error: %v", msg.Err))
+			if strings.TrimSpace(msg.Output) == "" {
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %v", msg.Err))
+			}
+		} else {
+			m.status = m.status.SetText("Agent run complete")
+		}
+
+		m.persistSession()
 
 	case SkillCallMsg:
 		batchMsg := SkillCallBatchMsg{

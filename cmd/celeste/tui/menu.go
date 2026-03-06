@@ -31,6 +31,7 @@ var menuItems = []MenuItem{
 	{"stats", "Show usage statistics"},
 	{"session", "Manage conversation sessions"},
 	{"export", "Export session data"},
+	{"agent", "Run autonomous agent loop"},
 	{"providers", "List AI providers"},
 	{"exit", "Exit the application"},
 }
