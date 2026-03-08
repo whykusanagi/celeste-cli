@@ -1,6 +1,6 @@
 run:
   timeout: 5m
-  go: '1.23'
+  go: '1.26'
 
 linters:
   enable:
@@ -41,8 +41,6 @@ linters-settings:
   staticcheck:
     checks: ["all"]
 
-  unused:
-    check-exported: false
 
 issues:
   exclude-rules:
