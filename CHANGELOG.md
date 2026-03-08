@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - persistent workspace-scoped project memory store under `~/.celeste/agent/memory`
   - memory recall injected into new and resumed runs
   - run-summary/failure writeback into project memory for continuity across runs
+- Phase 9 provider compatibility gate (initial slice):
+  - deterministic OpenAI/xAI/Vertex provider matrix gate test with regression thresholds
+  - fixture-driven multi-tool stream parsing checks for OpenAI and xAI
+  - CI/release workflow enforcement for provider compatibility gate
 
 ### Testing
 - Added new unit coverage for:

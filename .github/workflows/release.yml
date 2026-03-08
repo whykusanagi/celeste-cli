@@ -28,6 +28,13 @@ jobs:
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+    - name: Run provider matrix gate
+      env:
+        CELESTE_PROVIDER_GATE_MIN_PASS: "1.0"
+        CELESTE_PROVIDER_GATE_MIN_PASS_PER_PROVIDER: "1.0"
+      run: |
+        go test -v ./cmd/celeste/llm -run TestProviderCompatibilityMatrixGate
+
     - name: Build binaries
       run: |
         # Linux

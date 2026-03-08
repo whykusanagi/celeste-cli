@@ -377,6 +377,23 @@ go test -tags=integration -v ./cmd/celeste/providers/
 
 **Status**: Framework ready, needs API keys for full validation
 
+### Provider Compatibility Gate (Phase 9)
+
+Deterministic provider parity checks for OpenAI/xAI/Vertex paths are enforced via:
+
+```bash
+go test -v ./cmd/celeste/llm -run TestProviderCompatibilityMatrixGate
+```
+
+Optional thresholds/report controls:
+
+```bash
+CELESTE_PROVIDER_GATE_MIN_PASS=1.0 \
+CELESTE_PROVIDER_GATE_MIN_PASS_PER_PROVIDER=1.0 \
+CELESTE_PROVIDER_GATE_REPORT=provider-gate-report.json \
+go test -v ./cmd/celeste/llm -run TestProviderCompatibilityMatrixGate
+```
+
 ### One-Shot Command Tests
 
 Located in `test/test_oneshot_commands.sh`.

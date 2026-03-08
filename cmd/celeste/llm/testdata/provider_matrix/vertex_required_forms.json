@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "name": "required_string_slice",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string"
+          }
+        },
+        "required": ["location"]
+      },
+      "expected_required": ["location"]
+    },
+    {
+      "name": "required_interface_slice",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string"
+          }
+        },
+        "required": ["location"]
+      },
+      "expected_required": ["location"]
+    }
+  ]
+}

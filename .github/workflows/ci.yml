@@ -120,6 +120,37 @@ jobs:
         path: test/reports/
         retention-days: 7
 
+  provider-compat-gate:
+    name: Provider Compatibility Gate
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26.1'
+        cache: true
+
+    - name: Run provider matrix gate
+      env:
+        CELESTE_PROVIDER_GATE_MIN_PASS: "1.0"
+        CELESTE_PROVIDER_GATE_MIN_PASS_PER_PROVIDER: "1.0"
+        CELESTE_PROVIDER_GATE_REPORT: provider-gate-report.json
+      run: |
+        go test -v ./cmd/celeste/llm -run TestProviderCompatibilityMatrixGate
+
+    - name: Upload provider gate report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: provider-gate-report
+        path: provider-gate-report.json
+        if-no-files-found: ignore
+        retention-days: 7
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -149,7 +180,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, lint, docker-test]
+    needs: [test, lint, docker-test, provider-compat-gate]
 
     steps:
     - name: Check out code
