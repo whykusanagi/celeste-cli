@@ -119,6 +119,9 @@ func TestDevRunCommandBlocksRiskyByDefault(t *testing.T) {
 }
 
 func TestDevRunCommandAllowsRiskyWhenExplicit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c pwd returns Unix-style paths on Windows; workspace comparison not applicable")
+	}
 	workspace := t.TempDir()
 	registry := skills.NewRegistry()
 	require.NoError(t, RegisterDevSkills(registry, workspace))
