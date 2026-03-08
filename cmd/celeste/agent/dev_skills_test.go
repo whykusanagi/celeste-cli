@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -66,6 +67,9 @@ func TestDevSkillsReadWriteSearchFlow(t *testing.T) {
 }
 
 func TestDevRunCommandExecutesInWorkspace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c pwd returns Unix-style paths on Windows; workspace comparison not applicable")
+	}
 	workspace := t.TempDir()
 	registry := skills.NewRegistry()
 	err := RegisterDevSkills(registry, workspace)
