@@ -33,6 +33,8 @@ linters-settings:
       - (os.File).Sync
       - flag.FlagSet.Parse
       - (skills.Registry).LoadSkills
+      - fmt.Sscanf
+      - fmt.Scanln
 
   staticcheck:
     checks: ["all"]
