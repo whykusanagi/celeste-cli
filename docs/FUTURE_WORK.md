@@ -106,7 +106,7 @@ This document tracks planned features, incomplete integrations, and improvement 
   - [ ] Complete Phase 5 lifecycle controls (`/agent show`, `/agent stop`, live progress stream)
   - [ ] Phase 6 safety controls (workspace jail, command policy, approval gates)
   - [ ] Phase 7 planner/executor/verifier hardening (retries, dependencies, blocker handling)
-  - [ ] Phase 8 long-horizon memory and checkpoint continuity
+- [ ] Phase 8 long-horizon memory and checkpoint continuity (baseline memory store + recall/writeback added; deeper retrieval tuning pending)
   - [ ] Phase 9 provider eval-gate matrix (OpenAI/xAI/Vertex)
   - [ ] Phase 10 release productization and operational tooling
   - [ ] See plan: `docs/plans/2026-03-06-agent-productization-phases-5-10.md`

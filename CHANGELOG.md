@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Phase 7 runtime hardening (initial slice):
   - blocker-marker detection (`BLOCKED:` by default) can stop runs with explicit blocker reason capture
   - verification attempts are capped (`max_verification_retries`) to prevent indefinite verify/fix loops
+- Phase 8 memory continuity (initial slice):
+  - persistent workspace-scoped project memory store under `~/.celeste/agent/memory`
+  - memory recall injected into new and resumed runs
+  - run-summary/failure writeback into project memory for continuity across runs
 
 ### Testing
 - Added new unit coverage for:

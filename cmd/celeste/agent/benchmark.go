@@ -124,6 +124,7 @@ func (r *Runner) RunBenchmark(ctx context.Context, suite BenchmarkSuite) (*Bench
 			opts := r.options
 			opts.DisableCheckpoints = true
 			opts.EmitArtifacts = false
+			opts.EnableMemory = false
 			opts.Verbose = false
 			if c.MaxTurns > 0 {
 				opts.MaxTurns = c.MaxTurns

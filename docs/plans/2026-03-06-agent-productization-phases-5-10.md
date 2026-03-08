@@ -104,4 +104,5 @@ Evolve Celeste from one-shot chat + tools into a production-ready autonomous ass
 - Phase 5: IN PROGRESS on `codex/celeste-phase5-product-core`.
 - Phase 6: IN PROGRESS (command policy + workspace symlink guard baseline).
 - Phase 7: IN PROGRESS (blocker-aware stop + verification retry ceiling baseline).
-- Phases 8-10: Planned.
+- Phase 8: IN PROGRESS (project memory store + recall/writeback baseline).
+- Phases 9-10: Planned.

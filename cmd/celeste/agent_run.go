@@ -52,6 +52,9 @@ func runAgentCommand(args []string) {
 	maxVerifyRetries := fs.Int("max-verify-retries", 0, "Maximum verification attempts before stopping")
 	stopOnBlocker := fs.Bool("stop-on-blocker", true, "Stop run when assistant emits blocker marker")
 	blockerMarker := fs.String("blocker-marker", "BLOCKED:", "Marker token for assistant blocker reports")
+	enableMemory := fs.Bool("memory", true, "Enable cross-run project memory recall/writeback")
+	memoryRecall := fs.Int("memory-recall", 0, "Number of memory entries to inject into run context")
+	memoryMaxEntries := fs.Int("memory-max-entries", 0, "Maximum persisted memory entries per workspace")
 	enablePlanning := fs.Bool("planner", true, "Enable explicit planning phase")
 	planMaxSteps := fs.Int("plan-max-steps", 0, "Maximum steps extracted from planning phase")
 	requireVerification := fs.Bool("require-verify", false, "Require verification commands to pass before completion")
@@ -112,6 +115,7 @@ func runAgentCommand(args []string) {
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)
 	opts.StopOnBlocker = *stopOnBlocker
 	opts.BlockerMarker = strings.TrimSpace(*blockerMarker)
+	opts.EnableMemory = *enableMemory
 	opts.ArtifactDir = strings.TrimSpace(*artifactDir)
 	opts.EmitArtifacts = !*noArtifacts
 	opts.DisableCheckpoints = *noCheckpoint
@@ -136,6 +140,12 @@ func runAgentCommand(args []string) {
 	}
 	if *maxVerifyRetries > 0 {
 		opts.MaxVerificationRetries = *maxVerifyRetries
+	}
+	if *memoryRecall > 0 {
+		opts.MemoryRecallLimit = *memoryRecall
+	}
+	if *memoryMaxEntries > 0 {
+		opts.MemoryMaxEntries = *memoryMaxEntries
 	}
 
 	runner, err := agent.NewRunner(cfg, opts, os.Stdout, os.Stderr)
@@ -288,6 +298,9 @@ func printRunSummary(state *agent.RunState) {
 	}
 	if strings.TrimSpace(state.BlockerReason) != "" {
 		fmt.Printf("Blocker: %s\n", state.BlockerReason)
+	}
+	if len(state.MemoryContext) > 0 {
+		fmt.Printf("Memory Context Entries: %d\n", len(state.MemoryContext))
 	}
 	if state.LastAssistantResponse != "" {
 		fmt.Printf("\nFinal Response:\n%s\n", state.LastAssistantResponse)

@@ -102,3 +102,87 @@ func TestExtractBlockerMarker(t *testing.T) {
 	assert.Equal(t, "missing API key", extractBlockerMarker("BLOCKED: missing API key", "BLOCKED:"))
 	assert.Equal(t, "cannot reach endpoint", extractBlockerMarker("some text\nblocked: cannot reach endpoint\nmore", "BLOCKED:"))
 }
+
+func TestAttachProjectMemoryContextInjectsMessageOnce(t *testing.T) {
+	store, err := NewProjectMemoryStore(t.TempDir())
+	require.NoError(t, err)
+
+	workspace := t.TempDir()
+	_, err = store.Append(workspace, []MemoryEntry{
+		{
+			Category: "run_summary",
+			Content:  "Updated provider compatibility tests and fixed flaky parser",
+			Goal:     "stabilize provider tests",
+		},
+	}, 50)
+	require.NoError(t, err)
+
+	runner := &Runner{
+		memory: store,
+		out:    io.Discard,
+		errOut: io.Discard,
+	}
+
+	opts := DefaultOptions()
+	opts.Workspace = workspace
+	state := NewRunState("fix provider parser test flakes", opts)
+
+	runner.attachProjectMemoryContext(state, state.Goal)
+	require.True(t, state.MemoryInjected)
+	require.Len(t, state.MemoryContext, 1)
+	require.Len(t, state.Messages, 1)
+	assert.Equal(t, "user", state.Messages[0].Role)
+	assert.Contains(t, state.Messages[0].Content, "Project memory context")
+
+	runner.attachProjectMemoryContext(state, state.Goal)
+	assert.Len(t, state.Messages, 1, "memory context should be injected once")
+}
+
+func TestPersistProjectMemoryWritesRunSummaryAndFailures(t *testing.T) {
+	store, err := NewProjectMemoryStore(t.TempDir())
+	require.NoError(t, err)
+
+	workspace := t.TempDir()
+	opts := DefaultOptions()
+	opts.Workspace = workspace
+
+	state := NewRunState("run validations", opts)
+	state.Status = StatusVerificationStop
+	state.Turn = 3
+	state.ToolCallCount = 2
+	state.Error = "verification failed after 2 attempt(s)"
+	state.LastAssistantResponse = "TASK_COMPLETE: pending validation"
+	state.Verification = []VerificationCheck{
+		{
+			Command:  "go test ./...",
+			Passed:   false,
+			ExitCode: 1,
+			Output:   "FAIL example",
+			TimedOut: false,
+		},
+	}
+
+	runner := &Runner{
+		memory: store,
+		out:    io.Discard,
+		errOut: io.Discard,
+	}
+	runner.persistProjectMemory(state)
+
+	loaded, err := store.Load(workspace)
+	require.NoError(t, err)
+	require.NotEmpty(t, loaded.Entries)
+
+	foundSummary := false
+	foundFailure := false
+	for _, entry := range loaded.Entries {
+		switch entry.Category {
+		case "run_summary":
+			foundSummary = true
+		case "failure":
+			foundFailure = true
+		}
+	}
+	assert.True(t, foundSummary)
+	assert.True(t, foundFailure)
+}

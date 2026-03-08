@@ -45,6 +45,9 @@ type Options struct {
 	MaxVerificationRetries    int           `json:"max_verification_retries"`
 	StopOnBlocker             bool          `json:"stop_on_blocker"`
 	BlockerMarker             string        `json:"blocker_marker"`
+	EnableMemory              bool          `json:"enable_memory"`
+	MemoryRecallLimit         int           `json:"memory_recall_limit"`
+	MemoryMaxEntries          int           `json:"memory_max_entries"`
 	EmitArtifacts             bool          `json:"emit_artifacts"`
 	ArtifactDir               string        `json:"artifact_dir,omitempty"`
 	DisableCheckpoints        bool          `json:"disable_checkpoints"`
@@ -68,6 +71,9 @@ func DefaultOptions() Options {
 		MaxVerificationRetries:    2,
 		StopOnBlocker:             true,
 		BlockerMarker:             "BLOCKED:",
+		EnableMemory:              true,
+		MemoryRecallLimit:         6,
+		MemoryMaxEntries:          200,
 		EmitArtifacts:             true,
 		ArtifactDir:               "",
 		DisableCheckpoints:        false,
@@ -118,6 +124,8 @@ type RunState struct {
 	VerificationAttempts   int                 `json:"verification_attempts,omitempty"`
 	LastAssistantResponse  string              `json:"last_assistant_response,omitempty"`
 	BlockerReason          string              `json:"blocker_reason,omitempty"`
+	MemoryInjected         bool                `json:"memory_injected,omitempty"`
+	MemoryContext          []MemoryEntry       `json:"memory_context,omitempty"`
 	ArtifactBundlePath     string              `json:"artifact_bundle_path,omitempty"`
 	Error                  string              `json:"error,omitempty"`
 	Options                Options             `json:"options"`

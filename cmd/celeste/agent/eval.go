@@ -63,6 +63,7 @@ func (r *Runner) RunEval(ctx context.Context, cases []EvalCase) ([]EvalResult, e
 		caseOptions := r.options
 		caseOptions.DisableCheckpoints = true
 		caseOptions.EmitArtifacts = false
+		caseOptions.EnableMemory = false
 		caseOptions.Verbose = false
 		if c.MaxTurns > 0 {
 			caseOptions.MaxTurns = c.MaxTurns

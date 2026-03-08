@@ -23,6 +23,7 @@ type Runner struct {
 	client    *llm.Client
 	registry  *skills.Registry
 	store     *CheckpointStore
+	memory    *ProjectMemoryStore
 	options   Options
 	out       io.Writer
 	errOut    io.Writer
@@ -89,11 +90,16 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	if err != nil {
 		return nil, err
 	}
+	memoryStore, err := NewProjectMemoryStore("")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Runner{
 		client:   client,
 		registry: registry,
 		store:    store,
+		memory:   memoryStore,
 		options:  options,
 		out:      out,
 		errOut:   errOut,
@@ -110,6 +116,7 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 		return nil, err
 	}
 	normalizeStateOptions(state, r.options)
+	r.attachProjectMemoryContext(state, state.Goal)
 	return r.runState(ctx, state)
 }
 
@@ -121,6 +128,7 @@ func (r *Runner) RunGoal(ctx context.Context, goal string) (*RunState, error) {
 
 	state := NewRunState(goal, r.options)
 	normalizeStateOptions(state, r.options)
+	r.attachProjectMemoryContext(state, goal)
 	if !state.Options.EnablePlanning {
 		state.Phase = PhaseExecution
 	}
@@ -146,6 +154,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	}
 	normalizeStateOptions(state, r.options)
 	defer r.persistArtifacts(state)
+	defer r.persistProjectMemory(state)
 	r.emitEvent(state, "run_started", "Agent run started", nil)
 
 	if state.Phase == "" {
@@ -601,6 +610,12 @@ func normalizeOptions(options *Options) {
 	if strings.TrimSpace(options.BlockerMarker) == "" {
 		options.BlockerMarker = defaults.BlockerMarker
 	}
+	if options.MemoryRecallLimit <= 0 {
+		options.MemoryRecallLimit = defaults.MemoryRecallLimit
+	}
+	if options.MemoryMaxEntries <= 0 {
+		options.MemoryMaxEntries = defaults.MemoryMaxEntries
+	}
 }
 
 func normalizeStateOptions(state *RunState, fallback Options) {
@@ -631,6 +646,15 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	if strings.TrimSpace(state.Options.BlockerMarker) == "" && strings.TrimSpace(fallback.BlockerMarker) != "" {
 		state.Options.BlockerMarker = fallback.BlockerMarker
 	}
+	if !state.Options.EnableMemory && fallback.EnableMemory {
+		state.Options.EnableMemory = fallback.EnableMemory
+	}
+	if state.Options.MemoryRecallLimit <= 0 && fallback.MemoryRecallLimit > 0 {
+		state.Options.MemoryRecallLimit = fallback.MemoryRecallLimit
+	}
+	if state.Options.MemoryMaxEntries <= 0 && fallback.MemoryMaxEntries > 0 {
+		state.Options.MemoryMaxEntries = fallback.MemoryMaxEntries
+	}
 	if !state.Options.EmitArtifacts && fallback.EmitArtifacts {
 		state.Options.EmitArtifacts = fallback.EmitArtifacts
 	}
@@ -656,7 +680,11 @@ func isCompletionResponse(content string, options Options) bool {
 }
 
 func buildPlanningPrompt(state *RunState) string {
-	return fmt.Sprintf("Create a concise execution plan for this goal with 3-7 numbered steps. Include technical validation steps. Goal: %s", state.Goal)
+	memoryContext := buildMemoryContextText(state.MemoryContext)
+	if memoryContext == "" {
+		return fmt.Sprintf("Create a concise execution plan for this goal with 3-7 numbered steps. Include technical validation steps. Goal: %s", state.Goal)
+	}
+	return fmt.Sprintf("Create a concise execution plan for this goal with 3-7 numbered steps. Include technical validation steps. Use this prior project memory when relevant.\n\nProject memory:\n%s\n\nGoal: %s", memoryContext, state.Goal)
 }
 
 func buildExecutionKickoffPrompt(state *RunState) string {
@@ -664,7 +692,11 @@ func buildExecutionKickoffPrompt(state *RunState) string {
 	for _, step := range state.Plan {
 		planLines = append(planLines, fmt.Sprintf("%d. %s", step.Index, step.Title))
 	}
-	return fmt.Sprintf("Begin executing this plan now. Use tools as needed and emit STEP_DONE: <n> when a step is completed.\n\nPlan:\n%s", strings.Join(planLines, "\n"))
+	memoryContext := buildMemoryContextText(state.MemoryContext)
+	if memoryContext == "" {
+		return fmt.Sprintf("Begin executing this plan now. Use tools as needed and emit STEP_DONE: <n> when a step is completed.\n\nPlan:\n%s", strings.Join(planLines, "\n"))
+	}
+	return fmt.Sprintf("Begin executing this plan now. Use tools as needed and emit STEP_DONE: <n> when a step is completed.\n\nProject memory:\n%s\n\nPlan:\n%s", memoryContext, strings.Join(planLines, "\n"))
 }
 
 func buildContinuePrompt(state *RunState) string {
@@ -681,7 +713,11 @@ func buildContinuePrompt(state *RunState) string {
 	if len(state.Plan) > 0 && state.ActivePlanStep >= 0 && state.ActivePlanStep < len(state.Plan) {
 		stepHint = fmt.Sprintf(" Focus on plan step %d: %s.", state.Plan[state.ActivePlanStep].Index, state.Plan[state.ActivePlanStep].Title)
 	}
-	return fmt.Sprintf("Continue working toward the goal.%s Use tools when needed. If you are blocked, respond with '%s <reason>'. If you are done, respond with '%s' followed by final deliverables and validation notes.", stepHint, blockerMarker, marker)
+	memoryHint := ""
+	if len(state.MemoryContext) > 0 {
+		memoryHint = " Apply relevant project memory context."
+	}
+	return fmt.Sprintf("Continue working toward the goal.%s%s Use tools when needed. If you are blocked, respond with '%s <reason>'. If you are done, respond with '%s' followed by final deliverables and validation notes.", stepHint, memoryHint, blockerMarker, marker)
 }
 
 func buildVerificationFailurePrompt(checks []VerificationCheck, options Options, attempt int) string {
@@ -713,6 +749,10 @@ func buildAgentSystemPrompt(options Options) string {
 		}
 		blockerInstruction = fmt.Sprintf("If you are blocked, respond with '%s <reason>'.", blockerMarker)
 	}
+	memoryInstruction := ""
+	if options.EnableMemory {
+		memoryInstruction = "Use provided project memory context as hints; validate assumptions before acting."
+	}
 
 	return fmt.Sprintf(`You are Celeste Agent, an autonomous execution loop for software and content tasks.
 
@@ -728,8 +768,9 @@ Execution contract:
 6. If blocked, clearly describe the blocker and the next required user action.
 7. %s
 8. %s
+9. %s
 
-Current workspace root: %s`, marker, verificationInstruction, blockerInstruction, options.Workspace)
+Current workspace root: %s`, marker, verificationInstruction, blockerInstruction, memoryInstruction, options.Workspace)
 }
 
 func parsePlanSteps(content string, maxSteps int) []PlanStep {
@@ -962,6 +1003,169 @@ func formatToolResult(toolName string, execution *skills.ExecutionResult, err er
 		}
 		return string(b)
 	}
+}
+
+func (r *Runner) attachProjectMemoryContext(state *RunState, query string) {
+	if r == nil || state == nil {
+		return
+	}
+	if !state.Options.EnableMemory || r.memory == nil {
+		return
+	}
+	if state.MemoryInjected || hasMemoryContextStep(state) {
+		state.MemoryInjected = true
+		return
+	}
+	if strings.TrimSpace(state.Options.Workspace) == "" {
+		return
+	}
+
+	if len(state.MemoryContext) == 0 {
+		memory, err := r.memory.Load(state.Options.Workspace)
+		if err != nil {
+			fmt.Fprintf(r.errOut, "Warning: failed to load project memory: %v\n", err)
+			return
+		}
+		state.MemoryContext = memory.Recall(query, state.Options.MemoryRecallLimit)
+	}
+	if len(state.MemoryContext) == 0 {
+		return
+	}
+
+	contextText := buildMemoryContextText(state.MemoryContext)
+	if contextText == "" {
+		return
+	}
+
+	now := time.Now()
+	state.Messages = append(state.Messages, tui.ChatMessage{
+		Role:      "user",
+		Content:   "Project memory context from previous runs (use as hints and verify before acting):\n" + contextText,
+		Timestamp: now,
+	})
+	state.Steps = append(state.Steps, Step{
+		Turn:      state.Turn,
+		Type:      "memory_context",
+		Content:   truncateForStep(contextText),
+		Timestamp: now,
+	})
+	state.MemoryInjected = true
+	r.emitEvent(state, "memory_loaded", fmt.Sprintf("Loaded %d memory entries", len(state.MemoryContext)), map[string]any{
+		"memory_entries": len(state.MemoryContext),
+	})
+}
+
+func (r *Runner) persistProjectMemory(state *RunState) {
+	if r == nil || state == nil || r.memory == nil {
+		return
+	}
+	if !state.Options.EnableMemory || strings.TrimSpace(state.Options.Workspace) == "" {
+		return
+	}
+
+	entries := buildProjectMemoryEntries(state)
+	if len(entries) == 0 {
+		return
+	}
+
+	if _, err := r.memory.Append(state.Options.Workspace, entries, state.Options.MemoryMaxEntries); err != nil {
+		fmt.Fprintf(r.errOut, "Warning: failed to persist project memory: %v\n", err)
+		return
+	}
+
+	r.emitEvent(state, "memory_saved", fmt.Sprintf("Saved %d memory entries", len(entries)), map[string]any{
+		"memory_entries": len(entries),
+	})
+}
+
+func buildProjectMemoryEntries(state *RunState) []MemoryEntry {
+	if state == nil {
+		return nil
+	}
+
+	entries := make([]MemoryEntry, 0, 4)
+	summary := fmt.Sprintf("Goal: %s | Status: %s | Turns: %d | Tool calls: %d", truncateForStep(state.Goal), state.Status, state.Turn, state.ToolCallCount)
+	if strings.TrimSpace(state.LastAssistantResponse) != "" {
+		summary += " | Final: " + truncateForStep(state.LastAssistantResponse)
+	}
+	entries = append(entries, MemoryEntry{
+		Category: "run_summary",
+		Content:  summary,
+		Goal:     state.Goal,
+		RunID:    state.RunID,
+		Status:   state.Status,
+	})
+
+	if strings.TrimSpace(state.BlockerReason) != "" {
+		entries = append(entries, MemoryEntry{
+			Category: "blocker",
+			Content:  truncateForStep(state.BlockerReason),
+			Goal:     state.Goal,
+			RunID:    state.RunID,
+			Status:   state.Status,
+		})
+	}
+
+	if strings.TrimSpace(state.Error) != "" && state.Status != StatusCompleted {
+		entries = append(entries, MemoryEntry{
+			Category: "failure",
+			Content:  truncateForStep(state.Error),
+			Goal:     state.Goal,
+			RunID:    state.RunID,
+			Status:   state.Status,
+		})
+	}
+
+	failedChecks := 0
+	for _, check := range state.Verification {
+		if check.Passed {
+			continue
+		}
+		entries = append(entries, MemoryEntry{
+			Category: "verification_failure",
+			Content:  truncateForStep(fmt.Sprintf("%s (exit=%d, timed_out=%v): %s", check.Command, check.ExitCode, check.TimedOut, check.Output)),
+			Goal:     state.Goal,
+			RunID:    state.RunID,
+			Status:   state.Status,
+		})
+		failedChecks++
+		if failedChecks >= 2 {
+			break
+		}
+	}
+
+	return entries
+}
+
+func hasMemoryContextStep(state *RunState) bool {
+	if state == nil {
+		return false
+	}
+	for _, step := range state.Steps {
+		if step.Type == "memory_context" {
+			return true
+		}
+	}
+	return false
+}
+
+func buildMemoryContextText(entries []MemoryEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		content := strings.TrimSpace(entry.Content)
+		if content == "" {
+			continue
+		}
+		category := strings.TrimSpace(entry.Category)
+		if category == "" {
+			category = "note"
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s", category, truncateForStep(content)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func truncateForStep(s string) string {

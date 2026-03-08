@@ -240,6 +240,9 @@ func formatAgentRunSummary(state *agent.RunState) string {
 	if state.VerificationAttempts > 0 {
 		lines = append(lines, fmt.Sprintf("Verification Attempts: %d", state.VerificationAttempts))
 	}
+	if len(state.MemoryContext) > 0 {
+		lines = append(lines, fmt.Sprintf("Memory Context Entries: %d", len(state.MemoryContext)))
+	}
 	if strings.TrimSpace(state.Error) != "" {
 		lines = append(lines, fmt.Sprintf("Error: %s", state.Error))
 	}
