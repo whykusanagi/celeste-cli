@@ -3,7 +3,7 @@
 #        docker-compose -f docker-compose.test.yml up
 
 # Stage 1: Build test binaries
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 LABEL maintainer="whykusanagi"
 LABEL description="CelesteCLI test environment"
