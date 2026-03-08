@@ -76,3 +76,29 @@ func TestRunVerificationPhaseFailureReturnsToExecution(t *testing.T) {
 	assert.Equal(t, "user", last.Role)
 	assert.Contains(t, last.Content, "Verification failed")
 }
+
+func TestRunVerificationPhaseStopsAfterRetryLimit(t *testing.T) {
+	runner := &Runner{out: io.Discard, errOut: io.Discard}
+	state := NewRunState("goal", DefaultOptions())
+	state.Options.Workspace = t.TempDir()
+	state.Options.RequireVerification = true
+	state.Options.VerificationCommands = []string{"exit 1"}
+	state.Options.VerifyTimeout = 2 * time.Second
+	state.Options.MaxVerificationRetries = 1
+	state.Options.CompletionMarker = "TASK_COMPLETE:"
+	state.Status = StatusRunning
+	state.Phase = PhaseExecution
+
+	completed, err := runner.runVerificationPhase(context.Background(), state)
+	require.NoError(t, err)
+	assert.True(t, completed)
+	assert.Equal(t, StatusVerificationStop, state.Status)
+	assert.Contains(t, state.Error, "verification failed after 1 attempt")
+	assert.Equal(t, 1, state.VerificationAttempts)
+}
+
+func TestExtractBlockerMarker(t *testing.T) {
+	assert.Equal(t, "", extractBlockerMarker("all good", "BLOCKED:"))
+	assert.Equal(t, "missing API key", extractBlockerMarker("BLOCKED: missing API key", "BLOCKED:"))
+	assert.Equal(t, "cannot reach endpoint", extractBlockerMarker("some text\nblocked: cannot reach endpoint\nmore", "BLOCKED:"))
+}

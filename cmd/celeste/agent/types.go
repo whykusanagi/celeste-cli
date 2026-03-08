@@ -10,6 +10,8 @@ const (
 	StatusRunning           = "running"
 	StatusCompleted         = "completed"
 	StatusFailed            = "failed"
+	StatusBlocked           = "blocked"
+	StatusVerificationStop  = "verification_stopped"
 	StatusMaxTurnsReached   = "max_turns_reached"
 	StatusNoProgressStopped = "no_progress_stopped"
 )
@@ -40,6 +42,9 @@ type Options struct {
 	RequireVerification       bool          `json:"require_verification"`
 	VerificationCommands      []string      `json:"verification_commands,omitempty"`
 	VerifyTimeout             time.Duration `json:"verify_timeout"`
+	MaxVerificationRetries    int           `json:"max_verification_retries"`
+	StopOnBlocker             bool          `json:"stop_on_blocker"`
+	BlockerMarker             string        `json:"blocker_marker"`
 	EmitArtifacts             bool          `json:"emit_artifacts"`
 	ArtifactDir               string        `json:"artifact_dir,omitempty"`
 	DisableCheckpoints        bool          `json:"disable_checkpoints"`
@@ -60,6 +65,9 @@ func DefaultOptions() Options {
 		RequireVerification:       false,
 		VerificationCommands:      nil,
 		VerifyTimeout:             120 * time.Second,
+		MaxVerificationRetries:    2,
+		StopOnBlocker:             true,
+		BlockerMarker:             "BLOCKED:",
 		EmitArtifacts:             true,
 		ArtifactDir:               "",
 		DisableCheckpoints:        false,
@@ -107,7 +115,9 @@ type RunState struct {
 	Plan                   []PlanStep          `json:"plan,omitempty"`
 	ActivePlanStep         int                 `json:"active_plan_step,omitempty"`
 	Verification           []VerificationCheck `json:"verification,omitempty"`
+	VerificationAttempts   int                 `json:"verification_attempts,omitempty"`
 	LastAssistantResponse  string              `json:"last_assistant_response,omitempty"`
+	BlockerReason          string              `json:"blocker_reason,omitempty"`
 	ArtifactBundlePath     string              `json:"artifact_bundle_path,omitempty"`
 	Error                  string              `json:"error,omitempty"`
 	Options                Options             `json:"options"`

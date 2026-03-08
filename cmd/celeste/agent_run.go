@@ -49,6 +49,9 @@ func runAgentCommand(args []string) {
 	requestTimeout := fs.Int("request-timeout", 0, "LLM request timeout in seconds")
 	toolTimeout := fs.Int("tool-timeout", 0, "Tool execution timeout in seconds")
 	verifyTimeout := fs.Int("verify-timeout", 0, "Verification command timeout in seconds")
+	maxVerifyRetries := fs.Int("max-verify-retries", 0, "Maximum verification attempts before stopping")
+	stopOnBlocker := fs.Bool("stop-on-blocker", true, "Stop run when assistant emits blocker marker")
+	blockerMarker := fs.String("blocker-marker", "BLOCKED:", "Marker token for assistant blocker reports")
 	enablePlanning := fs.Bool("planner", true, "Enable explicit planning phase")
 	planMaxSteps := fs.Int("plan-max-steps", 0, "Maximum steps extracted from planning phase")
 	requireVerification := fs.Bool("require-verify", false, "Require verification commands to pass before completion")
@@ -107,6 +110,8 @@ func runAgentCommand(args []string) {
 	opts.PlanMaxSteps = *planMaxSteps
 	opts.RequireVerification = *requireVerification
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)
+	opts.StopOnBlocker = *stopOnBlocker
+	opts.BlockerMarker = strings.TrimSpace(*blockerMarker)
 	opts.ArtifactDir = strings.TrimSpace(*artifactDir)
 	opts.EmitArtifacts = !*noArtifacts
 	opts.DisableCheckpoints = *noCheckpoint
@@ -128,6 +133,9 @@ func runAgentCommand(args []string) {
 	}
 	if *verifyTimeout > 0 {
 		opts.VerifyTimeout = time.Duration(*verifyTimeout) * time.Second
+	}
+	if *maxVerifyRetries > 0 {
+		opts.MaxVerificationRetries = *maxVerifyRetries
 	}
 
 	runner, err := agent.NewRunner(cfg, opts, os.Stdout, os.Stderr)
@@ -277,6 +285,9 @@ func printRunSummary(state *agent.RunState) {
 	fmt.Printf("Tool Calls: %d\n", state.ToolCallCount)
 	if strings.TrimSpace(state.ArtifactBundlePath) != "" {
 		fmt.Printf("Artifacts: %s\n", state.ArtifactBundlePath)
+	}
+	if strings.TrimSpace(state.BlockerReason) != "" {
+		fmt.Printf("Blocker: %s\n", state.BlockerReason)
 	}
 	if state.LastAssistantResponse != "" {
 		fmt.Printf("\nFinal Response:\n%s\n", state.LastAssistantResponse)

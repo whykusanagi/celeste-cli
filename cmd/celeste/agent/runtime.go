@@ -230,6 +230,32 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 				"max_consecutive_no_tool_turn": state.Options.MaxConsecutiveNoToolTurns,
 			})
 
+			if state.Options.StopOnBlocker {
+				if blockerReason := extractBlockerMarker(state.LastAssistantResponse, state.Options.BlockerMarker); blockerReason != "" {
+					state.Status = StatusBlocked
+					state.BlockerReason = blockerReason
+					state.Error = blockerReason
+					now := time.Now()
+					state.CompletedAt = &now
+					state.Steps = append(state.Steps, Step{
+						Turn:      state.Turn,
+						Type:      "blocked",
+						Content:   truncateForStep(blockerReason),
+						Timestamp: now,
+					})
+					r.emitEvent(state, "run_blocked", blockerReason, map[string]any{
+						"marker": state.Options.BlockerMarker,
+					})
+					r.emitEvent(state, "run_stopped", blockerReason, map[string]any{
+						"reason": "blocked",
+					})
+					if !state.Options.DisableCheckpoints {
+						_ = r.store.Save(state)
+					}
+					return state, nil
+				}
+			}
+
 			if isCompletionResponse(state.LastAssistantResponse, state.Options) {
 				completed, err := r.handleCompletionCandidate(ctx, state)
 				if err != nil {
@@ -375,8 +401,11 @@ func (r *Runner) handleCompletionCandidate(ctx context.Context, state *RunState)
 
 func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (bool, error) {
 	state.Phase = PhaseVerification
+	state.VerificationAttempts++
 	r.emitEvent(state, "verification_start", "Verification phase started", map[string]any{
-		"checks": len(state.Options.VerificationCommands),
+		"checks":            len(state.Options.VerificationCommands),
+		"attempt":           state.VerificationAttempts,
+		"max_retry_attempt": state.Options.MaxVerificationRetries,
 	})
 	state.Steps = append(state.Steps, Step{
 		Turn:      state.Turn,
@@ -421,7 +450,23 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 		return true, nil
 	}
 
-	failureSummary := buildVerificationFailurePrompt(checks, state.Options)
+	if state.VerificationAttempts >= state.Options.MaxVerificationRetries {
+		state.Status = StatusVerificationStop
+		state.Error = fmt.Sprintf("verification failed after %d attempt(s)", state.VerificationAttempts)
+		now := time.Now()
+		state.CompletedAt = &now
+		state.Steps = append(state.Steps, Step{
+			Turn:      state.Turn,
+			Type:      "verification_exhausted",
+			Content:   truncateForStep(state.Error),
+			Timestamp: now,
+		})
+		r.emitEvent(state, "verification_exhausted", state.Error, nil)
+		r.emitEvent(state, "run_stopped", state.Error, nil)
+		return true, nil
+	}
+
+	failureSummary := buildVerificationFailurePrompt(checks, state.Options, state.VerificationAttempts)
 	state.Messages = append(state.Messages, tui.ChatMessage{
 		Role:      "user",
 		Content:   failureSummary,
@@ -433,7 +478,10 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 		Content:   truncateForStep(failureSummary),
 		Timestamp: time.Now(),
 	})
-	r.emitEvent(state, "verification_failed", "Verification failed; continuing execution", nil)
+	r.emitEvent(state, "verification_failed", "Verification failed; continuing execution", map[string]any{
+		"attempt":     state.VerificationAttempts,
+		"max_attempt": state.Options.MaxVerificationRetries,
+	})
 	state.ConsecutiveNoToolTurns = 0
 	state.Phase = PhaseExecution
 	return false, nil
@@ -547,6 +595,12 @@ func normalizeOptions(options *Options) {
 	if options.VerifyTimeout <= 0 {
 		options.VerifyTimeout = defaults.VerifyTimeout
 	}
+	if options.MaxVerificationRetries <= 0 {
+		options.MaxVerificationRetries = defaults.MaxVerificationRetries
+	}
+	if strings.TrimSpace(options.BlockerMarker) == "" {
+		options.BlockerMarker = defaults.BlockerMarker
+	}
 }
 
 func normalizeStateOptions(state *RunState, fallback Options) {
@@ -567,6 +621,15 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	}
 	if !state.Options.RequireVerification && fallback.RequireVerification {
 		state.Options.RequireVerification = fallback.RequireVerification
+	}
+	if state.Options.MaxVerificationRetries <= 0 && fallback.MaxVerificationRetries > 0 {
+		state.Options.MaxVerificationRetries = fallback.MaxVerificationRetries
+	}
+	if !state.Options.StopOnBlocker && fallback.StopOnBlocker {
+		state.Options.StopOnBlocker = fallback.StopOnBlocker
+	}
+	if strings.TrimSpace(state.Options.BlockerMarker) == "" && strings.TrimSpace(fallback.BlockerMarker) != "" {
+		state.Options.BlockerMarker = fallback.BlockerMarker
 	}
 	if !state.Options.EmitArtifacts && fallback.EmitArtifacts {
 		state.Options.EmitArtifacts = fallback.EmitArtifacts
@@ -609,15 +672,19 @@ func buildContinuePrompt(state *RunState) string {
 	if marker == "" {
 		marker = "TASK_COMPLETE:"
 	}
+	blockerMarker := strings.TrimSpace(state.Options.BlockerMarker)
+	if blockerMarker == "" {
+		blockerMarker = "BLOCKED:"
+	}
 
 	stepHint := ""
 	if len(state.Plan) > 0 && state.ActivePlanStep >= 0 && state.ActivePlanStep < len(state.Plan) {
 		stepHint = fmt.Sprintf(" Focus on plan step %d: %s.", state.Plan[state.ActivePlanStep].Index, state.Plan[state.ActivePlanStep].Title)
 	}
-	return fmt.Sprintf("Continue working toward the goal.%s Use tools when needed. If you are done, respond with '%s' followed by final deliverables and validation notes.", stepHint, marker)
+	return fmt.Sprintf("Continue working toward the goal.%s Use tools when needed. If you are blocked, respond with '%s <reason>'. If you are done, respond with '%s' followed by final deliverables and validation notes.", stepHint, blockerMarker, marker)
 }
 
-func buildVerificationFailurePrompt(checks []VerificationCheck, options Options) string {
+func buildVerificationFailurePrompt(checks []VerificationCheck, options Options, attempt int) string {
 	failed := make([]string, 0)
 	for _, c := range checks {
 		if c.Passed {
@@ -625,7 +692,7 @@ func buildVerificationFailurePrompt(checks []VerificationCheck, options Options)
 		}
 		failed = append(failed, fmt.Sprintf("- `%s` (exit=%d, timed_out=%v)\n%s", c.Command, c.ExitCode, c.TimedOut, truncateForStep(c.Output)))
 	}
-	return fmt.Sprintf("Verification failed. Fix the issues and continue execution. Re-run validations before completion.\n\nFailed checks:\n%s\n\nWhen complete, respond with '%s'.", strings.Join(failed, "\n"), options.CompletionMarker)
+	return fmt.Sprintf("Verification failed (attempt %d/%d). Fix the issues and continue execution. Re-run validations before completion.\n\nFailed checks:\n%s\n\nWhen complete, respond with '%s'.", attempt, options.MaxVerificationRetries, strings.Join(failed, "\n"), options.CompletionMarker)
 }
 
 func buildAgentSystemPrompt(options Options) string {
@@ -636,7 +703,15 @@ func buildAgentSystemPrompt(options Options) string {
 
 	verificationInstruction := ""
 	if options.RequireVerification && len(options.VerificationCommands) > 0 {
-		verificationInstruction = "Before final completion, ensure verification commands pass."
+		verificationInstruction = fmt.Sprintf("Before final completion, ensure verification commands pass. You have at most %d verification attempts.", options.MaxVerificationRetries)
+	}
+	blockerInstruction := ""
+	if options.StopOnBlocker {
+		blockerMarker := strings.TrimSpace(options.BlockerMarker)
+		if blockerMarker == "" {
+			blockerMarker = "BLOCKED:"
+		}
+		blockerInstruction = fmt.Sprintf("If you are blocked, respond with '%s <reason>'.", blockerMarker)
 	}
 
 	return fmt.Sprintf(`You are Celeste Agent, an autonomous execution loop for software and content tasks.
@@ -652,8 +727,9 @@ Execution contract:
    - any remaining risks/open items
 6. If blocked, clearly describe the blocker and the next required user action.
 7. %s
+8. %s
 
-Current workspace root: %s`, marker, verificationInstruction, options.Workspace)
+Current workspace root: %s`, marker, verificationInstruction, blockerInstruction, options.Workspace)
 }
 
 func parsePlanSteps(content string, maxSteps int) []PlanStep {
@@ -748,6 +824,30 @@ func extractStepDoneMarker(content string) int {
 		return -1
 	}
 	return n
+}
+
+func extractBlockerMarker(content string, marker string) string {
+	marker = strings.TrimSpace(marker)
+	if marker == "" {
+		marker = "BLOCKED:"
+	}
+
+	upperContent := strings.ToUpper(content)
+	upperMarker := strings.ToUpper(marker)
+	idx := strings.Index(upperContent, upperMarker)
+	if idx < 0 {
+		return ""
+	}
+
+	rest := strings.TrimSpace(content[idx+len(marker):])
+	if rest == "" {
+		return "blocked without details"
+	}
+	line := rest
+	if newline := strings.Index(line, "\n"); newline >= 0 {
+		line = line[:newline]
+	}
+	return strings.TrimSpace(line)
 }
 
 func updatePlanProgressFromAssistant(state *RunState, content string, hadTools bool) {

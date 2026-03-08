@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Phase 6 safety hardening (initial slice):
   - dev command policy blocks risky shell commands unless `allow_risky=true`
   - stronger workspace path guard rejects symlink escapes for dev file tools
+- Phase 7 runtime hardening (initial slice):
+  - blocker-marker detection (`BLOCKED:` by default) can stop runs with explicit blocker reason capture
+  - verification attempts are capped (`max_verification_retries`) to prevent indefinite verify/fix loops
 
 ### Testing
 - Added new unit coverage for:
