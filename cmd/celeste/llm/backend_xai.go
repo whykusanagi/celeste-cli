@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
@@ -64,6 +65,7 @@ type xAIMessage struct {
 
 // xAIToolCall represents a tool call in xAI's format
 type xAIToolCall struct {
+	Index    int    `json:"index"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {
@@ -207,13 +209,19 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 				isFirst = false
 			}
 
-			// Accumulate tool calls
+			// Accumulate tool calls — arguments stream across multiple chunks,
+			// so append argument fragments rather than replacing the whole struct.
 			for _, tc := range choice.Delta.ToolCalls {
-				// Update or append tool call
 				found := false
 				for i := range toolCalls {
-					if toolCalls[i].ID == tc.ID {
-						toolCalls[i] = tc
+					if toolCalls[i].Index == tc.Index {
+						toolCalls[i].Function.Arguments += tc.Function.Arguments
+						if tc.ID != "" {
+							toolCalls[i].ID = tc.ID
+						}
+						if tc.Function.Name != "" {
+							toolCalls[i].Function.Name = tc.Function.Name
+						}
 						found = true
 						break
 					}
@@ -268,9 +276,36 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 	return nil
 }
 
-// SendMessageSync sends a message synchronously (not implemented for xAI backend).
+// SendMessageSync collects the xAI stream into a single synchronous result.
 func (b *XAIBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	return nil, fmt.Errorf("SendMessageSync not implemented for xAI backend, use SendMessageStream instead")
+	var content strings.Builder
+	var result *ChatCompletionResult
+	var streamErr error
+
+	streamErr = b.SendMessageStream(ctx, messages, tools, func(chunk StreamChunk) {
+		if chunk.Content != "" {
+			content.WriteString(chunk.Content)
+		}
+		if chunk.IsFinal {
+			result = &ChatCompletionResult{
+				Content:      content.String(),
+				ToolCalls:    chunk.ToolCalls,
+				FinishReason: chunk.FinishReason,
+			}
+		}
+	})
+
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	if result == nil {
+		// Stream ended without a final chunk — return whatever content accumulated
+		result = &ChatCompletionResult{
+			Content:      content.String(),
+			FinishReason: "stop",
+		}
+	}
+	return result, nil
 }
 
 // convertMessages converts TUI messages to xAI format
