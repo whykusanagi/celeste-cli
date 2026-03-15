@@ -280,9 +280,7 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 func (b *XAIBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	var content strings.Builder
 	var result *ChatCompletionResult
-	var streamErr error
-
-	streamErr = b.SendMessageStream(ctx, messages, tools, func(chunk StreamChunk) {
+	streamErr := b.SendMessageStream(ctx, messages, tools, func(chunk StreamChunk) {
 		if chunk.Content != "" {
 			content.WriteString(chunk.Content)
 		}
