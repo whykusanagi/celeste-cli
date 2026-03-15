@@ -238,7 +238,6 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			updatePlanProgressFromAssistant(state, state.LastAssistantResponse, false)
 
 			if isCompletionResponse(state.LastAssistantResponse, state.Options) {
-				r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
 				completed, err := r.handleCompletionCandidate(ctx, state)
 				if err != nil {
 					state.Status = StatusFailed
@@ -249,6 +248,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 					return state, err
 				}
 				if completed {
+				r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
 					if !state.Options.DisableCheckpoints {
 						_ = r.store.Save(state)
 					}
