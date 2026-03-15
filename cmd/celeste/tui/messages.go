@@ -243,3 +243,29 @@ func (m AgentProgressMsg) ReadNext() tea.Cmd {
 		return msg
 	}
 }
+
+// OrchestratorEventMsg wraps an orchestrator.OrchestratorEvent for delivery to the TUI.
+// Defined here to avoid an import cycle (tui → orchestrator is fine; orchestrator must not → tui).
+type OrchestratorEventMsg struct {
+	Kind     int    // cast from orchestrator.EventKind
+	Lane     string // cast from orchestrator.TaskLane
+	Text     string
+	FilePath string
+	Diff     string
+	Score    float64
+	Ch       <-chan OrchestratorEventMsg // nil on terminal events
+}
+
+// ReadNext returns a cmd to read the next OrchestratorEventMsg.
+func (m OrchestratorEventMsg) ReadNext() tea.Cmd {
+	if m.Ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, ok := <-m.Ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}

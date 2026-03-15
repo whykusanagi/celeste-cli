@@ -80,6 +80,10 @@ type AppModel struct {
 	menuModel        *MenuModel
 	skillsBrowser    *SkillsBrowserModel
 	viewMode         string // "chat", "collections", "menu", "skills"
+
+	// Split panel for orchestrator/agent view
+	splitPanel     *SplitPanel
+	splitPanelMode bool
 }
 
 type pendingToolCall struct {
@@ -978,6 +982,58 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(cmds...)
 
+	case OrchestratorEventMsg:
+		var cmds []tea.Cmd
+
+		if m.splitPanel == nil {
+			m.splitPanel = NewSplitPanel(m.width, m.height)
+		}
+		m.splitPanelMode = true
+
+		// EventKind constants (mirror orchestrator package without import cycle):
+		// 0=Classified 1=Action 2=ToolCall 3=FileDiff 4=ReviewDraft 5=Defense 6=Verdict 7=Complete 8=Error
+		switch msg.Kind {
+		case 0: // EventClassified
+			m.splitPanel.AddAction(fmt.Sprintf("classified: %s (%s)", msg.Lane, msg.Text))
+			m.status = m.status.SetText(fmt.Sprintf("Orchestrator: [%s] %s", msg.Lane, msg.Text))
+			m.streaming = true
+			m.status = m.status.SetStreaming(true)
+		case 1, 2: // EventAction, EventToolCall
+			m.splitPanel.AddAction(msg.Text)
+			m.status = m.status.SetText(fmt.Sprintf("Orchestrator: %s", msg.Text))
+		case 3: // EventFileDiff
+			m.splitPanel.AddAction(fmt.Sprintf("wrote %s", msg.FilePath))
+			if msg.FilePath != "" {
+				m.splitPanel.SetDiff(msg.FilePath, msg.Diff)
+			}
+		case 4: // EventReviewDraft
+			m.splitPanel.AddAction(fmt.Sprintf("🔍 reviewer: %s", truncateText(msg.Text, 60)))
+		case 5: // EventDefense
+			m.splitPanel.AddAction(fmt.Sprintf("🛡 defense: %s", truncateText(msg.Text, 60)))
+		case 6: // EventVerdict
+			score := fmt.Sprintf("%.2f", msg.Score)
+			m.splitPanel.AddAction(fmt.Sprintf("verdict: %s (score %s)", msg.Text, score))
+			m.splitPanel.SetVerdict(fmt.Sprintf("%s\nscore: %s", msg.Text, score))
+		case 7: // EventComplete
+			m.streaming = false
+			m.splitPanelMode = false
+			m.status = m.status.SetStreaming(false)
+			m.status = m.status.SetText("Orchestrator: complete")
+			m.persistSession()
+		case 8: // EventError
+			m.streaming = false
+			m.splitPanelMode = false
+			m.status = m.status.SetStreaming(false)
+			m.status = m.status.SetText(fmt.Sprintf("Orchestrator error: %s", msg.Text))
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ %s", msg.Text))
+			m.persistSession()
+		}
+
+		if next := msg.ReadNext(); next != nil {
+			cmds = append(cmds, next)
+		}
+		return m, tea.Batch(cmds...)
+
 	case AgentCommandResultMsg:
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
@@ -1253,6 +1309,16 @@ func (m AppModel) View() string {
 	// Show skills view if in that mode
 	if m.viewMode == "skills" && m.skillsBrowser != nil {
 		return m.skillsBrowser.View()
+	}
+
+	if m.splitPanelMode && m.splitPanel != nil {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			m.header.View(),
+			m.splitPanel.View(),
+			m.skills.View(),
+			m.status.View(),
+			m.input.View(),
+		)
 	}
 
 	// Build the layout vertically
@@ -2211,3 +2277,10 @@ func Run(llmClient LLMClient) error {
 
 // Typing delay for simulated streaming (40 chars/sec = 25ms per char)
 const typingDelay = 25 * 1000000 // 25ms in nanoseconds
+
+func truncateText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
