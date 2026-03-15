@@ -927,6 +927,57 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
 
+	case AgentProgressMsg:
+		var cmds []tea.Cmd
+
+		switch msg.Kind {
+		case AgentProgressTurnStart:
+			m.streaming = true
+			m.status = m.status.SetStreaming(true)
+			m.status = m.status.SetText(fmt.Sprintf("Agent: %s", msg.Text))
+
+		case AgentProgressToolCall:
+			m.status = m.status.SetText(fmt.Sprintf("Agent: calling %s", msg.Text))
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚙ %s", msg.Text))
+
+		case AgentProgressStepDone:
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("✓ %s", msg.Text))
+
+		case AgentProgressResponse:
+			// Feed the final response through SimulatedTyping — same path as streamed LLM output.
+			if strings.TrimSpace(msg.Text) != "" {
+				m.typingContent = msg.Text
+				m.typingPos = 0
+				m.chat = m.chat.AddAssistantMessage("")
+				m.status = m.status.SetText("Agent: typing response...")
+				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
+					return TickMsg{Time: t}
+				}))
+			}
+
+		case AgentProgressComplete:
+			m.streaming = false
+			m.status = m.status.SetStreaming(false)
+			m.status = m.status.SetText("Agent run complete")
+			m.persistSession()
+
+		case AgentProgressError:
+			m.streaming = false
+			m.status = m.status.SetStreaming(false)
+			m.status = m.status.SetText(fmt.Sprintf("Agent error: %s", msg.Text))
+			if strings.TrimSpace(msg.Text) != "" {
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %s", msg.Text))
+			}
+			m.persistSession()
+		}
+
+		// If there are more messages in the channel, schedule reading the next one.
+		if next := msg.ReadNext(); next != nil {
+			cmds = append(cmds, next)
+		}
+
+		return m, tea.Batch(cmds...)
+
 	case AgentCommandResultMsg:
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
