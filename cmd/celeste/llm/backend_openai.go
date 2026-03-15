@@ -56,6 +56,7 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 
 	if len(openAITools) > 0 {
 		req.Tools = openAITools
+		req.ToolChoice = "auto"
 	}
 
 	// Create streaming request
@@ -255,8 +256,10 @@ func (b *OpenAIBackend) Close() error {
 func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.ChatCompletionMessage {
 	var result []openai.ChatCompletionMessage
 
-	// Add system prompt if configured
-	if b.systemPrompt != "" && !b.config.SkipPersonaPrompt {
+	// Add system prompt if set. The SkipPersonaPrompt flag controls whether the
+	// Celeste VTuber persona is prepended (handled upstream in runtime.go), not
+	// whether the system prompt itself is omitted — so we always include it here.
+	if b.systemPrompt != "" {
 		result = append(result, openai.ChatCompletionMessage{
 			Role:    "system",
 			Content: b.systemPrompt,
@@ -316,35 +319,11 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 }
 
 // convertTools converts TUI skill definitions to OpenAI tools.
+// Note: xAI-specific tool types (collections_search, web_search, x_search) are
+// handled exclusively by the XAIBackend; this backend is for OpenAI-compatible
+// endpoints only and must not inject non-standard tool types.
 func (b *OpenAIBackend) convertTools(tools []tui.SkillDefinition) []openai.Tool {
 	var result []openai.Tool
-
-	// Add xAI built-in tools if configured (xAI only)
-	if b.config.Collections != nil && b.config.Collections.Enabled {
-		if len(b.config.Collections.ActiveCollections) > 0 {
-			// Note: collections_search is a built-in xAI tool
-			// The go-openai library might not have this type yet
-			// We'll need to use a generic tool structure
-			result = append(result, openai.Tool{
-				Type: "collections_search",
-				// Collections IDs are passed in the tool definition for xAI
-			})
-		}
-	}
-
-	// Add web_search if enabled (xAI only)
-	if b.config.XAIFeatures != nil && b.config.XAIFeatures.EnableWebSearch {
-		result = append(result, openai.Tool{
-			Type: "web_search",
-		})
-	}
-
-	// Add x_search if enabled (xAI only)
-	if b.config.XAIFeatures != nil && b.config.XAIFeatures.EnableXSearch {
-		result = append(result, openai.Tool{
-			Type: "x_search",
-		})
-	}
 
 	// Add user-defined function tools
 	for _, tool := range tools {

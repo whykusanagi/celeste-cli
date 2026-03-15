@@ -53,12 +53,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	options.Workspace = filepath.Clean(absWorkspace)
 	normalizeOptions(&options)
 
+	// Agent registry: only register dev tools (file/shell access).
+	// Builtin skills (weather, tarot, crypto, etc.) are irrelevant for code
+	// tasks, inflate the tool list from 6 to 29+, and reduce tool-call accuracy.
 	registry := skills.NewRegistry()
-	if err := registry.LoadSkills(); err != nil {
-		fmt.Fprintf(errOut, "Warning: failed to load custom skills: %v\n", err)
-	}
-	configLoader := config.NewConfigLoader(cfg)
-	skills.RegisterBuiltinSkills(registry, configLoader)
 	if err := RegisterDevSkills(registry, options.Workspace); err != nil {
 		return nil, fmt.Errorf("register development skills: %w", err)
 	}
@@ -78,9 +76,15 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	client := llm.NewClient(llmConfig, registry)
 
+	// Build system prompt. The agent operational rules always come last so they
+	// take precedence over character voice. The persona (if enabled) sets tone
+	// only — tool-use rules in the agent prompt override any conflicting phrasing.
 	systemPrompt := buildAgentSystemPrompt(options)
 	if !cfg.SkipPersonaPrompt {
-		systemPrompt = prompts.GetSystemPrompt(false) + "\n\n" + systemPrompt
+		persona := prompts.GetSystemPrompt(false)
+		if persona != "" {
+			systemPrompt = persona + "\n\n" + systemPrompt
+		}
 	}
 	client.SetSystemPrompt(systemPrompt)
 
@@ -206,6 +210,15 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 		if state.Options.Verbose && state.LastAssistantResponse != "" {
 			fmt.Fprintf(r.out, "[assistant]\n%s\n", state.LastAssistantResponse)
+		}
+
+		// Text-based tool call fallback: some proxies/models don't issue native
+		// API tool_calls but describe them inline. Parse <tool_call>...</tool_call>
+		// blocks from the response content so we can execute them.
+		if len(result.ToolCalls) == 0 && result.Content != "" {
+			if textCalls := parseTextToolCalls(result.Content); len(textCalls) > 0 {
+				result.ToolCalls = textCalls
+			}
 		}
 
 		if len(result.ToolCalls) == 0 {
@@ -425,6 +438,17 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		Timestamp: time.Now(),
 	})
 
+	// Text-based tool calls have IDs like "text-tc-N"; they don't have
+	// matching tool_call_id entries in the assistant message, so we use
+	// "user" role with a labelled result instead of the "tool" role.
+	if strings.HasPrefix(tc.ID, "text-tc-") {
+		return tui.ChatMessage{
+			Role:      "user",
+			Content:   fmt.Sprintf("[Tool Result: %s]\n%s", toolName, resultContent),
+			Timestamp: time.Now(),
+		}
+	}
+
 	return tui.ChatMessage{
 		Role:       "tool",
 		ToolCallID: tc.ID,
@@ -600,6 +624,17 @@ You have file and shell tools. You MUST use them. There are no exceptions.
 - To find files: call dev_list_files or dev_run_command with ls/find.
 - To search code: call dev_run_command with grep, or dev_search_files.
 
+## Tool Invocation Format
+
+Invoke tools via the function calling API when available. If the API does not forward function calls, use this exact text format instead — one block per tool:
+
+<tool_call>{"name": "dev_write_file", "arguments": {"path": "hello.py", "content": "print('hello')"}}</tool_call>
+
+Rules for text-format tool calls:
+- Output ONLY the <tool_call> block(s) — do NOT narrate the action or simulate the output.
+- Stop after the block(s). Wait for [Tool Result] messages before continuing.
+- Do NOT write "I will call...", "Let me...", or any description before or after the block.
+
 If you write code or file content in your response instead of calling a tool, you have failed. The content will appear in the chat and nothing will be written to disk.
 
 ## Execution Contract
@@ -649,6 +684,43 @@ func parsePlanSteps(content string, maxSteps int) []PlanStep {
 		}
 	}
 	return steps
+}
+
+// parseTextToolCalls extracts <tool_call>...</tool_call> blocks from text.
+// This provides a fallback for models/proxies that understand tools but don't
+// issue native API tool_calls — they emit the invocation as structured text.
+// The expected block format is:
+//
+//	<tool_call>{"name":"dev_write_file","arguments":{"path":"x","content":"y"}}</tool_call>
+func parseTextToolCalls(content string) []llm.ToolCallResult {
+	var results []llm.ToolCallResult
+	remaining := content
+	for {
+		start := strings.Index(remaining, "<tool_call>")
+		if start < 0 {
+			break
+		}
+		after := remaining[start+len("<tool_call>"):]
+		end := strings.Index(after, "</tool_call>")
+		if end < 0 {
+			break
+		}
+		jsonStr := strings.TrimSpace(after[:end])
+		var call struct {
+			Name      string                 `json:"name"`
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &call); err == nil && call.Name != "" {
+			argsJSON, _ := json.Marshal(call.Arguments)
+			results = append(results, llm.ToolCallResult{
+				ID:        fmt.Sprintf("text-tc-%d", len(results)),
+				Name:      call.Name,
+				Arguments: string(argsJSON),
+			})
+		}
+		remaining = after[end+len("</tool_call>"):]
+	}
+	return results
 }
 
 func isNumberedStep(line string) bool {
