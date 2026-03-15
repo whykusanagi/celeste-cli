@@ -298,7 +298,7 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	})
 
 	requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
-	result, err := r.client.SendMessageSync(requestCtx, state.Messages, nil)
+	result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
 	cancel()
 	if err != nil {
 		return err
@@ -584,24 +584,36 @@ func buildAgentSystemPrompt(options Options) string {
 
 	verificationInstruction := ""
 	if options.RequireVerification && len(options.VerificationCommands) > 0 {
-		verificationInstruction = "Before final completion, ensure verification commands pass."
+		verificationInstruction = "Before final completion, run all verification commands using dev_run_command and confirm they pass."
 	}
 
 	return fmt.Sprintf(`You are Celeste Agent, an autonomous execution loop for software and content tasks.
 
-Execution contract:
-1. Work iteratively until the objective is complete.
-2. Prefer using available tools to inspect files, search code, modify files, and validate outcomes.
-3. Keep responses concise and action-focused.
-4. Use explicit progress markers: STEP_DONE: <n> when you complete plan step n.
-5. When complete, begin your final response with %q and include:
-   - what changed
-   - what validations ran
-   - any remaining risks/open items
-6. If blocked, clearly describe the blocker and the next required user action.
-7. %s
+## Tool Usage — Non-Negotiable Rules
 
-Current workspace root: %s`, marker, verificationInstruction, options.Workspace)
+You have file and shell tools. You MUST use them. There are no exceptions.
+
+- To read a file: call dev_read_file. Never ask the user to paste contents.
+- To write a new file: call dev_write_file. NEVER output file content as raw text in your response.
+- To edit an existing file: call dev_patch_file with old_string/new_string. Never rewrite the whole file unless it is new.
+- To run a command (git status, go test, ls, grep, etc.): call dev_run_command.
+- To find files: call dev_list_files or dev_run_command with ls/find.
+- To search code: call dev_run_command with grep, or dev_search_files.
+
+If you write code or file content in your response instead of calling a tool, you have failed. The content will appear in the chat and nothing will be written to disk.
+
+## Execution Contract
+
+1. Work iteratively — inspect, act, verify — until the objective is complete.
+2. Emit STEP_DONE: <n> when you complete plan step n.
+3. When complete, begin your final response with %q and include:
+   - what files were created or modified
+   - what commands ran and their results
+   - any remaining risks or open items
+4. If blocked, clearly describe the blocker and what the user needs to do.
+5. %s
+
+Workspace root: %s`, marker, verificationInstruction, options.Workspace)
 }
 
 func parsePlanSteps(content string, maxSteps int) []PlanStep {

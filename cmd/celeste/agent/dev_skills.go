@@ -21,33 +21,56 @@ const (
 )
 
 func RegisterDevSkills(registry *skills.Registry, workspace string) error {
+	return registerDevSkillsWithOptions(registry, workspace, false)
+}
+
+// RegisterReadOnlyDevSkills registers only read/search skills — no write or run access.
+// Used for reviewer agents that should observe but not modify the workspace.
+func RegisterReadOnlyDevSkills(registry *skills.Registry, workspace string) error {
+	return registerDevSkillsWithOptions(registry, workspace, true)
+}
+
+func registerDevSkillsWithOptions(registry *skills.Registry, workspace string, readOnly bool) error {
 	workspace, err := normalizeWorkspace(workspace)
 	if err != nil {
 		return err
 	}
 
-	definitions := []skills.Skill{
+	readDefs := []skills.Skill{
 		devListFilesSkill(),
 		devReadFileSkill(),
-		devWriteFileSkill(),
 		devSearchFilesSkill(),
-		devRunCommandSkill(),
 	}
-	for _, skillDef := range definitions {
+	for _, skillDef := range readDefs {
 		registry.RegisterSkill(skillDef)
 	}
-
 	registry.RegisterHandler("dev_list_files", func(args map[string]interface{}) (interface{}, error) {
 		return devListFilesHandler(workspace, args)
 	})
 	registry.RegisterHandler("dev_read_file", func(args map[string]interface{}) (interface{}, error) {
 		return devReadFileHandler(workspace, args)
 	})
+	registry.RegisterHandler("dev_search_files", func(args map[string]interface{}) (interface{}, error) {
+		return devSearchFilesHandler(workspace, args)
+	})
+
+	if readOnly {
+		return nil
+	}
+
+	writeDefs := []skills.Skill{
+		devWriteFileSkill(),
+		devPatchFileSkill(),
+		devRunCommandSkill(),
+	}
+	for _, skillDef := range writeDefs {
+		registry.RegisterSkill(skillDef)
+	}
 	registry.RegisterHandler("dev_write_file", func(args map[string]interface{}) (interface{}, error) {
 		return devWriteFileHandler(workspace, args)
 	})
-	registry.RegisterHandler("dev_search_files", func(args map[string]interface{}) (interface{}, error) {
-		return devSearchFilesHandler(workspace, args)
+	registry.RegisterHandler("dev_patch_file", func(args map[string]interface{}) (interface{}, error) {
+		return devPatchFileHandler(workspace, args)
 	})
 	registry.RegisterHandler("dev_run_command", func(args map[string]interface{}) (interface{}, error) {
 		return devRunCommandHandler(workspace, args)
@@ -126,6 +149,35 @@ func devWriteFileSkill() skills.Skill {
 				},
 			},
 			"required": []string{"path", "content"},
+		},
+	}
+}
+
+func devPatchFileSkill() skills.Skill {
+	return skills.Skill{
+		Name:        "dev_patch_file",
+		Description: "Make a surgical edit to a workspace file by replacing an exact string with new content. Prefer this over dev_write_file when modifying existing files — it is safer and token-efficient.",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative file path inside workspace.",
+				},
+				"old_string": map[string]interface{}{
+					"type":        "string",
+					"description": "The exact string to find and replace. Must be unique in the file.",
+				},
+				"new_string": map[string]interface{}{
+					"type":        "string",
+					"description": "The string to replace it with.",
+				},
+				"replace_all": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Replace every occurrence when true. Defaults to false (fails if old_string appears more than once).",
+				},
+			},
+			"required": []string{"path", "old_string", "new_string"},
 		},
 	}
 }
@@ -348,6 +400,53 @@ func devWriteFileHandler(workspace string, args map[string]interface{}) (interfa
 		"workspace":     workspace,
 		"bytes_written": bytesWritten,
 		"append":        appendMode,
+	}, nil
+}
+
+func devPatchFileHandler(workspace string, args map[string]interface{}) (interface{}, error) {
+	path := getStringArg(args, "path", "")
+	if path == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+	oldString := getStringArg(args, "old_string", "")
+	newString := getStringArg(args, "new_string", "")
+	replaceAll := getBoolArg(args, "replace_all", false)
+
+	targetPath, err := resolveWorkspacePath(workspace, path)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		return nil, err
+	}
+	original := string(data)
+
+	count := strings.Count(original, oldString)
+	if count == 0 {
+		return nil, fmt.Errorf("old_string not found in %s", path)
+	}
+	if !replaceAll && count > 1 {
+		return nil, fmt.Errorf("old_string appears %d times in %s — set replace_all:true or make it more specific", count, path)
+	}
+
+	var patched string
+	if replaceAll {
+		patched = strings.ReplaceAll(original, oldString, newString)
+	} else {
+		patched = strings.Replace(original, oldString, newString, 1)
+	}
+
+	if err := os.WriteFile(targetPath, []byte(patched), 0644); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"path":         path,
+		"workspace":    workspace,
+		"replacements": count,
+		"replace_all":  replaceAll,
 	}, nil
 }
 
