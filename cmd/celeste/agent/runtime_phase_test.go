@@ -76,3 +76,21 @@ func TestRunVerificationPhaseFailureReturnsToExecution(t *testing.T) {
 	assert.Equal(t, "user", last.Role)
 	assert.Contains(t, last.Content, "Verification failed")
 }
+
+func TestDetectEnvContext(t *testing.T) {
+	env := detectEnvContext()
+	assert.Contains(t, env, "OS:")
+	assert.Contains(t, env, "Shell:")
+	assert.Contains(t, env, "Package manager:")
+	assert.Contains(t, env, "Python:")
+}
+
+func TestBuildAgentSystemPromptContainsEnvSection(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Workspace = t.TempDir()
+	prompt := buildAgentSystemPrompt(opts, "OS: linux (amd64)\nShell: /bin/bash\nPackage manager: apt-get\nPython: python3")
+	assert.Contains(t, prompt, "## Environment")
+	assert.Contains(t, prompt, "apt-get")
+	assert.Contains(t, prompt, "python3")
+	assert.Contains(t, prompt, opts.Workspace)
+}

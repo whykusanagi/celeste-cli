@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -79,7 +80,8 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Build system prompt. The agent operational rules always come last so they
 	// take precedence over character voice. The persona (if enabled) sets tone
 	// only — tool-use rules in the agent prompt override any conflicting phrasing.
-	systemPrompt := buildAgentSystemPrompt(options)
+	envContext := detectEnvContext()
+	systemPrompt := buildAgentSystemPrompt(options, envContext)
 	if !cfg.SkipPersonaPrompt {
 		persona := prompts.GetSystemPrompt(false)
 		if persona != "" {
@@ -600,7 +602,41 @@ func buildVerificationFailurePrompt(checks []VerificationCheck, options Options)
 	return fmt.Sprintf("Verification failed. Fix the issues and continue execution. Re-run validations before completion.\n\nFailed checks:\n%s\n\nWhen complete, respond with '%s'.", strings.Join(failed, "\n"), options.CompletionMarker)
 }
 
-func buildAgentSystemPrompt(options Options) string {
+// detectEnvContext probes the runtime environment and returns a concise
+// summary string for inclusion in the agent system prompt.
+func detectEnvContext() string {
+	osName := runtime.GOOS
+	if osName == "darwin" {
+		osName = "macOS"
+	}
+	arch := runtime.GOARCH
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "unknown"
+	}
+
+	pkgManager := "none"
+	for _, candidate := range []string{"brew", "apt-get", "apt", "dnf", "yum", "pacman", "apk", "scoop", "choco"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			pkgManager = filepath.Base(path)
+			break
+		}
+	}
+
+	pythonExe := "none"
+	for _, candidate := range []string{"python3", "python"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			pythonExe = candidate
+			break
+		}
+	}
+
+	return fmt.Sprintf("OS: %s (%s)\nShell: %s\nPackage manager: %s\nPython: %s",
+		osName, arch, shell, pkgManager, pythonExe)
+}
+
+func buildAgentSystemPrompt(options Options, envContext string) string {
 	marker := options.CompletionMarker
 	if marker == "" {
 		marker = "TASK_COMPLETE:"
@@ -648,7 +684,13 @@ If you write code or file content in your response instead of calling a tool, yo
 4. If blocked, clearly describe the blocker and what the user needs to do.
 5. %s
 
-Workspace root: %s`, marker, verificationInstruction, options.Workspace)
+## Environment
+
+%s
+
+Use the package manager and Python executable listed above. Do not use sudo or assume alternatives are available.
+
+Workspace root: %s`, marker, verificationInstruction, envContext, options.Workspace)
 }
 
 func parsePlanSteps(content string, maxSteps int) []PlanStep {
