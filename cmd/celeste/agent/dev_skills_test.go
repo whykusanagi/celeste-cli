@@ -88,3 +88,36 @@ func TestDevRunCommandExecutesInWorkspace(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(workspace, ".."))
 	assert.NoError(t, statErr)
 }
+
+func TestDevRunCommandBlocksSudo(t *testing.T) {
+	workspace := t.TempDir()
+	registry := skills.NewRegistry()
+	require.NoError(t, RegisterDevSkills(registry, workspace))
+
+	blocked := []string{
+		"sudo apt-get install python3",
+		"sudo rm -rf /",
+		"su - root",
+		"su root",
+		"sudo",
+	}
+	for _, cmd := range blocked {
+		_, err := registry.Execute("dev_run_command", map[string]interface{}{"command": cmd})
+		require.Error(t, err, "expected block for: %s", cmd)
+		assert.Contains(t, err.Error(), "sudo/su is not permitted", "wrong error for: %s", cmd)
+	}
+
+	// Commands that merely mention sudo should not be blocked.
+	allowed := []string{
+		"grep sudo /etc/sudoers",
+		"echo 'sudo is useful'",
+		"cat /etc/sudoers",
+	}
+	for _, cmd := range allowed {
+		_, err := registry.Execute("dev_run_command", map[string]interface{}{"command": cmd})
+		// These may fail for other reasons (file missing) but not the sudo block.
+		if err != nil {
+			assert.NotContains(t, err.Error(), "sudo/su is not permitted", "false-positive block for: %s", cmd)
+		}
+	}
+}

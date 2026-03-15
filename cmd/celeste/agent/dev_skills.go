@@ -537,6 +537,9 @@ func devRunCommandHandler(workspace string, args map[string]interface{}) (interf
 	if strings.TrimSpace(command) == "" {
 		return nil, fmt.Errorf("command is required")
 	}
+	if fields := strings.Fields(command); len(fields) > 0 && (fields[0] == "sudo" || fields[0] == "su") {
+		return nil, fmt.Errorf("sudo/su is not permitted in dev_run_command; run commands as the current user only")
+	}
 	timeoutSeconds := getIntArg(args, "timeout_seconds", 20)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 20
