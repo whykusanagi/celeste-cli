@@ -13,7 +13,7 @@ var laneKeywords = []struct {
 	{[]string{"write", "draft", "blog", "docs", "document", "summarize", "explain", "describe", "article"}, LaneContent},
 	{[]string{"upscale", "image", "video", "render", "convert", "generate image", "generate video", "media"}, LaneMedia},
 	{[]string{"review", "audit", "check", "critique", "blind review", "code review"}, LaneReview},
-	{[]string{"research", "find", "search", "compare", "what is", "how does", "investigate", "explore"}, LaneResearch},
+	{[]string{"research", "search", "compare", "what is", "how does", "investigate", "explore", "look up"}, LaneResearch},
 }
 
 // ClassifyHeuristic returns the best-guess TaskLane and a confidence score (0.0–1.0)

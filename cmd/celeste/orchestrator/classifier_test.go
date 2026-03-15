@@ -21,7 +21,7 @@ func TestClassifyKeywords(t *testing.T) {
 		{"review my pull request", orchestrator.LaneReview},
 		{"blind audit of main.go", orchestrator.LaneReview},
 		{"research the best Go ORMs", orchestrator.LaneResearch},
-		{"find all mentions of deprecated functions", orchestrator.LaneResearch},
+		{"search all mentions of deprecated functions", orchestrator.LaneResearch},
 	}
 	for _, tc := range cases {
 		t.Run(tc.goal, func(t *testing.T) {

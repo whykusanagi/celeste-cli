@@ -57,7 +57,9 @@ func New(cfg *config.Config, opts ...Option) *Orchestrator {
 		opt(o)
 	}
 	if o.runnerFactory == nil {
-		o.runnerFactory = defaultRunnerFactory(cfg)
+		// Pass a closure that always calls the current o.onEvent, so that
+		// OnEvent() calls made after New() are still honoured.
+		o.runnerFactory = defaultRunnerFactory(cfg, func(e OrchestratorEvent) { o.onEvent(e) })
 	}
 	return o
 }
@@ -118,7 +120,7 @@ func (o *Orchestrator) makeRunner(model, baseURL, apiKey string) AgentRunner {
 		if apiKey != "" {
 			cfg.APIKey = apiKey
 		}
-		return defaultRunnerFactory(&cfg)(model)
+		return defaultRunnerFactory(&cfg, func(e OrchestratorEvent) { o.onEvent(e) })(model)
 	}
 	return o.runnerFactory(model)
 }
