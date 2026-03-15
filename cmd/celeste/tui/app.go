@@ -105,6 +105,11 @@ type AgentCommandRunner interface {
 	RunAgentCommand(args []string) tea.Cmd
 }
 
+// OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
+type OrchestratorCommandRunner interface {
+	RunOrchestratorCommand(goal string) tea.Cmd
+}
+
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
 type EndpointSwitcher interface {
 	SwitchEndpoint(endpoint string) error
@@ -336,6 +341,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				agentArgs := append([]string{}, cmd.Args...)
 				return m, tea.Batch(
 					agentRunner.RunAgentCommand(agentArgs),
+					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+						return TickMsg{Time: t}
+					}),
+				)
+
+			case "orchestrate":
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Usage: /orchestrate <goal>")
+					return m, nil
+				}
+				orchRunner, ok := m.llmClient.(OrchestratorCommandRunner)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("❌ /orchestrate is unavailable for this client.")
+					return m, nil
+				}
+				goal := strings.Join(cmd.Args, " ")
+				m.streaming = true
+				m.status = m.status.SetStreaming(true)
+				m.status = m.status.SetText(StreamingSpinner(0) + " Orchestrating...")
+				m.chat = m.chat.AddSystemMessage("🎭 Orchestrator: " + goal)
+				return m, tea.Batch(
+					orchRunner.RunOrchestratorCommand(goal),
 					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 						return TickMsg{Time: t}
 					}),

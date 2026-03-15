@@ -83,7 +83,7 @@ func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
 
 	// 3. Run primary agent
 	o.onEvent(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: fmt.Sprintf("starting primary agent (%s)", assignment.Primary)})
-	primary := o.runnerFactory(assignment.Primary)
+	primary := o.makeRunner(assignment.Primary, assignment.PrimaryBaseURL, assignment.PrimaryAPIKey)
 	primaryResponse, err := primary.RunGoal(ctx, goal)
 	if err != nil {
 		o.onEvent(OrchestratorEvent{Kind: EventError, Text: err.Error()})
@@ -107,9 +107,25 @@ func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
 	return result, nil
 }
 
+// makeRunner creates an AgentRunner for the given model, optionally overriding
+// the base URL and API key for cross-provider orchestration.
+func (o *Orchestrator) makeRunner(model, baseURL, apiKey string) AgentRunner {
+	if baseURL != "" || apiKey != "" {
+		cfg := *o.cfg
+		if baseURL != "" {
+			cfg.BaseURL = baseURL
+		}
+		if apiKey != "" {
+			cfg.APIKey = apiKey
+		}
+		return defaultRunnerFactory(&cfg)(model)
+	}
+	return o.runnerFactory(model)
+}
+
 func (o *Orchestrator) runDebate(ctx context.Context, goal, primaryOutput string, assignment ModelAssignment) (*DebateResult, error) {
 	dm := NewDebateManager(DebateOptions{MaxRounds: o.debateRounds})
-	reviewer := o.runnerFactory(assignment.Reviewer)
+	reviewer := o.makeRunner(assignment.Reviewer, assignment.ReviewerBaseURL, assignment.ReviewerAPIKey)
 
 	reviewPrompt := fmt.Sprintf(
 		"You are reviewing code produced by another model. Evaluate purely on correctness, security, and clarity.\n\nOriginal goal: %s\n\nOutput to review:\n%s\n\nList any issues as JSON: [{\"file\":\"\",\"line\":0,\"severity\":\"low|medium|high\",\"description\":\"\"}]",

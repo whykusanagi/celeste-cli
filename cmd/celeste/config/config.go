@@ -121,9 +121,15 @@ type XAIFeaturesConfig struct {
 }
 
 // LaneConfig holds the primary and optional reviewer model for one task lane.
+// PrimaryBaseURL/PrimaryAPIKey and ReviewerBaseURL/ReviewerAPIKey allow cross-provider
+// orchestration (e.g. xAI primary + OpenAI reviewer) without changing the main config.
 type LaneConfig struct {
-	Primary  string `json:"primary"`
-	Reviewer string `json:"reviewer,omitempty"`
+	Primary         string `json:"primary"`
+	PrimaryBaseURL  string `json:"primary_base_url,omitempty"`
+	PrimaryAPIKey   string `json:"primary_api_key,omitempty"`
+	Reviewer        string `json:"reviewer,omitempty"`
+	ReviewerBaseURL string `json:"reviewer_base_url,omitempty"`
+	ReviewerAPIKey  string `json:"reviewer_api_key,omitempty"`
 }
 
 // OrchestratorConfig controls multi-model orchestration behaviour.

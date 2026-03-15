@@ -627,6 +627,10 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 
 	a.client.UpdateConfig(llmConfig)
 
+	// Persist the full config as baseConfig so that agent/orchestrator commands
+	// pick up provider-specific settings like Orchestrator lanes.
+	a.baseConfig = cfg
+
 	// Re-inject Celeste persona prompt after endpoint switch (unless explicitly skipped)
 	if !cfg.SkipPersonaPrompt {
 		a.client.SetSystemPrompt(prompts.GetSystemPrompt(false))
