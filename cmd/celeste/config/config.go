@@ -102,6 +102,9 @@ type Config struct {
 	XAIManagementAPIKey string             `json:"xai_management_api_key,omitempty"`
 	Collections         *CollectionsConfig `json:"collections,omitempty"`
 	XAIFeatures         *XAIFeaturesConfig `json:"xai_features,omitempty"`
+
+	// Orchestrator settings
+	Orchestrator *OrchestratorConfig `json:"orchestrator,omitempty"`
 }
 
 // CollectionsConfig holds collections settings
@@ -115,6 +118,19 @@ type CollectionsConfig struct {
 type XAIFeaturesConfig struct {
 	EnableWebSearch bool `json:"enable_web_search"`
 	EnableXSearch   bool `json:"enable_x_search"`
+}
+
+// LaneConfig holds the primary and optional reviewer model for one task lane.
+type LaneConfig struct {
+	Primary  string `json:"primary"`
+	Reviewer string `json:"reviewer,omitempty"`
+}
+
+// OrchestratorConfig controls multi-model orchestration behaviour.
+type OrchestratorConfig struct {
+	Lanes        map[string]LaneConfig `json:"lanes,omitempty"`
+	DefaultLane  string                `json:"default_lane,omitempty"`
+	DebateRounds int                   `json:"debate_rounds,omitempty"`
 }
 
 // DefaultConfig returns a config with default values.

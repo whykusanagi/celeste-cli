@@ -205,3 +205,67 @@ func Exit() tea.Cmd {
 		return ExitMsg{}
 	}
 }
+
+// AgentProgressKind identifies the type of an AgentProgressMsg.
+type AgentProgressKind int
+
+const (
+	AgentProgressTurnStart  AgentProgressKind = iota // a new turn has started
+	AgentProgressToolCall                            // agent called a tool
+	AgentProgressStepDone                            // a plan step was marked done
+	AgentProgressResponse                            // final assistant response text
+	AgentProgressComplete                            // run finished successfully
+	AgentProgressError                               // run failed
+)
+
+// AgentProgressMsg is sent incrementally during an agent run.
+// Ch is a channel of further progress messages; nil on terminal kinds (Complete/Error).
+type AgentProgressMsg struct {
+	RunID    string
+	Kind     AgentProgressKind
+	Text     string
+	Turn     int
+	MaxTurns int
+	Ch       <-chan AgentProgressMsg
+}
+
+// ReadNext returns a tea.Cmd that reads the next AgentProgressMsg from Ch.
+// Returns nil when Ch is nil or closed — no command to schedule.
+func (m AgentProgressMsg) ReadNext() tea.Cmd {
+	if m.Ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, ok := <-m.Ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+// OrchestratorEventMsg wraps an orchestrator.OrchestratorEvent for delivery to the TUI.
+// Defined here to avoid an import cycle (tui → orchestrator is fine; orchestrator must not → tui).
+type OrchestratorEventMsg struct {
+	Kind     int    // cast from orchestrator.EventKind
+	Lane     string // cast from orchestrator.TaskLane
+	Text     string
+	FilePath string
+	Diff     string
+	Score    float64
+	Ch       <-chan OrchestratorEventMsg // nil on terminal events
+}
+
+// ReadNext returns a cmd to read the next OrchestratorEventMsg.
+func (m OrchestratorEventMsg) ReadNext() tea.Cmd {
+	if m.Ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, ok := <-m.Ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}

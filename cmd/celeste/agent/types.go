@@ -26,6 +26,18 @@ const (
 	PlanStatusCompleted  = "completed"
 )
 
+// ProgressKind identifies an agent progress event.
+type ProgressKind int
+
+const (
+	ProgressTurnStart  ProgressKind = iota
+	ProgressToolCall
+	ProgressStepDone
+	ProgressResponse
+	ProgressComplete
+	ProgressError
+)
+
 type Options struct {
 	Workspace                 string        `json:"workspace"`
 	MaxTurns                  int           `json:"max_turns"`
@@ -44,6 +56,10 @@ type Options struct {
 	ArtifactDir               string        `json:"artifact_dir,omitempty"`
 	DisableCheckpoints        bool          `json:"disable_checkpoints"`
 	Verbose                   bool          `json:"verbose"`
+	// OnProgress is an optional callback invoked at key agent events.
+	// text is a human-readable label. turn/maxTurns are 0 for non-turn events.
+	// This field is not serialised to JSON (func types are not JSON-safe).
+	OnProgress func(kind ProgressKind, text string, turn, maxTurns int) `json:"-"`
 }
 
 func DefaultOptions() Options {

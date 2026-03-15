@@ -29,6 +29,13 @@ type Runner struct {
 	errOut   io.Writer
 }
 
+// emitProgress calls r.options.OnProgress if it is set.
+func (r *Runner) emitProgress(kind ProgressKind, text string, turn, maxTurns int) {
+	if r.options.OnProgress != nil {
+		r.options.OnProgress(kind, text, turn, maxTurns)
+	}
+}
+
 func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Writer) (*Runner, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
@@ -166,6 +173,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			state.Error = err.Error()
 			state.UpdatedAt = time.Now()
 			_ = r.store.Save(state)
+			r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
 			return state, err
 		}
 		if !state.Options.DisableCheckpoints {
@@ -183,6 +191,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		if state.Options.Verbose {
 			fmt.Fprintf(r.out, "\n[agent] turn %d/%d\n", state.Turn, state.Options.MaxTurns)
 		}
+		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
 
 		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 		result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
@@ -192,6 +201,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			state.Error = err.Error()
 			state.UpdatedAt = time.Now()
 			_ = r.store.Save(state)
+			r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
 			return state, err
 		}
 
@@ -234,12 +244,15 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 					state.Error = err.Error()
 					state.UpdatedAt = time.Now()
 					_ = r.store.Save(state)
+					r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
 					return state, err
 				}
 				if completed {
+				r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
 					if !state.Options.DisableCheckpoints {
 						_ = r.store.Save(state)
 					}
+					r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
 					return state, nil
 				}
 			}
@@ -251,6 +264,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 				if !state.Options.DisableCheckpoints {
 					_ = r.store.Save(state)
 				}
+				r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
 				return state, nil
 			}
 
@@ -274,6 +288,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 
 		for _, tc := range toolCalls {
+			r.emitProgress(ProgressToolCall, tc.Name, state.Turn, state.Options.MaxTurns)
 			toolMsg := r.executeToolCall(ctx, state, tc)
 			state.Messages = append(state.Messages, toolMsg)
 			state.ToolCallCount++
@@ -290,6 +305,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	if !state.Options.DisableCheckpoints {
 		_ = r.store.Save(state)
 	}
+	r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
 	return state, nil
 }
 
