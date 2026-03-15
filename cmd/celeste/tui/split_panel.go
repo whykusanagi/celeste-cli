@@ -72,21 +72,28 @@ func (s *SplitPanel) View() string {
 	leftWidth := s.width / 2
 	rightWidth := s.width - leftWidth - 1
 
+	// s.height is the available panel height (total terminal minus header/status/input).
+	// lipgloss Height sets content area; the border adds 2 lines (top + bottom).
+	contentH := s.height - 2
+	if contentH < 3 {
+		contentH = 3
+	}
+
 	leftStyle := lipgloss.NewStyle().
 		Width(leftWidth).
-		Height(s.height - 4).
+		Height(contentH).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#8b5cf6")).
 		Padding(0, 1)
 
 	rightStyle := lipgloss.NewStyle().
 		Width(rightWidth).
-		Height(s.height - 4).
+		Height(contentH).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#00d4ff")).
 		Padding(0, 1)
 
-	leftContent := s.renderActionFeed(leftWidth - 4)
+	leftContent := s.renderActionFeed(leftWidth-4, contentH)
 	rightContent := s.renderArtifact(rightWidth - 4)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
@@ -95,13 +102,13 @@ func (s *SplitPanel) View() string {
 	)
 }
 
-func (s *SplitPanel) renderActionFeed(width int) string {
+func (s *SplitPanel) renderActionFeed(width, contentH int) string {
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#d94f90")).Render("AGENT ACTIONS")
 	if len(s.actions) == 0 {
 		return header + "\n(waiting...)"
 	}
-	// Show last N entries that fit.
-	maxLines := s.height - 8
+	// contentH is the lipgloss box content area; subtract header line and padding.
+	maxLines := contentH - 2
 	if maxLines < 1 {
 		maxLines = 1
 	}

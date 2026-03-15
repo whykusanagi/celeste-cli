@@ -315,8 +315,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.skills = m.skills.SetSize(m.width, skillsHeight)
 		m.status = m.status.SetWidth(m.width)
 
+		// Resize split panel if active: available height = total minus header/status/input
+		if m.splitPanel != nil {
+			panelH := m.height - 4 // header(1) + status(1) + input(2)
+			if panelH < 5 {
+				panelH = 5
+			}
+			m.splitPanel.Resize(m.width, panelH)
+		}
+
 	case SendMessageMsg:
 		content := strings.TrimSpace(msg.Content)
+
+		// Dismiss the split panel when user sends next message (unless it's another /orchestrate)
+		if m.splitPanelMode && !strings.HasPrefix(content, "/orchestrate") {
+			m.splitPanelMode = false
+			m.splitPanel = nil
+		}
 
 		// Check if it's a slash command first
 		if cmd := commands.Parse(content); cmd != nil {
@@ -1013,7 +1028,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 
 		if m.splitPanel == nil {
-			m.splitPanel = NewSplitPanel(m.width, m.height)
+			panelH := m.height - 4 // header(1) + status(1) + input(2)
+			if panelH < 5 {
+				panelH = 5
+			}
+			m.splitPanel = NewSplitPanel(m.width, panelH)
 		}
 		m.splitPanelMode = true
 
@@ -1043,9 +1062,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.SetVerdict(fmt.Sprintf("%s\nscore: %s", msg.Text, score))
 		case 7: // EventComplete
 			m.streaming = false
-			m.splitPanelMode = false
+			// Keep splitPanelMode = true so results stay visible; user closes by sending next message
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText("Orchestrator: complete")
+			m.status = m.status.SetText("Orchestrator: complete — send a message to return to chat")
+			if msg.Text != "" && m.splitPanel != nil {
+				// Show primary response in right panel if no verdict was set
+				m.splitPanel.SetDiff("result", msg.Text)
+			}
 			m.persistSession()
 		case 8: // EventError
 			m.streaming = false
@@ -1342,7 +1365,6 @@ func (m AppModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			m.header.View(),
 			m.splitPanel.View(),
-			m.skills.View(),
 			m.status.View(),
 			m.input.View(),
 		)

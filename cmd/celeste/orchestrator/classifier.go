@@ -9,7 +9,7 @@ var laneKeywords = []struct {
 	keywords []string
 	lane     TaskLane
 }{
-	{[]string{"fix", "refactor", "debug", "test", "build", "compile", "implement", "lint", "patch", "bug"}, LaneCode},
+	{[]string{"fix", "refactor", "debug", "test", "build", "compile", "implement", "lint", "patch", "bug", "script", "bash", "create", "code", "function", "program", "deploy", "automate"}, LaneCode},
 	{[]string{"write", "draft", "blog", "docs", "document", "summarize", "explain", "describe", "article"}, LaneContent},
 	{[]string{"upscale", "image", "video", "render", "convert", "generate image", "generate video", "media"}, LaneMedia},
 	{[]string{"review", "audit", "check", "critique", "blind review", "code review"}, LaneReview},
