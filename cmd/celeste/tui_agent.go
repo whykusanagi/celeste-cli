@@ -80,7 +80,7 @@ func (a *TUIClientAdapter) RunAgentCommand(args []string) tea.Cmd {
 func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 	// ch is bidirectional so the goroutine can write and we can hand the
 	// receive end (<-chan) to AgentProgressMsg.Ch without a compile error.
-	ch := make(chan tui.AgentProgressMsg, 64)
+	ch := make(chan tui.AgentProgressMsg, 256)
 
 	go func() {
 		defer close(ch)
