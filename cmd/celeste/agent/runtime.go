@@ -14,6 +14,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -75,11 +76,16 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	client := llm.NewClient(llmConfig, registry)
 
-	// Agent mode: never prepend the Celeste persona.
-	// The persona ("If uncertain, distract with flirtation...") conflicts with
-	// agentic tool execution and causes the model to generate character responses
-	// instead of calling file/shell tools.
+	// Build system prompt. The agent operational rules always come last so they
+	// take precedence over character voice. The persona (if enabled) sets tone
+	// only — tool-use rules in the agent prompt override any conflicting phrasing.
 	systemPrompt := buildAgentSystemPrompt(options)
+	if !cfg.SkipPersonaPrompt {
+		persona := prompts.GetSystemPrompt(false)
+		if persona != "" {
+			systemPrompt = persona + "\n\n" + systemPrompt
+		}
+	}
 	client.SetSystemPrompt(systemPrompt)
 
 	store, err := NewCheckpointStore("")
