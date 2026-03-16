@@ -95,6 +95,19 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 			opts.Workspace = cwd
 		}
 		opts.Verbose = false
+
+		// Capture per-turn timing and token counts.
+		// OnTurnStats fires immediately after SendMessageSync returns (before any
+		// ProgressToolCall), so stats are always available when ProgressToolCall fires.
+		turnStatsMap := make(map[int]agent.TurnStats)
+		// turnStatsEmitted[turn] tracks whether we forwarded stats for that turn.
+		// We emit on the FIRST ProgressToolCall (tool-call turns) or on
+		// ProgressResponse (completion turns with no tool calls).
+		turnStatsEmitted := make(map[int]bool)
+		opts.OnTurnStats = func(stats agent.TurnStats) {
+			turnStatsMap[stats.Turn] = stats
+		}
+
 		// Pass the receive end of ch so AgentProgressMsg.Ch is a <-chan.
 		recvCh := (<-chan tui.AgentProgressMsg)(ch)
 		opts.OnProgress = func(kind agent.ProgressKind, text string, turn, maxTurns int) {
@@ -104,13 +117,36 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 			if tuiKind != tui.AgentProgressComplete && tuiKind != tui.AgentProgressError {
 				msgCh = recvCh
 			}
-			ch <- tui.AgentProgressMsg{
+			msg := tui.AgentProgressMsg{
 				Kind:     tuiKind,
 				Text:     text,
 				Turn:     turn,
 				MaxTurns: maxTurns,
 				Ch:       msgCh,
 			}
+			// Attach per-turn stats to the FIRST ProgressToolCall of each turn.
+			// This makes every tool-call turn show timing+tokens immediately,
+			// matching the orchestrator runner behaviour.
+			if tuiKind == tui.AgentProgressToolCall && !turnStatsEmitted[turn] {
+				if stats, ok := turnStatsMap[turn]; ok {
+					msg.Duration = stats.Elapsed
+					msg.InputTokens = stats.InputTokens
+					msg.OutputTokens = stats.OutputTokens
+					turnStatsEmitted[turn] = true
+					delete(turnStatsMap, turn)
+				}
+			}
+			// For completion turns (no tool calls) attach stats to ProgressResponse.
+			if tuiKind == tui.AgentProgressResponse {
+				if stats, ok := turnStatsMap[turn]; ok {
+					msg.Duration = stats.Elapsed
+					msg.InputTokens = stats.InputTokens
+					msg.OutputTokens = stats.OutputTokens
+					delete(turnStatsMap, turn)
+				}
+			}
+			logAgentProgress(tuiKind, msg)
+			ch <- msg
 		}
 
 		runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
@@ -300,4 +336,36 @@ func previewText(value string, limit int) string {
 		return text
 	}
 	return text[:limit] + "\n...(truncated)"
+}
+
+// logAgentProgress writes agent progress events to the session log so they
+// appear alongside orchestrator events in /export logs.
+func logAgentProgress(kind tui.AgentProgressKind, msg tui.AgentProgressMsg) {
+	switch kind {
+	case tui.AgentProgressTurnStart:
+		tui.LogInfo(fmt.Sprintf("[AGENT] turn %d/%d start", msg.Turn, msg.MaxTurns))
+	case tui.AgentProgressToolCall:
+		line := fmt.Sprintf("[AGENT] turn %d tool=%s", msg.Turn, msg.Text)
+		if msg.InputTokens > 0 || msg.Duration > 0 {
+			line += fmt.Sprintf(" elapsed=%.2fs tokens=↑%d ↓%d",
+				msg.Duration.Seconds(), msg.InputTokens, msg.OutputTokens)
+		}
+		tui.LogInfo(line)
+	case tui.AgentProgressStepDone:
+		tui.LogInfo(fmt.Sprintf("[AGENT] step done: %s", msg.Text))
+	case tui.AgentProgressResponse:
+		line := fmt.Sprintf("[AGENT] turn %d response", msg.Turn)
+		if msg.InputTokens > 0 || msg.Duration > 0 {
+			line += fmt.Sprintf(" elapsed=%.2fs tokens=↑%d ↓%d",
+				msg.Duration.Seconds(), msg.InputTokens, msg.OutputTokens)
+		}
+		tui.LogInfo(line)
+		if strings.TrimSpace(msg.Text) != "" {
+			tui.LogInfo(fmt.Sprintf("[AGENT] response:\n%s", msg.Text))
+		}
+	case tui.AgentProgressComplete:
+		tui.LogInfo("[AGENT] run complete")
+	case tui.AgentProgressError:
+		tui.LogInfo(fmt.Sprintf("[AGENT] error: %s", msg.Text))
+	}
 }

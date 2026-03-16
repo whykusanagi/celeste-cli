@@ -956,7 +956,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StreamDoneMsg:
 		// Update token counts from API response
-		if msg.Usage != nil {
+		if msg.Usage != nil && (msg.Usage.PromptTokens > 0 || msg.Usage.CompletionTokens > 0) {
 			m.lastMsgInTok = msg.Usage.PromptTokens
 			m.lastMsgOutTok = msg.Usage.CompletionTokens
 			if m.contextTracker != nil {
@@ -965,9 +965,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					msg.Usage.CompletionTokens,
 					msg.Usage.TotalTokens,
 				)
-				// Update header with new token counts
 				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
 			}
+		} else if msg.FullContent != "" {
+			// API didn't return token usage — estimate from response length and
+			// update the context tracker so the header counter keeps moving.
+			estOut := config.EstimateTokens(msg.FullContent)
+			if m.contextTracker != nil && estOut > 0 {
+				cur := m.contextTracker.CurrentTokens + estOut
+				m.contextTracker.UpdateTokens(0, estOut, cur)
+				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			}
+			// Leave lastMsgInTok/lastMsgOutTok at 0 so the TickMsg inferred path runs.
 		}
 
 		if msg.FullContent != "" {
@@ -1046,8 +1055,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case AgentProgressToolCall:
+			entry := fmt.Sprintf("⚙  %s", msg.Text)
+			// First tool call of each turn carries per-turn stats.
+			if msg.InputTokens > 0 || msg.Duration > 0 {
+				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
+				m.lastMsgInTok = msg.InputTokens
+				m.lastMsgOutTok = msg.OutputTokens
+				m.agentInputTokens += msg.InputTokens
+				m.agentOutputTokens += msg.OutputTokens
+			}
 			m.status = m.status.SetText(fmt.Sprintf("Agent: calling %s", msg.Text))
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚙  %s", msg.Text))
+			m.chat = m.chat.AddSystemMessage(entry)
 
 		case AgentProgressStepDone:
 			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("✓ %s", msg.Text))
@@ -1453,12 +1471,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
+				typedContent := m.typingContent
 				m.typingContent = ""
 				m.typingPos = 0
 				m.streaming = false
 				m.status = m.status.SetStreaming(false)
 				elapsed := time.Since(m.streamStart)
-				statsStr := formatOrchestratorStats(elapsed, m.lastMsgInTok, m.lastMsgOutTok)
+				inTok, outTok := m.lastMsgInTok, m.lastMsgOutTok
+				isInferred := inTok == 0 && outTok == 0
+				if isInferred {
+					// API did not return token counts — estimate from response length.
+					outTok = config.EstimateTokens(typedContent)
+					if m.contextTracker != nil && m.contextTracker.CurrentTokens > 0 {
+						inTok = m.contextTracker.CurrentTokens
+					}
+				}
+				var statsStr string
+				if isInferred && (inTok > 0 || outTok > 0) {
+					statsStr = fmt.Sprintf("(%.1fs · ~↑%s ~↓%s)",
+						elapsed.Seconds(),
+						formatOrchestratorTokens(inTok),
+						formatOrchestratorTokens(outTok))
+				} else {
+					statsStr = formatOrchestratorStats(elapsed, inTok, outTok)
+				}
 				if statsStr != "" {
 					m.status = m.status.SetText("Ready " + statsStr)
 				} else {
