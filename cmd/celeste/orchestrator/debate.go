@@ -12,10 +12,23 @@ const (
 type VerdictKind int
 
 const (
-	VerdictApproved  VerdictKind = iota
+	VerdictApproved VerdictKind = iota
 	VerdictNeedsWork
 	VerdictContested
 )
+
+func (v VerdictKind) String() string {
+	switch v {
+	case VerdictApproved:
+		return "approved"
+	case VerdictNeedsWork:
+		return "needs_work"
+	case VerdictContested:
+		return "contested"
+	default:
+		return "unknown"
+	}
+}
 
 // Issue is a code issue raised by the reviewer.
 type Issue struct {

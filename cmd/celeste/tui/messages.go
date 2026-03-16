@@ -125,26 +125,10 @@ type ErrorMsg struct {
 	Err error
 }
 
-// StatusMsg is sent to update the status bar.
-type StatusMsg struct {
-	Text string
-}
-
 // NSFWToggleMsg is sent when NSFW mode is toggled.
 type NSFWToggleMsg struct {
 	Enabled bool
 }
-
-// SessionLoadedMsg is sent when a session is loaded.
-type SessionLoadedMsg struct {
-	Messages []ChatMessage
-}
-
-// ClearChatMsg is sent to clear the chat history.
-type ClearChatMsg struct{}
-
-// ExitMsg is sent to exit the application.
-type ExitMsg struct{}
 
 // GenerateMediaMsg is sent to generate media (image/video/etc) via Venice.ai.
 type GenerateMediaMsg struct {
@@ -185,37 +169,16 @@ func SendMessage(content string) tea.Cmd {
 	}
 }
 
-// Error returns a command that sends an error message.
-func Error(err error) tea.Cmd {
-	return func() tea.Msg {
-		return ErrorMsg{Err: err}
-	}
-}
-
-// ClearChat returns a command that clears the chat.
-func ClearChat() tea.Cmd {
-	return func() tea.Msg {
-		return ClearChatMsg{}
-	}
-}
-
-// Exit returns a command that exits the application.
-func Exit() tea.Cmd {
-	return func() tea.Msg {
-		return ExitMsg{}
-	}
-}
-
 // AgentProgressKind identifies the type of an AgentProgressMsg.
 type AgentProgressKind int
 
 const (
-	AgentProgressTurnStart  AgentProgressKind = iota // a new turn has started
-	AgentProgressToolCall                            // agent called a tool
-	AgentProgressStepDone                            // a plan step was marked done
-	AgentProgressResponse                            // final assistant response text
-	AgentProgressComplete                            // run finished successfully
-	AgentProgressError                               // run failed
+	AgentProgressTurnStart AgentProgressKind = iota // a new turn has started
+	AgentProgressToolCall                           // agent called a tool
+	AgentProgressStepDone                           // a plan step was marked done
+	AgentProgressResponse                           // final assistant response text
+	AgentProgressComplete                           // run finished successfully
+	AgentProgressError                              // run failed
 )
 
 // AgentProgressMsg is sent incrementally during an agent run.
@@ -226,7 +189,11 @@ type AgentProgressMsg struct {
 	Text     string
 	Turn     int
 	MaxTurns int
-	Ch       <-chan AgentProgressMsg
+	// Per-turn stats — populated on ProgressResponse and ProgressComplete kinds.
+	InputTokens  int
+	OutputTokens int
+	Duration     time.Duration
+	Ch           <-chan AgentProgressMsg
 }
 
 // ReadNext returns a tea.Cmd that reads the next AgentProgressMsg from Ch.
@@ -247,13 +214,18 @@ func (m AgentProgressMsg) ReadNext() tea.Cmd {
 // OrchestratorEventMsg wraps an orchestrator.OrchestratorEvent for delivery to the TUI.
 // Defined here to avoid an import cycle (tui → orchestrator is fine; orchestrator must not → tui).
 type OrchestratorEventMsg struct {
-	Kind     int    // cast from orchestrator.EventKind
-	Lane     string // cast from orchestrator.TaskLane
-	Text     string
-	FilePath string
-	Diff     string
-	Score    float64
-	Ch       <-chan OrchestratorEventMsg // nil on terminal events
+	Kind         int    // cast from orchestrator.EventKind
+	Lane         string // cast from orchestrator.TaskLane
+	Text         string
+	Model        string // model name where role matters (primary/reviewer)
+	Duration     time.Duration
+	InputTokens  int
+	OutputTokens int
+	Response     string // full assistant response text for live code output panel
+	FilePath     string
+	Diff         string
+	Score        float64
+	Ch           <-chan OrchestratorEventMsg // nil on terminal events
 }
 
 // ReadNext returns a cmd to read the next OrchestratorEventMsg.

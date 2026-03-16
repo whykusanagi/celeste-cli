@@ -30,7 +30,7 @@ const (
 type ProgressKind int
 
 const (
-	ProgressTurnStart  ProgressKind = iota
+	ProgressTurnStart ProgressKind = iota
 	ProgressToolCall
 	ProgressStepDone
 	ProgressResponse
@@ -60,6 +60,20 @@ type Options struct {
 	// text is a human-readable label. turn/maxTurns are 0 for non-turn events.
 	// This field is not serialised to JSON (func types are not JSON-safe).
 	OnProgress func(kind ProgressKind, text string, turn, maxTurns int) `json:"-"`
+	// OnTurnStats is an optional callback fired after each LLM API call completes.
+	// It carries timing and token usage data for that call.
+	OnTurnStats func(TurnStats) `json:"-"`
+}
+
+// TurnStats carries per-turn performance data from a completed LLM call.
+type TurnStats struct {
+	Turn         int
+	MaxTurns     int
+	Elapsed      time.Duration
+	InputTokens  int
+	OutputTokens int
+	Response     string   // full assistant content for this turn (may be empty for pure tool-call turns)
+	ToolCalls    []string // names of tools called this turn
 }
 
 func DefaultOptions() Options {

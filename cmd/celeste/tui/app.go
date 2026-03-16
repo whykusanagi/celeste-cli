@@ -97,9 +97,9 @@ type AppModel struct {
 	agentRunStart     time.Time
 
 	// Per-message response timing and token stats (regular chat)
-	streamStart    time.Time
-	lastMsgInTok   int
-	lastMsgOutTok  int
+	streamStart   time.Time
+	lastMsgInTok  int
+	lastMsgOutTok int
 }
 
 type pendingToolCall struct {
@@ -322,7 +322,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Calculate component heights - RPG menu layout
 		headerHeight := 1
-		inputHeight := 3 // 1 border + 1 text + 1 typeahead hint line
+		inputHeight := 3   // 1 border + 1 text + 1 typeahead hint line
 		skillsHeight := 12 // Increased for RPG-style menu with contextual help
 		statusHeight := 1
 		chatHeight := m.height - headerHeight - inputHeight - skillsHeight - statusHeight

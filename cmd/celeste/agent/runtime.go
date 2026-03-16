@@ -194,6 +194,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
 
 		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
+		turnStart := time.Now()
 		result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
 		cancel()
 		if err != nil {
@@ -203,6 +204,22 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			_ = r.store.Save(state)
 			r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
 			return state, err
+		}
+
+		if r.options.OnTurnStats != nil {
+			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: time.Since(turnStart)}
+			if result.Usage != nil {
+				stats.InputTokens = result.Usage.PromptTokens
+				stats.OutputTokens = result.Usage.CompletionTokens
+			}
+			stats.Response = strings.TrimSpace(result.Content)
+			if len(result.ToolCalls) > 0 {
+				stats.ToolCalls = make([]string, len(result.ToolCalls))
+				for i, tc := range result.ToolCalls {
+					stats.ToolCalls[i] = tc.Name
+				}
+			}
+			r.options.OnTurnStats(stats)
 		}
 
 		assistantMsg := tui.ChatMessage{
@@ -248,7 +265,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 					return state, err
 				}
 				if completed {
-				r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
+					r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
 					if !state.Options.DisableCheckpoints {
 						_ = r.store.Save(state)
 					}
@@ -329,10 +346,20 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	})
 
 	requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
+	planTurnStart := time.Now()
 	result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
 	cancel()
 	if err != nil {
 		return err
+	}
+
+	if r.options.OnTurnStats != nil {
+		stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: time.Since(planTurnStart)}
+		if result.Usage != nil {
+			stats.InputTokens = result.Usage.PromptTokens
+			stats.OutputTokens = result.Usage.CompletionTokens
+		}
+		r.options.OnTurnStats(stats)
 	}
 
 	planResponse := strings.TrimSpace(result.Content)
