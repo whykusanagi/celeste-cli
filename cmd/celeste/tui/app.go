@@ -4,7 +4,9 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,6 +86,20 @@ type AppModel struct {
 	// Split panel for orchestrator/agent view
 	splitPanel     *SplitPanel
 	splitPanelMode bool
+
+	// Running token totals for the current orchestrator run
+	orchInputTokens  int
+	orchOutputTokens int
+
+	// Running token totals for the current agent run
+	agentInputTokens  int
+	agentOutputTokens int
+	agentRunStart     time.Time
+
+	// Per-message response timing and token stats (regular chat)
+	streamStart    time.Time
+	lastMsgInTok   int
+	lastMsgOutTok  int
 }
 
 type pendingToolCall struct {
@@ -267,16 +283,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
+			m.persistSession()
 			return m, tea.Quit
 		case "ctrl+k":
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
 			m.status = m.status.SetText("Skill calls toggled")
-		case "pgup", "pgdown", "shift+up", "shift+down":
-			// Scrolling keys go to chat
-			var cmd tea.Cmd
-			m.chat, cmd = m.chat.Update(msg)
-			cmds = append(cmds, cmd)
+		case "pgup", "shift+up":
+			if m.splitPanelMode && m.splitPanel != nil {
+				m.splitPanel.ScrollUp(5)
+			} else {
+				var cmd tea.Cmd
+				m.chat, cmd = m.chat.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+		case "pgdown", "shift+down":
+			if m.splitPanelMode && m.splitPanel != nil {
+				m.splitPanel.ScrollDown(5)
+			} else {
+				var cmd tea.Cmd
+				m.chat, cmd = m.chat.Update(msg)
+				cmds = append(cmds, cmd)
+			}
 		default:
 			// Other keys go to input
 			var cmd tea.Cmd
@@ -294,7 +322,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Calculate component heights - RPG menu layout
 		headerHeight := 1
-		inputHeight := 2
+		inputHeight := 3 // 1 border + 1 text + 1 typeahead hint line
 		skillsHeight := 12 // Increased for RPG-style menu with contextual help
 		statusHeight := 1
 		chatHeight := m.height - headerHeight - inputHeight - skillsHeight - statusHeight
@@ -317,7 +345,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Resize split panel if active: available height = total minus header/status/input
 		if m.splitPanel != nil {
-			panelH := m.height - 4 // header(1) + status(1) + input(2)
+			panelH := m.height - 5 // header(1) + status(1) + input(3)
 			if panelH < 5 {
 				panelH = 5
 			}
@@ -328,7 +356,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		content := strings.TrimSpace(msg.Content)
 
 		// Dismiss the split panel when user sends next message (unless it's another /orchestrate)
-		if m.splitPanelMode && !strings.HasPrefix(content, "/orchestrate") {
+		if m.splitPanelMode && !strings.HasPrefix(content, "/orchestrate") && !strings.HasPrefix(content, "/orch ") {
 			m.splitPanelMode = false
 			m.splitPanel = nil
 		}
@@ -361,7 +389,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}),
 				)
 
-			case "orchestrate":
+			case "orchestrate", "orch":
 				if len(cmd.Args) == 0 {
 					m.chat = m.chat.AddSystemMessage("Usage: /orchestrate <goal>")
 					return m, nil
@@ -371,11 +399,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat = m.chat.AddSystemMessage("❌ /orchestrate is unavailable for this client.")
 					return m, nil
 				}
-				goal := strings.Join(cmd.Args, " ")
+				goal := expandFileRefs(strings.Join(cmd.Args, " "))
 				m.streaming = true
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Orchestrating...")
 				m.chat = m.chat.AddSystemMessage("🎭 Orchestrator: " + goal)
+				m.orchInputTokens = 0
+				m.orchOutputTokens = 0
 				return m, tea.Batch(
 					orchRunner.RunOrchestratorCommand(goal),
 					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
@@ -643,6 +673,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lowerContent := strings.ToLower(content)
 		switch lowerContent {
 		case "exit", "quit", "q", ":q", ":quit", ":exit":
+			m.persistSession()
 			return m, tea.Quit
 		case "clear":
 			m.chat = m.chat.Clear()
@@ -774,6 +805,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Persist user message immediately (in case of crash before response)
 		m.persistSession()
+
+		// Record when we started waiting for this response.
+		m.streamStart = time.Now()
+		m.lastMsgInTok = 0
+		m.lastMsgOutTok = 0
 
 		// Send to LLM and start animation
 		if m.llmClient != nil {
@@ -920,14 +956,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StreamDoneMsg:
 		// Update token counts from API response
-		if msg.Usage != nil && m.contextTracker != nil {
-			m.contextTracker.UpdateTokens(
-				msg.Usage.PromptTokens,
-				msg.Usage.CompletionTokens,
-				msg.Usage.TotalTokens,
-			)
-			// Update header with new token counts
-			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+		if msg.Usage != nil {
+			m.lastMsgInTok = msg.Usage.PromptTokens
+			m.lastMsgOutTok = msg.Usage.CompletionTokens
+			if m.contextTracker != nil {
+				m.contextTracker.UpdateTokens(
+					msg.Usage.PromptTokens,
+					msg.Usage.CompletionTokens,
+					msg.Usage.TotalTokens,
+				)
+				// Update header with new token counts
+				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			}
 		}
 
 		if msg.FullContent != "" {
@@ -980,17 +1020,53 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case AgentProgressTurnStart:
 			m.streaming = true
 			m.status = m.status.SetStreaming(true)
-			m.status = m.status.SetText(fmt.Sprintf("Agent: %s", msg.Text))
+			// Reset per-turn timing so the TickMsg "typing complete" handler
+			// measures only this turn's API latency.
+			m.streamStart = time.Now()
+			m.lastMsgInTok = 0
+			m.lastMsgOutTok = 0
+			// Initialise run-level accumulators on the first turn.
+			if msg.Turn <= 1 {
+				m.agentInputTokens = 0
+				m.agentOutputTokens = 0
+				m.agentRunStart = time.Now()
+			}
+			turnLabel := "Agent"
+			if msg.MaxTurns > 0 {
+				turnLabel = fmt.Sprintf("Agent: turn %d/%d", msg.Turn, msg.MaxTurns)
+			}
+			if msg.Text != "" {
+				turnLabel += " · " + msg.Text
+			}
+			m.status = m.status.SetText(turnLabel)
+			// Visible turn separator in the chat history for full traceability.
+			if msg.Turn > 0 {
+				sep := fmt.Sprintf("── turn %d/%d ──", msg.Turn, msg.MaxTurns)
+				m.chat = m.chat.AddSystemMessage(sep)
+			}
 
 		case AgentProgressToolCall:
 			m.status = m.status.SetText(fmt.Sprintf("Agent: calling %s", msg.Text))
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚙ %s", msg.Text))
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚙  %s", msg.Text))
 
 		case AgentProgressStepDone:
 			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("✓ %s", msg.Text))
 
 		case AgentProgressResponse:
-			// Feed the final response through SimulatedTyping — same path as streamed LLM output.
+			// Capture per-turn stats so the TickMsg "typing complete" path
+			// displays timing + tokens in the status bar — same as regular chat.
+			if msg.InputTokens > 0 || msg.OutputTokens > 0 {
+				m.lastMsgInTok = msg.InputTokens
+				m.lastMsgOutTok = msg.OutputTokens
+				m.agentInputTokens += msg.InputTokens
+				m.agentOutputTokens += msg.OutputTokens
+			}
+			if msg.Duration > 0 {
+				// Back-date streamStart so elapsed == API latency, not wall-clock
+				// time since turn start (which includes tool execution time).
+				m.streamStart = time.Now().Add(-msg.Duration)
+			}
+			// Feed the response through SimulatedTyping — same path as regular chat.
 			if strings.TrimSpace(msg.Text) != "" {
 				m.typingContent = msg.Text
 				m.typingPos = 0
@@ -1004,7 +1080,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case AgentProgressComplete:
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText("Agent run complete")
+			// Show run-level summary in status bar — total time + total tokens.
+			totalElapsed := time.Since(m.agentRunStart)
+			summary := formatOrchestratorStats(totalElapsed, m.agentInputTokens, m.agentOutputTokens)
+			if summary != "" {
+				m.status = m.status.SetText("Agent complete " + summary)
+			} else {
+				m.status = m.status.SetText("Agent complete")
+			}
 			m.persistSession()
 
 		case AgentProgressError:
@@ -1028,7 +1111,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 
 		if m.splitPanel == nil {
-			panelH := m.height - 4 // header(1) + status(1) + input(2)
+			panelH := m.height - 5 // header(1) + status(1) + input(3)
 			if panelH < 5 {
 				panelH = 5
 			}
@@ -1037,15 +1120,35 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.splitPanelMode = true
 
 		// EventKind constants (mirror orchestrator package without import cycle):
-		// 0=Classified 1=Action 2=ToolCall 3=FileDiff 4=ReviewDraft 5=Defense 6=Verdict 7=Complete 8=Error
+		// 0=Classified 1=Action 2=ToolCall 3=FileDiff 4=ReviewDraft 5=Defense 6=Verdict 7=Complete 8=Error 9=DebateStart
 		switch msg.Kind {
 		case 0: // EventClassified
-			m.splitPanel.AddAction(fmt.Sprintf("classified: %s (%s)", msg.Lane, msg.Text))
+			m.splitPanel.AddAction(fmt.Sprintf("── %s · %s ──", msg.Lane, msg.Text))
 			m.status = m.status.SetText(fmt.Sprintf("Orchestrator: [%s] %s", msg.Lane, msg.Text))
 			m.streaming = true
 			m.status = m.status.SetStreaming(true)
-		case 1, 2: // EventAction, EventToolCall
+		case 1: // EventAction
+			m.orchInputTokens += msg.InputTokens
+			m.orchOutputTokens += msg.OutputTokens
+			entry := msg.Text
+			if msg.Model != "" {
+				entry = fmt.Sprintf("[%s] %s", msg.Model, entry)
+			}
+			if msg.Duration > 0 || msg.InputTokens > 0 {
+				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
+			}
+			m.splitPanel.AddAction(entry)
+			if msg.Response != "" {
+				m.splitPanel.SetOutput(msg.Response)
+			}
+			statusText := fmt.Sprintf("Orchestrator: %s", msg.Text)
+			if m.orchInputTokens > 0 {
+				statusText += fmt.Sprintf(" · ↑%s ↓%s total", formatOrchestratorTokens(m.orchInputTokens), formatOrchestratorTokens(m.orchOutputTokens))
+			}
+			m.status = m.status.SetText(statusText)
+		case 2: // EventToolCall
 			m.splitPanel.AddAction(msg.Text)
+			m.splitPanel.AppendOutput(msg.Text + "\n")
 			m.status = m.status.SetText(fmt.Sprintf("Orchestrator: %s", msg.Text))
 		case 3: // EventFileDiff
 			m.splitPanel.AddAction(fmt.Sprintf("wrote %s", msg.FilePath))
@@ -1053,21 +1156,65 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.splitPanel.SetDiff(msg.FilePath, msg.Diff)
 			}
 		case 4: // EventReviewDraft
-			m.splitPanel.AddAction(fmt.Sprintf("🔍 reviewer: %s", truncateText(msg.Text, 60)))
+			m.orchInputTokens += msg.InputTokens
+			m.orchOutputTokens += msg.OutputTokens
+			reviewer := "reviewer"
+			if msg.Model != "" {
+				reviewer = msg.Model
+			}
+			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, truncateText(msg.Text, 60))
+			if msg.Duration > 0 || msg.InputTokens > 0 {
+				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
+			}
+			m.splitPanel.AddAction(entry)
+			if msg.Response != "" {
+				m.splitPanel.SetOutput("=== REVIEW: " + reviewer + " ===\n\n" + msg.Response)
+			}
 		case 5: // EventDefense
-			m.splitPanel.AddAction(fmt.Sprintf("🛡 defense: %s", truncateText(msg.Text, 60)))
+			m.orchInputTokens += msg.InputTokens
+			m.orchOutputTokens += msg.OutputTokens
+			model := "primary"
+			if msg.Model != "" {
+				model = msg.Model
+			}
+			entry := fmt.Sprintf("🛡 [%s] %s", model, truncateText(msg.Text, 60))
+			if msg.Duration > 0 || msg.InputTokens > 0 {
+				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
+			}
+			m.splitPanel.AddAction(entry)
+			if msg.Response != "" {
+				m.splitPanel.SetOutput("=== DEFENSE: " + model + " ===\n\n" + msg.Response)
+			}
 		case 6: // EventVerdict
-			score := fmt.Sprintf("%.2f", msg.Score)
-			m.splitPanel.AddAction(fmt.Sprintf("verdict: %s (score %s)", msg.Text, score))
-			m.splitPanel.SetVerdict(fmt.Sprintf("%s\nscore: %s", msg.Text, score))
+			icon := "✓"
+			if msg.Text == "contested" || msg.Text == "needs_work" {
+				icon = "✗"
+			}
+			m.splitPanel.AddAction(fmt.Sprintf("%s verdict: %s (%.2f)", icon, msg.Text, msg.Score))
+			m.splitPanel.SetVerdict(fmt.Sprintf("%s %s\nscore: %.2f", icon, msg.Text, msg.Score))
+		case 9: // EventDebateStart
+			label := fmt.Sprintf("── debate %s", msg.Text)
+			reviewer := msg.Model
+			if reviewer == "" {
+				reviewer = "reviewer"
+			}
+			if msg.Model != "" {
+				label = fmt.Sprintf("── debate %s · [%s] reviewing ──", msg.Text, msg.Model)
+			}
+			m.splitPanel.AddAction(label)
+			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
 			m.streaming = false
 			// Keep splitPanelMode = true so results stay visible; user closes by sending next message
 			m.status = m.status.SetStreaming(false)
 			m.status = m.status.SetText("Orchestrator: complete — send a message to return to chat")
 			if msg.Text != "" && m.splitPanel != nil {
-				// Show primary response in right panel if no verdict was set
-				m.splitPanel.SetDiff("result", msg.Text)
+				// Show primary response in right panel (lane label as header)
+				label := "agent output"
+				if msg.Lane != "" {
+					label = msg.Lane + " output"
+				}
+				m.splitPanel.SetDiff(label, msg.Text)
 			}
 			m.persistSession()
 		case 8: // EventError
@@ -1310,7 +1457,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.typingPos = 0
 				m.streaming = false
 				m.status = m.status.SetStreaming(false)
-				m.status = m.status.SetText("Ready")
+				elapsed := time.Since(m.streamStart)
+				statsStr := formatOrchestratorStats(elapsed, m.lastMsgInTok, m.lastMsgOutTok)
+				if statsStr != "" {
+					m.status = m.status.SetText("Ready " + statsStr)
+				} else {
+					m.status = m.status.SetText("Ready")
+				}
 
 				// Persist session now that the message is complete
 				m.persistSession()
@@ -1525,6 +1678,11 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	m.streaming = true
 	m.status = m.status.SetStreaming(true)
 	m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
+	// Reset timing for the follow-up LLM call so the displayed stats reflect
+	// only that call's latency, not the elapsed tool execution time.
+	m.streamStart = time.Now()
+	m.lastMsgInTok = 0
+	m.lastMsgOutTok = 0
 
 	toolsToSend := m.getToolsForDispatch()
 	return m, []tea.Cmd{
@@ -1560,6 +1718,8 @@ type Session interface {
 	GetMessagesRaw() interface{}     // Returns []SessionMessage
 	SetMessagesRaw(msgs interface{}) // Accepts []SessionMessage
 	SummarizeRaw() interface{}       // Returns SessionSummary
+	SetCommandHistory(history []string)
+	GetCommandHistory() []string
 }
 
 // SessionMessage represents a message stored in session (matches config.SessionMessage).
@@ -1692,6 +1852,75 @@ func (m AppModel) WithEndpoint(endpoint string) AppModel {
 	return m
 }
 
+// formatOrchestratorStats formats per-turn timing and token counts for the action feed.
+func formatOrchestratorStats(d time.Duration, inputTok, outputTok int) string {
+	var parts []string
+	if d >= time.Millisecond {
+		if d < time.Second {
+			parts = append(parts, fmt.Sprintf("%.0fms", float64(d.Milliseconds())))
+		} else if d < time.Minute {
+			parts = append(parts, fmt.Sprintf("%.1fs", d.Seconds()))
+		} else {
+			parts = append(parts, fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60))
+		}
+	}
+	if inputTok > 0 || outputTok > 0 {
+		parts = append(parts, fmt.Sprintf("↑%s ↓%s", formatOrchestratorTokens(inputTok), formatOrchestratorTokens(outputTok)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "(" + strings.Join(parts, " · ") + ")"
+}
+
+// formatOrchestratorTokens formats a token count compactly (e.g. 1234 → "1.2k").
+func formatOrchestratorTokens(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000.0)
+	}
+	return strconv.Itoa(n)
+}
+
+// expandFileRefs replaces @filename tokens in text with the contents of the referenced file.
+// Filenames are resolved relative to the current working directory.
+// Unknown or unreadable files are left as-is.
+func expandFileRefs(text string) string {
+	// Find all @word tokens
+	words := strings.Fields(text)
+	replacements := map[string]string{}
+	for _, w := range words {
+		if !strings.HasPrefix(w, "@") || len(w) < 2 {
+			continue
+		}
+		filename := w[1:]
+		if _, already := replacements[filename]; already {
+			continue
+		}
+		data, err := os.ReadFile(filename)
+		if err != nil {
+			continue
+		}
+		replacements[filename] = string(data)
+	}
+	if len(replacements) == 0 {
+		return text
+	}
+	// Replace each @filename with its contents inline
+	result := text
+	for name, contents := range replacements {
+		result = strings.ReplaceAll(result, "@"+name, "\n```\n"+contents+"```\n")
+	}
+	return result
+}
+
+// WithCommandHistory restores the command history from a saved session.
+func (m AppModel) WithCommandHistory(history []string) AppModel {
+	if len(history) > 0 {
+		m.input = m.input.SetHistory(history)
+	}
+	return m
+}
+
 // persistSession saves the current session state.
 func (m *AppModel) persistSession() {
 	if m.sessionManager == nil || m.currentSession == nil {
@@ -1701,6 +1930,9 @@ func (m *AppModel) persistSession() {
 	m.currentSession.SetEndpoint(m.endpoint)
 	m.currentSession.SetModel(m.model)
 	m.currentSession.SetNSFWMode(m.nsfwMode)
+	if hist := m.input.GetHistory(); len(hist) > 0 {
+		m.currentSession.SetCommandHistory(hist)
+	}
 
 	// Convert TUI ChatMessages to config SessionMessages
 	chatMsgs := m.chat.GetMessages()
