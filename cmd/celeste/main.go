@@ -27,7 +27,7 @@ import (
 
 // Version information
 const (
-	Version = "1.6.3"
+	Version = "1.6.4"
 	Build   = "bubbletea-tui"
 )
 
@@ -308,6 +308,15 @@ func runChatTUI() {
 		// Use endpoint from session if it's valid
 		tui.LogInfo(fmt.Sprintf("✓ Using endpoint from session: %s", sessionEndpoint))
 		app = app.WithEndpoint(sessionEndpoint)
+		// Load the named config so baseConfig carries provider-specific settings
+		// (e.g. Orchestrator lanes). WithEndpoint only updates the UI; it does not
+		// update TUIClientAdapter.baseConfig.
+		if namedCfg, loadErr := config.LoadNamed(sessionEndpoint); loadErr == nil {
+			tuiClient.baseConfig = namedCfg
+			tui.LogInfo(fmt.Sprintf("✓ Loaded named config for restored endpoint: %s", sessionEndpoint))
+		} else {
+			tui.LogInfo(fmt.Sprintf("⚠ Could not load named config for %s: %v", sessionEndpoint, loadErr))
+		}
 	} else {
 		// Detect provider from base URL in config
 		detectedProvider := providers.DetectProvider(cfg.BaseURL)
@@ -326,6 +335,10 @@ func runChatTUI() {
 		} else {
 			tui.LogInfo("⚠ Could not detect provider from BaseURL")
 		}
+	}
+
+	if hist := currentSession.GetCommandHistory(); len(hist) > 0 {
+		app = app.WithCommandHistory(hist)
 	}
 
 	// Set model from config if not set by session
