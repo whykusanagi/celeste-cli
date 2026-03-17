@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
@@ -84,7 +86,7 @@ func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
 	}
 
 	// 3. Run primary agent
-	o.onEvent(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: fmt.Sprintf("starting primary agent (%s)", assignment.Primary)})
+	o.onEvent(OrchestratorEvent{Kind: EventAction, Lane: lane, Model: assignment.Primary, Text: fmt.Sprintf("[%s] primary agent", assignment.Primary)})
 	primary := o.makeRunner(assignment.Primary, assignment.PrimaryBaseURL, assignment.PrimaryAPIKey)
 	primaryResponse, err := primary.RunGoal(ctx, goal)
 	if err != nil {
@@ -105,7 +107,7 @@ func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
 		}
 	}
 
-	o.onEvent(OrchestratorEvent{Kind: EventComplete, Lane: lane, Text: "done"})
+	o.onEvent(OrchestratorEvent{Kind: EventComplete, Lane: lane, Text: result.Primary})
 	return result, nil
 }
 
@@ -138,34 +140,53 @@ func (o *Orchestrator) runDebate(ctx context.Context, goal, primaryOutput string
 	var lastIssues []Issue
 
 	for round := 1; round <= o.debateRounds; round++ {
-		reviewOutput, err := reviewer.RunGoal(ctx, reviewPrompt)
+		o.onEvent(OrchestratorEvent{Kind: EventDebateStart, Model: assignment.Reviewer, Text: fmt.Sprintf("round %d", round)})
+
+		reviewOutput, reviewElapsed, reviewIn, reviewOut, err := o.runGoalAccumStats(ctx, reviewer, reviewPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("reviewer round %d failed: %w", round, err)
 		}
 		dm.AddTurn(DebateTurn{Round: round, Role: RoleReviewer, Input: reviewPrompt, Output: reviewOutput})
-		o.onEvent(OrchestratorEvent{Kind: EventReviewDraft, Text: reviewOutput})
 
-		// Parse issues from reviewer JSON (best-effort; empty on parse failure)
+		// Parse issues before emitting so the action feed shows a readable summary.
 		lastIssues = parseIssues(reviewOutput)
+		var reviewSummary string
+		if len(lastIssues) == 0 {
+			reviewSummary = "no issues found"
+		} else {
+			reviewSummary = fmt.Sprintf("%d issue(s): %s", len(lastIssues), lastIssues[0].Description)
+			if len(reviewSummary) > 100 {
+				reviewSummary = reviewSummary[:100] + "…"
+			}
+		}
+		o.onEvent(OrchestratorEvent{Kind: EventReviewDraft, Model: assignment.Reviewer, Text: reviewSummary, Response: reviewOutput, Duration: reviewElapsed, InputTokens: reviewIn, OutputTokens: reviewOut})
 		verdict := dm.Verdict(lastIssues)
 
 		if verdict.Kind == VerdictApproved {
-			o.onEvent(OrchestratorEvent{Kind: EventVerdict, Score: verdict.Score, Text: "approved"})
+			o.onEvent(OrchestratorEvent{Kind: EventVerdict, Model: assignment.Reviewer, Score: verdict.Score, Text: "approved", Duration: reviewElapsed, InputTokens: reviewIn, OutputTokens: reviewOut})
 			return &verdict, nil
 		}
 		if verdict.Kind == VerdictContested {
-			o.onEvent(OrchestratorEvent{Kind: EventVerdict, Score: verdict.Score, Text: "contested"})
+			o.onEvent(OrchestratorEvent{Kind: EventVerdict, Model: assignment.Reviewer, Score: verdict.Score, Text: "contested", Duration: reviewElapsed, InputTokens: reviewIn, OutputTokens: reviewOut})
 			return &verdict, nil
 		}
 
 		// Primary agent responds to critique
 		defensePrompt := fmt.Sprintf("The reviewer found these issues:\n%s\n\nAddress each issue and provide the corrected output.", reviewOutput)
-		defenseOutput, err := o.runnerFactory(assignment.Primary).RunGoal(ctx, defensePrompt)
+		defenseRunner := o.runnerFactory(assignment.Primary)
+		defenseOutput, defenseElapsed, defenseIn, defenseOut, err := o.runGoalAccumStats(ctx, defenseRunner, defensePrompt)
 		if err != nil {
 			return nil, fmt.Errorf("primary defense round %d failed: %w", round, err)
 		}
 		dm.AddTurn(DebateTurn{Round: round, Role: RolePrimary, Input: defensePrompt, Output: defenseOutput})
-		o.onEvent(OrchestratorEvent{Kind: EventDefense, Text: defenseOutput})
+		defensePreview := strings.TrimSpace(defenseOutput)
+		if nl := strings.IndexByte(defensePreview, '\n'); nl > 0 {
+			defensePreview = defensePreview[:nl]
+		}
+		if len(defensePreview) > 100 {
+			defensePreview = defensePreview[:100] + "…"
+		}
+		o.onEvent(OrchestratorEvent{Kind: EventDefense, Model: assignment.Primary, Text: defensePreview, Response: defenseOutput, Duration: defenseElapsed, InputTokens: defenseIn, OutputTokens: defenseOut})
 		reviewPrompt = fmt.Sprintf("Review the revised output:\n%s", defenseOutput)
 	}
 
@@ -173,6 +194,23 @@ func (o *Orchestrator) runDebate(ctx context.Context, goal, primaryOutput string
 	verdict := dm.Verdict(lastIssues)
 	o.onEvent(OrchestratorEvent{Kind: EventVerdict, Score: verdict.Score, Text: "max rounds reached"})
 	return &verdict, nil
+}
+
+// runGoalAccumStats runs runner.RunGoal while intercepting all emitted events to
+// accumulate total token counts and elapsed time. All events are still forwarded
+// to the original o.onEvent so the TUI receives per-turn progress in real time.
+func (o *Orchestrator) runGoalAccumStats(ctx context.Context, runner AgentRunner, goal string) (output string, elapsed time.Duration, totalIn, totalOut int, err error) {
+	saved := o.onEvent
+	o.onEvent = func(e OrchestratorEvent) {
+		totalIn += e.InputTokens
+		totalOut += e.OutputTokens
+		saved(e)
+	}
+	start := time.Now()
+	output, err = runner.RunGoal(ctx, goal)
+	elapsed = time.Since(start)
+	o.onEvent = saved
+	return
 }
 
 // parseIssues extracts Issue structs from a JSON array in the reviewer's response.

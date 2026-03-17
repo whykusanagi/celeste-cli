@@ -158,6 +158,7 @@ type ChatCompletionResult struct {
 	ToolCalls    []ToolCallResult
 	FinishReason string
 	Error        error
+	Usage        *TokenUsage // Token usage from the API response (if available)
 }
 
 // ToolCallResult holds a tool call from the LLM.

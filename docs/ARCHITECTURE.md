@@ -17,156 +17,267 @@ Comprehensive system architecture for Celeste CLI.
 
 ## System Overview
 
-Celeste CLI is a terminal-based AI assistant that provides an interactive chat interface with function calling capabilities (skills), multi-provider LLM support, and persistent session management.
+Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provider LLM support, persistent sessions, and four distinct runtime modes — each offering a different level of autonomy and observability.
 
 ### Key Features
 
-- **Multi-Provider Support**: OpenAI, Grok, Venice.ai, Anthropic, Gemini, etc.
-- **Function Calling**: 18 built-in skills (weather, currency, QR codes, etc.)
-- **Interactive TUI**: Bubble Tea-based terminal interface
-- **Session Persistence**: Save and resume conversations
-- **Streaming Responses**: Real-time LLM output
+- **Multi-Provider Support**: OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
+- **Four Runtime Modes**: Classic chat, Claw (agentic chat), Agent (autonomous runs), Orchestrator (multi-model debate)
+- **21 Built-in Skills**: Function calling for weather, currency, QR codes, tarot, and more
+- **Interactive TUI**: Split-panel Bubble Tea interface with real-time event streaming
+- **Session Persistence**: Auto-save conversations, command history, and model selection across restarts
+- **Per-Turn Observability**: Timing and token stats (`3.2s · ↑1.2k ↓483`) visible in all modes
 - **NSFW Mode**: Uncensored content generation via Venice.ai
-- **Content Generation**: Platform-specific content (Twitter, TikTok, YouTube)
+- **Collections / RAG**: Document upload for context injection (xAI only)
 
 ### Technology Stack
 
-- **Language**: Go 1.21+
+- **Language**: Go 1.24+
 - **TUI Framework**: Bubble Tea + Lip Gloss
 - **HTTP Client**: net/http with streaming support
 - **Testing**: testify/assert + testify/require
-- **Configuration**: JSON-based config files
+- **Configuration**: JSON-based named config profiles (`~/.celeste/*.json`)
 
 ---
 
 ## Component Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        User Interface                        │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              Bubble Tea TUI (cmd/celeste/tui/)       │  │
-│  │  - Chat view (chat.go)                               │  │
-│  │  - Skills view (skills.go)                           │  │
-│  │  - Streaming handler (streaming.go)                  │  │
-│  │  - Styles & themes (styles.go)                       │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↕
-┌─────────────────────────────────────────────────────────────┐
-│                      Command Layer                           │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        Command Parser (cmd/celeste/commands/)        │  │
-│  │  - Command definitions (commands.go)                 │  │
-│  │  - Provider commands (providers.go)                  │  │
-│  │  - Context management (context.go)                   │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↕
-┌─────────────────────────────────────────────────────────────┐
-│                      Business Logic                          │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        LLM Client (cmd/celeste/llm/)                 │  │
-│  │  - Chat completion (client.go)                       │  │
-│  │  - Streaming (client.go)                             │  │
-│  │  - Function calling (client.go)                      │  │
-│  │  - Context summarization (summarize.go)              │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        Skills System (cmd/celeste/skills/)           │  │
-│  │  - Registry (registry.go)                            │  │
-│  │  - Built-in skills (builtin.go)                      │  │
-│  │  - Executor (executor.go)                            │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        Provider Registry (cmd/celeste/providers/)    │  │
-│  │  - Provider registry (registry.go)                   │  │
-│  │  - Model detection (models.go)                       │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↕
-┌─────────────────────────────────────────────────────────────┐
-│                      Data & Config                           │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        Configuration (cmd/celeste/config/)           │  │
-│  │  - Config management (config.go)                     │  │
-│  │  - Session storage (session.go)                      │  │
-│  │  - Export/import (export.go)                         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        Prompts (cmd/celeste/prompts/)                │  │
-│  │  - Persona essence (celeste.go)                      │  │
-│  │  - System prompts (celeste.go)                       │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↕
-┌─────────────────────────────────────────────────────────────┐
-│                      External Services                       │
-│  - OpenAI API                                               │
-│  - Grok (xAI) API                                           │
-│  - Venice.ai API (NSFW/media)                               │
-│  - Anthropic API                                            │
-│  - Gemini API                                               │
-│  - Weather API, Currency API, etc.                          │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    Bubble Tea TUI  (cmd/celeste/tui/)            │
+│  app.go · chat.go · input.go · split_panel.go · messages.go     │
+│  Header: provider · model · context %                           │
+│  Chat: message history · turn separators · tool call logs       │
+│  Input: command history (↑/↓) · @file expansion · ctrl+w/u     │
+│  Status: streaming spinner · (Xs · ↑Nk ↓Nk) per response      │
+│  Split panel (orchestrator/agent): action feed · file diffs     │
+└──────────────────┬───────────────────────────────────────────────┘
+                   │  tea.Cmd / tea.Msg
+       ┌───────────┴──────────────────────────────────┐
+       │           Runtime Mode Router                 │
+       │  classic chat │ claw mode │ /agent │ /orch   │
+       └───┬───────────┬───────────┬──────────┬───────┘
+           │           │           │          │
+    ┌──────▼──┐  ┌─────▼──┐  ┌────▼───┐  ┌──▼──────────┐
+    │ Classic │  │  Claw  │  │ Agent  │  │ Orchestrator│
+    │  chat   │  │  mode  │  │ runner │  │             │
+    │ stream  │  │ tool   │  │agent/  │  │orchestrator/│
+    │ chunks  │  │ loop   │  │runtime │  │orchestrator │
+    └────┬────┘  └───┬────┘  └───┬────┘  └──────┬──────┘
+         │           │           │               │
+         └─────────┬─┴───────────┘               │
+                   │                             │
+    ┌──────────────▼─────────────────────────────▼────────┐
+    │              LLM Client  (cmd/celeste/llm/)          │
+    │  OpenAI-compatible streaming · sync · tool calls    │
+    │  Backends: openai · grok · venice · gemini · vertex │
+    └──────────────────────────────────────────────────────┘
+                   │
+    ┌──────────────▼──────────────────────────────────────┐
+    │  Skills (cmd/celeste/skills/)  ·  21 built-in       │
+    │  Providers (cmd/celeste/providers/)  ·  registry    │
+    │  Config (cmd/celeste/config/)  ·  sessions          │
+    │  Prompts (cmd/celeste/prompts/)  ·  persona         │
+    └─────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Runtime Modes
+
+There are four distinct ways to interact with the LLM. They share the same config and provider system but differ fundamentally in where the tool-call loop lives, how much autonomy the model has, and what the TUI shows.
+
+---
+
+### 1. Classic Chat (`-mode classic`, default)
+
+The simplest mode. One request, one response.
+
+```
+User types message
+  → LLM client streams response chunks (StreamChunkMsg)
+  → Response complete (StreamDoneMsg) → token stats captured
+  → Simulated typing animation plays out
+  → Status bar: "Ready (2.1s · ↑1.2k ↓483)"
+```
+
+If the LLM requests a tool call, it is executed and the result is shown inline, but no further LLM call is made automatically. Use claw mode if you want automatic follow-up.
+
+**When to use**: Conversational questions, code review, content generation — anything where a single exchange is sufficient.
+
+---
+
+### 2. Claw Mode (`-mode claw`)
+
+Classic chat extended with an automatic tool-call loop, implemented entirely inside the TUI layer (`tui/app.go`). The agent package is not involved.
+
+```
+User types message
+  → LLM responds with tool call(s) (SkillCallBatchMsg)
+  → TUI executes each tool (SkillResultMsg)
+  → TUI resets streamStart, sends results back to LLM ──┐
+  → LLM responds again — more tool calls? ──────────────┘
+  → Eventually: final text response
+  → Status bar: timing + tokens for the final LLM call only
+```
+
+A safety cap (`ClawMaxToolIterations`, default 10) stops runaway loops. The loop counter resets with each new user message.
+
+**What it is not**: Claw mode has no planning step, no checkpoints, no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
+
+**Configure**:
+```bash
+celeste config --set-mode claw               # persist as default
+celeste config --set-claw-max-iterations 15  # raise the safety cap
+celeste -mode claw chat                      # one-session override
+```
+
+**When to use**: Multi-step tasks where you want the model to call tools (search, calculate, look up data) and synthesise the results in a single conversational turn. E.g. "research the latest Rust releases and summarise the breaking changes."
+
+---
+
+### 3. Agent Mode (`/agent <goal>`)
+
+A fully autonomous, multi-turn agent implemented in `cmd/celeste/agent/`. The tool-call loop lives in `agent/runtime.go`, completely separate from the TUI. The TUI receives only event notifications.
+
+```
+/agent write a bash script to reorganise these log files
+  → agent.Runner.RunGoal() starts in a goroutine
+      → planning turn: LLM produces a step-by-step plan
+      → execution turns (up to MaxTurns):
+          → LLM calls agent tools (bash, read_file, write_file, …)
+          → tools run against Workspace (cwd by default)
+          → OnProgress callback fires → AgentProgressMsg to TUI
+          → OnTurnStats callback fires → turn timing + tokens
+      → final response turn
+  → TUI shows inline turn separators: ── turn 3/12 ──
+  → TUI shows per-turn stats: "Agent: typing response... (3.2s · ↑1.2k ↓483)"
+  → Run completes: "Agent complete (45.1s · ↑12.4k ↓3.2k)"
+```
+
+Agent runs are checkpointed to disk (`~/.celeste/agent-runs/`). A crashed or interrupted run can be resumed:
+```bash
+/agent resume <run-id>
+/agent list-runs
+```
+
+**Key differences from claw mode**:
+
+| | Claw mode | Agent mode |
+|---|---|---|
+| Loop lives in | TUI (`app.go`) | `agent/runtime.go` |
+| Planning step | No | Yes (dedicated planning turn) |
+| Checkpoints / resume | No | Yes |
+| Workspace awareness | No | Yes (reads/writes files in cwd) |
+| Tools available | TUI skills (21 built-ins) | Agent tools (bash, file I/O, …) |
+| Memory | Conversation history only | Full run state persisted to disk |
+| Observability | Status bar per tool call | Turn separators + per-turn stats in chat |
+
+**When to use**: Long-running autonomous tasks — refactoring a codebase, processing a batch of files, multi-step research with file output.
+
+---
+
+### 4. Orchestrator Mode (`/orchestrate <goal>`)
+
+Wraps the agent runner in a multi-model debate loop. The primary model executes the goal; a separate reviewer model critiques the output; the primary defends; the reviewer issues a verdict. Multiple debate rounds are possible.
+
+```
+/orchestrate write a production-ready Go HTTP middleware
+  → Classifier determines task lane (code/content/research/…)
+  → Primary agent (e.g. grok-4-1-fast) runs RunGoal()
+  → Debate round begins:
+      → Reviewer (e.g. gpt-4o-mini) critiques output
+      → Primary defends
+      → Reviewer issues verdict (score 0.0–1.0)
+  → If contested: another round (up to MaxRounds)
+  → Final output displayed in split panel
+```
+
+The split panel TUI shows:
+- **Left**: live action feed — classified lane, agent turns, tool calls, debate rounds, review verdicts
+- **Right**: file diffs (colour-coded) or review verdict
+
+Both panels are scrollable (`PgUp`/`PgDn`).
+
+**Configure via named config** (e.g. `config.grok.json`):
+```json
+{
+  "orchestrator": {
+    "primary_model": "grok-4-1-fast",
+    "reviewer_model": "gpt-4o-mini",
+    "max_debate_rounds": 3
+  }
+}
+```
+
+**When to use**: Tasks where output quality matters enough to warrant automated review — production code, content with specific requirements, research that needs fact-checking.
 
 ---
 
 ## Data Flow
 
-### Basic Chat Flow
+### Classic Chat Flow
 
 ```
-1. User types message
+1. User types message → input.go adds to history (↑/↓ to recall)
    ↓
-2. TUI captures input (tui/chat.go)
+2. Check for slash command (commands/commands.go)
+   ├─ /agent  → agent mode (see Runtime Modes)
+   ├─ /orchestrate → orchestrator mode
+   ├─ /nsfw, /endpoint, /model, etc. → config updates
+   └─ plain text → continue to LLM
    ↓
-3. Check for slash command (commands/commands.go)
-   ├─ Yes → Execute command → Update UI
-   └─ No → Continue to LLM
+3. streamStart = time.Now()  ← timing starts here
    ↓
-4. Build request with system prompt (prompts/celeste.go)
+4. Build request: system prompt + conversation history + skill definitions
    ↓
-5. Add skills as tools (skills/registry.go)
+5. Send to LLM client (llm/client.go) — streaming
    ↓
-6. Send to LLM client (llm/client.go)
+6. StreamChunkMsg arrives → append to last assistant message
    ↓
-7. Stream response chunks
+7. StreamDoneMsg arrives → token counts captured (lastMsgInTok/Out)
+   ├─ Tool calls requested?
+   │   ├─ classic mode: show tool calls inline, no follow-up
+   │   └─ claw mode:   execute tools → streamStart reset →
+   │                   send results back to LLM → repeat from step 6
+   └─ No tool calls → simulated typing animation
    ↓
-8. Check for tool calls
-   ├─ Yes → Execute skills → Send results back
-   └─ No → Display response
+8. Typing complete → status: "Ready (2.1s · ↑1.2k ↓483)"
    ↓
-9. Save to session (config/session.go)
+9. persistSession() → saves messages + command history + endpoint
 ```
 
-### Function Call Flow
+### Agent Mode Flow
 
 ```
-User: "What's the weather in NYC?"
+/agent <goal>
    ↓
-1. LLM receives message + skill definitions
+1. tui_agent.go: builds agent.Options
+   - OnProgress callback → streams AgentProgressMsg to TUI
+   - OnTurnStats callback → captures per-turn timing + tokens
    ↓
-2. LLM decides to call "get_weather" skill
+2. agent.Runner.RunGoal() starts in goroutine
    ↓
-3. LLM returns tool_call:
-   {
-     "name": "get_weather",
-     "arguments": {"location": "NYC"}
-   }
+3. Planning turn: LLM produces structured plan
    ↓
-4. Skills executor finds handler (skills/executor.go)
+4. Execution loop (turn 1 … MaxTurns):
+   a. TUI receives AgentProgressTurnStart
+      → "── turn N/M ──" separator added to chat
+      → streamStart reset for this turn
+   b. LLM call via SendMessageSync
+      → OnTurnStats fires with Elapsed, InputTokens, OutputTokens
+   c. Tool calls executed against Workspace (cwd)
+      → TUI receives AgentProgressToolCall → "⚙ tool_name" in chat
+   d. State checkpointed to ~/.celeste/agent-runs/
    ↓
-5. Handler makes API call (skills/builtin.go)
+5. Final response turn:
+   → AgentProgressResponse with per-turn stats attached
+   → Simulated typing
+   → Status: "Agent: typing response... (3.2s · ↑1.2k ↓483)"
    ↓
-6. Result returned: {"temperature": 45, "condition": "cloudy"}
-   ↓
-7. Result sent back to LLM with role: "tool"
-   ↓
-8. LLM generates natural response: "It's 45°F and cloudy in NYC..."
-   ↓
-9. Response displayed to user
+6. AgentProgressComplete
+   → Status: "Agent complete (45.1s · ↑12.4k ↓3.2k)" (run totals)
+   → persistSession()
 ```
 
 ### Provider Detection Flow
@@ -178,15 +289,14 @@ User: "What's the weather in NYC?"
    ↓
 3. URL pattern matching:
    - "api.openai.com" → openai
-   - "api.x.ai" → grok
-   - "api.venice.ai" → venice
-   - etc.
+   - "api.x.ai"       → grok
+   - "api.venice.ai"  → venice
+   - "generativelanguage.googleapis.com" → gemini
+   - "aiplatform.googleapis.com"         → vertex
    ↓
-4. Provider capabilities retrieved
+4. Provider capabilities retrieved (SupportsFunctionCalling, etc.)
    ↓
-5. Model recommendations based on provider
-   ↓
-6. Function calling support determined
+5. Header updated: provider name · model · context window %
 ```
 
 ---
@@ -362,78 +472,76 @@ Skills are converted to OpenAI's function calling format:
 
 Located in `cmd/celeste/tui/`.
 
-### Bubble Tea Architecture
-
-Follows The Elm Architecture (TEA):
+### Layout
 
 ```
-┌─────────────────────────────────────┐
-│           Model (State)              │
-│  - Messages                          │
-│  - Input buffer                      │
-│  - Viewport                          │
-│  - Skills list                       │
-│  - Current view                      │
-└─────────────────────────────────────┘
-         ↓                 ↑
-    ┌────────┐        ┌────────┐
-    │ Update │        │  View  │
-    └────────┘        └────────┘
-         ↑                 ↓
-    ┌────────┐        ┌────────┐
-    │  Msg   │        │ String │
-    └────────┘        └────────┘
+┌─ Header ──────────────────────────────────────────────────────┐
+│  celeste  │  grok  │  grok-4-1-fast  │  🟢 5.2K/128K (4.1%) │
+├─ Chat area (scrollable) ──────────────────────────────────────┤
+│  [user] hello                                                 │
+│  ── turn 1/12 ──                         ← agent separator   │
+│  ⚙  read_file("main.go")                ← tool call log      │
+│  [assistant] Here's what I found...                          │
+├─ Status bar ──────────────────────────────────────────────────┤
+│  Ready (2.1s · ↑1.2k ↓483)              ← per-response stats │
+├─ Input ───────────────────────────────────────────────────────┤
+│  ❯ _                                                          │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-### Components
+During `/orchestrate` the chat area is replaced by a split panel:
 
-**1. App Model** (`app.go`):
-
-```go
-type App struct {
-    config      *Config
-    llmClient   *llm.Client
-    messages    []Message
-    input       textinput.Model
-    viewport    viewport.Model
-    skills      []Skill
-    currentView View
-    streaming   bool
-}
+```
+┌─ Header ─────────────────────────────────────────────────────┐
+├─ AGENT ACTIONS ──────────────┬─ FILE DIFF / VERDICT ─────────┤
+│  ● [grok-4-1-fast] turn 1/12 │  src/main.go                  │
+│  ● ⚙ read_file               │  @@ -12,6 +12,8 @@            │
+│  ● [gpt-4o-mini] reviewing   │  + func newHandler() {        │
+│  ↑ 3 older  ↓ pgdn to resume │    line 8-24 / 47             │
+├─ Status ─────────────────────┴───────────────────────────────┤
+│  Orchestrator: turn 4/12 · ↑12.4k ↓3.2k total               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**2. Message Types**:
+### Key Files
 
-- User messages
-- Assistant messages
-- Tool calls (function execution)
-- System messages
-- Error messages
+| File | Responsibility |
+|------|---------------|
+| `app.go` | Root model, Update/View, all message handlers |
+| `input.go` | Text input with ↑/↓ command history, ctrl+w/u |
+| `chat.go` | Message history, viewport scrolling |
+| `split_panel.go` | Two-column action feed + diff panel (orchestrator) |
+| `messages.go` | All tea.Msg types: StreamChunkMsg, AgentProgressMsg, OrchestratorEventMsg, … |
+| `context.go` | Context window tracker, colour-coded % indicator |
+| `styles.go` | Lip Gloss style definitions |
 
-**3. Update Cycle** (`app.go:Update()`):
+### Message Types and their Handlers
 
-```go
-func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    switch msg := msg.(type) {
-    case tea.KeyMsg:
-        // Handle keyboard input
-    case StreamChunkMsg:
-        // Handle LLM stream chunks
-    case CompletionDoneMsg:
-        // Handle completion end
-    case ToolCallMsg:
-        // Handle function calls
-    }
-    return a, cmd
-}
-```
+| Message | Source | What it does |
+|---------|--------|-------------|
+| `StreamChunkMsg` | LLM stream | Appends delta to last assistant message |
+| `StreamDoneMsg` | LLM stream end | Captures token counts, starts typing animation |
+| `SkillCallBatchMsg` | LLM tool request | Executes skills; in claw mode schedules follow-up |
+| `SkillResultMsg` | Skill executor | Appends tool result; if last in batch, sends to LLM |
+| `AgentProgressMsg` | agent.Runner | Turn separators, tool logs, per-turn stats, complete summary |
+| `OrchestratorEventMsg` | orchestrator | Action feed entries, file diffs, debate rounds, verdicts |
+| `TickMsg` | timer | Typing animation; on completion writes `(Xs · ↑Nk ↓Nk)` to status |
 
-**4. View Rendering** (`app.go:View()`):
+### Input Features
 
-- Message history viewport
-- Input box at bottom
-- Status indicators (thinking, streaming)
-- Styled output (Lip Gloss)
+- **History navigation**: ↑/↓ arrows cycle through past commands; unsent input is buffered and restored when you navigate back to the end
+- **Word delete**: `ctrl+w` deletes the last word; `ctrl+u` clears the line
+- **File expansion**: `@filename` in any prompt is replaced with the file's contents before sending
+- **Persistence**: Command history is saved to the session JSON and restored on restart
+
+### Observability
+
+Every mode surfaces timing and token information consistently:
+
+- **Regular chat / claw**: status bar shows `(Xs · ↑Nk ↓Nk)` after each response
+- **Agent mode**: inline `── turn N/M ──` separators; per-turn stats on each response; run total on completion
+- **Orchestrator**: per-action stats in the split panel action feed; running total in the status bar
+- **Context usage**: colour-coded header indicator — 🟢 OK / 🟡 75% / 🟠 85% / 🔴 95%
 
 ---
 
@@ -443,35 +551,36 @@ Located in `cmd/celeste/config/`.
 
 ### Session Structure
 
+Sessions persist the full conversation state across restarts — including command history, so `↑` in the input box recalls commands from previous sessions.
+
 ```go
 type Session struct {
-    ID            string
-    Name          string
-    CreatedAt     time.Time
-    UpdatedAt     time.Time
-    Messages      []Message
-    Provider      string
-    Model         string
-    BaseURL       string
-    ContextWindow int
-    TokenCount    int
+    ID           string
+    Name         string          // auto-generated from first user message
+    CreatedAt    time.Time
+    UpdatedAt    time.Time
+    Messages     []SessionMessage
+    Provider     string
+    Model        string
+    NSFWMode     bool
+    TokenCount   int
+    UsageMetrics UsageMetrics    // prompt + completion token totals
+    Metadata     map[string]any  // command_history stored here
 }
 ```
 
 ### Storage Format
 
-Sessions saved as JSON in `~/.celeste/sessions/`:
-
 ```
 ~/.celeste/
-├── config.json
+├── config.json              ← default config profile
+├── config.grok.json         ← named profile (loaded with /endpoint grok)
+├── config.openai.json       ← named profile
 ├── sessions/
-│   ├── session_abc123.json
-│   ├── session_def456.json
+│   ├── session_<id>.json    ← one file per session, auto-resumed on start
 │   └── ...
-└── skills/
-    ├── custom_skill_1.json
-    └── ...
+└── agent-runs/
+    └── <run-id>/            ← agent checkpoint files (resumable)
 ```
 
 ### Session Operations
@@ -731,27 +840,17 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 
 ---
 
-## Future Architecture Improvements
-
-1. **Plugin System**: Load skills from external binaries
-2. **HTTP Mocking**: Test llm package without real APIs
-3. **TUI Testing**: Bubble Tea test framework
-4. **Parallel Requests**: Concurrent skill execution
-5. **Caching Layer**: Cache LLM responses for similar queries
-6. **Native Provider APIs**: Direct integration (Anthropic, Gemini)
-7. **Multi-Agent**: Specialist agents for different tasks
-
----
-
 ## Further Reading
 
 - [Provider Documentation](./LLM_PROVIDERS.md)
 - [Testing Guide](./TESTING.md)
 - [Contributing Guide](./CONTRIBUTING.md)
+- [Claw Mode Build Plan](./plans/2026-03-01-celeste-claw-feature-buildout.md)
+- [Agent Mode Build Plan](./plans/2026-03-02-autonomous-agent-mode-buildout.md)
+- [Orchestrator Design](./superpowers/specs/2026-03-15-orchestrator-design.md)
 - [Bubble Tea Docs](https://github.com/charmbracelet/bubbletea)
-- [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling)
 
 ---
 
-**Last Updated**: December 14, 2024
-**Version**: v1.2.0
+**Last Updated**: 2026-03-15
+**Version**: v1.6.x

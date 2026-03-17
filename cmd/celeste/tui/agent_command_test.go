@@ -162,5 +162,5 @@ func TestAgentProgressCompleteStopsStreaming(t *testing.T) {
 	m = model.(AppModel)
 
 	assert.False(t, m.streaming)
-	assert.Contains(t, m.status.text, "Agent run complete")
+	assert.Contains(t, m.status.text, "Agent complete")
 }

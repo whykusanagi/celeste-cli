@@ -52,6 +52,9 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 		Model:    b.config.Model,
 		Messages: openAIMessages,
 		Stream:   true,
+		StreamOptions: &openai.StreamOptions{
+			IncludeUsage: true,
+		},
 	}
 
 	if len(openAITools) > 0 {
@@ -77,6 +80,15 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 		if err != nil {
 			result.Error = err
 			return result, err
+		}
+
+		// Capture usage from the final usage-only chunk (sent by OpenAI when IncludeUsage is true).
+		if response.Usage != nil {
+			result.Usage = &TokenUsage{
+				PromptTokens:     response.Usage.PromptTokens,
+				CompletionTokens: response.Usage.CompletionTokens,
+				TotalTokens:      response.Usage.TotalTokens,
+			}
 		}
 
 		for _, choice := range response.Choices {
