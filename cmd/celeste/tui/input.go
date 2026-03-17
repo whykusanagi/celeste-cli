@@ -3,17 +3,53 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// knownCommands is the authoritative list of slash commands for typeahead.
+var knownCommands = []string{
+	"agent", "clear", "config", "context", "endpoint", "export",
+	"help", "model", "nsfw", "orch", "orchestrate", "providers",
+	"safe", "session", "set-model", "skills", "stats", "tools",
+}
+
+var (
+	suggestionTabStyle    = lipgloss.NewStyle().Foreground(ColorTextMuted)
+	suggestionActiveStyle = lipgloss.NewStyle().Foreground(ColorPurpleNeon).Bold(true)
+	suggestionDimStyle    = lipgloss.NewStyle().Foreground(ColorTextMuted)
+)
+
+// computeSuggestions returns commands that start with the partial, excluding exact match.
+func computeSuggestions(value string) []string {
+	if !strings.HasPrefix(value, "/") {
+		return nil
+	}
+	partial := strings.TrimPrefix(value, "/")
+	if partial == "" || strings.Contains(partial, " ") {
+		return nil
+	}
+	var matches []string
+	for _, cmd := range knownCommands {
+		if strings.HasPrefix(cmd, partial) && cmd != partial {
+			matches = append(matches, cmd)
+		}
+	}
+	return matches
+}
 
 // InputModel represents the text input component.
 type InputModel struct {
-	textInput    textinput.Model
-	width        int
-	history      []string
-	historyIndex int
-	tempInput    string // Stores current input when browsing history
+	textInput     textinput.Model
+	width         int
+	history       []string
+	historyIndex  int
+	tempInput     string   // Stores current input when browsing history
+	suggestions   []string // Current typeahead matches
+	suggestionIdx int      // Which suggestion is highlighted (Tab cycles)
 }
 
 // NewInputModel creates a new input model.
@@ -54,6 +90,16 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "tab":
+			// Complete with the highlighted suggestion
+			if len(m.suggestions) > 0 {
+				m.textInput.SetValue("/" + m.suggestions[m.suggestionIdx] + " ")
+				m.textInput.CursorEnd()
+				m.suggestions = nil
+				m.suggestionIdx = 0
+			}
+			return m, nil
+
 		case "enter":
 			value := m.textInput.Value()
 			if value != "" {
@@ -61,6 +107,8 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 				m.history = append(m.history, value)
 				m.historyIndex = len(m.history) // Reset index past end
 				m.tempInput = ""
+				m.suggestions = nil
+				m.suggestionIdx = 0
 
 				// Clear input
 				m.textInput.Reset()
@@ -127,17 +175,38 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 	}
 
 	m.textInput, cmd = m.textInput.Update(msg)
+
+	// Recompute typeahead after every keystroke
+	m.suggestions = computeSuggestions(m.textInput.Value())
+	if m.suggestionIdx >= len(m.suggestions) {
+		m.suggestionIdx = 0
+	}
+
 	return m, cmd
 }
 
 // View renders the input component.
 func (m InputModel) View() string {
-	// Create the input line - compact, no extra lines
-	input := m.textInput.View()
+	inputLine := m.textInput.View()
+
+	// Always render a hint line to keep layout height stable at 3 lines.
+	// When suggestions exist, show them; otherwise show a blank line.
+	var hintLine string
+	if len(m.suggestions) > 0 {
+		parts := make([]string, len(m.suggestions))
+		for i, s := range m.suggestions {
+			if i == m.suggestionIdx {
+				parts[i] = suggestionActiveStyle.Render("/" + s)
+			} else {
+				parts[i] = suggestionDimStyle.Render("/" + s)
+			}
+		}
+		hintLine = suggestionTabStyle.Render("  ↹ ") + strings.Join(parts, suggestionTabStyle.Render("  "))
+	}
 
 	return InputPanelStyle.
 		Width(m.width).
-		Render(input)
+		Render(inputLine + "\n" + hintLine)
 }
 
 // Value returns the current input value.

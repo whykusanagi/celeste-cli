@@ -84,15 +84,21 @@ type xAITool struct {
 	} `json:"function"`
 }
 
+// xAIStreamOptions requests usage data in the final streaming chunk.
+type xAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 // xAIChatCompletionRequest is the request format for xAI chat completions
 type xAIChatCompletionRequest struct {
-	Model         string       `json:"model"`
-	Messages      []xAIMessage `json:"messages"`
-	Tools         []xAITool    `json:"tools,omitempty"`
-	Stream        bool         `json:"stream"`
-	CollectionIDs []string     `json:"collection_ids,omitempty"` // xAI Collections support
-	Temperature   float32      `json:"temperature,omitempty"`
-	MaxTokens     int          `json:"max_tokens,omitempty"`
+	Model         string            `json:"model"`
+	Messages      []xAIMessage      `json:"messages"`
+	Tools         []xAITool         `json:"tools,omitempty"`
+	Stream        bool              `json:"stream"`
+	StreamOptions *xAIStreamOptions `json:"stream_options,omitempty"`
+	CollectionIDs []string          `json:"collection_ids,omitempty"` // xAI Collections support
+	Temperature   float32           `json:"temperature,omitempty"`
+	MaxTokens     int               `json:"max_tokens,omitempty"`
 }
 
 // xAIStreamChunk represents a streaming response chunk
@@ -128,10 +134,11 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 
 	// Build request
 	req := xAIChatCompletionRequest{
-		Model:    b.model,
-		Messages: xaiMessages,
-		Tools:    xaiTools,
-		Stream:   true,
+		Model:         b.model,
+		Messages:      xaiMessages,
+		Tools:         xaiTools,
+		Stream:        true,
+		StreamOptions: &xAIStreamOptions{IncludeUsage: true},
 	}
 
 	// Add Collections support if enabled
@@ -175,10 +182,14 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 		return fmt.Errorf("xAI API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// Process streaming response
+	// Process streaming response.
+	// When include_usage is set, xAI sends usage data in a separate chunk that arrives
+	// AFTER the finish_reason chunk but BEFORE [DONE]. We defer the final callback until
+	// [DONE] so that usage is always populated when the caller receives IsFinal=true.
 	scanner := bufio.NewScanner(resp.Body)
 	var toolCalls []xAIToolCall
 	var usage *TokenUsage
+	var pendingFinal *StreamChunk // hold finish chunk until [DONE]
 	isFirst := true
 
 	for scanner.Scan() {
@@ -198,9 +209,20 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 			continue
 		}
 
+		// Capture usage whenever it appears — may be in the finish chunk or a trailing chunk.
+		if chunk.Usage != nil {
+			usage = &TokenUsage{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+			if chunk.Usage.NumSourcesUsed > 0 {
+				tui.LogInfo(fmt.Sprintf("✅ xAI Collections: %d sources used in response", chunk.Usage.NumSourcesUsed))
+			}
+		}
+
 		// Process choices
 		for _, choice := range chunk.Choices {
-			// Send content delta
 			if choice.Delta.Content != "" {
 				callback(StreamChunk{
 					Content: choice.Delta.Content,
@@ -209,8 +231,7 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 				isFirst = false
 			}
 
-			// Accumulate tool calls — arguments stream across multiple chunks,
-			// so append argument fragments rather than replacing the whole struct.
+			// Accumulate tool calls across chunks
 			for _, tc := range choice.Delta.ToolCalls {
 				found := false
 				for i := range toolCalls {
@@ -231,46 +252,34 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 				}
 			}
 
-			// Handle finish reason
+			// Defer the final callback — usage may arrive in the next chunk.
 			if choice.FinishReason != "" {
-				// Convert tool calls if present
-				var convertedToolCalls []ToolCallResult
-				if len(toolCalls) > 0 {
-					for _, tc := range toolCalls {
-						convertedToolCalls = append(convertedToolCalls, ToolCallResult{
-							ID:        tc.ID,
-							Name:      tc.Function.Name,
-							Arguments: tc.Function.Arguments,
-						})
-					}
+				var converted []ToolCallResult
+				for _, tc := range toolCalls {
+					converted = append(converted, ToolCallResult{
+						ID:        tc.ID,
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					})
 				}
-
-				callback(StreamChunk{
+				sc := StreamChunk{
 					IsFinal:      true,
 					FinishReason: choice.FinishReason,
-					ToolCalls:    convertedToolCalls,
-					Usage:        usage,
-				})
-			}
-		}
-
-		// Capture usage stats (typically in final chunk)
-		if chunk.Usage != nil {
-			usage = &TokenUsage{
-				PromptTokens:     chunk.Usage.PromptTokens,
-				CompletionTokens: chunk.Usage.CompletionTokens,
-				TotalTokens:      chunk.Usage.TotalTokens,
-			}
-
-			// Log Collections usage
-			if chunk.Usage.NumSourcesUsed > 0 {
-				tui.LogInfo(fmt.Sprintf("✅ xAI Collections: %d sources used in response", chunk.Usage.NumSourcesUsed))
+					ToolCalls:    converted,
+				}
+				pendingFinal = &sc
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read stream: %w", err)
+	}
+
+	// Fire the final callback now that all chunks (including trailing usage) are consumed.
+	if pendingFinal != nil {
+		pendingFinal.Usage = usage
+		callback(*pendingFinal)
 	}
 
 	return nil
@@ -289,6 +298,7 @@ func (b *XAIBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMes
 				Content:      content.String(),
 				ToolCalls:    chunk.ToolCalls,
 				FinishReason: chunk.FinishReason,
+				Usage:        chunk.Usage,
 			}
 		}
 	})

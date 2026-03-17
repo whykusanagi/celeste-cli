@@ -24,10 +24,23 @@ Celeste CLI is the **official command-line interface** for CelesteAI, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
 - 🔮 **21 AI-Powered Skills** - Function calling for weather, tarot, conversions, and more
 - 🗂️ **Collections** - Upload documents for RAG (xAI only)
-- 💾 **Session Persistence** - Auto-save conversations and resume anytime
-- 🌐 **Multi-Provider Support** - Works with OpenAI, Grok/xAI, and more
+- 💾 **Session Persistence** - Auto-save conversations, command history, and model selection across restarts
+- 🌐 **Multi-Provider Support** - OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
 - 👁️ **Demonic Eye Animation** - Shows when Celeste is thinking
 - 🎭 **Celeste Personality** - Embedded AI personality with lore-accurate responses
+
+### Four Runtime Modes
+
+| Mode | Command | What it does |
+|------|---------|-------------|
+| **Classic** | `celeste chat` (default) | Single request → response. Fast, conversational. |
+| **Claw** | `celeste -mode claw chat` | LLM can call tools repeatedly in one turn. Good for research tasks that need multiple lookups. |
+| **Agent** | `/agent <goal>` (in TUI) | Fully autonomous multi-turn agent with planning, file I/O, checkpointing, and resume. For long-running tasks. |
+| **Orchestrator** | `/orchestrate <goal>` (in TUI) | Agent run with a second reviewer model that critiques and debates the output. For high-quality deliverables. |
+
+> **Claw vs Agent**: Claw is a reactive tool loop inside the chat UI — no planning, no persistence.
+> Agent is a separate runtime with its own turn loop, checkpoint store, and workspace awareness.
+> They are independent implementations, not layers on top of each other.
 
 ---
 

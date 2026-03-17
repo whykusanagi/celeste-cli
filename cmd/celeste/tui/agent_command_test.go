@@ -103,3 +103,64 @@ func hasSystemMessageContaining(messages []ChatMessage, needle string) bool {
 	}
 	return false
 }
+
+func TestAgentProgressTurnStartUpdatesStatus(t *testing.T) {
+	client := &fakeAgentLLMClient{}
+	m := NewApp(client)
+
+	// Simulate receiving a turn-start progress message
+	model, cmd := m.Update(AgentProgressMsg{
+		Kind:     AgentProgressTurnStart,
+		Text:     "turn 1/12",
+		Turn:     1,
+		MaxTurns: 12,
+	})
+	m = model.(AppModel)
+
+	assert.Contains(t, m.status.text, "turn 1")
+	assert.True(t, m.streaming)
+	assert.Nil(t, cmd) // no Ch means no ReadNext
+}
+
+func TestAgentProgressToolCallAddsAnnotation(t *testing.T) {
+	client := &fakeAgentLLMClient{}
+	m := NewApp(client)
+	m.streaming = true
+
+	model, _ := m.Update(AgentProgressMsg{
+		Kind: AgentProgressToolCall,
+		Text: "dev_write_file",
+		Ch:   make(chan AgentProgressMsg), // non-nil = more coming
+	})
+	m = model.(AppModel)
+
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "dev_write_file"))
+}
+
+func TestAgentProgressResponseTriggersTypingAnimation(t *testing.T) {
+	client := &fakeAgentLLMClient{}
+	m := NewApp(client)
+	m.streaming = true
+
+	model, cmd := m.Update(AgentProgressMsg{
+		Kind: AgentProgressResponse,
+		Text: "hello from agent",
+	})
+	m = model.(AppModel)
+
+	assert.Equal(t, "hello from agent", m.typingContent)
+	assert.Equal(t, 0, m.typingPos)
+	assert.NotNil(t, cmd) // typing tick scheduled
+}
+
+func TestAgentProgressCompleteStopsStreaming(t *testing.T) {
+	client := &fakeAgentLLMClient{}
+	m := NewApp(client)
+	m.streaming = true
+
+	model, _ := m.Update(AgentProgressMsg{Kind: AgentProgressComplete, Text: "done"})
+	m = model.(AppModel)
+
+	assert.False(t, m.streaming)
+	assert.Contains(t, m.status.text, "Agent complete")
+}

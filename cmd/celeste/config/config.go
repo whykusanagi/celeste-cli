@@ -102,6 +102,9 @@ type Config struct {
 	XAIManagementAPIKey string             `json:"xai_management_api_key,omitempty"`
 	Collections         *CollectionsConfig `json:"collections,omitempty"`
 	XAIFeatures         *XAIFeaturesConfig `json:"xai_features,omitempty"`
+
+	// Orchestrator settings
+	Orchestrator *OrchestratorConfig `json:"orchestrator,omitempty"`
 }
 
 // CollectionsConfig holds collections settings
@@ -115,6 +118,25 @@ type CollectionsConfig struct {
 type XAIFeaturesConfig struct {
 	EnableWebSearch bool `json:"enable_web_search"`
 	EnableXSearch   bool `json:"enable_x_search"`
+}
+
+// LaneConfig holds the primary and optional reviewer model for one task lane.
+// PrimaryBaseURL/PrimaryAPIKey and ReviewerBaseURL/ReviewerAPIKey allow cross-provider
+// orchestration (e.g. xAI primary + OpenAI reviewer) without changing the main config.
+type LaneConfig struct {
+	Primary         string `json:"primary"`
+	PrimaryBaseURL  string `json:"primary_base_url,omitempty"`
+	PrimaryAPIKey   string `json:"primary_api_key,omitempty"`
+	Reviewer        string `json:"reviewer,omitempty"`
+	ReviewerBaseURL string `json:"reviewer_base_url,omitempty"`
+	ReviewerAPIKey  string `json:"reviewer_api_key,omitempty"`
+}
+
+// OrchestratorConfig controls multi-model orchestration behaviour.
+type OrchestratorConfig struct {
+	Lanes        map[string]LaneConfig `json:"lanes,omitempty"`
+	DefaultLane  string                `json:"default_lane,omitempty"`
+	DebateRounds int                   `json:"debate_rounds,omitempty"`
 }
 
 // DefaultConfig returns a config with default values.

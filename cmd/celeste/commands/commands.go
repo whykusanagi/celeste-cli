@@ -715,16 +715,21 @@ Session Control:
   /help              Show this help message
 
 Agent:
-  /agent <goal>      Run autonomous task loop from TUI
-  /agent list-runs   List checkpointed agent runs
-  /agent resume <id> Resume an existing agent run
+  /agent <goal>          Run autonomous task loop from TUI
+  /agent list-runs       List checkpointed agent runs
+  /agent resume <id>     Resume an existing agent run
+
+Orchestrator:
+  /orchestrate <goal>    Multi-model orchestrated run with debate/review
+  /orch <goal>           Alias for /orchestrate
 
 Examples:
-  /nsfw              → Enable uncensored mode with media generation
-  /endpoint google   → Switch to Google Vertex AI
-  /model gpt-4o      → Use GPT-4o model
-  /agent fix tests   → Run autonomous code-fix loop
-  /safe              → Return to safe mode
+  /nsfw                  → Enable uncensored mode with media generation
+  /endpoint google       → Switch to Google Vertex AI
+  /model gpt-4o          → Use GPT-4o model
+  /agent fix tests       → Run autonomous code-fix loop
+  /orch write a script   → Run orchestrator with grok + reviewer debate
+  /safe                  → Return to safe mode
 
 Skills Available: 18 function-calling tools
   • Weather, currency, timezone conversion

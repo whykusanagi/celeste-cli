@@ -26,6 +26,18 @@ const (
 	PlanStatusCompleted  = "completed"
 )
 
+// ProgressKind identifies an agent progress event.
+type ProgressKind int
+
+const (
+	ProgressTurnStart ProgressKind = iota
+	ProgressToolCall
+	ProgressStepDone
+	ProgressResponse
+	ProgressComplete
+	ProgressError
+)
+
 type Options struct {
 	Workspace                 string        `json:"workspace"`
 	MaxTurns                  int           `json:"max_turns"`
@@ -44,6 +56,24 @@ type Options struct {
 	ArtifactDir               string        `json:"artifact_dir,omitempty"`
 	DisableCheckpoints        bool          `json:"disable_checkpoints"`
 	Verbose                   bool          `json:"verbose"`
+	// OnProgress is an optional callback invoked at key agent events.
+	// text is a human-readable label. turn/maxTurns are 0 for non-turn events.
+	// This field is not serialised to JSON (func types are not JSON-safe).
+	OnProgress func(kind ProgressKind, text string, turn, maxTurns int) `json:"-"`
+	// OnTurnStats is an optional callback fired after each LLM API call completes.
+	// It carries timing and token usage data for that call.
+	OnTurnStats func(TurnStats) `json:"-"`
+}
+
+// TurnStats carries per-turn performance data from a completed LLM call.
+type TurnStats struct {
+	Turn         int
+	MaxTurns     int
+	Elapsed      time.Duration
+	InputTokens  int
+	OutputTokens int
+	Response     string   // full assistant content for this turn (may be empty for pure tool-call turns)
+	ToolCalls    []string // names of tools called this turn
 }
 
 func DefaultOptions() Options {

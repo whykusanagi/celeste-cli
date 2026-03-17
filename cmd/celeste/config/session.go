@@ -358,6 +358,39 @@ func (s *Session) GetProvider() string {
 	return s.Provider
 }
 
+// SetCommandHistory stores the input command history in session metadata.
+func (s *Session) SetCommandHistory(history []string) {
+	if s.Metadata == nil {
+		s.Metadata = make(map[string]any)
+	}
+	s.Metadata["command_history"] = history
+}
+
+// GetCommandHistory retrieves the input command history from session metadata.
+func (s *Session) GetCommandHistory() []string {
+	if s.Metadata == nil {
+		return nil
+	}
+	raw, ok := s.Metadata["command_history"]
+	if !ok {
+		return nil
+	}
+	// JSON round-trip stores []string as []interface{}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // SetModel stores the current model in session metadata.
 func (s *Session) SetModel(model string) {
 	if s.Metadata == nil {

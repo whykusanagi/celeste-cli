@@ -14,6 +14,23 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
+func agentKindToTUI(k agent.ProgressKind) tui.AgentProgressKind {
+	switch k {
+	case agent.ProgressTurnStart:
+		return tui.AgentProgressTurnStart
+	case agent.ProgressToolCall:
+		return tui.AgentProgressToolCall
+	case agent.ProgressStepDone:
+		return tui.AgentProgressStepDone
+	case agent.ProgressResponse:
+		return tui.AgentProgressResponse
+	case agent.ProgressComplete:
+		return tui.AgentProgressComplete
+	default:
+		return tui.AgentProgressError
+	}
+}
+
 type agentRunnerAPI interface {
 	ListRuns(limit int) ([]agent.RunSummary, error)
 	Resume(ctx context.Context, runID string) (*agent.RunState, error)
@@ -24,15 +41,143 @@ var newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out i
 	return agent.NewRunner(cfg, options, out, errOut)
 }
 
-// RunAgentCommand runs autonomous agent commands from TUI slash-command flow.
+// RunAgentCommand dispatches /agent sub-commands.
+// Info commands (help, list, resume) return a single AgentCommandResultMsg.
+// Goal commands stream incremental AgentProgressMsg via a channel.
 func (a *TUIClientAdapter) RunAgentCommand(args []string) tea.Cmd {
-	copiedArgs := append([]string(nil), args...)
-	return func() tea.Msg {
-		output, err := a.executeAgentCommand(copiedArgs)
-		return tui.AgentCommandResultMsg{
-			Output: output,
-			Err:    err,
+	if len(args) == 0 {
+		return func() tea.Msg {
+			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments")}
 		}
+	}
+	sub := strings.ToLower(strings.TrimSpace(args[0]))
+	switch sub {
+	case "help", "--help", "-h":
+		return func() tea.Msg {
+			return tui.AgentCommandResultMsg{Output: agentUsage()}
+		}
+	case "list", "list-runs", "--list-runs":
+		copiedArgs := append([]string(nil), args...)
+		return func() tea.Msg {
+			output, err := a.executeAgentCommand(copiedArgs)
+			return tui.AgentCommandResultMsg{Output: output, Err: err}
+		}
+	case "resume", "--resume":
+		copiedArgs := append([]string(nil), args...)
+		return func() tea.Msg {
+			output, err := a.executeAgentCommand(copiedArgs)
+			return tui.AgentCommandResultMsg{Output: output, Err: err}
+		}
+	default:
+		// Treat all other input as a goal — stream progress.
+		return a.runGoalWithProgress(args)
+	}
+}
+
+// runGoalWithProgress runs a goal in a goroutine and streams AgentProgressMsg
+// back to the TUI via a bidirectional channel. The read end is stored in each
+// non-terminal AgentProgressMsg so app.go can schedule the next read.
+func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
+	// ch is bidirectional so the goroutine can write and we can hand the
+	// receive end (<-chan) to AgentProgressMsg.Ch without a compile error.
+	ch := make(chan tui.AgentProgressMsg, 256)
+
+	go func() {
+		defer close(ch)
+		cfg := a.currentAgentConfig()
+		if cfg.APIKey == "" && !cfg.GoogleUseADC && strings.TrimSpace(cfg.GoogleCredentialsFile) == "" {
+			ch <- tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: "no API key or credentials configured"}
+			return
+		}
+
+		opts := agent.DefaultOptions()
+		if cwd, err := os.Getwd(); err == nil {
+			opts.Workspace = cwd
+		}
+		opts.Verbose = false
+
+		// Capture per-turn timing and token counts.
+		// OnTurnStats fires immediately after SendMessageSync returns (before any
+		// ProgressToolCall), so stats are always available when ProgressToolCall fires.
+		turnStatsMap := make(map[int]agent.TurnStats)
+		// turnStatsEmitted[turn] tracks whether we forwarded stats for that turn.
+		// We emit on the FIRST ProgressToolCall (tool-call turns) or on
+		// ProgressResponse (completion turns with no tool calls).
+		turnStatsEmitted := make(map[int]bool)
+		opts.OnTurnStats = func(stats agent.TurnStats) {
+			turnStatsMap[stats.Turn] = stats
+		}
+
+		// Pass the receive end of ch so AgentProgressMsg.Ch is a <-chan.
+		recvCh := (<-chan tui.AgentProgressMsg)(ch)
+		opts.OnProgress = func(kind agent.ProgressKind, text string, turn, maxTurns int) {
+			tuiKind := agentKindToTUI(kind)
+			var msgCh <-chan tui.AgentProgressMsg
+			// Terminal kinds close the chain — don't set Ch so ReadNext returns nil.
+			if tuiKind != tui.AgentProgressComplete && tuiKind != tui.AgentProgressError {
+				msgCh = recvCh
+			}
+			msg := tui.AgentProgressMsg{
+				Kind:     tuiKind,
+				Text:     text,
+				Turn:     turn,
+				MaxTurns: maxTurns,
+				Ch:       msgCh,
+			}
+			// Attach per-turn stats to the FIRST ProgressToolCall of each turn.
+			// This makes every tool-call turn show timing+tokens immediately,
+			// matching the orchestrator runner behaviour.
+			if tuiKind == tui.AgentProgressToolCall && !turnStatsEmitted[turn] {
+				if stats, ok := turnStatsMap[turn]; ok {
+					msg.Duration = stats.Elapsed
+					msg.InputTokens = stats.InputTokens
+					msg.OutputTokens = stats.OutputTokens
+					turnStatsEmitted[turn] = true
+					delete(turnStatsMap, turn)
+				}
+			}
+			// For completion turns (no tool calls) attach stats to ProgressResponse.
+			if tuiKind == tui.AgentProgressResponse {
+				if stats, ok := turnStatsMap[turn]; ok {
+					msg.Duration = stats.Elapsed
+					msg.InputTokens = stats.InputTokens
+					msg.OutputTokens = stats.OutputTokens
+					delete(turnStatsMap, turn)
+				}
+			}
+			logAgentProgress(tuiKind, msg)
+			ch <- msg
+		}
+
+		runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
+		if err != nil {
+			ch <- tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: err.Error()}
+			return
+		}
+
+		goal := strings.TrimSpace(strings.Join(args, " "))
+		state, runErr := runner.RunGoal(context.Background(), goal)
+		if runErr != nil {
+			// OnProgress already sent ProgressError via the callback; nothing else needed.
+			_ = state
+			return
+		}
+		// Defensive: if the runner didn't fire ProgressComplete via OnProgress
+		// (e.g., future runner implementation gap), emit it here so the TUI
+		// always receives a terminal event and stops streaming.
+		lastResponse := ""
+		if state != nil {
+			lastResponse = state.LastAssistantResponse
+		}
+		ch <- tui.AgentProgressMsg{Kind: tui.AgentProgressComplete, Text: lastResponse}
+	}()
+
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
 	}
 }
 
@@ -191,4 +336,36 @@ func previewText(value string, limit int) string {
 		return text
 	}
 	return text[:limit] + "\n...(truncated)"
+}
+
+// logAgentProgress writes agent progress events to the session log so they
+// appear alongside orchestrator events in /export logs.
+func logAgentProgress(kind tui.AgentProgressKind, msg tui.AgentProgressMsg) {
+	switch kind {
+	case tui.AgentProgressTurnStart:
+		tui.LogInfo(fmt.Sprintf("[AGENT] turn %d/%d start", msg.Turn, msg.MaxTurns))
+	case tui.AgentProgressToolCall:
+		line := fmt.Sprintf("[AGENT] turn %d tool=%s", msg.Turn, msg.Text)
+		if msg.InputTokens > 0 || msg.Duration > 0 {
+			line += fmt.Sprintf(" elapsed=%.2fs tokens=↑%d ↓%d",
+				msg.Duration.Seconds(), msg.InputTokens, msg.OutputTokens)
+		}
+		tui.LogInfo(line)
+	case tui.AgentProgressStepDone:
+		tui.LogInfo(fmt.Sprintf("[AGENT] step done: %s", msg.Text))
+	case tui.AgentProgressResponse:
+		line := fmt.Sprintf("[AGENT] turn %d response", msg.Turn)
+		if msg.InputTokens > 0 || msg.Duration > 0 {
+			line += fmt.Sprintf(" elapsed=%.2fs tokens=↑%d ↓%d",
+				msg.Duration.Seconds(), msg.InputTokens, msg.OutputTokens)
+		}
+		tui.LogInfo(line)
+		if strings.TrimSpace(msg.Text) != "" {
+			tui.LogInfo(fmt.Sprintf("[AGENT] response:\n%s", msg.Text))
+		}
+	case tui.AgentProgressComplete:
+		tui.LogInfo("[AGENT] run complete")
+	case tui.AgentProgressError:
+		tui.LogInfo(fmt.Sprintf("[AGENT] error: %s", msg.Text))
+	}
 }
