@@ -32,7 +32,7 @@ linters-settings:
       - json.Unmarshal
       - (os.File).Sync
       - flag.FlagSet.Parse
-      - (skills.Registry).LoadSkills
+      - (tools.Registry).LoadCustomTools
       - fmt.Sscanf
       - fmt.Scanln
 
