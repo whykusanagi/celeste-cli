@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 )
 
@@ -147,9 +146,4 @@ func expandEnvVars(env map[string]string) map[string]string {
 		})
 	}
 	return result
-}
-
-// isEnvVarRef checks if a string contains ${...} patterns.
-func isEnvVarRef(s string) bool {
-	return strings.Contains(s, "${")
 }

@@ -26,8 +26,8 @@ func (a *toolInfoAdapter) IsReadOnly() bool { return a.tool.IsReadOnly() }
 type Registry struct {
 	mu      sync.RWMutex
 	tools   map[string]Tool
-	modes   map[string][]RuntimeMode   // tool name -> allowed modes (nil = all modes)
-	checker *permissions.Checker       // optional, nil = allow all
+	modes   map[string][]RuntimeMode // tool name -> allowed modes (nil = all modes)
+	checker *permissions.Checker     // optional, nil = allow all
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -189,13 +189,13 @@ type customToolWrapper struct {
 	command     string
 }
 
-func (c *customToolWrapper) Name() string                                                          { return c.name }
-func (c *customToolWrapper) Description() string                                                   { return c.description }
-func (c *customToolWrapper) Parameters() json.RawMessage                                           { return c.params }
-func (c *customToolWrapper) IsConcurrencySafe(input map[string]any) bool                           { return false }
-func (c *customToolWrapper) IsReadOnly() bool                                                      { return false }
-func (c *customToolWrapper) ValidateInput(input map[string]any) error                              { return nil }
-func (c *customToolWrapper) InterruptBehavior() InterruptBehavior                                  { return InterruptCancel }
+func (c *customToolWrapper) Name() string                                { return c.name }
+func (c *customToolWrapper) Description() string                         { return c.description }
+func (c *customToolWrapper) Parameters() json.RawMessage                 { return c.params }
+func (c *customToolWrapper) IsConcurrencySafe(input map[string]any) bool { return false }
+func (c *customToolWrapper) IsReadOnly() bool                            { return false }
+func (c *customToolWrapper) ValidateInput(input map[string]any) error    { return nil }
+func (c *customToolWrapper) InterruptBehavior() InterruptBehavior        { return InterruptCancel }
 func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
 	return ToolResult{Content: "custom tool execution not yet implemented"}, nil
 }

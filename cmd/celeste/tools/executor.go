@@ -79,11 +79,11 @@ type StreamingToolExecutor struct {
 	cancel   context.CancelFunc
 
 	mu          sync.Mutex
-	entries     []*toolEntry       // all entries in insertion order
+	entries     []*toolEntry // all entries in insertion order
 	entryByID   map[string]*toolEntry
-	serialQueue chan *toolEntry     // serial tools are fed through this channel
-	wg          sync.WaitGroup     // tracks all executing goroutines
-	done        chan struct{}       // closed when Done() is called (no more tools)
+	serialQueue chan *toolEntry // serial tools are fed through this channel
+	wg          sync.WaitGroup  // tracks all executing goroutines
+	done        chan struct{}   // closed when Done() is called (no more tools)
 	doneOnce    sync.Once
 
 	progressFn func(ProgressEvent)
@@ -303,7 +303,7 @@ func (e *StreamingToolExecutor) serialWorker() {
 
 		var input map[string]any
 		if entry.inputJSON != "" && entry.inputJSON != "{}" {
-			json.Unmarshal([]byte(entry.inputJSON), &input)
+			_ = json.Unmarshal([]byte(entry.inputJSON), &input)
 		}
 		if input == nil {
 			input = make(map[string]any)

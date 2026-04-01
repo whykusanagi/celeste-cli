@@ -118,7 +118,7 @@ func TestEstimateSummarySavings_EdgeCases(t *testing.T) {
 	// count > len(messages) -- should clamp
 	msgs := makeConversation(2) // 4 messages
 	before, after = EstimateSummarySavings(msgs, 100)
-	if before <= 0 {
+	if before <= 0 || after < 0 {
 		t.Error("should still estimate with clamped count")
 	}
 }

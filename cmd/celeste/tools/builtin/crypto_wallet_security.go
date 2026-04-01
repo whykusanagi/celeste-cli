@@ -34,17 +34,17 @@ type MonitoredWallet struct {
 
 // SecurityAlert represents a detected security threat
 type SecurityAlert struct {
-	ID             string                 `json:"id"`             // alert_<timestamp>_<random>
-	WalletAddress  string                 `json:"wallet_address"` // Affected wallet
-	AlertType      string                 `json:"alert_type"`     // dust_attack, nft_scam, dangerous_approval, large_transfer
-	Severity       string                 `json:"severity"`       // low, medium, high, critical
-	TxHash         string                 `json:"tx_hash"`        // Transaction hash
-	BlockNumber    string                 `json:"block_number"`
-	Description    string                 `json:"description"` // Human-readable description
+	ID             string         `json:"id"`             // alert_<timestamp>_<random>
+	WalletAddress  string         `json:"wallet_address"` // Affected wallet
+	AlertType      string         `json:"alert_type"`     // dust_attack, nft_scam, dangerous_approval, large_transfer
+	Severity       string         `json:"severity"`       // low, medium, high, critical
+	TxHash         string         `json:"tx_hash"`        // Transaction hash
+	BlockNumber    string         `json:"block_number"`
+	Description    string         `json:"description"` // Human-readable description
 	Details        map[string]any `json:"details"`     // Type-specific details
-	DetectedAt     time.Time              `json:"detected_at"`
-	Acknowledged   bool                   `json:"acknowledged"`
-	AcknowledgedAt *time.Time             `json:"acknowledged_at,omitempty"`
+	DetectedAt     time.Time      `json:"detected_at"`
+	Acknowledged   bool           `json:"acknowledged"`
+	AcknowledgedAt *time.Time     `json:"acknowledged_at,omitempty"`
 }
 
 // AlertsLog stores all security alerts

@@ -267,6 +267,11 @@ func (c *Client) ExecuteSkill(ctx context.Context, name string, argsJSON string)
 	return &ExecutionResult{
 		Success: !toolResult.Error,
 		Result:  toolResult.Content,
-		Error:   func() string { if toolResult.Error { return toolResult.Content }; return "" }(),
+		Error: func() string {
+			if toolResult.Error {
+				return toolResult.Content
+			}
+			return ""
+		}(),
 	}, nil
 }

@@ -250,7 +250,7 @@ func runChatTUI() {
 	if err := mcpManager.Start(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: MCP initialization failed: %v\n", err)
 	}
-	defer mcpManager.Stop()
+	defer func() { _ = mcpManager.Stop() }()
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{
