@@ -37,14 +37,14 @@ func NewNoteSaveTool() *NoteSaveTool {
 		BaseTool: BaseTool{
 			ToolName:        "save_note",
 			ToolDescription: "Save a note with an optional title",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"title": map[string]interface{}{
+				"properties": map[string]any{
+					"title": map[string]any{
 						"type":        "string",
 						"description": "Optional note title",
 					},
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type":        "string",
 						"description": "Note content",
 					},
@@ -66,7 +66,7 @@ func (t *NoteSaveTool) Execute(ctx context.Context, input map[string]any, progre
 			"validation_error",
 			"The 'content' parameter is required",
 			"Please provide the note content you want to save.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "save_note",
 				"field": "content",
 			},
@@ -113,7 +113,7 @@ func (t *NoteSaveTool) Execute(ctx context.Context, input map[string]any, progre
 			"internal_error",
 			"Failed to save note",
 			"An internal error occurred while saving the note. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "save_note",
 				"error": err.Error(),
 			},
@@ -124,14 +124,14 @@ func (t *NoteSaveTool) Execute(ctx context.Context, input map[string]any, progre
 			"internal_error",
 			"Failed to save note file",
 			"An internal error occurred while saving the note. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "save_note",
 				"error": err.Error(),
 			},
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"title":   title,
 		"success": true,
 	})
@@ -148,10 +148,10 @@ func NewNoteGetTool() *NoteGetTool {
 		BaseTool: BaseTool{
 			ToolName:        "get_note",
 			ToolDescription: "Retrieve a note by title",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"title": map[string]interface{}{
+				"properties": map[string]any{
+					"title": map[string]any{
 						"type":        "string",
 						"description": "Note title to retrieve",
 					},
@@ -173,7 +173,7 @@ func (t *NoteGetTool) Execute(ctx context.Context, input map[string]any, progres
 			"validation_error",
 			"The 'title' parameter is required",
 			"Please provide the title of the note you want to retrieve.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_note",
 				"field": "title",
 			},
@@ -187,7 +187,7 @@ func (t *NoteGetTool) Execute(ctx context.Context, input map[string]any, progres
 			"not_found",
 			fmt.Sprintf("Note '%s' not found", title),
 			"The note file does not exist or the note with this title was not found.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_note",
 				"title": title,
 			},
@@ -198,7 +198,7 @@ func (t *NoteGetTool) Execute(ctx context.Context, input map[string]any, progres
 				"internal_error",
 				"Failed to parse notes file",
 				"The notes file may be corrupted. Please try again.",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "get_note",
 					"error": err.Error(),
 				},
@@ -212,14 +212,14 @@ func (t *NoteGetTool) Execute(ctx context.Context, input map[string]any, progres
 			"not_found",
 			fmt.Sprintf("Note '%s' not found", title),
 			"No note exists with this title. Use 'list_notes' to see available notes.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_note",
 				"title": title,
 			},
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"title":   note.Title,
 		"content": note.Content,
 		"created": note.Created.Format(time.RFC3339),
@@ -238,9 +238,9 @@ func NewNoteListTool() *NoteListTool {
 		BaseTool: BaseTool{
 			ToolName:        "list_notes",
 			ToolDescription: "List all saved notes",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type":       "object",
-				"properties": map[string]interface{}{},
+				"properties": map[string]any{},
 				"required":   []string{},
 			}),
 			ReadOnly:        true,
@@ -259,16 +259,16 @@ func (t *NoteListTool) Execute(ctx context.Context, input map[string]any, progre
 		notes = make(map[string]Note)
 	}
 
-	noteList := make([]map[string]interface{}, 0, len(notes))
+	noteList := make([]map[string]any, 0, len(notes))
 	for _, note := range notes {
-		noteList = append(noteList, map[string]interface{}{
+		noteList = append(noteList, map[string]any{
 			"title":   note.Title,
 			"created": note.Created.Format(time.RFC3339),
 			"updated": note.Updated.Format(time.RFC3339),
 		})
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"count": len(noteList),
 		"notes": noteList,
 	})

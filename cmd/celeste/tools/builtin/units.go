@@ -19,18 +19,18 @@ func NewUnitConverterTool() *UnitConverterTool {
 		BaseTool: BaseTool{
 			ToolName:        "convert_units",
 			ToolDescription: "Convert between different units of measurement (length, weight, temperature, volume)",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"value": map[string]interface{}{
+				"properties": map[string]any{
+					"value": map[string]any{
 						"type":        "number",
 						"description": "The numeric value to convert",
 					},
-					"from_unit": map[string]interface{}{
+					"from_unit": map[string]any{
 						"type":        "string",
 						"description": "Source unit (e.g., 'm', 'km', 'ft', 'mi', 'kg', 'lb', 'celsius', 'fahrenheit', 'liter', 'gallon')",
 					},
-					"to_unit": map[string]interface{}{
+					"to_unit": map[string]any{
 						"type":        "string",
 						"description": "Target unit (e.g., 'm', 'km', 'ft', 'mi', 'kg', 'lb', 'celsius', 'fahrenheit', 'liter', 'gallon')",
 					},
@@ -52,7 +52,7 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 			"validation_error",
 			"The 'value' parameter must be a number",
 			"Please provide a numeric value to convert.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_units",
 				"field": "value",
 			},
@@ -65,7 +65,7 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 			"validation_error",
 			"The 'from_unit' parameter is required",
 			"Please specify the source unit (e.g., 'm', 'km', 'ft', 'kg', 'lb', 'celsius', 'fahrenheit').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_units",
 				"field": "from_unit",
 			},
@@ -78,7 +78,7 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 			"validation_error",
 			"The 'to_unit' parameter is required",
 			"Please specify the target unit (e.g., 'm', 'km', 'ft', 'kg', 'lb', 'celsius', 'fahrenheit').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_units",
 				"field": "to_unit",
 			},
@@ -114,7 +114,7 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 				"validation_error",
 				fmt.Sprintf("Invalid target unit '%s' for length conversion", toUnit),
 				"Valid length units: m, km, cm, mm, ft, in, yd, mi",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "convert_units", "field": "to_unit", "provided": toUnit, "category": "length",
 				},
 			))
@@ -128,7 +128,7 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 				"validation_error",
 				fmt.Sprintf("Invalid target unit '%s' for weight conversion", toUnit),
 				"Valid weight units: kg, g, mg, lb, oz",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "convert_units", "field": "to_unit", "provided": toUnit, "category": "weight",
 				},
 			))
@@ -142,7 +142,7 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 				"validation_error",
 				fmt.Sprintf("Invalid target unit '%s' for volume conversion", toUnit),
 				"Valid volume units: l, liter, ml, gallon, quart, pint, cup, fl oz",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "convert_units", "field": "to_unit", "provided": toUnit, "category": "volume",
 				},
 			))
@@ -167,13 +167,13 @@ func (t *UnitConverterTool) Execute(ctx context.Context, input map[string]any, p
 			"validation_error",
 			fmt.Sprintf("Unsupported unit conversion from '%s' to '%s'", fromUnit, toUnit),
 			"Please ensure both units are of the same type (length, weight, temperature, or volume).",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_units", "from_unit": fromUnit, "to_unit": toUnit,
 			},
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"value":      result,
 		"from_value": value,
 		"from_unit":  fromUnit,

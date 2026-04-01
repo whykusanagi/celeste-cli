@@ -23,18 +23,18 @@ func NewCurrencyTool() *CurrencyTool {
 		BaseTool: BaseTool{
 			ToolName:        "convert_currency",
 			ToolDescription: "Convert between different currencies using current exchange rates",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"amount": map[string]interface{}{
+				"properties": map[string]any{
+					"amount": map[string]any{
 						"type":        "number",
 						"description": "Amount to convert",
 					},
-					"from_currency": map[string]interface{}{
+					"from_currency": map[string]any{
 						"type":        "string",
 						"description": "Source currency code (e.g., 'USD', 'EUR', 'JPY', 'GBP')",
 					},
-					"to_currency": map[string]interface{}{
+					"to_currency": map[string]any{
 						"type":        "string",
 						"description": "Target currency code (e.g., 'USD', 'EUR', 'JPY', 'GBP')",
 					},
@@ -56,7 +56,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"validation_error",
 			"The 'amount' parameter must be a number",
 			"Please provide a numeric amount to convert.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_currency",
 				"field": "amount",
 			},
@@ -69,7 +69,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"validation_error",
 			"The 'from_currency' parameter is required",
 			"Please specify the source currency code (e.g., 'USD', 'EUR', 'JPY', 'GBP').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_currency",
 				"field": "from_currency",
 			},
@@ -82,7 +82,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"validation_error",
 			"The 'to_currency' parameter is required",
 			"Please specify the target currency code (e.g., 'USD', 'EUR', 'JPY', 'GBP').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_currency",
 				"field": "to_currency",
 			},
@@ -93,7 +93,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 	toCurrency = strings.ToUpper(toCurrency)
 
 	if fromCurrency == toCurrency {
-		return resultFromMap(map[string]interface{}{
+		return resultFromMap(map[string]any{
 			"amount":        amount,
 			"from_currency": fromCurrency,
 			"to_currency":   toCurrency,
@@ -111,7 +111,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"network_error",
 			"Failed to connect to currency API",
 			"Please check your internet connection and try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_currency",
 				"error": err.Error(),
 			},
@@ -125,7 +125,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"api_error",
 			fmt.Sprintf("Currency API returned error (status %d)", resp.StatusCode),
 			"The currency exchange service may be temporarily unavailable. Please try again later.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":       "convert_currency",
 				"status_code": resp.StatusCode,
 				"response":    string(body),
@@ -144,7 +144,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"api_error",
 			"Failed to parse currency API response",
 			"The currency service returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_currency",
 				"error": err.Error(),
 			},
@@ -157,7 +157,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 			"validation_error",
 			fmt.Sprintf("Currency %s not found in exchange rates", toCurrency),
 			"Please use a valid 3-letter currency code (e.g., USD, EUR, JPY, GBP)",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "convert_currency",
 				"field":    "to_currency",
 				"provided": toCurrency,
@@ -167,7 +167,7 @@ func (t *CurrencyTool) Execute(ctx context.Context, input map[string]any, progre
 
 	converted := amount * rate
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"amount":        amount,
 		"from_currency": fromCurrency,
 		"to_currency":   toCurrency,

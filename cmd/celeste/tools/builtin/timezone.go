@@ -20,22 +20,22 @@ func NewTimezoneConverterTool() *TimezoneConverterTool {
 		BaseTool: BaseTool{
 			ToolName:        "convert_timezone",
 			ToolDescription: "Convert time between different timezones",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"time": map[string]interface{}{
+				"properties": map[string]any{
+					"time": map[string]any{
 						"type":        "string",
 						"description": "Time to convert (format: 'HH:MM' or 'HH:MM:SS', defaults to current time if not provided)",
 					},
-					"from_timezone": map[string]interface{}{
+					"from_timezone": map[string]any{
 						"type":        "string",
 						"description": "Source timezone (e.g., 'America/New_York', 'UTC', 'Asia/Tokyo')",
 					},
-					"to_timezone": map[string]interface{}{
+					"to_timezone": map[string]any{
 						"type":        "string",
 						"description": "Target timezone (e.g., 'America/New_York', 'UTC', 'Asia/Tokyo')",
 					},
-					"date": map[string]interface{}{
+					"date": map[string]any{
 						"type":        "string",
 						"description": "Optional date (format: 'YYYY-MM-DD', defaults to today if not provided)",
 					},
@@ -57,7 +57,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 			"validation_error",
 			"The 'from_timezone' parameter is required",
 			"Please specify the source timezone (e.g., 'America/New_York', 'UTC', 'Asia/Tokyo').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_timezone",
 				"field": "from_timezone",
 			},
@@ -70,7 +70,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 			"validation_error",
 			"The 'to_timezone' parameter is required",
 			"Please specify the target timezone (e.g., 'America/New_York', 'UTC', 'Asia/Tokyo').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_timezone",
 				"field": "to_timezone",
 			},
@@ -83,7 +83,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 			"validation_error",
 			fmt.Sprintf("Invalid timezone '%s'", fromTZ),
 			"Please use a valid IANA timezone identifier (e.g., 'America/New_York', 'UTC', 'Asia/Tokyo').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_timezone", "field": "from_timezone", "provided": fromTZ, "error": err.Error(),
 			},
 		))
@@ -95,7 +95,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 			"validation_error",
 			fmt.Sprintf("Invalid timezone '%s'", toTZ),
 			"Please use a valid IANA timezone identifier (e.g., 'America/New_York', 'UTC', 'Asia/Tokyo').",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "convert_timezone", "field": "to_timezone", "provided": toTZ, "error": err.Error(),
 			},
 		))
@@ -116,7 +116,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 				"validation_error",
 				"Invalid time format",
 				"Please use format 'HH:MM' or 'HH:MM:SS' (e.g., '14:30' or '14:30:00').",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "convert_timezone", "field": "time", "provided": timeStr,
 				},
 			))
@@ -135,7 +135,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 				"validation_error",
 				"Invalid time format",
 				"Please use format 'YYYY-MM-DD HH:MM' or 'HH:MM' for today.",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "convert_timezone", "field": "time", "provided": timeStr, "error": err.Error(),
 				},
 			))
@@ -150,7 +150,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 					"validation_error",
 					"Invalid date format",
 					"Please use format 'YYYY-MM-DD' (e.g., '2024-12-03').",
-					map[string]interface{}{
+					map[string]any{
 						"skill": "convert_timezone", "field": "date", "provided": date, "error": err.Error(),
 					},
 				))
@@ -162,7 +162,7 @@ func (tool *TimezoneConverterTool) Execute(ctx context.Context, input map[string
 
 	converted := t.In(toLoc)
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"original_time":   t.Format("2006-01-02 15:04:05 MST"),
 		"converted_time":  converted.Format("2006-01-02 15:04:05 MST"),
 		"from_timezone":   fromTZ,

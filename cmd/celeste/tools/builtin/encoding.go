@@ -18,10 +18,10 @@ func NewBase64EncodeTool() *Base64EncodeTool {
 		BaseTool: BaseTool{
 			ToolName:        "base64_encode",
 			ToolDescription: "Encode a string to base64",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"text": map[string]interface{}{
+				"properties": map[string]any{
+					"text": map[string]any{
 						"type":        "string",
 						"description": "Text to encode",
 					},
@@ -43,7 +43,7 @@ func (t *Base64EncodeTool) Execute(ctx context.Context, input map[string]any, pr
 			"validation_error",
 			"The 'text' parameter is required",
 			"Please provide the text you want to encode.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "base64_encode",
 				"field": "text",
 			},
@@ -52,7 +52,7 @@ func (t *Base64EncodeTool) Execute(ctx context.Context, input map[string]any, pr
 
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"original": text,
 		"encoded":  encoded,
 	})
@@ -69,10 +69,10 @@ func NewBase64DecodeTool() *Base64DecodeTool {
 		BaseTool: BaseTool{
 			ToolName:        "base64_decode",
 			ToolDescription: "Decode a base64 string",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"encoded": map[string]interface{}{
+				"properties": map[string]any{
+					"encoded": map[string]any{
 						"type":        "string",
 						"description": "Base64 encoded string to decode",
 					},
@@ -94,7 +94,7 @@ func (t *Base64DecodeTool) Execute(ctx context.Context, input map[string]any, pr
 			"validation_error",
 			"The 'encoded' parameter is required",
 			"Please provide the base64 encoded string you want to decode.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "base64_decode",
 				"field": "encoded",
 			},
@@ -107,7 +107,7 @@ func (t *Base64DecodeTool) Execute(ctx context.Context, input map[string]any, pr
 			"validation_error",
 			"Invalid base64 string",
 			"The provided string is not valid base64 encoded data.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "base64_decode",
 				"field": "encoded",
 				"error": err.Error(),
@@ -115,7 +115,7 @@ func (t *Base64DecodeTool) Execute(ctx context.Context, input map[string]any, pr
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"encoded": encoded,
 		"decoded": string(decoded),
 	})

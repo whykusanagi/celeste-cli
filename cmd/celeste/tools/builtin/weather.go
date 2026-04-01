@@ -23,14 +23,14 @@ func NewWeatherTool(configLoader ConfigLoader) *WeatherTool {
 		BaseTool: BaseTool{
 			ToolName:        "get_weather",
 			ToolDescription: "Get current weather and forecast for a location. Uses default zip code if not specified. User can provide zip code in the prompt to override default.",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"zip_code": map[string]interface{}{
+				"properties": map[string]any{
+					"zip_code": map[string]any{
 						"type":        "string",
 						"description": "Optional zip code (5 digits). If not provided, uses default zip code from configuration. User can specify zip code in their message to override default.",
 					},
-					"days": map[string]interface{}{
+					"days": map[string]any{
 						"type":        "integer",
 						"description": "Number of days for forecast (1-3, default: 1 for current weather)",
 					},
@@ -77,7 +77,7 @@ func (t *WeatherTool) Execute(ctx context.Context, input map[string]any, progres
 			"validation_error",
 			"Zip code must be exactly 5 digits",
 			"Please provide a valid 5-digit US zip code",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "get_weather",
 				"field":    "zip_code",
 				"provided": zipCode,
@@ -90,7 +90,7 @@ func (t *WeatherTool) Execute(ctx context.Context, input map[string]any, progres
 				"validation_error",
 				"Zip code must contain only digits",
 				"Please provide a valid 5-digit US zip code",
-				map[string]interface{}{
+				map[string]any{
 					"skill":    "get_weather",
 					"field":    "zip_code",
 					"provided": zipCode,
@@ -122,7 +122,7 @@ func (t *WeatherTool) Execute(ctx context.Context, input map[string]any, progres
 			"network_error",
 			"Failed to connect to weather service",
 			"Please check your internet connection and try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_weather",
 				"error": err.Error(),
 			},
@@ -136,7 +136,7 @@ func (t *WeatherTool) Execute(ctx context.Context, input map[string]any, progres
 			"api_error",
 			fmt.Sprintf("Weather API returned error (status %d)", resp.StatusCode),
 			"The weather service may be temporarily unavailable. Please try again later.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":       "get_weather",
 				"status_code": resp.StatusCode,
 				"response":    string(body),
@@ -144,13 +144,13 @@ func (t *WeatherTool) Execute(ctx context.Context, input map[string]any, progres
 		))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return resultFromMap(formatErrorResponse(
 			"api_error",
 			"Failed to parse weather API response",
 			"The weather service returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_weather",
 				"error": err.Error(),
 			},

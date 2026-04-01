@@ -18,9 +18,9 @@ func NewUUIDTool() *UUIDTool {
 		BaseTool: BaseTool{
 			ToolName:        "generate_uuid",
 			ToolDescription: "Generate a random UUID (v4)",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type":       "object",
-				"properties": map[string]interface{}{},
+				"properties": map[string]any{},
 				"required":   []string{},
 			}),
 			ReadOnly:        true,
@@ -32,7 +32,7 @@ func NewUUIDTool() *UUIDTool {
 
 func (t *UUIDTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
 	id := uuid.New()
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"uuid": id.String(),
 	})
 }

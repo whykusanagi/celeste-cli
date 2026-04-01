@@ -23,14 +23,14 @@ func NewHashTool() *HashTool {
 		BaseTool: BaseTool{
 			ToolName:        "generate_hash",
 			ToolDescription: "Generate cryptographic hash (MD5, SHA256, SHA512) for a given string",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"text": map[string]interface{}{
+				"properties": map[string]any{
+					"text": map[string]any{
 						"type":        "string",
 						"description": "Text to hash",
 					},
-					"algorithm": map[string]interface{}{
+					"algorithm": map[string]any{
 						"type":        "string",
 						"enum":        []string{"md5", "sha256", "sha512"},
 						"description": "Hash algorithm to use",
@@ -53,7 +53,7 @@ func (t *HashTool) Execute(ctx context.Context, input map[string]any, progress c
 			"validation_error",
 			"The 'text' parameter is required",
 			"Please provide the text you want to hash.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "generate_hash",
 				"field": "text",
 			},
@@ -66,7 +66,7 @@ func (t *HashTool) Execute(ctx context.Context, input map[string]any, progress c
 			"validation_error",
 			"The 'algorithm' parameter is required",
 			"Please specify a hash algorithm: 'md5', 'sha256', or 'sha512'.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "generate_hash",
 				"field": "algorithm",
 			},
@@ -91,7 +91,7 @@ func (t *HashTool) Execute(ctx context.Context, input map[string]any, progress c
 			"validation_error",
 			fmt.Sprintf("Unsupported algorithm '%s'", algorithm),
 			"Please use one of: 'md5', 'sha256', or 'sha512'.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "generate_hash",
 				"field":     "algorithm",
 				"provided":  algorithm,
@@ -100,7 +100,7 @@ func (t *HashTool) Execute(ctx context.Context, input map[string]any, progress c
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"text":      text,
 		"algorithm": algorithm,
 		"hash":      hash,

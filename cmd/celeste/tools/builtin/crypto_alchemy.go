@@ -1,5 +1,5 @@
-// Package skills provides Alchemy blockchain API skill implementation
-package skills
+// Package builtin provides Alchemy blockchain API handler implementation
+package builtin
 
 import (
 	"bytes"
@@ -12,52 +12,8 @@ import (
 	"time"
 )
 
-// AlchemySkill returns the Alchemy skill definition
-func AlchemySkill() Skill {
-	return Skill{
-		Name:        "alchemy",
-		Description: "Blockchain data and analytics via Alchemy API: wallet tracing, token prices, NFT data, transaction monitoring across Ethereum and L2s (Arbitrum, Optimism, Polygon, Base)",
-		Parameters: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"operation": map[string]interface{}{
-					"type": "string",
-					"enum": []string{
-						"get_balance", "get_token_balances", "get_transaction_history",
-						"get_token_price", "get_token_metadata",
-						"get_nfts_by_owner", "get_nft_metadata",
-						"get_gas_price", "get_transaction_receipt", "get_block_number",
-					},
-					"description": "Alchemy API operation to perform",
-				},
-				"network": map[string]interface{}{
-					"type":        "string",
-					"description": "Blockchain network (eth-mainnet, polygon-mainnet, arbitrum-mainnet, optimism-mainnet, base-mainnet)",
-				},
-				"address": map[string]interface{}{
-					"type":        "string",
-					"description": "Ethereum address (for wallet and NFT operations)",
-				},
-				"token_address": map[string]interface{}{
-					"type":        "string",
-					"description": "Token contract address",
-				},
-				"tx_hash": map[string]interface{}{
-					"type":        "string",
-					"description": "Transaction hash (for transaction operations)",
-				},
-				"block_number": map[string]interface{}{
-					"type":        "string",
-					"description": "Block number (latest, earliest, or hex number)",
-				},
-			},
-			"required": []string{"operation"},
-		},
-	}
-}
-
-// AlchemyHandler handles Alchemy skill execution
-func AlchemyHandler(args map[string]interface{}, configLoader ConfigLoader) (interface{}, error) {
+// alchemyHandler handles Alchemy skill execution
+func alchemyHandler(args map[string]any, configLoader ConfigLoader) (any, error) {
 	// Get configuration
 	config, err := configLoader.GetAlchemyConfig()
 	if err != nil {
@@ -65,7 +21,7 @@ func AlchemyHandler(args map[string]interface{}, configLoader ConfigLoader) (int
 			"config_error",
 			"Alchemy API key is required",
 			"Configure Alchemy by setting CELESTE_ALCHEMY_API_KEY environment variable or adding to skills.json",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "alchemy",
 				"config_command": "Set CELESTE_ALCHEMY_API_KEY=<your_key>",
 			},
@@ -79,7 +35,7 @@ func AlchemyHandler(args map[string]interface{}, configLoader ConfigLoader) (int
 			"validation_error",
 			"Operation is required",
 			"Specify an Alchemy operation (get_balance, get_nfts_by_owner, etc.)",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "alchemy",
 				"field": "operation",
 			},
@@ -98,7 +54,7 @@ func AlchemyHandler(args map[string]interface{}, configLoader ConfigLoader) (int
 			"validation_error",
 			err.Error(),
 			"Use one of: eth-mainnet, polygon-mainnet, arbitrum-mainnet, optimism-mainnet, base-mainnet",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
@@ -137,7 +93,7 @@ func AlchemyHandler(args map[string]interface{}, configLoader ConfigLoader) (int
 			"validation_error",
 			fmt.Sprintf("Unknown operation: %s", operation),
 			"Check the operation name",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": operation,
 			},
@@ -146,11 +102,11 @@ func AlchemyHandler(args map[string]interface{}, configLoader ConfigLoader) (int
 }
 
 // alchemyRequest makes a JSON-RPC request to Alchemy
-func alchemyRequest(ctx context.Context, client *http.Client, config AlchemyConfig, network, method string, params []interface{}) (map[string]interface{}, error) {
+func alchemyRequest(ctx context.Context, client *http.Client, config AlchemyConfig, network, method string, params []any) (map[string]any, error) {
 	url := BuildAlchemyURL(network, config.APIKey)
 
 	// Build JSON-RPC request
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  method,
@@ -184,13 +140,13 @@ func alchemyRequest(ctx context.Context, client *http.Client, config AlchemyConf
 	}
 
 	// Parse JSON-RPC response
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	// Check for JSON-RPC error
-	if errObj, ok := result["error"].(map[string]interface{}); ok {
+	if errObj, ok := result["error"].(map[string]any); ok {
 		return nil, fmt.Errorf("RPC error: %v", errObj["message"])
 	}
 
@@ -198,7 +154,7 @@ func alchemyRequest(ctx context.Context, client *http.Client, config AlchemyConf
 }
 
 // handleGetBalance gets ETH balance for an address
-func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -206,7 +162,7 @@ func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyCo
 			"validation_error",
 			"Address is required",
 			"Provide an Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_balance",
 			},
@@ -219,7 +175,7 @@ func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyCo
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"address": address,
 			},
@@ -233,13 +189,13 @@ func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyCo
 	}
 
 	// Make RPC call
-	result, err := alchemyRequest(ctx, client, config, network, "eth_getBalance", []interface{}{normalizedAddr, blockParam})
+	result, err := alchemyRequest(ctx, client, config, network, "eth_getBalance", []any{normalizedAddr, blockParam})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get balance: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
@@ -253,7 +209,7 @@ func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyCo
 			"api_error",
 			"Invalid response format",
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "alchemy",
 			},
 		), nil
@@ -266,7 +222,7 @@ func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyCo
 	// Convert to Ether
 	etherBalance := WeiToEther(balance)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":     true,
 		"address":     normalizedAddr,
 		"balance_wei": balance.String(),
@@ -278,7 +234,7 @@ func handleGetBalance(ctx context.Context, client *http.Client, config AlchemyCo
 }
 
 // handleGetTokenBalances gets token balances for an address
-func handleGetTokenBalances(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetTokenBalances(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -286,7 +242,7 @@ func handleGetTokenBalances(ctx context.Context, client *http.Client, config Alc
 			"validation_error",
 			"Address is required",
 			"Provide an Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_token_balances",
 			},
@@ -299,7 +255,7 @@ func handleGetTokenBalances(ctx context.Context, client *http.Client, config Alc
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"address": address,
 			},
@@ -307,20 +263,20 @@ func handleGetTokenBalances(ctx context.Context, client *http.Client, config Alc
 	}
 
 	// Make RPC call (using Alchemy's enhanced API)
-	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getTokenBalances", []interface{}{normalizedAddr, "erc20"})
+	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getTokenBalances", []any{normalizedAddr, "erc20"})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get token balances: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"address": normalizedAddr,
 		"network": network,
@@ -330,7 +286,7 @@ func handleGetTokenBalances(ctx context.Context, client *http.Client, config Alc
 }
 
 // handleGetTransactionHistory gets transaction history for an address
-func handleGetTransactionHistory(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetTransactionHistory(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -338,7 +294,7 @@ func handleGetTransactionHistory(ctx context.Context, client *http.Client, confi
 			"validation_error",
 			"Address is required",
 			"Provide an Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_transaction_history",
 			},
@@ -351,7 +307,7 @@ func handleGetTransactionHistory(ctx context.Context, client *http.Client, confi
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"address": address,
 			},
@@ -359,26 +315,26 @@ func handleGetTransactionHistory(ctx context.Context, client *http.Client, confi
 	}
 
 	// Build parameters for asset transfers
-	params := map[string]interface{}{
+	params := map[string]any{
 		"fromAddress": normalizedAddr,
 		"category":    []string{"external", "internal", "erc20", "erc721", "erc1155"},
 	}
 
 	// Make RPC call (using Alchemy's asset transfers API)
-	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []interface{}{params})
+	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []any{params})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get transaction history: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"address": normalizedAddr,
 		"network": network,
@@ -388,7 +344,7 @@ func handleGetTransactionHistory(ctx context.Context, client *http.Client, confi
 }
 
 // handleGetTokenMetadata gets metadata for a token
-func handleGetTokenMetadata(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetTokenMetadata(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate token address
 	tokenAddress, ok := args["token_address"].(string)
 	if !ok || tokenAddress == "" {
@@ -396,7 +352,7 @@ func handleGetTokenMetadata(ctx context.Context, client *http.Client, config Alc
 			"validation_error",
 			"Token address is required",
 			"Provide a token contract address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_token_metadata",
 			},
@@ -409,7 +365,7 @@ func handleGetTokenMetadata(ctx context.Context, client *http.Client, config Alc
 			"validation_error",
 			err.Error(),
 			"Provide a valid token contract address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":         "alchemy",
 				"token_address": tokenAddress,
 			},
@@ -417,20 +373,20 @@ func handleGetTokenMetadata(ctx context.Context, client *http.Client, config Alc
 	}
 
 	// Make RPC call
-	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getTokenMetadata", []interface{}{normalizedAddr})
+	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getTokenMetadata", []any{normalizedAddr})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get token metadata: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":       true,
 		"token_address": normalizedAddr,
 		"network":       network,
@@ -440,7 +396,7 @@ func handleGetTokenMetadata(ctx context.Context, client *http.Client, config Alc
 }
 
 // handleGetNFTsByOwner gets NFTs owned by an address
-func handleGetNFTsByOwner(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetNFTsByOwner(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -448,7 +404,7 @@ func handleGetNFTsByOwner(ctx context.Context, client *http.Client, config Alche
 			"validation_error",
 			"Address is required",
 			"Provide an Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_nfts_by_owner",
 			},
@@ -461,7 +417,7 @@ func handleGetNFTsByOwner(ctx context.Context, client *http.Client, config Alche
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"address": address,
 			},
@@ -469,20 +425,20 @@ func handleGetNFTsByOwner(ctx context.Context, client *http.Client, config Alche
 	}
 
 	// Make RPC call (using Alchemy's NFT API)
-	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getNFTs", []interface{}{normalizedAddr})
+	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getNFTs", []any{normalizedAddr})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get NFTs: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"address": normalizedAddr,
 		"network": network,
@@ -492,7 +448,7 @@ func handleGetNFTsByOwner(ctx context.Context, client *http.Client, config Alche
 }
 
 // handleGetNFTMetadata gets metadata for a specific NFT
-func handleGetNFTMetadata(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetNFTMetadata(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate contract address
 	contractAddress, ok := args["token_address"].(string)
 	if !ok || contractAddress == "" {
@@ -500,7 +456,7 @@ func handleGetNFTMetadata(ctx context.Context, client *http.Client, config Alche
 			"validation_error",
 			"Token address (NFT contract) is required",
 			"Provide an NFT contract address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_nft_metadata",
 			},
@@ -513,7 +469,7 @@ func handleGetNFTMetadata(ctx context.Context, client *http.Client, config Alche
 			"validation_error",
 			err.Error(),
 			"Provide a valid NFT contract address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":         "alchemy",
 				"token_address": contractAddress,
 			},
@@ -527,20 +483,20 @@ func handleGetNFTMetadata(ctx context.Context, client *http.Client, config Alche
 	}
 
 	// Make RPC call
-	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getNFTMetadata", []interface{}{normalizedAddr, tokenID})
+	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getNFTMetadata", []any{normalizedAddr, tokenID})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get NFT metadata: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":  true,
 		"contract": normalizedAddr,
 		"token_id": tokenID,
@@ -551,15 +507,15 @@ func handleGetNFTMetadata(ctx context.Context, client *http.Client, config Alche
 }
 
 // handleGetGasPrice gets current gas price
-func handleGetGasPrice(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (interface{}, error) {
+func handleGetGasPrice(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (any, error) {
 	// Make RPC call
-	result, err := alchemyRequest(ctx, client, config, network, "eth_gasPrice", []interface{}{})
+	result, err := alchemyRequest(ctx, client, config, network, "eth_gasPrice", []any{})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get gas price: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
@@ -573,7 +529,7 @@ func handleGetGasPrice(ctx context.Context, client *http.Client, config AlchemyC
 			"api_error",
 			"Invalid response format",
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "alchemy",
 			},
 		), nil
@@ -586,7 +542,7 @@ func handleGetGasPrice(ctx context.Context, client *http.Client, config AlchemyC
 	// Convert to Gwei
 	gweiPrice := WeiToGwei(gasPrice)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":        true,
 		"network":        network,
 		"gas_price_wei":  gasPrice.String(),
@@ -596,7 +552,7 @@ func handleGetGasPrice(ctx context.Context, client *http.Client, config AlchemyC
 }
 
 // handleGetTransactionReceipt gets receipt for a transaction
-func handleGetTransactionReceipt(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetTransactionReceipt(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get transaction hash
 	txHash, ok := args["tx_hash"].(string)
 	if !ok || txHash == "" {
@@ -604,7 +560,7 @@ func handleGetTransactionReceipt(ctx context.Context, client *http.Client, confi
 			"validation_error",
 			"Transaction hash is required",
 			"Provide a transaction hash",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "alchemy",
 				"operation": "get_transaction_receipt",
 			},
@@ -612,20 +568,20 @@ func handleGetTransactionReceipt(ctx context.Context, client *http.Client, confi
 	}
 
 	// Make RPC call
-	result, err := alchemyRequest(ctx, client, config, network, "eth_getTransactionReceipt", []interface{}{txHash})
+	result, err := alchemyRequest(ctx, client, config, network, "eth_getTransactionReceipt", []any{txHash})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get transaction receipt: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":          true,
 		"transaction_hash": txHash,
 		"network":          network,
@@ -635,15 +591,15 @@ func handleGetTransactionReceipt(ctx context.Context, client *http.Client, confi
 }
 
 // handleGetBlockNumber gets current block number
-func handleGetBlockNumber(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (interface{}, error) {
+func handleGetBlockNumber(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (any, error) {
 	// Make RPC call
-	result, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []interface{}{})
+	result, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []any{})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get block number: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "alchemy",
 				"network": network,
 			},
@@ -657,7 +613,7 @@ func handleGetBlockNumber(ctx context.Context, client *http.Client, config Alche
 			"api_error",
 			"Invalid response format",
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "alchemy",
 			},
 		), nil
@@ -667,7 +623,7 @@ func handleGetBlockNumber(ctx context.Context, client *http.Client, config Alche
 	blockNumber := new(big.Int)
 	blockNumber.SetString(blockNumberHex[2:], 16) // Remove "0x" prefix
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":      true,
 		"network":      network,
 		"block_number": blockNumber.String(),

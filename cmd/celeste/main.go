@@ -1634,10 +1634,8 @@ func runWalletMonitorCommand(args []string) {
 		os.Exit(1)
 	}
 
-	configLoader := config.NewConfigLoader(cfg)
-
-	// Create daemon
-	daemon := monitor.NewDaemon(configLoader)
+	// Create daemon with adapted config loader
+	daemon := monitor.NewDaemon(newBuiltinConfigAdapter(config.NewConfigLoader(cfg)))
 
 	subcommand := args[0]
 

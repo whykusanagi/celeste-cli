@@ -24,10 +24,10 @@ func NewTwitchTool(configLoader ConfigLoader) *TwitchTool {
 		BaseTool: BaseTool{
 			ToolName:        "check_twitch_live",
 			ToolDescription: "Check if a Twitch streamer is currently live. Uses default streamer if not specified. User can provide streamer name in prompt to override default.",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"streamer": map[string]interface{}{
+				"properties": map[string]any{
+					"streamer": map[string]any{
 						"type":        "string",
 						"description": "Optional Twitch streamer username. If not provided, uses default streamer from configuration. User can specify streamer name in their message to override default.",
 					},
@@ -61,7 +61,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"config_error",
 			"Twitch Client ID and Secret are required. Please configure them in skills.json.",
 			"The Twitch API requires OAuth authentication. You need both Client ID and Client Secret from the Twitch Developer Console.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "check_twitch_live",
 				"config_command": "Add twitch_client_id and twitch_client_secret to ~/.celeste/skills.json",
 			},
@@ -80,7 +80,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"internal_error",
 			"Failed to create OAuth request",
 			"An internal error occurred. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "check_twitch_live",
 				"error": err.Error(),
 			},
@@ -94,7 +94,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"network_error",
 			"Failed to get Twitch OAuth token",
 			"Please check your internet connection and try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "check_twitch_live",
 				"error": err.Error(),
 			},
@@ -108,7 +108,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"auth_error",
 			"Failed to authenticate with Twitch",
 			"The Twitch Client ID or Secret may be invalid. Please check your configuration.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":       "check_twitch_live",
 				"status_code": tokenResp.StatusCode,
 				"response":    string(body),
@@ -127,7 +127,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"api_error",
 			"Failed to parse OAuth token response",
 			"The Twitch OAuth API returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "check_twitch_live",
 				"error": err.Error(),
 			},
@@ -143,7 +143,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"internal_error",
 			"Failed to create Twitch API request",
 			"An internal error occurred. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "check_twitch_live",
 				"error": err.Error(),
 			},
@@ -159,7 +159,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"network_error",
 			"Failed to connect to Twitch API",
 			"Please check your internet connection and try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "check_twitch_live",
 				"error": err.Error(),
 			},
@@ -173,7 +173,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"api_error",
 			fmt.Sprintf("Twitch API returned error (status %d)", resp.StatusCode),
 			"The Twitch API may be temporarily unavailable or the streamer may not exist.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":       "check_twitch_live",
 				"status_code": resp.StatusCode,
 				"response":    string(body),
@@ -203,7 +203,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 			"api_error",
 			"Failed to parse Twitch API response",
 			"The Twitch API returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "check_twitch_live",
 				"error": err.Error(),
 			},
@@ -212,7 +212,7 @@ func (t *TwitchTool) Execute(ctx context.Context, input map[string]any, progress
 
 	isLive := len(result.Data) > 0
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"streamer": streamer,
 		"is_live":  isLive,
 	}

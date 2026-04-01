@@ -20,19 +20,19 @@ func NewUpscaleImageTool(configLoader ConfigLoader) *UpscaleImageTool {
 		BaseTool: BaseTool{
 			ToolName:        "upscale_image",
 			ToolDescription: "Upscale and enhance an image using Venice.ai. Provide the file path to the image. Returns the path to the upscaled file.",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"image_path": map[string]interface{}{
+				"properties": map[string]any{
+					"image_path": map[string]any{
 						"type":        "string",
 						"description": "Path to the image file to upscale (e.g. ~/Pictures/photo.png)",
 					},
-					"scale": map[string]interface{}{
+					"scale": map[string]any{
 						"type":        "integer",
 						"description": "Upscale factor, e.g. 2 for 2x resolution (default: 2)",
 						"default":     2,
 					},
-					"creativity": map[string]interface{}{
+					"creativity": map[string]any{
 						"type":        "number",
 						"description": "Enhancement creativity level from 0.0 to 1.0 (default: 0.5)",
 						"default":     0.5,
@@ -75,7 +75,7 @@ func (t *UpscaleImageTool) Execute(ctx context.Context, input map[string]any, pr
 		BaseURL: veniceConfig.BaseURL,
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"scale":      scale,
 		"creativity": creativity,
 	}
@@ -89,7 +89,7 @@ func (t *UpscaleImageTool) Execute(ctx context.Context, input map[string]any, pr
 		return tools.ToolResult{}, fmt.Errorf("upscale failed: %s", response.Error)
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"message": fmt.Sprintf("Image upscaled %dx successfully", scale),
 	}
 	if response.Path != "" {

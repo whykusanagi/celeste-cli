@@ -24,14 +24,14 @@ func NewYouTubeTool(configLoader ConfigLoader) *YouTubeTool {
 		BaseTool: BaseTool{
 			ToolName:        "get_youtube_videos",
 			ToolDescription: "Get recent videos from a YouTube channel. Uses default channel if not specified. User can provide channel name/ID in prompt to override default.",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"channel": map[string]interface{}{
+				"properties": map[string]any{
+					"channel": map[string]any{
 						"type":        "string",
 						"description": "Optional YouTube channel username or channel ID. If not provided, uses default channel from configuration. User can specify channel in their message to override default.",
 					},
-					"max_results": map[string]interface{}{
+					"max_results": map[string]any{
 						"type":        "integer",
 						"description": "Maximum number of videos to return (default: 5, min: 1, max: 50)",
 					},
@@ -65,7 +65,7 @@ func (t *YouTubeTool) Execute(ctx context.Context, input map[string]any, progres
 			"config_error",
 			"YouTube API key is required. Please configure it using: celeste config --set-youtube-key <api-key>",
 			"The YouTube API key is needed to access the YouTube Data API. You can get one from the Google Cloud Console.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "get_youtube_videos",
 				"config_command": "celeste config --set-youtube-key <api-key>",
 			},
@@ -114,7 +114,7 @@ func (t *YouTubeTool) Execute(ctx context.Context, input map[string]any, progres
 			"network_error",
 			"Failed to connect to YouTube API",
 			"Please check your internet connection and try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_youtube_videos",
 				"error": err.Error(),
 			},
@@ -128,7 +128,7 @@ func (t *YouTubeTool) Execute(ctx context.Context, input map[string]any, progres
 			"api_error",
 			fmt.Sprintf("YouTube API returned error (status %d)", resp.StatusCode),
 			"The YouTube API may be temporarily unavailable or the channel may not exist.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":       "get_youtube_videos",
 				"status_code": resp.StatusCode,
 				"response":    string(body),
@@ -160,16 +160,16 @@ func (t *YouTubeTool) Execute(ctx context.Context, input map[string]any, progres
 			"api_error",
 			"Failed to parse YouTube API response",
 			"The YouTube API returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "get_youtube_videos",
 				"error": err.Error(),
 			},
 		))
 	}
 
-	videos := make([]map[string]interface{}, 0, len(result.Items))
+	videos := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		videos = append(videos, map[string]interface{}{
+		videos = append(videos, map[string]any{
 			"video_id":      item.ID.VideoID,
 			"title":         item.Snippet.Title,
 			"description":   item.Snippet.Description,
@@ -180,7 +180,7 @@ func (t *YouTubeTool) Execute(ctx context.Context, input map[string]any, progres
 		})
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"channel":    channel,
 		"channel_id": channelID,
 		"count":      len(videos),

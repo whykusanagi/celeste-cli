@@ -8,9 +8,72 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
 )
+
+// TarotConfig holds tarot function configuration.
+type TarotConfig struct {
+	FunctionURL string
+	AuthToken   string
+}
+
+// VeniceConfig holds Venice.ai configuration.
+type VeniceConfig struct {
+	APIKey     string
+	BaseURL    string
+	Model      string // Chat model (venice-uncensored)
+	ImageModel string // Image generation model (lustify-sdxl, animewan, hidream, wai-Illustrious)
+	Upscaler   string
+}
+
+// WeatherConfig holds weather skill configuration.
+type WeatherConfig struct {
+	DefaultZipCode string
+}
+
+// TwitchConfig holds Twitch API configuration.
+type TwitchConfig struct {
+	ClientID        string
+	ClientSecret    string
+	DefaultStreamer string
+}
+
+// YouTubeConfig holds YouTube API configuration.
+type YouTubeConfig struct {
+	APIKey         string
+	DefaultChannel string
+}
+
+// IPFSConfig holds IPFS configuration.
+type IPFSConfig struct {
+	Provider       string
+	APIKey         string
+	APISecret      string
+	ProjectID      string
+	GatewayURL     string
+	TimeoutSeconds int
+}
+
+// AlchemyConfig holds Alchemy API configuration.
+type AlchemyConfig struct {
+	APIKey         string
+	DefaultNetwork string
+	TimeoutSeconds int
+}
+
+// BlockmonConfig holds blockchain monitoring configuration.
+type BlockmonConfig struct {
+	AlchemyAPIKey       string
+	WebhookURL          string
+	DefaultNetwork      string
+	PollIntervalSeconds int
+}
+
+// WalletSecuritySettingsConfig holds wallet security settings.
+type WalletSecuritySettingsConfig struct {
+	Enabled      bool
+	PollInterval int    // seconds
+	AlertLevel   string // minimum severity to alert on
+}
 
 const (
 	RuntimeModeClassic           = "classic"
@@ -274,9 +337,9 @@ func LoadNamed(name string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config '%s': %w", name, err)
 	}
 
-	// Load shared skills.json (for all skill configurations)
+	// Load shared json (for all skill configurations)
 	if skillsConfig, err := LoadSkillsConfig(); err == nil {
-		// Merge skill configs (skills.json takes precedence if set)
+		// Merge skill configs (json takes precedence if set)
 		if skillsConfig.VeniceAPIKey != "" {
 			config.VeniceAPIKey = skillsConfig.VeniceAPIKey
 		}
@@ -420,7 +483,7 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Load skills.json (shared across all configs)
+	// Load json (shared across all configs)
 	if skillsConfig, err := LoadSkillsConfig(); err == nil {
 		// Merge skill configs
 		if skillsConfig.VeniceAPIKey != "" {
@@ -543,7 +606,7 @@ func SaveSecrets(config *Config) error {
 	return os.WriteFile(secretsFile, data, 0600) // More restrictive permissions for secrets
 }
 
-// ConfigLoader implements skills.ConfigLoader interface.
+// ConfigLoader provides configuration values to tools.
 type ConfigLoader struct {
 	config *Config
 }
@@ -554,9 +617,9 @@ func NewConfigLoader(config *Config) *ConfigLoader {
 }
 
 // GetTarotConfig returns tarot configuration.
-func (l *ConfigLoader) GetTarotConfig() (skills.TarotConfig, error) {
+func (l *ConfigLoader) GetTarotConfig() (TarotConfig, error) {
 	if l.config.TarotAuthToken == "" {
-		return skills.TarotConfig{}, fmt.Errorf("tarot auth token not configured")
+		return TarotConfig{}, fmt.Errorf("tarot auth token not configured")
 	}
 
 	url := l.config.TarotFunctionURL
@@ -564,16 +627,16 @@ func (l *ConfigLoader) GetTarotConfig() (skills.TarotConfig, error) {
 		url = "https://faas-nyc1-2ef2e6cc.doserverless.co/api/v1/namespaces/fn-30b193db-d334-4dab-b5cd-ab49067f88cc/actions/tarot/logic?blocking=true&result=true"
 	}
 
-	return skills.TarotConfig{
+	return TarotConfig{
 		FunctionURL: url,
 		AuthToken:   l.config.TarotAuthToken,
 	}, nil
 }
 
 // GetVeniceConfig returns Venice.ai configuration.
-func (l *ConfigLoader) GetVeniceConfig() (skills.VeniceConfig, error) {
+func (l *ConfigLoader) GetVeniceConfig() (VeniceConfig, error) {
 	if l.config.VeniceAPIKey == "" {
-		return skills.VeniceConfig{}, fmt.Errorf("Venice.ai API key not configured")
+		return VeniceConfig{}, fmt.Errorf("Venice.ai API key not configured")
 	}
 
 	baseURL := l.config.VeniceBaseURL
@@ -591,7 +654,7 @@ func (l *ConfigLoader) GetVeniceConfig() (skills.VeniceConfig, error) {
 		imageModel = "lustify-sdxl" // Default NSFW image generation model
 	}
 
-	return skills.VeniceConfig{
+	return VeniceConfig{
 		APIKey:     l.config.VeniceAPIKey,
 		BaseURL:    baseURL,
 		Model:      model,
@@ -601,16 +664,16 @@ func (l *ConfigLoader) GetVeniceConfig() (skills.VeniceConfig, error) {
 }
 
 // GetWeatherConfig returns weather skill configuration.
-func (l *ConfigLoader) GetWeatherConfig() (skills.WeatherConfig, error) {
-	return skills.WeatherConfig{
+func (l *ConfigLoader) GetWeatherConfig() (WeatherConfig, error) {
+	return WeatherConfig{
 		DefaultZipCode: l.config.WeatherDefaultZipCode,
 	}, nil
 }
 
 // GetTwitchConfig returns Twitch API configuration.
-func (l *ConfigLoader) GetTwitchConfig() (skills.TwitchConfig, error) {
+func (l *ConfigLoader) GetTwitchConfig() (TwitchConfig, error) {
 	if l.config.TwitchClientID == "" {
-		return skills.TwitchConfig{}, fmt.Errorf("Twitch Client ID not configured")
+		return TwitchConfig{}, fmt.Errorf("Twitch Client ID not configured")
 	}
 
 	defaultStreamer := l.config.TwitchDefaultStreamer
@@ -618,7 +681,7 @@ func (l *ConfigLoader) GetTwitchConfig() (skills.TwitchConfig, error) {
 		defaultStreamer = "whykusanagi"
 	}
 
-	return skills.TwitchConfig{
+	return TwitchConfig{
 		ClientID:        l.config.TwitchClientID,
 		ClientSecret:    l.config.TwitchClientSecret,
 		DefaultStreamer: defaultStreamer,
@@ -626,9 +689,9 @@ func (l *ConfigLoader) GetTwitchConfig() (skills.TwitchConfig, error) {
 }
 
 // GetYouTubeConfig returns YouTube API configuration.
-func (l *ConfigLoader) GetYouTubeConfig() (skills.YouTubeConfig, error) {
+func (l *ConfigLoader) GetYouTubeConfig() (YouTubeConfig, error) {
 	if l.config.YouTubeAPIKey == "" {
-		return skills.YouTubeConfig{}, fmt.Errorf("YouTube API key not configured")
+		return YouTubeConfig{}, fmt.Errorf("YouTube API key not configured")
 	}
 
 	defaultChannel := l.config.YouTubeDefaultChannel
@@ -636,16 +699,16 @@ func (l *ConfigLoader) GetYouTubeConfig() (skills.YouTubeConfig, error) {
 		defaultChannel = "whykusanagi"
 	}
 
-	return skills.YouTubeConfig{
+	return YouTubeConfig{
 		APIKey:         l.config.YouTubeAPIKey,
 		DefaultChannel: defaultChannel,
 	}, nil
 }
 
 // GetIPFSConfig returns IPFS configuration.
-func (l *ConfigLoader) GetIPFSConfig() (skills.IPFSConfig, error) {
+func (l *ConfigLoader) GetIPFSConfig() (IPFSConfig, error) {
 	if l.config.IPFSAPIKey == "" {
-		return skills.IPFSConfig{}, fmt.Errorf("IPFS API key not configured")
+		return IPFSConfig{}, fmt.Errorf("IPFS API key not configured")
 	}
 
 	provider := l.config.IPFSProvider
@@ -658,7 +721,7 @@ func (l *ConfigLoader) GetIPFSConfig() (skills.IPFSConfig, error) {
 		timeout = 30
 	}
 
-	return skills.IPFSConfig{
+	return IPFSConfig{
 		Provider:       provider,
 		APIKey:         l.config.IPFSAPIKey,
 		APISecret:      l.config.IPFSAPISecret,
@@ -669,9 +732,9 @@ func (l *ConfigLoader) GetIPFSConfig() (skills.IPFSConfig, error) {
 }
 
 // GetAlchemyConfig returns Alchemy API configuration.
-func (l *ConfigLoader) GetAlchemyConfig() (skills.AlchemyConfig, error) {
+func (l *ConfigLoader) GetAlchemyConfig() (AlchemyConfig, error) {
 	if l.config.AlchemyAPIKey == "" {
-		return skills.AlchemyConfig{}, fmt.Errorf("Alchemy API key not configured")
+		return AlchemyConfig{}, fmt.Errorf("Alchemy API key not configured")
 	}
 
 	network := l.config.AlchemyDefaultNetwork
@@ -684,7 +747,7 @@ func (l *ConfigLoader) GetAlchemyConfig() (skills.AlchemyConfig, error) {
 		timeout = 10
 	}
 
-	return skills.AlchemyConfig{
+	return AlchemyConfig{
 		APIKey:         l.config.AlchemyAPIKey,
 		DefaultNetwork: network,
 		TimeoutSeconds: timeout,
@@ -692,14 +755,14 @@ func (l *ConfigLoader) GetAlchemyConfig() (skills.AlchemyConfig, error) {
 }
 
 // GetBlockmonConfig returns blockchain monitoring configuration.
-func (l *ConfigLoader) GetBlockmonConfig() (skills.BlockmonConfig, error) {
+func (l *ConfigLoader) GetBlockmonConfig() (BlockmonConfig, error) {
 	apiKey := l.config.BlockmonAlchemyAPIKey
 	if apiKey == "" {
 		// Fall back to main Alchemy API key
 		apiKey = l.config.AlchemyAPIKey
 	}
 	if apiKey == "" {
-		return skills.BlockmonConfig{}, fmt.Errorf("Alchemy API key not configured for blockchain monitoring")
+		return BlockmonConfig{}, fmt.Errorf("Alchemy API key not configured for blockchain monitoring")
 	}
 
 	network := l.config.BlockmonDefaultNetwork
@@ -712,7 +775,7 @@ func (l *ConfigLoader) GetBlockmonConfig() (skills.BlockmonConfig, error) {
 		pollInterval = 15
 	}
 
-	return skills.BlockmonConfig{
+	return BlockmonConfig{
 		AlchemyAPIKey:       apiKey,
 		WebhookURL:          l.config.BlockmonWebhookURL,
 		DefaultNetwork:      network,
@@ -721,7 +784,7 @@ func (l *ConfigLoader) GetBlockmonConfig() (skills.BlockmonConfig, error) {
 }
 
 // GetWalletSecurityConfig returns wallet security monitoring configuration.
-func (l *ConfigLoader) GetWalletSecurityConfig() (skills.WalletSecuritySettingsConfig, error) {
+func (l *ConfigLoader) GetWalletSecurityConfig() (WalletSecuritySettingsConfig, error) {
 	pollInterval := l.config.WalletSecurityPollInterval
 	if pollInterval == 0 {
 		pollInterval = 300 // 5 minutes default
@@ -732,7 +795,7 @@ func (l *ConfigLoader) GetWalletSecurityConfig() (skills.WalletSecuritySettingsC
 		alertLevel = "medium"
 	}
 
-	return skills.WalletSecuritySettingsConfig{
+	return WalletSecuritySettingsConfig{
 		Enabled:      l.config.WalletSecurityEnabled,
 		PollInterval: pollInterval,
 		AlertLevel:   alertLevel,

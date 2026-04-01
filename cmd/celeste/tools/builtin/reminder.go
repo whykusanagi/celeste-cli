@@ -38,14 +38,14 @@ func NewReminderSetTool() *ReminderSetTool {
 		BaseTool: BaseTool{
 			ToolName:        "set_reminder",
 			ToolDescription: "Set a reminder with a specific time and message",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"message": map[string]interface{}{
+				"properties": map[string]any{
+					"message": map[string]any{
 						"type":        "string",
 						"description": "Reminder message",
 					},
-					"time": map[string]interface{}{
+					"time": map[string]any{
 						"type":        "string",
 						"description": "Time for reminder (format: 'YYYY-MM-DD HH:MM' or 'HH:MM' for today, or relative like 'in 1 hour', 'tomorrow at 3pm')",
 					},
@@ -67,7 +67,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			"validation_error",
 			"The 'message' parameter is required",
 			"Please provide a reminder message.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "set_reminder",
 				"field": "message",
 			},
@@ -80,7 +80,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			"validation_error",
 			"The 'time' parameter is required",
 			"Please provide a time for the reminder (format: 'YYYY-MM-DD HH:MM' or 'HH:MM' for today).",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "set_reminder",
 				"field": "time",
 			},
@@ -97,7 +97,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			"validation_error",
 			"Relative time parsing not yet implemented",
 			"Please use format 'YYYY-MM-DD HH:MM' or 'HH:MM' for today.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "set_reminder",
 				"field":    "time",
 				"provided": timeStr,
@@ -131,7 +131,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			"validation_error",
 			"Failed to parse time",
 			"Please use format 'YYYY-MM-DD HH:MM' or 'HH:MM' for today.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "set_reminder",
 				"field":    "time",
 				"provided": timeStr,
@@ -164,7 +164,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			"internal_error",
 			"Failed to save reminder",
 			"An internal error occurred while saving the reminder. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "set_reminder",
 				"error": err.Error(),
 			},
@@ -175,14 +175,14 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			"internal_error",
 			"Failed to save reminder file",
 			"An internal error occurred while saving the reminder. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "set_reminder",
 				"error": err.Error(),
 			},
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"id":      reminder.ID,
 		"message": message,
 		"time":    reminderTime.Format(time.RFC3339),
@@ -201,9 +201,9 @@ func NewReminderListTool() *ReminderListTool {
 		BaseTool: BaseTool{
 			ToolName:        "list_reminders",
 			ToolDescription: "List all active reminders",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type":       "object",
-				"properties": map[string]interface{}{},
+				"properties": map[string]any{},
 				"required":   []string{},
 			}),
 			ReadOnly:        true,
@@ -221,10 +221,10 @@ func (t *ReminderListTool) Execute(ctx context.Context, input map[string]any, pr
 	}
 
 	now := time.Now()
-	activeReminders := make([]map[string]interface{}, 0)
+	activeReminders := make([]map[string]any, 0)
 	for _, r := range reminders {
 		if r.Time.After(now) {
-			activeReminders = append(activeReminders, map[string]interface{}{
+			activeReminders = append(activeReminders, map[string]any{
 				"id":      r.ID,
 				"message": r.Message,
 				"time":    r.Time.Format(time.RFC3339),
@@ -233,7 +233,7 @@ func (t *ReminderListTool) Execute(ctx context.Context, input map[string]any, pr
 		}
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"count":     len(activeReminders),
 		"reminders": activeReminders,
 	})

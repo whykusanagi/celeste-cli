@@ -1,5 +1,5 @@
-// Package skills provides blockchain monitoring skill implementation
-package skills
+// Package builtin provides blockchain monitoring handler implementation
+package builtin
 
 import (
 	"context"
@@ -9,43 +9,8 @@ import (
 	"time"
 )
 
-// BlockmonSkill returns the blockchain monitoring skill definition
-func BlockmonSkill() Skill {
-	return Skill{
-		Name:        "blockmon",
-		Description: "Real-time blockchain monitoring: watch addresses, get latest blocks, monitor network activity across Ethereum and L2s",
-		Parameters: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"operation": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"get_latest_block", "watch_address", "get_block_by_number"},
-					"description": "Monitoring operation to perform",
-				},
-				"network": map[string]interface{}{
-					"type":        "string",
-					"description": "Blockchain network to monitor (eth-mainnet, polygon-mainnet, etc.)",
-				},
-				"address": map[string]interface{}{
-					"type":        "string",
-					"description": "Address to watch (for watch_address operation)",
-				},
-				"blocks_history": map[string]interface{}{
-					"type":        "number",
-					"description": "Number of past blocks to check (default: 10)",
-				},
-				"block_number": map[string]interface{}{
-					"type":        "string",
-					"description": "Block number to fetch (hex or decimal)",
-				},
-			},
-			"required": []string{"operation"},
-		},
-	}
-}
-
-// BlockmonHandler handles blockchain monitoring skill execution
-func BlockmonHandler(args map[string]interface{}, configLoader ConfigLoader) (interface{}, error) {
+// blockmonHandler handles blockchain monitoring skill execution
+func blockmonHandler(args map[string]any, configLoader ConfigLoader) (any, error) {
 	// Get configuration
 	config, err := configLoader.GetBlockmonConfig()
 	if err != nil {
@@ -53,7 +18,7 @@ func BlockmonHandler(args map[string]interface{}, configLoader ConfigLoader) (in
 			"config_error",
 			"Alchemy API key is required for blockchain monitoring",
 			"Configure Alchemy API key (same key used for both Alchemy and monitoring)",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "blockmon",
 				"config_command": "Set CELESTE_ALCHEMY_API_KEY=<your_key>",
 			},
@@ -67,7 +32,7 @@ func BlockmonHandler(args map[string]interface{}, configLoader ConfigLoader) (in
 			"validation_error",
 			"Operation is required",
 			"Specify a monitoring operation (get_latest_block, watch_address, etc.)",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "blockmon",
 				"field": "operation",
 			},
@@ -86,7 +51,7 @@ func BlockmonHandler(args map[string]interface{}, configLoader ConfigLoader) (in
 			"validation_error",
 			err.Error(),
 			"Use one of: eth-mainnet, polygon-mainnet, arbitrum-mainnet, optimism-mainnet, base-mainnet",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"network": network,
 			},
@@ -120,7 +85,7 @@ func BlockmonHandler(args map[string]interface{}, configLoader ConfigLoader) (in
 			"validation_error",
 			fmt.Sprintf("Unknown operation: %s", operation),
 			"Valid operations: get_latest_block, watch_address, get_block_by_number",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "blockmon",
 				"operation": operation,
 			},
@@ -129,15 +94,15 @@ func BlockmonHandler(args map[string]interface{}, configLoader ConfigLoader) (in
 }
 
 // handleGetLatestBlock gets the latest block information
-func handleGetLatestBlock(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (interface{}, error) {
+func handleGetLatestBlock(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (any, error) {
 	// Get latest block number
-	blockNumResult, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []interface{}{})
+	blockNumResult, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []any{})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get block number: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"network": network,
 			},
@@ -147,26 +112,26 @@ func handleGetLatestBlock(ctx context.Context, client *http.Client, config Alche
 	blockNumberHex := blockNumResult["result"].(string)
 
 	// Get full block details
-	blockResult, err := alchemyRequest(ctx, client, config, network, "eth_getBlockByNumber", []interface{}{blockNumberHex, true})
+	blockResult, err := alchemyRequest(ctx, client, config, network, "eth_getBlockByNumber", []any{blockNumberHex, true})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get block details: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"network": network,
 			},
 		), nil
 	}
 
-	blockData, ok := blockResult["result"].(map[string]interface{})
+	blockData, ok := blockResult["result"].(map[string]any)
 	if !ok {
 		return formatErrorResponse(
 			"api_error",
 			"Invalid block data format",
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "blockmon",
 			},
 		), nil
@@ -178,11 +143,11 @@ func handleGetLatestBlock(ctx context.Context, client *http.Client, config Alche
 
 	// Get transaction count
 	txCount := 0
-	if transactions, ok := blockData["transactions"].([]interface{}); ok {
+	if transactions, ok := blockData["transactions"].([]any); ok {
 		txCount = len(transactions)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":           true,
 		"network":           network,
 		"block_number":      blockNumber.String(),
@@ -198,7 +163,7 @@ func handleGetLatestBlock(ctx context.Context, client *http.Client, config Alche
 }
 
 // handleWatchAddress monitors recent transactions for an address
-func handleWatchAddress(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleWatchAddress(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -206,7 +171,7 @@ func handleWatchAddress(ctx context.Context, client *http.Client, config Alchemy
 			"validation_error",
 			"Address is required for watch_address operation",
 			"Provide an Ethereum address to monitor",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "blockmon",
 				"operation": "watch_address",
 			},
@@ -219,7 +184,7 @@ func handleWatchAddress(ctx context.Context, client *http.Client, config Alchemy
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"address": address,
 			},
@@ -233,13 +198,13 @@ func handleWatchAddress(ctx context.Context, client *http.Client, config Alchemy
 	}
 
 	// Get current block number
-	blockNumResult, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []interface{}{})
+	blockNumResult, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []any{})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get block number: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"network": network,
 			},
@@ -255,42 +220,42 @@ func handleWatchAddress(ctx context.Context, client *http.Client, config Alchemy
 	fromBlockHex := fmt.Sprintf("0x%x", fromBlock)
 
 	// Get asset transfers for the address
-	params := map[string]interface{}{
+	params := map[string]any{
 		"fromBlock":   fromBlockHex,
 		"toBlock":     "latest",
 		"fromAddress": normalizedAddr,
 		"category":    []string{"external", "internal", "erc20", "erc721", "erc1155"},
 	}
 
-	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []interface{}{params})
+	result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []any{params})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get transactions: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"network": network,
 			},
 		), nil
 	}
 
-	transferData, ok := result["result"].(map[string]interface{})
+	transferData, ok := result["result"].(map[string]any)
 	if !ok {
 		return formatErrorResponse(
 			"api_error",
 			"Invalid response format",
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "blockmon",
 			},
 		), nil
 	}
 
-	transfers, _ := transferData["transfers"].([]interface{})
+	transfers, _ := transferData["transfers"].([]any)
 	txCount := len(transfers)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":           true,
 		"address":           normalizedAddr,
 		"network":           network,
@@ -304,7 +269,7 @@ func handleWatchAddress(ctx context.Context, client *http.Client, config Alchemy
 }
 
 // handleGetBlockByNumber gets a specific block by number
-func handleGetBlockByNumber(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]interface{}) (interface{}, error) {
+func handleGetBlockByNumber(ctx context.Context, client *http.Client, config AlchemyConfig, network string, args map[string]any) (any, error) {
 	// Get block number
 	blockNumber, ok := args["block_number"].(string)
 	if !ok || blockNumber == "" {
@@ -312,7 +277,7 @@ func handleGetBlockByNumber(ctx context.Context, client *http.Client, config Alc
 			"validation_error",
 			"Block number is required",
 			"Provide a block number (hex like 0x1234 or decimal like 4660)",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "blockmon",
 				"operation": "get_block_by_number",
 			},
@@ -329,26 +294,26 @@ func handleGetBlockByNumber(ctx context.Context, client *http.Client, config Alc
 	}
 
 	// Get block details
-	result, err := alchemyRequest(ctx, client, config, network, "eth_getBlockByNumber", []interface{}{blockNumberHex, true})
+	result, err := alchemyRequest(ctx, client, config, network, "eth_getBlockByNumber", []any{blockNumberHex, true})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get block: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "blockmon",
 				"network": network,
 			},
 		), nil
 	}
 
-	blockData, ok := result["result"].(map[string]interface{})
+	blockData, ok := result["result"].(map[string]any)
 	if !ok || blockData == nil {
 		return formatErrorResponse(
 			"api_error",
 			"Block not found",
 			"The block number may not exist yet",
-			map[string]interface{}{
+			map[string]any{
 				"skill":        "blockmon",
 				"block_number": blockNumber,
 			},
@@ -357,11 +322,11 @@ func handleGetBlockByNumber(ctx context.Context, client *http.Client, config Alc
 
 	// Get transaction count
 	txCount := 0
-	if transactions, ok := blockData["transactions"].([]interface{}); ok {
+	if transactions, ok := blockData["transactions"].([]any); ok {
 		txCount = len(transactions)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":           true,
 		"network":           network,
 		"block_number":      blockNumber,

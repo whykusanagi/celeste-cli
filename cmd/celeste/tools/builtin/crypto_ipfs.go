@@ -1,5 +1,5 @@
-// Package skills provides IPFS skill implementation using Kubo RPC client.
-package skills
+// Package builtin provides IPFS skill implementation using Kubo RPC client.
+package builtin
 
 import (
 	"context"
@@ -69,39 +69,8 @@ func (c *kuboIPFSClient) ListPins(ctx context.Context) ([]string, error) {
 
 var newIPFSClient = createIPFSClient
 
-// IPFSSkill returns the IPFS skill definition
-func IPFSSkill() Skill {
-	return Skill{
-		Name:        "ipfs",
-		Description: "IPFS decentralized storage operations: upload content/files, download by CID, manage pins. Supports string content and binary files. Works with Infura, Pinata, and custom IPFS nodes.",
-		Parameters: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"operation": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"upload", "download", "pin", "unpin", "list_pins"},
-					"description": "IPFS operation to perform",
-				},
-				"content": map[string]interface{}{
-					"type":        "string",
-					"description": "String content to upload (for upload operation with text/data)",
-				},
-				"file_path": map[string]interface{}{
-					"type":        "string",
-					"description": "Path to file to upload (for upload operation with binary files)",
-				},
-				"cid": map[string]interface{}{
-					"type":        "string",
-					"description": "Content identifier (for download, pin, unpin operations)",
-				},
-			},
-			"required": []string{"operation"},
-		},
-	}
-}
-
-// IPFSHandler handles IPFS skill execution
-func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interface{}, error) {
+// ipfsHandler handles IPFS skill execution
+func ipfsHandler(args map[string]any, configLoader ConfigLoader) (any, error) {
 	// Get configuration
 	config, err := configLoader.GetIPFSConfig()
 	if err != nil {
@@ -109,7 +78,7 @@ func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interf
 			"config_error",
 			"IPFS configuration is required",
 			"Configure IPFS by setting CELESTE_IPFS_API_KEY environment variable or adding to skills.json",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "ipfs",
 				"config_command": "Set CELESTE_IPFS_API_KEY=<your_key>",
 			},
@@ -123,7 +92,7 @@ func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interf
 			"validation_error",
 			"Operation is required",
 			"Specify one of: upload, download, pin, unpin, list_pins",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "ipfs",
 				"field": "operation",
 			},
@@ -137,7 +106,7 @@ func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interf
 			"connection_error",
 			fmt.Sprintf("Failed to connect to IPFS: %v", err),
 			"Check your IPFS configuration and network connection",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "ipfs",
 				"provider": config.Provider,
 			},
@@ -164,7 +133,7 @@ func IPFSHandler(args map[string]interface{}, configLoader ConfigLoader) (interf
 			"validation_error",
 			fmt.Sprintf("Unknown operation: %s", operation),
 			"Valid operations: upload, download, pin, unpin, list_pins",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": operation,
 			},
@@ -226,7 +195,7 @@ func applyIPFSAuthHeaders(config IPFSConfig, addHeader func(key, value string)) 
 }
 
 // handleIPFSUpload uploads content to IPFS
-func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]interface{}, config IPFSConfig) (interface{}, error) {
+func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]any, config IPFSConfig) (any, error) {
 	// Check for file_path first, then content
 	filePath, hasFile := args["file_path"].(string)
 	content, hasContent := args["content"].(string)
@@ -237,7 +206,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 			"validation_error",
 			"Either content or file_path is required for upload operation",
 			"Provide string content or a file path to upload to IPFS",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "upload",
 			},
@@ -249,7 +218,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 			"validation_error",
 			"Provide either content or file_path, not both",
 			"Choose one: string content or file path",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "upload",
 			},
@@ -272,7 +241,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 				"file_error",
 				fmt.Sprintf("Failed to open file: %v", err),
 				"Check that the file exists and is readable",
-				map[string]interface{}{
+				map[string]any{
 					"skill":     "ipfs",
 					"operation": "upload",
 					"file_path": filePath,
@@ -288,7 +257,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 				"file_error",
 				fmt.Sprintf("Failed to get file info: %v", err),
 				"",
-				map[string]interface{}{
+				map[string]any{
 					"skill":     "ipfs",
 					"operation": "upload",
 					"file_path": filePath,
@@ -317,7 +286,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 			"upload_error",
 			fmt.Sprintf("Failed to upload to IPFS: %v", err),
 			"Check your IPFS configuration and try again",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "upload",
 				"type":      uploadType,
@@ -333,7 +302,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 		gatewayURL = fmt.Sprintf("https://ipfs.io/ipfs/%s", cidStr)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":     true,
 		"cid":         cidStr,
 		"size":        size,
@@ -345,7 +314,7 @@ func handleIPFSUpload(ctx context.Context, client ipfsClient, args map[string]in
 }
 
 // handleIPFSDownload downloads content from IPFS by CID
-func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]interface{}) (interface{}, error) {
+func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]any) (any, error) {
 	// Get CID
 	cidStr, ok := args["cid"].(string)
 	if !ok || cidStr == "" {
@@ -353,7 +322,7 @@ func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]
 			"validation_error",
 			"CID is required for download operation",
 			"Provide a valid IPFS Content Identifier (CID)",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "download",
 			},
@@ -367,7 +336,7 @@ func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]
 			"validation_error",
 			fmt.Sprintf("Invalid CID: %v", err),
 			"Provide a valid IPFS Content Identifier",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "download",
 				"cid":       cidStr,
@@ -383,7 +352,7 @@ func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]
 			"download_error",
 			fmt.Sprintf("Failed to download from IPFS: %v", err),
 			"Check that the CID exists and is accessible",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "download",
 				"cid":       cidStr,
@@ -399,7 +368,7 @@ func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]
 			"download_error",
 			"Content is not a file",
 			"The CID may point to a directory",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "download",
 				"cid":       cidStr,
@@ -412,14 +381,14 @@ func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]
 			"download_error",
 			fmt.Sprintf("Failed to read content: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "download",
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"cid":     cidStr,
 		"content": string(content),
@@ -429,7 +398,7 @@ func handleIPFSDownload(ctx context.Context, client ipfsClient, args map[string]
 }
 
 // handleIPFSPin pins content on IPFS
-func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]interface{}) (interface{}, error) {
+func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]any) (any, error) {
 	// Get CID
 	cidStr, ok := args["cid"].(string)
 	if !ok || cidStr == "" {
@@ -437,7 +406,7 @@ func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]inter
 			"validation_error",
 			"CID is required for pin operation",
 			"Provide a valid IPFS Content Identifier to pin",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "pin",
 			},
@@ -451,7 +420,7 @@ func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]inter
 			"validation_error",
 			fmt.Sprintf("Invalid CID: %v", err),
 			"Provide a valid IPFS Content Identifier",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "pin",
 				"cid":       cidStr,
@@ -467,7 +436,7 @@ func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]inter
 			"pin_error",
 			fmt.Sprintf("Failed to pin content: %v", err),
 			"Check that the CID exists and is accessible",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "pin",
 				"cid":       cidStr,
@@ -475,7 +444,7 @@ func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]inter
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"cid":     cidStr,
 		"message": "Content successfully pinned on IPFS",
@@ -483,7 +452,7 @@ func handleIPFSPin(ctx context.Context, client ipfsClient, args map[string]inter
 }
 
 // handleIPFSUnpin unpins content from IPFS
-func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]interface{}) (interface{}, error) {
+func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]any) (any, error) {
 	// Get CID
 	cidStr, ok := args["cid"].(string)
 	if !ok || cidStr == "" {
@@ -491,7 +460,7 @@ func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]int
 			"validation_error",
 			"CID is required for unpin operation",
 			"Provide a valid IPFS Content Identifier to unpin",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "unpin",
 			},
@@ -505,7 +474,7 @@ func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]int
 			"validation_error",
 			fmt.Sprintf("Invalid CID: %v", err),
 			"Provide a valid IPFS Content Identifier",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "unpin",
 				"cid":       cidStr,
@@ -521,7 +490,7 @@ func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]int
 			"unpin_error",
 			fmt.Sprintf("Failed to unpin content: %v", err),
 			"Check that the content is currently pinned",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "unpin",
 				"cid":       cidStr,
@@ -529,7 +498,7 @@ func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]int
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"cid":     cidStr,
 		"message": "Content successfully unpinned from IPFS",
@@ -537,7 +506,7 @@ func handleIPFSUnpin(ctx context.Context, client ipfsClient, args map[string]int
 }
 
 // handleIPFSListPins lists all pinned content
-func handleIPFSListPins(ctx context.Context, client ipfsClient) (interface{}, error) {
+func handleIPFSListPins(ctx context.Context, client ipfsClient) (any, error) {
 	// List pins
 	cidList, err := client.ListPins(ctx)
 	if err != nil {
@@ -545,14 +514,14 @@ func handleIPFSListPins(ctx context.Context, client ipfsClient) (interface{}, er
 			"list_error",
 			fmt.Sprintf("Failed to list pins: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "ipfs",
 				"operation": "list_pins",
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"pins":    cidList,
 		"count":   len(cidList),

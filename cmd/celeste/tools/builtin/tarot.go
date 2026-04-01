@@ -25,15 +25,15 @@ func NewTarotTool(configLoader ConfigLoader) *TarotTool {
 		BaseTool: BaseTool{
 			ToolName:        "tarot_reading",
 			ToolDescription: "Generate a tarot card reading using either a three-card spread (past/present/future) or a celtic cross spread",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"spread_type": map[string]interface{}{
+				"properties": map[string]any{
+					"spread_type": map[string]any{
 						"type":        "string",
 						"enum":        []string{"three", "celtic"},
 						"description": "Type of spread: 'three' for 3-card past/present/future, 'celtic' for 10-card celtic cross",
 					},
-					"question": map[string]interface{}{
+					"question": map[string]any{
 						"type":        "string",
 						"description": "Optional question to focus the reading on",
 					},
@@ -56,7 +56,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 			"config_error",
 			"Tarot configuration is required. Please configure it using: celeste config --set-tarot-token <token>",
 			"The tarot auth token is needed to access the tarot reading service.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "tarot_reading",
 				"config_command": "celeste config --set-tarot-token <token>",
 			},
@@ -73,7 +73,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 		question = q
 	}
 
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"spread_type": spreadType,
 	}
 	if question != "" {
@@ -86,7 +86,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 			"internal_error",
 			"Failed to encode tarot request",
 			"An internal error occurred. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "tarot_reading",
 				"error": err.Error(),
 			},
@@ -99,7 +99,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 			"internal_error",
 			"Failed to create tarot request",
 			"An internal error occurred. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "tarot_reading",
 				"error": err.Error(),
 			},
@@ -126,7 +126,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 			"network_error",
 			"Failed to connect to tarot API",
 			"Please check your internet connection and try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "tarot_reading",
 				"error":   err.Error(),
 				"elapsed": elapsed.String(),
@@ -141,7 +141,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 			"api_error",
 			"Failed to read tarot API response",
 			"The tarot service may have returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "tarot_reading",
 				"error":   err.Error(),
 				"elapsed": elapsed.String(),
@@ -154,7 +154,7 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 			"api_error",
 			fmt.Sprintf("Tarot API returned error (status %d)", resp.StatusCode),
 			"The tarot reading service may be temporarily unavailable. Please try again later.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":       "tarot_reading",
 				"status_code": resp.StatusCode,
 				"response":    string(responseBody),
@@ -163,13 +163,13 @@ func (t *TarotTool) Execute(ctx context.Context, input map[string]any, progress 
 		))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return resultFromMap(formatErrorResponse(
 			"api_error",
 			"Failed to parse tarot API response",
 			"The tarot service returned invalid data. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "tarot_reading",
 				"error":   err.Error(),
 				"elapsed": elapsed.String(),

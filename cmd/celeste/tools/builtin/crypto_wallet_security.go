@@ -1,5 +1,5 @@
-// Package skills provides wallet security monitoring skill implementation
-package skills
+// Package builtin provides wallet security monitoring handler implementation
+package builtin
 
 import (
 	"context"
@@ -16,52 +16,6 @@ import (
 	"strconv"
 	"time"
 )
-
-// WalletSecuritySkill returns the wallet security monitoring skill definition
-func WalletSecuritySkill() Skill {
-	return Skill{
-		Name:        "wallet_security",
-		Description: "Monitor wallet addresses for security threats: dust attacks, NFT scams, dangerous approvals, large transfers across Ethereum and L2s",
-		Parameters: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"operation": map[string]interface{}{
-					"type": "string",
-					"enum": []string{
-						"add_monitored_wallet",
-						"remove_monitored_wallet",
-						"list_monitored_wallets",
-						"check_wallet_security",
-						"get_security_alerts",
-						"acknowledge_alert",
-					},
-					"description": "Wallet security operation to perform",
-				},
-				"address": map[string]interface{}{
-					"type":        "string",
-					"description": "Ethereum wallet address to monitor",
-				},
-				"label": map[string]interface{}{
-					"type":        "string",
-					"description": "Friendly label for the wallet (e.g., 'Main Wallet', 'Trading Account')",
-				},
-				"network": map[string]interface{}{
-					"type":        "string",
-					"description": "Blockchain network (default: eth-mainnet)",
-				},
-				"alert_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Alert ID to acknowledge",
-				},
-				"unacknowledged_only": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Filter for unacknowledged alerts only",
-				},
-			},
-			"required": []string{"operation"},
-		},
-	}
-}
 
 // WalletSecurityConfig holds wallet security configuration
 type WalletSecurityConfig struct {
@@ -87,7 +41,7 @@ type SecurityAlert struct {
 	TxHash         string                 `json:"tx_hash"`        // Transaction hash
 	BlockNumber    string                 `json:"block_number"`
 	Description    string                 `json:"description"` // Human-readable description
-	Details        map[string]interface{} `json:"details"`     // Type-specific details
+	Details        map[string]any `json:"details"`     // Type-specific details
 	DetectedAt     time.Time              `json:"detected_at"`
 	Acknowledged   bool                   `json:"acknowledged"`
 	AcknowledgedAt *time.Time             `json:"acknowledged_at,omitempty"`
@@ -98,7 +52,7 @@ type AlertsLog struct {
 	Alerts []SecurityAlert `json:"alerts"`
 }
 
-// AssetTransfer represents a blockchain asset transfer (from crypto_blockmon.go pattern)
+// AssetTransfer represents a blockchain asset transfer
 type AssetTransfer struct {
 	Category        string
 	BlockNum        string
@@ -127,8 +81,14 @@ func getWalletAlertsPath() string {
 	return filepath.Join(homeDir, ".celeste", "wallet_alerts.json")
 }
 
-// WalletSecurityHandler handles wallet security skill execution
-func WalletSecurityHandler(args map[string]interface{}, configLoader ConfigLoader) (interface{}, error) {
+// WalletSecurityHandlerFunc is the exported entry point for wallet security operations.
+// It is used by the monitor daemon to perform periodic wallet checks.
+func WalletSecurityHandlerFunc(args map[string]any, configLoader ConfigLoader) (any, error) {
+	return walletSecurityHandler(args, configLoader)
+}
+
+// walletSecurityHandler handles wallet security skill execution
+func walletSecurityHandler(args map[string]any, configLoader ConfigLoader) (any, error) {
 	// Get operation
 	operation, ok := args["operation"].(string)
 	if !ok || operation == "" {
@@ -136,7 +96,7 @@ func WalletSecurityHandler(args map[string]interface{}, configLoader ConfigLoade
 			"validation_error",
 			"Operation is required",
 			"Specify a wallet security operation",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 				"field": "operation",
 			},
@@ -165,7 +125,7 @@ func WalletSecurityHandler(args map[string]interface{}, configLoader ConfigLoade
 			"validation_error",
 			fmt.Sprintf("Unknown operation: %s", operation),
 			"Check the operation name",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "wallet_security",
 				"operation": operation,
 			},
@@ -174,7 +134,7 @@ func WalletSecurityHandler(args map[string]interface{}, configLoader ConfigLoade
 }
 
 // handleAddMonitoredWallet adds a wallet to the monitoring list
-func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) {
+func handleAddMonitoredWallet(args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -182,7 +142,7 @@ func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) 
 			"validation_error",
 			"Address is required",
 			"Provide an Ethereum address to monitor",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "wallet_security",
 				"operation": "add_monitored_wallet",
 			},
@@ -195,7 +155,7 @@ func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) 
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "wallet_security",
 				"address": address,
 			},
@@ -219,7 +179,7 @@ func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) 
 			"validation_error",
 			err.Error(),
 			"Use one of: eth-mainnet, polygon-mainnet, arbitrum-mainnet, optimism-mainnet, base-mainnet",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "wallet_security",
 				"network": network,
 			},
@@ -242,7 +202,7 @@ func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) 
 				"validation_error",
 				fmt.Sprintf("Wallet already monitored: %s on %s", normalizedAddr, network),
 				"This wallet is already in the monitoring list",
-				map[string]interface{}{
+				map[string]any{
 					"skill":   "wallet_security",
 					"address": normalizedAddr,
 					"network": network,
@@ -266,13 +226,13 @@ func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) 
 			"api_error",
 			fmt.Sprintf("Failed to save configuration: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Now monitoring wallet: %s (%s) on %s", label, normalizedAddr, network),
 		"wallet":  wallet,
@@ -280,7 +240,7 @@ func handleAddMonitoredWallet(args map[string]interface{}) (interface{}, error) 
 }
 
 // handleRemoveMonitoredWallet removes a wallet from the monitoring list
-func handleRemoveMonitoredWallet(args map[string]interface{}) (interface{}, error) {
+func handleRemoveMonitoredWallet(args map[string]any) (any, error) {
 	// Get and validate address
 	address, ok := args["address"].(string)
 	if !ok || address == "" {
@@ -288,7 +248,7 @@ func handleRemoveMonitoredWallet(args map[string]interface{}) (interface{}, erro
 			"validation_error",
 			"Address is required",
 			"Provide an Ethereum address to remove",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "wallet_security",
 				"operation": "remove_monitored_wallet",
 			},
@@ -301,7 +261,7 @@ func handleRemoveMonitoredWallet(args map[string]interface{}) (interface{}, erro
 			"validation_error",
 			err.Error(),
 			"Provide a valid Ethereum address",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "wallet_security",
 				"address": address,
 			},
@@ -318,7 +278,7 @@ func handleRemoveMonitoredWallet(args map[string]interface{}) (interface{}, erro
 			"api_error",
 			"No wallets configured for monitoring",
 			"Add a wallet first using add_monitored_wallet",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
@@ -340,7 +300,7 @@ func handleRemoveMonitoredWallet(args map[string]interface{}) (interface{}, erro
 			"validation_error",
 			"Wallet not found in monitoring list",
 			"Check the address and network",
-			map[string]interface{}{
+			map[string]any{
 				"skill":   "wallet_security",
 				"address": normalizedAddr,
 				"network": network,
@@ -356,23 +316,23 @@ func handleRemoveMonitoredWallet(args map[string]interface{}) (interface{}, erro
 			"api_error",
 			fmt.Sprintf("Failed to save configuration: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Removed wallet from monitoring: %s", normalizedAddr),
 	}, nil
 }
 
 // handleListMonitoredWallets lists all monitored wallets
-func handleListMonitoredWallets() (interface{}, error) {
+func handleListMonitoredWallets() (any, error) {
 	config, err := loadWalletSecurityConfig()
 	if err != nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"success": true,
 			"wallets": []MonitoredWallet{},
 			"count":   0,
@@ -380,7 +340,7 @@ func handleListMonitoredWallets() (interface{}, error) {
 		}, nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"wallets": config.MonitoredWallets,
 		"count":   len(config.MonitoredWallets),
@@ -389,7 +349,7 @@ func handleListMonitoredWallets() (interface{}, error) {
 }
 
 // handleCheckWalletSecurity checks all monitored wallets for security threats
-func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (interface{}, error) {
+func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (any, error) {
 	// Load wallet security config
 	wsConfig, err := loadWalletSecurityConfig()
 	if err != nil {
@@ -397,14 +357,14 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 			"api_error",
 			"No wallets configured for monitoring",
 			"Add a wallet first using add_monitored_wallet",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
 	}
 
 	if len(wsConfig.MonitoredWallets) == 0 {
-		return map[string]interface{}{
+		return map[string]any{
 			"success": true,
 			"message": "No wallets to monitor",
 		}, nil
@@ -417,7 +377,7 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 			"config_error",
 			"Alchemy API key is required for wallet security monitoring",
 			"Configure Alchemy API key",
-			map[string]interface{}{
+			map[string]any{
 				"skill":          "wallet_security",
 				"config_command": "Set CELESTE_ALCHEMY_API_KEY=<your_key>",
 			},
@@ -430,13 +390,13 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 	// Get current block
 	blockNumResult, err := alchemyRequest(ctx, client, alchemyConfig,
 		wsConfig.MonitoredWallets[0].Network,
-		"eth_blockNumber", []interface{}{})
+		"eth_blockNumber", []any{})
 	if err != nil {
 		return formatErrorResponse(
 			"api_error",
 			fmt.Sprintf("Failed to get current block: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
@@ -474,7 +434,7 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 				"api_error",
 				fmt.Sprintf("Failed to save alerts: %v", err),
 				"",
-				map[string]interface{}{
+				map[string]any{
 					"skill": "wallet_security",
 				},
 			), nil
@@ -488,13 +448,13 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 			"api_error",
 			fmt.Sprintf("Failed to update config: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":         true,
 		"wallets_checked": len(wsConfig.MonitoredWallets),
 		"alerts_found":    len(allAlerts),
@@ -509,7 +469,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	wallet MonitoredWallet, fromBlock, toBlock string) ([]SecurityAlert, error) {
 
 	// Fetch asset transfers (both incoming and outgoing)
-	params := map[string]interface{}{
+	params := map[string]any{
 		"fromBlock": fromBlock,
 		"toBlock":   toBlock,
 		"category":  []string{"external", "internal", "erc20", "erc721", "erc1155"},
@@ -517,47 +477,47 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 
 	// We need both directions, so we'll make two calls
 	// First: outgoing transfers
-	paramsOutgoing := make(map[string]interface{})
+	paramsOutgoing := make(map[string]any)
 	for k, v := range params {
 		paramsOutgoing[k] = v
 	}
 	paramsOutgoing["fromAddress"] = wallet.Address
 
 	resultOutgoing, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"alchemy_getAssetTransfers", []interface{}{paramsOutgoing})
+		"alchemy_getAssetTransfers", []any{paramsOutgoing})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get outgoing transfers: %w", err)
 	}
 
 	// Second: incoming transfers
-	paramsIncoming := make(map[string]interface{})
+	paramsIncoming := make(map[string]any)
 	for k, v := range params {
 		paramsIncoming[k] = v
 	}
 	paramsIncoming["toAddress"] = wallet.Address
 
 	resultIncoming, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"alchemy_getAssetTransfers", []interface{}{paramsIncoming})
+		"alchemy_getAssetTransfers", []any{paramsIncoming})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get incoming transfers: %w", err)
 	}
 
 	// Combine transfers
-	allTransfers := []interface{}{}
-	if outgoingData, ok := resultOutgoing["result"].(map[string]interface{}); ok {
-		if transfers, ok := outgoingData["transfers"].([]interface{}); ok {
+	allTransfers := []any{}
+	if outgoingData, ok := resultOutgoing["result"].(map[string]any); ok {
+		if transfers, ok := outgoingData["transfers"].([]any); ok {
 			allTransfers = append(allTransfers, transfers...)
 		}
 	}
-	if incomingData, ok := resultIncoming["result"].(map[string]interface{}); ok {
-		if transfers, ok := incomingData["transfers"].([]interface{}); ok {
+	if incomingData, ok := resultIncoming["result"].(map[string]any); ok {
+		if transfers, ok := incomingData["transfers"].([]any); ok {
 			allTransfers = append(allTransfers, transfers...)
 		}
 	}
 
 	// Get current balance for large transfer detection
 	balanceResult, _ := alchemyRequest(ctx, client, config, wallet.Network,
-		"eth_getBalance", []interface{}{wallet.Address, "latest"})
+		"eth_getBalance", []any{wallet.Address, "latest"})
 	balanceETH := 0.0
 	if balanceResult != nil {
 		if resultData, ok := balanceResult["result"].(string); ok {
@@ -572,7 +532,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	alerts := []SecurityAlert{}
 
 	for _, t := range allTransfers {
-		transfer := parseAssetTransfer(t.(map[string]interface{}))
+		transfer := parseAssetTransfer(t.(map[string]any))
 
 		// Run detection algorithms
 		if alert := detectDustAttack(transfer, wallet.Address); alert != nil {
@@ -626,31 +586,31 @@ func checkTokenApprovals(ctx context.Context, client *http.Client, config Alchem
 	// Topic1 should be the owner address (padded to 32 bytes)
 	ownerTopic := "0x" + fmt.Sprintf("%064s", wallet.Address[2:])
 
-	logsParams := map[string]interface{}{
+	logsParams := map[string]any{
 		"fromBlock": fromBlock,
 		"toBlock":   toBlock,
-		"topics": []interface{}{
+		"topics": []any{
 			approvalEventSig, // Topic0: event signature
 			ownerTopic,       // Topic1: owner (our monitored wallet)
 		},
 	}
 
 	result, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"eth_getLogs", []interface{}{logsParams})
+		"eth_getLogs", []any{logsParams})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get approval logs: %w", err)
 	}
 
 	// Parse logs
-	logs := []interface{}{}
-	if resultData, ok := result["result"].([]interface{}); ok {
+	logs := []any{}
+	if resultData, ok := result["result"].([]any); ok {
 		logs = resultData
 	}
 
 	// Analyze each approval
 	alerts := []SecurityAlert{}
 	for _, logEntry := range logs {
-		logData, ok := logEntry.(map[string]interface{})
+		logData, ok := logEntry.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -681,8 +641,8 @@ type ApprovalEvent struct {
 }
 
 // parseApprovalEvent parses eth_getLogs approval event
-func parseApprovalEvent(logData map[string]interface{}, ownerAddr string) ApprovalEvent {
-	topics, _ := logData["topics"].([]interface{})
+func parseApprovalEvent(logData map[string]any, ownerAddr string) ApprovalEvent {
+	topics, _ := logData["topics"].([]any)
 	data, _ := logData["data"].(string)
 
 	event := ApprovalEvent{
@@ -750,7 +710,7 @@ func detectDangerousApproval(approval ApprovalEvent) *SecurityAlert {
 		AlertType:   "dangerous_approval",
 		Severity:    severity,
 		Description: description,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"spender_address": approval.Spender,
 			"token_contract":  approval.TokenContract,
 			"approved_amount": approval.Value.String(),
@@ -789,7 +749,7 @@ func detectDustAttack(transfer AssetTransfer, monitoredAddr string) *SecurityAle
 		AlertType:   "dust_attack",
 		Severity:    "low",
 		Description: fmt.Sprintf("Potential dust attack: Received tiny amount (%f %s) from %s", transfer.Value, transfer.Asset, transfer.From),
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"from_address": transfer.From,
 			"amount":       transfer.Value,
 			"asset":        transfer.Asset,
@@ -816,7 +776,7 @@ func detectNFTScam(transfer AssetTransfer, monitoredAddr string) *SecurityAlert 
 		AlertType:   "nft_scam",
 		Severity:    "medium",
 		Description: fmt.Sprintf("Unsolicited NFT received from contract %s (potential scam)", contractAddr),
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"contract_address": contractAddr,
 			"token_id":         transfer.TokenId,
 			"from_address":     transfer.From,
@@ -865,7 +825,7 @@ func detectLargeTransfer(transfer AssetTransfer, monitoredAddr string, balanceET
 		AlertType:   "large_transfer",
 		Severity:    severity,
 		Description: fmt.Sprintf("Large outgoing transfer: %f %s sent to %s", transfer.Value, transfer.Asset, transfer.To),
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"to_address": transfer.To,
 			"amount":     transfer.Value,
 			"asset":      transfer.Asset,
@@ -875,10 +835,10 @@ func detectLargeTransfer(transfer AssetTransfer, monitoredAddr string, balanceET
 }
 
 // handleGetSecurityAlerts retrieves security alerts
-func handleGetSecurityAlerts(args map[string]interface{}) (interface{}, error) {
+func handleGetSecurityAlerts(args map[string]any) (any, error) {
 	alertsLog, err := loadAlertsLog()
 	if err != nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"success": true,
 			"alerts":  []SecurityAlert{},
 			"count":   0,
@@ -903,7 +863,7 @@ func handleGetSecurityAlerts(args map[string]interface{}) (interface{}, error) {
 		return filteredAlerts[i].DetectedAt.After(filteredAlerts[j].DetectedAt)
 	})
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"alerts":  filteredAlerts,
 		"count":   len(filteredAlerts),
@@ -912,14 +872,14 @@ func handleGetSecurityAlerts(args map[string]interface{}) (interface{}, error) {
 }
 
 // handleAcknowledgeAlert acknowledges an alert
-func handleAcknowledgeAlert(args map[string]interface{}) (interface{}, error) {
+func handleAcknowledgeAlert(args map[string]any) (any, error) {
 	alertID, ok := args["alert_id"].(string)
 	if !ok || alertID == "" {
 		return formatErrorResponse(
 			"validation_error",
 			"Alert ID is required",
 			"Provide an alert ID to acknowledge",
-			map[string]interface{}{
+			map[string]any{
 				"skill":     "wallet_security",
 				"operation": "acknowledge_alert",
 			},
@@ -932,7 +892,7 @@ func handleAcknowledgeAlert(args map[string]interface{}) (interface{}, error) {
 			"api_error",
 			"No alerts found",
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
@@ -954,7 +914,7 @@ func handleAcknowledgeAlert(args map[string]interface{}) (interface{}, error) {
 			"validation_error",
 			fmt.Sprintf("Alert not found: %s", alertID),
 			"Check the alert ID",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "wallet_security",
 				"alert_id": alertID,
 			},
@@ -966,13 +926,13 @@ func handleAcknowledgeAlert(args map[string]interface{}) (interface{}, error) {
 			"api_error",
 			fmt.Sprintf("Failed to save alerts: %v", err),
 			"",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "wallet_security",
 			},
 		), nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Alert %s acknowledged", alertID),
 	}, nil
@@ -1068,7 +1028,7 @@ func generateAlertID() string {
 	return fmt.Sprintf("alert_%d_%s", timestamp, randomHex)
 }
 
-func parseAssetTransfer(data map[string]interface{}) AssetTransfer {
+func parseAssetTransfer(data map[string]any) AssetTransfer {
 	transfer := AssetTransfer{}
 
 	if category, ok := data["category"].(string); ok {
@@ -1092,7 +1052,7 @@ func parseAssetTransfer(data map[string]interface{}) AssetTransfer {
 	if hash, ok := data["hash"].(string); ok {
 		transfer.Hash = hash
 	}
-	if rawContract, ok := data["rawContract"].(map[string]interface{}); ok {
+	if rawContract, ok := data["rawContract"].(map[string]any); ok {
 		if address, ok := rawContract["address"].(string); ok {
 			transfer.RawContract.Address = address
 		}

@@ -22,14 +22,14 @@ func NewQRCodeTool() *QRCodeTool {
 		BaseTool: BaseTool{
 			ToolName:        "generate_qr_code",
 			ToolDescription: "Generate a QR code from text or URL",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"text": map[string]interface{}{
+				"properties": map[string]any{
+					"text": map[string]any{
 						"type":        "string",
 						"description": "Text or URL to encode in QR code",
 					},
-					"size": map[string]interface{}{
+					"size": map[string]any{
 						"type":        "integer",
 						"description": "QR code size in pixels (default: 256, min: 64, max: 1024)",
 					},
@@ -51,7 +51,7 @@ func (t *QRCodeTool) Execute(ctx context.Context, input map[string]any, progress
 			"validation_error",
 			"The 'text' parameter is required",
 			"Please provide the text or URL you want to encode in the QR code.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "generate_qr_code",
 				"field": "text",
 			},
@@ -75,7 +75,7 @@ func (t *QRCodeTool) Execute(ctx context.Context, input map[string]any, progress
 			"internal_error",
 			"Failed to generate QR code",
 			"An internal error occurred while generating the QR code. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "generate_qr_code",
 				"error": err.Error(),
 			},
@@ -88,7 +88,7 @@ func (t *QRCodeTool) Execute(ctx context.Context, input map[string]any, progress
 			"internal_error",
 			"Failed to encode QR code as PNG",
 			"An internal error occurred while encoding the QR code. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill": "generate_qr_code",
 				"error": err.Error(),
 			},
@@ -107,7 +107,7 @@ func (t *QRCodeTool) Execute(ctx context.Context, input map[string]any, progress
 			"internal_error",
 			"Failed to save QR code file",
 			"An internal error occurred while saving the QR code. Please try again.",
-			map[string]interface{}{
+			map[string]any{
 				"skill":    "generate_qr_code",
 				"error":    err.Error(),
 				"filepath": filePath,
@@ -115,7 +115,7 @@ func (t *QRCodeTool) Execute(ctx context.Context, input map[string]any, progress
 		))
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"text":     text,
 		"size":     size,
 		"filepath": filePath,

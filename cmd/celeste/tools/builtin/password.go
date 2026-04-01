@@ -18,18 +18,18 @@ func NewPasswordTool() *PasswordTool {
 		BaseTool: BaseTool{
 			ToolName:        "generate_password",
 			ToolDescription: "Generate a secure random password",
-			ToolParameters: mustJSON(map[string]interface{}{
+			ToolParameters: mustJSON(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"length": map[string]interface{}{
+				"properties": map[string]any{
+					"length": map[string]any{
 						"type":        "integer",
 						"description": "Password length (default: 16, min: 8, max: 128)",
 					},
-					"include_symbols": map[string]interface{}{
+					"include_symbols": map[string]any{
 						"type":        "boolean",
 						"description": "Include special symbols (default: true)",
 					},
-					"include_numbers": map[string]interface{}{
+					"include_numbers": map[string]any{
 						"type":        "boolean",
 						"description": "Include numbers (default: true)",
 					},
@@ -85,7 +85,7 @@ func (t *PasswordTool) Execute(ctx context.Context, input map[string]any, progre
 		password[i] = charset[int(b[0])%len(charset)]
 	}
 
-	return resultFromMap(map[string]interface{}{
+	return resultFromMap(map[string]any{
 		"password":        string(password),
 		"length":          length,
 		"include_symbols": includeSymbols,

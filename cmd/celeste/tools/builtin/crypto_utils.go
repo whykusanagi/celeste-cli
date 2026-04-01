@@ -1,5 +1,5 @@
-// Package skills provides crypto utility functions using modern Go crypto libraries
-package skills
+// Package builtin provides crypto utility functions using modern Go crypto libraries
+package builtin
 
 import (
 	"context"

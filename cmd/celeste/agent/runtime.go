@@ -21,6 +21,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
+const maxCommandOutput = 12_000
+
 type Runner struct {
 	client   *llm.Client
 	registry *tools.Registry

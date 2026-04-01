@@ -8,8 +8,8 @@ import (
 )
 
 // formatErrorResponse creates a structured error response for LLM interpretation.
-func formatErrorResponse(errorType, message, hint string, context map[string]interface{}) map[string]interface{} {
-	result := map[string]interface{}{
+func formatErrorResponse(errorType, message, hint string, context map[string]any) map[string]any {
+	result := map[string]any{
 		"error":      true,
 		"error_type": errorType,
 		"message":    message,
@@ -25,7 +25,7 @@ func formatErrorResponse(errorType, message, hint string, context map[string]int
 }
 
 // getUserOrDefault gets a value from args first, then falls back to config default.
-func getUserOrDefault(args map[string]interface{}, key string, configGetter func() string) (string, bool) {
+func getUserOrDefault(args map[string]any, key string, configGetter func() string) (string, bool) {
 	if val, ok := args[key].(string); ok && val != "" {
 		return val, true
 	}
@@ -39,12 +39,12 @@ func getUserOrDefault(args map[string]interface{}, key string, configGetter func
 }
 
 // formatConfigError creates a structured error when both user value and config default are missing.
-func formatConfigError(skillName, fieldName, configCommand string) map[string]interface{} {
+func formatConfigError(skillName, fieldName, configCommand string) map[string]any {
 	return formatErrorResponse(
 		"config_error",
 		fmt.Sprintf("%s is required for %s. Please provide %s in your request, or set a default using: %s", fieldName, skillName, fieldName, configCommand),
 		fmt.Sprintf("You can ask the user for their %s or location", fieldName),
-		map[string]interface{}{
+		map[string]any{
 			"skill":          skillName,
 			"field":          fieldName,
 			"config_command": configCommand,
@@ -53,8 +53,8 @@ func formatConfigError(skillName, fieldName, configCommand string) map[string]in
 	)
 }
 
-// resultFromMap converts a map[string]interface{} to a ToolResult by marshalling to JSON.
-func resultFromMap(m interface{}) (tools.ToolResult, error) {
+// resultFromMap converts a map[string]any to a ToolResult by marshalling to JSON.
+func resultFromMap(m any) (tools.ToolResult, error) {
 	data, err := json.Marshal(m)
 	if err != nil {
 		return tools.ToolResult{}, fmt.Errorf("failed to marshal result: %w", err)
@@ -62,7 +62,7 @@ func resultFromMap(m interface{}) (tools.ToolResult, error) {
 
 	// Check if the response contains an error field
 	isError := false
-	if mp, ok := m.(map[string]interface{}); ok {
+	if mp, ok := m.(map[string]any); ok {
 		if errVal, ok := mp["error"]; ok {
 			if b, ok := errVal.(bool); ok && b {
 				isError = true
@@ -77,7 +77,7 @@ func resultFromMap(m interface{}) (tools.ToolResult, error) {
 }
 
 // mustJSON marshals v to json.RawMessage, panicking on error (for static definitions).
-func mustJSON(v interface{}) json.RawMessage {
+func mustJSON(v any) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {
 		panic(fmt.Sprintf("mustJSON: %v", err))
