@@ -194,16 +194,35 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 		turnStart := time.Now()
-		result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
+
+		// Use streaming events to collect the response incrementally.
+		// This is the bridge approach: we collect tool calls via the
+		// ToolUseAccumulator but still execute them serially below.
+		var result llm.ChatCompletionResult
+		acc := llm.NewToolUseAccumulator()
+
+		streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
+			switch event.Type {
+			case llm.EventContentDelta:
+				result.Content += event.ContentDelta
+			case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
+				acc.HandleEvent(event)
+			case llm.EventMessageDone:
+				result.Usage = event.Usage
+			}
+		})
 		cancel()
-		if err != nil {
+
+		if streamErr != nil {
 			state.Status = StatusFailed
-			state.Error = err.Error()
+			state.Error = streamErr.Error()
 			state.UpdatedAt = time.Now()
 			_ = r.store.Save(state)
-			r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
-			return state, err
+			r.emitProgress(ProgressError, streamErr.Error(), state.Turn, state.Options.MaxTurns)
+			return state, streamErr
 		}
+
+		result.ToolCalls = acc.CompletedCalls()
 
 		if r.options.OnTurnStats != nil {
 			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: time.Since(turnStart)}
@@ -346,10 +365,19 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 
 	requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 	planTurnStart := time.Now()
-	result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
+
+	var result llm.ChatCompletionResult
+	streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
+		switch event.Type {
+		case llm.EventContentDelta:
+			result.Content += event.ContentDelta
+		case llm.EventMessageDone:
+			result.Usage = event.Usage
+		}
+	})
 	cancel()
-	if err != nil {
-		return err
+	if streamErr != nil {
+		return streamErr
 	}
 
 	if r.options.OnTurnStats != nil {

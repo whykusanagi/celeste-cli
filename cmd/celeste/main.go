@@ -402,14 +402,19 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 		}
 
 		var fullContent string
-		var toolCalls []llm.ToolCallResult
 		var usage *llm.TokenUsage
+		var finishReason string
+		acc := llm.NewToolUseAccumulator()
 
-		err := a.client.SendMessageStream(ctx, messages, tools, func(chunk llm.StreamChunk) {
-			fullContent += chunk.Content
-			if chunk.IsFinal {
-				toolCalls = chunk.ToolCalls
-				usage = chunk.Usage // Capture token usage from final chunk
+		err := a.client.SendMessageStreamEvents(ctx, messages, tools, func(event llm.StreamEvent) {
+			switch event.Type {
+			case llm.EventContentDelta:
+				fullContent += event.ContentDelta
+			case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
+				acc.HandleEvent(event)
+			case llm.EventMessageDone:
+				usage = event.Usage
+				finishReason = event.FinishReason
 			}
 		})
 
@@ -434,6 +439,14 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 			}
 
 			return tui.StreamErrorMsg{Err: err}
+		}
+
+		// Collect completed tool calls from accumulator
+		toolCalls := acc.CompletedCalls()
+
+		// Default finish reason to "stop" if not provided by backend
+		if finishReason == "" {
+			finishReason = "stop"
 		}
 
 		// Log the response
@@ -497,7 +510,7 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 
 		return tui.StreamDoneMsg{
 			FullContent:  fullContent,
-			FinishReason: "stop",
+			FinishReason: finishReason,
 			Usage:        tuiUsage,
 		}
 	}
