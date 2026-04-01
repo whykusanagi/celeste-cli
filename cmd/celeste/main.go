@@ -21,6 +21,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -230,6 +231,17 @@ func runChatTUI() {
 	cwd, _ := os.Getwd()
 	builtin.RegisterAll(registry, cwd, configLoader)
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+
+	// Load permissions and set checker
+	permConfigPath := filepath.Join(homeDir, ".celeste", "permissions.json")
+	permConfig, err := permissions.LoadConfig(permConfigPath)
+	if err != nil {
+		// Use default config if loading fails
+		defaultCfg := permissions.DefaultConfig()
+		permConfig = &defaultCfg
+	}
+	checker := permissions.NewChecker(*permConfig)
+	registry.SetPermissionChecker(checker)
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{

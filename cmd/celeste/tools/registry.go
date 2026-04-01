@@ -9,13 +9,25 @@ import (
 	"slices"
 	"sort"
 	"sync"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 )
+
+// toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
+// Tool has Name() while ToolInfo expects ToolName().
+type toolInfoAdapter struct {
+	tool Tool
+}
+
+func (a *toolInfoAdapter) ToolName() string { return a.tool.Name() }
+func (a *toolInfoAdapter) IsReadOnly() bool { return a.tool.IsReadOnly() }
 
 // Registry manages the collection of available tools and their mode associations.
 type Registry struct {
-	mu       sync.RWMutex
-	tools    map[string]Tool
-	modes    map[string][]RuntimeMode // tool name -> allowed modes (nil = all modes)
+	mu      sync.RWMutex
+	tools   map[string]Tool
+	modes   map[string][]RuntimeMode   // tool name -> allowed modes (nil = all modes)
+	checker *permissions.Checker       // optional, nil = allow all
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -135,7 +147,31 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	if err := tool.ValidateInput(input); err != nil {
 		return ToolResult{Content: err.Error(), Error: true}, nil
 	}
+
+	// Permission check
+	if r.checker != nil {
+		result := r.checker.Check(&toolInfoAdapter{tool: tool}, input)
+		switch result.Decision {
+		case permissions.Deny:
+			return ToolResult{
+				Content: fmt.Sprintf("Permission denied: %s", result.Reason),
+				Error:   true,
+			}, nil
+		case permissions.Ask:
+			// For now, treat Ask as Allow (TUI prompt comes in Plan 6)
+			// TODO: Plan 6 will add interactive permission prompts
+		}
+	}
+
 	return tool.Execute(ctx, input, progress)
+}
+
+// SetPermissionChecker sets the permission checker used to gate tool execution.
+// If checker is nil, all tools are allowed (default behavior).
+func (r *Registry) SetPermissionChecker(checker *permissions.Checker) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.checker = checker
 }
 
 // Count returns the number of registered tools.

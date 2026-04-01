@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 )
 
 func TestRegistryRegisterAndGet(t *testing.T) {
@@ -84,4 +85,60 @@ func TestRegistryCount(t *testing.T) {
 	assert.Equal(t, 0, r.Count())
 	r.Register(&mockTool{name: "a"})
 	assert.Equal(t, 1, r.Count())
+}
+
+func TestRegistryExecutePermissionDenied(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&mockTool{name: "dangerous_tool"})
+
+	// Create a checker that denies "dangerous_tool"
+	cfg := permissions.PermissionConfig{
+		Mode: permissions.ModeDefault,
+		AlwaysDeny: []permissions.Rule{
+			{ToolPattern: "dangerous_tool", Decision: permissions.Deny},
+		},
+	}
+	checker := permissions.NewChecker(cfg)
+	r.SetPermissionChecker(checker)
+
+	result, err := r.Execute(context.Background(), "dangerous_tool", map[string]any{})
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, "Permission denied")
+}
+
+func TestRegistryExecutePermissionAllowed(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&mockTool{
+		name:     "safe_tool",
+		readOnly: true,
+		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
+			return ToolResult{Content: "executed"}, nil
+		},
+	})
+
+	// Create a checker in default mode — read-only tools should be auto-allowed
+	cfg := permissions.PermissionConfig{Mode: permissions.ModeDefault}
+	checker := permissions.NewChecker(cfg)
+	r.SetPermissionChecker(checker)
+
+	result, err := r.Execute(context.Background(), "safe_tool", map[string]any{})
+	require.NoError(t, err)
+	assert.False(t, result.Error)
+	assert.Equal(t, "executed", result.Content)
+}
+
+func TestRegistryExecuteNoChecker(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&mockTool{
+		name: "any_tool",
+		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
+			return ToolResult{Content: "ran"}, nil
+		},
+	})
+
+	// No checker set — should allow all
+	result, err := r.Execute(context.Background(), "any_tool", map[string]any{})
+	require.NoError(t, err)
+	assert.Equal(t, "ran", result.Content)
 }

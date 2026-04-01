@@ -17,6 +17,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -69,6 +70,16 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Agent registry: register dev tools only (no configLoader = no skill tools).
 	registry := tools.NewRegistry()
 	builtin.RegisterAll(registry, options.Workspace, nil)
+
+	// Load permissions and set checker
+	agentHomeDir, _ := os.UserHomeDir()
+	permConfigPath := filepath.Join(agentHomeDir, ".celeste", "permissions.json")
+	permConfig, permErr := permissions.LoadConfig(permConfigPath)
+	if permErr != nil {
+		defaultCfg := permissions.DefaultConfig()
+		permConfig = &defaultCfg
+	}
+	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
 
 	llmConfig := &llm.Config{
 		APIKey:                cfg.APIKey,
