@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -75,11 +76,8 @@ func (r *Registry) GetTools(mode RuntimeMode) []Tool {
 			result = append(result, t)
 			continue
 		}
-		for _, m := range modes {
-			if m == mode {
-				result = append(result, t)
-				break
-			}
+		if slices.Contains(modes, mode) {
+			result = append(result, t)
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
