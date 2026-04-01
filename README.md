@@ -186,6 +186,12 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 
 [See Collections Guide](docs/COLLECTIONS.md) for setup and usage.
 
+### Tool System (v1.7)
+- **MCP (Model Context Protocol) support** for external tool servers
+- **Permission system** with configurable allow/deny rules
+- **Streaming tool execution** with concurrent dispatch
+- **Automatic context window management**
+
 ### Session Management
 - **Conversation Persistence** - Auto-save and resume sessions seamlessly
 - **Message History** - Full conversation logging with timestamps
@@ -837,10 +843,11 @@ celeste-cli/
 │   │   ├── styles.go        # Lip Gloss theme (corrupted aesthetic)
 │   │   ├── streaming.go     # Simulated typing animation
 │   │   └── messages.go      # Bubble Tea messages (events)
-│   ├── skills/              # Skills system
-│   │   ├── registry.go      # Skill registry (register/lookup)
-│   │   ├── executor.go      # Skill execution engine
-│   │   └── builtin.go       # 21 built-in skills
+│   ├── tools/             # Unified tool system
+│   │   ├── builtin/       # All built-in tool implementations
+│   │   └── mcp/           # MCP client for external tools
+│   ├── permissions/       # Tool permission system
+│   ├── context/           # Token budget & context management
 │   ├── llm/                 # LLM client
 │   │   ├── client.go        # OpenAI-compatible client
 │   │   ├── stream.go        # Streaming handler (SSE)

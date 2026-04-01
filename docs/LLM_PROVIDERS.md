@@ -481,7 +481,7 @@ go test -coverprofile=coverage.out ./cmd/celeste/... && go tool cover -html=cove
 - `cmd/celeste/prompts/celeste_test.go` (new)
 - `cmd/celeste/venice/media_test.go` (new)
 - `cmd/celeste/commands/commands_test.go` (enhanced)
-- `cmd/celeste/skills/registry_test.go` (enhanced)
+- `cmd/celeste/tools/registry_test.go` (enhanced)
 
 ---
 

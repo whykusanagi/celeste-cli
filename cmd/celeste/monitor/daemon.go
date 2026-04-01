@@ -10,20 +10,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 )
 
 // Daemon manages the background wallet monitoring process
 type Daemon struct {
-	configLoader *config.ConfigLoader
+	configLoader builtin.ConfigLoader
 	pidFile      string
 	ticker       *time.Ticker
 	stopChan     chan bool
 }
 
 // NewDaemon creates a new monitoring daemon
-func NewDaemon(configLoader *config.ConfigLoader) *Daemon {
+func NewDaemon(configLoader builtin.ConfigLoader) *Daemon {
 	homeDir, _ := os.UserHomeDir()
 	pidFile := filepath.Join(homeDir, ".celeste", "wallet_monitor.pid")
 
@@ -125,8 +124,8 @@ func (d *Daemon) run(pollInterval time.Duration) error {
 
 // checkWallets performs wallet security check
 func (d *Daemon) checkWallets() {
-	// Call wallet security skill
-	result, err := skills.WalletSecurityHandler(map[string]interface{}{
+	// Call wallet security handler via builtin package
+	result, err := builtin.WalletSecurityHandlerFunc(map[string]interface{}{
 		"operation": "check_wallet_security",
 	}, d.configLoader)
 

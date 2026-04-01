@@ -26,11 +26,15 @@ const typingTickInterval = 80 * time.Millisecond
 // AppModel is the root model for the Celeste TUI application.
 type AppModel struct {
 	// Sub-components
-	header HeaderModel
-	chat   ChatModel
-	input  InputModel
-	skills SkillsModel
-	status StatusModel
+	header           HeaderModel
+	chat             ChatModel
+	input            InputModel
+	skills           SkillsModel
+	status           StatusModel
+	toolProgress     ToolProgressModel
+	contextBar       ContextBarModel
+	permissionPrompt PermissionPromptModel
+	mcpPanel         MCPPanelModel
 
 	// Application state
 	width         int
@@ -180,6 +184,10 @@ func NewApp(llmClient LLMClient) AppModel {
 		input:             NewInputModel(),
 		skills:            NewSkillsModel(),
 		status:            NewStatusModel(),
+		toolProgress:      NewToolProgressModel(),
+		contextBar:        NewContextBarModel(),
+		permissionPrompt:  NewPermissionPromptModel(),
+		mcpPanel:          NewMCPPanelModel(),
 		llmClient:         llmClient,
 		viewMode:          "chat",
 		runtimeMode:       config.RuntimeModeClassic,
@@ -274,6 +282,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// If permission prompt is active, route keys to it first
+		if m.permissionPrompt.Active() {
+			var cmd tea.Cmd
+			m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
+			return m, cmd
+		}
+
+		// If MCP panel is active, route keys to it
+		if m.mcpPanel.Active() {
+			var cmd tea.Cmd
+			m.mcpPanel, cmd = m.mcpPanel.Update(msg)
+			return m, cmd
+		}
+
 		// If selector is active, route all keys to it
 		if m.selectorActive {
 			var cmd tea.Cmd
@@ -342,6 +364,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input = m.input.SetWidth(m.width)
 		m.skills = m.skills.SetSize(m.width, skillsHeight)
 		m.status = m.status.SetWidth(m.width)
+
+		// Resize new components
+		m.toolProgress.SetSize(m.width, 0)
+		m.contextBar.SetSize(m.width, 0)
+		m.permissionPrompt.SetSize(m.width, 0)
+		m.mcpPanel.SetSize(m.width, m.height-10)
 
 		// Resize split panel if active: available height = total minus header/status/input
 		if m.splitPanel != nil {
@@ -483,6 +511,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				model := NewSkillsBrowserModel(skillsList)
 				m.skillsBrowser = &model
 				return m, m.skillsBrowser.Init()
+
+			case "mcp":
+				m.mcpPanel.Show()
+				return m, nil
 			}
 
 			// For other commands, use normal execution flow
@@ -966,6 +998,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					msg.Usage.TotalTokens,
 				)
 				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+
+				// Update context bar
+				budgetMsg := ContextBudgetMsg{
+					UsedTokens:   m.contextTracker.CurrentTokens,
+					MaxTokens:    m.contextTracker.MaxTokens,
+					UsagePercent: float64(m.contextTracker.CurrentTokens) / float64(m.contextTracker.MaxTokens) * 100,
+				}
+				if m.contextTracker.Budget != nil {
+					budgetMsg.CompactCount = m.contextTracker.Budget.CompactCount
+					budgetMsg.TurnCount = m.contextTracker.Budget.TurnCount
+				}
+				m.contextBar, _ = m.contextBar.Update(budgetMsg)
 			}
 		} else if msg.FullContent != "" {
 			// API didn't return token usage — estimate from response length and
@@ -1021,6 +1065,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
+
+	case ToolProgressMsg:
+		var cmd tea.Cmd
+		m.toolProgress, cmd = m.toolProgress.Update(msg)
+		cmds = append(cmds, cmd)
+
+	case ContextBudgetMsg:
+		var cmd tea.Cmd
+		m.contextBar, cmd = m.contextBar.Update(msg)
+		cmds = append(cmds, cmd)
+
+	case PermissionRequestMsg:
+		var cmd tea.Cmd
+		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
+		cmds = append(cmds, cmd)
+
+	case MCPStatusMsg:
+		var cmd tea.Cmd
+		m.mcpPanel, cmd = m.mcpPanel.Update(msg)
+		cmds = append(cmds, cmd)
 
 	case AgentProgressMsg:
 		var cmds []tea.Cmd
@@ -1567,6 +1631,26 @@ func (m AppModel) View() string {
 
 	// Chat panel (flexible height)
 	sections = append(sections, m.chat.View())
+
+	// Tool progress cards (if any tools are executing)
+	if m.toolProgress.HasActive() {
+		sections = append(sections, m.toolProgress.View())
+	}
+
+	// Context budget bar (if token budget is known)
+	if m.contextBar.maxTokens > 0 {
+		sections = append(sections, m.contextBar.View())
+	}
+
+	// Permission prompt overlay (if waiting for user approval)
+	if m.permissionPrompt.Active() {
+		sections = append(sections, m.permissionPrompt.View())
+	}
+
+	// MCP server status panel (if active via /mcp)
+	if m.mcpPanel.Active() {
+		sections = append(sections, m.mcpPanel.View())
+	}
 
 	// Input panel (fixed, 3 lines)
 	sections = append(sections, m.input.View())

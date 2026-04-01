@@ -14,19 +14,25 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
+const maxCommandOutput = 12_000
+
 type Runner struct {
 	client   *llm.Client
-	registry *skills.Registry
+	registry *tools.Registry
 	store    *CheckpointStore
 	options  Options
 	out      io.Writer
 	errOut   io.Writer
+	budget   *ctxmgr.TokenBudget
 }
 
 // emitProgress calls r.options.OnProgress if it is set.
@@ -61,13 +67,19 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	options.Workspace = filepath.Clean(absWorkspace)
 	normalizeOptions(&options)
 
-	// Agent registry: only register dev tools (file/shell access).
-	// Builtin skills (weather, tarot, crypto, etc.) are irrelevant for code
-	// tasks, inflate the tool list from 6 to 29+, and reduce tool-call accuracy.
-	registry := skills.NewRegistry()
-	if err := RegisterDevSkills(registry, options.Workspace); err != nil {
-		return nil, fmt.Errorf("register development skills: %w", err)
+	// Agent registry: register dev tools only (no configLoader = no skill tools).
+	registry := tools.NewRegistry()
+	builtin.RegisterAll(registry, options.Workspace, nil)
+
+	// Load permissions and set checker
+	agentHomeDir, _ := os.UserHomeDir()
+	permConfigPath := filepath.Join(agentHomeDir, ".celeste", "permissions.json")
+	permConfig, permErr := permissions.LoadConfig(permConfigPath)
+	if permErr != nil {
+		defaultCfg := permissions.DefaultConfig()
+		permConfig = &defaultCfg
 	}
+	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
 
 	llmConfig := &llm.Config{
 		APIKey:                cfg.APIKey,
@@ -102,6 +114,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		return nil, err
 	}
 
+	// Create a token budget for context tracking.
+	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
+	budget := ctxmgr.NewTokenBudgetForModel(cfg.Model, systemPromptTokens, 0)
+
 	return &Runner{
 		client:   client,
 		registry: registry,
@@ -109,6 +125,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		options:  options,
 		out:      out,
 		errOut:   errOut,
+		budget:   budget,
 	}, nil
 }
 
@@ -195,15 +212,43 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 		turnStart := time.Now()
-		result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
+
+		// Use streaming events to collect the response incrementally.
+		// This is the bridge approach: we collect tool calls via the
+		// ToolUseAccumulator but still execute them serially below.
+		var result llm.ChatCompletionResult
+		acc := llm.NewToolUseAccumulator()
+
+		streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
+			switch event.Type {
+			case llm.EventContentDelta:
+				result.Content += event.ContentDelta
+			case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
+				acc.HandleEvent(event)
+			case llm.EventMessageDone:
+				result.Usage = event.Usage
+			}
+		})
 		cancel()
-		if err != nil {
+
+		if streamErr != nil {
 			state.Status = StatusFailed
-			state.Error = err.Error()
+			state.Error = streamErr.Error()
 			state.UpdatedAt = time.Now()
 			_ = r.store.Save(state)
-			r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
-			return state, err
+			r.emitProgress(ProgressError, streamErr.Error(), state.Turn, state.Options.MaxTurns)
+			return state, streamErr
+		}
+
+		result.ToolCalls = acc.CompletedCalls()
+
+		// Update token budget with usage from this turn.
+		if r.budget != nil && result.Usage != nil {
+			r.budget.AddTurn(result.Usage.PromptTokens, result.Usage.CompletionTokens)
+			if r.budget.ShouldCompactReactive() {
+				fmt.Fprintf(r.errOut, "[agent] warning: context usage at %.0f%% — compaction recommended\n",
+					r.budget.GetUsagePercent()*100)
+			}
 		}
 
 		if r.options.OnTurnStats != nil {
@@ -347,10 +392,19 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 
 	requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 	planTurnStart := time.Now()
-	result, err := r.client.SendMessageSync(requestCtx, state.Messages, r.client.GetSkills())
+
+	var result llm.ChatCompletionResult
+	streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
+		switch event.Type {
+		case llm.EventContentDelta:
+			result.Content += event.ContentDelta
+		case llm.EventMessageDone:
+			result.Usage = event.Usage
+		}
+	})
 	cancel()
-	if err != nil {
-		return err
+	if streamErr != nil {
+		return streamErr
 	}
 
 	if r.options.OnTurnStats != nil {
@@ -938,7 +992,7 @@ func convertToolCalls(calls []llm.ToolCallResult) []tui.ToolCallInfo {
 	return result
 }
 
-func formatToolResult(toolName string, execution *skills.ExecutionResult, err error) string {
+func formatToolResult(toolName string, execution *llm.ExecutionResult, err error) string {
 	if err != nil {
 		payload, _ := json.Marshal(map[string]interface{}{
 			"error":   true,

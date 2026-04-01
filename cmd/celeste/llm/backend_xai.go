@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -25,11 +25,11 @@ type XAIBackend struct {
 	config       *Config
 	httpClient   *http.Client
 	systemPrompt string
-	registry     *skills.Registry
+	registry     *tools.Registry
 }
 
 // NewXAIBackend creates a new xAI backend with Collections support.
-func NewXAIBackend(config *Config, registry *skills.Registry) (*XAIBackend, error) {
+func NewXAIBackend(config *Config, registry *tools.Registry) (*XAIBackend, error) {
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("xAI API key is required")
 	}
@@ -285,6 +285,193 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 	return nil
 }
 
+// SendMessageStreamEvents sends a message with granular streaming events.
+func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
+	// Convert messages to xAI format
+	xaiMessages := b.convertMessages(messages)
+
+	// Convert tools to xAI format
+	xaiTools := b.convertTools(tools)
+
+	// Build request
+	req := xAIChatCompletionRequest{
+		Model:         b.model,
+		Messages:      xaiMessages,
+		Tools:         xaiTools,
+		Stream:        true,
+		StreamOptions: &xAIStreamOptions{IncludeUsage: true},
+	}
+
+	// Add Collections support if enabled
+	if b.config.Collections != nil && b.config.Collections.Enabled {
+		if len(b.config.Collections.ActiveCollections) > 0 {
+			req.CollectionIDs = b.config.Collections.ActiveCollections
+		}
+	}
+
+	// Marshal request
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		b.baseURL+"/chat/completions",
+		bytes.NewBuffer(jsonData),
+	)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+b.apiKey)
+
+	// Send request
+	resp, err := b.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("xAI API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Process streaming response
+	scanner := bufio.NewScanner(resp.Body)
+
+	// Track tool calls by index for accumulation
+	type toolCallState struct {
+		index int
+		id    string
+		name  string
+		args  string
+	}
+	var toolCallsByIndex []toolCallState
+	var usage *TokenUsage
+	var finishReason string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk xAIStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		// Capture usage
+		if chunk.Usage != nil {
+			usage = &TokenUsage{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+		}
+
+		// Process choices
+		for _, choice := range chunk.Choices {
+			// Content delta
+			if choice.Delta.Content != "" {
+				callback(StreamEvent{
+					Type:         EventContentDelta,
+					ContentDelta: choice.Delta.Content,
+				})
+			}
+
+			// Accumulate tool calls
+			for _, tc := range choice.Delta.ToolCalls {
+				found := false
+				for i := range toolCallsByIndex {
+					if toolCallsByIndex[i].index == tc.Index {
+						// Existing tool call — accumulate arguments
+						toolCallsByIndex[i].args += tc.Function.Arguments
+						if tc.ID != "" {
+							toolCallsByIndex[i].id = tc.ID
+						}
+						if tc.Function.Name != "" {
+							toolCallsByIndex[i].name = tc.Function.Name
+						}
+						if tc.Function.Arguments != "" {
+							callback(StreamEvent{
+								Type:       EventToolUseInputDelta,
+								ToolUseID:  toolCallsByIndex[i].id,
+								InputDelta: tc.Function.Arguments,
+							})
+						}
+						found = true
+						break
+					}
+				}
+				if !found {
+					// New tool call
+					toolCallsByIndex = append(toolCallsByIndex, toolCallState{
+						index: tc.Index,
+						id:    tc.ID,
+						name:  tc.Function.Name,
+						args:  tc.Function.Arguments,
+					})
+					callback(StreamEvent{
+						Type:      EventToolUseStart,
+						ToolUseID: tc.ID,
+						ToolName:  tc.Function.Name,
+					})
+					if tc.Function.Arguments != "" {
+						callback(StreamEvent{
+							Type:       EventToolUseInputDelta,
+							ToolUseID:  tc.ID,
+							InputDelta: tc.Function.Arguments,
+						})
+					}
+				}
+			}
+
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read stream: %w", err)
+	}
+
+	// Emit ToolUseDone for each accumulated tool call
+	for _, tc := range toolCallsByIndex {
+		if tc.id != "" {
+			callback(StreamEvent{
+				Type:          EventToolUseDone,
+				ToolUseID:     tc.id,
+				ToolName:      tc.name,
+				CompleteInput: tc.args,
+			})
+		}
+	}
+
+	// Emit MessageDone
+	if finishReason == "" {
+		finishReason = "stop"
+	}
+	callback(StreamEvent{
+		Type:         EventMessageDone,
+		Usage:        usage,
+		FinishReason: finishReason,
+	})
+
+	return nil
+}
+
 // SendMessageSync collects the xAI stream into a single synchronous result.
 func (b *XAIBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	var content strings.Builder
@@ -416,14 +603,18 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 		return []tui.SkillDefinition{}
 	}
 
-	skillsList := b.registry.GetAllSkills()
-	result := make([]tui.SkillDefinition, 0, len(skillsList))
+	allTools := b.registry.GetAll()
+	result := make([]tui.SkillDefinition, 0, len(allTools))
 
-	for _, skill := range skillsList {
+	for _, t := range allTools {
+		var params map[string]interface{}
+		if t.Parameters() != nil {
+			_ = json.Unmarshal(t.Parameters(), &params)
+		}
 		result = append(result, tui.SkillDefinition{
-			Name:        skill.Name,
-			Description: skill.Description,
-			Parameters:  skill.Parameters,
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  params,
 		})
 	}
 

@@ -3,12 +3,13 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -17,7 +18,7 @@ import (
 type Client struct {
 	backend      LLMBackend
 	config       *Config
-	registry     *skills.Registry
+	registry     *tools.Registry
 	backendType  BackendType
 	systemPrompt string
 }
@@ -43,7 +44,7 @@ type Config struct {
 
 // NewClient creates a new LLM client with automatic backend selection.
 // It detects whether to use OpenAI SDK, Google GenAI SDK, or xAI SDK based on the base URL.
-func NewClient(config *Config, registry *skills.Registry) *Client {
+func NewClient(config *Config, registry *tools.Registry) *Client {
 	// Detect which backend to use
 	backendType := DetectBackendType(config.BaseURL)
 
@@ -200,32 +201,77 @@ func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessa
 	return c.backend.SendMessageStream(ctx, messages, tools, callback)
 }
 
+// SendMessageStreamEvents sends a message with granular streaming events.
+// This delegates to the appropriate backend.
+func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
+	return c.backend.SendMessageStreamEvents(ctx, messages, tools, callback)
+}
+
 // GetSkills returns skill definitions for the TUI.
 func (c *Client) GetSkills() []tui.SkillDefinition {
 	if c.registry == nil {
 		return nil
 	}
 
-	allSkills := c.registry.GetAllSkills()
+	allTools := c.registry.GetAll()
 	var result []tui.SkillDefinition
 
-	for _, skill := range allSkills {
+	for _, t := range allTools {
+		var params map[string]interface{}
+		if t.Parameters() != nil {
+			_ = json.Unmarshal(t.Parameters(), &params)
+		}
 		result = append(result, tui.SkillDefinition{
-			Name:        skill.Name,
-			Description: skill.Description,
-			Parameters:  skill.Parameters,
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  params,
 		})
 	}
 
 	return result
 }
 
+// ExecutionResult represents the result of a skill/tool execution.
+type ExecutionResult struct {
+	Success bool        `json:"success"`
+	Result  interface{} `json:"result,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
 // ExecuteSkill executes a skill and returns the result.
-func (c *Client) ExecuteSkill(ctx context.Context, name string, argsJSON string) (*skills.ExecutionResult, error) {
+func (c *Client) ExecuteSkill(ctx context.Context, name string, argsJSON string) (*ExecutionResult, error) {
 	if c.registry == nil {
 		return nil, fmt.Errorf("no skill registry configured")
 	}
 
-	executor := skills.NewExecutor(c.registry)
-	return executor.Execute(ctx, name, argsJSON)
+	// Parse the JSON arguments into a map
+	var args map[string]any
+	if argsJSON != "" {
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return &ExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to parse arguments: %v", err),
+			}, nil
+		}
+	}
+	if args == nil {
+		args = make(map[string]any)
+	}
+
+	toolResult, err := c.registry.Execute(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert tools.ToolResult to ExecutionResult
+	return &ExecutionResult{
+		Success: !toolResult.Error,
+		Result:  toolResult.Content,
+		Error: func() string {
+			if toolResult.Error {
+				return toolResult.Content
+			}
+			return ""
+		}(),
+	}, nil
 }

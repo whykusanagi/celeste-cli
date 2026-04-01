@@ -154,7 +154,7 @@ We follow standard Go conventions:
    ├── tui/              # Bubble Tea UI components
    ├── llm/              # LLM client logic
    ├── config/           # Configuration management
-   ├── skills/           # Skills/tools system
+   ├── tools/             # Unified tool system
    └── prompts/          # System prompts
    ```
 

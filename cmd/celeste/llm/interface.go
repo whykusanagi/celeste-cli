@@ -18,6 +18,12 @@ type LLMBackend interface {
 	SendMessageStream(ctx context.Context, messages []tui.ChatMessage,
 		tools []tui.SkillDefinition, callback StreamCallback) error
 
+	// SendMessageStreamEvents sends a message with granular streaming events.
+	// Unlike SendMessageStream which batches tool calls into the final chunk,
+	// this method delivers tool call information incrementally as it arrives.
+	SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage,
+		tools []tui.SkillDefinition, callback StreamEventCallback) error
+
 	// SendMessageSync sends a message and returns the complete result.
 	// This is useful for non-streaming use cases or testing.
 	// Returns the full chat completion result or error.
