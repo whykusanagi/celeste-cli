@@ -241,3 +241,51 @@ func (m OrchestratorEventMsg) ReadNext() tea.Cmd {
 		return msg
 	}
 }
+
+// --- v1.7 TUI Enhancement Messages ---
+
+// ToolProgressMsg reports real-time tool execution status.
+type ToolProgressMsg struct {
+	ToolCallID string
+	ToolName   string
+	State      string // "executing", "done", "failed", "aborted"
+	Message    string // progress message
+	Elapsed    time.Duration
+}
+
+// PermissionRequestMsg asks the user for permission to run a tool.
+type PermissionRequestMsg struct {
+	ToolCallID   string
+	ToolName     string
+	InputSummary string // short description of what the tool wants to do
+	RiskLevel    string // "read", "write", "destructive"
+	Response     chan PermissionResponse
+}
+
+// PermissionResponse is the user's answer to a permission request.
+type PermissionResponse struct {
+	Decision string // "allow_once", "always_allow", "deny", "always_deny"
+	Pattern  string // rule pattern for "always" decisions
+}
+
+// ContextBudgetMsg updates the context budget display.
+type ContextBudgetMsg struct {
+	UsedTokens   int
+	MaxTokens    int
+	UsagePercent float64
+	CompactCount int
+	TurnCount    int
+}
+
+// MCPStatusMsg updates the MCP server status display.
+type MCPStatusMsg struct {
+	Servers []MCPServerInfo
+}
+
+// MCPServerInfo describes the status of a single MCP server.
+type MCPServerInfo struct {
+	Name      string
+	Transport string
+	Connected bool
+	ToolCount int
+}
