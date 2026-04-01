@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -30,6 +31,7 @@ type Runner struct {
 	options  Options
 	out      io.Writer
 	errOut   io.Writer
+	budget   *ctxmgr.TokenBudget
 }
 
 // emitProgress calls r.options.OnProgress if it is set.
@@ -101,6 +103,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		return nil, err
 	}
 
+	// Create a token budget for context tracking.
+	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
+	budget := ctxmgr.NewTokenBudgetForModel(cfg.Model, systemPromptTokens, 0)
+
 	return &Runner{
 		client:   client,
 		registry: registry,
@@ -108,6 +114,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		options:  options,
 		out:      out,
 		errOut:   errOut,
+		budget:   budget,
 	}, nil
 }
 
@@ -223,6 +230,15 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 
 		result.ToolCalls = acc.CompletedCalls()
+
+		// Update token budget with usage from this turn.
+		if r.budget != nil && result.Usage != nil {
+			r.budget.AddTurn(result.Usage.PromptTokens, result.Usage.CompletionTokens)
+			if r.budget.ShouldCompactReactive() {
+				fmt.Fprintf(r.errOut, "[agent] warning: context usage at %.0f%% — compaction recommended\n",
+					r.budget.GetUsagePercent()*100)
+			}
+		}
 
 		if r.options.OnTurnStats != nil {
 			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: time.Since(turnStart)}

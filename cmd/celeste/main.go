@@ -18,6 +18,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -573,6 +574,16 @@ func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCa
 		} else {
 			resultStr = fmt.Sprintf("Error: %s", result.Error)
 			tui.LogInfo(fmt.Sprintf("Skill '%s' returned error after %v: %s", name, elapsed, result.Error))
+		}
+
+		// Cap large tool results to avoid blowing the context window.
+		sessionID := fmt.Sprintf("tui-%d", os.Getpid())
+		capped, wasCapped, capErr := ctxmgr.CapToolResult(resultStr, 0, sessionID, toolCallID, "")
+		if capErr != nil {
+			tui.LogInfo(fmt.Sprintf("Warning: failed to cap tool result for '%s': %v", name, capErr))
+		} else if wasCapped {
+			tui.LogInfo(fmt.Sprintf("Tool result for '%s' was capped from %d to %d bytes", name, len(resultStr), len(capped)))
+			resultStr = capped
 		}
 
 		return tui.SkillResultMsg{
