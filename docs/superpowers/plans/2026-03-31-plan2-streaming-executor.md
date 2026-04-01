@@ -413,7 +413,7 @@ func TestToolUseAccumulator_PendingCount(t *testing.T) {
 - [ ] Run test, verify it fails to compile:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/llm/ -run TestStreamEvent -count=1
+go test ./cmd/celeste/llm/ -run TestStreamEvent -count=1
 # Expected: compilation error - StreamEventType, StreamEvent, etc. not defined
 ```
 
@@ -623,8 +623,8 @@ func (a *ToolUseAccumulator) Reset() {
 - [ ] Run test, verify all pass:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/llm/ -run TestStreamEvent -count=1 -v
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/llm/ -run TestToolUseAccumulator -count=1 -v
+go test ./cmd/celeste/llm/ -run TestStreamEvent -count=1 -v
+go test ./cmd/celeste/llm/ -run TestToolUseAccumulator -count=1 -v
 # Expected: all tests PASS
 ```
 
@@ -1006,7 +1006,7 @@ func TestToolState_String(t *testing.T) {
 - [ ] Run test, verify it fails to compile:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -count=1
+go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -count=1
 # Expected: compilation error - NewStreamingToolExecutor, ToolState, etc. not defined
 ```
 
@@ -1373,8 +1373,8 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 - [ ] Run test, verify all pass:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -count=1 -v
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -run TestToolState -count=1 -v
+go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -count=1 -v
+go test ./cmd/celeste/tools/ -run TestToolState -count=1 -v
 # Expected: all tests PASS
 ```
 
@@ -1605,7 +1605,7 @@ func TestStreamingToolExecutor_AbortAllQueued(t *testing.T) {
 - [ ] Run tests, verify the new tests fail (missing `SetCascadeOnFailure` method):
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -run "TestStreamingToolExecutor_Cascad|TestStreamingToolExecutor_NoCascade|TestStreamingToolExecutor_Context|TestStreamingToolExecutor_Interrupt|TestStreamingToolExecutor_Abort" -count=1
+go test ./cmd/celeste/tools/ -run "TestStreamingToolExecutor_Cascad|TestStreamingToolExecutor_NoCascade|TestStreamingToolExecutor_Context|TestStreamingToolExecutor_Interrupt|TestStreamingToolExecutor_Abort" -count=1
 # Expected: compilation error - SetCascadeOnFailure not defined
 ```
 
@@ -1696,7 +1696,7 @@ And change the Execute call to use `execCtx` instead of `e.ctx`:
 - [ ] Run tests, verify all pass:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -count=1 -v -timeout 30s
+go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -count=1 -v -timeout 30s
 # Expected: all tests PASS
 ```
 
@@ -1904,7 +1904,7 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 - [ ] Run existing backend tests to verify no regressions:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/llm/
+go build ./cmd/celeste/llm/
 # Expected: compiles without errors
 ```
 
@@ -2002,7 +2002,7 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 - [ ] Verify compilation:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/llm/
+go build ./cmd/celeste/llm/
 # Expected: compiles without errors
 ```
 
@@ -2182,7 +2182,7 @@ func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui
 - [ ] Verify compilation:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/llm/
+go build ./cmd/celeste/llm/
 # Expected: compiles without errors
 ```
 
@@ -2287,14 +2287,14 @@ func (a *TUIClientAdapter) sendMessageWithStreamEvents(messages []tui.ChatMessag
 - [ ] Verify compilation:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/
+go build ./cmd/celeste/
 # Expected: compiles without errors
 ```
 
 - [ ] Run existing TUI tests to verify no regressions:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/ -count=1 -timeout 30s
+go test ./cmd/celeste/ -count=1 -timeout 30s
 # Expected: existing tests PASS
 ```
 
@@ -2409,14 +2409,14 @@ Key changes to the `for state.Turn < state.Options.MaxTurns` loop:
 - [ ] Verify compilation:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/
+go build ./cmd/celeste/
 # Expected: compiles without errors
 ```
 
 - [ ] Run agent tests to verify no regressions:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/agent/ -count=1 -timeout 30s
+go test ./cmd/celeste/agent/ -count=1 -timeout 30s
 # Expected: existing tests PASS
 ```
 
@@ -2431,30 +2431,30 @@ cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/agent/ -coun
 - [ ] Run full test suite:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./... -count=1 -timeout 120s
+go test ./... -count=1 -timeout 120s
 # Expected: all tests PASS
 ```
 
 - [ ] Run linter:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go vet ./...
+go vet ./...
 # Expected: no issues
 ```
 
 - [ ] Verify cross-platform build:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && GOOS=linux GOARCH=amd64 go build ./cmd/celeste/
-cd /Users/kusanagi/Development/celeste-cli && GOOS=darwin GOARCH=arm64 go build ./cmd/celeste/
-cd /Users/kusanagi/Development/celeste-cli && GOOS=windows GOARCH=amd64 go build ./cmd/celeste/
+GOOS=linux GOARCH=amd64 go build ./cmd/celeste/
+GOOS=darwin GOARCH=arm64 go build ./cmd/celeste/
+GOOS=windows GOARCH=amd64 go build ./cmd/celeste/
 # Expected: all three build without errors
 ```
 
 - [ ] Run race detector on executor tests:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -race -count=1 -timeout 30s
+go test ./cmd/celeste/tools/ -run TestStreamingToolExecutor -race -count=1 -timeout 30s
 # Expected: no race conditions detected
 ```
 

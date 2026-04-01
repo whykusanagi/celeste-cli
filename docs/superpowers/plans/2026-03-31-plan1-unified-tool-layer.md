@@ -170,7 +170,7 @@ func TestMockToolImplementsInterface(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -v -run TestToolResult`
+Run: `go test ./cmd/celeste/tools/ -v -run TestToolResult`
 Expected: FAIL — package doesn't exist yet
 
 - [ ] **Step 3: Write the Tool interface**
@@ -255,7 +255,7 @@ const (
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -v`
+Run: `go test ./cmd/celeste/tools/ -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -332,7 +332,7 @@ func TestBaseToolExecuteNotImplemented(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/builtin/ -v`
+Run: `go test ./cmd/celeste/tools/builtin/ -v`
 Expected: FAIL
 
 - [ ] **Step 3: Write BaseTool**
@@ -385,7 +385,7 @@ func (b *BaseTool) Execute(ctx context.Context, input map[string]any, progress c
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/builtin/ -v`
+Run: `go test ./cmd/celeste/tools/builtin/ -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -507,7 +507,7 @@ func TestRegistryCount(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -v -run TestRegistry`
+Run: `go test ./cmd/celeste/tools/ -v -run TestRegistry`
 Expected: FAIL
 
 - [ ] **Step 3: Write the Registry**
@@ -738,7 +738,7 @@ func (c *customTool) Execute(ctx context.Context, input map[string]any, progress
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/ -v`
+Run: `go test ./cmd/celeste/tools/ -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -808,7 +808,7 @@ func TestBashTool_RequiresCommand(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/builtin/ -v -run TestBashTool`
+Run: `go test ./cmd/celeste/tools/builtin/ -v -run TestBashTool`
 Expected: FAIL
 
 - [ ] **Step 3: Write bash.go**
@@ -998,7 +998,7 @@ func TestReadFileTool_PathTraversal(t *testing.T) {
 
 - [ ] **Step 6: Run all tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/... -v`
+Run: `go test ./cmd/celeste/tools/... -v`
 Expected: PASS
 
 - [ ] **Step 7: Commit**
@@ -1192,7 +1192,7 @@ The config type definitions (`WeatherConfig`, `TarotConfig`, `VeniceConfig`, etc
 
 - [ ] **Step 4: Run all tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/... -v`
+Run: `go test ./cmd/celeste/tools/... -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1276,7 +1276,7 @@ func (c *Client) ExecuteSkill(ctx context.Context, name string, argsJSON string)
 
 - [ ] **Step 5: Run existing tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/llm/ -v`
+Run: `go test ./cmd/celeste/llm/ -v`
 Expected: PASS (or fix compilation errors)
 
 - [ ] **Step 6: Commit**
@@ -1331,7 +1331,7 @@ In `runAgentCommand()`, use `builtin.RegisterAll(registry, workspace, configLoad
 
 - [ ] **Step 5: Build and test**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/`
+Run: `go build ./cmd/celeste/`
 Expected: Compiles successfully
 
 - [ ] **Step 6: Commit**
@@ -1366,7 +1366,7 @@ Update test imports to use `tools/builtin` instead. Or delete the test file if t
 
 - [ ] **Step 5: Build and run existing agent tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/agent/ -v`
+Run: `go test ./cmd/celeste/agent/ -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -1385,7 +1385,7 @@ git commit -m "refactor(agent): remove dev_skills, use unified tools package"
 
 - [ ] **Step 1: Verify no remaining imports**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && grep -r '"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"' cmd/`
+Run: `grep -r '"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"' cmd/`
 Expected: No results
 
 - [ ] **Step 2: Delete the package**
@@ -1396,7 +1396,7 @@ rm -rf cmd/celeste/skills/
 
 - [ ] **Step 3: Build and run all tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/ && go test ./cmd/celeste/... -v`
+Run: `go build ./cmd/celeste/ && go test ./cmd/celeste/... -v`
 Expected: Compiles and all tests pass
 
 - [ ] **Step 4: Commit**
@@ -1412,17 +1412,17 @@ git commit -m "refactor: remove old skills package — replaced by tools/"
 
 - [ ] **Step 1: Run full test suite**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test -race ./cmd/celeste/... -v`
+Run: `go test -race ./cmd/celeste/... -v`
 Expected: All tests pass
 
 - [ ] **Step 2: Run linter**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go vet ./cmd/celeste/...`
+Run: `go vet ./cmd/celeste/...`
 Expected: No issues
 
 - [ ] **Step 3: Verify build for all platforms**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && GOOS=linux GOARCH=amd64 go build ./cmd/celeste/ && GOOS=darwin GOARCH=arm64 go build ./cmd/celeste/`
+Run: `GOOS=linux GOARCH=amd64 go build ./cmd/celeste/ && GOOS=darwin GOARCH=arm64 go build ./cmd/celeste/`
 Expected: Both compile
 
 - [ ] **Step 4: Commit any remaining fixes**

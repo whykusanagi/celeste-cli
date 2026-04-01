@@ -592,7 +592,7 @@ Token approval monitoring detects dangerous ERC20 token approvals by monitoring 
 3. Check contract address on Etherscan for legitimacy
 4. For legitimate protocols: Acknowledge alert to clear it
 
-## Future Enhancements (v1.5.0)
+## Future Enhancements
 
 Planned features for future releases:
 

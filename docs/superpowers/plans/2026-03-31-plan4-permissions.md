@@ -168,7 +168,7 @@ func TestCheckResult_NeedsPrompt(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestDecision_String`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestDecision_String`
 Expected: FAIL -- package doesn't exist yet
 
 - [ ] **Step 3: Write the core types**
@@ -298,7 +298,7 @@ func (cr CheckResult) NeedsPrompt() bool {
 
 - [ ] **Step 4: Run tests, verify green**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v`
+Run: `go test ./cmd/celeste/permissions/ -v`
 Expected: All tests PASS
 
 ---
@@ -528,7 +528,7 @@ func TestExtractFirstStringArg(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestMatchRule`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestMatchRule`
 Expected: FAIL -- functions don't exist yet
 
 - [ ] **Step 3: Write the pattern matching implementation**
@@ -693,7 +693,7 @@ func globMatchWildcard(pattern, s string) bool {
 
 - [ ] **Step 4: Run tests, verify green**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run "TestMatchRule|TestParseToolPattern|TestExtractFirstStringArg"`
+Run: `go test ./cmd/celeste/permissions/ -v -run "TestMatchRule|TestParseToolPattern|TestExtractFirstStringArg"`
 Expected: All tests PASS
 
 ---
@@ -896,7 +896,7 @@ func TestChecker_NilToolInfo(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestChecker`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestChecker`
 Expected: FAIL -- Checker doesn't exist yet
 
 - [ ] **Step 3: Write the checker implementation**
@@ -1034,7 +1034,7 @@ func (c *Checker) Mode() PermissionMode {
 
 - [ ] **Step 4: Run tests, verify green**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestChecker`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestChecker`
 Expected: All tests PASS
 
 ---
@@ -1178,7 +1178,7 @@ func TestDenialTracker_ConcurrencySafe(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestDenialTracker`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestDenialTracker`
 Expected: FAIL -- DenialTracker doesn't exist yet
 
 - [ ] **Step 3: Write the denial tracker implementation**
@@ -1275,7 +1275,7 @@ func (dt *DenialTracker) ResetTool(toolName string) {
 
 - [ ] **Step 4: Run tests, verify green**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestDenialTracker -race`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestDenialTracker -race`
 Expected: All tests PASS (including race detector)
 
 ---
@@ -1458,7 +1458,7 @@ func TestDefaultConfigPath(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestDefaultConfig`
+Run: `go test ./cmd/celeste/permissions/ -v -run TestDefaultConfig`
 Expected: FAIL -- config functions don't exist yet
 
 - [ ] **Step 3: Write the config implementation**
@@ -1651,7 +1651,7 @@ func convertRulesToJSON(rules []Rule) []ruleJSON {
 
 - [ ] **Step 4: Run tests, verify green**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run "TestDefaultConfig|TestSaveAndLoad|TestLoadConfig|TestConfigJSON|TestDefaultConfigPath"`
+Run: `go test ./cmd/celeste/permissions/ -v -run "TestDefaultConfig|TestSaveAndLoad|TestLoadConfig|TestConfigJSON|TestDefaultConfigPath"`
 Expected: All tests PASS
 
 ---
@@ -1805,7 +1805,7 @@ func (r *Registry) ExecuteWithOverride(ctx context.Context, name string, input m
 
 - [ ] **Step 4: Verify compilation**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/tools/...`
+Run: `go build ./cmd/celeste/tools/...`
 Expected: Compiles without errors
 
 ---
@@ -1864,7 +1864,7 @@ if permissionModeFlag != "" {
 
 - [ ] **Step 3: Verify compilation**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/`
+Run: `go build ./cmd/celeste/`
 Expected: Compiles without errors
 
 ---
@@ -1874,7 +1874,7 @@ Expected: Compiles without errors
 - [ ] **Step 1: Run all permission tests**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -race -count=1
+go test ./cmd/celeste/permissions/ -v -race -count=1
 ```
 
 Expected: All tests PASS, no race conditions
@@ -1882,7 +1882,7 @@ Expected: All tests PASS, no race conditions
 - [ ] **Step 2: Run all project tests**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./... -race -count=1 -timeout 120s
+go test ./... -race -count=1 -timeout 120s
 ```
 
 Expected: All tests PASS (including existing tests unaffected by changes)
@@ -1890,7 +1890,7 @@ Expected: All tests PASS (including existing tests unaffected by changes)
 - [ ] **Step 3: Verify the build**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/
+go build ./cmd/celeste/
 ```
 
 Expected: Clean build
@@ -1900,7 +1900,7 @@ Expected: Clean build
 Create a test config and verify it round-trips correctly:
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/permissions/ -v -run TestConfigJSON_Format
+go test ./cmd/celeste/permissions/ -v -run TestConfigJSON_Format
 ```
 
 - [ ] **Step 5: Manual smoke test**
@@ -1913,7 +1913,7 @@ Run celeste-cli and verify:
 - [ ] **Step 6: Verify no circular dependencies**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go vet ./cmd/celeste/permissions/ ./cmd/celeste/tools/...
+go vet ./cmd/celeste/permissions/ ./cmd/celeste/tools/...
 ```
 
 Expected: No errors. The `permissions` package depends only on the standard library. The `tools` package imports `permissions`, not the other way around.

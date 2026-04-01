@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-03-31
+
+### Added
+- **Unified Tool Layer**: Single `Tool` interface replacing the old `skills/` package, with `tools/builtin/` for all implementations
+- **Streaming Tool Executor**: Tools begin executing as LLM generates, with concurrent dispatch for read-only tools
+- **Context Window Management**: Automatic token budget tracking, reactive/proactive compaction, tool result capping
+- **Permission System**: Multi-layer allow/deny/ask rules with pattern matching, denial tracking, persistent config
+- **MCP Client**: Model Context Protocol support with stdio/SSE transports for external tool servers
+- **TUI Enhancements**: Tool progress indicators, context budget bar, permission prompts, MCP server panel
+
+### Changed
+- Replaced `cmd/celeste/skills/` package with `cmd/celeste/tools/` unified tool system
+- All 23 built-in skills migrated to `tools/builtin/` with individual files
+- All 6 dev tools migrated from `agent/dev_skills.go` to `tools/builtin/`
+- LLM backends now support `SendMessageStreamEvents()` for granular streaming
+- Agent runtime uses streaming events instead of sync batch execution
+- Config token tracking delegates to new `context/` package
+
+### Removed
+- `cmd/celeste/skills/` package (replaced by `cmd/celeste/tools/`)
+- `cmd/celeste/agent/dev_skills.go` (replaced by `tools/builtin/`)
+- `cmd/celeste/llm/summarize.go` (replaced by `context/summarizer.go`)
+- `cmd/celeste/config/context.go` token tracking (replaced by `context/budget.go`)
+
+## [Unreleased - Pre-1.7]
+
 ### Added
 - New autonomous `agent` command family for multi-turn task execution:
   - `celeste agent --goal ...`

@@ -6,11 +6,11 @@ Vertex AI has been successfully configured for your Celeste CLI on **2025-12-15*
 
 ## Configuration Details
 
-- **Project ID**: `celesteai-480304`
+- **Project ID**: `your-project-id`
 - **Location**: `us-central1`
 - **Model**: `gemini-2.0-flash`
 - **Config File**: `~/.celeste/config.vertex.json`
-- **Authenticated As**: `anthonygtellez@gmail.com`
+- **Authenticated As**: `you@example.com`
 
 ## How to Use
 
@@ -130,8 +130,8 @@ gcloud auth application-default login
 Grant yourself Vertex AI permissions:
 
 ```bash
-PROJECT_ID="celesteai-480304"
-USER_EMAIL="anthonygtellez@gmail.com"
+PROJECT_ID="your-project-id"
+USER_EMAIL="you@example.com"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="user:$USER_EMAIL" \
@@ -163,9 +163,9 @@ gcloud services enable generativelanguage.googleapis.com
 
 ## GCP Console Links
 
-- **Vertex AI Dashboard**: https://console.cloud.google.com/vertex-ai?project=celesteai-480304
-- **API Usage**: https://console.cloud.google.com/apis/dashboard?project=celesteai-480304
-- **Billing**: https://console.cloud.google.com/billing?project=celesteai-480304
+- **Vertex AI Dashboard**: https://console.cloud.google.com/vertex-ai?project=your-project-id
+- **API Usage**: https://console.cloud.google.com/apis/dashboard?project=your-project-id
+- **Billing**: https://console.cloud.google.com/billing?project=your-project-id
 
 ## Support
 

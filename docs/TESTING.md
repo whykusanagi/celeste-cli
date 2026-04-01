@@ -30,7 +30,7 @@ Test a single package:
 ```bash
 go test ./cmd/celeste/providers/
 go test ./cmd/celeste/commands/
-go test ./cmd/celeste/skills/
+go test ./cmd/celeste/tools/...
 ```
 
 ### With Coverage

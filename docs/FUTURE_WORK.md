@@ -154,8 +154,8 @@ This document tracks planned features, incomplete integrations, and improvement 
 
 These functions are currently unused but may be useful for future features:
 
-- `HasHandler()` in `skills/registry.go` - Useful for debugging/validation
-- `Count()` in `skills/registry.go` - Useful for stats/metrics
+- `HasHandler()` in `tools/registry.go` - Useful for debugging/validation
+- `Count()` in `tools/registry.go` - Useful for stats/metrics
 - `GetBestToolModel()` in `providers/models.go` - Useful for auto-selection
 
 **Decision**: Keep these small utility functions until clear they won't be needed.

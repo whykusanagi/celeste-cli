@@ -208,7 +208,7 @@ func TestNewNotification(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestRequest`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestRequest`
 Expected: FAIL -- package does not exist yet
 
 - [ ] **Step 3: Write the JSON-RPC types**
@@ -290,7 +290,7 @@ func NewNotification(method string) *Notification {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v`
+Run: `go test ./cmd/celeste/tools/mcp/ -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -335,7 +335,7 @@ type Transport interface {
 
 - [ ] **Step 2: Verify it compiles**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/tools/mcp/`
+Run: `go build ./cmd/celeste/tools/mcp/`
 Expected: success (no errors)
 
 - [ ] **Step 3: Commit**
@@ -443,7 +443,7 @@ func TestExpandEnvVars_NoMatch(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestStdio`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestStdio`
 Expected: FAIL -- `NewStdioTransport` and `expandEnvVars` not defined
 
 - [ ] **Step 3: Write the stdio transport**
@@ -608,7 +608,7 @@ func isEnvVarRef(s string) bool {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestStdio`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestStdio`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -744,7 +744,7 @@ func TestSSETransport_Close(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestSSE`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestSSE`
 Expected: FAIL -- `NewSSETransport` not defined
 
 - [ ] **Step 3: Write the SSE transport**
@@ -940,7 +940,7 @@ func (t *SSETransport) Close() error {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestSSE -timeout 10s`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestSSE -timeout 10s`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1174,7 +1174,7 @@ func TestClient_Close(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestClient`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestClient`
 Expected: FAIL -- `NewClient` not defined
 
 - [ ] **Step 3: Write the MCP client**
@@ -1403,7 +1403,7 @@ func (c *Client) Close() error {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestClient`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestClient`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1550,7 +1550,7 @@ func TestMCPTool_ValidateInput(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestMCPTool`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestMCPTool`
 Expected: FAIL -- `MCPTool` and `NewMCPTool` not defined
 
 - [ ] **Step 3: Write the adapter**
@@ -1654,7 +1654,7 @@ func (m *MCPTool) Execute(ctx context.Context, input map[string]any, progress ch
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestMCPTool`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestMCPTool`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1781,7 +1781,7 @@ func TestDiscoverAndRegister_ListError(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestDiscover`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestDiscover`
 Expected: FAIL -- `DiscoverAndRegister` not defined
 
 - [ ] **Step 3: Write the discovery function**
@@ -1823,7 +1823,7 @@ func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Re
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestDiscover`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestDiscover`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -2010,7 +2010,7 @@ func TestDefaultConfigPath(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestLoadConfig`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestLoadConfig`
 Expected: FAIL -- `LoadConfig` not defined
 
 - [ ] **Step 3: Write the config loader**
@@ -2096,7 +2096,7 @@ func LoadConfig(path string) (*MCPConfig, error) {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run "TestLoadConfig|TestDefaultConfig"`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run "TestLoadConfig|TestDefaultConfig"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -2178,7 +2178,7 @@ func TestManager_ServerCount(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestManager`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestManager`
 Expected: FAIL -- `NewManager` not defined
 
 - [ ] **Step 3: Write the manager**
@@ -2352,7 +2352,7 @@ func (m *Manager) ServerCount() int {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -run TestManager`
+Run: `go test ./cmd/celeste/tools/mcp/ -v -run TestManager`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -2407,7 +2407,7 @@ defer func() {
 
 - [ ] **Step 3: Verify the integration compiles**
 
-Run: `cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/`
+Run: `go build ./cmd/celeste/`
 Expected: success
 
 - [ ] **Step 4: Manual integration test**
@@ -2424,7 +2424,7 @@ cat > ~/.celeste/mcp.json.test << 'EOF'
 EOF
 
 # Build and run -- should start without errors even with no servers
-cd /Users/kusanagi/Development/celeste-cli && go build -o celeste-test ./cmd/celeste/
+go build -o celeste-test ./cmd/celeste/
 # The binary should start normally (MCP loads empty config, logs nothing)
 ```
 
@@ -2442,7 +2442,7 @@ git commit -m "feat(mcp): wire MCP manager into application startup and shutdown
 - [ ] **Step 1: Run all MCP package tests**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -v -count=1
+go test ./cmd/celeste/tools/mcp/ -v -count=1
 ```
 
 Expected: all tests PASS
@@ -2450,7 +2450,7 @@ Expected: all tests PASS
 - [ ] **Step 2: Run tests with race detector**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -race -count=1
+go test ./cmd/celeste/tools/mcp/ -race -count=1
 ```
 
 Expected: no race conditions detected
@@ -2458,7 +2458,7 @@ Expected: no race conditions detected
 - [ ] **Step 3: Verify the full build succeeds**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/
+go build ./cmd/celeste/
 ```
 
 Expected: clean build, no errors
@@ -2466,7 +2466,7 @@ Expected: clean build, no errors
 - [ ] **Step 4: Verify no regressions in existing tests**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./... -count=1
+go test ./... -count=1
 ```
 
 Expected: all existing tests still pass
@@ -2474,7 +2474,7 @@ Expected: all existing tests still pass
 - [ ] **Step 5: Check test coverage**
 
 ```bash
-cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/tools/mcp/ -coverprofile=coverage_mcp.out -covermode=atomic
+go test ./cmd/celeste/tools/mcp/ -coverprofile=coverage_mcp.out -covermode=atomic
 go tool cover -func=coverage_mcp.out | tail -1
 ```
 

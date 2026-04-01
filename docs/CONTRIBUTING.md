@@ -112,7 +112,11 @@ When suggesting a feature:
 
 Skills are AI-callable functions that extend Celeste's capabilities.
 
-**1. Define the Skill** (`cmd/celeste/skills/builtin.go`):
+**1. Define the Tool** (`cmd/celeste/tools/builtin/`).
+
+Tools now implement the `tools.Tool` interface.
+
+Previously in `cmd/celeste/skills/builtin.go`, tools are now individual files under `cmd/celeste/tools/builtin/`:
 
 ```go
 func MyNewSkill() Skill {

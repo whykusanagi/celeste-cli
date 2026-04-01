@@ -8,7 +8,7 @@ Comprehensive system architecture for Celeste CLI.
 - [Component Architecture](#component-architecture)
 - [Data Flow](#data-flow)
 - [Provider System](#provider-system)
-- [Skills System](#skills-system)
+- [Tools System](#tools-system)
 - [TUI Component](#tui-component)
 - [Session Management](#session-management)
 - [Configuration System](#configuration-system)
@@ -375,45 +375,51 @@ toolProviders := providers.GetToolCallingProviders()
 
 ---
 
-## Skills System
+## Tools System
 
-Located in `cmd/celeste/skills/`.
+Located in `cmd/celeste/tools/`.
 
 ### Design Philosophy
 
-Registry-based skill system with OpenAI function calling format.
+Registry-based tool system with OpenAI function calling format.
 
 ### Components
 
-**1. Skill Registry** (`registry.go`):
+**1. Tool Registry** (`registry.go`):
 
 ```go
-type Skill struct {
+type Tool struct {
     Name        string
     Description string
     Parameters  map[string]interface{} // JSON schema
 }
 
 type Registry struct {
-    skills   map[string]Skill
-    handlers map[string]SkillHandler
+    tools    map[string]Tool
+    handlers map[string]tools.Tool.Execute()
 }
 ```
 
-**2. Built-in Skills** (`builtin.go`):
+**2. Built-in Tools** (`builtin/`):
 
-18 skills across categories:
+23 tools across categories, each in its own file under `tools/builtin/`:
 - **Utilities**: UUID, password generation, base64, hashing
 - **APIs**: Weather, currency, Twitch, YouTube
 - **Media**: QR codes, image generation
 - **Personal**: Notes, reminders
 - **Mystical**: Tarot reading
 
-**3. Skill Executor** (`executor.go`):
+**3. Tool Executor** (`executor.go`):
 
 - Parses OpenAI tool calls
 - Executes handlers with arguments
 - Formats results for LLM
+
+### Related Packages
+
+- **`permissions/`**: Multi-layer allow/deny/ask rules with pattern matching and persistent config
+- **`context/`**: Token budget tracking, reactive/proactive compaction, tool result capping
+- **`tools/mcp/`**: Model Context Protocol client with stdio/SSE transports for external tool servers
 
 ### Skill Definition Pattern
 
@@ -853,4 +859,4 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 ---
 
 **Last Updated**: 2026-03-15
-**Version**: v1.6.x
+**Version**: v1.7.0

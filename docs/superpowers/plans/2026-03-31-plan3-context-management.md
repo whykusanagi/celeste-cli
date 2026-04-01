@@ -1678,19 +1678,19 @@ if err == nil && wasCapped {
 
 - [ ] Run full build and verify no compilation errors:
   ```bash
-  cd /Users/kusanagi/Development/celeste-cli && go build ./...
+  go build ./...
   ```
 - [ ] Run all tests:
   ```bash
-  cd /Users/kusanagi/Development/celeste-cli && go test ./cmd/celeste/context/... -v
+  go test ./cmd/celeste/context/... -v
   ```
 - [ ] Run vet:
   ```bash
-  cd /Users/kusanagi/Development/celeste-cli && go vet ./...
+  go vet ./...
   ```
 - [ ] Verify no circular imports:
   ```bash
-  cd /Users/kusanagi/Development/celeste-cli && go build ./cmd/celeste/context/
+  go build ./cmd/celeste/context/
   ```
 - [ ] Verify old files are deleted:
   ```bash
