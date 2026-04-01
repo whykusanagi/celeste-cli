@@ -259,6 +259,157 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 	}
 }
 
+// SendMessageStreamEvents sends a message with granular streaming events.
+func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
+	// Convert messages to OpenAI format
+	openAIMessages := b.convertMessages(messages)
+
+	// Convert tools to OpenAI format
+	openAITools := b.convertTools(tools)
+
+	// Create request
+	req := openai.ChatCompletionRequest{
+		Model:    b.config.Model,
+		Messages: openAIMessages,
+		Stream:   true,
+		StreamOptions: &openai.StreamOptions{
+			IncludeUsage: true,
+		},
+	}
+
+	if len(openAITools) > 0 {
+		req.Tools = openAITools
+	}
+
+	// Create streaming request
+	stream, err := b.client.CreateChatCompletionStream(ctx, req)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	// Track tool calls by index for accumulation
+	type toolCallState struct {
+		id   string
+		name string
+		args string
+	}
+	var toolCallsByIndex []toolCallState
+	var usage *TokenUsage
+	var finishReason string
+
+	for {
+		response, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Capture usage from the final usage-only chunk
+		if response.Usage != nil {
+			usage = &TokenUsage{
+				PromptTokens:     response.Usage.PromptTokens,
+				CompletionTokens: response.Usage.CompletionTokens,
+				TotalTokens:      response.Usage.TotalTokens,
+			}
+		}
+
+		for _, choice := range response.Choices {
+			// Handle content delta
+			if choice.Delta.Content != "" {
+				callback(StreamEvent{
+					Type:         EventContentDelta,
+					ContentDelta: choice.Delta.Content,
+				})
+			}
+
+			// Handle tool calls
+			for _, tc := range choice.Delta.ToolCalls {
+				if tc.Index != nil {
+					idx := *tc.Index
+					// New tool call index → emit ToolUseStart
+					if idx >= len(toolCallsByIndex) {
+						for len(toolCallsByIndex) <= idx {
+							toolCallsByIndex = append(toolCallsByIndex, toolCallState{})
+						}
+						toolCallsByIndex[idx].id = tc.ID
+						toolCallsByIndex[idx].name = tc.Function.Name
+						callback(StreamEvent{
+							Type:      EventToolUseStart,
+							ToolUseID: tc.ID,
+							ToolName:  tc.Function.Name,
+						})
+					} else {
+						// Update ID/name if provided in subsequent chunks
+						if tc.ID != "" {
+							toolCallsByIndex[idx].id = tc.ID
+						}
+						if tc.Function.Name != "" {
+							toolCallsByIndex[idx].name = tc.Function.Name
+						}
+					}
+
+					// Accumulate arguments and emit input delta
+					if tc.Function.Arguments != "" {
+						toolCallsByIndex[idx].args += tc.Function.Arguments
+						callback(StreamEvent{
+							Type:       EventToolUseInputDelta,
+							ToolUseID:  toolCallsByIndex[idx].id,
+							InputDelta: tc.Function.Arguments,
+						})
+					}
+				} else {
+					// Gemini/other format: complete tool call without index
+					if tc.ID != "" {
+						callback(StreamEvent{
+							Type:      EventToolUseStart,
+							ToolUseID: tc.ID,
+							ToolName:  tc.Function.Name,
+						})
+						callback(StreamEvent{
+							Type:          EventToolUseDone,
+							ToolUseID:     tc.ID,
+							ToolName:      tc.Function.Name,
+							CompleteInput: tc.Function.Arguments,
+						})
+					}
+				}
+			}
+
+			// Check finish reason
+			if choice.FinishReason != "" {
+				finishReason = string(choice.FinishReason)
+			}
+		}
+	}
+
+	// Emit ToolUseDone for each accumulated indexed tool call
+	for _, tc := range toolCallsByIndex {
+		if tc.id != "" {
+			callback(StreamEvent{
+				Type:          EventToolUseDone,
+				ToolUseID:     tc.id,
+				ToolName:      tc.name,
+				CompleteInput: tc.args,
+			})
+		}
+	}
+
+	// Emit MessageDone
+	if finishReason == "" {
+		finishReason = "stop"
+	}
+	callback(StreamEvent{
+		Type:         EventMessageDone,
+		Usage:        usage,
+		FinishReason: finishReason,
+	})
+
+	return nil
+}
+
 // Close cleans up resources (no-op for OpenAI backend).
 func (b *OpenAIBackend) Close() error {
 	return nil

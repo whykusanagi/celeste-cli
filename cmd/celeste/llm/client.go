@@ -201,6 +201,12 @@ func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessa
 	return c.backend.SendMessageStream(ctx, messages, tools, callback)
 }
 
+// SendMessageStreamEvents sends a message with granular streaming events.
+// This delegates to the appropriate backend.
+func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
+	return c.backend.SendMessageStreamEvents(ctx, messages, tools, callback)
+}
+
 // GetSkills returns skill definitions for the TUI.
 func (c *Client) GetSkills() []tui.SkillDefinition {
 	if c.registry == nil {

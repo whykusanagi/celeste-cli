@@ -229,6 +229,93 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 	return nil
 }
 
+// SendMessageStreamEvents sends a message with granular streaming events.
+func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
+	// Convert messages to Google GenAI format
+	contents := b.convertMessagesToGenAI(messages)
+
+	// Convert tools to Google function declarations
+	var functionDeclarations []*genai.FunctionDeclaration
+	if len(tools) > 0 {
+		functionDeclarations = b.convertToolsToGenAI(tools)
+	}
+
+	// Create generation config
+	genConfig := &genai.GenerateContentConfig{}
+
+	// Add system instruction if present
+	if b.systemPrompt != "" && !b.config.SkipPersonaPrompt {
+		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
+	}
+
+	if len(functionDeclarations) > 0 {
+		genConfig.Tools = []*genai.Tool{
+			{FunctionDeclarations: functionDeclarations},
+		}
+	}
+
+	// Stream the response
+	modelName := b.config.Model
+	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
+
+	var lastFinishReason string
+
+	// Iterate over streaming chunks
+	for chunk, err := range streamIter {
+		if err != nil {
+			return fmt.Errorf("Google AI stream error: %w", err)
+		}
+
+		for _, candidate := range chunk.Candidates {
+			if candidate.Content != nil {
+				// Extract text content
+				text := extractText(candidate.Content)
+				if text != "" {
+					callback(StreamEvent{
+						Type:         EventContentDelta,
+						ContentDelta: text,
+					})
+				}
+
+				// Extract function calls — Google sends them complete
+				for _, part := range candidate.Content.Parts {
+					if part.FunctionCall != nil {
+						toolCall := b.convertFunctionCallToResult(part.FunctionCall)
+						// Emit start then immediately done
+						callback(StreamEvent{
+							Type:      EventToolUseStart,
+							ToolUseID: toolCall.ID,
+							ToolName:  toolCall.Name,
+						})
+						callback(StreamEvent{
+							Type:          EventToolUseDone,
+							ToolUseID:     toolCall.ID,
+							ToolName:      toolCall.Name,
+							CompleteInput: toolCall.Arguments,
+						})
+					}
+				}
+			}
+
+			if candidate.FinishReason != "" {
+				lastFinishReason = string(candidate.FinishReason)
+			}
+		}
+	}
+
+	// Emit MessageDone
+	if lastFinishReason == "" {
+		lastFinishReason = "stop"
+	}
+	callback(StreamEvent{
+		Type:         EventMessageDone,
+		Usage:        nil, // Google GenAI SDK doesn't provide token usage in streaming yet
+		FinishReason: lastFinishReason,
+	})
+
+	return nil
+}
+
 // Close cleans up resources.
 func (b *GoogleBackend) Close() error {
 	// Google GenAI SDK client doesn't require explicit cleanup
