@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -26,7 +26,7 @@ func TestXAIBackend_Initialization(t *testing.T) {
 		Timeout: 60,
 	}
 
-	registry := skills.NewRegistry()
+	registry := tools.NewRegistry()
 	backend, err := NewXAIBackend(cfg, registry)
 	if err != nil {
 		t.Fatalf("Failed to create xAI backend: %v", err)
@@ -55,7 +55,7 @@ func TestXAIBackend_BasicChatCompletion(t *testing.T) {
 		Timeout: 60,
 	}
 
-	registry := skills.NewRegistry()
+	registry := tools.NewRegistry()
 	backend, err := NewXAIBackend(cfg, registry)
 	if err != nil {
 		t.Fatalf("Failed to create xAI backend: %v", err)
@@ -120,7 +120,7 @@ func TestXAIBackend_Collections(t *testing.T) {
 		},
 	}
 
-	registry := skills.NewRegistry()
+	registry := tools.NewRegistry()
 	backend, err := NewXAIBackend(cfg, registry)
 	if err != nil {
 		t.Fatalf("Failed to create xAI backend: %v", err)
@@ -198,7 +198,7 @@ func TestXAIBackend_ToolCalls(t *testing.T) {
 		Timeout: 60,
 	}
 
-	registry := skills.NewRegistry()
+	registry := tools.NewRegistry()
 	backend, err := NewXAIBackend(cfg, registry)
 	if err != nil {
 		t.Fatalf("Failed to create xAI backend: %v", err)
@@ -267,7 +267,7 @@ func TestXAIBackend_SystemPrompt(t *testing.T) {
 		Timeout: 60,
 	}
 
-	registry := skills.NewRegistry()
+	registry := tools.NewRegistry()
 	backend, err := NewXAIBackend(cfg, registry)
 	if err != nil {
 		t.Fatalf("Failed to create xAI backend: %v", err)
@@ -325,7 +325,7 @@ func TestXAIBackend_MultiTurnConversation(t *testing.T) {
 		Timeout: 60,
 	}
 
-	registry := skills.NewRegistry()
+	registry := tools.NewRegistry()
 	backend, err := NewXAIBackend(cfg, registry)
 	if err != nil {
 		t.Fatalf("Failed to create xAI backend: %v", err)
@@ -397,7 +397,7 @@ func TestXAIBackend_ErrorHandling(t *testing.T) {
 			Timeout: 10,
 		}
 
-		registry := skills.NewRegistry()
+		registry := tools.NewRegistry()
 		backend, err := NewXAIBackend(cfg, registry)
 		if err != nil {
 			t.Fatalf("Failed to create backend: %v", err)
@@ -426,7 +426,7 @@ func TestXAIBackend_ErrorHandling(t *testing.T) {
 			Timeout: 10,
 		}
 
-		registry := skills.NewRegistry()
+		registry := tools.NewRegistry()
 		_, err := NewXAIBackend(cfg, registry)
 		if err == nil {
 			t.Error("Expected error with empty API key, got nil")

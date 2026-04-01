@@ -16,13 +16,14 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 type Runner struct {
 	client   *llm.Client
-	registry *skills.Registry
+	registry *tools.Registry
 	store    *CheckpointStore
 	options  Options
 	out      io.Writer
@@ -61,13 +62,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	options.Workspace = filepath.Clean(absWorkspace)
 	normalizeOptions(&options)
 
-	// Agent registry: only register dev tools (file/shell access).
-	// Builtin skills (weather, tarot, crypto, etc.) are irrelevant for code
-	// tasks, inflate the tool list from 6 to 29+, and reduce tool-call accuracy.
-	registry := skills.NewRegistry()
-	if err := RegisterDevSkills(registry, options.Workspace); err != nil {
-		return nil, fmt.Errorf("register development skills: %w", err)
-	}
+	// Agent registry: register dev tools only (no configLoader = no skill tools).
+	registry := tools.NewRegistry()
+	builtin.RegisterAll(registry, options.Workspace, nil)
 
 	llmConfig := &llm.Config{
 		APIKey:                cfg.APIKey,
@@ -938,7 +935,7 @@ func convertToolCalls(calls []llm.ToolCallResult) []tui.ToolCallInfo {
 	return result
 }
 
-func formatToolResult(toolName string, execution *skills.ExecutionResult, err error) string {
+func formatToolResult(toolName string, execution *llm.ExecutionResult, err error) string {
 	if err != nil {
 		payload, _ := json.Marshal(map[string]interface{}{
 			"error":   true,

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -25,11 +25,11 @@ type XAIBackend struct {
 	config       *Config
 	httpClient   *http.Client
 	systemPrompt string
-	registry     *skills.Registry
+	registry     *tools.Registry
 }
 
 // NewXAIBackend creates a new xAI backend with Collections support.
-func NewXAIBackend(config *Config, registry *skills.Registry) (*XAIBackend, error) {
+func NewXAIBackend(config *Config, registry *tools.Registry) (*XAIBackend, error) {
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("xAI API key is required")
 	}
@@ -416,14 +416,18 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 		return []tui.SkillDefinition{}
 	}
 
-	skillsList := b.registry.GetAllSkills()
-	result := make([]tui.SkillDefinition, 0, len(skillsList))
+	allTools := b.registry.GetAll()
+	result := make([]tui.SkillDefinition, 0, len(allTools))
 
-	for _, skill := range skillsList {
+	for _, t := range allTools {
+		var params map[string]interface{}
+		if t.Parameters() != nil {
+			_ = json.Unmarshal(t.Parameters(), &params)
+		}
 		result = append(result, tui.SkillDefinition{
-			Name:        skill.Name,
-			Description: skill.Description,
-			Parameters:  skill.Parameters,
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  params,
 		})
 	}
 

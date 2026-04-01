@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/skills"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -220,15 +222,13 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 
-	// Initialize skill registry
-	registry := skills.NewRegistry()
-	if err := registry.LoadSkills(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to load skills: %v\n", err)
-	}
-
-	// Register built-in skills
-	configLoader := config.NewConfigLoader(cfg)
-	skills.RegisterBuiltinSkills(registry, configLoader)
+	// Initialize tool registry
+	registry := tools.NewRegistry()
+	configLoader := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
+	homeDir, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+	builtin.RegisterAll(registry, cwd, configLoader)
+	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{
@@ -373,7 +373,7 @@ func runChatTUI() {
 // TUIClientAdapter adapts the LLM client for the TUI.
 type TUIClientAdapter struct {
 	client     *llm.Client
-	registry   *skills.Registry
+	registry   *tools.Registry
 	baseConfig *config.Config // Store base config for loading named configs
 }
 
@@ -1126,46 +1126,28 @@ func runSkillExecuteCommand(args []string) {
 		os.Exit(1)
 	}
 
-	registry := skills.NewRegistry()
-	_ = registry.LoadSkills()
-
-	configLoader := config.NewConfigLoader(cfg)
-	skills.RegisterBuiltinSkills(registry, configLoader)
-
-	executor := skills.NewExecutor(registry)
-
-	// Convert args to JSON
-	argsJSON, err := json.Marshal(skillArgs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding arguments: %v\n", err)
-		os.Exit(1)
-	}
+	registry := tools.NewRegistry()
+	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
+	execCwd, _ := os.Getwd()
+	builtin.RegisterAll(registry, execCwd, clAdapter)
+	homeDir, _ := os.UserHomeDir()
+	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
 	// Execute skill
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := executor.Execute(ctx, skillName, string(argsJSON))
+	toolResult, err := registry.Execute(ctx, skillName, skillArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error executing skill '%s': %v\n", skillName, err)
 		os.Exit(1)
 	}
 
 	// Display result
-	if result.Success {
-		// Format result based on type
-		switch v := result.Result.(type) {
-		case string:
-			fmt.Println(v)
-		case map[string]interface{}:
-			// Pretty print JSON objects
-			jsonOut, _ := json.MarshalIndent(v, "", "  ")
-			fmt.Println(string(jsonOut))
-		default:
-			fmt.Printf("%v\n", v)
-		}
+	if !toolResult.Error {
+		fmt.Println(toolResult.Content)
 	} else {
-		fmt.Fprintf(os.Stderr, "Skill '%s' failed: %s\n", skillName, result.Error)
+		fmt.Fprintf(os.Stderr, "Skill '%s' failed: %s\n", skillName, toolResult.Content)
 		os.Exit(1)
 	}
 }
@@ -1183,22 +1165,24 @@ func runSkillsCommand(args []string) {
 	_ = fs.Parse(args)
 
 	if *init {
-		if err := skills.CreateDefaultSkillFiles(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating skill files: %v\n", err)
+		initHome, _ := os.UserHomeDir()
+		skillsDir := filepath.Join(initHome, ".celeste", "skills")
+		if err := os.MkdirAll(skillsDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating skills directory: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Default skill files created in ~/.celeste/skills/")
+		fmt.Printf("Skills directory ready: %s\n", skillsDir)
+		fmt.Println("Place custom tool JSON files here to extend Celeste.")
 		return
 	}
 
-	registry := skills.NewRegistry()
-	// Load skills - ignore error as we'll still show built-in skills
-	_ = registry.LoadSkills()
-
-	// Register built-in skills (for display)
 	cfg, _ := config.Load()
-	configLoader := config.NewConfigLoader(cfg)
-	skills.RegisterBuiltinSkills(registry, configLoader)
+	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
+	skillsCwd, _ := os.Getwd()
+	registry := tools.NewRegistry()
+	builtin.RegisterAll(registry, skillsCwd, clAdapter)
+	homeDir, _ := os.UserHomeDir()
+	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
 	// Execute skill if --exec provided
 	if *exec != "" {
@@ -1211,41 +1195,36 @@ func runSkillsCommand(args []string) {
 
 	// Handle delete subcommand
 	if *deleteSkill != "" {
-		if err := registry.DeleteSkill(*deleteSkill); err != nil {
+		// Delete the custom skill JSON file
+		skillFile := filepath.Join(homeDir, ".celeste", "skills", *deleteSkill+".json")
+		if err := os.Remove(skillFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Error deleting skill '%s': %v\n", *deleteSkill, err)
 			os.Exit(1)
 		}
-		fmt.Printf("✓ Deleted skill: %s\n", *deleteSkill)
+		fmt.Printf("Deleted skill: %s\n", *deleteSkill)
 		return
 	}
 
 	// Handle info subcommand
 	if *info != "" {
-		hasHandler := registry.HasHandler(*info)
-		skill, exists := registry.GetSkill(*info)
+		t, exists := registry.Get(*info)
 
-		fmt.Printf("\n═══════════════════════════════════════════════\n")
+		fmt.Printf("\n===================================================\n")
 		fmt.Printf("           SKILL: %s\n", strings.ToUpper(*info))
-		fmt.Printf("═══════════════════════════════════════════════\n\n")
+		fmt.Printf("===================================================\n\n")
 
 		if !exists {
-			fmt.Printf("Status:       ✗ Not Found\n")
+			fmt.Printf("Status:       Not Found\n")
 			fmt.Printf("\nUse 'celeste skills --list' to see available skills.\n\n")
 			os.Exit(1)
 		}
 
-		fmt.Printf("Status:       ✓ Registered\n")
-		fmt.Printf("Has Handler:  ")
-		if hasHandler {
-			fmt.Printf("✓ Yes\n")
-		} else {
-			fmt.Printf("✗ No\n")
-		}
-		fmt.Printf("\nDescription:  %s\n", skill.Description)
+		fmt.Printf("Status:       Registered\n")
+		fmt.Printf("Read-Only:    %v\n", t.IsReadOnly())
+		fmt.Printf("\nDescription:  %s\n", t.Description())
 
-		if len(skill.Parameters) > 0 {
-			fmt.Printf("\nParameters:   %d defined\n", len(skill.Parameters))
-			fmt.Printf("\nUse the skill to see full parameter details.\n")
+		if t.Parameters() != nil {
+			fmt.Printf("\nParameters:   (defined)\n")
 		}
 		fmt.Println()
 		return
@@ -1253,23 +1232,20 @@ func runSkillsCommand(args []string) {
 
 	// Handle reload subcommand
 	if *reload {
-		registry = skills.NewRegistry()
-		if err := registry.LoadSkills(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error reloading skills: %v\n", err)
-			os.Exit(1)
-		}
-		skills.RegisterBuiltinSkills(registry, configLoader)
-		fmt.Printf("✓ Reloaded %d skills from disk\n", registry.Count())
+		registry = tools.NewRegistry()
+		builtin.RegisterAll(registry, skillsCwd, clAdapter)
+		_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+		fmt.Printf("Reloaded %d skills from disk\n", registry.Count())
 		return
 	}
 
 	// Default: list skills
 	if *list || len(args) == 0 {
-		allSkills := registry.GetAllSkills()
+		allTools := registry.GetAll()
 		fmt.Printf("\nAvailable Skills (%d):\n", registry.Count())
-		for _, skill := range allSkills {
-			fmt.Printf("\n  %s\n", skill.Name)
-			fmt.Printf("    %s\n", skill.Description)
+		for _, t := range allTools {
+			fmt.Printf("\n  %s\n", t.Name())
+			fmt.Printf("    %s\n", t.Description())
 		}
 		fmt.Println()
 	}
@@ -1449,6 +1425,61 @@ func (a *SessionManagerAdapter) MergeSessions(session1, session2 interface{}) in
 		return nil
 	}
 	return a.manager.MergeSessions(s1, s2)
+}
+
+// builtinConfigAdapter bridges config.ConfigLoader (returns skills.* types) to
+// builtin.ConfigLoader (expects builtin.* types). The struct layouts are identical.
+type builtinConfigAdapter struct {
+	cl *config.ConfigLoader
+}
+
+func newBuiltinConfigAdapter(cl *config.ConfigLoader) *builtinConfigAdapter {
+	return &builtinConfigAdapter{cl: cl}
+}
+
+func (a *builtinConfigAdapter) GetTarotConfig() (builtin.TarotConfig, error) {
+	c, err := a.cl.GetTarotConfig()
+	return builtin.TarotConfig{FunctionURL: c.FunctionURL, AuthToken: c.AuthToken}, err
+}
+
+func (a *builtinConfigAdapter) GetVeniceConfig() (builtin.VeniceConfig, error) {
+	c, err := a.cl.GetVeniceConfig()
+	return builtin.VeniceConfig{APIKey: c.APIKey, BaseURL: c.BaseURL, Model: c.Model, ImageModel: c.ImageModel, Upscaler: c.Upscaler}, err
+}
+
+func (a *builtinConfigAdapter) GetWeatherConfig() (builtin.WeatherConfig, error) {
+	c, err := a.cl.GetWeatherConfig()
+	return builtin.WeatherConfig{DefaultZipCode: c.DefaultZipCode}, err
+}
+
+func (a *builtinConfigAdapter) GetTwitchConfig() (builtin.TwitchConfig, error) {
+	c, err := a.cl.GetTwitchConfig()
+	return builtin.TwitchConfig{ClientID: c.ClientID, ClientSecret: c.ClientSecret, DefaultStreamer: c.DefaultStreamer}, err
+}
+
+func (a *builtinConfigAdapter) GetYouTubeConfig() (builtin.YouTubeConfig, error) {
+	c, err := a.cl.GetYouTubeConfig()
+	return builtin.YouTubeConfig{APIKey: c.APIKey, DefaultChannel: c.DefaultChannel}, err
+}
+
+func (a *builtinConfigAdapter) GetIPFSConfig() (builtin.IPFSConfig, error) {
+	c, err := a.cl.GetIPFSConfig()
+	return builtin.IPFSConfig{Provider: c.Provider, APIKey: c.APIKey, APISecret: c.APISecret, ProjectID: c.ProjectID, GatewayURL: c.GatewayURL, TimeoutSeconds: c.TimeoutSeconds}, err
+}
+
+func (a *builtinConfigAdapter) GetAlchemyConfig() (builtin.AlchemyConfig, error) {
+	c, err := a.cl.GetAlchemyConfig()
+	return builtin.AlchemyConfig{APIKey: c.APIKey, DefaultNetwork: c.DefaultNetwork, TimeoutSeconds: c.TimeoutSeconds}, err
+}
+
+func (a *builtinConfigAdapter) GetBlockmonConfig() (builtin.BlockmonConfig, error) {
+	c, err := a.cl.GetBlockmonConfig()
+	return builtin.BlockmonConfig{AlchemyAPIKey: c.AlchemyAPIKey, WebhookURL: c.WebhookURL, DefaultNetwork: c.DefaultNetwork, PollIntervalSeconds: c.PollIntervalSeconds}, err
+}
+
+func (a *builtinConfigAdapter) GetWalletSecurityConfig() (builtin.WalletSecuritySettingsConfig, error) {
+	c, err := a.cl.GetWalletSecurityConfig()
+	return builtin.WalletSecuritySettingsConfig{Enabled: c.Enabled, PollInterval: c.PollInterval, AlertLevel: c.AlertLevel}, err
 }
 
 // runContextCommand handles standalone context status display.
