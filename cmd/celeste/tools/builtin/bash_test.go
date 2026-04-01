@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,10 @@ func TestBashToolProperties(t *testing.T) {
 }
 
 func TestBashToolExecuteSimpleCommand(t *testing.T) {
-	bt := NewBashTool("/tmp")
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool uses sh -c which is not available on Windows")
+	}
+	bt := NewBashTool(t.TempDir())
 	result, err := bt.Execute(context.Background(), map[string]any{
 		"command": "echo hello",
 	}, nil)
