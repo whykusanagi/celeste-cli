@@ -26,6 +26,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -242,6 +243,14 @@ func runChatTUI() {
 	}
 	checker := permissions.NewChecker(*permConfig)
 	registry.SetPermissionChecker(checker)
+
+	// Initialize MCP servers (external tool providers)
+	mcpConfigPath := filepath.Join(homeDir, ".celeste", "mcp.json")
+	mcpManager := mcp.NewManager(mcpConfigPath, registry)
+	if err := mcpManager.Start(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: MCP initialization failed: %v\n", err)
+	}
+	defer mcpManager.Stop()
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{
