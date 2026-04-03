@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -14,11 +15,14 @@ import (
 type WriteFileTool struct {
 	BaseTool
 	workspace string
+	tracker   *checkpoints.FileTracker
+	snapMgr   *checkpoints.SnapshotManager
 }
 
 // NewWriteFileTool creates a WriteFileTool bound to the given workspace directory.
-func NewWriteFileTool(workspace string) *WriteFileTool {
-	return &WriteFileTool{
+// Optional dependencies can be provided for stale detection and file checkpointing.
+func NewWriteFileTool(workspace string, opts ...WriteFileOption) *WriteFileTool {
+	t := &WriteFileTool{
 		BaseTool: BaseTool{
 			ToolName:        "write_file",
 			ToolDescription: "Write text to a workspace file. Creates parent directories automatically.",
@@ -46,6 +50,27 @@ func NewWriteFileTool(workspace string) *WriteFileTool {
 		},
 		workspace: workspace,
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+// WriteFileOption configures optional dependencies for WriteFileTool.
+type WriteFileOption func(*WriteFileTool)
+
+// WithWriteFileTracker attaches a FileTracker for stale detection.
+func WithWriteFileTracker(ft *checkpoints.FileTracker) WriteFileOption {
+	return func(t *WriteFileTool) {
+		t.tracker = ft
+	}
+}
+
+// WithWriteFileSnapshots attaches a SnapshotManager for file checkpointing.
+func WithWriteFileSnapshots(sm *checkpoints.SnapshotManager) WriteFileOption {
+	return func(t *WriteFileTool) {
+		t.snapMgr = sm
+	}
 }
 
 func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
@@ -60,6 +85,20 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	targetPath, err := resolvePath(t.workspace, path)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
+
+	// Check for stale reads before writing
+	if t.tracker != nil {
+		if err := t.tracker.CheckStale(targetPath); err != nil {
+			return tools.ToolResult{Error: true, Content: err.Error()}, nil
+		}
+	}
+
+	// Snapshot before writing
+	if t.snapMgr != nil {
+		if err := t.snapMgr.Snapshot(targetPath); err != nil {
+			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
@@ -83,6 +122,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 			return tools.ToolResult{Error: true, Content: err.Error()}, nil
 		}
 		bytesWritten = len(content)
+	}
+
+	// Record new mtime after write
+	if t.tracker != nil {
+		_ = t.tracker.RecordRead(targetPath)
 	}
 
 	result := map[string]any{

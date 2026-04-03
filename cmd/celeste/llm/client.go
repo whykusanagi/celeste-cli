@@ -96,6 +96,13 @@ func (c *Client) SetSystemPrompt(prompt string) {
 	}
 }
 
+// SetThinkingConfig configures extended thinking / reasoning effort.
+func (c *Client) SetThinkingConfig(config ThinkingConfig) {
+	if c.backend != nil {
+		c.backend.SetThinkingConfig(config)
+	}
+}
+
 // UpdateConfig updates the client configuration and recreates the backend if needed.
 // This allows dynamic endpoint/model switching during runtime.
 func (c *Client) UpdateConfig(config *Config) {
@@ -233,9 +240,10 @@ func (c *Client) GetSkills() []tui.SkillDefinition {
 
 // ExecutionResult represents the result of a skill/tool execution.
 type ExecutionResult struct {
-	Success bool        `json:"success"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Success  bool           `json:"success"`
+	Result   interface{}    `json:"result,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"` // e.g. image base64 from read_file
 }
 
 // ExecuteSkill executes a skill and returns the result.
@@ -273,5 +281,6 @@ func (c *Client) ExecuteSkill(ctx context.Context, name string, argsJSON string)
 			}
 			return ""
 		}(),
+		Metadata: toolResult.Metadata,
 	}, nil
 }

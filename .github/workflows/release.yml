@@ -31,15 +31,15 @@ jobs:
     - name: Build binaries
       run: |
         # Linux
-        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-linux-amd64 ./cmd/celeste
-        GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-linux-arm64 ./cmd/celeste
+        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-linux-amd64 ./cmd/celeste
+        GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-linux-arm64 ./cmd/celeste
 
         # macOS
-        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-darwin-amd64 ./cmd/celeste
-        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-darwin-arm64 ./cmd/celeste
+        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-darwin-amd64 ./cmd/celeste
+        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-darwin-arm64 ./cmd/celeste
 
         # Windows
-        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }}" -o dist/celeste-windows-amd64.exe ./cmd/celeste
+        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-windows-amd64.exe ./cmd/celeste
 
     - name: Create archives
       run: |

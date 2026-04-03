@@ -10,15 +10,18 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
+	"strings"
+
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 // OpenAIBackend implements LLMBackend using the go-openai SDK.
 // This backend supports OpenAI, Grok, Venice, Anthropic, and other OpenAI-compatible providers.
 type OpenAIBackend struct {
-	client       *openai.Client
-	config       *Config
-	systemPrompt string
+	client         *openai.Client
+	config         *Config
+	systemPrompt   string
+	thinkingConfig ThinkingConfig
 }
 
 // NewOpenAIBackend creates a new OpenAI-compatible backend.
@@ -37,6 +40,13 @@ func NewOpenAIBackend(config *Config) *OpenAIBackend {
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (b *OpenAIBackend) SetSystemPrompt(prompt string) {
 	b.systemPrompt = prompt
+}
+
+// SetThinkingConfig configures extended thinking / reasoning effort.
+// For OpenAI o-series models this maps to reasoning_effort.
+// For Anthropic (via OpenAI compat) this is a no-op for now.
+func (b *OpenAIBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.thinkingConfig = config
 }
 
 // SendMessageSync sends a message synchronously and returns the complete result.
@@ -61,6 +71,8 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 		req.Tools = openAITools
 		req.ToolChoice = "auto"
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Create streaming request
 	stream, err := b.client.CreateChatCompletionStream(ctx, req)
@@ -159,6 +171,8 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 	if len(openAITools) > 0 {
 		req.Tools = openAITools
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Create streaming request
 	stream, err := b.client.CreateChatCompletionStream(ctx, req)
@@ -280,6 +294,8 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	if len(openAITools) > 0 {
 		req.Tools = openAITools
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Create streaming request
 	stream, err := b.client.CreateChatCompletionStream(ctx, req)
@@ -410,6 +426,28 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	return nil
 }
 
+// applyThinkingConfig adds reasoning_effort to the request when the model
+// supports it (OpenAI o-series) and thinking is enabled.
+func (b *OpenAIBackend) applyThinkingConfig(req *openai.ChatCompletionRequest) {
+	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+		return
+	}
+	// OpenAI o-series models support reasoning_effort ("low", "medium", "high").
+	// Map our extended levels into what the API accepts.
+	model := strings.ToLower(req.Model)
+	if !strings.HasPrefix(model, "o1") && !strings.HasPrefix(model, "o3") && !strings.HasPrefix(model, "o4") {
+		return // Not an o-series model; skip silently
+	}
+	switch b.thinkingConfig.Level {
+	case "low":
+		req.ReasoningEffort = "low"
+	case "medium":
+		req.ReasoningEffort = "medium"
+	case "high", "max":
+		req.ReasoningEffort = "high"
+	}
+}
+
 // Close cleans up resources (no-op for OpenAI backend).
 func (b *OpenAIBackend) Close() error {
 	return nil
@@ -422,6 +460,13 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 	// Add system prompt if set. The SkipPersonaPrompt flag controls whether the
 	// Celeste VTuber persona is prepended (handled upstream in runtime.go), not
 	// whether the system prompt itself is omitted — so we always include it here.
+	//
+	// TODO(prompt-caching): When using Anthropic via OpenAI compat, structure
+	// the system message with cache_control hints for prompt caching. The static
+	// prefix of the CacheablePrompt should include:
+	//   {"type": "text", "text": "<static>", "cache_control": {"type": "ephemeral"}}
+	// This requires switching from a simple string content to multi-part content
+	// blocks when b.isAnthropicProvider() is true.
 	if b.systemPrompt != "" {
 		result = append(result, openai.ChatCompletionMessage{
 			Role:    "system",
@@ -444,6 +489,39 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 				Content:    msg.Content,
 				ToolCallID: msg.ToolCallID,
 			})
+
+			// If this tool result carries image metadata, inject a user
+			// message with the image as a data URL so vision-capable models
+			// can actually see it.  The OpenAI API only supports multipart
+			// content on user messages, not tool messages.
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					if b64, ok := msg.Metadata["base64"].(string); ok {
+						format, _ := msg.Metadata["format"].(string)
+						if format == "" {
+							format = "png"
+						}
+						filename, _ := msg.Metadata["filename"].(string)
+						dataURL := fmt.Sprintf("data:image/%s;base64,%s", format, b64)
+						result = append(result, openai.ChatCompletionMessage{
+							Role: "user",
+							MultiContent: []openai.ChatMessagePart{
+								{
+									Type: openai.ChatMessagePartTypeText,
+									Text: fmt.Sprintf("[Attached image from tool result: %s]", filename),
+								},
+								{
+									Type: openai.ChatMessagePartTypeImageURL,
+									ImageURL: &openai.ChatMessageImageURL{
+										URL:    dataURL,
+										Detail: openai.ImageURLDetailAuto,
+									},
+								},
+							},
+						})
+					}
+				}
+			}
 		} else if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 			// Assistant messages with tool_calls need to include ToolCalls field
 			toolCalls := make([]openai.ToolCall, len(msg.ToolCalls))

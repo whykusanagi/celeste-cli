@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -14,11 +15,14 @@ import (
 type PatchFileTool struct {
 	BaseTool
 	workspace string
+	tracker   *checkpoints.FileTracker
+	snapMgr   *checkpoints.SnapshotManager
 }
 
 // NewPatchFileTool creates a PatchFileTool bound to the given workspace directory.
-func NewPatchFileTool(workspace string) *PatchFileTool {
-	return &PatchFileTool{
+// Optional dependencies can be provided for stale detection and file checkpointing.
+func NewPatchFileTool(workspace string, opts ...PatchFileOption) *PatchFileTool {
+	t := &PatchFileTool{
 		BaseTool: BaseTool{
 			ToolName:        "patch_file",
 			ToolDescription: "Make a surgical edit to a workspace file by replacing an exact string with new content. Prefer this over write_file when modifying existing files.",
@@ -50,6 +54,27 @@ func NewPatchFileTool(workspace string) *PatchFileTool {
 		},
 		workspace: workspace,
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+// PatchFileOption configures optional dependencies for PatchFileTool.
+type PatchFileOption func(*PatchFileTool)
+
+// WithPatchFileTracker attaches a FileTracker for stale detection.
+func WithPatchFileTracker(ft *checkpoints.FileTracker) PatchFileOption {
+	return func(t *PatchFileTool) {
+		t.tracker = ft
+	}
+}
+
+// WithPatchFileSnapshots attaches a SnapshotManager for file checkpointing.
+func WithPatchFileSnapshots(sm *checkpoints.SnapshotManager) PatchFileOption {
+	return func(t *PatchFileTool) {
+		t.snapMgr = sm
+	}
 }
 
 func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
@@ -65,6 +90,20 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	targetPath, err := resolvePath(t.workspace, path)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
+
+	// Check for stale reads before patching
+	if t.tracker != nil {
+		if err := t.tracker.CheckStale(targetPath); err != nil {
+			return tools.ToolResult{Error: true, Content: err.Error()}, nil
+		}
+	}
+
+	// Snapshot before patching
+	if t.snapMgr != nil {
+		if err := t.snapMgr.Snapshot(targetPath); err != nil {
+			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
+		}
 	}
 
 	data, err := os.ReadFile(targetPath)
@@ -93,6 +132,11 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	if err := os.WriteFile(targetPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
+	}
+
+	// Record new mtime after patch
+	if t.tracker != nil {
+		_ = t.tracker.RecordRead(targetPath)
 	}
 
 	result := map[string]any{

@@ -3,6 +3,7 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,9 +17,10 @@ import (
 // GoogleBackend implements LLMBackend using Google's native GenAI SDK.
 // This backend supports Gemini AI Studio and Vertex AI with automatic authentication.
 type GoogleBackend struct {
-	client       *genai.Client
-	config       *Config
-	systemPrompt string
+	client         *genai.Client
+	config         *Config
+	systemPrompt   string
+	thinkingConfig ThinkingConfig
 }
 
 // NewGoogleBackend creates a new Google GenAI backend with automatic authentication.
@@ -78,6 +80,12 @@ func (b *GoogleBackend) SetSystemPrompt(prompt string) {
 	b.systemPrompt = prompt
 }
 
+// SetThinkingConfig configures extended thinking for Gemini models.
+// Gemini supports thinkingBudget via GenerateContentConfig.ThinkingConfig.
+func (b *GoogleBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.thinkingConfig = config
+}
+
 // SendMessageSync sends a message synchronously and returns the complete result.
 func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	// Convert messages to Google GenAI format
@@ -103,6 +111,8 @@ func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 			{FunctionDeclarations: functionDeclarations},
 		}
 	}
+
+	b.applyThinkingConfig(genConfig)
 
 	// Generate content
 	modelName := b.config.Model
@@ -166,6 +176,8 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 			{FunctionDeclarations: functionDeclarations},
 		}
 	}
+
+	b.applyThinkingConfig(genConfig)
 
 	// Stream the response
 	modelName := b.config.Model
@@ -254,6 +266,8 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 		}
 	}
 
+	b.applyThinkingConfig(genConfig)
+
 	// Stream the response
 	modelName := b.config.Model
 	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
@@ -316,6 +330,23 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	return nil
 }
 
+// applyThinkingConfig adds ThinkingConfig to the generation config when
+// thinking is enabled.
+func (b *GoogleBackend) applyThinkingConfig(genConfig *genai.GenerateContentConfig) {
+	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+		return
+	}
+	budget := b.thinkingConfig.LevelToBudget()
+	tc := &genai.ThinkingConfig{
+		IncludeThoughts: true,
+	}
+	if budget > 0 {
+		b32 := int32(budget)
+		tc.ThinkingBudget = &b32
+	}
+	genConfig.ThinkingConfig = tc
+}
+
 // Close cleans up resources.
 func (b *GoogleBackend) Close() error {
 	// Google GenAI SDK client doesn't require explicit cleanup
@@ -350,6 +381,29 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 
 			// Function responses use "user" role in Google GenAI
 			contents = append(contents, genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser))
+
+			// If the tool result carries image metadata, inject a user
+			// message with the image as inline data so Gemini can see it.
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					if b64, ok := msg.Metadata["base64"].(string); ok {
+						format, _ := msg.Metadata["format"].(string)
+						if format == "" {
+							format = "png"
+						}
+						filename, _ := msg.Metadata["filename"].(string)
+						imageBytes, decErr := base64.StdEncoding.DecodeString(b64)
+						if decErr == nil {
+							mimeType := fmt.Sprintf("image/%s", format)
+							parts := []*genai.Part{
+								genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", filename)),
+								genai.NewPartFromBytes(imageBytes, mimeType),
+							}
+							contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
+						}
+					}
+				}
+			}
 			continue
 		}
 

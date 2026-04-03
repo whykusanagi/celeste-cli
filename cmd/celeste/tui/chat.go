@@ -155,14 +155,19 @@ func (m ChatModel) AddSystemMessage(content string) ChatModel {
 }
 
 // AddToolResult adds a tool result message to the chat.
-func (m ChatModel) AddToolResult(toolCallID, name, result string) ChatModel {
-	m.messages = append(m.messages, ChatMessage{
+// Optional metadata maps can be passed to attach extra data (e.g. image base64).
+func (m ChatModel) AddToolResult(toolCallID, name, result string, metadata ...map[string]any) ChatModel {
+	msg := ChatMessage{
 		Role:       "tool",
 		Content:    result,
 		ToolCallID: toolCallID,
 		Name:       name,
 		Timestamp:  time.Now(),
-	})
+	}
+	if len(metadata) > 0 && metadata[0] != nil {
+		msg.Metadata = metadata[0]
+	}
+	m.messages = append(m.messages, msg)
 	m.updateContent()
 	// Only auto-scroll if user hasn't manually scrolled
 	if !m.userScrolled {

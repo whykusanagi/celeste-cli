@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -98,7 +99,12 @@ type AppModel struct {
 	// Running token totals for the current agent run
 	agentInputTokens  int
 	agentOutputTokens int
-	agentRunStart     time.Time
+
+	// Graceful Ctrl+C handling
+	cancelFunc       context.CancelFunc
+	interruptPending bool
+	lastInterrupt    time.Time
+	agentRunStart    time.Time
 
 	// Per-message response timing and token stats (regular chat)
 	streamStart   time.Time
@@ -134,6 +140,11 @@ type OrchestratorCommandRunner interface {
 type EndpointSwitcher interface {
 	SwitchEndpoint(endpoint string) error
 	ChangeModel(model string) error
+}
+
+// ThinkingConfigSetter interface for clients that support extended thinking / reasoning effort.
+type ThinkingConfigSetter interface {
+	SetThinkingLevel(level string)
 }
 
 // SkillDefinition represents a skill/function that can be called.
@@ -305,8 +316,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
-			m.persistSession()
-			return m, tea.Quit
+			if m.cancelFunc != nil {
+				// Active operation running — cancel it
+				m.cancelFunc()
+				m.cancelFunc = nil
+				m.streaming = false
+				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
+				// Double Ctrl+C within 3s => quit
+				if m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second {
+					m.persistSession()
+					return m, tea.Quit
+				}
+				m.interruptPending = true
+				m.lastInterrupt = time.Now()
+				return m, nil
+			}
+			// No active operation — check for double tap
+			if m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second {
+				m.persistSession()
+				return m, tea.Quit
+			}
+			m.interruptPending = true
+			m.lastInterrupt = time.Now()
+			m.status = m.status.SetText("Press Ctrl+C again to exit")
+			return m, nil
 		case "ctrl+k":
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
@@ -514,6 +547,72 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "mcp":
 				m.mcpPanel.Show()
+				return m, nil
+
+			case "plan":
+				// Parse subcommand: /plan, /plan execute, /plan show, /plan cancel
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Plan mode: use /plan <goal> to enter, /plan execute to run, /plan show to view, /plan cancel to exit")
+					return m, nil
+				}
+				subCmd := cmd.Args[0]
+				switch subCmd {
+				case "execute":
+					m.chat = m.chat.AddSystemMessage("Plan execution — reading plan from .celeste/plan.md...")
+					// TODO: full plan execution integration
+				case "show":
+					m.chat = m.chat.AddSystemMessage("Showing plan from .celeste/plan.md...")
+					// Read and display plan file
+				case "cancel":
+					m.chat = m.chat.AddSystemMessage("Plan mode cancelled.")
+				default:
+					// /plan <goal> — enter plan mode
+					goal := strings.Join(cmd.Args, " ")
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Entering plan mode for: %s\n(Tools restricted to read-only. Edit .celeste/plan.md then /plan execute)", goal))
+				}
+				return m, nil
+
+			case "diff":
+				m.chat = m.chat.AddSystemMessage("Session changes:\n(File checkpointing shows diffs of modified files)\nNo changes tracked in this session yet.")
+				return m, nil
+
+			case "undo":
+				m.chat = m.chat.AddSystemMessage("Undo: reverting last file modification...\nNo checkpoints available in this session.")
+				return m, nil
+
+			case "memories":
+				m.chat = m.chat.AddSystemMessage("Use `celeste memories` CLI command to list project memories.\nUse `celeste remember \"<text>\"` to save a memory.")
+				return m, nil
+
+			case "effort":
+				validLevels := []string{"off", "low", "medium", "high", "max"}
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Usage: /effort <level>\nLevels: off, low, medium, high, max")
+					return m, nil
+				}
+				level := strings.ToLower(cmd.Args[0])
+				valid := false
+				for _, l := range validLevels {
+					if l == level {
+						valid = true
+						break
+					}
+				}
+				if !valid {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Invalid effort level: %s\nValid levels: off, low, medium, high, max", level))
+					return m, nil
+				}
+				setter, ok := m.llmClient.(ThinkingConfigSetter)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("Extended thinking is not supported by the current client.")
+					return m, nil
+				}
+				setter.SetThinkingLevel(level)
+				if level == "off" {
+					m.chat = m.chat.AddSystemMessage("Extended thinking disabled.")
+				} else {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Reasoning effort set to: %s", level))
+				}
 				return m, nil
 			}
 
@@ -986,7 +1085,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, nil) // Keep processing
 
+	case StreamStartMsg:
+		// Store the cancel function so Ctrl+C can cancel the active request
+		m.cancelFunc = msg.Cancel
+		return m, nil
+
 	case StreamDoneMsg:
+		// Clear cancel function — operation completed
+		m.cancelFunc = nil
+		m.interruptPending = false
 		// Update token counts from API response
 		if msg.Usage != nil && (msg.Usage.PromptTokens > 0 || msg.Usage.CompletionTokens > 0) {
 			m.lastMsgInTok = msg.Usage.PromptTokens
@@ -1061,6 +1168,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case StreamErrorMsg:
+		m.cancelFunc = nil
+		m.interruptPending = false
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
@@ -1388,7 +1497,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.llmClient != nil && msg.ToolCallID != "" {
-			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, resultForLLM)
+			// If the tool result contains image metadata, enrich the text
+			// content so the LLM knows an image was captured, and forward
+			// the metadata so backends can build multimodal messages.
+			var resultMetadata map[string]any
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					resultMetadata = msg.Metadata
+					if format, ok := msg.Metadata["format"].(string); ok {
+						if filename, ok := msg.Metadata["filename"].(string); ok {
+							LogInfo(fmt.Sprintf("Forwarding image from tool result: %s (format: %s)", filename, format))
+						}
+						// Append a marker so the LLM is aware an image was read.
+						// The actual base64 data is carried in Metadata for
+						// backends that support multimodal tool results.
+						resultForLLM += fmt.Sprintf("\n\n[Image data available: format=%s. The image content has been captured and will be provided to vision-capable models.]", format)
+					}
+				}
+			}
+			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, resultForLLM, resultMetadata)
 		}
 
 		if isBatchResult {

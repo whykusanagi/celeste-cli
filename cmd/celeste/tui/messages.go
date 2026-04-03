@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,7 @@ type ChatMessage struct {
 	Name       string         // For tool messages, the function name
 	ToolCalls  []ToolCallInfo // For assistant messages, the tool calls that were made
 	Timestamp  time.Time      // When the message was created
+	Metadata   map[string]any // Optional metadata (e.g. image data from tool results)
 }
 
 // ToolCallInfo represents a tool call in an assistant message.
@@ -54,6 +56,12 @@ type TokenUsage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+}
+
+// StreamStartMsg carries the context cancel function so the TUI can cancel
+// an in-progress LLM request on Ctrl+C.
+type StreamStartMsg struct {
+	Cancel context.CancelFunc
 }
 
 // StreamDoneMsg is sent when streaming is complete.
@@ -95,7 +103,8 @@ type SkillResultMsg struct {
 	Name       string
 	Result     string
 	Err        error
-	ToolCallID string // OpenAI tool call ID for sending result back
+	ToolCallID string         // OpenAI tool call ID for sending result back
+	Metadata   map[string]any // Optional metadata (e.g. image base64 from read_file)
 }
 
 // AgentCommandResultMsg is sent when a TUI /agent command completes.

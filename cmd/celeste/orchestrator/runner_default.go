@@ -98,6 +98,7 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 	if err != nil {
 		return "", err
 	}
+	defer runner.Close()
 	state, err := runner.RunGoal(ctx, goal)
 	if state != nil {
 		return state.LastAssistantResponse, err

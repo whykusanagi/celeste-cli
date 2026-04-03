@@ -19,13 +19,14 @@ import (
 // XAIBackend implements LLMBackend using xAI's native API.
 // This backend supports xAI-specific features like Collections (RAG).
 type XAIBackend struct {
-	apiKey       string
-	baseURL      string
-	model        string
-	config       *Config
-	httpClient   *http.Client
-	systemPrompt string
-	registry     *tools.Registry
+	apiKey         string
+	baseURL        string
+	model          string
+	config         *Config
+	httpClient     *http.Client
+	systemPrompt   string
+	registry       *tools.Registry
+	thinkingConfig ThinkingConfig
 }
 
 // NewXAIBackend creates a new xAI backend with Collections support.
@@ -54,13 +55,60 @@ func (b *XAIBackend) SetSystemPrompt(prompt string) {
 	b.systemPrompt = prompt
 }
 
-// xAIMessage represents a message in xAI's format
+// SetThinkingConfig configures extended thinking / reasoning effort for Grok models.
+// xAI supports reasoning_effort in the request body.
+func (b *XAIBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.thinkingConfig = config
+}
+
+// xAIMessage represents a message in xAI's format.
+// Content can be either a plain string or multipart ([]xAIContentPart) for
+// image-bearing user messages.  We use a custom MarshalJSON so that the two
+// representations share the same "content" JSON key.
 type xAIMessage struct {
-	Role       string        `json:"role"`
-	Content    string        `json:"content,omitempty"`
-	ToolCalls  []xAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
-	Name       string        `json:"name,omitempty"`
+	Role         string           `json:"role"`
+	Content      string           `json:"-"` // plain-text content (used when MultiContent is nil)
+	MultiContent []xAIContentPart `json:"-"` // multipart content (images + text)
+	ToolCalls    []xAIToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID   string           `json:"tool_call_id,omitempty"`
+	Name         string           `json:"name,omitempty"`
+}
+
+// MarshalJSON implements custom JSON marshaling for xAIMessage so that the
+// "content" field is either a string or an array of content parts.
+func (m xAIMessage) MarshalJSON() ([]byte, error) {
+	type Alias struct {
+		Role       string        `json:"role"`
+		Content    interface{}   `json:"content,omitempty"`
+		ToolCalls  []xAIToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string        `json:"tool_call_id,omitempty"`
+		Name       string        `json:"name,omitempty"`
+	}
+	a := Alias{
+		Role:       m.Role,
+		ToolCalls:  m.ToolCalls,
+		ToolCallID: m.ToolCallID,
+		Name:       m.Name,
+	}
+	if len(m.MultiContent) > 0 {
+		a.Content = m.MultiContent
+	} else {
+		a.Content = m.Content
+	}
+	return json.Marshal(a)
+}
+
+// xAIContentPart represents a content part in a multimodal message.
+type xAIContentPart struct {
+	Type     string       `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	ImageURL *xAIImageURL `json:"image_url,omitempty"`
+}
+
+// xAIImageURL represents an image URL in a content part.
+type xAIImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // xAIToolCall represents a tool call in xAI's format
@@ -91,14 +139,15 @@ type xAIStreamOptions struct {
 
 // xAIChatCompletionRequest is the request format for xAI chat completions
 type xAIChatCompletionRequest struct {
-	Model         string            `json:"model"`
-	Messages      []xAIMessage      `json:"messages"`
-	Tools         []xAITool         `json:"tools,omitempty"`
-	Stream        bool              `json:"stream"`
-	StreamOptions *xAIStreamOptions `json:"stream_options,omitempty"`
-	CollectionIDs []string          `json:"collection_ids,omitempty"` // xAI Collections support
-	Temperature   float32           `json:"temperature,omitempty"`
-	MaxTokens     int               `json:"max_tokens,omitempty"`
+	Model           string            `json:"model"`
+	Messages        []xAIMessage      `json:"messages"`
+	Tools           []xAITool         `json:"tools,omitempty"`
+	Stream          bool              `json:"stream"`
+	StreamOptions   *xAIStreamOptions `json:"stream_options,omitempty"`
+	CollectionIDs   []string          `json:"collection_ids,omitempty"` // xAI Collections support
+	Temperature     float32           `json:"temperature,omitempty"`
+	MaxTokens       int               `json:"max_tokens,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"` // "low", "medium", "high"
 }
 
 // xAIStreamChunk represents a streaming response chunk
@@ -149,6 +198,8 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 				len(req.CollectionIDs), req.CollectionIDs))
 		}
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Marshal request
 	jsonData, err := json.Marshal(req)
@@ -308,6 +359,8 @@ func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui
 			req.CollectionIDs = b.config.Collections.ActiveCollections
 		}
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Marshal request
 	jsonData, err := json.Marshal(req)
@@ -525,6 +578,28 @@ func (b *XAIBackend) convertMessages(messages []tui.ChatMessage) []xAIMessage {
 				ToolCallID: msg.ToolCallID,
 				Name:       msg.Name,
 			})
+
+			// Inject a user message with image data when present,
+			// mirroring the OpenAI backend approach.
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					if b64, ok := msg.Metadata["base64"].(string); ok {
+						format, _ := msg.Metadata["format"].(string)
+						if format == "" {
+							format = "png"
+						}
+						filename, _ := msg.Metadata["filename"].(string)
+						dataURL := fmt.Sprintf("data:image/%s;base64,%s", format, b64)
+						result = append(result, xAIMessage{
+							Role: "user",
+							MultiContent: []xAIContentPart{
+								{Type: "text", Text: fmt.Sprintf("[Attached image from tool result: %s]", filename)},
+								{Type: "image_url", ImageURL: &xAIImageURL{URL: dataURL, Detail: "auto"}},
+							},
+						})
+					}
+				}
+			}
 		} else if len(msg.ToolCalls) > 0 {
 			// Assistant message with tool calls
 			var toolCalls []xAIToolCall
@@ -619,6 +694,21 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 	}
 
 	return result
+}
+
+// applyThinkingConfig sets reasoning_effort on the request when thinking is enabled.
+func (b *XAIBackend) applyThinkingConfig(req *xAIChatCompletionRequest) {
+	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+		return
+	}
+	switch b.thinkingConfig.Level {
+	case "low":
+		req.ReasoningEffort = "low"
+	case "medium":
+		req.ReasoningEffort = "medium"
+	case "high", "max":
+		req.ReasoningEffort = "high"
+	}
 }
 
 // Close cleans up resources (implements LLMBackend interface)

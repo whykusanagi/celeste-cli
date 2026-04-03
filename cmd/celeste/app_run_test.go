@@ -66,6 +66,46 @@ func (f *fakeRunner) RunAgent(args []string) {
 	f.lastCall = "agent"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunInit(args []string) {
+	f.lastCall = "init"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunGrimoire(args []string) {
+	f.lastCall = "grimoire"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunServe(args []string) {
+	f.lastCall = "serve"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunCosts(args []string) {
+	f.lastCall = "costs"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunMemories(args []string) {
+	f.lastCall = "memories"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunRemember(args []string) {
+	f.lastCall = "remember"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunForget(args []string) {
+	f.lastCall = "forget"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunResume(args []string) {
+	f.lastCall = "resume"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunPlan(args []string) {
+	f.lastCall = "plan"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunRevert(args []string) {
+	f.lastCall = "revert"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_ShowsUsageAndTipWhenDefaultConfigExists(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}

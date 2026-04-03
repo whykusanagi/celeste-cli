@@ -9,8 +9,8 @@ import (
 
 func TestRegisterAll_DevToolsOnly(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil)
-	// 6 dev tools + 14 config-free skills = 20
+	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	// 6 dev tools + 2 web tools + 14 config-free skills = 22
 	assert.True(t, registry.Count() > 6, "expected more than 6 tools, got %d", registry.Count())
 	bash, ok := registry.Get("bash")
 	assert.True(t, ok)
@@ -19,7 +19,7 @@ func TestRegisterAll_DevToolsOnly(t *testing.T) {
 
 func TestRegisterAll_WithModeFiltering(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil)
 	agentTools := registry.GetTools(tools.ModeAgent)
 	// Agent should have dev tools but not chat-only skills like tarot
 	for _, tool := range agentTools {
@@ -30,7 +30,7 @@ func TestRegisterAll_WithModeFiltering(t *testing.T) {
 
 func TestRegisterAll_ChatModeHasSkills(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil)
 	chatTools := registry.GetTools(tools.ModeChat)
 
 	// Chat mode should have dev tools + config-free skills
@@ -55,7 +55,7 @@ func TestRegisterAll_ChatModeHasSkills(t *testing.T) {
 
 func TestRegisterAll_NoWorkspace(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, "", nil)
+	RegisterAll(registry, "", nil, nil, nil)
 	// Should only have config-free skills (no dev tools)
 	_, ok := registry.Get("bash")
 	assert.False(t, ok, "bash should not be registered without workspace")
@@ -77,8 +77,8 @@ func TestRegisterReadOnlyDevTools(t *testing.T) {
 
 func TestToolCount(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil)
-	// 6 dev tools + 14 config-free skills = 20
+	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	// 6 dev tools + 2 git tools + 2 web tools + 14 config-free skills + 1 todo = 25
 	// (config-dependent tools not registered when configLoader is nil)
-	assert.Equal(t, 20, registry.Count(), "expected 20 tools without configLoader")
+	assert.Equal(t, 25, registry.Count(), "expected 25 tools without configLoader")
 }

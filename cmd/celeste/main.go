@@ -9,31 +9,43 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/server"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/subagents"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-// Version information
-const (
-	Version = "1.7.0"
-	Build   = "bubbletea-tui"
+// Version information — injected at build time via ldflags.
+// CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
+// When not set by ldflags, defaults are used.
+var (
+	Version   = "1.8.0"
+	Build     = "bubbletea-tui"
+	CommitSHA = "dev"
 )
 
 // Global config name (set by -config flag)
@@ -114,7 +126,17 @@ Commands:
   context                 Show context/token usage
   stats                   Show usage statistics
   export                  Export session data
+  init                    Create a starter .grimoire for the current project
+  grimoire                Show the resolved project grimoire (all layers merged)
+  serve                   Start MCP server (stdio or SSE transport)
   wallet-monitor          Manage wallet security monitoring daemon
+  costs                   Show session cost breakdown
+  memories                List memories for current project
+  remember "<text>"       Save a memory
+  forget <name>           Delete a memory
+  resume [session-id]     Resume a previous session
+  plan                    Show plan mode help
+  revert <file>           Revert a file from checkpoint
   help                    Show this help message
   version                 Show version information
 
@@ -126,7 +148,7 @@ Interactive Commands (in chat mode):
   exit, quit, q           Exit the application
 
 Keyboard Shortcuts:
-  Ctrl+C                  Exit immediately
+  Ctrl+C                  Cancel current operation (double-tap to exit)
   PgUp/PgDown            Scroll chat history
   Shift+↑/↓              Scroll chat history
   ↑/↓                    Navigate input history
@@ -225,13 +247,25 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 
+	// Initialize file checkpointing for stale detection and undo support
+	fileTracker := checkpoints.NewFileTracker()
+	snapshotMgr := checkpoints.NewSnapshotManager(fmt.Sprintf("tui-%d", os.Getpid()))
+
 	// Initialize tool registry
 	registry := tools.NewRegistry()
 	configLoader := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
-	builtin.RegisterAll(registry, cwd, configLoader)
+	builtin.RegisterAll(registry, cwd, configLoader, fileTracker, snapshotMgr)
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+
+	// Register subagent spawning tool
+	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
+	subMgr := subagents.NewManager(cfg, cwd, isChild)
+	registry.RegisterWithModes(
+		subagents.NewSpawnAgentTool(subMgr),
+		tools.ModeAgent, tools.ModeClaw,
+	)
 
 	// Load permissions and set checker
 	permConfigPath := filepath.Join(homeDir, ".celeste", "permissions.json")
@@ -266,16 +300,74 @@ func runChatTUI() {
 	}
 	client := llm.NewClient(llmConfig, registry)
 
-	// Set system prompt if not skipping
+	// Load project grimoire and git snapshot for system prompt context
+	var grimoireContent string
+	projectGrimoire, grimoireErr := grimoire.LoadAll(cwd)
+	if grimoireErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load .grimoire: %v\n", grimoireErr)
+	} else if projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+		grimoireContent = projectGrimoire.Render()
+	}
+
+	var gitSnapshotContent string
+	gitSnapshot := grimoire.CaptureGitSnapshot(cwd)
+	if gitSnapshot != nil {
+		gitSnapshotContent = gitSnapshot.FormatForPrompt()
+	}
+
+	// Initialize code graph index
+	var codeGraphSummary string
+	_ = os.MkdirAll(filepath.Join(cwd, ".celeste"), 0755)
+	indexer, cgErr := codegraph.NewIndexer(cwd, filepath.Join(cwd, ".celeste", "codegraph.db"))
+	if cgErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: code graph init failed: %v\n", cgErr)
+	} else {
+		// Incremental update (fast if cached)
+		if err := indexer.Update(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: code graph update failed: %v\n", err)
+		}
+		defer indexer.Close()
+
+		// Register code graph tools
+		builtin.RegisterCodeGraphTools(registry, indexer)
+
+		// Add project summary to system prompt context
+		codeGraphSummary = indexer.ProjectSummary()
+	}
+
+	// Set system prompt with project context if not skipping
+	var projectContext string
+	if grimoireContent != "" {
+		projectContext += grimoireContent
+	}
+	if codeGraphSummary != "" {
+		if projectContext != "" {
+			projectContext += "\n\n"
+		}
+		projectContext += "# Code Graph\n\n" + codeGraphSummary
+	}
 	if !cfg.SkipPersonaPrompt {
-		client.SetSystemPrompt(prompts.GetSystemPrompt(false))
+		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(false, projectContext, gitSnapshotContent))
+	} else if projectContext != "" || gitSnapshotContent != "" {
+		// Even with persona skipped, inject project context
+		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, projectContext, gitSnapshotContent))
+	}
+
+	// Wire grimoire hooks into the tool registry
+	if projectGrimoire != nil {
+		parsedHooks := hooks.ParseFromGrimoire(projectGrimoire)
+		if len(parsedHooks) > 0 {
+			executor := hooks.NewExecutor(parsedHooks, cwd)
+			registry.SetHookRunner(&hookRunnerAdapter{executor: executor})
+		}
 	}
 
 	// Create TUI client adapter
 	tuiClient := &TUIClientAdapter{
-		client:     client,
-		registry:   registry,
-		baseConfig: cfg,
+		client:      client,
+		registry:    registry,
+		baseConfig:  cfg,
+		costTracker: costs.NewSessionTracker(),
 	}
 
 	// Initialize logging for skill calls
@@ -392,17 +484,51 @@ func runChatTUI() {
 	}
 }
 
+// hookRunnerAdapter adapts hooks.Executor to satisfy tools.HookRunner interface.
+type hookRunnerAdapter struct {
+	executor *hooks.Executor
+}
+
+func (a *hookRunnerAdapter) RunPreToolUse(toolName string, input map[string]any) (*tools.HookResult, error) {
+	result, err := a.executor.RunPreToolUse(toolName, input)
+	if err != nil {
+		return nil, err
+	}
+	return &tools.HookResult{Decision: result.Decision, Output: result.Output}, nil
+}
+
+func (a *hookRunnerAdapter) RunPostToolUse(toolName string, input map[string]any) (*tools.HookResult, error) {
+	result, err := a.executor.RunPostToolUse(toolName, input)
+	if err != nil {
+		return nil, err
+	}
+	return &tools.HookResult{Decision: result.Decision, Output: result.Output}, nil
+}
+
 // TUIClientAdapter adapts the LLM client for the TUI.
 type TUIClientAdapter struct {
-	client     *llm.Client
-	registry   *tools.Registry
-	baseConfig *config.Config // Store base config for loading named configs
+	client      *llm.Client
+	registry    *tools.Registry
+	baseConfig  *config.Config // Store base config for loading named configs
+	costTracker *costs.SessionTracker
 }
 
 // SendMessage implements tui.LLMClient.
 func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
+	// Create context with cancel so Ctrl+C can abort in-flight requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+
+	// Return a batch: first deliver the cancel func to the TUI model, then
+	// start the actual LLM call.
+	return tea.Batch(
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		a.sendMessageWithCtx(ctx, cancel, messages, tools),
+	)
+}
+
+// sendMessageWithCtx performs the actual LLM call using the provided context.
+func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel context.CancelFunc, messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		// Log the request with current endpoint info
@@ -414,6 +540,22 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 		for i, msg := range messages {
 			tui.LogInfo(fmt.Sprintf("  Message[%d]: role=%s, content_len=%d, tool_calls=%d",
 				i, msg.Role, len(msg.Content), len(msg.ToolCalls)))
+		}
+
+		// Image metadata in tool results is now forwarded to the LLM.
+		// Each backend's convertMessages handles the Metadata map on tool
+		// messages and injects a multimodal user message with the image:
+		//   - OpenAI:  MultiContent with image_url data URI
+		//   - xAI:     MultiContent with image_url data URI
+		//   - Google:  InlineData part with decoded bytes
+		// Log detected images for observability.
+		for _, msg := range messages {
+			if msg.Role == "tool" && msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					tui.LogInfo(fmt.Sprintf("  Image in tool result will be forwarded: %s (format: %s)",
+						msg.Metadata["filename"], msg.Metadata["format"]))
+				}
+			}
 		}
 
 		// Check if we're sending tools to Venice uncensored (which may not support function calling)
@@ -520,13 +662,18 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 			}
 		}
 
-		// Convert llm.TokenUsage to tui.TokenUsage
+		// Convert llm.TokenUsage to tui.TokenUsage and record costs
 		var tuiUsage *tui.TokenUsage
 		if usage != nil {
 			tuiUsage = &tui.TokenUsage{
 				PromptTokens:     usage.PromptTokens,
 				CompletionTokens: usage.CompletionTokens,
 				TotalTokens:      usage.TotalTokens,
+			}
+			a.costTracker.RecordUsage(currentConfig.Model, usage.PromptTokens, usage.CompletionTokens)
+			summary := a.costTracker.GetSummary()
+			if summary.TotalCostUSD > 0 {
+				tui.LogInfo(fmt.Sprintf("Session cost: $%.4f (%d turns)", summary.TotalCostUSD, summary.Turns))
 			}
 		}
 
@@ -612,6 +759,7 @@ func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCa
 			Result:     resultStr,
 			Err:        nil,
 			ToolCallID: toolCallID,
+			Metadata:   result.Metadata,
 		}
 	}
 }
@@ -731,6 +879,16 @@ func (a *TUIClientAdapter) ChangeModel(model string) error {
 	a.client.UpdateConfig(newConfig)
 	tui.LogInfo(fmt.Sprintf("Changed model to: %s", model))
 	return nil
+}
+
+// SetThinkingLevel implements tui.ThinkingConfigSetter.
+func (a *TUIClientAdapter) SetThinkingLevel(level string) {
+	enabled := level != "off"
+	a.client.SetThinkingConfig(llm.ThinkingConfig{
+		Enabled: enabled,
+		Level:   level,
+	})
+	tui.LogInfo(fmt.Sprintf("Thinking config set: level=%s, enabled=%v", level, enabled))
 }
 
 func parseArgs(argsJSON string) (map[string]any, error) {
@@ -1174,7 +1332,7 @@ func runSkillExecuteCommand(args []string) {
 	registry := tools.NewRegistry()
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	execCwd, _ := os.Getwd()
-	builtin.RegisterAll(registry, execCwd, clAdapter)
+	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil)
 	homeDir, _ := os.UserHomeDir()
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
@@ -1225,7 +1383,7 @@ func runSkillsCommand(args []string) {
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	skillsCwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, skillsCwd, clAdapter)
+	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
 	homeDir, _ := os.UserHomeDir()
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
@@ -1278,7 +1436,7 @@ func runSkillsCommand(args []string) {
 	// Handle reload subcommand
 	if *reload {
 		registry = tools.NewRegistry()
-		builtin.RegisterAll(registry, skillsCwd, clAdapter)
+		builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
 		_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 		fmt.Printf("Reloaded %d skills from disk\n", registry.Count())
 		return
@@ -1714,6 +1872,46 @@ func runWalletMonitorCommand(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown wallet-monitor command: %s\n", subcommand)
 		fmt.Fprintln(os.Stderr, "Valid commands: start, stop, status")
+		os.Exit(1)
+	}
+}
+
+// runServeCommand starts the MCP server with the given arguments.
+func runServeCommand(args []string) {
+	serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
+	sseMode := serveFlags.Bool("sse", false, "Use SSE transport instead of stdio")
+	port := serveFlags.Int("port", 8420, "Port for SSE transport")
+	remote := serveFlags.Bool("remote", false, "Bind to 0.0.0.0 for network access")
+	certFile := serveFlags.String("cert", "", "TLS certificate file for mTLS")
+	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
+	_ = serveFlags.Parse(args)
+
+	cfg, err := config.LoadNamed(configName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	serverCfg := server.DefaultConfig()
+	serverCfg.CelesteConfig = cfg
+	serverCfg.Workspace, _ = os.Getwd()
+
+	if *sseMode {
+		serverCfg.Transport = "sse"
+		serverCfg.Port = *port
+		serverCfg.Remote = *remote
+		serverCfg.CertFile = *certFile
+		serverCfg.KeyFile = *keyFile
+	}
+
+	srv := server.New(serverCfg)
+	server.RegisterHandlers(srv)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := srv.Serve(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -12,9 +12,9 @@ import (
 
 // knownCommands is the authoritative list of slash commands for typeahead.
 var knownCommands = []string{
-	"agent", "clear", "config", "context", "endpoint", "export",
-	"help", "model", "nsfw", "orch", "orchestrate", "providers",
-	"safe", "session", "set-model", "skills", "stats", "tools",
+	"agent", "clear", "config", "context", "diff", "effort", "endpoint", "export",
+	"help", "memories", "model", "nsfw", "orch", "orchestrate", "plan", "providers",
+	"safe", "session", "set-model", "skills", "stats", "tools", "undo",
 }
 
 var (

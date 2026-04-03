@@ -22,12 +22,26 @@ type toolInfoAdapter struct {
 func (a *toolInfoAdapter) ToolName() string { return a.tool.Name() }
 func (a *toolInfoAdapter) IsReadOnly() bool { return a.tool.IsReadOnly() }
 
+// HookResult is the outcome of a pre/post tool hook.
+type HookResult struct {
+	Decision string // "approve" or "block"
+	Output   string
+}
+
+// HookRunner is an interface for running pre/post tool hooks.
+// This avoids a circular dependency between tools and hooks packages.
+type HookRunner interface {
+	RunPreToolUse(toolName string, input map[string]any) (*HookResult, error)
+	RunPostToolUse(toolName string, input map[string]any) (*HookResult, error)
+}
+
 // Registry manages the collection of available tools and their mode associations.
 type Registry struct {
 	mu      sync.RWMutex
 	tools   map[string]Tool
 	modes   map[string][]RuntimeMode // tool name -> allowed modes (nil = all modes)
 	checker *permissions.Checker     // optional, nil = allow all
+	hooks   HookRunner               // optional, nil = no hooks
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -163,7 +177,29 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 		}
 	}
 
-	return tool.Execute(ctx, input, progress)
+	// Pre-tool hook check
+	if r.hooks != nil {
+		hookResult, hookErr := r.hooks.RunPreToolUse(name, input)
+		if hookErr != nil {
+			return ToolResult{Content: fmt.Sprintf("Hook error: %s", hookErr.Error()), Error: true}, nil
+		}
+		if hookResult != nil && hookResult.Decision == "block" {
+			msg := "Blocked by pre-tool hook"
+			if hookResult.Output != "" {
+				msg = fmt.Sprintf("Blocked by pre-tool hook: %s", hookResult.Output)
+			}
+			return ToolResult{Content: msg, Error: true}, nil
+		}
+	}
+
+	result, err := tool.Execute(ctx, input, progress)
+
+	// Post-tool hook (fire-and-forget, does not block result)
+	if r.hooks != nil && err == nil {
+		_, _ = r.hooks.RunPostToolUse(name, input)
+	}
+
+	return result, err
 }
 
 // SetPermissionChecker sets the permission checker used to gate tool execution.
@@ -172,6 +208,14 @@ func (r *Registry) SetPermissionChecker(checker *permissions.Checker) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.checker = checker
+}
+
+// SetHookRunner sets the hook runner used for pre/post tool hooks.
+// If runner is nil, no hooks are executed (default behavior).
+func (r *Registry) SetHookRunner(runner HookRunner) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hooks = runner
 }
 
 // Count returns the number of registered tools.

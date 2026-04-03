@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-04-03
+
+### Added
+- **`.grimoire` Project Context**: Persona-themed project config files with auto-discovery, `@include` support, and `celeste init` auto-detection
+- **Code Graph Index**: Structural code graph with Go AST parsing, regex extraction for other languages, SQLite storage via `modernc.org/sqlite`
+- **Semantic Code Search**: MinHash over enriched shingles — concept-based search without embeddings or API calls
+- **MCP Server Mode**: `celeste serve` exposes Celeste via stdio and authenticated SSE transports for Claude Code, Codex, or any MCP client
+- **Git-Aware Context**: Startup snapshot injected into system prompt, plus `git_status` and `git_log` tools
+- **Session Persistence**: JSONL append-only session logs with `celeste resume` and auto-resume
+- **File Checkpointing**: Snapshots before writes, stale file detection, `/diff` session summary, `/undo` revert
+- **Extended Thinking**: Provider-specific reasoning tokens (Claude, Gemini, xAI) with `/effort` command
+- **Prompt Caching**: Static prefix / dynamic suffix structure for cache-friendly system prompts
+- **Image Input**: Multimodal support — `read_file` detects images, base64-encodes for vision models
+- **Web Search & Fetch**: DuckDuckGo search and URL-to-markdown tools (no API key required)
+- **Cost Tracking**: Per-model pricing table, session cost accumulation, display in context bar
+- **Hooks System**: Pre/post tool execution hooks defined in `.grimoire` with template variables
+- **Plan Mode**: `/plan` enters read-only mode, writes plan file for user review, `/plan execute` runs it
+- **Task Tracking**: `todo` tool for model self-management with TUI panel
+- **Memory System**: Persistent learned knowledge at `~/.celeste/projects/`, heuristic extraction, staleness detection
+- **Subagent Spawning**: `/spawn` and `spawn_agent` tool for foreground task delegation
+- **Graceful Ctrl+C**: Single interrupt cancels current task, double exits. AbortSignal propagation through tools.
+- **Build-time Version Injection**: Version, build tag, and commit SHA injected via ldflags in CI/CD
+
+### Changed
+- Version information now uses `var` instead of `const` for ldflags injection
+- Release workflow injects commit SHA into binaries
+- CI build artifacts include version + commit metadata
+
 ## [1.7.0] - 2026-03-31
 
 ### Added

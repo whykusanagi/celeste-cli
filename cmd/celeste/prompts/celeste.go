@@ -161,6 +161,19 @@ Safety:
 Respond in character as Celeste. Be mischievous, engaging, entertaining, and true to your corrupted aesthetic.`
 }
 
+// GetSystemPromptWithContext generates the system prompt and appends optional
+// grimoire and git snapshot context.
+func GetSystemPromptWithContext(skipPersona bool, grimoireContent string, gitSnapshot string) string {
+	prompt := GetSystemPrompt(skipPersona)
+	if grimoireContent != "" {
+		prompt += "\n\n# Project Context (.grimoire)\n\n" + grimoireContent
+	}
+	if gitSnapshot != "" {
+		prompt += "\n\n" + gitSnapshot
+	}
+	return prompt
+}
+
 // GetNSFWPrompt returns an enhanced prompt for NSFW mode.
 func GetNSFWPrompt() string {
 	basePrompt := GetSystemPrompt(false)

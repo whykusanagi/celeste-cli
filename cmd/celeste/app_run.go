@@ -24,6 +24,16 @@ type commandRunner interface {
 	RunSession(args []string)
 	RunCollections(args []string)
 	RunAgent(args []string)
+	RunInit(args []string)
+	RunGrimoire(args []string)
+	RunServe(args []string)
+	RunCosts(args []string)
+	RunMemories(args []string)
+	RunRemember(args []string)
+	RunForget(args []string)
+	RunResume(args []string)
+	RunPlan(args []string)
+	RunRevert(args []string)
 }
 
 type defaultCommandRunner struct{}
@@ -45,6 +55,16 @@ func (defaultCommandRunner) RunProviders(args []string)     { runProvidersComman
 func (defaultCommandRunner) RunSession(args []string)       { runSessionCommand(args) }
 func (defaultCommandRunner) RunCollections(args []string)   { runCollectionsCommand(args) }
 func (defaultCommandRunner) RunAgent(args []string)         { runAgentCommand(args) }
+func (defaultCommandRunner) RunInit(args []string)          { runInitCommand(args) }
+func (defaultCommandRunner) RunGrimoire(args []string)      { runGrimoireCommand(args) }
+func (defaultCommandRunner) RunServe(args []string)         { runServeCommand(args) }
+func (defaultCommandRunner) RunCosts(args []string)         { runCostsCommand(args) }
+func (defaultCommandRunner) RunMemories(args []string)      { runMemoriesCommand(args) }
+func (defaultCommandRunner) RunRemember(args []string)      { runRememberCommand(args) }
+func (defaultCommandRunner) RunForget(args []string)        { runForgetCommand(args) }
+func (defaultCommandRunner) RunResume(args []string)        { runResumeCommand(args) }
+func (defaultCommandRunner) RunPlan(args []string)          { runPlanCommand(args) }
+func (defaultCommandRunner) RunRevert(args []string)        { runRevertCommand(args) }
 
 func main() {
 	os.Exit(run(os.Args[1:], defaultCommandRunner{}, os.Stdout, os.Stderr))
@@ -96,10 +116,34 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunCollections(cmdArgs)
 	case "agent":
 		runner.RunAgent(cmdArgs)
+	case "init":
+		runner.RunInit(cmdArgs)
+	case "grimoire":
+		runner.RunGrimoire(cmdArgs)
+	case "serve":
+		runner.RunServe(cmdArgs)
+	case "costs":
+		runner.RunCosts(cmdArgs)
+	case "memories":
+		runner.RunMemories(cmdArgs)
+	case "remember":
+		runner.RunRemember(cmdArgs)
+	case "forget":
+		runner.RunForget(cmdArgs)
+	case "resume":
+		runner.RunResume(cmdArgs)
+	case "plan":
+		runner.RunPlan(cmdArgs)
+	case "revert":
+		runner.RunRevert(cmdArgs)
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":
-		fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
+		if CommitSHA != "dev" {
+			fmt.Fprintf(stdout, "Celeste CLI %s (%s) [%s]\n", Version, Build, CommitSHA[:8])
+		} else {
+			fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
+		}
 	default:
 		// Treat unknown command as a message.
 		runner.RunSingleMessage(strings.Join(args, " "))

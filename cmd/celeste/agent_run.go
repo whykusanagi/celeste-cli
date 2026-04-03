@@ -135,6 +135,7 @@ func runAgentCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Error creating agent runner: %v\n", err)
 		os.Exit(1)
 	}
+	defer runner.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

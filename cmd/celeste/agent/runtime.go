@@ -13,8 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -33,12 +36,20 @@ type Runner struct {
 	out      io.Writer
 	errOut   io.Writer
 	budget   *ctxmgr.TokenBudget
+	indexer  *codegraph.Indexer // code graph indexer, may be nil
 }
 
 // emitProgress calls r.options.OnProgress if it is set.
 func (r *Runner) emitProgress(kind ProgressKind, text string, turn, maxTurns int) {
 	if r.options.OnProgress != nil {
 		r.options.OnProgress(kind, text, turn, maxTurns)
+	}
+}
+
+// Close releases resources held by the runner (e.g. code graph DB).
+func (r *Runner) Close() {
+	if r.indexer != nil {
+		r.indexer.Close()
 	}
 }
 
@@ -67,9 +78,27 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	options.Workspace = filepath.Clean(absWorkspace)
 	normalizeOptions(&options)
 
+	// Set up file checkpointing for stale detection and undo support.
+	fileTracker := checkpoints.NewFileTracker()
+	sessionID := fmt.Sprintf("agent-%d", os.Getpid())
+	snapshotMgr := checkpoints.NewSnapshotManager(sessionID)
+
 	// Agent registry: register dev tools only (no configLoader = no skill tools).
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, options.Workspace, nil)
+	builtin.RegisterAll(registry, options.Workspace, nil, fileTracker, snapshotMgr)
+
+	// Initialize code graph for the workspace
+	var cgIndexer *codegraph.Indexer
+	_ = os.MkdirAll(filepath.Join(options.Workspace, ".celeste"), 0755)
+	if idx, cgErr := codegraph.NewIndexer(options.Workspace, filepath.Join(options.Workspace, ".celeste", "codegraph.db")); cgErr != nil {
+		fmt.Fprintf(errOut, "Warning: code graph init failed: %v\n", cgErr)
+	} else {
+		if err := idx.Update(); err != nil {
+			fmt.Fprintf(errOut, "Warning: code graph update failed: %v\n", err)
+		}
+		builtin.RegisterCodeGraphTools(registry, idx)
+		cgIndexer = idx
+	}
 
 	// Load permissions and set checker
 	agentHomeDir, _ := os.UserHomeDir()
@@ -107,6 +136,15 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 			systemPrompt = persona + "\n\n" + systemPrompt
 		}
 	}
+
+	// Inject grimoire and git context into agent system prompt
+	if projectGrimoire, err := grimoire.LoadAll(options.Workspace); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+		systemPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+	}
+	if gitSnap := grimoire.CaptureGitSnapshot(options.Workspace); gitSnap != nil {
+		systemPrompt += "\n\n" + gitSnap.FormatForPrompt()
+	}
+
 	client.SetSystemPrompt(systemPrompt)
 
 	store, err := NewCheckpointStore("")
@@ -126,6 +164,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		out:      out,
 		errOut:   errOut,
 		budget:   budget,
+		indexer:  cgIndexer,
 	}, nil
 }
 
