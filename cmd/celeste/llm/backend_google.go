@@ -3,6 +3,7 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -380,6 +381,29 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 
 			// Function responses use "user" role in Google GenAI
 			contents = append(contents, genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser))
+
+			// If the tool result carries image metadata, inject a user
+			// message with the image as inline data so Gemini can see it.
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					if b64, ok := msg.Metadata["base64"].(string); ok {
+						format, _ := msg.Metadata["format"].(string)
+						if format == "" {
+							format = "png"
+						}
+						filename, _ := msg.Metadata["filename"].(string)
+						imageBytes, decErr := base64.StdEncoding.DecodeString(b64)
+						if decErr == nil {
+							mimeType := fmt.Sprintf("image/%s", format)
+							parts := []*genai.Part{
+								genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", filename)),
+								genai.NewPartFromBytes(imageBytes, mimeType),
+							}
+							contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
+						}
+					}
+				}
+			}
 			continue
 		}
 

@@ -542,19 +542,17 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 				i, msg.Role, len(msg.Content), len(msg.ToolCalls)))
 		}
 
-		// Detect tool results with image metadata for future multimodal support.
-		// TODO(image-input): Convert image metadata into provider-appropriate
-		// image content blocks before sending messages to the LLM. Each
-		// provider has a different format:
-		//   - OpenAI:  {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}
-		//   - Anthropic: {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}
-		//   - Google:  genai.Part with InlineData
-		//   - xAI:    Similar to OpenAI format
-		// For now, log detected images so the plumbing is visible.
+		// Image metadata in tool results is now forwarded to the LLM.
+		// Each backend's convertMessages handles the Metadata map on tool
+		// messages and injects a multimodal user message with the image:
+		//   - OpenAI:  MultiContent with image_url data URI
+		//   - xAI:     MultiContent with image_url data URI
+		//   - Google:  InlineData part with decoded bytes
+		// Log detected images for observability.
 		for _, msg := range messages {
 			if msg.Role == "tool" && msg.Metadata != nil {
 				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					tui.LogInfo(fmt.Sprintf("  Image detected in tool result: %s (format: %s)",
+					tui.LogInfo(fmt.Sprintf("  Image in tool result will be forwarded: %s (format: %s)",
 						msg.Metadata["filename"], msg.Metadata["format"]))
 				}
 			}
