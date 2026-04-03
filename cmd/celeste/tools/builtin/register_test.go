@@ -10,7 +10,7 @@ import (
 func TestRegisterAll_DevToolsOnly(t *testing.T) {
 	registry := tools.NewRegistry()
 	RegisterAll(registry, t.TempDir(), nil)
-	// 6 dev tools + 14 config-free skills = 20
+	// 6 dev tools + 2 web tools + 14 config-free skills = 22
 	assert.True(t, registry.Count() > 6, "expected more than 6 tools, got %d", registry.Count())
 	bash, ok := registry.Get("bash")
 	assert.True(t, ok)
@@ -78,7 +78,7 @@ func TestRegisterReadOnlyDevTools(t *testing.T) {
 func TestToolCount(t *testing.T) {
 	registry := tools.NewRegistry()
 	RegisterAll(registry, t.TempDir(), nil)
-	// 6 dev tools + 2 git tools + 14 config-free skills = 22
+	// 6 dev tools + 2 git tools + 2 web tools + 14 config-free skills + 1 todo = 25
 	// (config-dependent tools not registered when configLoader is nil)
-	assert.Equal(t, 22, registry.Count(), "expected 22 tools without configLoader")
+	assert.Equal(t, 25, registry.Count(), "expected 25 tools without configLoader")
 }

@@ -31,6 +31,10 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 		RegisterCryptoTools(registry, configLoader)
 	}
 
+	// Web tools — available in Agent, Claw, Chat
+	registry.RegisterWithModes(NewWebSearchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewWebFetchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+
 	// Config-free skill tools — Chat and Claw only
 	registry.RegisterWithModes(NewCurrencyTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewBase64EncodeTool(), tools.ModeChat, tools.ModeClaw)
@@ -46,6 +50,9 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	registry.RegisterWithModes(NewQRCodeTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewUnitConverterTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewTimezoneConverterTool(), tools.ModeChat, tools.ModeClaw)
+
+	// Task tracking — available in Agent and Claw modes
+	registry.RegisterWithModes(NewTodoTool(), tools.ModeAgent, tools.ModeClaw)
 }
 
 // RegisterReadOnlyDevTools registers only read-only dev tools (for restricted agent mode).
