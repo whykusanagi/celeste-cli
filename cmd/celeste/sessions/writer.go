@@ -15,7 +15,7 @@ import (
 
 // LogEntry represents a single line in the JSONL session log.
 type LogEntry struct {
-	Type      string    `json:"type"`                 // "user", "assistant", "tool_call", "tool_result", "system"
+	Type      string    `json:"type"` // "user", "assistant", "tool_call", "tool_result", "system"
 	Content   string    `json:"content"`
 	Role      string    `json:"role,omitempty"`
 	ToolName  string    `json:"tool_name,omitempty"`

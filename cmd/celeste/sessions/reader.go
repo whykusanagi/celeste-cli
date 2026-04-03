@@ -15,7 +15,7 @@ import (
 type SessionInfo struct {
 	ID         string
 	Path       string
-	Title      string    // derived from first user message
+	Title      string // derived from first user message
 	EntryCount int
 	CreatedAt  time.Time
 	UpdatedAt  time.Time // file mtime

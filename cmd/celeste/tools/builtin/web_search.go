@@ -21,8 +21,8 @@ const maxSearchesPerSession = 10
 type WebSearchTool struct {
 	BaseTool
 
-	mu           sync.Mutex
-	searchCount  int
+	mu          sync.Mutex
+	searchCount int
 }
 
 // NewWebSearchTool creates a WebSearchTool.

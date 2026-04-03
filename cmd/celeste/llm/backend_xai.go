@@ -98,15 +98,15 @@ type xAIStreamOptions struct {
 
 // xAIChatCompletionRequest is the request format for xAI chat completions
 type xAIChatCompletionRequest struct {
-	Model            string            `json:"model"`
-	Messages         []xAIMessage      `json:"messages"`
-	Tools            []xAITool         `json:"tools,omitempty"`
-	Stream           bool              `json:"stream"`
-	StreamOptions    *xAIStreamOptions `json:"stream_options,omitempty"`
-	CollectionIDs    []string          `json:"collection_ids,omitempty"` // xAI Collections support
-	Temperature      float32           `json:"temperature,omitempty"`
-	MaxTokens        int               `json:"max_tokens,omitempty"`
-	ReasoningEffort  string            `json:"reasoning_effort,omitempty"` // "low", "medium", "high"
+	Model           string            `json:"model"`
+	Messages        []xAIMessage      `json:"messages"`
+	Tools           []xAITool         `json:"tools,omitempty"`
+	Stream          bool              `json:"stream"`
+	StreamOptions   *xAIStreamOptions `json:"stream_options,omitempty"`
+	CollectionIDs   []string          `json:"collection_ids,omitempty"` // xAI Collections support
+	Temperature     float32           `json:"temperature,omitempty"`
+	MaxTokens       int               `json:"max_tokens,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"` // "low", "medium", "high"
 }
 
 // xAIStreamChunk represents a streaming response chunk

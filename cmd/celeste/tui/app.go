@@ -104,7 +104,7 @@ type AppModel struct {
 	cancelFunc       context.CancelFunc
 	interruptPending bool
 	lastInterrupt    time.Time
-	agentRunStart     time.Time
+	agentRunStart    time.Time
 
 	// Per-message response timing and token stats (regular chat)
 	streamStart   time.Time

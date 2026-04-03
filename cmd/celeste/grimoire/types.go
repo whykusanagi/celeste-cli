@@ -115,4 +115,3 @@ func Merge(grimoires ...*Grimoire) *Grimoire {
 	}
 	return merged
 }
-

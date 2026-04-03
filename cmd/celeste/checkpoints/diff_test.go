@@ -124,11 +124,11 @@ func TestComputeDiff_Mixed(t *testing.T) {
 
 func TestDiffStats(t *testing.T) {
 	tests := []struct {
-		name       string
-		old        []string
-		new        []string
-		wantIns    int
-		wantDel    int
+		name    string
+		old     []string
+		new     []string
+		wantIns int
+		wantDel int
 	}{
 		{"identical", []string{"a", "b"}, []string{"a", "b"}, 0, 0},
 		{"pure insert", []string{"a"}, []string{"a", "b", "c"}, 2, 0},

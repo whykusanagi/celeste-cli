@@ -19,12 +19,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
@@ -502,10 +502,10 @@ func (a *hookRunnerAdapter) RunPostToolUse(toolName string, input map[string]any
 
 // TUIClientAdapter adapts the LLM client for the TUI.
 type TUIClientAdapter struct {
-	client       *llm.Client
-	registry     *tools.Registry
-	baseConfig   *config.Config // Store base config for loading named configs
-	costTracker  *costs.SessionTracker
+	client      *llm.Client
+	registry    *tools.Registry
+	baseConfig  *config.Config // Store base config for loading named configs
+	costTracker *costs.SessionTracker
 }
 
 // SendMessage implements tui.LLMClient.
