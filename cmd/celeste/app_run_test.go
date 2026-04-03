@@ -66,6 +66,14 @@ func (f *fakeRunner) RunAgent(args []string) {
 	f.lastCall = "agent"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunInit(args []string) {
+	f.lastCall = "init"
+	f.lastArgs = args
+}
+func (f *fakeRunner) RunGrimoire(args []string) {
+	f.lastCall = "grimoire"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_ShowsUsageAndTipWhenDefaultConfigExists(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}

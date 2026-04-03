@@ -24,6 +24,8 @@ type commandRunner interface {
 	RunSession(args []string)
 	RunCollections(args []string)
 	RunAgent(args []string)
+	RunInit(args []string)
+	RunGrimoire(args []string)
 }
 
 type defaultCommandRunner struct{}
@@ -45,6 +47,8 @@ func (defaultCommandRunner) RunProviders(args []string)     { runProvidersComman
 func (defaultCommandRunner) RunSession(args []string)       { runSessionCommand(args) }
 func (defaultCommandRunner) RunCollections(args []string)   { runCollectionsCommand(args) }
 func (defaultCommandRunner) RunAgent(args []string)         { runAgentCommand(args) }
+func (defaultCommandRunner) RunInit(args []string)          { runInitCommand(args) }
+func (defaultCommandRunner) RunGrimoire(args []string)      { runGrimoireCommand(args) }
 
 func main() {
 	os.Exit(run(os.Args[1:], defaultCommandRunner{}, os.Stdout, os.Stderr))
@@ -96,6 +100,10 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunCollections(cmdArgs)
 	case "agent":
 		runner.RunAgent(cmdArgs)
+	case "init":
+		runner.RunInit(cmdArgs)
+	case "grimoire":
+		runner.RunGrimoire(cmdArgs)
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":

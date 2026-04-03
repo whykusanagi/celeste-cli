@@ -114,6 +114,8 @@ Commands:
   context                 Show context/token usage
   stats                   Show usage statistics
   export                  Export session data
+  init                    Create a starter .grimoire for the current project
+  grimoire                Show the resolved project grimoire (all layers merged)
   wallet-monitor          Manage wallet security monitoring daemon
   help                    Show this help message
   version                 Show version information
