@@ -129,6 +129,13 @@ Commands:
   grimoire                Show the resolved project grimoire (all layers merged)
   serve                   Start MCP server (stdio or SSE transport)
   wallet-monitor          Manage wallet security monitoring daemon
+  costs                   Show session cost breakdown
+  memories                List memories for current project
+  remember "<text>"       Save a memory
+  forget <name>           Delete a memory
+  resume [session-id]     Resume a previous session
+  plan                    Show plan mode help
+  revert <file>           Revert a file from checkpoint
   help                    Show this help message
   version                 Show version information
 
