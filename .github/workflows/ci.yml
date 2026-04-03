@@ -163,10 +163,11 @@ jobs:
 
     - name: Build for multiple platforms
       run: |
-        GOOS=linux GOARCH=amd64 go build -o dist/celeste-linux-amd64 ./cmd/celeste
-        GOOS=darwin GOARCH=amd64 go build -o dist/celeste-darwin-amd64 ./cmd/celeste
-        GOOS=darwin GOARCH=arm64 go build -o dist/celeste-darwin-arm64 ./cmd/celeste
-        GOOS=windows GOARCH=amd64 go build -o dist/celeste-windows-amd64.exe ./cmd/celeste
+        LDFLAGS="-X main.Version=ci-${{ github.sha }} -X main.CommitSHA=${{ github.sha }}"
+        GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/celeste-linux-amd64 ./cmd/celeste
+        GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/celeste-darwin-amd64 ./cmd/celeste
+        GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/celeste-darwin-arm64 ./cmd/celeste
+        GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/celeste-windows-amd64.exe ./cmd/celeste
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4

@@ -38,10 +38,13 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-// Version information
-const (
-	Version = "1.7.0"
-	Build   = "bubbletea-tui"
+// Version information — injected at build time via ldflags.
+// CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
+// When not set by ldflags, defaults are used.
+var (
+	Version   = "1.8.0"
+	Build     = "bubbletea-tui"
+	CommitSHA = "dev"
 )
 
 // Global config name (set by -config flag)

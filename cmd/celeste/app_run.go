@@ -111,7 +111,11 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":
-		fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
+		if CommitSHA != "dev" {
+			fmt.Fprintf(stdout, "Celeste CLI %s (%s) [%s]\n", Version, Build, CommitSHA[:8])
+		} else {
+			fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
+		}
 	default:
 		// Treat unknown command as a message.
 		runner.RunSingleMessage(strings.Join(args, " "))

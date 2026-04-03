@@ -858,5 +858,5 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 
 ---
 
-**Last Updated**: 2026-03-15
-**Version**: v1.7.0
+**Last Updated**: 2026-04-03
+**Version**: v1.8.0
