@@ -16,9 +16,10 @@ import (
 // GoogleBackend implements LLMBackend using Google's native GenAI SDK.
 // This backend supports Gemini AI Studio and Vertex AI with automatic authentication.
 type GoogleBackend struct {
-	client       *genai.Client
-	config       *Config
-	systemPrompt string
+	client         *genai.Client
+	config         *Config
+	systemPrompt   string
+	thinkingConfig ThinkingConfig
 }
 
 // NewGoogleBackend creates a new Google GenAI backend with automatic authentication.
@@ -78,6 +79,12 @@ func (b *GoogleBackend) SetSystemPrompt(prompt string) {
 	b.systemPrompt = prompt
 }
 
+// SetThinkingConfig configures extended thinking for Gemini models.
+// Gemini supports thinkingBudget via GenerateContentConfig.ThinkingConfig.
+func (b *GoogleBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.thinkingConfig = config
+}
+
 // SendMessageSync sends a message synchronously and returns the complete result.
 func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	// Convert messages to Google GenAI format
@@ -103,6 +110,8 @@ func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 			{FunctionDeclarations: functionDeclarations},
 		}
 	}
+
+	b.applyThinkingConfig(genConfig)
 
 	// Generate content
 	modelName := b.config.Model
@@ -166,6 +175,8 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 			{FunctionDeclarations: functionDeclarations},
 		}
 	}
+
+	b.applyThinkingConfig(genConfig)
 
 	// Stream the response
 	modelName := b.config.Model
@@ -254,6 +265,8 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 		}
 	}
 
+	b.applyThinkingConfig(genConfig)
+
 	// Stream the response
 	modelName := b.config.Model
 	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
@@ -314,6 +327,23 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	})
 
 	return nil
+}
+
+// applyThinkingConfig adds ThinkingConfig to the generation config when
+// thinking is enabled.
+func (b *GoogleBackend) applyThinkingConfig(genConfig *genai.GenerateContentConfig) {
+	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+		return
+	}
+	budget := b.thinkingConfig.LevelToBudget()
+	tc := &genai.ThinkingConfig{
+		IncludeThoughts: true,
+	}
+	if budget > 0 {
+		b32 := int32(budget)
+		tc.ThinkingBudget = &b32
+	}
+	genConfig.ThinkingConfig = tc
 }
 
 // Close cleans up resources.

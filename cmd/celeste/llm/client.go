@@ -96,6 +96,13 @@ func (c *Client) SetSystemPrompt(prompt string) {
 	}
 }
 
+// SetThinkingConfig configures extended thinking / reasoning effort.
+func (c *Client) SetThinkingConfig(config ThinkingConfig) {
+	if c.backend != nil {
+		c.backend.SetThinkingConfig(config)
+	}
+}
+
 // UpdateConfig updates the client configuration and recreates the backend if needed.
 // This allows dynamic endpoint/model switching during runtime.
 func (c *Client) UpdateConfig(config *Config) {

@@ -1,6 +1,9 @@
 package builtin
 
-import "github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+import (
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+)
 
 // RegisterAll registers all built-in tools with the registry.
 func RegisterAll(registry *tools.Registry, workspace string, configLoader ConfigLoader) {
@@ -50,6 +53,14 @@ func RegisterReadOnlyDevTools(registry *tools.Registry, workspace string) {
 	registry.RegisterWithModes(NewReadFileTool(workspace), tools.ModeAgent)
 	registry.RegisterWithModes(NewListFilesTool(workspace), tools.ModeAgent)
 	registry.RegisterWithModes(NewSearchTool(workspace), tools.ModeAgent)
+}
+
+// RegisterCodeGraphTools registers code graph tools with the given indexer.
+// Called after the indexer is initialized during startup.
+func RegisterCodeGraphTools(registry *tools.Registry, indexer *codegraph.Indexer) {
+	registry.RegisterWithModes(NewCodeSearchTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewCodeGraphTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewCodeSymbolsTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 }
 
 // RegisterCryptoTools registers all crypto/blockchain tools.

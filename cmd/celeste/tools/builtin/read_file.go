@@ -2,9 +2,11 @@ package builtin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
@@ -87,6 +89,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
 
+	// Check for image files and handle them with base64 encoding
+	ext := strings.ToLower(filepath.Ext(targetPath))
+	if isImageExtension(ext) {
+		return t.readImageFile(targetPath, path, ext)
+	}
+
 	data, err := os.ReadFile(targetPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
@@ -132,5 +140,57 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 	return tools.ToolResult{
 		Content:  formatResult(result),
 		Metadata: result,
+	}, nil
+}
+
+// maxImageBytes limits image file reads to 10 MB.
+const maxImageBytes = 10 * 1024 * 1024
+
+// imageExtensions lists file extensions treated as images.
+var imageExtensions = map[string]bool{
+	".png":  true,
+	".jpg":  true,
+	".jpeg": true,
+	".gif":  true,
+	".webp": true,
+}
+
+// isImageExtension reports whether ext (with leading dot, lowercase) is an image extension.
+func isImageExtension(ext string) bool {
+	return imageExtensions[ext]
+}
+
+// readImageFile reads an image file and returns a ToolResult with base64-encoded
+// content in the Metadata map, enabling downstream consumers (LLM client / TUI
+// adapter) to convert it into provider-specific image content blocks.
+func (t *ReadFileTool) readImageFile(targetPath, relPath, ext string) (tools.ToolResult, error) {
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: err.Error()}, nil
+	}
+
+	if len(data) > maxImageBytes {
+		return tools.ToolResult{
+			Error:   true,
+			Content: fmt.Sprintf("image file too large: %d bytes (max %d)", len(data), maxImageBytes),
+		}, nil
+	}
+
+	base64Data := base64.StdEncoding.EncodeToString(data)
+	format := ext[1:] // strip leading dot: ".png" -> "png"
+
+	// Record mtime for stale detection
+	if t.tracker != nil {
+		_ = t.tracker.RecordRead(targetPath)
+	}
+
+	return tools.ToolResult{
+		Content: fmt.Sprintf("Image file: %s (%s, %d bytes)", relPath, format, len(data)),
+		Metadata: map[string]any{
+			"type":     "image",
+			"format":   format,
+			"base64":   base64Data,
+			"filename": filepath.Base(targetPath),
+		},
 	}, nil
 }

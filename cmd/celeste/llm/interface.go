@@ -34,6 +34,10 @@ type LLMBackend interface {
 	// This configures the LLM's behavior and character.
 	SetSystemPrompt(prompt string)
 
+	// SetThinkingConfig configures extended thinking / reasoning effort.
+	// Backends that don't support thinking silently ignore the config.
+	SetThinkingConfig(config ThinkingConfig)
+
 	// Close cleans up resources (e.g., network connections).
 	// Should be called when the backend is no longer needed.
 	Close() error

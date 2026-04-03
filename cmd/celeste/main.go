@@ -449,6 +449,24 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 				i, msg.Role, len(msg.Content), len(msg.ToolCalls)))
 		}
 
+		// Detect tool results with image metadata for future multimodal support.
+		// TODO(image-input): Convert image metadata into provider-appropriate
+		// image content blocks before sending messages to the LLM. Each
+		// provider has a different format:
+		//   - OpenAI:  {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}
+		//   - Anthropic: {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}
+		//   - Google:  genai.Part with InlineData
+		//   - xAI:    Similar to OpenAI format
+		// For now, log detected images so the plumbing is visible.
+		for _, msg := range messages {
+			if msg.Role == "tool" && msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					tui.LogInfo(fmt.Sprintf("  Image detected in tool result: %s (format: %s)",
+						msg.Metadata["filename"], msg.Metadata["format"]))
+				}
+			}
+		}
+
 		// Check if we're sending tools to Venice uncensored (which may not support function calling)
 		if strings.Contains(currentConfig.BaseURL, "venice") && currentConfig.Model == "venice-uncensored" && len(tools) > 0 {
 			tui.LogInfo(fmt.Sprintf("  ⚠️  WARNING: Sending %d tools to venice-uncensored model", len(tools)))
@@ -764,6 +782,16 @@ func (a *TUIClientAdapter) ChangeModel(model string) error {
 	a.client.UpdateConfig(newConfig)
 	tui.LogInfo(fmt.Sprintf("Changed model to: %s", model))
 	return nil
+}
+
+// SetThinkingLevel implements tui.ThinkingConfigSetter.
+func (a *TUIClientAdapter) SetThinkingLevel(level string) {
+	enabled := level != "off"
+	a.client.SetThinkingConfig(llm.ThinkingConfig{
+		Enabled: enabled,
+		Level:   level,
+	})
+	tui.LogInfo(fmt.Sprintf("Thinking config set: level=%s, enabled=%v", level, enabled))
 }
 
 func parseArgs(argsJSON string) (map[string]any, error) {

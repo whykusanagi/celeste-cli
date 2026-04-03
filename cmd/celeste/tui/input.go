@@ -12,7 +12,7 @@ import (
 
 // knownCommands is the authoritative list of slash commands for typeahead.
 var knownCommands = []string{
-	"agent", "clear", "config", "context", "endpoint", "export",
+	"agent", "clear", "config", "context", "effort", "endpoint", "export",
 	"help", "model", "nsfw", "orch", "orchestrate", "providers",
 	"safe", "session", "set-model", "skills", "stats", "tools",
 }

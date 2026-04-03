@@ -142,6 +142,11 @@ type EndpointSwitcher interface {
 	ChangeModel(model string) error
 }
 
+// ThinkingConfigSetter interface for clients that support extended thinking / reasoning effort.
+type ThinkingConfigSetter interface {
+	SetThinkingLevel(level string)
+}
+
 // SkillDefinition represents a skill/function that can be called.
 type SkillDefinition struct {
 	Name        string         `json:"name"`
@@ -542,6 +547,37 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "mcp":
 				m.mcpPanel.Show()
+				return m, nil
+
+			case "effort":
+				validLevels := []string{"off", "low", "medium", "high", "max"}
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Usage: /effort <level>\nLevels: off, low, medium, high, max")
+					return m, nil
+				}
+				level := strings.ToLower(cmd.Args[0])
+				valid := false
+				for _, l := range validLevels {
+					if l == level {
+						valid = true
+						break
+					}
+				}
+				if !valid {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Invalid effort level: %s\nValid levels: off, low, medium, high, max", level))
+					return m, nil
+				}
+				setter, ok := m.llmClient.(ThinkingConfigSetter)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("Extended thinking is not supported by the current client.")
+					return m, nil
+				}
+				setter.SetThinkingLevel(level)
+				if level == "off" {
+					m.chat = m.chat.AddSystemMessage("Extended thinking disabled.")
+				} else {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Reasoning effort set to: %s", level))
+				}
 				return m, nil
 			}
 

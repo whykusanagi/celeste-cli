@@ -17,6 +17,7 @@ type ChatMessage struct {
 	Name       string         // For tool messages, the function name
 	ToolCalls  []ToolCallInfo // For assistant messages, the tool calls that were made
 	Timestamp  time.Time      // When the message was created
+	Metadata   map[string]any // Optional metadata (e.g. image data from tool results)
 }
 
 // ToolCallInfo represents a tool call in an assistant message.

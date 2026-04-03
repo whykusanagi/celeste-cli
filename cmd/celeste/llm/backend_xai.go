@@ -19,13 +19,14 @@ import (
 // XAIBackend implements LLMBackend using xAI's native API.
 // This backend supports xAI-specific features like Collections (RAG).
 type XAIBackend struct {
-	apiKey       string
-	baseURL      string
-	model        string
-	config       *Config
-	httpClient   *http.Client
-	systemPrompt string
-	registry     *tools.Registry
+	apiKey         string
+	baseURL        string
+	model          string
+	config         *Config
+	httpClient     *http.Client
+	systemPrompt   string
+	registry       *tools.Registry
+	thinkingConfig ThinkingConfig
 }
 
 // NewXAIBackend creates a new xAI backend with Collections support.
@@ -52,6 +53,12 @@ func NewXAIBackend(config *Config, registry *tools.Registry) (*XAIBackend, error
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (b *XAIBackend) SetSystemPrompt(prompt string) {
 	b.systemPrompt = prompt
+}
+
+// SetThinkingConfig configures extended thinking / reasoning effort for Grok models.
+// xAI supports reasoning_effort in the request body.
+func (b *XAIBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.thinkingConfig = config
 }
 
 // xAIMessage represents a message in xAI's format
@@ -91,14 +98,15 @@ type xAIStreamOptions struct {
 
 // xAIChatCompletionRequest is the request format for xAI chat completions
 type xAIChatCompletionRequest struct {
-	Model         string            `json:"model"`
-	Messages      []xAIMessage      `json:"messages"`
-	Tools         []xAITool         `json:"tools,omitempty"`
-	Stream        bool              `json:"stream"`
-	StreamOptions *xAIStreamOptions `json:"stream_options,omitempty"`
-	CollectionIDs []string          `json:"collection_ids,omitempty"` // xAI Collections support
-	Temperature   float32           `json:"temperature,omitempty"`
-	MaxTokens     int               `json:"max_tokens,omitempty"`
+	Model            string            `json:"model"`
+	Messages         []xAIMessage      `json:"messages"`
+	Tools            []xAITool         `json:"tools,omitempty"`
+	Stream           bool              `json:"stream"`
+	StreamOptions    *xAIStreamOptions `json:"stream_options,omitempty"`
+	CollectionIDs    []string          `json:"collection_ids,omitempty"` // xAI Collections support
+	Temperature      float32           `json:"temperature,omitempty"`
+	MaxTokens        int               `json:"max_tokens,omitempty"`
+	ReasoningEffort  string            `json:"reasoning_effort,omitempty"` // "low", "medium", "high"
 }
 
 // xAIStreamChunk represents a streaming response chunk
@@ -149,6 +157,8 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 				len(req.CollectionIDs), req.CollectionIDs))
 		}
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Marshal request
 	jsonData, err := json.Marshal(req)
@@ -308,6 +318,8 @@ func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui
 			req.CollectionIDs = b.config.Collections.ActiveCollections
 		}
 	}
+
+	b.applyThinkingConfig(&req)
 
 	// Marshal request
 	jsonData, err := json.Marshal(req)
@@ -619,6 +631,21 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 	}
 
 	return result
+}
+
+// applyThinkingConfig sets reasoning_effort on the request when thinking is enabled.
+func (b *XAIBackend) applyThinkingConfig(req *xAIChatCompletionRequest) {
+	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+		return
+	}
+	switch b.thinkingConfig.Level {
+	case "low":
+		req.ReasoningEffort = "low"
+	case "medium":
+		req.ReasoningEffort = "medium"
+	case "high", "max":
+		req.ReasoningEffort = "high"
+	}
 }
 
 // Close cleans up resources (implements LLMBackend interface)
