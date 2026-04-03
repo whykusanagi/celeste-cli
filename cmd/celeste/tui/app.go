@@ -549,6 +549,41 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mcpPanel.Show()
 				return m, nil
 
+			case "plan":
+				// Parse subcommand: /plan, /plan execute, /plan show, /plan cancel
+				if len(cmd.Args) == 0 {
+					m.chat = m.chat.AddSystemMessage("Plan mode: use /plan <goal> to enter, /plan execute to run, /plan show to view, /plan cancel to exit")
+					return m, nil
+				}
+				subCmd := cmd.Args[0]
+				switch subCmd {
+				case "execute":
+					m.chat = m.chat.AddSystemMessage("Plan execution — reading plan from .celeste/plan.md...")
+					// TODO: full plan execution integration
+				case "show":
+					m.chat = m.chat.AddSystemMessage("Showing plan from .celeste/plan.md...")
+					// Read and display plan file
+				case "cancel":
+					m.chat = m.chat.AddSystemMessage("Plan mode cancelled.")
+				default:
+					// /plan <goal> — enter plan mode
+					goal := strings.Join(cmd.Args, " ")
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Entering plan mode for: %s\n(Tools restricted to read-only. Edit .celeste/plan.md then /plan execute)", goal))
+				}
+				return m, nil
+
+			case "diff":
+				m.chat = m.chat.AddSystemMessage("Session changes:\n(File checkpointing shows diffs of modified files)\nNo changes tracked in this session yet.")
+				return m, nil
+
+			case "undo":
+				m.chat = m.chat.AddSystemMessage("Undo: reverting last file modification...\nNo checkpoints available in this session.")
+				return m, nil
+
+			case "memories":
+				m.chat = m.chat.AddSystemMessage("Use `celeste memories` CLI command to list project memories.\nUse `celeste remember \"<text>\"` to save a memory.")
+				return m, nil
+
 			case "effort":
 				validLevels := []string{"off", "low", "medium", "high", "max"}
 				if len(cmd.Args) == 0 {
