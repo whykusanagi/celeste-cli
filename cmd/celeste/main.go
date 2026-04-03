@@ -17,6 +17,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -323,11 +325,21 @@ func runChatTUI() {
 		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, projectContext, gitSnapshotContent))
 	}
 
+	// Wire grimoire hooks into the tool registry
+	if projectGrimoire != nil {
+		parsedHooks := hooks.ParseFromGrimoire(projectGrimoire)
+		if len(parsedHooks) > 0 {
+			executor := hooks.NewExecutor(parsedHooks, cwd)
+			registry.SetHookRunner(&hookRunnerAdapter{executor: executor})
+		}
+	}
+
 	// Create TUI client adapter
 	tuiClient := &TUIClientAdapter{
-		client:     client,
-		registry:   registry,
-		baseConfig: cfg,
+		client:      client,
+		registry:    registry,
+		baseConfig:  cfg,
+		costTracker: costs.NewSessionTracker(),
 	}
 
 	// Initialize logging for skill calls
@@ -444,11 +456,33 @@ func runChatTUI() {
 	}
 }
 
+// hookRunnerAdapter adapts hooks.Executor to satisfy tools.HookRunner interface.
+type hookRunnerAdapter struct {
+	executor *hooks.Executor
+}
+
+func (a *hookRunnerAdapter) RunPreToolUse(toolName string, input map[string]any) (*tools.HookResult, error) {
+	result, err := a.executor.RunPreToolUse(toolName, input)
+	if err != nil {
+		return nil, err
+	}
+	return &tools.HookResult{Decision: result.Decision, Output: result.Output}, nil
+}
+
+func (a *hookRunnerAdapter) RunPostToolUse(toolName string, input map[string]any) (*tools.HookResult, error) {
+	result, err := a.executor.RunPostToolUse(toolName, input)
+	if err != nil {
+		return nil, err
+	}
+	return &tools.HookResult{Decision: result.Decision, Output: result.Output}, nil
+}
+
 // TUIClientAdapter adapts the LLM client for the TUI.
 type TUIClientAdapter struct {
-	client     *llm.Client
-	registry   *tools.Registry
-	baseConfig *config.Config // Store base config for loading named configs
+	client       *llm.Client
+	registry     *tools.Registry
+	baseConfig   *config.Config // Store base config for loading named configs
+	costTracker  *costs.SessionTracker
 }
 
 // SendMessage implements tui.LLMClient.
@@ -602,13 +636,18 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 			}
 		}
 
-		// Convert llm.TokenUsage to tui.TokenUsage
+		// Convert llm.TokenUsage to tui.TokenUsage and record costs
 		var tuiUsage *tui.TokenUsage
 		if usage != nil {
 			tuiUsage = &tui.TokenUsage{
 				PromptTokens:     usage.PromptTokens,
 				CompletionTokens: usage.CompletionTokens,
 				TotalTokens:      usage.TotalTokens,
+			}
+			a.costTracker.RecordUsage(currentConfig.Model, usage.PromptTokens, usage.CompletionTokens)
+			summary := a.costTracker.GetSummary()
+			if summary.TotalCostUSD > 0 {
+				tui.LogInfo(fmt.Sprintf("Session cost: $%.4f (%d turns)", summary.TotalCostUSD, summary.Turns))
 			}
 		}
 
