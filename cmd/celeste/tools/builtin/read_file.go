@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -16,11 +17,13 @@ const maxReadBytes = 200_000
 type ReadFileTool struct {
 	BaseTool
 	workspace string
+	tracker   *checkpoints.FileTracker
 }
 
 // NewReadFileTool creates a ReadFileTool bound to the given workspace directory.
-func NewReadFileTool(workspace string) *ReadFileTool {
-	return &ReadFileTool{
+// An optional FileTracker records mtimes after each read for stale detection.
+func NewReadFileTool(workspace string, opts ...ReadFileOption) *ReadFileTool {
+	t := &ReadFileTool{
 		BaseTool: BaseTool{
 			ToolName:        "read_file",
 			ToolDescription: "Read a text file from workspace. Supports optional line ranges.",
@@ -47,6 +50,20 @@ func NewReadFileTool(workspace string) *ReadFileTool {
 			RequiredFields:  []string{"path"},
 		},
 		workspace: workspace,
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+// ReadFileOption configures optional dependencies for ReadFileTool.
+type ReadFileOption func(*ReadFileTool)
+
+// WithReadFileTracker attaches a FileTracker for stale detection.
+func WithReadFileTracker(ft *checkpoints.FileTracker) ReadFileOption {
+	return func(t *ReadFileTool) {
+		t.tracker = ft
 	}
 }
 
@@ -95,6 +112,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 	selected := ""
 	if totalLines > 0 {
 		selected = strings.Join(lines[startLine-1:endLine], "\n")
+	}
+
+	// Record mtime for stale detection
+	if t.tracker != nil {
+		_ = t.tracker.RecordRead(targetPath)
 	}
 
 	result := map[string]any{
