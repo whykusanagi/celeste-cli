@@ -36,13 +36,13 @@ type toolsListResult struct {
 	Tools []MCPToolDef `json:"tools"`
 }
 
-// toolCallResult is the server's response to tools/call.
-type toolCallResult struct {
-	Content []contentBlock `json:"content"`
+// ToolCallResult is the server's response to tools/call.
+type ToolCallResult struct {
+	Content []ContentBlock `json:"content"`
 }
 
-// contentBlock is a single content item in a tool call response.
-type contentBlock struct {
+// ContentBlock is a single content item in a tool call response.
+type ContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
@@ -197,7 +197,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 		return "", fmt.Errorf("tools/call error: %w", resp.Error)
 	}
 
-	var result toolCallResult
+	var result ToolCallResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return "", fmt.Errorf("unmarshal tools/call result: %w", err)
 	}

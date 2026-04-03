@@ -74,6 +74,10 @@ func (f *fakeRunner) RunGrimoire(args []string) {
 	f.lastCall = "grimoire"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunServe(args []string) {
+	f.lastCall = "serve"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_ShowsUsageAndTipWhenDefaultConfigExists(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}

@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +30,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/server"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/subagents"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
@@ -120,6 +124,7 @@ Commands:
   export                  Export session data
   init                    Create a starter .grimoire for the current project
   grimoire                Show the resolved project grimoire (all layers merged)
+  serve                   Start MCP server (stdio or SSE transport)
   wallet-monitor          Manage wallet security monitoring daemon
   help                    Show this help message
   version                 Show version information
@@ -238,6 +243,14 @@ func runChatTUI() {
 	cwd, _ := os.Getwd()
 	builtin.RegisterAll(registry, cwd, configLoader)
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+
+	// Register subagent spawning tool
+	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
+	subMgr := subagents.NewManager(cfg, cwd, isChild)
+	registry.RegisterWithModes(
+		subagents.NewSpawnAgentTool(subMgr),
+		tools.ModeAgent, tools.ModeClaw,
+	)
 
 	// Load permissions and set checker
 	permConfigPath := filepath.Join(homeDir, ".celeste", "permissions.json")
@@ -1845,6 +1858,46 @@ func runWalletMonitorCommand(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown wallet-monitor command: %s\n", subcommand)
 		fmt.Fprintln(os.Stderr, "Valid commands: start, stop, status")
+		os.Exit(1)
+	}
+}
+
+// runServeCommand starts the MCP server with the given arguments.
+func runServeCommand(args []string) {
+	serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
+	sseMode := serveFlags.Bool("sse", false, "Use SSE transport instead of stdio")
+	port := serveFlags.Int("port", 8420, "Port for SSE transport")
+	remote := serveFlags.Bool("remote", false, "Bind to 0.0.0.0 for network access")
+	certFile := serveFlags.String("cert", "", "TLS certificate file for mTLS")
+	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
+	serveFlags.Parse(args)
+
+	cfg, err := config.LoadNamed(configName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	serverCfg := server.DefaultConfig()
+	serverCfg.CelesteConfig = cfg
+	serverCfg.Workspace, _ = os.Getwd()
+
+	if *sseMode {
+		serverCfg.Transport = "sse"
+		serverCfg.Port = *port
+		serverCfg.Remote = *remote
+		serverCfg.CertFile = *certFile
+		serverCfg.KeyFile = *keyFile
+	}
+
+	srv := server.New(serverCfg)
+	server.RegisterHandlers(srv)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := srv.Serve(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
 }
