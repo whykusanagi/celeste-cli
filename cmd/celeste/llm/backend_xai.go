@@ -78,11 +78,11 @@ type xAIMessage struct {
 // "content" field is either a string or an array of content parts.
 func (m xAIMessage) MarshalJSON() ([]byte, error) {
 	type Alias struct {
-		Role       string           `json:"role"`
-		Content    interface{}      `json:"content,omitempty"`
-		ToolCalls  []xAIToolCall    `json:"tool_calls,omitempty"`
-		ToolCallID string           `json:"tool_call_id,omitempty"`
-		Name       string           `json:"name,omitempty"`
+		Role       string        `json:"role"`
+		Content    interface{}   `json:"content,omitempty"`
+		ToolCalls  []xAIToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string        `json:"tool_call_id,omitempty"`
+		Name       string        `json:"name,omitempty"`
 	}
 	a := Alias{
 		Role:       m.Role,
