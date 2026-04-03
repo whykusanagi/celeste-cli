@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -42,9 +43,11 @@ func TestLoadOrCreateTokenNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat token file: %v", err)
 	}
-	perm := info.Mode().Perm()
-	if perm != 0600 {
-		t.Fatalf("expected 0600 permissions, got %04o", perm)
+	if runtime.GOOS != "windows" {
+		perm := info.Mode().Perm()
+		if perm != 0600 {
+			t.Fatalf("expected 0600 permissions, got %04o", perm)
+		}
 	}
 }
 

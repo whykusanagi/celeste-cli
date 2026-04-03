@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -91,7 +92,7 @@ func (idx *Index) Render() string {
 
 // Save writes the index to disk as MEMORY.md.
 func (idx *Index) Save() error {
-	if err := os.MkdirAll(strings.TrimSuffix(idx.path, "/MEMORY.md"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(idx.path), 0755); err != nil {
 		return err
 	}
 
