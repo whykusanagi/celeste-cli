@@ -12,6 +12,10 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 		registry.RegisterWithModes(NewPatchFileTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewListFilesTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewSearchTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+
+		// Git tools — available in all modes (read-only, always useful)
+		registry.RegisterWithModes(NewGitStatusTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+		registry.RegisterWithModes(NewGitLogTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	}
 
 	// Skill tools that require config — Chat and Claw only
