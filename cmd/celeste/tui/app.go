@@ -1497,7 +1497,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.llmClient != nil && msg.ToolCallID != "" {
-			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, resultForLLM)
+			// If the tool result contains image metadata, enrich the text
+			// content so the LLM knows an image was captured, and forward
+			// the metadata so backends can build multimodal messages.
+			var resultMetadata map[string]any
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					resultMetadata = msg.Metadata
+					if format, ok := msg.Metadata["format"].(string); ok {
+						if filename, ok := msg.Metadata["filename"].(string); ok {
+							LogInfo(fmt.Sprintf("Forwarding image from tool result: %s (format: %s)", filename, format))
+						}
+						// Append a marker so the LLM is aware an image was read.
+						// The actual base64 data is carried in Metadata for
+						// backends that support multimodal tool results.
+						resultForLLM += fmt.Sprintf("\n\n[Image data available: format=%s. The image content has been captured and will be provided to vision-capable models.]", format)
+					}
+				}
+			}
+			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, resultForLLM, resultMetadata)
 		}
 
 		if isBatchResult {

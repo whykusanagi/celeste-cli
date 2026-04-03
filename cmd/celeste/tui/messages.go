@@ -103,7 +103,8 @@ type SkillResultMsg struct {
 	Name       string
 	Result     string
 	Err        error
-	ToolCallID string // OpenAI tool call ID for sending result back
+	ToolCallID string         // OpenAI tool call ID for sending result back
+	Metadata   map[string]any // Optional metadata (e.g. image base64 from read_file)
 }
 
 // AgentCommandResultMsg is sent when a TUI /agent command completes.

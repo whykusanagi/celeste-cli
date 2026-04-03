@@ -489,6 +489,39 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 				Content:    msg.Content,
 				ToolCallID: msg.ToolCallID,
 			})
+
+			// If this tool result carries image metadata, inject a user
+			// message with the image as a data URL so vision-capable models
+			// can actually see it.  The OpenAI API only supports multipart
+			// content on user messages, not tool messages.
+			if msg.Metadata != nil {
+				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
+					if b64, ok := msg.Metadata["base64"].(string); ok {
+						format, _ := msg.Metadata["format"].(string)
+						if format == "" {
+							format = "png"
+						}
+						filename, _ := msg.Metadata["filename"].(string)
+						dataURL := fmt.Sprintf("data:image/%s;base64,%s", format, b64)
+						result = append(result, openai.ChatCompletionMessage{
+							Role: "user",
+							MultiContent: []openai.ChatMessagePart{
+								{
+									Type: openai.ChatMessagePartTypeText,
+									Text: fmt.Sprintf("[Attached image from tool result: %s]", filename),
+								},
+								{
+									Type: openai.ChatMessagePartTypeImageURL,
+									ImageURL: &openai.ChatMessageImageURL{
+										URL:    dataURL,
+										Detail: openai.ImageURLDetailAuto,
+									},
+								},
+							},
+						})
+					}
+				}
+			}
 		} else if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 			// Assistant messages with tool_calls need to include ToolCalls field
 			toolCalls := make([]openai.ToolCall, len(msg.ToolCalls))

@@ -63,11 +63,25 @@ func (b *XAIBackend) SetThinkingConfig(config ThinkingConfig) {
 
 // xAIMessage represents a message in xAI's format
 type xAIMessage struct {
-	Role       string        `json:"role"`
-	Content    string        `json:"content,omitempty"`
-	ToolCalls  []xAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
-	Name       string        `json:"name,omitempty"`
+	Role         string            `json:"role"`
+	Content      string            `json:"content,omitempty"`
+	MultiContent []xAIContentPart  `json:"content,omitempty"` // used when Content is empty
+	ToolCalls    []xAIToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID   string            `json:"tool_call_id,omitempty"`
+	Name         string            `json:"name,omitempty"`
+}
+
+// xAIContentPart represents a content part in a multimodal message.
+type xAIContentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *xAIImageURL  `json:"image_url,omitempty"`
+}
+
+// xAIImageURL represents an image URL in a content part.
+type xAIImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // xAIToolCall represents a tool call in xAI's format

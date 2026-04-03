@@ -761,6 +761,7 @@ func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCa
 			Result:     resultStr,
 			Err:        nil,
 			ToolCallID: toolCallID,
+			Metadata:   result.Metadata,
 		}
 	}
 }
