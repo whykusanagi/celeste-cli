@@ -119,9 +119,7 @@ func resolveNestedIncludes(ref *IncludeRef, baseDir string, visited map[string]b
 func resolvePath(ref string, baseDir string) (string, error) {
 	// Strip the @ prefix
 	path := ref
-	if strings.HasPrefix(path, "@") {
-		path = path[1:]
-	}
+	path = strings.TrimPrefix(path, "@")
 
 	if strings.HasPrefix(path, "~/") {
 		homeDir, err := os.UserHomeDir()

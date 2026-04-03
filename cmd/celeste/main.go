@@ -1880,7 +1880,7 @@ func runServeCommand(args []string) {
 	remote := serveFlags.Bool("remote", false, "Bind to 0.0.0.0 for network access")
 	certFile := serveFlags.String("cert", "", "TLS certificate file for mTLS")
 	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
-	serveFlags.Parse(args)
+	_ = serveFlags.Parse(args)
 
 	cfg, err := config.LoadNamed(configName)
 	if err != nil {

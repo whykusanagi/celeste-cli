@@ -111,7 +111,7 @@ func GenerateTemplate(info *ProjectInfo) string {
 	sb.WriteString("## Bindings\n")
 	switch info.Language {
 	case "go":
-		sb.WriteString(fmt.Sprintf("- This is a Go project\n"))
+		sb.WriteString("- This is a Go project\n")
 		if info.ModulePath != "" {
 			sb.WriteString(fmt.Sprintf("- Module path: %s\n", info.ModulePath))
 		}

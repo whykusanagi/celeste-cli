@@ -453,11 +453,6 @@ func (b *OpenAIBackend) Close() error {
 	return nil
 }
 
-// isAnthropicProvider checks if the base URL points to an Anthropic endpoint.
-func (b *OpenAIBackend) isAnthropicProvider() bool {
-	return b.config.BaseURL != "" && strings.Contains(b.config.BaseURL, "anthropic")
-}
-
 // convertMessages converts TUI messages to OpenAI format.
 func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.ChatCompletionMessage {
 	var result []openai.ChatCompletionMessage
