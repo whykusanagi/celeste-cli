@@ -1,18 +1,34 @@
 package builtin
 
 import (
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
 // RegisterAll registers all built-in tools with the registry.
-func RegisterAll(registry *tools.Registry, workspace string, configLoader ConfigLoader) {
+// tracker and snapshots are optional; pass nil to disable file checkpointing.
+func RegisterAll(registry *tools.Registry, workspace string, configLoader ConfigLoader, tracker *checkpoints.FileTracker, snapshots *checkpoints.SnapshotManager) {
 	// Dev tools — available in Agent, Claw, Chat
 	if workspace != "" {
+		var readOpts []ReadFileOption
+		var writeOpts []WriteFileOption
+		var patchOpts []PatchFileOption
+
+		if tracker != nil {
+			readOpts = append(readOpts, WithReadFileTracker(tracker))
+			writeOpts = append(writeOpts, WithWriteFileTracker(tracker))
+			patchOpts = append(patchOpts, WithPatchFileTracker(tracker))
+		}
+		if snapshots != nil {
+			writeOpts = append(writeOpts, WithWriteFileSnapshots(snapshots))
+			patchOpts = append(patchOpts, WithPatchFileSnapshots(snapshots))
+		}
+
 		registry.RegisterWithModes(NewBashTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
-		registry.RegisterWithModes(NewReadFileTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
-		registry.RegisterWithModes(NewWriteFileTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
-		registry.RegisterWithModes(NewPatchFileTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+		registry.RegisterWithModes(NewReadFileTool(workspace, readOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+		registry.RegisterWithModes(NewWriteFileTool(workspace, writeOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+		registry.RegisterWithModes(NewPatchFileTool(workspace, patchOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewListFilesTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewSearchTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 

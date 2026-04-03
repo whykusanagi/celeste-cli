@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -77,9 +78,14 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	options.Workspace = filepath.Clean(absWorkspace)
 	normalizeOptions(&options)
 
+	// Set up file checkpointing for stale detection and undo support.
+	fileTracker := checkpoints.NewFileTracker()
+	sessionID := fmt.Sprintf("agent-%d", os.Getpid())
+	snapshotMgr := checkpoints.NewSnapshotManager(sessionID)
+
 	// Agent registry: register dev tools only (no configLoader = no skill tools).
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, options.Workspace, nil)
+	builtin.RegisterAll(registry, options.Workspace, nil, fileTracker, snapshotMgr)
 
 	// Initialize code graph for the workspace
 	var cgIndexer *codegraph.Indexer

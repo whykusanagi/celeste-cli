@@ -18,6 +18,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -246,12 +247,16 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 
+	// Initialize file checkpointing for stale detection and undo support
+	fileTracker := checkpoints.NewFileTracker()
+	snapshotMgr := checkpoints.NewSnapshotManager(fmt.Sprintf("tui-%d", os.Getpid()))
+
 	// Initialize tool registry
 	registry := tools.NewRegistry()
 	configLoader := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
-	builtin.RegisterAll(registry, cwd, configLoader)
+	builtin.RegisterAll(registry, cwd, configLoader, fileTracker, snapshotMgr)
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
 	// Register subagent spawning tool
@@ -1328,7 +1333,7 @@ func runSkillExecuteCommand(args []string) {
 	registry := tools.NewRegistry()
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	execCwd, _ := os.Getwd()
-	builtin.RegisterAll(registry, execCwd, clAdapter)
+	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil)
 	homeDir, _ := os.UserHomeDir()
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
@@ -1379,7 +1384,7 @@ func runSkillsCommand(args []string) {
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	skillsCwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, skillsCwd, clAdapter)
+	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
 	homeDir, _ := os.UserHomeDir()
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
@@ -1432,7 +1437,7 @@ func runSkillsCommand(args []string) {
 	// Handle reload subcommand
 	if *reload {
 		registry = tools.NewRegistry()
-		builtin.RegisterAll(registry, skillsCwd, clAdapter)
+		builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
 		_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 		fmt.Printf("Reloaded %d skills from disk\n", registry.Count())
 		return

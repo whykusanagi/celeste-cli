@@ -89,7 +89,7 @@ func registerCelesteTool(s *Server) {
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, workspace, nil)
+	builtin.RegisterAll(registry, workspace, nil, nil, nil)
 
 	llmConfig := &llm.Config{
 		APIKey:  cfg.APIKey,
