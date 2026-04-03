@@ -1,13 +1,22 @@
 package hooks
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("hook executor uses sh -c which is not available on Windows")
+	}
+}
+
 func TestExecutor_PreToolUse_Approve(t *testing.T) {
+	skipOnWindows(t)
 	hooks := []Hook{
 		{Event: "PreToolUse", Tool: "*", Command: "true", Timeout: 5},
 	}
@@ -19,6 +28,7 @@ func TestExecutor_PreToolUse_Approve(t *testing.T) {
 }
 
 func TestExecutor_PreToolUse_Block(t *testing.T) {
+	skipOnWindows(t)
 	hooks := []Hook{
 		{Event: "PreToolUse", Tool: "*", Command: "echo blocked && exit 1", Timeout: 5},
 	}
@@ -31,6 +41,7 @@ func TestExecutor_PreToolUse_Block(t *testing.T) {
 }
 
 func TestExecutor_ToolFiltering(t *testing.T) {
+	skipOnWindows(t)
 	hooks := []Hook{
 		{Event: "PreToolUse", Tool: "write_file", Command: "exit 1", Timeout: 5},
 	}
@@ -48,6 +59,7 @@ func TestExecutor_ToolFiltering(t *testing.T) {
 }
 
 func TestExecutor_PostToolUse(t *testing.T) {
+	skipOnWindows(t)
 	hooks := []Hook{
 		{Event: "PostToolUse", Tool: "*", Command: "echo done", Timeout: 5},
 	}
@@ -59,6 +71,7 @@ func TestExecutor_PostToolUse(t *testing.T) {
 }
 
 func TestExecutor_TemplateVars(t *testing.T) {
+	skipOnWindows(t)
 	hooks := []Hook{
 		{Event: "PreToolUse", Tool: "*", Command: "echo {{tool}} {{path}}", Timeout: 5},
 	}
@@ -86,6 +99,7 @@ func TestExpandTemplateVars_MissingInput(t *testing.T) {
 }
 
 func TestExecutor_NoMatchingHooks(t *testing.T) {
+	skipOnWindows(t)
 	hooks := []Hook{
 		{Event: "PostToolUse", Tool: "bash", Command: "echo post", Timeout: 5},
 	}

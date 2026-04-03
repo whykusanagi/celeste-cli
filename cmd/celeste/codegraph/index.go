@@ -94,8 +94,8 @@ func (idx *Indexer) Update() error {
 	// Delete symbols for removed files
 	for path := range indexedMap {
 		if !currentSet[path] {
-			idx.store.DeleteFileSymbols(path)
-			idx.store.DeleteFile(path)
+			_ = idx.store.DeleteFileSymbols(path)
+			_ = idx.store.DeleteFile(path)
 		}
 	}
 
@@ -109,7 +109,7 @@ func (idx *Indexer) Update() error {
 			continue // unchanged
 		}
 		// Re-index this file
-		idx.store.DeleteFileSymbols(path)
+		_ = idx.store.DeleteFileSymbols(path)
 		if err := idx.indexFile(path); err != nil {
 			continue
 		}
@@ -157,7 +157,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 		if sym.Kind != SymbolImport {
 			shingles := ShinglesForSymbol(sym, source)
 			sig := idx.hasher.Signature(shingles)
-			idx.store.UpdateMinHash(id, sig)
+			_ = idx.store.UpdateMinHash(id, sig)
 		}
 	}
 
@@ -166,7 +166,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 		sourceID, ok1 := symbolIDs[edge.SourceName]
 		targetID, ok2 := symbolIDs[edge.TargetName]
 		if ok1 && ok2 {
-			idx.store.AddEdge(sourceID, targetID, edge.Kind)
+			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
 		}
 	}
 
@@ -177,7 +177,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 	if info != nil {
 		size = info.Size()
 	}
-	idx.store.UpsertFile(FileRecord{
+	_ = idx.store.UpsertFile(FileRecord{
 		Path:        relPath,
 		Language:    lang,
 		Size:        size,

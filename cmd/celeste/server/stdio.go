@@ -58,7 +58,7 @@ func (s *Server) serveStdioStreams(ctx context.Context, r io.Reader, w io.Writer
 		if err := json.Unmarshal(line, &req); err != nil {
 			// Write parse error response
 			errResp := s.errorResponse(0, -32700, "parse error", nil)
-			s.writeJSON(w, errResp)
+			_ = s.writeJSON(w, errResp)
 			continue
 		}
 
@@ -72,7 +72,7 @@ func (s *Server) serveStdioStreams(ctx context.Context, r io.Reader, w io.Writer
 		resp, err := s.dispatch(ctx, &req)
 		if err != nil {
 			errResp := s.errorResponse(req.ID, -32603, err.Error(), nil)
-			s.writeJSON(w, errResp)
+			_ = s.writeJSON(w, errResp)
 			continue
 		}
 

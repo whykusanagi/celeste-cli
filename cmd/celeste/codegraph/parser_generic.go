@@ -18,7 +18,6 @@ type GenericParser struct {
 type languagePatterns struct {
 	function  []*regexp.Regexp
 	class     []*regexp.Regexp
-	method    []*regexp.Regexp
 	iface     []*regexp.Regexp
 	typeDecl  []*regexp.Regexp
 	structDcl []*regexp.Regexp

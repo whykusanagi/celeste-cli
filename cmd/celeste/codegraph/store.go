@@ -393,13 +393,13 @@ func (s *Store) Stats() (*StoreStats, error) {
 	}
 
 	// Total symbols
-	s.db.QueryRow(`SELECT COUNT(*) FROM symbols`).Scan(&stats.TotalSymbols)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM symbols`).Scan(&stats.TotalSymbols)
 
 	// Total edges
-	s.db.QueryRow(`SELECT COUNT(*) FROM edges`).Scan(&stats.TotalEdges)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM edges`).Scan(&stats.TotalEdges)
 
 	// Total files
-	s.db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&stats.TotalFiles)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&stats.TotalFiles)
 
 	// Symbols by kind
 	rows, err := s.db.Query(`SELECT kind, COUNT(*) FROM symbols GROUP BY kind`)
@@ -408,7 +408,7 @@ func (s *Store) Stats() (*StoreStats, error) {
 		for rows.Next() {
 			var kind SymbolKind
 			var count int
-			rows.Scan(&kind, &count)
+			_ = rows.Scan(&kind, &count)
 			stats.SymbolsByKind[kind] = count
 		}
 	}
@@ -420,7 +420,7 @@ func (s *Store) Stats() (*StoreStats, error) {
 		for rows2.Next() {
 			var lang string
 			var count int
-			rows2.Scan(&lang, &count)
+			_ = rows2.Scan(&lang, &count)
 			stats.FilesByLang[lang] = count
 		}
 	}
