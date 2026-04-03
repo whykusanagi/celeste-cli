@@ -16,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -284,12 +285,42 @@ func runChatTUI() {
 		gitSnapshotContent = gitSnapshot.FormatForPrompt()
 	}
 
+	// Initialize code graph index
+	var codeGraphSummary string
+	_ = os.MkdirAll(filepath.Join(cwd, ".celeste"), 0755)
+	indexer, cgErr := codegraph.NewIndexer(cwd, filepath.Join(cwd, ".celeste", "codegraph.db"))
+	if cgErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: code graph init failed: %v\n", cgErr)
+	} else {
+		// Incremental update (fast if cached)
+		if err := indexer.Update(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: code graph update failed: %v\n", err)
+		}
+		defer indexer.Close()
+
+		// Register code graph tools
+		builtin.RegisterCodeGraphTools(registry, indexer)
+
+		// Add project summary to system prompt context
+		codeGraphSummary = indexer.ProjectSummary()
+	}
+
 	// Set system prompt with project context if not skipping
+	var projectContext string
+	if grimoireContent != "" {
+		projectContext += grimoireContent
+	}
+	if codeGraphSummary != "" {
+		if projectContext != "" {
+			projectContext += "\n\n"
+		}
+		projectContext += "# Code Graph\n\n" + codeGraphSummary
+	}
 	if !cfg.SkipPersonaPrompt {
-		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(false, grimoireContent, gitSnapshotContent))
-	} else if grimoireContent != "" || gitSnapshotContent != "" {
+		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(false, projectContext, gitSnapshotContent))
+	} else if projectContext != "" || gitSnapshotContent != "" {
 		// Even with persona skipped, inject project context
-		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, grimoireContent, gitSnapshotContent))
+		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, projectContext, gitSnapshotContent))
 	}
 
 	// Create TUI client adapter
