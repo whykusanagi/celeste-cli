@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,6 +55,12 @@ type TokenUsage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+}
+
+// StreamStartMsg carries the context cancel function so the TUI can cancel
+// an in-progress LLM request on Ctrl+C.
+type StreamStartMsg struct {
+	Cancel context.CancelFunc
 }
 
 // StreamDoneMsg is sent when streaming is complete.

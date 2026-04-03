@@ -15,6 +15,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -107,6 +108,15 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 			systemPrompt = persona + "\n\n" + systemPrompt
 		}
 	}
+
+	// Inject grimoire and git context into agent system prompt
+	if projectGrimoire, err := grimoire.LoadAll(options.Workspace); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+		systemPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+	}
+	if gitSnap := grimoire.CaptureGitSnapshot(options.Workspace); gitSnap != nil {
+		systemPrompt += "\n\n" + gitSnap.FormatForPrompt()
+	}
+
 	client.SetSystemPrompt(systemPrompt)
 
 	store, err := NewCheckpointStore("")

@@ -19,6 +19,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
@@ -128,7 +129,7 @@ Interactive Commands (in chat mode):
   exit, quit, q           Exit the application
 
 Keyboard Shortcuts:
-  Ctrl+C                  Exit immediately
+  Ctrl+C                  Cancel current operation (double-tap to exit)
   PgUp/PgDown            Scroll chat history
   Shift+↑/↓              Scroll chat history
   ↑/↓                    Navigate input history
@@ -268,9 +269,27 @@ func runChatTUI() {
 	}
 	client := llm.NewClient(llmConfig, registry)
 
-	// Set system prompt if not skipping
+	// Load project grimoire and git snapshot for system prompt context
+	var grimoireContent string
+	projectGrimoire, grimoireErr := grimoire.LoadAll(cwd)
+	if grimoireErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load .grimoire: %v\n", grimoireErr)
+	} else if projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+		grimoireContent = projectGrimoire.Render()
+	}
+
+	var gitSnapshotContent string
+	gitSnapshot := grimoire.CaptureGitSnapshot(cwd)
+	if gitSnapshot != nil {
+		gitSnapshotContent = gitSnapshot.FormatForPrompt()
+	}
+
+	// Set system prompt with project context if not skipping
 	if !cfg.SkipPersonaPrompt {
-		client.SetSystemPrompt(prompts.GetSystemPrompt(false))
+		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(false, grimoireContent, gitSnapshotContent))
+	} else if grimoireContent != "" || gitSnapshotContent != "" {
+		// Even with persona skipped, inject project context
+		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, grimoireContent, gitSnapshotContent))
 	}
 
 	// Create TUI client adapter
@@ -403,8 +422,20 @@ type TUIClientAdapter struct {
 
 // SendMessage implements tui.LLMClient.
 func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
+	// Create context with cancel so Ctrl+C can abort in-flight requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+
+	// Return a batch: first deliver the cancel func to the TUI model, then
+	// start the actual LLM call.
+	return tea.Batch(
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		a.sendMessageWithCtx(ctx, cancel, messages, tools),
+	)
+}
+
+// sendMessageWithCtx performs the actual LLM call using the provided context.
+func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel context.CancelFunc, messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		// Log the request with current endpoint info

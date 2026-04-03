@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -98,6 +99,11 @@ type AppModel struct {
 	// Running token totals for the current agent run
 	agentInputTokens  int
 	agentOutputTokens int
+
+	// Graceful Ctrl+C handling
+	cancelFunc       context.CancelFunc
+	interruptPending bool
+	lastInterrupt    time.Time
 	agentRunStart     time.Time
 
 	// Per-message response timing and token stats (regular chat)
@@ -305,8 +311,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
-			m.persistSession()
-			return m, tea.Quit
+			if m.cancelFunc != nil {
+				// Active operation running — cancel it
+				m.cancelFunc()
+				m.cancelFunc = nil
+				m.streaming = false
+				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
+				// Double Ctrl+C within 3s => quit
+				if m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second {
+					m.persistSession()
+					return m, tea.Quit
+				}
+				m.interruptPending = true
+				m.lastInterrupt = time.Now()
+				return m, nil
+			}
+			// No active operation — check for double tap
+			if m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second {
+				m.persistSession()
+				return m, tea.Quit
+			}
+			m.interruptPending = true
+			m.lastInterrupt = time.Now()
+			m.status = m.status.SetText("Press Ctrl+C again to exit")
+			return m, nil
 		case "ctrl+k":
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
@@ -986,7 +1014,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, nil) // Keep processing
 
+	case StreamStartMsg:
+		// Store the cancel function so Ctrl+C can cancel the active request
+		m.cancelFunc = msg.Cancel
+		return m, nil
+
 	case StreamDoneMsg:
+		// Clear cancel function — operation completed
+		m.cancelFunc = nil
+		m.interruptPending = false
 		// Update token counts from API response
 		if msg.Usage != nil && (msg.Usage.PromptTokens > 0 || msg.Usage.CompletionTokens > 0) {
 			m.lastMsgInTok = msg.Usage.PromptTokens
@@ -1061,6 +1097,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case StreamErrorMsg:
+		m.cancelFunc = nil
+		m.interruptPending = false
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
