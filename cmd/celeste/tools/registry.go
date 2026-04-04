@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
+	"bytes"
+	"os/exec"
 )
 
 // toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
@@ -172,7 +174,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 				Error:   true,
 			}, nil
 		case permissions.Ask:
-			// For now, treat Ask as Allow (TUI prompt comes in Plan 6)
+			fmt.Fprintf(os.Stderr, "⚠️ Permission ASK for tool %q (input: %v) - auto-allowed until TUI prompts (Plan 6)\\n", name, input)
 			// TODO: Plan 6 will add interactive permission prompts
 		}
 	}
@@ -196,7 +198,10 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 
 	// Post-tool hook (fire-and-forget, does not block result)
 	if r.hooks != nil && err == nil {
-		_, _ = r.hooks.RunPostToolUse(name, input)
+		_, hookErr := r.hooks.RunPostToolUse(name, input)
+		if hookErr != nil {
+			fmt.Fprintf(os.Stderr, "Post-tool hook failed for %q: %v\\n", name, hookErr)
+		}
 	}
 
 	return result, err
@@ -241,7 +246,24 @@ func (c *customToolWrapper) IsReadOnly() bool                            { retur
 func (c *customToolWrapper) ValidateInput(input map[string]any) error    { return nil }
 func (c *customToolWrapper) InterruptBehavior() InterruptBehavior        { return InterruptCancel }
 func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-	return ToolResult{Content: "custom tool execution not yet implemented"}, nil
+	if c.command == "" {
+		return ToolResult{Content: "Custom tool schema loaded, but no 'command' field defined. Add 'command' (shell-executable) to ~/.celeste/skills/" + c.name + ".json for execution support."}, nil
+	}
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		return ToolResult{Content: fmt.Sprintf("Failed to marshal input: %v", err), Error: true}, nil
+	}
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", c.command)
+	cmd.Stdin = bytes.NewBuffer(data)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %v\\nOutput:\\n%s", c.command, err, string(output)), Error: true}, nil
+	}
+
+	return ToolResult{Content: string(output)}, nil
 }
 
 // LoadCustomTools loads JSON tool definitions from a directory.
