@@ -92,6 +92,18 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v4
 
+    - name: Enforce single Docker setup
+      run: |
+        # Only Dockerfile (root), docker-compose.yml (root), and test/mock-server/Dockerfile are allowed
+        EXTRA_DOCKERFILES=$(find . -name 'Dockerfile*' -o -name 'docker-compose*' | grep -v './Dockerfile$' | grep -v './docker-compose.yml$' | grep -v './test/mock-server/Dockerfile$' | sort)
+        if [ -n "$EXTRA_DOCKERFILES" ]; then
+          echo "ERROR: Only one Docker setup allowed. Found extra files:"
+          echo "$EXTRA_DOCKERFILES"
+          echo "Remove these or rename to use the canonical Dockerfile and docker-compose.yml"
+          exit 1
+        fi
+        echo "Docker file check passed"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -100,7 +112,7 @@ jobs:
 
     - name: Run Docker tests
       run: |
-        docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test-runner
+        docker compose up --build --abort-on-container-exit --exit-code-from test-runner
 
     - name: View test logs
       if: always()

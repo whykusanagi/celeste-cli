@@ -5,7 +5,7 @@ services:
   test-runner:
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: Dockerfile
     container_name: celeste-cli-test-runner
     environment:
       # Mock API endpoints (point to mock-api service)
