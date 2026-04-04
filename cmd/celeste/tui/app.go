@@ -344,7 +344,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
 			m.status = m.status.SetText("Skill calls toggled")
-		case "pgup", "shift+up":
+		case "pgup", "shift+up", "home":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollUp(5)
 			} else {
@@ -352,7 +352,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat, cmd = m.chat.Update(msg)
 				cmds = append(cmds, cmd)
 			}
-		case "pgdown", "shift+down":
+		case "pgdown", "shift+down", "end":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollDown(5)
 			} else {
@@ -2796,7 +2796,8 @@ func Run(llmClient LLMClient) error {
 	p := tea.NewProgram(
 		NewApp(llmClient),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		// Mouse capture disabled — allows terminal-native text selection and copy.
+		// Scroll via PgUp/PgDown, Shift+Up/Down, Home/End instead.
 	)
 
 	_, err := p.Run()

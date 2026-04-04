@@ -488,7 +488,8 @@ func runChatTUI() {
 	app = app.SetSessionManager(smAdapter, currentSession)
 
 	// Run the TUI
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Mouse capture disabled — allows terminal-native text selection and copy.
+	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
