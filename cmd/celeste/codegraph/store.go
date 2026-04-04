@@ -458,6 +458,46 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 	return files, rows.Err()
 }
 
+// StubResult represents a function/method with zero outgoing call edges.
+type StubResult struct {
+	Name     string
+	File     string
+	Line     int
+	Kind     string
+	OutEdges int
+	InEdges  int
+}
+
+// FindStubs returns functions/methods with zero outgoing call edges.
+// These are likely stubs, placeholders, or dead code.
+func (s *Store) FindStubs(includeTests bool) ([]StubResult, error) {
+	query := `
+		SELECT s.name, s.file, s.line, s.kind,
+		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
+		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
+		FROM symbols s
+		WHERE s.kind IN ('function', 'method')
+		AND (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) = 0
+		ORDER BY called_by ASC, s.file, s.line
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("find stubs query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []StubResult
+	for rows.Next() {
+		var r StubResult
+		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.OutEdges, &r.InEdges); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
 // encodeMinHash converts a MinHash signature to a byte slice for BLOB storage.
 func encodeMinHash(sig MinHashSignature) []byte {
 	buf := make([]byte, len(sig)*8)

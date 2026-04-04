@@ -84,6 +84,7 @@ func RegisterCodeGraphTools(registry *tools.Registry, indexer *codegraph.Indexer
 	registry.RegisterWithModes(NewCodeSearchTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewCodeGraphTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewCodeSymbolsTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewCodeStubsTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 }
 
 // RegisterCryptoTools registers all crypto/blockchain tools.

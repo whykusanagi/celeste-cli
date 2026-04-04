@@ -51,6 +51,16 @@ func NewIndexer(workspace, dbPath string) (*Indexer, error) {
 	}, nil
 }
 
+// NewIndexerWithStore creates an indexer using an existing store.
+// This is useful for testing where the store is set up manually.
+func NewIndexerWithStore(store *Store, workspace string) *Indexer {
+	return &Indexer{
+		workspace: workspace,
+		store:     store,
+		hasher:    NewMinHasher(DefaultNumHashes),
+	}
+}
+
 // Close releases the underlying database connection.
 func (idx *Indexer) Close() error {
 	return idx.store.Close()
