@@ -1465,6 +1465,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Log the skill result
 		LogSkillResult(msg.Name, msg.Result, msg.Err)
 
+		// Update tool progress display
+		state := "done"
+		if msg.Err != nil {
+			state = "failed"
+		}
+		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+			ToolCallID: msg.ToolCallID,
+			ToolName:   msg.Name,
+			State:      state,
+		})
+
 		isBatchResult := m.toolBatchActive
 		shouldFollowUp := msg.ToolCallID != ""
 		if isBatchResult {
@@ -1857,6 +1868,29 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 			args:       call.Call.Arguments,
 			toolCallID: call.ToolCallID,
 			parseError: call.ParseError,
+		})
+	}
+
+	// Emit progress events for all tool calls in the batch
+	for _, call := range m.pendingToolCalls {
+		summary := call.name
+		if args := call.args; args != nil {
+			if p, ok := args["path"].(string); ok {
+				summary += " " + p
+			} else if q, ok := args["query"].(string); ok {
+				summary += " " + q
+			} else if c, ok := args["command"].(string); ok {
+				if len(c) > 60 {
+					c = c[:60] + "..."
+				}
+				summary += " " + c
+			}
+		}
+		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+			ToolCallID: call.toolCallID,
+			ToolName:   call.name,
+			State:      "executing",
+			Message:    summary,
 		})
 	}
 
