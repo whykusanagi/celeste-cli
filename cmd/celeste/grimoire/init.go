@@ -188,7 +188,7 @@ func Init(dir string) (string, error) {
 		if !strings.Contains(string(data), ".celeste/") {
 			f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
 			if err == nil {
-				f.WriteString("\n# Celeste CLI local data\n.celeste/\n")
+				_, _ = f.WriteString("\n# Celeste CLI local data\n.celeste/\n")
 				f.Close()
 			}
 		}

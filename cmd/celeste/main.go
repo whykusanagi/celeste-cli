@@ -344,12 +344,12 @@ func runChatTUI() {
 				// Update memory index
 				memIdx, _ := memories.LoadIndex(filepath.Join(memStore.BaseDir(), "MEMORY.md"))
 				if memIdx != nil {
-					memIdx.Add(memories.IndexEntry{
+					_ = memIdx.Add(memories.IndexEntry{
 						Name:        mem.Name,
 						File:        "project-init.md",
 						Description: mem.Description,
 					})
-					memIdx.Save()
+					_ = memIdx.Save()
 				}
 			}
 		}
