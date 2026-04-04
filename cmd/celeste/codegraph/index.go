@@ -162,9 +162,30 @@ func (idx *Indexer) indexFile(relPath string) error {
 	}
 
 	// Store edges (resolve names to IDs)
+	// First try local file symbols, then fall back to global store lookup
+	// for cross-file edges (e.g., calling functions from other packages).
+	// For qualified names like "pkg.Func" or "obj.Method", also try the
+	// unqualified suffix (just "Func" or "Method") since symbols are stored
+	// without receiver/package prefixes.
 	for _, edge := range result.Edges {
 		sourceID, ok1 := symbolIDs[edge.SourceName]
+		if !ok1 {
+			sourceID, ok1 = idx.store.GetSymbolIDByName(edge.SourceName)
+		}
 		targetID, ok2 := symbolIDs[edge.TargetName]
+		if !ok2 {
+			targetID, ok2 = idx.store.GetSymbolIDByName(edge.TargetName)
+		}
+		// Try unqualified name: "pkg.Func" -> "Func"
+		if !ok2 {
+			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
+				unqualified := edge.TargetName[dotIdx+1:]
+				targetID, ok2 = symbolIDs[unqualified]
+				if !ok2 {
+					targetID, ok2 = idx.store.GetSymbolIDByName(unqualified)
+				}
+			}
+		}
 		if ok1 && ok2 {
 			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
 		}
