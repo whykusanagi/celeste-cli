@@ -27,6 +27,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -311,6 +312,60 @@ func runChatTUI() {
 		grimoireContent = projectGrimoire.Render()
 	}
 
+	// If no grimoire found, auto-create one
+	if projectGrimoire == nil || projectGrimoire.IsEmpty() {
+		fmt.Fprintf(os.Stderr, "📖 No .grimoire found — creating one...\n")
+		if _, err := grimoire.Init(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: auto-init grimoire failed: %v\n", err)
+		} else {
+			// Reload after creation
+			projectGrimoire, _ = grimoire.LoadAll(cwd)
+			if projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+				grimoireContent = projectGrimoire.Render()
+			}
+			fmt.Fprintf(os.Stderr, "📖 .grimoire created — run 'celeste grimoire' to view\n")
+
+			// Initialize memory store for this project on first visit
+			detectedLang := "unknown"
+			if projInfo, detectErr := grimoire.DetectProject(cwd); detectErr == nil {
+				detectedLang = projInfo.Language
+			}
+			memStore := memories.NewStore(cwd)
+			mem := memories.NewMemory(
+				"project-init",
+				"First visit — project context established",
+				"project",
+				cwd,
+				fmt.Sprintf("First indexed this project on %s. Language: %s.", time.Now().Format("2006-01-02"), detectedLang),
+			)
+			if saveErr := memStore.Save(mem); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save initial memory: %v\n", saveErr)
+			} else {
+				// Update memory index
+				memIdx, _ := memories.LoadIndex(filepath.Join(memStore.BaseDir(), "MEMORY.md"))
+				if memIdx != nil {
+					memIdx.Add(memories.IndexEntry{
+						Name:        mem.Name,
+						File:        "project-init.md",
+						Description: mem.Description,
+					})
+					memIdx.Save()
+				}
+			}
+		}
+	}
+
+	// Load project memories
+	memStore := memories.NewStore(cwd)
+	memIndex, memIdxErr := memories.LoadIndex(filepath.Join(memStore.BaseDir(), "MEMORY.md"))
+	if memIdxErr == nil && len(memIndex.Entries()) > 0 {
+		memoryContent := memIndex.Render()
+		if grimoireContent != "" {
+			grimoireContent += "\n\n"
+		}
+		grimoireContent += "# Project Memories\n\n" + memoryContent
+	}
+
 	var gitSnapshotContent string
 	gitDone := make(chan *grimoire.GitSnapshot, 1)
 	go func() { gitDone <- grimoire.CaptureGitSnapshot(cwd) }()
@@ -325,8 +380,7 @@ func runChatTUI() {
 
 	// Initialize code graph index (with timeout to prevent startup hang)
 	var codeGraphSummary string
-	_ = os.MkdirAll(filepath.Join(cwd, ".celeste"), 0755)
-	indexer, cgErr := codegraph.NewIndexer(cwd, filepath.Join(cwd, ".celeste", "codegraph.db"))
+	indexer, cgErr := codegraph.NewIndexer(cwd, codegraph.DefaultIndexPath(cwd))
 	if cgErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: code graph init failed: %v\n", cgErr)
 	} else {

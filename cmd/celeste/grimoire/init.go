@@ -154,6 +154,7 @@ func GenerateTemplate(info *ProjectInfo) string {
 
 	// Wards
 	sb.WriteString("## Wards\n")
+	sb.WriteString("- Do not modify .celeste/ directory contents\n")
 	sb.WriteString("# Add paths that should not be modified without explicit permission:\n")
 	sb.WriteString("# - Do not modify .env or secrets files\n")
 	sb.WriteString("\n")
@@ -179,6 +180,18 @@ func Init(dir string) (string, error) {
 	content := GenerateTemplate(info)
 	if err := os.WriteFile(grimPath, []byte(content), 0644); err != nil {
 		return "", fmt.Errorf("failed to write .grimoire: %w", err)
+	}
+
+	// Append .celeste/ to .gitignore if not already there
+	gitignorePath := filepath.Join(dir, ".gitignore")
+	if data, err := os.ReadFile(gitignorePath); err == nil {
+		if !strings.Contains(string(data), ".celeste/") {
+			f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
+			if err == nil {
+				f.WriteString("\n# Celeste CLI local data\n.celeste/\n")
+				f.Close()
+			}
+		}
 	}
 
 	return grimPath, nil
