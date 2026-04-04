@@ -80,17 +80,24 @@ run_test() {
 echo "🚀 Starting test execution..."
 echo ""
 
-# Skills tests
-run_test "skills" "$TEST_DIR/skills_test"
-
-# Config tests
+# Core packages
 run_test "config" "$TEST_DIR/config_test"
-
-# LLM tests
 run_test "llm" "$TEST_DIR/llm_test"
+run_test "tools" "$TEST_DIR/tools_test"
+run_test "tools_builtin" "$TEST_DIR/tools_builtin_test"
+run_test "permissions" "$TEST_DIR/permissions_test"
+run_test "context" "$TEST_DIR/context_test"
 
-# TUI tests (if they exist)
-run_test "tui" "$TEST_DIR/tui_test"
+# v1.8 packages
+run_test "codegraph" "$TEST_DIR/codegraph_test"
+run_test "grimoire" "$TEST_DIR/grimoire_test"
+run_test "costs" "$TEST_DIR/costs_test"
+run_test "hooks" "$TEST_DIR/hooks_test"
+run_test "memories" "$TEST_DIR/memories_test"
+run_test "sessions" "$TEST_DIR/sessions_test"
+run_test "checkpoints" "$TEST_DIR/checkpoints_test"
+run_test "planning" "$TEST_DIR/planning_test"
+run_test "server" "$TEST_DIR/server_test"
 
 # Print summary
 echo "════════════════════════════════════════════════════════════════"

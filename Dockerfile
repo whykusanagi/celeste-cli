@@ -1,6 +1,5 @@
 # Multi-stage Dockerfile for running CelesteCLI tests
-# Usage: docker build -f Dockerfile.test -t celestecli-test .
-#        docker-compose -f docker-compose.test.yml up
+# Usage: docker compose up --build
 
 # Stage 1: Build test binaries
 FROM golang:1.26-alpine AS builder
@@ -22,12 +21,26 @@ RUN go mod download
 COPY . .
 
 # Build test binaries for all packages
-RUN go test -c -o /tmp/tests/skills_test ./cmd/celeste/skills || true
-RUN go test -c -o /tmp/tests/config_test ./cmd/celeste/config || true
-RUN go test -c -o /tmp/tests/llm_test ./cmd/celeste/llm || true
+RUN mkdir -p /tmp/tests && \
+    go test -c -o /tmp/tests/config_test ./cmd/celeste/config && \
+    go test -c -o /tmp/tests/llm_test ./cmd/celeste/llm && \
+    go test -c -o /tmp/tests/tools_test ./cmd/celeste/tools && \
+    go test -c -o /tmp/tests/tools_builtin_test ./cmd/celeste/tools/builtin && \
+    go test -c -o /tmp/tests/permissions_test ./cmd/celeste/permissions && \
+    go test -c -o /tmp/tests/codegraph_test ./cmd/celeste/codegraph && \
+    go test -c -o /tmp/tests/context_test ./cmd/celeste/context && \
+    go test -c -o /tmp/tests/grimoire_test ./cmd/celeste/grimoire && \
+    go test -c -o /tmp/tests/costs_test ./cmd/celeste/costs && \
+    go test -c -o /tmp/tests/hooks_test ./cmd/celeste/hooks && \
+    go test -c -o /tmp/tests/memories_test ./cmd/celeste/memories && \
+    go test -c -o /tmp/tests/sessions_test ./cmd/celeste/sessions && \
+    go test -c -o /tmp/tests/checkpoints_test ./cmd/celeste/checkpoints && \
+    go test -c -o /tmp/tests/planning_test ./cmd/celeste/planning && \
+    go test -c -o /tmp/tests/server_test ./cmd/celeste/server && \
+    echo "Test binaries built successfully"
 
-# Verify at least one test binary exists
-RUN ls -la /tmp/tests/ && echo "Test binaries built successfully"
+# Verify binaries exist
+RUN ls -la /tmp/tests/
 
 # Stage 2: Test runner
 FROM alpine:latest
