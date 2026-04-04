@@ -8,7 +8,7 @@
 
 **A premium, corruption-aesthetic command-line interface for CelesteAI**
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
 [![TUI Framework](https://img.shields.io/badge/TUI-Bubble%20Tea-d94f90)](https://github.com/charmbracelet/bubbletea)
 
@@ -20,13 +20,19 @@
 
 ## ✨ What is Celeste CLI?
 
-Celeste CLI is the **official command-line interface** for CelesteAI, featuring:
+Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
-- 🔮 **21 AI-Powered Skills** - Function calling for weather, tarot, conversions, and more
-- 🗂️ **Collections** - Upload documents for RAG (xAI only)
-- 💾 **Session Persistence** - Auto-save conversations, command history, and model selection across restarts
-- 🌐 **Multi-Provider Support** - OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
-- 👁️ **Demonic Eye Animation** - Shows when Celeste is thinking
+- 🔮 **34 Built-in Tools** - File I/O, shell execution, web search, code graph, git, and more
+- 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery
+- 🧠 **Code Graph + Semantic Search** - MinHash-based concept search without embeddings
+- 🔌 **MCP Server Mode** - `celeste serve` lets Claude Code, Codex, or any MCP client delegate tasks to Celeste
+- 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching
+- 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection
+- 🌐 **Multi-Provider** - Grok/xAI, OpenAI, Anthropic (native), Gemini, Venice.ai, Vertex AI, OpenRouter
+- 💰 **Cost Tracking** - Per-model pricing, session cost display
+- 🪝 **Hooks** - Pre/post tool execution hooks defined in `.grimoire`
+- 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok)
+- 🖼️ **Image Input** - Multimodal support for vision-capable models
 - 🎭 **Celeste Personality** - Embedded AI personality with lore-accurate responses
 
 ### Four Runtime Modes
@@ -57,7 +63,7 @@ go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
 The `celeste` binary will be installed to `$GOPATH/bin` (or `~/go/bin` by default).
 
 **Requirements:**
-- Go 1.23.0 or higher
+- Go 1.26.0 or higher
 - `$GOPATH/bin` (or `~/go/bin`) in your PATH
 
 To add to PATH:
@@ -1261,20 +1267,12 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ---
 
-## 🔗 Related Projects
+## 🔗 Links
 
-Celeste CLI is part of the larger **CelesteAI Ecosystem**:
-
-| Project | Description | Link |
-|---------|-------------|------|
-| **Celeste CLI** | Command-line interface (this project) | [GitHub](https://github.com/whykusanagi/celeste-cli) |
-| **Union Raid** | NIKKE game companion web app | [raid.whykusanagi.xyz](https://raid.whykusanagi.xyz) |
-| **Web Widget** | Chat widget for whykusanagi.xyz | Integrated |
-| **Twitch Bot** | Live chat moderation & interaction | Integrated |
-| **Discord Bot** | Custom commands & personality | Private |
-| **Flipper Zero App** | Celeste animations & personality | Private |
-
-See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for complete ecosystem documentation.
+- [Documentation](docs/)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ---
 

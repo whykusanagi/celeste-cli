@@ -55,6 +55,9 @@ const (
 
 	// BackendTypeXAI uses the native xAI SDK with Collections support (Grok models)
 	BackendTypeXAI BackendType = "xai"
+
+	// BackendTypeAnthropic uses the native Anthropic SDK (Claude models)
+	BackendTypeAnthropic BackendType = "anthropic"
 )
 
 // DetectBackendType determines which backend to use based on the base URL.
@@ -65,7 +68,18 @@ func DetectBackendType(baseURL string) BackendType {
 	if isGoogleProvider(baseURL) {
 		return BackendTypeGoogle
 	}
+	if isAnthropicProvider(baseURL) {
+		return BackendTypeAnthropic
+	}
 	return BackendTypeOpenAI
+}
+
+// isAnthropicProvider checks if a base URL belongs to Anthropic.
+func isAnthropicProvider(baseURL string) bool {
+	if baseURL == "" {
+		return false
+	}
+	return contains(baseURL, "api.anthropic.com")
 }
 
 // isXAIProvider checks if a base URL belongs to xAI (Grok).

@@ -344,6 +344,17 @@ func scanSymbols(rows *sql.Rows) ([]Symbol, error) {
 	return syms, rows.Err()
 }
 
+// GetSymbolIDByName returns the ID of a symbol by exact name match.
+// If multiple symbols share the same name, returns the first found.
+func (s *Store) GetSymbolIDByName(name string) (int64, bool) {
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ? LIMIT 1`, name).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // UpdateMinHash stores the MinHash signature for a symbol.
 func (s *Store) UpdateMinHash(symbolID int64, sig MinHashSignature) error {
 	blob := encodeMinHash(sig)

@@ -45,8 +45,10 @@ go.work.sum
 .DS_Store
 Thumbs.db
 
-# === Implementation Plans (development-only) ===
+# === Implementation Plans and Specs (development-only) ===
+docs/plans/
 docs/superpowers/plans/
+docs/superpowers/specs/
 
 # === Sensitive Documentation ===
 AGENT_CONFIGURATION.md
