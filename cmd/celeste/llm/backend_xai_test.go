@@ -371,7 +371,7 @@ func TestBackendDetection_XAI(t *testing.T) {
 		{"https://api.x.ai/v1", BackendTypeXAI},
 		{"https://api.x.ai/v1/chat/completions", BackendTypeXAI},
 		{"https://api.openai.com/v1", BackendTypeOpenAI},
-		{"https://api.anthropic.com/v1", BackendTypeOpenAI},
+		{"https://api.anthropic.com/v1", BackendTypeAnthropic},
 		{"https://generativelanguage.googleapis.com/v1", BackendTypeGoogle},
 	}
 

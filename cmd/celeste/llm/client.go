@@ -75,8 +75,21 @@ func NewClient(config *Config, registry *tools.Registry) *Client {
 			backend = googleBackend
 		}
 
+	case BackendTypeAnthropic:
+		// Use native Anthropic SDK for Claude models
+		anthropicBackend, err := NewAnthropicBackend(config)
+		if err != nil {
+			// Fallback to OpenAI backend if Anthropic backend fails
+			fmt.Fprintf(os.Stderr, "Warning: Failed to create Anthropic backend: %v\nFalling back to OpenAI SDK\n", err)
+			backendType = BackendTypeOpenAI
+			backend = NewOpenAIBackend(config)
+		} else {
+			backend = anthropicBackend
+			tui.LogInfo("Using native Anthropic backend with prompt caching")
+		}
+
 	default:
-		// Use OpenAI SDK for OpenAI, Venice, Anthropic, etc.
+		// Use OpenAI SDK for OpenAI, Venice, etc.
 		backend = NewOpenAIBackend(config)
 	}
 
@@ -139,6 +152,17 @@ func (c *Client) UpdateConfig(config *Config) {
 				c.backend = NewOpenAIBackend(config)
 			} else {
 				c.backend = googleBackend
+			}
+
+		case BackendTypeAnthropic:
+			anthropicBackend, err := NewAnthropicBackend(config)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to create Anthropic backend: %v\nFalling back to OpenAI SDK\n", err)
+				newBackendType = BackendTypeOpenAI
+				c.backend = NewOpenAIBackend(config)
+			} else {
+				c.backend = anthropicBackend
+				tui.LogInfo("Switched to native Anthropic backend")
 			}
 
 		default:
