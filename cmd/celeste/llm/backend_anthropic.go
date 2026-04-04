@@ -301,6 +301,14 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 			}
 
 		case "message_delta":
+			// Update usage BEFORE sending final callback to avoid stale/nil usage.
+			if event.Usage.OutputTokens > 0 || event.Usage.InputTokens > 0 {
+				usage = &TokenUsage{
+					PromptTokens:     int(event.Usage.InputTokens),
+					CompletionTokens: int(event.Usage.OutputTokens),
+					TotalTokens:      int(event.Usage.InputTokens + event.Usage.OutputTokens),
+				}
+			}
 			if event.Delta.StopReason != "" {
 				finishReason := mapStopReason(string(event.Delta.StopReason))
 				callback(StreamChunk{
@@ -309,13 +317,6 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 					ToolCalls:    toolCalls,
 					Usage:        usage,
 				})
-			}
-			if event.Usage.OutputTokens > 0 || event.Usage.InputTokens > 0 {
-				usage = &TokenUsage{
-					PromptTokens:     int(event.Usage.InputTokens),
-					CompletionTokens: int(event.Usage.OutputTokens),
-					TotalTokens:      int(event.Usage.InputTokens + event.Usage.OutputTokens),
-				}
 			}
 
 		case "message_start":
