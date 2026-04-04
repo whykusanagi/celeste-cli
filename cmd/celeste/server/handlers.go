@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -88,6 +91,11 @@ func registerCelesteTool(s *Server) {
 
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
+	// Auto-init grimoire if not present
+	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
+		grimoire.Init(workspace)
+	}
+
 	registry := tools.NewRegistry()
 	builtin.RegisterAll(registry, workspace, nil, nil, nil)
 
@@ -100,6 +108,12 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 	client := llm.NewClient(llmConfig, registry)
 
 	systemPrompt := prompts.GetSystemPrompt(cfg.SkipPersonaPrompt)
+
+	// Load grimoire into system prompt for project context
+	if projectGrimoire, err := grimoire.LoadAll(workspace); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+		systemPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+	}
+
 	client.SetSystemPrompt(systemPrompt)
 
 	messages := []tui.ChatMessage{
@@ -116,6 +130,11 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 // runAgentMode runs a multi-turn agent loop for complex tasks.
 func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace string) ([]ContentBlock, error) {
+	// Auto-init grimoire if not present
+	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
+		grimoire.Init(workspace)
+	}
+
 	var outBuf, errBuf bytes.Buffer
 
 	opts := agent.Options{

@@ -142,6 +142,9 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 	// Deduplicate symbols (method patterns may overlap with function patterns)
 	result.Symbols = deduplicateSymbols(result.Symbols)
 
+	// Extract call edges from function/method bodies
+	result.Edges = p.extractCallEdges(source, result.Symbols)
+
 	return result, nil
 }
 
@@ -210,6 +213,89 @@ func countLeadingSpaces(line string) int {
 		}
 	}
 	return count
+}
+
+// callPattern matches identifiers followed by '(' — a simple call heuristic.
+var callPattern = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
+
+// extractCallEdges scans each function/method body for call-like patterns and
+// creates edges to known symbols. Works for JS/TS/Python/Rust and any language
+// where calls look like `name(`.
+func (p *GenericParser) extractCallEdges(source string, symbols []Symbol) []RawEdge {
+	var edges []RawEdge
+
+	// Build a set of known callable symbol names
+	knownSymbols := make(map[string]bool)
+	for _, s := range symbols {
+		if s.Kind == SymbolFunction || s.Kind == SymbolMethod {
+			knownSymbols[s.Name] = true
+		}
+	}
+
+	for _, sym := range symbols {
+		if sym.Kind != SymbolFunction && sym.Kind != SymbolMethod {
+			continue
+		}
+		body := extractBody(source, sym.Line)
+		matches := callPattern.FindAllStringSubmatch(body, -1)
+		seen := make(map[string]bool)
+		for _, match := range matches {
+			callee := match[1]
+			if isGenericKeyword(callee) || callee == sym.Name || seen[callee] {
+				continue
+			}
+			if knownSymbols[callee] {
+				seen[callee] = true
+				edges = append(edges, RawEdge{
+					SourceName: sym.Name,
+					TargetName: callee,
+					Kind:       EdgeCalls,
+				})
+			}
+		}
+	}
+	return edges
+}
+
+// extractBody returns up to 50 lines starting from startLine (1-based).
+func extractBody(source string, startLine int) string {
+	lines := strings.Split(source, "\n")
+	if startLine <= 0 || startLine > len(lines) {
+		return ""
+	}
+	end := startLine + 50
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return strings.Join(lines[startLine-1:end], "\n")
+}
+
+// isGenericKeyword returns true for common keywords across JS/TS/Python/Rust
+// that should not be treated as function calls.
+var genericKeywords = map[string]bool{
+	// JS/TS
+	"if": true, "else": true, "for": true, "while": true, "return": true,
+	"function": true, "class": true, "const": true, "let": true, "var": true,
+	"new": true, "this": true, "super": true, "import": true, "export": true,
+	"async": true, "await": true, "try": true, "catch": true, "throw": true,
+	"typeof": true, "instanceof": true, "switch": true, "case": true,
+	"console": true, "require": true, "module": true, "true": true, "false": true,
+	"null": true, "undefined": true, "void": true, "delete": true,
+	// Python
+	"def": true, "elif": true, "except": true, "finally": true, "from": true,
+	"global": true, "lambda": true, "nonlocal": true, "not": true, "or": true,
+	"and": true, "pass": true, "raise": true, "with": true, "yield": true,
+	"print": true, "self": true, "None": true, "True": true, "False": true,
+	// Rust
+	"fn": true, "pub": true, "impl": true, "trait": true, "struct": true,
+	"enum": true, "mod": true, "use": true, "crate": true, "match": true,
+	"where": true, "loop": true, "break": true, "continue": true, "move": true,
+	"mut": true, "ref": true, "unsafe": true, "type": true, "as": true,
+	"in": true, "dyn": true,
+}
+
+func isGenericKeyword(s string) bool {
+	return genericKeywords[s]
 }
 
 // deduplicateSymbols removes duplicate symbols (same name+kind+file+line).

@@ -125,6 +125,72 @@ export class Server implements UserService {
 	assert.Equal(t, SymbolClass, srv.Kind)
 }
 
+func TestGenericParser_PythonCallEdges(t *testing.T) {
+	src := `def helper(x):
+    return x + 1
+
+def process(items):
+    for item in items:
+        result = helper(item)
+    return result
+
+def unused():
+    pass
+`
+	path := writeTestFile(t, "calls.py", src)
+	parser := NewGenericParser("python")
+	result, err := parser.ParseFile(path)
+	require.NoError(t, err)
+
+	// Should find call edge from process -> helper
+	assert.NotEmpty(t, result.Edges, "should detect call edges")
+	found := false
+	for _, e := range result.Edges {
+		if e.SourceName == "process" && e.TargetName == "helper" && e.Kind == EdgeCalls {
+			found = true
+		}
+	}
+	assert.True(t, found, "should find process -> helper edge")
+}
+
+func TestGenericParser_JSCallEdges(t *testing.T) {
+	src := `function validate(input) {
+    return input.length > 0;
+}
+
+function processForm(data) {
+    if (validate(data.name)) {
+        submit(data);
+    }
+}
+
+function submit(payload) {
+    fetch('/api', payload);
+}
+`
+	path := writeTestFile(t, "form.js", src)
+	parser := NewGenericParser("javascript")
+	result, err := parser.ParseFile(path)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, result.Edges, "should detect call edges")
+
+	// processForm -> validate
+	foundValidate := false
+	// processForm -> submit
+	foundSubmit := false
+	for _, e := range result.Edges {
+		if e.SourceName == "processForm" && e.TargetName == "validate" {
+			foundValidate = true
+		}
+		if e.SourceName == "processForm" && e.TargetName == "submit" {
+			foundSubmit = true
+		}
+	}
+	assert.True(t, foundValidate, "should find processForm -> validate edge")
+	assert.True(t, foundSubmit, "should find processForm -> submit edge")
+}
+
 func TestGenericParser_Rust(t *testing.T) {
 	src := `use std::collections::HashMap;
 
