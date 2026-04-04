@@ -5,7 +5,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -13,8 +13,8 @@ import (
 // knownCommands is the authoritative list of slash commands for typeahead.
 var knownCommands = []string{
 	"agent", "clear", "config", "context", "diff", "effort", "endpoint", "export",
-	"help", "memories", "model", "nsfw", "orch", "orchestrate", "plan", "providers",
-	"safe", "session", "set-model", "skills", "stats", "tools", "undo",
+	"help", "memories", "mcp", "model", "nsfw", "orch", "orchestrate", "plan", "providers",
+	"safe", "session", "set-model", "skills", "spawn", "stats", "tools", "undo",
 }
 
 var (
@@ -29,9 +29,11 @@ func computeSuggestions(value string) []string {
 		return nil
 	}
 	partial := strings.TrimPrefix(value, "/")
-	if partial == "" || strings.Contains(partial, " ") {
+	partial = strings.TrimSpace(partial)
+	if partial == "" {
 		return nil
 	}
+
 	var matches []string
 	for _, cmd := range knownCommands {
 		if strings.HasPrefix(cmd, partial) && cmd != partial {
@@ -41,9 +43,10 @@ func computeSuggestions(value string) []string {
 	return matches
 }
 
-// InputModel represents the text input component.
+// InputModel wraps a textarea for multi-line input with word wrap,
+// command history, and slash-command typeahead.
 type InputModel struct {
-	textInput     textinput.Model
+	textArea      textarea.Model
 	width         int
 	history       []string
 	historyIndex  int
@@ -52,20 +55,26 @@ type InputModel struct {
 	suggestionIdx int      // Which suggestion is highlighted (Tab cycles)
 }
 
-// NewInputModel creates a new input model.
+// NewInputModel creates a new input model using textarea for word-wrap support.
 func NewInputModel() InputModel {
-	ti := textinput.New()
-	ti.Placeholder = "Type a message or 'help'..."
-	ti.Focus()
-	ti.CharLimit = 4096
-	ti.Width = 80
-	ti.PromptStyle = InputPromptStyle
-	ti.TextStyle = InputTextStyle
-	ti.PlaceholderStyle = InputPlaceholderStyle
-	ti.Prompt = "❯ "
+	ta := textarea.New()
+	ta.Placeholder = "Type a message or 'help'..."
+	ta.Focus()
+	ta.CharLimit = 4096
+	ta.SetWidth(80)
+	ta.SetHeight(3) // 3 visible lines — expands visually with wrapping
+	ta.ShowLineNumbers = false
+	ta.Prompt = "❯ "
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle() // No highlight on current line
+	ta.FocusedStyle.Base = InputTextStyle
+	ta.FocusedStyle.Placeholder = InputPlaceholderStyle
+	ta.FocusedStyle.Prompt = InputPromptStyle
+	ta.BlurredStyle = ta.FocusedStyle
+	// Use soft wrap so long lines wrap instead of scrolling horizontally
+	ta.KeyMap.InsertNewline.SetEnabled(false) // Enter sends, not inserts newline
 
 	return InputModel{
-		textInput:    ti,
+		textArea:     ta,
 		history:      []string{},
 		historyIndex: -1,
 	}
@@ -74,16 +83,33 @@ func NewInputModel() InputModel {
 // SetWidth sets the input width.
 func (m InputModel) SetWidth(width int) InputModel {
 	if width < 20 {
-		width = 80 // sensible default before first WindowSizeMsg
+		width = 80
 	}
 	m.width = width
-	m.textInput.Width = width - 8 // Account for prompt and padding
+	m.textArea.SetWidth(width - 4) // Account for borders/padding
+	return m
+}
+
+// Value returns the current input value.
+func (m InputModel) Value() string {
+	return m.textArea.Value()
+}
+
+// SetValue sets the input text.
+func (m InputModel) SetValue(s string) InputModel {
+	m.textArea.SetValue(s)
+	return m
+}
+
+// Focus gives focus to the input.
+func (m InputModel) Focus() InputModel {
+	m.textArea.Focus()
 	return m
 }
 
 // Init implements the init method for InputModel.
 func (m InputModel) Init() tea.Cmd {
-	return textinput.Blink
+	return textarea.Blink
 }
 
 // Update handles messages for the input component.
@@ -96,92 +122,85 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		case "tab":
 			// Complete with the highlighted suggestion
 			if len(m.suggestions) > 0 {
-				m.textInput.SetValue("/" + m.suggestions[m.suggestionIdx] + " ")
-				m.textInput.CursorEnd()
+				m.textArea.SetValue("/" + m.suggestions[m.suggestionIdx] + " ")
 				m.suggestions = nil
 				m.suggestionIdx = 0
 			}
 			return m, nil
 
 		case "enter":
-			value := m.textInput.Value()
-			if value != "" {
+			value := m.textArea.Value()
+			if strings.TrimSpace(value) != "" {
 				// Add to history
 				m.history = append(m.history, value)
-				m.historyIndex = len(m.history) // Reset index past end
+				m.historyIndex = len(m.history)
 				m.tempInput = ""
 				m.suggestions = nil
 				m.suggestionIdx = 0
 
 				// Clear input
-				m.textInput.Reset()
+				m.textArea.Reset()
 
 				// Send message
 				return m, SendMessage(value)
 			}
+			return m, nil
 
 		case "up":
-			// Browse history backwards
-			if len(m.history) > 0 {
-				if m.historyIndex == len(m.history) {
-					// Save current input before browsing
-					m.tempInput = m.textInput.Value()
+			// Browse history backwards (only when input is single line / at top)
+			if len(m.textArea.Value()) == 0 || !strings.Contains(m.textArea.Value(), "\n") {
+				if len(m.history) > 0 {
+					if m.historyIndex == len(m.history) {
+						m.tempInput = m.textArea.Value()
+					}
+					if m.historyIndex > 0 {
+						m.historyIndex--
+						m.textArea.SetValue(m.history[m.historyIndex])
+					}
 				}
-				if m.historyIndex > 0 {
-					m.historyIndex--
-					m.textInput.SetValue(m.history[m.historyIndex])
-					m.textInput.CursorEnd()
-				}
+				return m, nil
 			}
-			return m, nil
 
 		case "down":
-			// Browse history forwards
-			if len(m.history) > 0 && m.historyIndex < len(m.history) {
-				m.historyIndex++
-				if m.historyIndex == len(m.history) {
-					// Restore saved input
-					m.textInput.SetValue(m.tempInput)
-				} else {
-					m.textInput.SetValue(m.history[m.historyIndex])
+			// Browse history forwards (only when input is single line / at bottom)
+			if len(m.textArea.Value()) == 0 || !strings.Contains(m.textArea.Value(), "\n") {
+				if m.historyIndex < len(m.history) {
+					m.historyIndex++
+					if m.historyIndex == len(m.history) {
+						m.textArea.SetValue(m.tempInput)
+					} else {
+						m.textArea.SetValue(m.history[m.historyIndex])
+					}
 				}
-				m.textInput.CursorEnd()
+				return m, nil
 			}
-			return m, nil
 
 		case "ctrl+u":
 			// Clear input line
-			m.textInput.Reset()
+			m.textArea.Reset()
+			m.suggestions = nil
 			return m, nil
 
 		case "ctrl+w":
-			// Delete word backwards
-			value := m.textInput.Value()
-			if len(value) > 0 {
-				// Find last space
-				lastSpace := -1
-				for i := len(value) - 2; i >= 0; i-- {
-					if value[i] == ' ' {
-						lastSpace = i
-						break
-					}
-				}
-				if lastSpace >= 0 {
-					m.textInput.SetValue(value[:lastSpace+1])
-				} else {
-					m.textInput.Reset()
-				}
-				m.textInput.CursorEnd()
+			// Delete last word
+			val := m.textArea.Value()
+			trimmed := strings.TrimRight(val, " ")
+			lastSpace := strings.LastIndex(trimmed, " ")
+			if lastSpace >= 0 {
+				m.textArea.SetValue(val[:lastSpace+1])
+			} else {
+				m.textArea.Reset()
 			}
 			return m, nil
 		}
 	}
 
-	m.textInput, cmd = m.textInput.Update(msg)
+	// Delegate to textarea for character input, cursor movement, etc.
+	m.textArea, cmd = m.textArea.Update(msg)
 
-	// Recompute typeahead after every keystroke
-	m.suggestions = computeSuggestions(m.textInput.Value())
-	if m.suggestionIdx >= len(m.suggestions) {
+	// Update suggestions based on current value
+	m.suggestions = computeSuggestions(m.textArea.Value())
+	if len(m.suggestions) > 0 && m.suggestionIdx >= len(m.suggestions) {
 		m.suggestionIdx = 0
 	}
 
@@ -190,14 +209,9 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 
 // View renders the input component.
 func (m InputModel) View() string {
-	// Guard against zero/negative width before first WindowSizeMsg
-	if m.textInput.Width <= 0 {
-		m.textInput.Width = 80
-	}
-	inputLine := m.textInput.View()
+	inputView := m.textArea.View()
 
-	// Always render a hint line to keep layout height stable at 3 lines.
-	// When suggestions exist, show them; otherwise show a blank line.
+	// Render typeahead suggestions below input
 	var hintLine string
 	if len(m.suggestions) > 0 {
 		parts := make([]string, len(m.suggestions))
@@ -208,46 +222,13 @@ func (m InputModel) View() string {
 				parts[i] = suggestionDimStyle.Render("/" + s)
 			}
 		}
-		hintLine = suggestionTabStyle.Render("  ↹ ") + strings.Join(parts, suggestionTabStyle.Render("  "))
+		hintLine = suggestionTabStyle.Render("  ") + strings.Join(parts, suggestionDimStyle.Render(" · "))
 	}
 
-	return InputPanelStyle.
-		Width(m.width).
-		Render(inputLine + "\n" + hintLine)
-}
-
-// Value returns the current input value.
-func (m InputModel) Value() string {
-	return m.textInput.Value()
-}
-
-// Focus focuses the input.
-func (m InputModel) Focus() InputModel {
-	m.textInput.Focus()
-	return m
-}
-
-// Blur removes focus from the input.
-func (m InputModel) Blur() InputModel {
-	m.textInput.Blur()
-	return m
-}
-
-// SetValue sets the input value.
-func (m InputModel) SetValue(value string) InputModel {
-	m.textInput.SetValue(value)
-	return m
-}
-
-// Clear clears the input.
-func (m InputModel) Clear() InputModel {
-	m.textInput.Reset()
-	return m
-}
-
-// GetHistory returns the command history.
-func (m InputModel) GetHistory() []string {
-	return m.history
+	if hintLine != "" {
+		return inputView + "\n" + hintLine
+	}
+	return inputView
 }
 
 // SetHistory sets the command history.
@@ -255,4 +236,9 @@ func (m InputModel) SetHistory(history []string) InputModel {
 	m.history = history
 	m.historyIndex = len(history)
 	return m
+}
+
+// GetHistory returns the command history.
+func (m InputModel) GetHistory() []string {
+	return m.history
 }
