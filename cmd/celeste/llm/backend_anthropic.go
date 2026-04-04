@@ -77,9 +77,9 @@ func (b *AnthropicBackend) maxTokens() int64 {
 // buildParams constructs the MessageNewParams shared by sync and streaming requests.
 func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.SkillDefinition) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
-		Model:    anthropic.Model(b.config.Model),
+		Model:     anthropic.Model(b.config.Model),
 		MaxTokens: b.maxTokens(),
-		Messages: b.convertMessages(messages),
+		Messages:  b.convertMessages(messages),
 	}
 
 	// Set system prompt with cache control on the static prefix.
