@@ -133,6 +133,79 @@ func main() {}
 	assert.Contains(t, summary, "testproject")
 }
 
+func TestIndexer_SkipsVendorDirs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module testproject\n\ngo 1.26\n")
+	writeFile(t, dir, "main.go", `package main
+
+func main() {}
+`)
+	// Create files inside vendor dirs that should be skipped
+	writeFile(t, dir, "node_modules/pkg/index.js", `function hello() {}`)
+	writeFile(t, dir, "venv/lib/site.py", `def site(): pass`)
+	writeFile(t, dir, "__pycache__/mod.py", `cached = True`)
+	writeFile(t, dir, ".git/config", `[core]`)
+
+	dbPath := filepath.Join(dir, "test-codegraph.db")
+
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+
+	err = idx.Build()
+	require.NoError(t, err)
+
+	stats, err := idx.Stats()
+	require.NoError(t, err)
+
+	// Should only index main.go, not files in vendor dirs
+	assert.Equal(t, 1, stats.TotalFiles, "should only index main.go, not vendor dir files")
+}
+
+func TestIndexer_RespectsGitignore(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module testproject\n\ngo 1.26\n")
+	writeFile(t, dir, "main.go", `package main
+
+func main() {}
+`)
+	writeFile(t, dir, "generated.go", `package main
+
+func generated() {}
+`)
+	writeFile(t, dir, ".gitignore", "generated.go\n")
+
+	dbPath := filepath.Join(dir, "test-codegraph.db")
+
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+
+	err = idx.Build()
+	require.NoError(t, err)
+
+	stats, err := idx.Stats()
+	require.NoError(t, err)
+
+	// Should only index main.go, not generated.go
+	assert.Equal(t, 1, stats.TotalFiles, "should skip files matched by .gitignore")
+}
+
+func TestDefaultIndexPath(t *testing.T) {
+	path := DefaultIndexPath("/some/project/root")
+	assert.Contains(t, path, ".celeste")
+	assert.Contains(t, path, "projects")
+	assert.Contains(t, path, "codegraph.db")
+	// Should not contain the project directory itself
+	assert.NotContains(t, path, "/some/project/root")
+	// Same input should give same output
+	path2 := DefaultIndexPath("/some/project/root")
+	assert.Equal(t, path, path2)
+	// Different input should give different output
+	path3 := DefaultIndexPath("/other/project")
+	assert.NotEqual(t, path, path3)
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)

@@ -89,8 +89,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	// Initialize code graph for the workspace
 	var cgIndexer *codegraph.Indexer
-	_ = os.MkdirAll(filepath.Join(options.Workspace, ".celeste"), 0755)
-	if idx, cgErr := codegraph.NewIndexer(options.Workspace, filepath.Join(options.Workspace, ".celeste", "codegraph.db")); cgErr != nil {
+	if idx, cgErr := codegraph.NewIndexer(options.Workspace, codegraph.DefaultIndexPath(options.Workspace)); cgErr != nil {
 		fmt.Fprintf(errOut, "Warning: code graph init failed: %v\n", cgErr)
 	} else {
 		if err := idx.Update(); err != nil {

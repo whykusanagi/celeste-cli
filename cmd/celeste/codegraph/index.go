@@ -2,6 +2,7 @@ package codegraph
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -21,6 +22,18 @@ type Indexer struct {
 	workspace string
 	store     *Store
 	hasher    *MinHasher
+}
+
+// DefaultIndexPath returns the path to the code graph database for a project.
+// It stores the index under ~/.celeste/projects/<hash>/codegraph.db to avoid
+// polluting the project directory.
+func DefaultIndexPath(projectRoot string) string {
+	homeDir, _ := os.UserHomeDir()
+	hash := sha256.Sum256([]byte(projectRoot))
+	hexHash := hex.EncodeToString(hash[:8]) // first 8 bytes = 16 hex chars
+	dir := filepath.Join(homeDir, ".celeste", "projects", hexHash)
+	os.MkdirAll(dir, 0755)
+	return filepath.Join(dir, "codegraph.db")
 }
 
 // NewIndexer creates an indexer for the given workspace, using the specified
@@ -212,6 +225,8 @@ func (idx *Indexer) indexFile(relPath string) error {
 func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	var files []string
 
+	gitignore := LoadGitignore(idx.workspace)
+
 	err := filepath.WalkDir(idx.workspace, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip errored entries
@@ -226,10 +241,16 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 			if ShouldSkipPath(rel) {
 				return filepath.SkipDir
 			}
+			if gitignore.ShouldSkip(rel, true) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
 		if ShouldSkipPath(rel) {
+			return nil
+		}
+		if gitignore.ShouldSkip(rel, false) {
 			return nil
 		}
 
