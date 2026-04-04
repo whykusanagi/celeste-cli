@@ -451,15 +451,12 @@ func runChatTUI() {
 	sessionManager := config.NewSessionManager()
 	var currentSession *config.Session
 
-	// Try to load latest session for auto-resume
-	if latest, err := sessionManager.LoadLatest(); err == nil {
-		fmt.Fprintf(os.Stderr, "📂 Resuming session: %s (%d messages)\n",
-			latest.ID[:8], len(latest.Messages))
-		currentSession = latest
-	} else {
-		fmt.Fprintln(os.Stderr, "📝 Starting new session")
-		currentSession = sessionManager.NewSession()
-	}
+	// Start a fresh session for each chat invocation.
+	// Previous sessions can be resumed explicitly with `celeste resume`.
+	// Auto-resume was causing cross-contamination between agent and chat
+	// sessions (agent markers like STEP_DONE/TASK_COMPLETE leaked into chat).
+	fmt.Fprintln(os.Stderr, "📝 Starting new session")
+	currentSession = sessionManager.NewSession()
 
 	// Create TUI with session management
 	app := tui.NewApp(tuiClient)
