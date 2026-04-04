@@ -1,18 +1,18 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
-	"bytes"
-	"os/exec"
 )
 
 // toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
@@ -174,7 +174,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 				Error:   true,
 			}, nil
 		case permissions.Ask:
-			fmt.Fprintf(os.Stderr, "⚠️ Permission ASK for tool %q (input: %v) - auto-allowed until TUI prompts (Plan 6)\\n", name, input)
+			fmt.Fprintf(os.Stderr, "⚠️ Permission ASK for tool %q (input: %v) - auto-allowed until TUI prompts (Plan 6)\n", name, input)
 			// TODO: Plan 6 will add interactive permission prompts
 		}
 	}
@@ -200,7 +200,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	if r.hooks != nil && err == nil {
 		_, hookErr := r.hooks.RunPostToolUse(name, input)
 		if hookErr != nil {
-			fmt.Fprintf(os.Stderr, "Post-tool hook failed for %q: %v\\n", name, hookErr)
+			fmt.Fprintf(os.Stderr, "Post-tool hook failed for %q: %v\n", name, hookErr)
 		}
 	}
 
@@ -260,7 +260,7 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 
 	output, err := cmd.Output()
 	if err != nil {
-		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %v\\nOutput:\\n%s", c.command, err, string(output)), Error: true}, nil
+		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %v\nOutput:\n%s", c.command, err, string(output)), Error: true}, nil
 	}
 
 	return ToolResult{Content: string(output)}, nil
