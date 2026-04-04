@@ -43,7 +43,7 @@ import (
 // CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
 // When not set by ldflags, defaults are used.
 var (
-	Version   = "1.8.2"
+	Version   = "1.8.3"
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
 )
@@ -278,12 +278,14 @@ func runChatTUI() {
 	checker := permissions.NewChecker(*permConfig)
 	registry.SetPermissionChecker(checker)
 
-	// Initialize MCP servers (external tool providers)
+	// Initialize MCP servers (external tool providers) with 5-second timeout
 	mcpConfigPath := filepath.Join(homeDir, ".celeste", "mcp.json")
 	mcpManager := mcp.NewManager(mcpConfigPath, registry)
-	if err := mcpManager.Start(context.Background()); err != nil {
+	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := mcpManager.Start(mcpCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: MCP initialization failed: %v\n", err)
 	}
+	mcpCancel()
 	defer func() { _ = mcpManager.Stop() }()
 
 	// Initialize LLM client
@@ -310,22 +312,37 @@ func runChatTUI() {
 	}
 
 	var gitSnapshotContent string
-	gitSnapshot := grimoire.CaptureGitSnapshot(cwd)
-	if gitSnapshot != nil {
-		gitSnapshotContent = gitSnapshot.FormatForPrompt()
+	gitDone := make(chan *grimoire.GitSnapshot, 1)
+	go func() { gitDone <- grimoire.CaptureGitSnapshot(cwd) }()
+	select {
+	case gitSnapshot := <-gitDone:
+		if gitSnapshot != nil {
+			gitSnapshotContent = gitSnapshot.FormatForPrompt()
+		}
+	case <-time.After(5 * time.Second):
+		fmt.Fprintf(os.Stderr, "Warning: git snapshot timed out, skipping\n")
 	}
 
-	// Initialize code graph index
+	// Initialize code graph index (with timeout to prevent startup hang)
 	var codeGraphSummary string
 	_ = os.MkdirAll(filepath.Join(cwd, ".celeste"), 0755)
 	indexer, cgErr := codegraph.NewIndexer(cwd, filepath.Join(cwd, ".celeste", "codegraph.db"))
 	if cgErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: code graph init failed: %v\n", cgErr)
 	} else {
-		// Incremental update (fast if cached)
-		if err := indexer.Update(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: code graph update failed: %v\n", err)
+		// Incremental update with 10-second timeout
+		cgCtx, cgCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cgDone := make(chan error, 1)
+		go func() { cgDone <- indexer.Update() }()
+		select {
+		case err := <-cgDone:
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: code graph update failed: %v\n", err)
+			}
+		case <-cgCtx.Done():
+			fmt.Fprintf(os.Stderr, "Warning: code graph update timed out (10s), skipping\n")
 		}
+		cgCancel()
 		defer indexer.Close()
 
 		// Register code graph tools

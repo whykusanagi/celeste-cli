@@ -73,6 +73,9 @@ func NewInputModel() InputModel {
 
 // SetWidth sets the input width.
 func (m InputModel) SetWidth(width int) InputModel {
+	if width < 20 {
+		width = 80 // sensible default before first WindowSizeMsg
+	}
 	m.width = width
 	m.textInput.Width = width - 8 // Account for prompt and padding
 	return m
@@ -187,6 +190,10 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 
 // View renders the input component.
 func (m InputModel) View() string {
+	// Guard against zero/negative width before first WindowSizeMsg
+	if m.textInput.Width <= 0 {
+		m.textInput.Width = 80
+	}
 	inputLine := m.textInput.View()
 
 	// Always render a hint line to keep layout height stable at 3 lines.
