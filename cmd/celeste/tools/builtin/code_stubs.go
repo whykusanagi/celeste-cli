@@ -24,7 +24,13 @@ func NewCodeStubsTool(indexer *codegraph.Indexer) *CodeStubsTool {
 			ToolName: "code_stubs",
 			ToolDescription: "Find structurally incomplete code — functions and methods with zero outgoing call edges, " +
 				"indicating stubs, placeholders, or dead code. More powerful than grep for TODO because it detects " +
-				"structural isolation in the code graph.",
+				"structural isolation in the code graph.\n\n" +
+				"IMPORTANT: After receiving results, classify each finding before presenting to the user:\n" +
+				"- REAL STUB: Function body contains 'TODO', 'not implemented', returns nil/empty, or has no meaningful logic. Action: needs implementation.\n" +
+				"- DEAD CODE: Function exists but nothing calls it (0 incoming edges) and it serves no current purpose. Action: recommend deletion.\n" +
+				"- FALSE POSITIVE: Function is a leaf node (simple DB operation, stdlib delegation, config accessor) that legitimately has zero outgoing edges. " +
+				"Common causes: method calls through interfaces (edges not captured), stdlib/SQL calls, simple return statements. Action: note as false positive with reason.\n\n" +
+				"Always read the actual function body (use read_file) before classifying. Present findings grouped by classification so the user can act on real stubs first.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {

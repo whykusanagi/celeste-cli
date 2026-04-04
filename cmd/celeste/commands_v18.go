@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/sessions"
@@ -109,10 +110,27 @@ func runPlanCommand(args []string) {
 func runRevertCommand(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: celeste revert <file-path>")
+		fmt.Fprintln(os.Stderr, "\nReverts a file to its most recent checkpoint (pre-edit snapshot).")
+		fmt.Fprintln(os.Stderr, "Checkpoints are created automatically before each write_file/patch_file.")
 		os.Exit(1)
 	}
-	fmt.Printf("File revert is available in interactive chat via /undo.\n")
-	fmt.Printf("Standalone revert not yet implemented.\n")
+
+	filePath := args[0]
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Find the most recent checkpoint for this file
+	sm := checkpoints.NewSnapshotManager(fmt.Sprintf("cli-%d", os.Getpid()))
+	if err := sm.Revert(absPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "\nNo checkpoint found. Checkpoints are created during interactive chat sessions.")
+		fmt.Fprintln(os.Stderr, "Use `celeste chat` and edit files — checkpoints are saved automatically.")
+		os.Exit(1)
+	}
+	fmt.Printf("Reverted: %s\n", filePath)
 }
 
 // generateMemorySlug creates a short slug from text for use as a memory name.
