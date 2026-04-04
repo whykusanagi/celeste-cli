@@ -46,7 +46,7 @@ RUN ls -la /tmp/tests/
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache bash curl jq ca-certificates tzdata
+RUN apk add --no-cache bash curl jq ca-certificates tzdata git
 
 # Create celeste user for running tests (non-root)
 RUN addgroup -g 1000 celeste && \
