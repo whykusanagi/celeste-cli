@@ -1851,7 +1851,7 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 	// Cap at maxToolTurns to prevent runaway loops.
 	maxToolTurns := m.clawMaxIterations
 	if maxToolTurns <= 0 {
-		maxToolTurns = 25 // generous default — let the model work
+		maxToolTurns = 50 // generous default — let the model work
 	}
 	if m.clawToolIterations >= maxToolTurns {
 		LogInfo(fmt.Sprintf("Tool loop safety cap reached (%d turns)", maxToolTurns))

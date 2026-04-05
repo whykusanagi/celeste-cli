@@ -139,7 +139,7 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 
 	opts := agent.Options{
 		Workspace: workspace,
-		MaxTurns:  20,
+		MaxTurns:  50,
 		Verbose:   false,
 	}
 

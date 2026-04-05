@@ -11,7 +11,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
-const maxCommandOutput = 12_000
+const maxCommandOutput = 64_000
 
 // BashTool executes shell commands in the workspace directory.
 type BashTool struct {

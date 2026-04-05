@@ -9,7 +9,7 @@ import (
 const (
 	// DefaultMaxToolResultBytes is the maximum size in bytes for a single tool
 	// result before it gets capped and spilled to disk. 32KB.
-	DefaultMaxToolResultBytes = 32 * 1024
+	DefaultMaxToolResultBytes = 128 * 1024
 
 	// previewTailBytes controls how many bytes from the end of the result are
 	// included in the preview (so the model sees both the beginning and end).
