@@ -35,12 +35,10 @@ var ModelLimits = map[string]int{
 	"o3":            1050000,
 	"o3-mini":       200000,
 	"o4-mini":       400000,
-	// Anthropic
-	"claude-3-opus":   200000,
-	"claude-3-sonnet": 200000,
-	"claude-3-haiku":  200000,
-	"claude-sonnet-4": 200000,
-	"claude-opus-4":   200000,
+	// Anthropic (current models, 2026-04)
+	"claude-opus-4-6":   1000000,
+	"claude-sonnet-4-6": 1000000,
+	"claude-haiku-4-5":  200000,
 	// xAI Grok (from /v1/models API)
 	"grok-3":                        131072,
 	"grok-3-mini":                   131072,

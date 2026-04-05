@@ -45,9 +45,10 @@ var ModelPricing = map[string]ModelCost{
 	"grok-code-fast-1":              {Input: 0.20, Output: 0.50},
 	// Google
 	"gemini-2.0-flash": {Input: 0.10, Output: 0.40},
-	// Anthropic
-	"claude-sonnet-4": {Input: 3.00, Output: 15.00},
-	"claude-opus-4":   {Input: 15.00, Output: 75.00},
+	// Anthropic (current models, 2026-04)
+	"claude-opus-4-6":   {Input: 5.00, Output: 25.00},
+	"claude-sonnet-4-6": {Input: 3.00, Output: 15.00},
+	"claude-haiku-4-5":  {Input: 1.00, Output: 5.00},
 	// Venice-unique models (from docs.venice.ai, 2026-04)
 	"venice-uncensored":                    {Input: 0.20, Output: 0.90},
 	"venice-uncensored-role-play":          {Input: 0.50, Output: 2.00},
