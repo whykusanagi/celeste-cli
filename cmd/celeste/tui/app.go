@@ -49,8 +49,10 @@ type AppModel struct {
 	imageModel    string // Current image generation model (for NSFW mode)
 	provider      string // Current provider (grok, openai, venice, etc.) - detected from endpoint
 	skillsEnabled bool   // Whether skills/function calling is available
-	version       string // Application version (e.g., "1.0.1")
-	build         string // Build identifier (e.g., "bubbletea-tui")
+	version          string // Application version (e.g., "1.0.1")
+	build            string // Build identifier (e.g., "bubbletea-tui")
+	grimoireContent  string // Resolved .grimoire content for /grimoire command
+	codeGraphSummary string // Code graph stats for /index command
 	runtimeMode   string // Runtime orchestration mode (classic or claw)
 
 	// Simulated typing state
@@ -590,11 +592,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "grimoire":
-				m.chat = m.chat.AddSystemMessage("Run `celeste grimoire` to view the resolved project context.\nRun `celeste init` to create a .grimoire if one doesn't exist.")
+				if m.grimoireContent != "" {
+					m.chat = m.chat.AddSystemMessage(m.grimoireContent)
+				} else {
+					m.chat = m.chat.AddSystemMessage("No .grimoire loaded for this project.\nRun `celeste init` to create one.")
+				}
 				return m, nil
 
 			case "index":
-				m.chat = m.chat.AddSystemMessage("Use `celeste index` CLI command to manage the code graph.\n  celeste index         — build/update\n  celeste index status  — show stats\n  celeste index rebuild — rebuild from scratch\n  celeste index reset   — delete index")
+				if m.codeGraphSummary != "" {
+					m.chat = m.chat.AddSystemMessage("Code Graph:\n" + m.codeGraphSummary)
+				} else {
+					m.chat = m.chat.AddSystemMessage("No code graph index loaded.\nRun `celeste index` to build one.")
+				}
 				return m, nil
 
 			case "effort":
@@ -2089,6 +2099,18 @@ func (m AppModel) SetVersion(version, build string) AppModel {
 }
 
 // SetConfig sets the configuration for accessing context limits and other settings.
+// WithGrimoireContent sets the grimoire content for /grimoire display.
+func (m AppModel) WithGrimoireContent(content string) AppModel {
+	m.grimoireContent = content
+	return m
+}
+
+// WithCodeGraphSummary sets the code graph summary for /index display.
+func (m AppModel) WithCodeGraphSummary(summary string) AppModel {
+	m.codeGraphSummary = summary
+	return m
+}
+
 func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 	m.config = cfg
 	if cfg == nil {

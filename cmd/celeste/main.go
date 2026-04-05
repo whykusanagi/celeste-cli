@@ -468,6 +468,14 @@ func runChatTUI() {
 	// Set configuration (for context limits, etc.)
 	app = app.SetConfig(cfg)
 
+	// Pass grimoire and code graph data to TUI for /grimoire and /index commands
+	if grimoireContent != "" {
+		app = app.WithGrimoireContent(grimoireContent)
+	}
+	if codeGraphSummary != "" {
+		app = app.WithCodeGraphSummary(codeGraphSummary)
+	}
+
 	// Restore messages from session if available
 	if len(currentSession.Messages) > 0 {
 		// Convert config.SessionMessage to tui.ChatMessage
