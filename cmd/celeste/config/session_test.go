@@ -611,7 +611,7 @@ func TestSessionBackwardCompatibility(t *testing.T) {
 		Messages: []SessionMessage{
 			{Role: "user", Content: "test", Timestamp: time.Now()},
 		},
-		Model: "gpt-4o",
+		Model: "gpt-4.1",
 		// UsageMetrics intentionally nil
 	}
 
@@ -648,7 +648,7 @@ func TestSessionWithProviderAndMaxContext(t *testing.T) {
 
 	manager := NewSessionManager()
 	session := manager.NewSession()
-	session.Model = "gpt-4o"
+	session.Model = "gpt-4.1"
 	session.Provider = "openai"
 	session.MaxContext = 128000
 
@@ -705,7 +705,7 @@ func TestSessionSaveWithUsageMetrics(t *testing.T) {
 
 	manager := NewSessionManager()
 	session := manager.NewSession()
-	session.Model = "gpt-4o"
+	session.Model = "gpt-4.1"
 	session.Provider = "openai"
 	session.MaxContext = 128000
 

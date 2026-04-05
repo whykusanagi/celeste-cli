@@ -34,15 +34,15 @@ var ModelPricing = map[string]ModelCost{
 	"o3-mini":       {Input: 1.10, Output: 4.40},
 	"o4-mini":       {Input: 0.75, Output: 4.50},
 	// xAI Grok (from pricing page)
-	"grok-4-1-fast":                 {Input: 0.20, Output: 0.50},
-	"grok-4-1-fast-reasoning":       {Input: 0.20, Output: 0.50},
-	"grok-4-1-fast-non-reasoning":   {Input: 0.20, Output: 0.50},
-	"grok-4-fast-reasoning":         {Input: 0.20, Output: 0.50},
-	"grok-4-fast-non-reasoning":     {Input: 0.20, Output: 0.50},
-	"grok-4.20-0309-reasoning":      {Input: 2.00, Output: 6.00},
-	"grok-4.20-0309-non-reasoning":  {Input: 2.00, Output: 6.00},
-	"grok-4.20-multi-agent-0309":    {Input: 2.00, Output: 6.00},
-	"grok-code-fast-1":              {Input: 0.20, Output: 0.50},
+	"grok-4-1-fast":                {Input: 0.20, Output: 0.50},
+	"grok-4-1-fast-reasoning":      {Input: 0.20, Output: 0.50},
+	"grok-4-1-fast-non-reasoning":  {Input: 0.20, Output: 0.50},
+	"grok-4-fast-reasoning":        {Input: 0.20, Output: 0.50},
+	"grok-4-fast-non-reasoning":    {Input: 0.20, Output: 0.50},
+	"grok-4.20-0309-reasoning":     {Input: 2.00, Output: 6.00},
+	"grok-4.20-0309-non-reasoning": {Input: 2.00, Output: 6.00},
+	"grok-4.20-multi-agent-0309":   {Input: 2.00, Output: 6.00},
+	"grok-code-fast-1":             {Input: 0.20, Output: 0.50},
 	// Google
 	"gemini-2.0-flash": {Input: 0.10, Output: 0.40},
 	// Anthropic (current models, 2026-04)
@@ -60,7 +60,7 @@ var ModelPricing = map[string]ModelCost{
 	"zai-org-glm-4.7":                      {Input: 0.55, Output: 2.65},
 	"mistral-small-3-2-24b-instruct":       {Input: 0.09, Output: 0.25},
 	"llama-3.3-70b":                        {Input: 0.70, Output: 2.80},
-	"minimax-m25":                           {Input: 0.34, Output: 1.19},
+	"minimax-m25":                          {Input: 0.34, Output: 1.19},
 }
 
 // GetCost calculates the total USD cost for the given token counts.

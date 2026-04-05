@@ -22,4 +22,3 @@ func (cp CacheablePrompt) FullPrompt() string {
 	}
 	return cp.StaticPrefix + "\n\n---\n\n" + cp.DynamicSuffix
 }
-

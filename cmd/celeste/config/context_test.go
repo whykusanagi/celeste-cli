@@ -60,10 +60,10 @@ func TestGetWarningLevel(t *testing.T) {
 		tokens int
 		level  string
 	}{
-		{500000, "ok"},         // 25%
-		{1500000, "warn"},      // 75%
-		{1700000, "caution"},   // 85%
-		{1900000, "critical"},  // 95%
+		{500000, "ok"},        // 25%
+		{1500000, "warn"},     // 75%
+		{1700000, "caution"},  // 85%
+		{1900000, "critical"}, // 95%
 	}
 
 	for _, tc := range testCases {

@@ -97,3 +97,7 @@ coverage.html
 
 # Celeste CLI local data
 .celeste/
+
+# Auto-generated project context
+.grimoire
+.grimoire.local

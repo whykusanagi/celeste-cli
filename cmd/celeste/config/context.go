@@ -205,4 +205,3 @@ func (ct *ContextTracker) GetContextSummary() string {
 func (ct *ContextTracker) MarkWarningShown() {
 	ct.LastWarningLevel = ct.GetWarningLevel()
 }
-

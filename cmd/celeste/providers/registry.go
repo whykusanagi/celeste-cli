@@ -38,8 +38,8 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    true,
 		SupportsTokenTracking:   true, // Full support via stream_options
-		DefaultModel:            "gpt-4o-mini",
-		PreferredToolModel:      "gpt-4o-mini",
+		DefaultModel:            "gpt-4.1-nano",
+		PreferredToolModel:      "gpt-4.1-nano",
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
 		Notes:                   "Native function calling support. Gold standard implementation.",
@@ -118,8 +118,8 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    true,
 		SupportsTokenTracking:   true, // OpenAI-compatible
-		DefaultModel:            "openai/gpt-4o-mini",
-		PreferredToolModel:      "openai/gpt-4o-mini",
+		DefaultModel:            "openai/gpt-4.1-nano",
+		PreferredToolModel:      "openai/gpt-4.1-nano",
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
 		Notes:                   "Aggregator for multiple providers. Full OpenAI compatibility. Parallel function calling supported.",
@@ -133,7 +133,7 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: false, // Requires cloud-hosted functions
 		SupportsModelListing:    false,
 		SupportsTokenTracking:   true, // Returns usage data with stream_options.include_usage
-		DefaultModel:            "gpt-4o-mini",
+		DefaultModel:            "gpt-4.1-nano",
 		PreferredToolModel:      "",
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,

@@ -32,7 +32,7 @@ func TestGetModelLimit(t *testing.T) {
 	}{
 		{"gpt-4.1", 1050000},
 		{"gpt-4.1-nano", 400000},
-		{"claude-3-opus", 200000},
+		{"claude-opus-4-6", 1000000},
 		{"venice-uncensored", 32000},
 		{"unknown-model", 8192}, // Should default
 	}

@@ -62,7 +62,7 @@ func TestCalculateCost(t *testing.T) {
 		expectedMax float64
 	}{
 		{"grok-4-1-fast", 1000, 500, 0.00044, 0.00046},     // $0.20/M in, $0.50/M out
-		{"gpt-4o-mini", 1000, 500, 0.0004, 0.0005},         // $0.15/M in, $0.60/M out
+		{"gpt-4.1-nano", 1000, 500, 0.0004, 0.0005},        // $0.15/M in, $0.60/M out
 		{"claude-sonnet-4", 1000, 500, 0.010, 0.011},       // $3.00/M in, $15/M out
 		{"venice-uncensored", 1000, 500, 0.00064, 0.00066}, // $0.20/M in, $0.90/M out
 	}
@@ -88,11 +88,11 @@ func TestNormalizeModelName(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"gpt-4o", "gpt-4o"},
-		{"gpt-4o-2024-11-20", "gpt-4o"},
-		{"GPT-4O", "gpt-4o"},
-		{"gpt-4o-mini", "gpt-4o-mini"},
-		{"gpt-4-turbo-preview", "gpt-4-turbo"},
+		{"gpt-4.1", "gpt-4.1"},
+		{"gpt-4o-2024-11-20", "gpt-4.1"},
+		{"GPT-4O", "gpt-4.1"},
+		{"gpt-4.1-nano", "gpt-4.1-nano"},
+		{"gpt-4-turbo-preview", "gpt-4.1"},
 		{"claude-3-5-sonnet-20241022", "claude-sonnet-4"},
 		{"claude-3-opus-20240229", "claude-opus-4.5"},
 		{"claude-3-haiku-20240307", "claude-haiku"},
@@ -117,7 +117,7 @@ func TestGetModelPricing(t *testing.T) {
 	}{
 		{"grok-4-1-fast", true},
 		{"claude-sonnet-4", true},
-		{"gpt-4o-mini", true},
+		{"gpt-4.1-nano", true},
 		{"unknown-model", false},
 	}
 
