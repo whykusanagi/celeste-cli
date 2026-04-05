@@ -1253,7 +1253,7 @@ func createConfigTemplate(name string) error {
 		},
 		"grok": {
 			BaseURL:               "https://api.x.ai/v1",
-			Model:                 "grok-4-latest",
+			Model:                 "grok-4-1-fast",
 			Timeout:               60,
 			SkipPersonaPrompt:     false, // Grok needs persona injection
 			SimulateTyping:        true,

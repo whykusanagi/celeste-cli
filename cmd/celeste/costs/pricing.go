@@ -9,12 +9,21 @@ type ModelCost struct {
 
 // ModelPricing maps model identifiers to their costs.
 var ModelPricing = map[string]ModelCost{
-	"gpt-4o":           {Input: 2.50, Output: 10.00},
-	"gpt-4o-mini":      {Input: 0.15, Output: 0.60},
-	"grok-4-1-fast":    {Input: 3.00, Output: 15.00},
+	// OpenAI
+	"gpt-4o":      {Input: 2.50, Output: 10.00},
+	"gpt-4o-mini": {Input: 0.15, Output: 0.60},
+	// xAI Grok
+	"grok-4-1-fast":                 {Input: 0.20, Output: 0.50},
+	"grok-4-1-fast-reasoning":       {Input: 0.20, Output: 0.50},
+	"grok-4-1-fast-non-reasoning":   {Input: 0.20, Output: 0.50},
+	"grok-4.20-0309-reasoning":      {Input: 2.00, Output: 6.00},
+	"grok-4.20-0309-non-reasoning":  {Input: 2.00, Output: 6.00},
+	"grok-4.20-multi-agent-0309":    {Input: 2.00, Output: 6.00},
+	// Google
 	"gemini-2.0-flash": {Input: 0.10, Output: 0.40},
-	"claude-sonnet-4":  {Input: 3.00, Output: 15.00},
-	"claude-opus-4":    {Input: 15.00, Output: 75.00},
+	// Anthropic
+	"claude-sonnet-4": {Input: 3.00, Output: 15.00},
+	"claude-opus-4":   {Input: 15.00, Output: 75.00},
 }
 
 // GetCost calculates the total USD cost for the given token counts.
