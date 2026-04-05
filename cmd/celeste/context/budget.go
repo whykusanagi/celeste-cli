@@ -11,29 +11,39 @@ import (
 // ModelLimits maps model names to their context window sizes in tokens.
 // Migrated from config/tokens.go.
 var ModelLimits = map[string]int{
-	// OpenAI
+	// OpenAI (from /v1/models API)
 	"gpt-4":         8192,
 	"gpt-4-turbo":   128000,
 	"gpt-4o":        128000,
 	"gpt-4o-mini":   128000,
+	"gpt-4.1":       1050000,
+	"gpt-4.1-mini":  400000,
+	"gpt-4.1-nano":  400000,
 	"gpt-3.5-turbo": 16385,
 	"o3":            1050000,
+	"o3-mini":       200000,
 	"o4-mini":       400000,
-	"gpt-4.1-nano":  400000,
+	"o1":            200000,
+	"o1-pro":        200000,
 	// Anthropic
 	"claude-3-opus":   200000,
 	"claude-3-sonnet": 200000,
 	"claude-3-haiku":  200000,
 	"claude-sonnet-4": 200000,
 	"claude-opus-4":   200000,
-	// xAI Grok
-	"grok-4-1":                      2000000,
+	// xAI Grok (from /v1/models API)
+	"grok-3":                        131072,
+	"grok-3-mini":                   131072,
+	"grok-4-0709":                   2000000,
+	"grok-4-fast-reasoning":         2000000,
+	"grok-4-fast-non-reasoning":     2000000,
 	"grok-4-1-fast":                 2000000,
 	"grok-4-1-fast-reasoning":       2000000,
 	"grok-4-1-fast-non-reasoning":   2000000,
 	"grok-4.20-0309-reasoning":      2000000,
 	"grok-4.20-0309-non-reasoning":  2000000,
 	"grok-4.20-multi-agent-0309":    2000000,
+	"grok-code-fast-1":              2000000,
 	// Venice
 	"venice-uncensored": 8192,
 	"llama-3.3-70b":     8192,
