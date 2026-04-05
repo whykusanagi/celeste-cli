@@ -20,8 +20,8 @@ type MemoryManagerModel struct {
 	scroll    int
 	width     int
 	height    int
-	confirmed int  // index pending delete confirmation (-1 = none)
-	expanded  int  // index of fully expanded memory (-1 = none)
+	confirmed int // index pending delete confirmation (-1 = none)
+	expanded  int // index of fully expanded memory (-1 = none)
 	message   string
 }
 
@@ -54,9 +54,6 @@ func NewMemoryManagerModel(workspace string) MemoryManagerModel {
 func (m MemoryManagerModel) Init() tea.Cmd {
 	return nil
 }
-
-// memoryDeletedMsg signals that a memory was deleted.
-type memoryDeletedMsg struct{}
 
 func (m MemoryManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -358,7 +355,7 @@ var (
 	memBadgeFeedbackStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#22c55e")).Bold(true)
 	memBadgeRefStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#eab308")).Bold(true)
+				Foreground(lipgloss.Color("#eab308")).Bold(true)
 )
 
 // memoryManagerExitMsg signals the manager should close (used for checking os import)

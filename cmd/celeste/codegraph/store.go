@@ -405,9 +405,9 @@ type PackageEdge struct {
 
 // PackageInfo holds package-level stats for visualization.
 type PackageInfo struct {
-	Name       string
+	Name        string
 	SymbolCount int
-	FileCount  int
+	FileCount   int
 }
 
 // GetPackageGraph returns package-level connectivity data for visualization.

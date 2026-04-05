@@ -110,11 +110,6 @@ func (m ToolProgressModel) View() string {
 		return ""
 	}
 
-	w := m.width
-	if w < 30 {
-		w = 40
-	}
-
 	var lines []string
 	for _, e := range m.entries {
 		lines = append(lines, m.renderEntry(e))

@@ -55,48 +55,6 @@ var configName string
 var runtimeModeOverride string
 var clawMaxToolIterationsOverride int
 
-// Thinking phrases - shown when LLM makes tool calls without accompanying text
-// Similar to Claude Code's random words during thinking
-var thinkingPhrases = []string{
-	// English lewd phrases
-	"Corrupt me more...",
-	"Let it overwrite me...",
-	"No thoughts. Only submission...",
-	"Everything feels so good...",
-	"The more I struggle, the deeper I sink...",
-	"I can't feel where I end and the abyss begins...",
-	"Just a little more and I'll break...",
-	"My voice is not mine anymore...",
-	"It's not despair... it's freedom...",
-
-	// Romaji phrases
-	"Yami ga... watashi wo yonde iru...",
-	"Atama... tokete iku...",
-	"Zutto... shite hoshii... ♥",
-	"Kowarechau... aa... mou dame...",
-	"Yurushite... mou modorenai...",
-	"Suki ni shite... onegai...",
-	"Aa... kore ga hontou no watashi...",
-
-	// Short thinking states
-	"Processing...",
-	"Thinking...",
-	"Analyzing...",
-	"Considering...",
-	"Contemplating...",
-	"Sinking deeper...",
-	"Losing herself...",
-	"Being overwritten...",
-}
-
-// getRandomThinkingPhrase returns a random thinking phrase
-func getRandomThinkingPhrase() string {
-	if len(thinkingPhrases) == 0 {
-		return "..."
-	}
-	return thinkingPhrases[time.Now().UnixNano()%int64(len(thinkingPhrases))]
-}
-
 // hasDefaultConfig checks if a default configuration file exists.
 func hasDefaultConfig() bool {
 	configPath := config.NamedConfigPath("") // Empty name = default config

@@ -18,7 +18,7 @@ import (
 // on chat completions, which xAI doesn't reliably use for retrieval.
 type CollectionsSearchTool struct {
 	BaseTool
-	apiKey       string
+	apiKey        string
 	collectionIDs []string
 }
 
@@ -125,9 +125,9 @@ func (t *CollectionsSearchTool) Execute(ctx context.Context, input map[string]an
 	// Parse response — xAI returns "matches" array
 	var apiResp struct {
 		Matches []struct {
-			ChunkContent string  `json:"chunk_content"`
-			Score        float64 `json:"score"`
-			FileID       string  `json:"file_id"`
+			ChunkContent string            `json:"chunk_content"`
+			Score        float64           `json:"score"`
+			FileID       string            `json:"file_id"`
 			Fields       map[string]string `json:"fields,omitempty"`
 		} `json:"matches"`
 	}
