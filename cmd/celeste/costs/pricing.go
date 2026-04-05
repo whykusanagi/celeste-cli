@@ -48,6 +48,18 @@ var ModelPricing = map[string]ModelCost{
 	// Anthropic
 	"claude-sonnet-4": {Input: 3.00, Output: 15.00},
 	"claude-opus-4":   {Input: 15.00, Output: 75.00},
+	// Venice-unique models (from docs.venice.ai, 2026-04)
+	"venice-uncensored":                    {Input: 0.20, Output: 0.90},
+	"venice-uncensored-role-play":          {Input: 0.50, Output: 2.00},
+	"deepseek-v3.2":                        {Input: 0.33, Output: 0.48},
+	"qwen3-coder-480b-a35b-instruct":       {Input: 0.75, Output: 3.00},
+	"qwen3-coder-480b-a35b-instruct-turbo": {Input: 0.35, Output: 1.50},
+	"qwen3-235b-a22b-thinking-2507":        {Input: 0.45, Output: 3.50},
+	"kimi-k2-5":                            {Input: 0.56, Output: 3.50},
+	"zai-org-glm-4.7":                      {Input: 0.55, Output: 2.65},
+	"mistral-small-3-2-24b-instruct":       {Input: 0.09, Output: 0.25},
+	"llama-3.3-70b":                        {Input: 0.70, Output: 2.80},
+	"minimax-m25":                           {Input: 0.34, Output: 1.19},
 }
 
 // GetCost calculates the total USD cost for the given token counts.

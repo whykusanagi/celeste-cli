@@ -54,15 +54,18 @@ var ModelLimits = map[string]int{
 	"grok-4.20-0309-non-reasoning":  2000000,
 	"grok-4.20-multi-agent-0309":    2000000,
 	"grok-code-fast-1":              2000000,
-	// Venice (multi-provider gateway, from /api/v1/models, 2026-04)
-	"venice-uncensored":          131072,
-	"venice-uncensored-role-play": 131072,
-	"llama-3.3-70b":              131072,
-	"deepseek-v3.2":              131072,
-	"qwen3-235b-a22b-instruct-2507": 131072,
-	"qwen3-coder-480b-a35b-instruct": 131072,
-	"kimi-k2-5":                  131072,
-	"minimax-m27":                131072,
+	// Venice-unique models (from docs.venice.ai/models/text, 2026-04)
+	"venice-uncensored":                    32000,
+	"venice-uncensored-role-play":          128000,
+	"deepseek-v3.2":                        160000,
+	"qwen3-coder-480b-a35b-instruct":       256000,
+	"qwen3-coder-480b-a35b-instruct-turbo": 256000,
+	"qwen3-235b-a22b-thinking-2507":        128000,
+	"kimi-k2-5":                            256000,
+	"zai-org-glm-4.7":                      198000,
+	"mistral-small-3-2-24b-instruct":       256000,
+	"llama-3.3-70b":                        128000,
+	"minimax-m25":                           198000,
 	// Default
 	"default": 8192,
 }
