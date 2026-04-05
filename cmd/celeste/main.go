@@ -1243,7 +1243,7 @@ func createConfigTemplate(name string) error {
 	templates := map[string]*config.Config{
 		"openai": {
 			BaseURL:               "https://api.openai.com/v1",
-			Model:                 "gpt-4o-mini",
+			Model:                 "gpt-4.1-nano",
 			Timeout:               60,
 			SkipPersonaPrompt:     false, // OpenAI needs persona injection
 			SimulateTyping:        true,
@@ -1283,7 +1283,7 @@ func createConfigTemplate(name string) error {
 		},
 		"digitalocean": {
 			BaseURL:               "https://your-agent.ondigitalocean.app/api/v1",
-			Model:                 "gpt-4o-mini",
+			Model:                 "gpt-4.1-nano",
 			Timeout:               60,
 			SkipPersonaPrompt:     true, // DO agents have built-in persona
 			SimulateTyping:        true,
@@ -1293,7 +1293,7 @@ func createConfigTemplate(name string) error {
 		},
 		"celeste-classic": {
 			BaseURL:               "https://api.openai.com/v1",
-			Model:                 "gpt-4o-mini",
+			Model:                 "gpt-4.1-nano",
 			Timeout:               60,
 			SkipPersonaPrompt:     false,
 			SimulateTyping:        true,
@@ -1303,7 +1303,7 @@ func createConfigTemplate(name string) error {
 		},
 		"celeste-claw": {
 			BaseURL:               "https://api.openai.com/v1",
-			Model:                 "gpt-4o-mini",
+			Model:                 "gpt-4.1-nano",
 			Timeout:               60,
 			SkipPersonaPrompt:     false,
 			SimulateTyping:        true,

@@ -11,10 +11,10 @@ import (
 
 func TestSessionTracker_RecordUsage(t *testing.T) {
 	tracker := NewSessionTracker()
-	tracker.RecordUsage("gpt-4o", 1000, 500)
+	tracker.RecordUsage("grok-4-1-fast", 1000, 500)
 
 	s := tracker.GetSummary()
-	assert.Equal(t, "gpt-4o", s.Model)
+	assert.Equal(t, "grok-4-1-fast", s.Model)
 	assert.Equal(t, 1000, s.TotalInput)
 	assert.Equal(t, 500, s.TotalOutput)
 	assert.Equal(t, 1, s.Turns)
@@ -23,8 +23,8 @@ func TestSessionTracker_RecordUsage(t *testing.T) {
 
 func TestSessionTracker_MultipleTurns(t *testing.T) {
 	tracker := NewSessionTracker()
-	tracker.RecordUsage("gpt-4o", 1000, 500)
-	tracker.RecordUsage("gpt-4o", 2000, 1000)
+	tracker.RecordUsage("grok-4-1-fast", 1000, 500)
+	tracker.RecordUsage("grok-4-1-fast", 2000, 1000)
 
 	s := tracker.GetSummary()
 	assert.Equal(t, 3000, s.TotalInput)

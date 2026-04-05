@@ -523,7 +523,7 @@ func TestSessionWithUsageMetrics(t *testing.T) {
 
 	manager := NewSessionManager()
 	session := manager.NewSession()
-	session.Model = "gpt-4o"
+	session.Model = "grok-4-1-fast"
 
 	// Add messages with token tracking
 	manager.AddMessageWithTokens(session, "user", "Hello", 10, 0)
@@ -541,9 +541,9 @@ func TestSessionWithUsageMetrics(t *testing.T) {
 	assert.Equal(t, 2, session.UsageMetrics.MessageCount)
 
 	// Verify cost calculation
-	// gpt-4o: $2.50/M input, $10.00/M output
-	// (10/1M * 2.50) + (20/1M * 10.00) = 0.000025 + 0.0002 = 0.000225
-	expectedCost := 0.000225
+	// grok-4-1-fast: $0.20/M input, $0.50/M output
+	// (10/1M * 0.20) + (20/1M * 0.50) = 0.000002 + 0.00001 = 0.000012
+	expectedCost := 0.000012
 	assert.InDelta(t, expectedCost, session.UsageMetrics.EstimatedCost, 0.000001)
 }
 
@@ -551,7 +551,7 @@ func TestSessionWithUsageMetrics(t *testing.T) {
 func TestUpdateUsageMetrics(t *testing.T) {
 	session := &Session{
 		ID:    "test",
-		Model: "gpt-4o",
+		Model: "grok-4-1-fast",
 	}
 
 	// Update usage metrics

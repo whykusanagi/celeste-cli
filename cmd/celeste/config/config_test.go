@@ -16,8 +16,8 @@ func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
 	assert.NotNil(t, config)
-	assert.Equal(t, "https://api.openai.com/v1", config.BaseURL)
-	assert.Equal(t, "gpt-4o-mini", config.Model)
+	assert.Equal(t, "https://api.x.ai/v1", config.BaseURL)
+	assert.Equal(t, "grok-4-1-fast", config.Model)
 	assert.Equal(t, 60, config.Timeout)
 	assert.False(t, config.SkipPersonaPrompt)
 	assert.True(t, config.SimulateTyping)

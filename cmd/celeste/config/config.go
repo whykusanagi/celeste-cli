@@ -205,8 +205,8 @@ type OrchestratorConfig struct {
 // DefaultConfig returns a config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		BaseURL:               "https://api.openai.com/v1",
-		Model:                 "gpt-4o-mini",
+		BaseURL:               "https://api.x.ai/v1",
+		Model:                 "grok-4-1-fast",
 		Timeout:               60,
 		SkipPersonaPrompt:     false,
 		SimulateTyping:        true,

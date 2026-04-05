@@ -20,7 +20,7 @@ func TestNewUsageMetrics(t *testing.T) {
 func TestUsageMetricsUpdate(t *testing.T) {
 	metrics := NewUsageMetrics()
 
-	metrics.Update(1000, 500, "gpt-4o")
+	metrics.Update(1000, 500, "grok-4-1-fast")
 
 	if metrics.TotalInputTokens != 1000 {
 		t.Errorf("Expected TotalInputTokens=1000, got %d", metrics.TotalInputTokens)
@@ -34,15 +34,15 @@ func TestUsageMetricsUpdate(t *testing.T) {
 		t.Errorf("Expected TotalTokens=1500, got %d", metrics.TotalTokens)
 	}
 
-	// Cost for gpt-4o: $2.50/M input, $10.00/M output
-	// (1000/1M * 2.50) + (500/1M * 10.00) = 0.0025 + 0.005 = 0.0075
-	expectedCost := 0.0075
+	// Cost for grok-4-1-fast: $0.20/M input, $0.50/M output
+	// (1000/1M * 0.20) + (500/1M * 0.50) = 0.0002 + 0.00025 = 0.00045
+	expectedCost := 0.00045
 	if metrics.EstimatedCost != expectedCost {
-		t.Errorf("Expected cost=%.4f, got %.4f", expectedCost, metrics.EstimatedCost)
+		t.Errorf("Expected cost=%.5f, got %.5f", expectedCost, metrics.EstimatedCost)
 	}
 
 	// Update again
-	metrics.Update(500, 250, "gpt-4o")
+	metrics.Update(500, 250, "grok-4-1-fast")
 
 	if metrics.TotalInputTokens != 1500 {
 		t.Errorf("Expected cumulative TotalInputTokens=1500, got %d", metrics.TotalInputTokens)
@@ -61,10 +61,10 @@ func TestCalculateCost(t *testing.T) {
 		expectedMin float64
 		expectedMax float64
 	}{
-		{"gpt-4o", 1000, 500, 0.007, 0.008},          // $2.50/M in, $10/M out
-		{"gpt-4o-mini", 1000, 500, 0.0004, 0.0005},   // $0.15/M in, $0.60/M out
-		{"claude-sonnet-4", 1000, 500, 0.010, 0.011}, // $3.00/M in, $15/M out
-		{"grok-4-1-fast", 1000, 500, 0.017, 0.018},   // $5.00/M in, $25/M out
+		{"grok-4-1-fast", 1000, 500, 0.00044, 0.00046},     // $0.20/M in, $0.50/M out
+		{"gpt-4o-mini", 1000, 500, 0.0004, 0.0005},         // $0.15/M in, $0.60/M out
+		{"claude-sonnet-4", 1000, 500, 0.010, 0.011},       // $3.00/M in, $15/M out
+		{"venice-uncensored", 1000, 500, 0.00064, 0.00066}, // $0.20/M in, $0.90/M out
 	}
 
 	for _, tc := range testCases {
@@ -115,9 +115,9 @@ func TestGetModelPricing(t *testing.T) {
 		model      string
 		shouldFind bool
 	}{
-		{"gpt-4o", true},
-		{"claude-sonnet-4", true},
 		{"grok-4-1-fast", true},
+		{"claude-sonnet-4", true},
+		{"gpt-4o-mini", true},
 		{"unknown-model", false},
 	}
 

@@ -94,3 +94,6 @@ coverage.html
 
 # === External References ===
 ../corrupted-theme/
+
+# Celeste CLI local data
+.celeste/

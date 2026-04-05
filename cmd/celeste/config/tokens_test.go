@@ -30,10 +30,10 @@ func TestGetModelLimit(t *testing.T) {
 		model    string
 		expected int
 	}{
-		{"gpt-4", 8192},
-		{"gpt-4-turbo", 128000},
+		{"gpt-4.1", 1050000},
+		{"gpt-4.1-nano", 400000},
 		{"claude-3-opus", 200000},
-		{"venice-uncensored", 8192},
+		{"venice-uncensored", 32000},
 		{"unknown-model", 8192}, // Should default
 	}
 

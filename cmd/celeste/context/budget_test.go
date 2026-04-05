@@ -28,9 +28,9 @@ func TestNewTokenBudget_ZeroLimit(t *testing.T) {
 }
 
 func TestNewTokenBudgetForModel(t *testing.T) {
-	tb := NewTokenBudgetForModel("gpt-4o", 1000, 500)
-	if tb.ModelLimit != 128000 {
-		t.Errorf("ModelLimit = %d, want 128000", tb.ModelLimit)
+	tb := NewTokenBudgetForModel("grok-4-1-fast", 1000, 500)
+	if tb.ModelLimit != 2000000 {
+		t.Errorf("ModelLimit = %d, want 2000000", tb.ModelLimit)
 	}
 
 	tb2 := NewTokenBudgetForModel("unknown-model", 100, 50)
@@ -191,8 +191,8 @@ func TestGetWarningLevel(t *testing.T) {
 }
 
 func TestGetModelLimit(t *testing.T) {
-	if GetModelLimit("gpt-4o") != 128000 {
-		t.Errorf("gpt-4o limit wrong")
+	if GetModelLimit("grok-4-1-fast") != 2000000 {
+		t.Errorf("grok-4-1-fast limit wrong, got %d", GetModelLimit("grok-4-1-fast"))
 	}
 	if GetModelLimit("nonexistent") != ModelLimits["default"] {
 		t.Errorf("fallback limit wrong")
