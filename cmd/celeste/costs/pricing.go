@@ -10,8 +10,11 @@ type ModelCost struct {
 // ModelPricing maps model identifiers to their costs.
 var ModelPricing = map[string]ModelCost{
 	// OpenAI
-	"gpt-4o":      {Input: 2.50, Output: 10.00},
-	"gpt-4o-mini": {Input: 0.15, Output: 0.60},
+	"gpt-4o":            {Input: 2.50, Output: 10.00},
+	"gpt-4o-mini":       {Input: 0.15, Output: 0.60},
+	"o3":                {Input: 2.50, Output: 15.00},
+	"o4-mini":           {Input: 0.75, Output: 4.50},
+	"gpt-4.1-nano":      {Input: 0.20, Output: 1.25},
 	// xAI Grok
 	"grok-4-1-fast":                 {Input: 0.20, Output: 0.50},
 	"grok-4-1-fast-reasoning":       {Input: 0.20, Output: 0.50},

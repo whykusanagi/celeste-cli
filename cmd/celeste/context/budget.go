@@ -17,6 +17,9 @@ var ModelLimits = map[string]int{
 	"gpt-4o":        128000,
 	"gpt-4o-mini":   128000,
 	"gpt-3.5-turbo": 16385,
+	"o3":            1050000,
+	"o4-mini":       400000,
+	"gpt-4.1-nano":  400000,
 	// Anthropic
 	"claude-3-opus":   200000,
 	"claude-3-sonnet": 200000,
