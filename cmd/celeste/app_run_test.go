@@ -74,6 +74,10 @@ func (f *fakeRunner) RunGrimoire(args []string) {
 	f.lastCall = "grimoire"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunIndex(args []string) {
+	f.lastCall = "index"
+	f.lastArgs = args
+}
 func (f *fakeRunner) RunServe(args []string) {
 	f.lastCall = "serve"
 	f.lastArgs = args

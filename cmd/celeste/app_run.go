@@ -26,6 +26,7 @@ type commandRunner interface {
 	RunAgent(args []string)
 	RunInit(args []string)
 	RunGrimoire(args []string)
+	RunIndex(args []string)
 	RunServe(args []string)
 	RunCosts(args []string)
 	RunMemories(args []string)
@@ -57,6 +58,7 @@ func (defaultCommandRunner) RunCollections(args []string)   { runCollectionsComm
 func (defaultCommandRunner) RunAgent(args []string)         { runAgentCommand(args) }
 func (defaultCommandRunner) RunInit(args []string)          { runInitCommand(args) }
 func (defaultCommandRunner) RunGrimoire(args []string)      { runGrimoireCommand(args) }
+func (defaultCommandRunner) RunIndex(args []string)         { runIndexCommand(args) }
 func (defaultCommandRunner) RunServe(args []string)         { runServeCommand(args) }
 func (defaultCommandRunner) RunCosts(args []string)         { runCostsCommand(args) }
 func (defaultCommandRunner) RunMemories(args []string)      { runMemoriesCommand(args) }
@@ -118,6 +120,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunInit(cmdArgs)
 	case "grimoire":
 		runner.RunGrimoire(cmdArgs)
+	case "index":
+		runner.RunIndex(cmdArgs)
 	case "serve":
 		runner.RunServe(cmdArgs)
 	case "costs":

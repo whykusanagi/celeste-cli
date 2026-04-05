@@ -129,6 +129,7 @@ Commands:
   export                  Export session data
   init                    Create a starter .grimoire for the current project
   grimoire                Show the resolved project grimoire (all layers merged)
+  index [status|rebuild|reset]  Manage code graph index
   serve                   Start MCP server (stdio or SSE transport)
   wallet-monitor          Manage wallet security monitoring daemon
   costs                   Show session cost breakdown

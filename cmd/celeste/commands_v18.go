@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/sessions"
@@ -131,6 +132,71 @@ func runRevertCommand(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Reverted: %s\n", filePath)
+}
+
+func runIndexCommand(args []string) {
+	cwd, _ := os.Getwd()
+
+	// Parse subcommands
+	if len(args) > 0 {
+		switch args[0] {
+		case "rebuild", "--rebuild":
+			// Delete and rebuild from scratch
+			dbPath := codegraph.DefaultIndexPath(cwd)
+			if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove old index: %v\n", err)
+			}
+			// Remove WAL/SHM files too
+			os.Remove(dbPath + "-wal")
+			os.Remove(dbPath + "-shm")
+			fmt.Println("Old index removed. Rebuilding...")
+
+		case "status":
+			dbPath := codegraph.DefaultIndexPath(cwd)
+			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+				fmt.Println("No index exists for this project.")
+				fmt.Println("Run `celeste index` to create one.")
+				return
+			}
+			indexer, err := codegraph.NewIndexer(cwd, dbPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			defer indexer.Close()
+			fmt.Println(indexer.ProjectSummary())
+			return
+
+		case "reset":
+			// Delete index entirely
+			dbPath := codegraph.DefaultIndexPath(cwd)
+			os.Remove(dbPath)
+			os.Remove(dbPath + "-wal")
+			os.Remove(dbPath + "-shm")
+			fmt.Println("Index deleted for current project.")
+			return
+		}
+	}
+
+	// Default: build/update index
+	dbPath := codegraph.DefaultIndexPath(cwd)
+	indexer, err := codegraph.NewIndexer(cwd, dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating indexer: %v\n", err)
+		os.Exit(1)
+	}
+	defer indexer.Close()
+
+	fmt.Printf("Indexing %s...\n", cwd)
+	start := time.Now()
+	if err := indexer.Update(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	elapsed := time.Since(start)
+
+	fmt.Println(indexer.ProjectSummary())
+	fmt.Printf("Completed in %s\n", elapsed.Round(time.Millisecond))
 }
 
 // generateMemorySlug creates a short slug from text for use as a memory name.

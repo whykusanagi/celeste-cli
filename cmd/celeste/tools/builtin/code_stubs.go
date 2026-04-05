@@ -25,12 +25,16 @@ func NewCodeStubsTool(indexer *codegraph.Indexer) *CodeStubsTool {
 			ToolDescription: "Find structurally incomplete code — functions and methods with zero outgoing call edges, " +
 				"indicating stubs, placeholders, or dead code. More powerful than grep for TODO because it detects " +
 				"structural isolation in the code graph.\n\n" +
-				"IMPORTANT: After receiving results, classify each finding before presenting to the user:\n" +
-				"- REAL STUB: Function body contains 'TODO', 'not implemented', returns nil/empty, or has no meaningful logic. Action: needs implementation.\n" +
-				"- DEAD CODE: Function exists but nothing calls it (0 incoming edges) and it serves no current purpose. Action: recommend deletion.\n" +
-				"- FALSE POSITIVE: Function is a leaf node (simple DB operation, stdlib delegation, config accessor) that legitimately has zero outgoing edges. " +
-				"Common causes: method calls through interfaces (edges not captured), stdlib/SQL calls, simple return statements. Action: note as false positive with reason.\n\n" +
-				"Always read the actual function body (use read_file) before classifying. Present findings grouped by classification so the user can act on real stubs first.",
+				"IMPORTANT: After receiving results, you MUST verify each finding before classifying:\n" +
+				"1. Use the search tool to grep for the function name across the codebase (e.g., search for 'KeywordSearch')\n" +
+				"2. If search finds callers, it's a FALSE POSITIVE — the graph missed a cross-package call\n" +
+				"3. Only if search confirms zero callers outside the definition, classify as DEAD CODE\n\n" +
+				"Classification:\n" +
+				"- REAL STUB: Function body contains 'TODO', 'not implemented', returns nil/empty, or has no meaningful logic.\n" +
+				"- DEAD CODE: Function has zero callers (verified by search, not just graph edges). Recommend deletion.\n" +
+				"- FALSE POSITIVE: Function has callers that the graph missed (common for cross-package method calls like obj.Method()). Note the caller location.\n\n" +
+				"KNOWN LIMITATION: The code graph misses cross-package method calls (e.g., indexer.KeywordSearch() from a different package). " +
+				"Always verify with search before classifying as dead code. Present findings grouped by classification.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
