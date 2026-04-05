@@ -34,14 +34,14 @@ type GraphModel struct {
 	edges       []graphEdge
 	cursor      int
 	scroll      int
-	expanded    map[int]bool   // which nodes are expanded to show symbols
+	expanded    map[int]bool // which nodes are expanded to show symbols
 	width       int
 	height      int
-	filterKind  string         // filter by symbol kind (empty = all)
-	searchQuery string         // filter nodes by name
-	searching   bool           // true when search input is active
-	viewMode    string         // "overview" or "detail"
-	detailIdx   int            // index of node shown in detail view
+	filterKind  string // filter by symbol kind (empty = all)
+	searchQuery string // filter nodes by name
+	searching   bool   // true when search input is active
+	viewMode    string // "overview" or "detail"
+	detailIdx   int    // index of node shown in detail view
 }
 
 // NewGraphModel creates a graph view from the code graph indexer.
