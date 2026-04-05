@@ -1,5 +1,5 @@
 // Package tui provides the Bubble Tea-based terminal UI for Celeste CLI.
-// This file implements an ASCII graph visualization for the code graph.
+// This file implements an interactive code graph browser for the code graph.
 package tui
 
 import (
@@ -34,19 +34,19 @@ type GraphModel struct {
 	edges       []graphEdge
 	cursor      int
 	scroll      int
-	expanded    map[int]bool // which nodes are expanded to show symbols
+	expanded    map[int]bool   // which nodes are expanded to show symbols
 	width       int
 	height      int
-	detail      *graphNode // currently selected node for detail view
-	filterKind  string     // filter by symbol kind (empty = all)
-	searchQuery string
-	viewMode    string // "overview" or "detail"
+	filterKind  string         // filter by symbol kind (empty = all)
+	searchQuery string         // filter nodes by name
+	searching   bool           // true when search input is active
+	viewMode    string         // "overview" or "detail"
+	detailIdx   int            // index of node shown in detail view
 }
 
 // NewGraphModel creates a graph view from the code graph indexer.
 func NewGraphModel(indexer *codegraph.Indexer) GraphModel {
 	store := indexer.Store()
-	stats, _ := store.Stats()
 
 	// Build file clusters
 	files, _ := store.GetAllFiles()
@@ -64,7 +64,7 @@ func NewGraphModel(indexer *codegraph.Indexer) GraphModel {
 		node.Symbols = syms
 	}
 
-	// Count edges per file
+	// Count edges per file and collect inter-file edges
 	allFuncs, _ := store.FindAllFunctionsWithEdges()
 	for _, f := range allFuncs {
 		if n, ok := nodeMap[f.File]; ok {
@@ -72,6 +72,22 @@ func NewGraphModel(indexer *codegraph.Indexer) GraphModel {
 			n.InEdges += f.InEdges
 		}
 	}
+
+	// Build inter-file edge map from the graph
+	edgeCount := make(map[string]int) // "src→dst" -> count
+	// We can approximate edges by looking at symbols that share edges across files
+	// For now, use package-level edges as a proxy
+	pkgs, pkgEdges, _ := indexer.PackageGraph()
+	_ = pkgs
+	var edges []graphEdge
+	for _, pe := range pkgEdges {
+		edges = append(edges, graphEdge{
+			SourceFile: pe.Source,
+			TargetFile: pe.Target,
+			Count:      pe.Count,
+		})
+	}
+	_ = edgeCount
 
 	// Convert to sorted slices — sort by edge count (most connected first)
 	var nodes []graphNode
@@ -89,10 +105,9 @@ func NewGraphModel(indexer *codegraph.Indexer) GraphModel {
 		return nodes[i].File < nodes[j].File
 	})
 
-	_ = stats // used for header
-
 	return GraphModel{
 		nodes:    nodes,
+		edges:    edges,
 		expanded: make(map[int]bool),
 		viewMode: "overview",
 	}
@@ -107,37 +122,75 @@ func (m GraphModel) Init() tea.Cmd {
 func (m GraphModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Search mode input
+		if m.searching {
+			switch msg.String() {
+			case "enter", "esc":
+				m.searching = false
+			case "backspace":
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				}
+			default:
+				if len(msg.String()) == 1 {
+					m.searchQuery += msg.String()
+				}
+			}
+			m.cursor = 0
+			m.scroll = 0
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "Q", "esc":
 			if m.viewMode == "detail" {
 				m.viewMode = "overview"
 				return m, nil
 			}
+			if m.searchQuery != "" {
+				m.searchQuery = ""
+				return m, nil
+			}
 			return m, nil // parent handles exit
 		case "up", "k":
+			visible := m.visibleNodes()
 			if m.cursor > 0 {
 				m.cursor--
 				if m.cursor < m.scroll {
 					m.scroll = m.cursor
 				}
 			}
+			_ = visible
 		case "down", "j":
-			if m.cursor < len(m.nodes)-1 {
+			visible := m.visibleNodes()
+			if m.cursor < len(visible)-1 {
 				m.cursor++
-				maxVisible := m.height - 8
-				if maxVisible < 5 {
-					maxVisible = 20
-				}
-				if m.cursor >= m.scroll+maxVisible {
+				maxVis := m.maxVisible()
+				if m.cursor >= m.scroll+maxVis {
 					m.scroll++
 				}
 			}
 		case "enter", " ":
-			if m.cursor < len(m.nodes) {
-				m.expanded[m.cursor] = !m.expanded[m.cursor]
+			if m.viewMode == "detail" {
+				// In detail mode, enter does nothing extra
+				return m, nil
 			}
+			visible := m.visibleNodes()
+			if m.cursor < len(visible) {
+				// Toggle between expand and detail
+				idx := visible[m.cursor].origIdx
+				m.expanded[idx] = !m.expanded[idx]
+			}
+		case "d":
+			// Detail view: show connections for selected node
+			visible := m.visibleNodes()
+			if m.cursor < len(visible) {
+				m.detailIdx = visible[m.cursor].origIdx
+				m.viewMode = "detail"
+			}
+		case "/":
+			m.searching = true
 		case "tab":
-			// Cycle through filter kinds
 			kinds := []string{"", "function", "method", "struct", "interface", "class"}
 			for i, k := range kinds {
 				if k == m.filterKind {
@@ -153,7 +206,33 @@ func (m GraphModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// glitchChar returns a random corrupted character for decoration.
+type visibleNode struct {
+	node    graphNode
+	origIdx int
+}
+
+func (m GraphModel) visibleNodes() []visibleNode {
+	var visible []visibleNode
+	for i, node := range m.nodes {
+		if m.searchQuery != "" {
+			if !strings.Contains(strings.ToLower(node.File), strings.ToLower(m.searchQuery)) {
+				continue
+			}
+		}
+		visible = append(visible, visibleNode{node: node, origIdx: i})
+	}
+	return visible
+}
+
+func (m GraphModel) maxVisible() int {
+	v := m.height - 8
+	if v < 5 {
+		v = 20
+	}
+	return v
+}
+
+// glitchChar returns a corrupted character for decoration.
 func glitchChar(i int) string {
 	chars := []string{"░", "▒", "▓", "█", "▀", "▄", "▌", "▐", "╫", "╬", "┼", "╳"}
 	return chars[i%len(chars)]
@@ -161,6 +240,13 @@ func glitchChar(i int) string {
 
 // View renders the graph visualization.
 func (m GraphModel) View() string {
+	if m.viewMode == "detail" {
+		return m.renderDetail()
+	}
+	return m.renderOverview()
+}
+
+func (m GraphModel) renderOverview() string {
 	if len(m.nodes) == 0 {
 		return graphHeaderStyle.Render("No code graph data. Run `celeste index` first.")
 	}
@@ -179,45 +265,50 @@ func (m GraphModel) View() string {
 		totalEdges += n.OutEdges
 	}
 
-	header := fmt.Sprintf(" %s CODE GRAPH %s  %d files  %d symbols  %d edges ",
-		glitchChar(0), glitchChar(1), len(m.nodes), totalSyms, totalEdges)
+	header := fmt.Sprintf(" %s CODE GRAPH %s  %d files  %d symbols  %d edges  %d pkg connections",
+		glitchChar(0), glitchChar(1), len(m.nodes), totalSyms, totalEdges, len(m.edges))
 	sb.WriteString(graphHeaderStyle.Width(width).Render(header))
 	sb.WriteString("\n")
 
-	// Corruption bar
 	bar := strings.Repeat("▀", width)
 	sb.WriteString(graphBarStyle.Render(bar))
 	sb.WriteString("\n")
 
+	// Search indicator
+	if m.searching {
+		sb.WriteString(graphFilterStyle.Render(fmt.Sprintf("  🔍 Search: %s_", m.searchQuery)))
+		sb.WriteString("\n")
+	} else if m.searchQuery != "" {
+		sb.WriteString(graphFilterStyle.Render(fmt.Sprintf("  🔍 Filter: %s  [/ to search, Esc to clear]", m.searchQuery)))
+		sb.WriteString("\n")
+	}
+
 	// Filter indicator
 	if m.filterKind != "" {
-		filterText := fmt.Sprintf("  ◈ Filter: %s  [Tab to change]", m.filterKind)
-		sb.WriteString(graphFilterStyle.Render(filterText))
+		sb.WriteString(graphFilterStyle.Render(fmt.Sprintf("  ◈ Kind: %s  [Tab to change]", m.filterKind)))
 		sb.WriteString("\n")
 	}
 
 	// Node list
-	maxVisible := m.height - 8
-	if maxVisible < 5 {
-		maxVisible = 20
-	}
-	endIdx := m.scroll + maxVisible
-	if endIdx > len(m.nodes) {
-		endIdx = len(m.nodes)
+	visible := m.visibleNodes()
+	maxVis := m.maxVisible()
+	endIdx := m.scroll + maxVis
+	if endIdx > len(visible) {
+		endIdx = len(visible)
 	}
 
-	for i := m.scroll; i < endIdx; i++ {
-		node := m.nodes[i]
-		isCursor := i == m.cursor
-		isExpanded := m.expanded[i]
+	for vi := m.scroll; vi < endIdx; vi++ {
+		vn := visible[vi]
+		node := vn.node
+		origIdx := vn.origIdx
+		isCursor := vi == m.cursor
+		isExpanded := m.expanded[origIdx]
 
-		// Count symbols by kind
 		kindCounts := make(map[string]int)
 		for _, sym := range node.Symbols {
 			kindCounts[string(sym.Kind)]++
 		}
 
-		// File header line
 		connStr := ""
 		total := node.OutEdges + node.InEdges
 		if total > 0 {
@@ -259,7 +350,6 @@ func (m GraphModel) View() string {
 				symbols = filtered
 			}
 
-			// Sort by kind then name
 			sort.Slice(symbols, func(a, b int) bool {
 				if symbols[a].Kind != symbols[b].Kind {
 					return symbols[a].Kind < symbols[b].Kind
@@ -288,10 +378,88 @@ func (m GraphModel) View() string {
 		}
 	}
 
-	// Footer
 	sb.WriteString("\n")
-	footer := " [↑/↓] Navigate  [Enter] Expand  [Tab] Filter kind  [Q/Esc] Back"
+	footer := " [↑/↓] Navigate  [Enter] Expand  [D] Detail  [/] Search  [Tab] Filter  [Q/Esc] Back"
 	sb.WriteString(graphFooterStyle.Render(footer))
+
+	return sb.String()
+}
+
+// renderDetail shows the selected node with its connections.
+func (m GraphModel) renderDetail() string {
+	if m.detailIdx >= len(m.nodes) {
+		return graphHeaderStyle.Render("Invalid node selection")
+	}
+
+	node := m.nodes[m.detailIdx]
+	var sb strings.Builder
+	width := m.width
+	if width < 40 {
+		width = 80
+	}
+
+	// Header
+	header := fmt.Sprintf(" %s %s %s", glitchChar(2), node.File, glitchChar(3))
+	sb.WriteString(graphHeaderStyle.Width(width).Render(header))
+	sb.WriteString("\n")
+	sb.WriteString(graphBarStyle.Render(strings.Repeat("▀", width)))
+	sb.WriteString("\n\n")
+
+	// Stats
+	sb.WriteString(graphFilterStyle.Render(fmt.Sprintf("  Symbols: %d  │  Outgoing: %d  │  Incoming: %d",
+		len(node.Symbols), node.OutEdges, node.InEdges)))
+	sb.WriteString("\n\n")
+
+	// Symbols list
+	sb.WriteString(graphHotStyle.Render("  Symbols:"))
+	sb.WriteString("\n")
+	for i, sym := range node.Symbols {
+		if i >= 30 {
+			sb.WriteString(graphMutedStyle.Render(fmt.Sprintf("    ... and %d more", len(node.Symbols)-30)))
+			sb.WriteString("\n")
+			break
+		}
+		icon := symbolIcon(string(sym.Kind))
+		line := fmt.Sprintf("    %s %s %s :%d", icon, sym.Name, graphMutedStyle.Render(string(sym.Kind)), sym.Line)
+		sb.WriteString(graphSymbolStyle.Render(line))
+		sb.WriteString("\n")
+	}
+
+	// Connected packages (from edges)
+	sb.WriteString("\n")
+	sb.WriteString(graphHotStyle.Render("  Package Connections:"))
+	sb.WriteString("\n")
+
+	// Find this file's package
+	filePkg := ""
+	for _, sym := range node.Symbols {
+		if sym.Package != "" {
+			filePkg = sym.Package
+			break
+		}
+	}
+
+	connCount := 0
+	if filePkg != "" {
+		for _, edge := range m.edges {
+			if edge.SourceFile == filePkg {
+				sb.WriteString(graphSymbolStyle.Render(fmt.Sprintf("    → %s (%d calls)", edge.TargetFile, edge.Count)))
+				sb.WriteString("\n")
+				connCount++
+			} else if edge.TargetFile == filePkg {
+				sb.WriteString(graphSymbolStyle.Render(fmt.Sprintf("    ← %s (%d calls)", edge.SourceFile, edge.Count)))
+				sb.WriteString("\n")
+				connCount++
+			}
+		}
+	}
+	if connCount == 0 {
+		sb.WriteString(graphMutedStyle.Render("    No cross-package connections"))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(graphFooterStyle.Render(" [Q/Esc] Back to overview"))
 
 	return sb.String()
 }
@@ -332,33 +500,33 @@ func truncate(s string, max int) string {
 var (
 	graphHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("#ff4da6")). // Bright pink
-				Background(lipgloss.Color("#1a1a2e"))  // Deep void
+				Foreground(lipgloss.Color("#ff4da6")).
+				Background(lipgloss.Color("#1a1a2e"))
 
 	graphBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#3a2555")) // Purple border dim
+			Foreground(lipgloss.Color("#3a2555"))
 
 	graphNodeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#b8afc8")) // Secondary text
+			Foreground(lipgloss.Color("#b8afc8"))
 
 	graphCursorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#ff4da6")). // Bright pink cursor
+				Foreground(lipgloss.Color("#ff4da6")).
 				Bold(true).
-				Background(lipgloss.Color("#1a1a2e")) // Subtle highlight
+				Background(lipgloss.Color("#1a1a2e"))
 
 	graphHotStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#c084fc")). // Neon purple for hot files
+			Foreground(lipgloss.Color("#c084fc")).
 			Bold(true)
 
 	graphSymbolStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#8b5cf6")) // Purple for symbols
+				Foreground(lipgloss.Color("#8b5cf6"))
 
 	graphMutedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7a7085")) // Muted
+			Foreground(lipgloss.Color("#7a7085"))
 
 	graphFilterStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#00d4ff")) // Cyan accent
+				Foreground(lipgloss.Color("#00d4ff"))
 
 	graphFooterStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#5a4575")) // Dim purple
+				Foreground(lipgloss.Color("#5a4575"))
 )

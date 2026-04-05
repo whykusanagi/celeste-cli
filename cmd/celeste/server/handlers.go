@@ -133,7 +133,7 @@ func registerCelesteTool(s *Server) {
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
 	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
-		grimoire.Init(workspace)
+		_, _ = grimoire.Init(workspace)
 	}
 
 	registry := tools.NewRegistry()
@@ -232,7 +232,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
 	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
-		grimoire.Init(workspace)
+		_, _ = grimoire.Init(workspace)
 	}
 
 	var outBuf, errBuf bytes.Buffer

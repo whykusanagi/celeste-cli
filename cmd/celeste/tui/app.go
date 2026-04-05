@@ -2037,9 +2037,6 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 
 // isClawMode is deprecated — tools always auto-loop now.
 // Kept for backward compatibility with config files that set runtime_mode.
-func (m AppModel) isClawMode() bool {
-	return true // always auto-loop
-}
 
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
