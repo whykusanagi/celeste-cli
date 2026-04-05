@@ -117,66 +117,11 @@ func GetModelPricing(model string) (PricingTier, bool) {
 func normalizeModelName(model string) string {
 	model = strings.ToLower(model)
 
-	// Handle common patterns (specific before general)
-	if strings.Contains(model, "gpt-4.1-nano") || strings.Contains(model, "gpt-4.1 nano") {
-		return "gpt-4.1-nano"
-	}
-	if strings.Contains(model, "gpt-4.1") {
-		return "gpt-4.1"
-	}
-	if strings.Contains(model, "gpt-4o") || strings.Contains(model, "gpt-4-turbo") {
-		return "gpt-4.1" // map legacy gpt-4o to gpt-4.1
-	}
-	if strings.Contains(model, "gpt-4") {
-		return "gpt-4.1" // map legacy gpt-4 to gpt-4.1
-	}
-	if strings.Contains(model, "gpt-3.5-turbo-16k") {
-		return "gpt-3.5-turbo-16k"
-	}
-	if strings.Contains(model, "gpt-3.5") {
-		return "gpt-3.5-turbo"
-	}
+	// No legacy mapping — return the model name as-is.
+	// If it's in the pricing table, cost is calculated.
+	// If not, returns 0 cost. Users should use current models.
 
-	// Claude models (map all variants to current names)
-	if strings.Contains(model, "claude-sonnet") || strings.Contains(model, "claude-3-5-sonnet") {
-		return "claude-sonnet-4"
-	}
-	if strings.Contains(model, "claude-opus") || strings.Contains(model, "claude-3-opus") {
-		return "claude-opus-4.5"
-	}
-	if strings.Contains(model, "claude-haiku") || strings.Contains(model, "claude-3-haiku") {
-		return "claude-haiku"
-	}
-
-	// Grok models
-	if strings.Contains(model, "grok-4-1-fast") || strings.Contains(model, "grok-4.1-fast") {
-		return "grok-4-1-fast"
-	}
-	if strings.Contains(model, "grok-4-1") || strings.Contains(model, "grok-4.1") {
-		return "grok-4-1"
-	}
-	if strings.Contains(model, "grok-4") {
-		return "grok-4"
-	}
-	if strings.Contains(model, "grok-3") {
-		return "grok-3"
-	}
-
-	// Gemini models
-	if strings.Contains(model, "gemini-2.0-flash") {
-		return "gemini-2.0-flash-exp"
-	}
-	if strings.Contains(model, "gemini-1.5-pro") {
-		return "gemini-1.5-pro"
-	}
-	if strings.Contains(model, "gemini-1.5-flash") {
-		return "gemini-1.5-flash"
-	}
-	if strings.Contains(model, "gemini-1.0") {
-		return "gemini-1.0-pro"
-	}
-
-	// Venice/Llama
+	// Venice shorthand
 	if strings.Contains(model, "venice") {
 		return "venice-uncensored"
 	}

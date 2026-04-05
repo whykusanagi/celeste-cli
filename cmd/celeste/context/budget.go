@@ -11,40 +11,22 @@ import (
 // ModelLimits maps model names to their context window sizes in tokens.
 // Migrated from config/tokens.go.
 var ModelLimits = map[string]int{
-	// OpenAI (from /v1/models API, 2026-04)
+	// OpenAI — current generation only (from /v1/models API, 2026-04)
 	"gpt-4.1":       1050000,
 	"gpt-4.1-mini":  400000,
 	"gpt-4.1-nano":  400000,
-	"gpt-5":         1050000,
-	"gpt-5-mini":    400000,
-	"gpt-5-nano":    400000,
-	"gpt-5-pro":     1050000,
-	"gpt-5-codex":   1050000,
-	"gpt-5.1":       1050000,
-	"gpt-5.1-codex": 1050000,
-	"gpt-5.2":       1050000,
-	"gpt-5.2-codex": 1050000,
-	"gpt-5.2-pro":   1050000,
 	"gpt-5.3-codex": 1050000,
 	"gpt-5.4":       1050000,
 	"gpt-5.4-mini":  400000,
 	"gpt-5.4-nano":  400000,
 	"gpt-5.4-pro":   1050000,
-	"o1":            200000,
-	"o1-pro":        200000,
 	"o3":            1050000,
-	"o3-mini":       200000,
 	"o4-mini":       400000,
 	// Anthropic (current models, 2026-04)
 	"claude-opus-4-6":   1000000,
 	"claude-sonnet-4-6": 1000000,
 	"claude-haiku-4-5":  200000,
-	// xAI Grok (from /v1/models API)
-	"grok-3":                       131072,
-	"grok-3-mini":                  131072,
-	"grok-4-0709":                  2000000,
-	"grok-4-fast-reasoning":        2000000,
-	"grok-4-fast-non-reasoning":    2000000,
+	// xAI Grok — current generation (from /v1/models API, 2026-04)
 	"grok-4-1-fast":                2000000,
 	"grok-4-1-fast-reasoning":      2000000,
 	"grok-4-1-fast-non-reasoning":  2000000,

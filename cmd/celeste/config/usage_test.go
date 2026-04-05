@@ -88,18 +88,20 @@ func TestNormalizeModelName(t *testing.T) {
 		input    string
 		expected string
 	}{
+		// Current models pass through as-is (lowercased)
 		{"gpt-4.1", "gpt-4.1"},
-		{"gpt-4o-2024-11-20", "gpt-4.1"},
-		{"GPT-4O", "gpt-4.1"},
 		{"gpt-4.1-nano", "gpt-4.1-nano"},
-		{"gpt-4-turbo-preview", "gpt-4.1"},
-		{"claude-3-5-sonnet-20241022", "claude-sonnet-4"},
-		{"claude-3-opus-20240229", "claude-opus-4.5"},
-		{"claude-3-haiku-20240307", "claude-haiku"},
 		{"grok-4-1-fast", "grok-4-1-fast"},
-		{"grok-4.1-fast", "grok-4-1-fast"},
-		{"gemini-1.5-pro", "gemini-1.5-pro"},
+		{"claude-sonnet-4-6", "claude-sonnet-4-6"},
+		{"gemini-2.0-flash", "gemini-2.0-flash"},
 		{"venice-uncensored", "venice-uncensored"},
+		// Uppercase normalized to lowercase
+		{"GPT-4.1", "gpt-4.1"},
+		{"GROK-4-1-FAST", "grok-4-1-fast"},
+		// Venice shorthand
+		{"venice-uncensored-role-play", "venice-uncensored"},
+		// Unknown models pass through
+		{"some-new-model", "some-new-model"},
 	}
 
 	for _, tc := range testCases {
