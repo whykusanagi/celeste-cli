@@ -23,78 +23,105 @@ type ProjectInfo struct {
 func DetectProject(dir string) (*ProjectInfo, error) {
 	info := &ProjectInfo{Language: "unknown"}
 
+	// Detect all present languages by manifest files AND file count.
+	// For multi-language projects, the dominant language (most source files) wins.
+	type langCandidate struct {
+		language    string
+		testCmd     string
+		lintCmd     string
+		buildCmd    string
+		modulePath  string
+		hasManifest bool
+		fileCount   int
+	}
+	candidates := make(map[string]*langCandidate)
+
 	// Check for Go project
-	goModPath := filepath.Join(dir, "go.mod")
-	if data, err := os.ReadFile(goModPath); err == nil {
-		info.Language = "go"
-		info.TestCommand = "go test ./... -count=1"
-		info.LintCommand = "golangci-lint run ./..."
-		info.BuildCommand = "go build ./..."
-		// Parse module path from go.mod
+	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil {
+		c := &langCandidate{language: "go", testCmd: "go test ./... -count=1", lintCmd: "golangci-lint run ./...", buildCmd: "go build ./...", hasManifest: true}
 		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "module ") {
-				info.ModulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
+			if strings.HasPrefix(strings.TrimSpace(line), "module ") {
+				c.modulePath = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "module"))
 				break
 			}
 		}
-		return info, nil
+		candidates["go"] = c
 	}
 
-	// Check for Node.js project
-	pkgPath := filepath.Join(dir, "package.json")
-	if data, err := os.ReadFile(pkgPath); err == nil {
-		info.Language = "javascript"
-		info.TestCommand = "npm test"
-		info.BuildCommand = "npm run build"
-
-		// Check for TypeScript
-		tsConfigPath := filepath.Join(dir, "tsconfig.json")
-		if _, err := os.Stat(tsConfigPath); err == nil {
-			info.Language = "typescript"
+	// Check for Node.js/TypeScript project
+	if data, err := os.ReadFile(filepath.Join(dir, "package.json")); err == nil {
+		lang := "javascript"
+		if _, err := os.Stat(filepath.Join(dir, "tsconfig.json")); err == nil {
+			lang = "typescript"
 		}
-
-		// Parse package.json for name and scripts
-		var pkg map[string]interface{}
+		c := &langCandidate{language: lang, testCmd: "npm test", buildCmd: "npm run build", hasManifest: true}
+		var pkg map[string]any
 		if err := json.Unmarshal(data, &pkg); err == nil {
 			if name, ok := pkg["name"].(string); ok {
-				info.ModulePath = name
+				c.modulePath = name
 			}
-			if scripts, ok := pkg["scripts"].(map[string]interface{}); ok {
+			if scripts, ok := pkg["scripts"].(map[string]any); ok {
 				if test, ok := scripts["test"].(string); ok {
-					info.TestCommand = test
+					c.testCmd = test
 				}
 				if lint, ok := scripts["lint"].(string); ok {
-					info.LintCommand = lint
+					c.lintCmd = lint
 				}
 			}
 		}
-		return info, nil
+		candidates[lang] = c
 	}
 
 	// Check for Python project
-	pyProjectPath := filepath.Join(dir, "pyproject.toml")
-	requirementsPath := filepath.Join(dir, "requirements.txt")
-	if _, err := os.Stat(pyProjectPath); err == nil {
-		info.Language = "python"
-		info.TestCommand = "pytest"
-		info.LintCommand = "ruff check ."
-		return info, nil
-	}
-	if _, err := os.Stat(requirementsPath); err == nil {
-		info.Language = "python"
-		info.TestCommand = "pytest"
-		info.LintCommand = "ruff check ."
-		return info, nil
+	if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
+		candidates["python"] = &langCandidate{language: "python", testCmd: "pytest", lintCmd: "ruff check .", hasManifest: true}
+	} else if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+		candidates["python"] = &langCandidate{language: "python", testCmd: "pytest", lintCmd: "ruff check .", hasManifest: true}
 	}
 
 	// Check for Rust project
-	cargoPath := filepath.Join(dir, "Cargo.toml")
-	if _, err := os.Stat(cargoPath); err == nil {
-		info.Language = "rust"
-		info.TestCommand = "cargo test"
-		info.LintCommand = "cargo clippy"
-		info.BuildCommand = "cargo build"
+	if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
+		candidates["rust"] = &langCandidate{language: "rust", testCmd: "cargo test", lintCmd: "cargo clippy", buildCmd: "cargo build", hasManifest: true}
+	}
+
+	// If multiple languages detected, count source files to find the dominant one
+	if len(candidates) > 1 {
+		extToLang := map[string]string{
+			".go": "go", ".py": "python", ".js": "javascript",
+			".ts": "typescript", ".tsx": "typescript", ".rs": "rust",
+		}
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				name := d.Name()
+				if d.IsDir() && (name == "node_modules" || name == "venv" || name == ".venv" || name == ".git" || name == "__pycache__" || name == "vendor" || name == "target") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := filepath.Ext(d.Name())
+			if lang, ok := extToLang[ext]; ok {
+				if c, ok := candidates[lang]; ok {
+					c.fileCount++
+				}
+			}
+			return nil
+		})
+	}
+
+	// Pick the winner — most source files, or single candidate
+	var winner *langCandidate
+	for _, c := range candidates {
+		if winner == nil || c.fileCount > winner.fileCount {
+			winner = c
+		}
+	}
+
+	if winner != nil {
+		info.Language = winner.language
+		info.TestCommand = winner.testCmd
+		info.LintCommand = winner.lintCmd
+		info.BuildCommand = winner.buildCmd
+		info.ModulePath = winner.modulePath
 		return info, nil
 	}
 
