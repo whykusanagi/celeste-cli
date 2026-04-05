@@ -136,28 +136,17 @@ func GenerateTemplate(info *ProjectInfo) string {
 
 	// Bindings
 	sb.WriteString("## Bindings\n")
-	switch info.Language {
-	case "go":
-		sb.WriteString("- This is a Go project\n")
-		if info.ModulePath != "" {
+	sb.WriteString(fmt.Sprintf("- This is a %s project\n", info.Language))
+	if info.ModulePath != "" {
+		switch info.Language {
+		case "go":
 			sb.WriteString(fmt.Sprintf("- Module path: %s\n", info.ModulePath))
-		}
-		sb.WriteString("- Use standard library conventions\n")
-	case "javascript", "typescript":
-		lang := "JavaScript"
-		if info.Language == "typescript" {
-			lang = "TypeScript"
-		}
-		sb.WriteString(fmt.Sprintf("- This is a %s project\n", lang))
-		if info.ModulePath != "" {
+		default:
 			sb.WriteString(fmt.Sprintf("- Package name: %s\n", info.ModulePath))
 		}
-	case "python":
-		sb.WriteString("- This is a Python project\n")
-	case "rust":
-		sb.WriteString("- This is a Rust project\n")
-	default:
-		sb.WriteString("- Describe your project here\n")
+	}
+	if info.Language == "go" {
+		sb.WriteString("- Use standard library conventions\n")
 	}
 	sb.WriteString("\n")
 
