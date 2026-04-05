@@ -51,6 +51,9 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	registry.RegisterWithModes(NewWebSearchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewWebFetchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 
+	// Code review tool — available in all modes
+	registry.RegisterWithModes(NewCodeReviewTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+
 	// Config-free skill tools — Chat and Claw only
 	registry.RegisterWithModes(NewCurrencyTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewBase64EncodeTool(), tools.ModeChat, tools.ModeClaw)
