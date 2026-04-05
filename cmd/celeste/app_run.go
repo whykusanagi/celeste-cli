@@ -75,10 +75,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	args = extractGlobalFlags(args)
 
 	if len(args) < 1 {
-		runner.PrintUsage()
-		if runner.HasDefaultConfig() {
-			fmt.Fprintln(stdout, "\n💡 Tip: You have a default configuration. Maybe you meant `celeste chat`?")
-		}
+		// No args = launch TUI chat (like `claude` with no args)
+		runner.RunChat()
 		return 0
 	}
 

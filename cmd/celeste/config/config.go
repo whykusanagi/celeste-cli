@@ -76,9 +76,9 @@ type WalletSecuritySettingsConfig struct {
 }
 
 const (
-	RuntimeModeClassic           = "classic"
-	RuntimeModeClaw              = "claw"
-	DefaultClawMaxToolIterations = 4
+	RuntimeModeClassic           = "classic" // deprecated — tools always auto-loop now
+	RuntimeModeClaw              = "claw"    // deprecated — tools always auto-loop now
+	DefaultClawMaxToolIterations = 25        // safety cap for tool loop turns
 )
 
 // Config holds all configuration for Celeste CLI.

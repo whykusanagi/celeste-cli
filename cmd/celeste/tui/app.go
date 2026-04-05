@@ -1836,21 +1836,30 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 	return m.getAvailableSkills()
 }
 
+// isClawMode is deprecated — tools always auto-loop now.
+// Kept for backward compatibility with config files that set runtime_mode.
 func (m AppModel) isClawMode() bool {
-	return m.runtimeMode == config.RuntimeModeClaw
+	return true // always auto-loop
 }
 
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
 		return m, nil
 	}
-	if m.isClawMode() && m.clawToolIterations >= m.clawMaxIterations {
-		LogInfo(fmt.Sprintf("Claw safety stop reached (%d tool-call turns)", m.clawMaxIterations))
+	// Safety cap: prevent infinite tool-call loops.
+	// Tools auto-loop by default (model decides when done).
+	// Cap at maxToolTurns to prevent runaway loops.
+	maxToolTurns := m.clawMaxIterations
+	if maxToolTurns <= 0 {
+		maxToolTurns = 25 // generous default — let the model work
+	}
+	if m.clawToolIterations >= maxToolTurns {
+		LogInfo(fmt.Sprintf("Tool loop safety cap reached (%d turns)", maxToolTurns))
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText(fmt.Sprintf("Claw safety stop reached (%d)", m.clawMaxIterations))
+		m.status = m.status.SetText(fmt.Sprintf("Tool loop capped at %d turns", maxToolTurns))
 		m.chat = m.chat.AddSystemMessage(
-			fmt.Sprintf("⚠️ Claw mode stopped repeated tool calls after %d turn(s). Start a new prompt or raise --set-claw-max-iterations.", m.clawMaxIterations),
+			fmt.Sprintf("⚠️ Tool loop stopped after %d turn(s). Send another message to continue.", maxToolTurns),
 		)
 		return m, nil
 	}
