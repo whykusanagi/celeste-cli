@@ -410,6 +410,41 @@ type PackageInfo struct {
 	FileCount   int
 }
 
+// FileEdge represents a connection between two files.
+type FileEdge struct {
+	Source string
+	Target string
+	Count  int
+}
+
+// GetFileGraph returns file-level connectivity data for visualization.
+// Works for all languages — shows which files call into other files.
+func (s *Store) GetFileGraph() ([]FileEdge, error) {
+	rows, err := s.db.Query(`
+		SELECT src.file, dst.file, COUNT(*) as edge_count
+		FROM edges e
+		JOIN symbols src ON e.source_id = src.id
+		JOIN symbols dst ON e.target_id = dst.id
+		WHERE src.file != dst.file
+		GROUP BY src.file, dst.file
+		ORDER BY edge_count DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var edges []FileEdge
+	for rows.Next() {
+		var e FileEdge
+		if err := rows.Scan(&e.Source, &e.Target, &e.Count); err != nil {
+			return nil, err
+		}
+		edges = append(edges, e)
+	}
+	return edges, rows.Err()
+}
+
 // GetPackageGraph returns package-level connectivity data for visualization.
 func (s *Store) GetPackageGraph() ([]PackageInfo, []PackageEdge, error) {
 	// Get package info
