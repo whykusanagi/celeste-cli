@@ -11,20 +11,30 @@ import (
 // ModelLimits maps model names to their context window sizes in tokens.
 // Migrated from config/tokens.go.
 var ModelLimits = map[string]int{
-	// OpenAI (from /v1/models API)
-	"gpt-4":         8192,
-	"gpt-4-turbo":   128000,
-	"gpt-4o":        128000,
-	"gpt-4o-mini":   128000,
+	// OpenAI (from /v1/models API, 2026-04)
 	"gpt-4.1":       1050000,
 	"gpt-4.1-mini":  400000,
 	"gpt-4.1-nano":  400000,
-	"gpt-3.5-turbo": 16385,
+	"gpt-5":         1050000,
+	"gpt-5-mini":    400000,
+	"gpt-5-nano":    400000,
+	"gpt-5-pro":     1050000,
+	"gpt-5-codex":   1050000,
+	"gpt-5.1":       1050000,
+	"gpt-5.1-codex": 1050000,
+	"gpt-5.2":       1050000,
+	"gpt-5.2-codex": 1050000,
+	"gpt-5.2-pro":   1050000,
+	"gpt-5.3-codex": 1050000,
+	"gpt-5.4":       1050000,
+	"gpt-5.4-mini":  400000,
+	"gpt-5.4-nano":  400000,
+	"gpt-5.4-pro":   1050000,
+	"o1":            200000,
+	"o1-pro":        200000,
 	"o3":            1050000,
 	"o3-mini":       200000,
 	"o4-mini":       400000,
-	"o1":            200000,
-	"o1-pro":        200000,
 	// Anthropic
 	"claude-3-opus":   200000,
 	"claude-3-sonnet": 200000,
