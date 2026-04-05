@@ -153,7 +153,7 @@ func TestSkillCallBatchParseErrorProducesExplicitToolError(t *testing.T) {
 	assert.True(t, foundError, "tool error result should be added to chat history")
 }
 
-func TestClawModeSafetyStopPreventsInfiniteToolLoops(t *testing.T) {
+func TestToolLoopSafetyCapStopsAfterMaxTurns(t *testing.T) {
 	client := &fakeToolLLMClient{
 		skills: []SkillDefinition{
 			{Name: "tool_a", Description: "A"},
@@ -162,8 +162,8 @@ func TestClawModeSafetyStopPreventsInfiniteToolLoops(t *testing.T) {
 
 	m := NewApp(client)
 	m.skillsEnabled = true
+	// Set a low cap for testing (tools always auto-loop now, cap is the safety net)
 	m = m.SetConfig(&config.Config{
-		RuntimeMode:           config.RuntimeModeClaw,
 		ClawMaxToolIterations: 1,
 	})
 
@@ -191,6 +191,7 @@ func TestClawModeSafetyStopPreventsInfiniteToolLoops(t *testing.T) {
 	m = model.(AppModel)
 	require.Len(t, client.sendCalls, 2) // user send + follow-up send
 
+	// Second batch should be blocked by safety cap
 	secondBatch := SkillCallBatchMsg{
 		Calls: []SkillCallRequest{
 			{
@@ -206,67 +207,21 @@ func TestClawModeSafetyStopPreventsInfiniteToolLoops(t *testing.T) {
 	model, _ = m.Update(secondBatch)
 	m = model.(AppModel)
 
-	assert.Len(t, client.executeCalls, 1, "claw safety stop should block additional tool execution")
+	assert.Len(t, client.executeCalls, 1, "safety cap should block additional tool execution")
 
 	foundSafetyStop := false
 	for _, msg := range m.chat.GetMessages() {
 		if msg.Role == "system" && msg.Content != "" {
-			foundSafetyStop = true
-			assert.Contains(t, msg.Content, "Claw mode stopped repeated tool calls")
-			break
+			if contains(msg.Content, "Tool loop stopped") || contains(msg.Content, "Tool loop capped") {
+				foundSafetyStop = true
+				break
+			}
 		}
 	}
-	assert.True(t, foundSafetyStop, "expected claw safety-stop system message")
+	assert.True(t, foundSafetyStop, "expected safety-cap system message")
 }
 
-func TestClassicModeIgnoresClawSafetyStop(t *testing.T) {
-	client := &fakeToolLLMClient{
-		skills: []SkillDefinition{
-			{Name: "tool_a", Description: "A"},
-		},
-	}
-
-	m := NewApp(client)
-	m.skillsEnabled = true
-	m = m.SetConfig(&config.Config{
-		RuntimeMode:           config.RuntimeModeClassic,
-		ClawMaxToolIterations: 1,
-	})
-
-	model, _ := m.Update(SendMessageMsg{Content: "run tools"})
-	m = model.(AppModel)
-
-	firstBatch := SkillCallBatchMsg{
-		Calls: []SkillCallRequest{
-			{
-				Call:       FunctionCall{Name: "tool_a", Arguments: map[string]any{"x": "1"}, Status: "executing"},
-				ToolCallID: "call_a",
-			},
-		},
-		AssistantContent: "thinking",
-		ToolCalls: []ToolCallInfo{
-			{ID: "call_a", Name: "tool_a", Arguments: `{"x":"1"}`},
-		},
-	}
-	model, _ = m.Update(firstBatch)
-	m = model.(AppModel)
-	model, _ = m.Update(SkillResultMsg{Name: "tool_a", Result: `{"ok":true}`, ToolCallID: "call_a"})
-	m = model.(AppModel)
-
-	secondBatch := SkillCallBatchMsg{
-		Calls: []SkillCallRequest{
-			{
-				Call:       FunctionCall{Name: "tool_a", Arguments: map[string]any{"x": "2"}, Status: "executing"},
-				ToolCallID: "call_b",
-			},
-		},
-		AssistantContent: "thinking again",
-		ToolCalls: []ToolCallInfo{
-			{ID: "call_b", Name: "tool_a", Arguments: `{"x":"2"}`},
-		},
-	}
-	model, _ = m.Update(secondBatch)
-	m = model.(AppModel)
-
-	assert.Len(t, client.executeCalls, 2, "classic mode should continue without claw safety stop")
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		len(s) > 0 && (s[:len(substr)] == substr || contains(s[1:], substr)))
 }

@@ -47,7 +47,7 @@ func TestBashToolSudoBlocking(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 	assert.True(t, result.Error)
-	assert.Contains(t, result.Content, "sudo/su is not permitted")
+	assert.Contains(t, result.Content, "privilege escalation")
 }
 
 func TestBashToolSuBlocking(t *testing.T) {
@@ -57,7 +57,7 @@ func TestBashToolSuBlocking(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 	assert.True(t, result.Error)
-	assert.Contains(t, result.Content, "sudo/su is not permitted")
+	assert.Contains(t, result.Content, "privilege escalation")
 }
 
 func TestBashToolRequiredFieldValidation(t *testing.T) {

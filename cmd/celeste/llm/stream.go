@@ -26,22 +26,6 @@ func NewStreamState() *StreamState {
 	}
 }
 
-// AddChunk adds a chunk to the stream state.
-func (s *StreamState) AddChunk(content string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	s.chunks = append(s.chunks, content)
-	s.chunkTimes = append(s.chunkTimes, now)
-	s.content += content
-
-	// Track first chunk time for dump detection
-	if len(s.chunks) == 1 {
-		s.firstChunkTime = now
-	}
-}
-
 // GetContent returns the accumulated content.
 func (s *StreamState) GetContent() string {
 	s.mu.Lock()

@@ -45,7 +45,7 @@ func TestOpenAIIntegration(t *testing.T) {
 		client := openai.NewClientWithConfig(config)
 
 		resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model: "gpt-4o-mini",
+			Model: "gpt-4.1-nano",
 			Messages: []openai.ChatCompletionMessage{
 				{Role: "user", Content: testPrompt},
 			},
@@ -66,7 +66,7 @@ func TestOpenAIIntegration(t *testing.T) {
 		client := openai.NewClientWithConfig(config)
 
 		resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model: "gpt-4o-mini",
+			Model: "gpt-4.1-nano",
 			Messages: []openai.ChatCompletionMessage{
 				{Role: "user", Content: "What's the weather in New York? Use the get_weather function."},
 			},
@@ -112,7 +112,7 @@ func TestOpenAIIntegration(t *testing.T) {
 		client := openai.NewClientWithConfig(config)
 
 		stream, err := client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
-			Model: "gpt-4o-mini",
+			Model: "gpt-4.1-nano",
 			Messages: []openai.ChatCompletionMessage{
 				{Role: "user", Content: "Count to 3"},
 			},
@@ -147,12 +147,12 @@ func TestOpenAIIntegration(t *testing.T) {
 		// Check for expected models
 		var hasGPT4Mini bool
 		for _, m := range models {
-			if m.ID == "gpt-4o-mini" {
+			if m.ID == "gpt-4.1-nano" {
 				hasGPT4Mini = true
-				assert.True(t, m.SupportsTools, "gpt-4o-mini should support tools")
+				assert.True(t, m.SupportsTools, "gpt-4.1-nano should support tools")
 			}
 		}
-		assert.True(t, hasGPT4Mini, "Should include gpt-4o-mini")
+		assert.True(t, hasGPT4Mini, "Should include gpt-4.1-nano")
 		t.Logf("✅ OpenAI model listing: found %d models", len(models))
 	})
 }
@@ -476,7 +476,7 @@ func TestProviderComparison(t *testing.T) {
 		baseURL string
 		model   string
 	}{
-		{"OpenAI", "OPENAI_API_KEY", "", "gpt-4o-mini"},
+		{"OpenAI", "OPENAI_API_KEY", "", "gpt-4.1-nano"},
 		{"Grok", "GROK_API_KEY", "https://api.x.ai/v1", "grok-beta"},
 		{"Gemini", "GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash"},
 		{"Venice", "VENICE_API_KEY", "https://api.venice.ai/api/v1", "llama-3.3-70b"},

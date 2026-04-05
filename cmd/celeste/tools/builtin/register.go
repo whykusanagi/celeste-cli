@@ -3,6 +3,7 @@ package builtin
 import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -67,8 +68,15 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	registry.RegisterWithModes(NewUnitConverterTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewTimezoneConverterTool(), tools.ModeChat, tools.ModeClaw)
 
-	// Task tracking — available in Agent and Claw modes
-	registry.RegisterWithModes(NewTodoTool(), tools.ModeAgent, tools.ModeClaw)
+	// Memory tool — available in all modes with workspace
+	if workspace != "" {
+		registry.RegisterWithModes(NewSaveMemoryTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	}
+
+	// Task tracking — available in all modes with workspace
+	if workspace != "" {
+		registry.RegisterWithModes(NewTodoTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	}
 }
 
 // RegisterReadOnlyDevTools registers only read-only dev tools (for restricted agent mode).
@@ -84,6 +92,14 @@ func RegisterCodeGraphTools(registry *tools.Registry, indexer *codegraph.Indexer
 	registry.RegisterWithModes(NewCodeSearchTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewCodeGraphTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewCodeSymbolsTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewCodeReviewTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+}
+
+// RegisterCollectionsTools registers collections search if active collections exist.
+func RegisterCollectionsTools(registry *tools.Registry, cfg *config.Config) {
+	if cfg.Collections != nil && len(cfg.Collections.ActiveCollections) > 0 && cfg.APIKey != "" {
+		registry.RegisterWithModes(NewCollectionsSearchTool(cfg), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	}
 }
 
 // RegisterCryptoTools registers all crypto/blockchain tools.

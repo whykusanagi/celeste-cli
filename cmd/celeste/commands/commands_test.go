@@ -33,11 +33,11 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name:  "command with multiple args",
-			input: "/model gpt-4o-mini",
+			input: "/model gpt-4.1-nano",
 			expected: &Command{
 				Name: "model",
-				Args: []string{"gpt-4o-mini"},
-				Raw:  "/model gpt-4o-mini",
+				Args: []string{"gpt-4.1-nano"},
+				Raw:  "/model gpt-4.1-nano",
 			},
 		},
 		{
@@ -158,15 +158,15 @@ func TestExecuteModel(t *testing.T) {
 	}{
 		{
 			name:        "set model",
-			args:        []string{"gpt-4o"},
+			args:        []string{"gpt-4.1"},
 			expectError: false,
-			modelName:   "gpt-4o",
+			modelName:   "gpt-4.1",
 		},
 		{
 			name:        "model with hyphens",
-			args:        []string{"gpt-4o-mini"},
+			args:        []string{"gpt-4.1-nano"},
 			expectError: false,
-			modelName:   "gpt-4o-mini",
+			modelName:   "gpt-4.1-nano",
 		},
 		{
 			name:        "no args",
@@ -407,7 +407,7 @@ func TestIsContentPolicyRefusal(t *testing.T) {
 func TestExecuteProviders(t *testing.T) {
 	t.Run("list all providers", func(t *testing.T) {
 		cmd := &Command{Name: "providers", Args: []string{}}
-		ctx := &CommandContext{Provider: "openai", CurrentModel: "gpt-4o-mini"}
+		ctx := &CommandContext{Provider: "openai", CurrentModel: "gpt-4.1-nano"}
 		result := Execute(cmd, ctx)
 
 		assert.True(t, result.Success)
@@ -454,12 +454,12 @@ func TestExecuteProviders(t *testing.T) {
 
 	t.Run("current provider", func(t *testing.T) {
 		cmd := &Command{Name: "providers", Args: []string{"current"}}
-		ctx := &CommandContext{Provider: "openai", CurrentModel: "gpt-4o-mini", BaseURL: "https://api.openai.com/v1"}
+		ctx := &CommandContext{Provider: "openai", CurrentModel: "gpt-4.1-nano", BaseURL: "https://api.openai.com/v1"}
 		result := Execute(cmd, ctx)
 
 		assert.True(t, result.Success)
 		assert.Contains(t, result.Message, "openai")
-		assert.Contains(t, result.Message, "gpt-4o-mini")
+		assert.Contains(t, result.Message, "gpt-4.1-nano")
 	})
 }
 

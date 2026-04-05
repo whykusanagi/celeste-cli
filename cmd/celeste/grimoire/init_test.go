@@ -82,9 +82,9 @@ func TestGenerateTemplate_Go(t *testing.T) {
 		LintCommand: "golangci-lint run ./...",
 	}
 
-	content := GenerateTemplate(info)
+	content := GenerateTemplate(info, t.TempDir())
 	assert.Contains(t, content, "## Bindings")
-	assert.Contains(t, content, "Go")
+	assert.Contains(t, content, "go project")
 	assert.Contains(t, content, "github.com/whykusanagi/celeste-cli")
 	assert.Contains(t, content, "## Rituals")
 	assert.Contains(t, content, "## Wards")
@@ -94,9 +94,9 @@ func TestGenerateTemplate_Unknown(t *testing.T) {
 	info := &ProjectInfo{
 		Language: "unknown",
 	}
-	content := GenerateTemplate(info)
+	content := GenerateTemplate(info, t.TempDir())
 	assert.Contains(t, content, "## Bindings")
-	assert.Contains(t, content, "Describe your project")
+	assert.Contains(t, content, "unknown project")
 }
 
 func TestInit_CreatesFile(t *testing.T) {
@@ -110,7 +110,7 @@ func TestInit_CreatesFile(t *testing.T) {
 	// Verify file was created
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "Go project")
+	assert.Contains(t, string(data), "go project")
 }
 
 func TestInit_AlreadyExists(t *testing.T) {

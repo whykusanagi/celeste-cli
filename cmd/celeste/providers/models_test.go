@@ -40,12 +40,12 @@ func TestGetStaticModels(t *testing.T) {
 		checkModelID  string // Specific model to verify
 	}{
 		{"grok", 4, true, "grok-4-1-fast"},
-		{"openai", 4, true, "gpt-4o-mini"},
+		{"openai", 4, true, "gpt-4.1-nano"},
 		{"venice", 3, true, "llama-3.3-70b"},
 		{"anthropic", 2, true, "claude-sonnet-4-5-20250929"},
 		{"vertex", 2, true, "gemini-1.5-pro"},
-		{"openrouter", 2, true, "openai/gpt-4o-mini"},
-		{"digitalocean", 1, false, "gpt-4o-mini"},
+		{"openrouter", 2, true, "openai/gpt-4.1-nano"},
+		{"digitalocean", 1, false, "gpt-4.1-nano"},
 		{"unknown", 0, false, ""}, // Unknown provider should return empty
 	}
 
@@ -91,13 +91,13 @@ func TestGetBestToolModel(t *testing.T) {
 		provider      string
 		expectedModel string
 	}{
-		{"openai", "gpt-4o-mini"},
+		{"openai", "gpt-4.1-nano"},
 		{"grok", "grok-4-1-fast"},
 		{"venice", ""}, // Venice uncensored has no tool model
 		{"anthropic", "claude-sonnet-4-5-20250929"},
 		{"gemini", "gemini-2.0-flash"},
 		{"vertex", "gemini-2.0-flash"},
-		{"openrouter", "openai/gpt-4o-mini"},
+		{"openrouter", "openai/gpt-4.1-nano"},
 		{"digitalocean", ""}, // No preferred tool model
 		{"unknown", ""},      // Unknown provider
 	}
@@ -120,7 +120,7 @@ func TestModelDetection(t *testing.T) {
 		expectsTools bool
 	}{
 		// OpenAI
-		{"openai", "gpt-4o-mini", true},
+		{"openai", "gpt-4.1-nano", true},
 		{"openai", "gpt-4-turbo", true},
 		{"openai", "gpt-3.5-turbo", true},
 		{"openai", "davinci-002", false}, // Old model
@@ -146,7 +146,7 @@ func TestModelDetection(t *testing.T) {
 		{"vertex", "gemini-1.5-flash", true},
 
 		// OpenRouter
-		{"openrouter", "openai/gpt-4o-mini", true},
+		{"openrouter", "openai/gpt-4.1-nano", true},
 		{"openrouter", "anthropic/claude-sonnet-4-5", true},
 		{"openrouter", "meta-llama/llama-2-70b", false}, // Old model
 
@@ -196,10 +196,10 @@ func TestGetModelDisplayName(t *testing.T) {
 		modelID  string
 		expected string
 	}{
-		{"openai", "gpt-4o-mini", "Gpt 4O Mini"},
+		{"openai", "gpt-4.1-nano", "Gpt 4.1 Nano"},
 		{"openai", "gpt-3.5-turbo", "Gpt 3.5 Turbo"},
 		{"grok", "grok-4-1-fast", "Grok 4 1 Fast"},
-		{"openrouter", "openai/gpt-4o-mini", "Gpt 4O Mini"}, // Removes prefix
+		{"openrouter", "openai/gpt-4.1-nano", "Gpt 4.1 Nano"}, // Removes prefix
 		{"anthropic", "anthropic/claude-sonnet-4-5", "Claude Sonnet 4 5"},
 		{"venice", "venice-uncensored", "Venice Uncensored"},
 	}
@@ -220,7 +220,7 @@ func TestGetModelDescription(t *testing.T) {
 		modelID     string
 		expectMatch string // Substring to match
 	}{
-		{"openai", "gpt-4o-mini", "Fast, affordable"},
+		{"openai", "gpt-4.1-nano", "Fast, affordable"},
 		{"openai", "gpt-4-turbo", "Previous flagship"},
 		{"grok", "grok-4-1-fast", "Best for tool calling"},
 		{"anthropic", "claude-opus-4-5-20251101", "Most capable"},
@@ -264,7 +264,7 @@ func TestSortModelsByCapability(t *testing.T) {
 func TestFormatModelList(t *testing.T) {
 	models := []ModelInfo{
 		{
-			ID:            "gpt-4o-mini",
+			ID:            "gpt-4.1-nano",
 			SupportsTools: true,
 			Description:   "Fast and affordable",
 			ContextWindow: 128000,
@@ -281,14 +281,14 @@ func TestFormatModelList(t *testing.T) {
 		output := FormatModelList(models, true)
 		assert.Contains(t, output, "Function Calling Enabled", "Should show section header")
 		assert.Contains(t, output, "✓", "Should have checkmark for tool models")
-		assert.Contains(t, output, "gpt-4o-mini", "Should include model ID")
+		assert.Contains(t, output, "gpt-4.1-nano", "Should include model ID")
 		assert.Contains(t, output, "128k context", "Should show context window")
 		assert.Contains(t, output, "no skills", "Should mark non-tool models")
 	})
 
 	t.Run("without highlighting", func(t *testing.T) {
 		output := FormatModelList(models, false)
-		assert.Contains(t, output, "gpt-4o-mini", "Should include model ID")
+		assert.Contains(t, output, "gpt-4.1-nano", "Should include model ID")
 		assert.Contains(t, output, "venice-uncensored", "Should include all models")
 		assert.NotContains(t, output, "Function Calling Enabled", "Should not have section headers")
 	})
@@ -352,15 +352,15 @@ func TestOpenAIStaticModels(t *testing.T) {
 		assert.True(t, model.SupportsTools, "All OpenAI models should support tools: %s", model.ID)
 	}
 
-	// Verify gpt-4o-mini exists (default)
+	// Verify gpt-4.1-nano exists (default)
 	found := false
 	for _, model := range models {
-		if model.ID == "gpt-4o-mini" {
+		if model.ID == "gpt-4.1-nano" {
 			found = true
 			assert.Equal(t, 128000, model.ContextWindow, "Should have 128k context")
 		}
 	}
-	assert.True(t, found, "Should have gpt-4o-mini")
+	assert.True(t, found, "Should have gpt-4.1-nano")
 }
 
 // TestVeniceStaticModels specifically tests Venice models
@@ -402,7 +402,7 @@ func TestDigitalOceanStaticModels(t *testing.T) {
 	models := service.getStaticModels()
 
 	assert.Equal(t, 1, len(models), "Should have 1 DigitalOcean model")
-	assert.Equal(t, "gpt-4o-mini", models[0].ID, "Should be gpt-4o-mini")
+	assert.Equal(t, "gpt-4.1-nano", models[0].ID, "Should be gpt-4.1-nano")
 	assert.False(t, models[0].SupportsTools, "DigitalOcean should not support local skills")
 	assert.Contains(t, models[0].Description, "no local skills", "Should mention no local skills")
 }

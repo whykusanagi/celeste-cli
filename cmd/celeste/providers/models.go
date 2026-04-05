@@ -148,7 +148,7 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 	case "openai":
 		return []ModelInfo{
 			{
-				ID:            "gpt-4o-mini",
+				ID:            "gpt-4.1-nano",
 				Name:          "GPT-4o Mini",
 				Provider:      "openai",
 				SupportsTools: true,
@@ -156,7 +156,7 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Fast, affordable, smart for everyday tasks",
 			},
 			{
-				ID:            "gpt-4o",
+				ID:            "gpt-4.1",
 				Name:          "GPT-4o",
 				Provider:      "openai",
 				SupportsTools: true,
@@ -249,7 +249,7 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 	case "openrouter":
 		return []ModelInfo{
 			{
-				ID:            "openai/gpt-4o-mini",
+				ID:            "openai/gpt-4.1-nano",
 				Name:          "GPT-4o Mini (via OpenRouter)",
 				Provider:      "openrouter",
 				SupportsTools: true,
@@ -267,7 +267,7 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 	case "digitalocean":
 		return []ModelInfo{
 			{
-				ID:            "gpt-4o-mini",
+				ID:            "gpt-4.1-nano",
 				Name:          "GPT-4o Mini",
 				Provider:      "digitalocean",
 				SupportsTools: false, // Cloud functions only

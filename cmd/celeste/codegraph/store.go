@@ -396,6 +396,103 @@ func (s *Store) GetAllMinHashes() ([]MinHashEntry, error) {
 	return entries, rows.Err()
 }
 
+// PackageEdge represents a connection between two packages.
+type PackageEdge struct {
+	Source string
+	Target string
+	Count  int
+}
+
+// PackageInfo holds package-level stats for visualization.
+type PackageInfo struct {
+	Name        string
+	SymbolCount int
+	FileCount   int
+}
+
+// FileEdge represents a connection between two files.
+type FileEdge struct {
+	Source string
+	Target string
+	Count  int
+}
+
+// GetFileGraph returns file-level connectivity data for visualization.
+// Works for all languages — shows which files call into other files.
+func (s *Store) GetFileGraph() ([]FileEdge, error) {
+	rows, err := s.db.Query(`
+		SELECT src.file, dst.file, COUNT(*) as edge_count
+		FROM edges e
+		JOIN symbols src ON e.source_id = src.id
+		JOIN symbols dst ON e.target_id = dst.id
+		WHERE src.file != dst.file
+		GROUP BY src.file, dst.file
+		ORDER BY edge_count DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var edges []FileEdge
+	for rows.Next() {
+		var e FileEdge
+		if err := rows.Scan(&e.Source, &e.Target, &e.Count); err != nil {
+			return nil, err
+		}
+		edges = append(edges, e)
+	}
+	return edges, rows.Err()
+}
+
+// GetPackageGraph returns package-level connectivity data for visualization.
+func (s *Store) GetPackageGraph() ([]PackageInfo, []PackageEdge, error) {
+	// Get package info
+	rows, err := s.db.Query(`
+		SELECT package, COUNT(*) as sym_count, COUNT(DISTINCT file) as file_count
+		FROM symbols WHERE package != '' GROUP BY package ORDER BY sym_count DESC
+	`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var packages []PackageInfo
+	for rows.Next() {
+		var p PackageInfo
+		if err := rows.Scan(&p.Name, &p.SymbolCount, &p.FileCount); err != nil {
+			return nil, nil, err
+		}
+		packages = append(packages, p)
+	}
+
+	// Get package-level edges
+	rows2, err := s.db.Query(`
+		SELECT src.package as src_pkg, dst.package as dst_pkg, COUNT(*) as edge_count
+		FROM edges e
+		JOIN symbols src ON e.source_id = src.id
+		JOIN symbols dst ON e.target_id = dst.id
+		WHERE src.package != '' AND dst.package != '' AND src.package != dst.package
+		GROUP BY src_pkg, dst_pkg
+		ORDER BY edge_count DESC
+	`)
+	if err != nil {
+		return packages, nil, err
+	}
+	defer rows2.Close()
+
+	var edges []PackageEdge
+	for rows2.Next() {
+		var e PackageEdge
+		if err := rows2.Scan(&e.Source, &e.Target, &e.Count); err != nil {
+			return packages, nil, err
+		}
+		edges = append(edges, e)
+	}
+
+	return packages, edges, rows2.Err()
+}
+
 // Stats returns aggregate counts for the indexed codebase.
 func (s *Store) Stats() (*StoreStats, error) {
 	stats := &StoreStats{
@@ -456,6 +553,119 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 		files = append(files, f)
 	}
 	return files, rows.Err()
+}
+
+// StubResult represents a function/method with zero outgoing call edges.
+type StubResult struct {
+	Name     string
+	File     string
+	Line     int
+	Kind     string
+	OutEdges int
+	InEdges  int
+}
+
+// FindStubs returns functions/methods with zero outgoing call edges.
+// These are likely stubs, placeholders, or dead code.
+func (s *Store) FindStubs(includeTests bool) ([]StubResult, error) {
+	query := `
+		SELECT s.name, s.file, s.line, s.kind,
+		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
+		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
+		FROM symbols s
+		WHERE s.kind IN ('function', 'method')
+		AND (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) = 0
+		ORDER BY called_by ASC, s.file, s.line
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("find stubs query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []StubResult
+	for rows.Next() {
+		var r StubResult
+		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.OutEdges, &r.InEdges); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// LazyRedirectCandidate represents a function whose name implies complex behavior
+// but whose graph structure shows it's structurally trivial — a potential lazy redirect.
+type LazyRedirectCandidate struct {
+	Name      string
+	File      string
+	Line      int
+	Kind      string
+	OutEdges  int
+	InEdges   int
+	Signature string
+}
+
+// FindLazyRedirectCandidates returns functions/methods with low outgoing edges
+// (0-2) that are NOT known leaf patterns (constructors, getters, interface impls).
+// These are candidates for lazy redirect analysis via shingle/edge divergence.
+func (s *Store) FindLazyRedirectCandidates(includeTests bool) ([]LazyRedirectCandidate, error) {
+	query := `
+		SELECT s.id, s.name, s.file, s.line, s.kind, COALESCE(s.signature, ''),
+		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
+		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
+		FROM symbols s
+		WHERE s.kind IN ('function', 'method')
+		AND (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) <= 2
+		ORDER BY calls_out ASC, s.file, s.line
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("find lazy redirect candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var results []LazyRedirectCandidate
+	for rows.Next() {
+		var id int64
+		var r LazyRedirectCandidate
+		if err := rows.Scan(&id, &r.Name, &r.File, &r.Line, &r.Kind, &r.Signature, &r.OutEdges, &r.InEdges); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// FindAllFunctionsWithEdges returns all functions/methods with their edge counts.
+// Used by the unified code smell detector for single-pass analysis.
+func (s *Store) FindAllFunctionsWithEdges() ([]FunctionEdgeInfo, error) {
+	query := `
+		SELECT s.name, s.file, s.line, s.kind, COALESCE(s.signature, ''),
+		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
+		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
+		FROM symbols s
+		WHERE s.kind IN ('function', 'method')
+		ORDER BY s.file, s.line
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("find all functions: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FunctionEdgeInfo
+	for rows.Next() {
+		var r FunctionEdgeInfo
+		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.Signature, &r.OutEdges, &r.InEdges); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
 }
 
 // encodeMinHash converts a MinHash signature to a byte slice for BLOB storage.

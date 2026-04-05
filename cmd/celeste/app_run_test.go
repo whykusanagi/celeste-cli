@@ -74,6 +74,10 @@ func (f *fakeRunner) RunGrimoire(args []string) {
 	f.lastCall = "grimoire"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunIndex(args []string) {
+	f.lastCall = "index"
+	f.lastArgs = args
+}
 func (f *fakeRunner) RunServe(args []string) {
 	f.lastCall = "serve"
 	f.lastArgs = args
@@ -107,16 +111,14 @@ func (f *fakeRunner) RunRevert(args []string) {
 	f.lastArgs = args
 }
 
-func TestRun_NoArgs_ShowsUsageAndTipWhenDefaultConfigExists(t *testing.T) {
+func TestRun_NoArgs_LaunchesChatDirectly(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}
 	var out bytes.Buffer
 	var errBuf bytes.Buffer
 
 	code := run([]string{}, r, &out, &errBuf)
 	assert.Equal(t, 0, code)
-	assert.True(t, r.usageCalled)
-	assert.Contains(t, out.String(), "Maybe you meant `celeste chat`?")
-	assert.Empty(t, errBuf.String())
+	assert.Equal(t, "chat", r.lastCall, "no args should launch chat TUI directly")
 }
 
 func TestRun_MessageWithoutBody_ReturnsError(t *testing.T) {

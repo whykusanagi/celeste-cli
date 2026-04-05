@@ -1,0 +1,22 @@
+# Grimoire: go project
+
+## Bindings
+- This is a Go project
+- Module path: github.com/whykusanagi/celeste-cli
+- Use standard library conventions
+
+## Rituals
+- Always run tests before committing: `go test ./... -count=1`
+- Run linter before commits: `golangci-lint run ./...`
+- Use conventional commit messages
+
+## Incantations
+# Add file references to include as context:
+# @./docs/ARCHITECTURE.md
+# @./docs/STYLE_GUIDE.md
+
+## Wards
+- Do not modify .celeste/ directory contents
+# Add paths that should not be modified without explicit permission:
+# - Do not modify .env or secrets files
+

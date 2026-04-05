@@ -11,21 +11,43 @@ import (
 // ModelLimits maps model names to their context window sizes in tokens.
 // Migrated from config/tokens.go.
 var ModelLimits = map[string]int{
-	"gpt-4":             8192,
-	"gpt-4-turbo":       128000,
-	"gpt-4o":            128000,
-	"gpt-4o-mini":       128000,
-	"gpt-3.5-turbo":     16385,
-	"claude-3-opus":     200000,
-	"claude-3-sonnet":   200000,
-	"claude-3-haiku":    200000,
-	"claude-sonnet-4":   200000,
-	"claude-opus-4.5":   200000,
-	"venice-uncensored": 8192,
-	"llama-3.3-70b":     8192,
-	"grok-4-1":          128000,
-	"grok-4-1-fast":     128000,
-	"default":           8192,
+	// OpenAI — current generation only (from /v1/models API, 2026-04)
+	"gpt-4.1":       1050000,
+	"gpt-4.1-mini":  400000,
+	"gpt-4.1-nano":  400000,
+	"gpt-5.3-codex": 1050000,
+	"gpt-5.4":       1050000,
+	"gpt-5.4-mini":  400000,
+	"gpt-5.4-nano":  400000,
+	"gpt-5.4-pro":   1050000,
+	"o3":            1050000,
+	"o4-mini":       400000,
+	// Anthropic (current models, 2026-04)
+	"claude-opus-4-6":   1000000,
+	"claude-sonnet-4-6": 1000000,
+	"claude-haiku-4-5":  200000,
+	// xAI Grok — current generation (from /v1/models API, 2026-04)
+	"grok-4-1-fast":                2000000,
+	"grok-4-1-fast-reasoning":      2000000,
+	"grok-4-1-fast-non-reasoning":  2000000,
+	"grok-4.20-0309-reasoning":     2000000,
+	"grok-4.20-0309-non-reasoning": 2000000,
+	"grok-4.20-multi-agent-0309":   2000000,
+	"grok-code-fast-1":             2000000,
+	// Venice-unique models (from docs.venice.ai/models/text, 2026-04)
+	"venice-uncensored":                    32000,
+	"venice-uncensored-role-play":          128000,
+	"deepseek-v3.2":                        160000,
+	"qwen3-coder-480b-a35b-instruct":       256000,
+	"qwen3-coder-480b-a35b-instruct-turbo": 256000,
+	"qwen3-235b-a22b-thinking-2507":        128000,
+	"kimi-k2-5":                            256000,
+	"zai-org-glm-4.7":                      198000,
+	"mistral-small-3-2-24b-instruct":       256000,
+	"llama-3.3-70b":                        128000,
+	"minimax-m25":                          198000,
+	// Default
+	"default": 8192,
 }
 
 // TokenBudget tracks token usage across all components of a conversation.

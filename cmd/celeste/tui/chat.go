@@ -308,22 +308,23 @@ func (m ChatModel) renderMessage(msg ChatMessage, width int) string {
 	// Header line
 	header := fmt.Sprintf("%s %s", roleLabel, timestamp)
 
-	// Detect pre-formatted content (stats dashboard, ASCII art, etc.)
-	// These have box-drawing characters or block elements that shouldn't be wrapped
-	isPreformatted := strings.Contains(msg.Content, "▓▒░") ||
-		strings.Contains(msg.Content, "═══") ||
-		strings.Contains(msg.Content, "█") ||
-		strings.Contains(msg.Content, "```")
-
-	// Wrap content to width (skip wrapping for pre-formatted content)
-	contentStyle := MessageRoleStyle(msg.Role)
-	var wrappedContent string
-	if isPreformatted {
-		wrappedContent = msg.Content // Don't wrap pre-formatted content
+	// Try markdown rendering for assistant messages
+	var styledContent string
+	if msg.Role == "assistant" || msg.Role == "system" {
+		rendered := renderMarkdown(msg.Content, width-2)
+		if rendered != msg.Content {
+			// Glamour handled it — already styled
+			styledContent = rendered
+		} else {
+			// Fallback: plain text with role-based styling
+			contentStyle := MessageRoleStyle(msg.Role)
+			styledContent = contentStyle.Render(wrapText(msg.Content, width-2))
+		}
 	} else {
-		wrappedContent = wrapText(msg.Content, width-2)
+		// User messages: simple wrap with role style
+		contentStyle := MessageRoleStyle(msg.Role)
+		styledContent = contentStyle.Render(wrapText(msg.Content, width-2))
 	}
-	styledContent := contentStyle.Render(wrappedContent)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, styledContent)
 }

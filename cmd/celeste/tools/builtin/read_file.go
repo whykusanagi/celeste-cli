@@ -13,7 +13,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
-const maxReadBytes = 200_000
+const maxReadBytes = 512_000
 
 // ReadFileTool reads text files from the workspace.
 type ReadFileTool struct {

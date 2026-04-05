@@ -11,7 +11,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
-const maxCommandOutput = 12_000
+const maxCommandOutput = 64_000
 
 // BashTool executes shell commands in the workspace directory.
 type BashTool struct {
@@ -58,8 +58,8 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 		return tools.ToolResult{Error: true, Content: "command is required"}, nil
 	}
 
-	if fields := strings.Fields(command); len(fields) > 0 && (fields[0] == "sudo" || fields[0] == "su") {
-		return tools.ToolResult{Error: true, Content: "sudo/su is not permitted; run commands as the current user only"}, nil
+	if reason := checkDangerousCommand(command); reason != "" {
+		return tools.ToolResult{Error: true, Content: reason}, nil
 	}
 
 	timeoutSeconds := getIntArg(input, "timeout_seconds", 20)

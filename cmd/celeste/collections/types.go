@@ -11,7 +11,8 @@ type Collection struct {
 	Name          string    `json:"collection_name"`
 	Description   string    `json:"description"`
 	CreatedAt     time.Time `json:"created_at"`
-	DocumentCount int       `json:"document_count,omitempty"`
+	DocumentCount int       `json:"documents_count,omitempty"`
+	TotalFileSize string    `json:"total_file_size,omitempty"`
 }
 
 // Document represents a document in a collection

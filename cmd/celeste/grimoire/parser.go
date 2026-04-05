@@ -1,7 +1,9 @@
 package grimoire
 
 import (
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Parse parses a .grimoire markdown file into a Grimoire struct.
@@ -14,6 +16,9 @@ func Parse(content string, baseDir string) (*Grimoire, error) {
 	if strings.TrimSpace(content) == "" {
 		return g, nil
 	}
+
+	// Parse metadata from HTML comment block at the top
+	g.Meta = parseMetadata(content)
 
 	// Split into sections by ## headings
 	sections := splitSections(content)
@@ -95,6 +100,48 @@ func parseIncantations(body string) []IncludeRef {
 		}
 	}
 	return refs
+}
+
+// parseMetadata extracts the <!-- ... --> metadata block from the grimoire content.
+func parseMetadata(content string) GrimoireMetadata {
+	var meta GrimoireMetadata
+
+	startIdx := strings.Index(content, "<!--")
+	endIdx := strings.Index(content, "-->")
+	if startIdx < 0 || endIdx < 0 || endIdx <= startIdx {
+		return meta
+	}
+
+	block := content[startIdx+4 : endIdx]
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+
+		switch key {
+		case "last_updated":
+			if t, err := time.Parse("2006-01-02 15:04:05", val); err == nil {
+				meta.LastUpdated = t
+			}
+		case "git_hash":
+			meta.GitHash = val
+		case "git_branch":
+			meta.GitBranch = val
+		case "git_commit_count":
+			if n, err := strconv.Atoi(val); err == nil {
+				meta.GitCommitCount = n
+			}
+		}
+	}
+
+	return meta
 }
 
 // parseHooks parses hook entries from ### PreToolUse / ### PostToolUse sub-sections.

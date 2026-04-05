@@ -13,16 +13,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
 )
 
-// Typing speed: ~25 chars/sec for smooth, visible corruption effects
-const charsPerTick = 2
-const typingTickInterval = 80 * time.Millisecond
+// Typing speed: ~60 chars/sec — visible animation that keeps up with streaming
+const charsPerTick = 3
+const typingTickInterval = 50 * time.Millisecond // 20fps
 
 // AppModel is the root model for the Celeste TUI application.
 type AppModel struct {
@@ -38,20 +40,22 @@ type AppModel struct {
 	mcpPanel         MCPPanelModel
 
 	// Application state
-	width         int
-	height        int
-	ready         bool
-	nsfwMode      bool
-	streaming     bool
-	endpoint      string // Current endpoint (openai, venice, grok, etc.)
-	safeEndpoint  string // Endpoint to return to when leaving NSFW mode
-	model         string // Current model name
-	imageModel    string // Current image generation model (for NSFW mode)
-	provider      string // Current provider (grok, openai, venice, etc.) - detected from endpoint
-	skillsEnabled bool   // Whether skills/function calling is available
-	version       string // Application version (e.g., "1.0.1")
-	build         string // Build identifier (e.g., "bubbletea-tui")
-	runtimeMode   string // Runtime orchestration mode (classic or claw)
+	width            int
+	height           int
+	ready            bool
+	nsfwMode         bool
+	streaming        bool
+	endpoint         string // Current endpoint (openai, venice, grok, etc.)
+	safeEndpoint     string // Endpoint to return to when leaving NSFW mode
+	model            string // Current model name
+	imageModel       string // Current image generation model (for NSFW mode)
+	provider         string // Current provider (grok, openai, venice, etc.) - detected from endpoint
+	skillsEnabled    bool   // Whether skills/function calling is available
+	version          string // Application version (e.g., "1.0.1")
+	build            string // Build identifier (e.g., "bubbletea-tui")
+	grimoireContent  string // Resolved .grimoire content for /grimoire command
+	codeGraphSummary string // Code graph stats for /index command
+	runtimeMode      string // Runtime orchestration mode (classic or claw)
 
 	// Simulated typing state
 	typingContent string // Full content to type
@@ -86,7 +90,12 @@ type AppModel struct {
 	collectionsModel *CollectionsModel
 	menuModel        *MenuModel
 	skillsBrowser    *SkillsBrowserModel
-	viewMode         string // "chat", "collections", "menu", "skills"
+	graphModel       *GraphModel
+	memoryManager    *MemoryManagerModel
+	viewMode         string // "chat", "collections", "menu", "skills", "graph", "memories"
+
+	// Code graph indexer (for /graph view)
+	codeGraphIndexer *codegraph.Indexer
 
 	// Split panel for orchestrator/agent view
 	splitPanel     *SplitPanel
@@ -218,6 +227,20 @@ func (m AppModel) Init() tea.Cmd {
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Always propagate WindowSizeMsg to parent layout regardless of viewMode.
+	// Sub-views eat all messages via early return, which means terminal resizes
+	// during /graph, /memories, /skills etc. leave the header with stale width.
+	if sizeMsg, isResize := msg.(tea.WindowSizeMsg); isResize {
+		m.width = sizeMsg.Width
+		m.height = sizeMsg.Height
+		m.ready = true
+		m.header = m.header.SetWidth(m.width)
+		m.chat = m.chat.SetSize(m.width, m.height-18)
+		m.input = m.input.SetWidth(m.width)
+		m.status = m.status.SetWidth(m.width)
+		// Don't return — let sub-views also handle the resize
+	}
+
 	// Route to collections view if in that mode
 	if m.viewMode == "collections" {
 		switch msg := msg.(type) {
@@ -269,23 +292,55 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			if msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc" {
-				// Return to chat mode
 				m.viewMode = "chat"
 				return m, nil
 			}
 		case skillSelectedMsg:
-			// User selected a skill, show it in input for them to add parameters
 			m.viewMode = "chat"
 			m.input = m.input.SetValue(msg.skillName + " ")
 			m.input = m.input.Focus()
 			return m, nil
 		}
 
-		// Update skills browser
 		if m.skillsBrowser != nil {
 			updated, cmd := m.skillsBrowser.Update(msg)
 			if updatedModel, ok := updated.(SkillsBrowserModel); ok {
 				*m.skillsBrowser = updatedModel
+			}
+			return m, cmd
+		}
+	} else if m.viewMode == "graph" {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc" {
+				m.viewMode = "chat"
+				return m, nil
+			}
+		}
+		if m.graphModel != nil {
+			updated, cmd := m.graphModel.Update(msg)
+			if updatedModel, ok := updated.(GraphModel); ok {
+				*m.graphModel = updatedModel
+			}
+			return m, cmd
+		}
+	} else if m.viewMode == "memories" {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc" {
+				if m.memoryManager != nil && m.memoryManager.confirmed >= 0 {
+					m.memoryManager.confirmed = -1
+					m.memoryManager.message = ""
+					return m, nil
+				}
+				m.viewMode = "chat"
+				return m, nil
+			}
+		}
+		if m.memoryManager != nil {
+			updated, cmd := m.memoryManager.Update(msg)
+			if updatedModel, ok := updated.(MemoryManagerModel); ok {
+				*m.memoryManager = updatedModel
 			}
 			return m, cmd
 		}
@@ -344,7 +399,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
 			m.status = m.status.SetText("Skill calls toggled")
-		case "pgup", "shift+up":
+		case "pgup", "shift+up", "home":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollUp(5)
 			} else {
@@ -352,7 +407,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat, cmd = m.chat.Update(msg)
 				cmds = append(cmds, cmd)
 			}
-		case "pgdown", "shift+down":
+		case "pgdown", "shift+down", "end":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollDown(5)
 			} else {
@@ -415,6 +470,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SendMessageMsg:
 		content := strings.TrimSpace(msg.Content)
+
+		// Clear completed tool progress from previous turn
+		m.toolProgress.ClearCompleted()
 
 		// Dismiss the split panel when user sends next message (unless it's another /orchestrate)
 		if m.splitPanelMode && !strings.HasPrefix(content, "/orchestrate") && !strings.HasPrefix(content, "/orch ") {
@@ -503,21 +561,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "collections":
-				// Switch to collections view
-				m.viewMode = "collections"
+				if m.config == nil || m.config.XAIManagementAPIKey == "" {
+					m.chat = m.chat.AddSystemMessage("Collections requires an xAI Management API key.\n\n" +
+						"Setup:\n" +
+						"  celeste config --set-management-key YOUR_XAI_MGMT_KEY\n\n" +
+						"Get your management key from https://console.x.ai\n" +
+						"This is separate from your chat API key.")
+					return m, nil
+				}
 
-				// Create collections manager if not exists
-				if m.collectionsModel == nil && m.config != nil {
+				m.viewMode = "collections"
+				if m.collectionsModel == nil {
 					client := collections.NewClient(m.config.XAIManagementAPIKey)
 					manager := collections.NewManager(client, m.config)
 					model := NewCollectionsModel(manager)
 					m.collectionsModel = &model
 				}
-
-				if m.collectionsModel != nil {
-					return m, m.collectionsModel.Init()
-				}
-				return m, nil
+				return m, m.collectionsModel.Init()
 
 			case "menu":
 				// Switch to menu view
@@ -550,25 +610,101 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "plan":
-				// Parse subcommand: /plan, /plan execute, /plan show, /plan cancel
+				cwd, _ := os.Getwd()
+				planPaths := []string{
+					cwd + "/.celeste/plan.md",
+					cwd + "/CODEBASE_FIX_PLAN.md",
+					cwd + "/PLAN.md",
+					cwd + "/plan.md",
+					cwd + "/FIX_PLAN.md",
+				}
+
 				if len(cmd.Args) == 0 {
-					m.chat = m.chat.AddSystemMessage("Plan mode: use /plan <goal> to enter, /plan execute to run, /plan show to view, /plan cancel to exit")
+					// No args: show current plan or say none found
+					found := false
+					for _, p := range planPaths {
+						data, err := os.ReadFile(p)
+						if err == nil {
+							relPath := strings.TrimPrefix(p, cwd+"/")
+							m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Plan (%s):\n\n%s", relPath, string(data)))
+							found = true
+							break
+						}
+					}
+					if !found {
+						m.chat = m.chat.AddSystemMessage("No plan found.\n\nUsage:\n  /plan <goal>    Create a plan\n  /plan show      Show current plan\n  /plan cancel    Delete plan")
+					}
 					return m, nil
 				}
+
 				subCmd := cmd.Args[0]
 				switch subCmd {
-				case "execute":
-					m.chat = m.chat.AddSystemMessage("Plan execution — reading plan from .celeste/plan.md...")
-					// TODO: full plan execution integration
 				case "show":
-					m.chat = m.chat.AddSystemMessage("Showing plan from .celeste/plan.md...")
-					// Read and display plan file
+					found := false
+					for _, p := range planPaths {
+						data, err := os.ReadFile(p)
+						if err == nil {
+							relPath := strings.TrimPrefix(p, cwd+"/")
+							m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Plan (%s):\n\n%s", relPath, string(data)))
+							found = true
+							break
+						}
+					}
+					if !found {
+						m.chat = m.chat.AddSystemMessage("No plan found.")
+					}
+
 				case "cancel":
-					m.chat = m.chat.AddSystemMessage("Plan mode cancelled.")
+					deleted := false
+					for _, p := range planPaths {
+						if err := os.Remove(p); err == nil {
+							relPath := strings.TrimPrefix(p, cwd+"/")
+							m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Plan cancelled: %s", relPath))
+							deleted = true
+							break
+						}
+					}
+					if !deleted {
+						m.chat = m.chat.AddSystemMessage("No active plan to cancel.")
+					}
+
 				default:
-					// /plan <goal> — enter plan mode
+					// /plan <goal> — ask Celeste to create a plan
 					goal := strings.Join(cmd.Args, " ")
-					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Entering plan mode for: %s\n(Tools restricted to read-only. Edit .celeste/plan.md then /plan execute)", goal))
+					planPath := cwd + "/.celeste/plan.md"
+
+					// Send as a user message with structured plan prompt
+					planPrompt := fmt.Sprintf(
+						"Create a structured plan for: %s\n\n"+
+							"Write the plan to %s using write_file. Format as a markdown checklist:\n"+
+							"```\n"+
+							"# Plan: %s\n\n"+
+							"- [ ] Step 1: ...\n"+
+							"- [ ] Step 2: ...\n"+
+							"- [ ] Step 3: ...\n"+
+							"```\n\n"+
+							"Use `- [ ]` for pending, `- [x]` for done, `- [>]` for in progress.\n"+
+							"Keep steps concrete and actionable. After writing the plan, show it to me.",
+						goal, planPath, goal,
+					)
+					m.chat = m.chat.AddUserMessage(planPrompt)
+
+					// Persist the user message
+					if m.currentSession != nil {
+						if cs, ok := m.currentSession.(*config.Session); ok {
+							cs.Messages = append(cs.Messages, config.SessionMessage{
+								Role: "user", Content: planPrompt, Timestamp: time.Now(),
+							})
+						}
+					}
+
+					// Send to LLM
+					m.streaming = true
+					m.streamStart = time.Now()
+					m.status = m.status.SetStreaming(true)
+					m.status = m.status.SetText("Planning...")
+					tools := m.getToolsForDispatch()
+					return m, m.llmClient.SendMessage(m.chat.GetLLMMessages(), tools)
 				}
 				return m, nil
 
@@ -581,7 +717,59 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "memories":
-				m.chat = m.chat.AddSystemMessage("Use `celeste memories` CLI command to list project memories.\nUse `celeste remember \"<text>\"` to save a memory.")
+				cwd, _ := os.Getwd()
+				m.viewMode = "memories"
+				model := NewMemoryManagerModel(cwd)
+				m.memoryManager = &model
+				return m, nil
+
+			case "costs":
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Session Costs:\n  Tokens: %d used / %d limit\n  Turns: %d\n  Compactions: %d\n\nFor detailed cost breakdown: `celeste costs`",
+					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount, m.contextBar.compactCount))
+				return m, nil
+
+			case "grimoire":
+				// Re-read from disk so edits are reflected immediately
+				cwd, _ := os.Getwd()
+				if g, err := grimoire.LoadAll(cwd); err == nil && g != nil && !g.IsEmpty() {
+					m.grimoireContent = g.Render()
+					// Check staleness
+					if stale := g.StalenessInfo(cwd); stale != "" {
+						m.chat = m.chat.AddSystemMessage(m.grimoireContent + "\n" + stale)
+					} else {
+						m.chat = m.chat.AddSystemMessage(m.grimoireContent)
+					}
+				} else if m.grimoireContent != "" {
+					m.chat = m.chat.AddSystemMessage(m.grimoireContent)
+				} else {
+					m.chat = m.chat.AddSystemMessage("No .grimoire loaded for this project.\nRun `celeste init` to create one.")
+				}
+				return m, nil
+
+			case "index":
+				if m.codeGraphIndexer != nil {
+					// Re-query live indexer for fresh stats
+					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.width)
+					if viz != "" {
+						m.chat = m.chat.AddSystemMessage(viz)
+					} else {
+						// Fallback: refresh summary from live indexer
+						m.codeGraphSummary = m.codeGraphIndexer.ProjectSummary()
+						m.chat = m.chat.AddSystemMessage("Code Graph:\n" + m.codeGraphSummary)
+					}
+				} else {
+					m.chat = m.chat.AddSystemMessage("No code graph index loaded.\nRun `celeste index` to build one.")
+				}
+				return m, nil
+
+			case "graph":
+				if m.codeGraphIndexer == nil {
+					m.chat = m.chat.AddSystemMessage("No code graph loaded.\nRun `celeste index` to build one, then relaunch.")
+					return m, nil
+				}
+				m.viewMode = "graph"
+				model := NewGraphModel(m.codeGraphIndexer)
+				m.graphModel = &model
 				return m, nil
 
 			case "effort":
@@ -1079,11 +1267,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 
 	case StreamChunkMsg:
-		m.chat = m.chat.AppendToLastAssistant(msg.Chunk.Content)
 		if msg.Chunk.IsFirst {
+			// First chunk: start the assistant message and typing animation
 			m.chat = m.chat.AddAssistantMessage("")
+			m.typingContent = msg.Chunk.Content
+			m.typingPos = 0
+			m.streaming = true
+			m.status = m.status.SetStreaming(true)
+			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
+			cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
+				return TickMsg{Time: t}
+			}))
+		} else {
+			// Subsequent chunks: extend the typing buffer
+			m.typingContent += msg.Chunk.Content
 		}
-		cmds = append(cmds, nil) // Keep processing
+		// Chain the next read from the stream channel
+		if msg.Next != nil {
+			cmds = append(cmds, msg.Next)
+		}
 
 	case StreamStartMsg:
 		// Store the cancel function so Ctrl+C can cancel the active request
@@ -1131,37 +1333,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.FullContent != "" {
-			// Check for content policy refusal
 			if commands.IsContentPolicyRefusal(msg.FullContent) && m.endpoint != "venice" {
-				// Detected refusal - offer to switch to Venice
 				m.chat = m.chat.AddSystemMessage(
 					"⚠️  Content policy refusal detected.\n\n" +
 						"💡 Tip: Use /nsfw to switch to Venice.ai for uncensored responses,\n" +
 						"or add 'nsfw' at the end of your message for auto-routing.",
 				)
-				m.streaming = false
-				m.status = m.status.SetStreaming(false)
-				m.status = m.status.SetText("Content policy refusal - use /nsfw")
+			}
 
-				// Still show the original response
+			if m.typingContent != "" {
+				// Real streaming was active — typing animation is already running.
+				// Just ensure the full content is in the buffer (in case final
+				// chunks arrived after EventMessageDone).
 				m.typingContent = msg.FullContent
-				m.typingPos = 0
-				m.chat = m.chat.AddAssistantMessage("")
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
 			} else {
-				// Normal response - start simulated typing
+				// No streaming chunks arrived (non-streaming backend or empty deltas).
+				// Fall back to simulated typing on the full response.
 				m.typingContent = msg.FullContent
 				m.typingPos = 0
-				m.chat = m.chat.AddAssistantMessage("") // Start with empty message
+				m.streaming = true
+				m.status = m.status.SetStreaming(true)
+				m.chat = m.chat.AddAssistantMessage("")
 				m.status = m.status.SetText("Typing...")
-				// Schedule first typing tick
 				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
 					return TickMsg{Time: t}
 				}))
 			}
-		} else {
+		} else if m.typingContent == "" {
+			// No content at all — empty response
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
 			m.status = m.status.SetText(fmt.Sprintf("Done (%s)", msg.FinishReason))
@@ -1465,6 +1664,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Log the skill result
 		LogSkillResult(msg.Name, msg.Result, msg.Err)
 
+		// Update tool progress display
+		state := "done"
+		if msg.Err != nil {
+			state = "failed"
+		}
+		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+			ToolCallID: msg.ToolCallID,
+			ToolName:   msg.Name,
+			State:      state,
+		})
+
 		isBatchResult := m.toolBatchActive
 		shouldFollowUp := msg.ToolCallID != ""
 		if isBatchResult {
@@ -1620,26 +1830,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.typingPos = len(m.typingContent)
 			}
 
-			// Update chat with current typed content + corruption at cursor
+			// Update chat with typed content + corruption glitch at cursor
 			displayed := m.typingContent[:m.typingPos]
-
-			// Check if content contains code blocks and apply corrupted-typing effect
-			if strings.Contains(m.typingContent, "```") {
-				// Calculate corruption intensity based on typing position (fade out as we type)
-				progressRatio := float64(m.typingPos) / float64(len(m.typingContent))
-				corruptionIntensity := 0.15 * (1 - progressRatio) // Start at 15%, fade to 0%
-
-				// Apply code block corruption with fading intensity
-				displayed = ApplyCodeBlockCorruption(displayed, m.typingPos, corruptionIntensity)
-			}
-
 			if m.typingPos < len(m.typingContent) {
-				// Add corruption effect at typing cursor
+				// Append corruption at the cursor — it gets overwritten next tick
+				// with more real content, so it never persists in the final message
 				displayed += GetRandomCorruption()
 			}
 			m.chat = m.chat.SetLastAssistantContent(displayed)
 
-			// Update status with corrupted animation
+			// Show corruption phrases in the status bar instead of in the content
 			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
 
 			if m.typingPos < len(m.typingContent) {
@@ -1741,6 +1941,16 @@ func (m AppModel) View() string {
 		return m.skillsBrowser.View()
 	}
 
+	// Show graph view if in that mode
+	if m.viewMode == "graph" && m.graphModel != nil {
+		return m.graphModel.View()
+	}
+
+	// Show memory manager if in that mode
+	if m.viewMode == "memories" && m.memoryManager != nil {
+		return m.memoryManager.View()
+	}
+
 	if m.splitPanelMode && m.splitPanel != nil {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			m.header.View(),
@@ -1825,21 +2035,36 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 	return m.getAvailableSkills()
 }
 
-func (m AppModel) isClawMode() bool {
-	return m.runtimeMode == config.RuntimeModeClaw
-}
+// isClawMode is deprecated — tools always auto-loop now.
+// Kept for backward compatibility with config files that set runtime_mode.
 
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
 		return m, nil
 	}
-	if m.isClawMode() && m.clawToolIterations >= m.clawMaxIterations {
-		LogInfo(fmt.Sprintf("Claw safety stop reached (%d tool-call turns)", m.clawMaxIterations))
+
+	// Stop any in-progress typing animation — tools are executing now
+	if m.typingContent != "" {
+		// Finalize whatever was being typed
+		m.chat = m.chat.SetLastAssistantContent(m.typingContent)
+		m.typingContent = ""
+		m.typingPos = 0
+	}
+	m.streaming = false
+	m.status = m.status.SetStreaming(false)
+
+	// Safety cap: prevent infinite tool-call loops.
+	maxToolTurns := m.clawMaxIterations
+	if maxToolTurns <= 0 {
+		maxToolTurns = 50 // generous default — let the model work
+	}
+	if m.clawToolIterations >= maxToolTurns {
+		LogInfo(fmt.Sprintf("Tool loop safety cap reached (%d turns)", maxToolTurns))
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText(fmt.Sprintf("Claw safety stop reached (%d)", m.clawMaxIterations))
+		m.status = m.status.SetText(fmt.Sprintf("Tool loop capped at %d turns", maxToolTurns))
 		m.chat = m.chat.AddSystemMessage(
-			fmt.Sprintf("⚠️ Claw mode stopped repeated tool calls after %d turn(s). Start a new prompt or raise --set-claw-max-iterations.", m.clawMaxIterations),
+			fmt.Sprintf("⚠️ Tool loop stopped after %d turn(s). Send another message to continue.", maxToolTurns),
 		)
 		return m, nil
 	}
@@ -1857,6 +2082,29 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 			args:       call.Call.Arguments,
 			toolCallID: call.ToolCallID,
 			parseError: call.ParseError,
+		})
+	}
+
+	// Emit progress events for all tool calls in the batch
+	for _, call := range m.pendingToolCalls {
+		summary := call.name
+		if args := call.args; args != nil {
+			if p, ok := args["path"].(string); ok {
+				summary += " " + p
+			} else if q, ok := args["query"].(string); ok {
+				summary += " " + q
+			} else if c, ok := args["command"].(string); ok {
+				if len(c) > 60 {
+					c = c[:60] + "..."
+				}
+				summary += " " + c
+			}
+		}
+		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+			ToolCallID: call.toolCallID,
+			ToolName:   call.name,
+			State:      "executing",
+			Message:    summary,
 		})
 	}
 
@@ -2033,6 +2281,24 @@ func (m AppModel) SetVersion(version, build string) AppModel {
 }
 
 // SetConfig sets the configuration for accessing context limits and other settings.
+// WithGrimoireContent sets the grimoire content for /grimoire display.
+func (m AppModel) WithGrimoireContent(content string) AppModel {
+	m.grimoireContent = content
+	return m
+}
+
+// WithCodeGraphSummary sets the code graph summary for /index display.
+func (m AppModel) WithCodeGraphSummary(summary string) AppModel {
+	m.codeGraphSummary = summary
+	return m
+}
+
+// WithCodeGraphIndexer sets the code graph indexer for /graph visualization.
+func (m AppModel) WithCodeGraphIndexer(indexer *codegraph.Indexer) AppModel {
+	m.codeGraphIndexer = indexer
+	return m
+}
+
 func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 	m.config = cfg
 	if cfg == nil {
@@ -2735,10 +3001,15 @@ func (m StatusModel) View() string {
 		warningStyle := m.getWarningStyle()
 		status = warningStyle.Render(m.warningMessage)
 	} else if m.streaming {
-		// Animated spinner
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		spinner := StatusStreamingStyle.Render(frames[m.frame%len(frames)])
-		status = spinner + " " + StatusStreamingStyle.Render("Streaming...")
+		// Show the text set by the typing animation (thinking phrases + spinner)
+		// Falls back to "Streaming..." if no text was set
+		if m.text != "" && m.text != "Ready" {
+			status = StatusStreamingStyle.Render(m.text)
+		} else {
+			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			spinner := StatusStreamingStyle.Render(frames[m.frame%len(frames)])
+			status = spinner + " " + StatusStreamingStyle.Render("Streaming...")
+		}
 	} else {
 		status = StatusActiveStyle.Render("●") + " " + m.text
 	}
@@ -2796,7 +3067,8 @@ func Run(llmClient LLMClient) error {
 	p := tea.NewProgram(
 		NewApp(llmClient),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		// Mouse capture disabled — allows terminal-native text selection and copy.
+		// Scroll via PgUp/PgDown, Shift+Up/Down, Home/End instead.
 	)
 
 	_, err := p.Run()

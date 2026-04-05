@@ -78,7 +78,7 @@ type TurnStats struct {
 
 func DefaultOptions() Options {
 	return Options{
-		MaxTurns:                  12,
+		MaxTurns:                  50,
 		MaxToolCallsPerTurn:       8,
 		MaxConsecutiveNoToolTurns: 3,
 		RequestTimeout:            90 * time.Second,

@@ -3,8 +3,19 @@ package grimoire
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
+
+// GrimoireMetadata holds the embedded metadata from the grimoire file.
+type GrimoireMetadata struct {
+	LastUpdated    time.Time
+	GitHash        string
+	GitBranch      string
+	GitCommitCount int
+}
 
 // Grimoire represents a fully resolved project context.
 type Grimoire struct {
@@ -15,6 +26,7 @@ type Grimoire struct {
 	Wards        []string          // protected areas
 	Hooks        []HookEntry       // pre/post tool execution commands
 	RawSections  map[string]string // unparsed section content by heading
+	Meta         GrimoireMetadata  // embedded metadata (last updated, git hash, etc.)
 }
 
 // IncludeRef represents an @include directive with its resolved content.
@@ -32,6 +44,52 @@ type HookEntry struct {
 	Command  string // shell command to execute
 }
 
+// StalenessInfo returns how stale the grimoire is relative to current git state.
+// Returns a human-readable message, or "" if metadata is unavailable.
+func (g *Grimoire) StalenessInfo(currentDir string) string {
+	if g.Meta.GitHash == "" {
+		return ""
+	}
+
+	// Check current commit count
+	currentCount := gitCommand(currentDir, "rev-list", "--count", "HEAD")
+	if currentCount == "" {
+		return ""
+	}
+	current, err := strconv.Atoi(currentCount)
+	if err != nil {
+		return ""
+	}
+
+	behind := current - g.Meta.GitCommitCount
+	if behind <= 0 {
+		return ""
+	}
+
+	age := ""
+	if !g.Meta.LastUpdated.IsZero() {
+		age = fmt.Sprintf(" (%s ago)", timeSince(g.Meta.LastUpdated))
+	}
+
+	if behind > 50 {
+		return fmt.Sprintf("WARNING: Grimoire is %d commits behind HEAD%s — consider updating", behind, age)
+	} else if behind > 10 {
+		return fmt.Sprintf("Note: Grimoire is %d commits behind HEAD%s", behind, age)
+	}
+	return ""
+}
+
+func timeSince(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
 // Render produces the grimoire content for injection into a system prompt.
 func (g *Grimoire) Render() string {
 	if g.IsEmpty() {
@@ -40,6 +98,14 @@ func (g *Grimoire) Render() string {
 
 	var sb strings.Builder
 	sb.WriteString("# Project Grimoire\n\n")
+
+	// Show metadata if available
+	if g.Meta.GitHash != "" {
+		sb.WriteString(fmt.Sprintf("_Last updated: %s | git: %s (%s)_\n\n",
+			g.Meta.LastUpdated.Format("2006-01-02 15:04"),
+			g.Meta.GitHash,
+			g.Meta.GitBranch))
+	}
 
 	if len(g.Bindings) > 0 {
 		sb.WriteString("## Bindings\n")
@@ -76,6 +142,23 @@ func (g *Grimoire) Render() string {
 		sb.WriteString("\n")
 	}
 
+	// Render any custom sections (Architecture, Structure, Issues, etc.)
+	// These are sections she writes that aren't part of the standard schema.
+	if len(g.RawSections) > 0 {
+		// Sort for deterministic output
+		keys := make([]string, 0, len(g.RawSections))
+		for k := range g.RawSections {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, name := range keys {
+			body := g.RawSections[name]
+			if body != "" {
+				sb.WriteString(fmt.Sprintf("## %s\n%s\n\n", name, body))
+			}
+		}
+	}
+
 	return sb.String()
 }
 
@@ -87,7 +170,8 @@ func (g *Grimoire) TotalSize() int {
 // IsEmpty returns true if the grimoire has no content.
 func (g *Grimoire) IsEmpty() bool {
 	return len(g.Bindings) == 0 && len(g.Rituals) == 0 &&
-		len(g.Incantations) == 0 && len(g.Wards) == 0 && len(g.Hooks) == 0
+		len(g.Incantations) == 0 && len(g.Wards) == 0 && len(g.Hooks) == 0 &&
+		len(g.RawSections) == 0
 }
 
 // MaxSize is the maximum total grimoire context size in bytes.

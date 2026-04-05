@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
@@ -132,6 +133,11 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	if err := os.WriteFile(targetPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
+	}
+
+	// Auto-stamp .grimoire metadata when patching it
+	if filepath.Base(targetPath) == ".grimoire" {
+		stampGrimoireMetadata(targetPath)
 	}
 
 	// Record new mtime after patch

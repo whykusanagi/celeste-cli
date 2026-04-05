@@ -700,46 +700,42 @@ Tip: Ask the uncensored LLM to write detailed NSFW prompts, then use
 		// Safe Mode Help
 		helpText = versionHeader + `Available Commands:
 
-Mode Control:
-  /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
-  /safe              Switch to safe mode (OpenAI, content policy)
-
-Endpoint Control:
-  /endpoint <name>   Switch to a specific endpoint
-                     Options: openai, venice, grok, elevenlabs, google
-  /config <name>     Load a named config profile
-  /model <name>      Change the model (e.g., gpt-4o, llama-3.3-70b)
-
-Session Control:
+Chat:
   /clear             Clear conversation history
   /help              Show this help message
+  /endpoint <name>   Switch AI provider (openai, venice, grok, google)
+  /config <name>     Load a named config profile
+  /model <name>      Change the model
 
-Agent:
-  /agent <goal>          Run autonomous task loop from TUI
-  /agent list-runs       List checkpointed agent runs
-  /agent resume <id>     Resume an existing agent run
+Project:
+  /memories          List project memories
+  /grimoire          Show project grimoire
+  /index             Show code graph status
+  /plan [show]       Show current plan
+  /context           Show context/token usage
+  /costs             Show session costs
 
-Orchestrator:
-  /orchestrate <goal>    Multi-model orchestrated run with debate/review
-  /orch <goal>           Alias for /orchestrate
+Agent & Orchestrator:
+  /agent <goal>      Run autonomous task loop
+  /agent list-runs   List checkpointed agent runs
+  /agent resume <id> Resume an existing agent run
+  /orch <goal>       Multi-model orchestrated run
+
+Settings:
+  /effort <level>    Set reasoning effort (off/low/medium/high/max)
+  /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
+  /safe              Return to safe mode
+
+Tools:
+  /tools             Browse available tools interactively
 
 Examples:
-  /nsfw                  → Enable uncensored mode with media generation
-  /endpoint google       → Switch to Google Vertex AI
-  /model gpt-4o          → Use GPT-4o model
   /agent fix tests       → Run autonomous code-fix loop
-  /orch write a script   → Run orchestrator with grok + reviewer debate
-  /safe                  → Return to safe mode
+  /orch write a script   → Multi-model orchestrated run
+  /endpoint google       → Switch to Google Vertex AI
+  /model grok-4-1-fast   → Use Grok model
 
-Skills Available: 18 function-calling tools
-  • Weather, currency, timezone conversion
-  • Hashing, encoding, UUID generation
-  • Twitch live checks, YouTube videos
-  • Reminders, notes, tarot readings
-  • QR codes, passwords
-
-Tip: You can also add keywords like "nsfw" or "uncensored" at the end
-of your message for automatic routing while staying in control.`
+Tip: Type / and press Tab for command autocomplete.`
 	}
 
 	return &CommandResult{

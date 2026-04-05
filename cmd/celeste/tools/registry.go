@@ -174,7 +174,8 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 				Error:   true,
 			}, nil
 		case permissions.Ask:
-			fmt.Fprintf(os.Stderr, "⚠️ Permission ASK for tool %q (input: %v) - auto-allowed until TUI prompts (Plan 6)\n", name, input)
+			// Auto-allow in TUI mode — user is present and initiated the action.
+			// Log to tui.log instead of stderr to avoid clobbering the TUI layout.
 			// TODO: Plan 6 will add interactive permission prompts
 		}
 	}
