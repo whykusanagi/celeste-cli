@@ -584,6 +584,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat = m.chat.AddSystemMessage("Use `celeste memories` CLI command to list project memories.\nUse `celeste remember \"<text>\"` to save a memory.")
 				return m, nil
 
+			case "costs":
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Session Costs:\n  Tokens: %d used / %d limit\n  Turns: %d\n  Compactions: %d\n\nFor detailed cost breakdown: `celeste costs`",
+					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount, m.contextBar.compactCount))
+				return m, nil
+
+			case "grimoire":
+				m.chat = m.chat.AddSystemMessage("Run `celeste grimoire` to view the resolved project context.\nRun `celeste init` to create a .grimoire if one doesn't exist.")
+				return m, nil
+
+			case "index":
+				m.chat = m.chat.AddSystemMessage("Use `celeste index` CLI command to manage the code graph.\n  celeste index         — build/update\n  celeste index status  — show stats\n  celeste index rebuild — rebuild from scratch\n  celeste index reset   — delete index")
+				return m, nil
+
 			case "effort":
 				validLevels := []string{"off", "low", "medium", "high", "max"}
 				if len(cmd.Args) == 0 {
