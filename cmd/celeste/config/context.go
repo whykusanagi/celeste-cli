@@ -100,18 +100,6 @@ func (ct *ContextTracker) UpdateTokens(prompt, completion, total int) {
 	}
 }
 
-// UpdateFromEstimate updates tokens using character-based estimation.
-func (ct *ContextTracker) UpdateFromEstimate() {
-	if ct.Session != nil {
-		estimated := EstimateSessionTokens(ct.Session)
-		ct.CurrentTokens = estimated
-		ct.Session.TokenCount = estimated
-		if ct.Budget != nil {
-			ct.Budget.SetHistoryTokens(estimated)
-		}
-	}
-}
-
 // GetUsagePercentage returns the percentage of context window used (0.0 to 1.0).
 func (ct *ContextTracker) GetUsagePercentage() float64 {
 	if ct.MaxTokens == 0 {
@@ -218,15 +206,3 @@ func (ct *ContextTracker) MarkWarningShown() {
 	ct.LastWarningLevel = ct.GetWarningLevel()
 }
 
-// IncrementCompactionCount increments the compaction counter.
-func (ct *ContextTracker) IncrementCompactionCount() {
-	ct.CompactionCount++
-	if ct.Budget != nil {
-		ct.Budget.IncrementCompactCount()
-	}
-}
-
-// IncrementTruncationCount increments the truncation counter.
-func (ct *ContextTracker) IncrementTruncationCount() {
-	ct.TruncationCount++
-}
