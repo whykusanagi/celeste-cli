@@ -10,7 +10,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 )
 
-func TestCodeStubsTool_Execute(t *testing.T) {
+func TestCodeReviewTool_Execute(t *testing.T) {
 	// Set up an in-memory code graph store with test data.
 	dir := t.TempDir()
 	store, err := codegraph.NewStore(filepath.Join(dir, "test.db"))
@@ -46,13 +46,15 @@ func TestCodeStubsTool_Execute(t *testing.T) {
 
 	// Create an indexer wrapping this store.
 	indexer := codegraph.NewIndexerWithStore(store, dir)
-	tool := NewCodeStubsTool(indexer)
+	tool := NewCodeReviewTool(indexer)
 
-	assert.Equal(t, "code_stubs", tool.Name())
+	assert.Equal(t, "code_review", tool.Name())
 	assert.True(t, tool.IsReadOnly())
 
-	// Execute with default params — should find ProcessOrder and Respond as stubs.
-	result, err := tool.Execute(context.Background(), map[string]any{}, nil)
+	// Execute with STUB kind only — should find ProcessOrder and Respond as stubs.
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"kinds": "STUB",
+	}, nil)
 	require.NoError(t, err)
 	assert.False(t, result.Error)
 	assert.Contains(t, result.Content, "ProcessOrder")
@@ -60,7 +62,7 @@ func TestCodeStubsTool_Execute(t *testing.T) {
 	assert.NotContains(t, result.Content, "HandleRequest")
 }
 
-func TestCodeStubsTool_FilterLeaf(t *testing.T) {
+func TestCodeReviewTool_FilterLeaf(t *testing.T) {
 	dir := t.TempDir()
 	store, err := codegraph.NewStore(filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
@@ -81,14 +83,16 @@ func TestCodeStubsTool_FilterLeaf(t *testing.T) {
 	require.NoError(t, err)
 
 	indexer := codegraph.NewIndexerWithStore(store, dir)
-	tool := NewCodeStubsTool(indexer)
+	tool := NewCodeReviewTool(indexer)
 
-	result, err := tool.Execute(context.Background(), map[string]any{}, nil)
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"kinds": "STUB",
+	}, nil)
 	require.NoError(t, err)
-	assert.Contains(t, result.Content, "No stub functions found")
+	assert.Contains(t, result.Content, "No issues detected")
 }
 
-func TestCodeStubsTool_ExcludeTests(t *testing.T) {
+func TestCodeReviewTool_ExcludeTests(t *testing.T) {
 	dir := t.TempDir()
 	store, err := codegraph.NewStore(filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
@@ -109,43 +113,47 @@ func TestCodeStubsTool_ExcludeTests(t *testing.T) {
 	require.NoError(t, err)
 
 	indexer := codegraph.NewIndexerWithStore(store, dir)
-	tool := NewCodeStubsTool(indexer)
+	tool := NewCodeReviewTool(indexer)
 
 	// Default: exclude tests.
-	result, err := tool.Execute(context.Background(), map[string]any{}, nil)
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"kinds": "STUB",
+	}, nil)
 	require.NoError(t, err)
 	assert.Contains(t, result.Content, "Placeholder")
 	assert.NotContains(t, result.Content, "helperSetup")
 
 	// Include tests.
-	result, err = tool.Execute(context.Background(), map[string]any{"include_tests": true}, nil)
+	result, err = tool.Execute(context.Background(), map[string]any{
+		"kinds":         "STUB",
+		"include_tests": true,
+	}, nil)
 	require.NoError(t, err)
 	assert.Contains(t, result.Content, "Placeholder")
 	assert.Contains(t, result.Content, "helperSetup")
 }
 
-func TestIsLeafFunction(t *testing.T) {
-	assert.True(t, isLeafFunction("String"))
-	assert.True(t, isLeafFunction("Close"))
-	assert.True(t, isLeafFunction("NewService"))
-	assert.True(t, isLeafFunction("GetName"))
-	assert.True(t, isLeafFunction("SetValue"))
-	assert.True(t, isLeafFunction("IsActive"))
-	assert.True(t, isLeafFunction("HasPermission"))
-	assert.True(t, isLeafFunction("TestFoo"))
-	assert.True(t, isLeafFunction("BenchmarkBar"))
+func TestCodeReviewTool_AllCategories(t *testing.T) {
+	dir := t.TempDir()
+	store, err := codegraph.NewStore(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	defer store.Close()
 
-	assert.False(t, isLeafFunction("ProcessOrder"))
-	assert.False(t, isLeafFunction("HandleRequest"))
-	assert.False(t, isLeafFunction("Run"))
-}
+	// A stub function — should appear in STUB category
+	_, err = store.UpsertSymbol(codegraph.Symbol{
+		Name: "ProcessOrder", Kind: codegraph.SymbolFunction,
+		Package: "orders", File: "orders/process.go", Line: 15,
+	})
+	require.NoError(t, err)
 
-func TestIsTestFile(t *testing.T) {
-	assert.True(t, isTestFile("pkg/handler_test.go"))
-	assert.True(t, isTestFile("src/utils.test.ts"))
-	assert.True(t, isTestFile("src/utils.spec.js"))
-	assert.True(t, isTestFile("lib/test/helper.go"))
+	indexer := codegraph.NewIndexerWithStore(store, dir)
+	tool := NewCodeReviewTool(indexer)
 
-	assert.False(t, isTestFile("pkg/handler.go"))
-	assert.False(t, isTestFile("src/utils.ts"))
+	// ALL categories (default)
+	result, err := tool.Execute(context.Background(), map[string]any{}, nil)
+	require.NoError(t, err)
+	assert.False(t, result.Error)
+	// Should find the stub
+	assert.Contains(t, result.Content, "ProcessOrder")
+	assert.Contains(t, result.Content, "STUB")
 }

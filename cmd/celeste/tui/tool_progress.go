@@ -20,12 +20,12 @@ type toolProgressEntry struct {
 	name      string
 	state     string // executing, done, failed, aborted
 	message   string
-	elapsed   time.Duration
 	startedAt time.Time
 	doneAt    time.Time
 }
 
 // ToolProgressModel displays stacked tool execution cards.
+// Entries auto-clear when the user sends a new message.
 type ToolProgressModel struct {
 	entries   []toolProgressEntry
 	width     int
@@ -47,17 +47,25 @@ func (m *ToolProgressModel) SetSize(width, _ int) {
 	m.width = width
 }
 
+// ClearCompleted removes all non-executing entries.
+// Called when the user sends a new message so old results don't accumulate.
+func (m *ToolProgressModel) ClearCompleted() {
+	kept := m.entries[:0]
+	for _, e := range m.entries {
+		if e.state == "executing" {
+			kept = append(kept, e)
+		}
+	}
+	m.entries = kept
+}
+
 // Update handles messages for the tool progress component.
 func (m ToolProgressModel) Update(msg tea.Msg) (ToolProgressModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ToolProgressMsg:
 		m.handleProgress(msg)
-
 	case TickMsg:
-		// Advance spinner frame
 		m.spinFrame = (m.spinFrame + 1) % len(brailleSpinner)
-		// Prune completed entries older than 2 seconds
-		m.pruneOldEntries()
 	}
 	return m, nil
 }
@@ -68,8 +76,10 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 		if e.callID == msg.ToolCallID {
 			m.entries[i].state = msg.State
 			m.entries[i].message = msg.Message
-			m.entries[i].elapsed = msg.Elapsed
-			if msg.State != "executing" {
+			if msg.State == "executing" && e.state != "executing" {
+				// Tool is starting now (was queued) — reset start time
+				m.entries[i].startedAt = time.Now()
+			} else if msg.State != "executing" {
 				m.entries[i].doneAt = time.Now()
 			}
 			return
@@ -81,25 +91,12 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 		name:      msg.ToolName,
 		state:     msg.State,
 		message:   msg.Message,
-		elapsed:   msg.Elapsed,
 		startedAt: time.Now(),
 	}
 	if msg.State != "executing" {
 		entry.doneAt = time.Now()
 	}
 	m.entries = append(m.entries, entry)
-}
-
-// pruneOldEntries removes completed entries older than 2 seconds.
-func (m *ToolProgressModel) pruneOldEntries() {
-	now := time.Now()
-	kept := m.entries[:0]
-	for _, e := range m.entries {
-		if e.state == "executing" || now.Sub(e.doneAt) < 2*time.Second {
-			kept = append(kept, e)
-		}
-	}
-	m.entries = kept
 }
 
 // HasActive returns true if there are any entries to display.
@@ -117,23 +114,17 @@ func (m ToolProgressModel) View() string {
 	if w < 30 {
 		w = 40
 	}
-	// Reserve space for border
-	innerW := w - 4
-	if innerW < 20 {
-		innerW = 20
-	}
 
-	var cards []string
+	var lines []string
 	for _, e := range m.entries {
-		cards = append(cards, m.renderEntry(e, innerW))
+		lines = append(lines, m.renderEntry(e))
 	}
 
-	return strings.Join(cards, "\n")
+	return strings.Join(lines, "\n")
 }
 
-// renderEntry renders a single tool progress card.
-func (m ToolProgressModel) renderEntry(e toolProgressEntry, innerW int) string {
-	// Status icon and label
+// renderEntry renders a single tool progress line.
+func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 	var icon string
 	var stateStyle lipgloss.Style
 	switch e.state {
@@ -154,60 +145,20 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry, innerW int) string {
 		stateStyle = lipgloss.NewStyle().Foreground(ColorTextMuted)
 	}
 
-	elapsed := fmt.Sprintf("%.1fs", e.elapsed.Seconds())
-
-	// Collapsed single-line for completed entries
-	if e.state != "executing" && !e.doneAt.IsZero() && time.Since(e.doneAt) > 500*time.Millisecond {
-		line := fmt.Sprintf(" %s %s %s %s",
-			stateStyle.Render(icon),
-			lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render(e.name),
-			stateStyle.Render(e.state),
-			lipgloss.NewStyle().Foreground(ColorTextMuted).Render(elapsed),
-		)
-		return line
+	// Compute elapsed from startedAt
+	var elapsed time.Duration
+	if e.state == "executing" {
+		elapsed = time.Since(e.startedAt)
+	} else if !e.doneAt.IsZero() {
+		elapsed = e.doneAt.Sub(e.startedAt)
 	}
 
-	// Full card with border
-	headerLabel := fmt.Sprintf(" %s ", e.name)
-	statusLabel := fmt.Sprintf(" %s %s", icon, e.state)
+	elapsedStr := fmt.Sprintf("%.1fs", elapsed.Seconds())
 
-	// Top line: ┌─ name ────── ⣾ executing
-	topFill := innerW - len(headerLabel) - len(statusLabel) - 2
-	if topFill < 1 {
-		topFill = 1
-	}
-	topLine := fmt.Sprintf("┌─%s%s%s",
-		lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render(headerLabel),
-		lipgloss.NewStyle().Foreground(ColorBorder).Render(strings.Repeat("─", topFill)),
-		stateStyle.Render(statusLabel),
+	return fmt.Sprintf(" %s %s %s %s",
+		stateStyle.Render(icon),
+		lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render(e.name),
+		stateStyle.Render(e.state),
+		lipgloss.NewStyle().Foreground(ColorTextMuted).Render(elapsedStr),
 	)
-
-	// Middle line: message (if any)
-	var midLine string
-	if e.message != "" {
-		msg := e.message
-		if len(msg) > innerW-4 {
-			msg = msg[:innerW-7] + "..."
-		}
-		midLine = fmt.Sprintf("%s  %s",
-			lipgloss.NewStyle().Foreground(ColorBorder).Render("│"),
-			lipgloss.NewStyle().Foreground(ColorTextSecondary).Render(msg),
-		)
-	}
-
-	// Bottom line: └──────── 1.2s
-	elapsedLabel := " " + elapsed
-	botFill := innerW - len(elapsedLabel) - 1
-	if botFill < 1 {
-		botFill = 1
-	}
-	botLine := fmt.Sprintf("%s%s",
-		lipgloss.NewStyle().Foreground(ColorBorder).Render("└"+strings.Repeat("─", botFill)),
-		lipgloss.NewStyle().Foreground(ColorTextMuted).Render(elapsedLabel),
-	)
-
-	if midLine != "" {
-		return topLine + "\n" + midLine + "\n" + botLine
-	}
-	return topLine + "\n" + botLine
 }

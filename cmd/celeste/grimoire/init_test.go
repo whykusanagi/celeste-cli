@@ -82,7 +82,7 @@ func TestGenerateTemplate_Go(t *testing.T) {
 		LintCommand: "golangci-lint run ./...",
 	}
 
-	content := GenerateTemplate(info)
+	content := GenerateTemplate(info, t.TempDir())
 	assert.Contains(t, content, "## Bindings")
 	assert.Contains(t, content, "go project")
 	assert.Contains(t, content, "github.com/whykusanagi/celeste-cli")
@@ -94,7 +94,7 @@ func TestGenerateTemplate_Unknown(t *testing.T) {
 	info := &ProjectInfo{
 		Language: "unknown",
 	}
-	content := GenerateTemplate(info)
+	content := GenerateTemplate(info, t.TempDir())
 	assert.Contains(t, content, "## Bindings")
 	assert.Contains(t, content, "unknown project")
 }

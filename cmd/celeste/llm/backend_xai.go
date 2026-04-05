@@ -357,6 +357,7 @@ func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui
 	if b.config.Collections != nil && b.config.Collections.Enabled {
 		if len(b.config.Collections.ActiveCollections) > 0 {
 			req.CollectionIDs = b.config.Collections.ActiveCollections
+			tui.LogInfo(fmt.Sprintf("xAI Collections: %d active, IDs sent with request", len(req.CollectionIDs)))
 		}
 	}
 

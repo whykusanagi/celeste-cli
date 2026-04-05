@@ -210,7 +210,7 @@ func (s *Server) serveSSE(ctx context.Context) error {
 	}
 
 	log.Printf("[mcp-server] SSE transport starting on %s", bindAddr)
-	log.Printf("[mcp-server] Bearer token: %s", token)
+	log.Printf("[mcp-server] Bearer token loaded (use ~/.celeste/server.token)")
 
 	// Start server in a goroutine and wait for context cancellation
 	errCh := make(chan error, 1)

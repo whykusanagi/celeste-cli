@@ -97,8 +97,28 @@ func (m CollectionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.collections = msg.collections
 		m.err = msg.err
 
-		// Load active collections using Manager method
+		// Load active collections and reconcile against API
 		m.activeIDs = m.manager.GetActiveCollectionIDs()
+
+		// Prune stale IDs that no longer exist in the API
+		if len(m.collections) > 0 {
+			validIDs := make(map[string]bool)
+			for _, col := range m.collections {
+				validIDs[col.ID] = true
+			}
+			pruned := false
+			for id := range m.activeIDs {
+				if !validIDs[id] {
+					delete(m.activeIDs, id)
+					_ = m.manager.DisableCollection(id)
+					pruned = true
+					LogInfo(fmt.Sprintf("Pruned stale collection: %s", id))
+				}
+			}
+			if pruned {
+				_ = m.manager.SaveConfig()
+			}
+		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

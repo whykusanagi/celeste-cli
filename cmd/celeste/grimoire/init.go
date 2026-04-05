@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ProjectInfo holds detected project metadata.
@@ -128,10 +130,46 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 	return info, nil
 }
 
+// GrimoireMeta returns a metadata header block for the grimoire file.
+// Includes timestamp, git hash, and branch so staleness can be detected.
+func GrimoireMeta(dir string) string {
+	var sb strings.Builder
+	sb.WriteString("<!--\n")
+	sb.WriteString(fmt.Sprintf("last_updated: %s\n", time.Now().Format("2006-01-02 15:04:05")))
+
+	// Git info
+	if hash := gitCommand(dir, "rev-parse", "--short", "HEAD"); hash != "" {
+		sb.WriteString(fmt.Sprintf("git_hash: %s\n", hash))
+	}
+	if branch := gitCommand(dir, "rev-parse", "--abbrev-ref", "HEAD"); branch != "" {
+		sb.WriteString(fmt.Sprintf("git_branch: %s\n", branch))
+	}
+	if count := gitCommand(dir, "rev-list", "--count", "HEAD"); count != "" {
+		sb.WriteString(fmt.Sprintf("git_commit_count: %s\n", count))
+	}
+
+	sb.WriteString("-->\n")
+	return sb.String()
+}
+
+// gitCommand runs a git command and returns trimmed stdout, or "" on error.
+func gitCommand(dir string, args ...string) string {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // GenerateTemplate creates a starter .grimoire file from project info.
-func GenerateTemplate(info *ProjectInfo) string {
+func GenerateTemplate(info *ProjectInfo, dir string) string {
 	var sb strings.Builder
 
+	// Metadata header (HTML comment — invisible in rendered markdown)
+	sb.WriteString(GrimoireMeta(dir))
+	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("# Grimoire: %s project\n\n", info.Language))
 
 	// Bindings
@@ -193,7 +231,7 @@ func Init(dir string) (string, error) {
 		return "", fmt.Errorf("project detection failed: %w", err)
 	}
 
-	content := GenerateTemplate(info)
+	content := GenerateTemplate(info, dir)
 	if err := os.WriteFile(grimPath, []byte(content), 0644); err != nil {
 		return "", fmt.Errorf("failed to write .grimoire: %w", err)
 	}

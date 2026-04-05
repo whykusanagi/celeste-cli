@@ -1,6 +1,7 @@
 package grimoire
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -127,10 +128,12 @@ func LoadAll(startDir string) (*Grimoire, error) {
 	for _, src := range sources {
 		data, err := os.ReadFile(src.Path)
 		if err != nil {
+			log.Printf("grimoire: skipping %s: %v", src.Path, err)
 			continue
 		}
 		g, err := Parse(string(data), filepath.Dir(src.Path))
 		if err != nil {
+			log.Printf("grimoire: parse error in %s: %v", src.Path, err)
 			continue
 		}
 		g.Sources = []string{src.Path}

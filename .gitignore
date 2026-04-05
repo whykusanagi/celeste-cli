@@ -101,3 +101,10 @@ coverage.html
 # Auto-generated project context
 .grimoire
 .grimoire.local
+
+# Temp test files
+hello*.sh
+divide.py
+analyze_logs.sh
+*.log
+__pycache__/

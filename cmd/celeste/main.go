@@ -20,6 +20,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -137,16 +138,27 @@ Commands:
   remember "<text>"       Save a memory
   forget <name>           Delete a memory
   resume [session-id]     Resume a previous session
-  plan                    Show plan mode help
+  plan [show]             Show current plan from .celeste/plan.md
   revert <file>           Revert a file from checkpoint
   help                    Show this help message
   version                 Show version information
 
 Interactive Commands (in chat mode):
-  help                    Show available commands
-  clear                   Clear chat history
-  config                  Show current configuration
-  tools, debug            Show available skills
+  /help                   Show available commands
+  /clear                  Clear chat history
+  /config                 Show current configuration
+  /tools, /skills         Browse available tools
+  /agent <goal>           Run autonomous task loop
+  /orch <goal>            Multi-model orchestrated run
+  /memories               List project memories
+  /costs                  Show session costs
+  /context                Show context/token usage
+  /grimoire               Show project grimoire
+  /index                  Show code graph status
+  /plan [show]            Show current plan
+  /effort <level>         Set reasoning effort (off/low/medium/high/max)
+  /endpoint <name>        Switch AI provider endpoint
+  /model <name>           Change the model
   exit, quit, q           Exit the application
 
 Keyboard Shortcuts:
@@ -259,6 +271,7 @@ func runChatTUI() {
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 	builtin.RegisterAll(registry, cwd, configLoader, fileTracker, snapshotMgr)
+	builtin.RegisterCollectionsTools(registry, cfg)
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
 	// Register subagent spawning tool
@@ -425,6 +438,48 @@ func runChatTUI() {
 		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, projectContext, gitSnapshotContent))
 	}
 
+	// Auto-scan collections if management key is set.
+	// Also prunes stale collection IDs that no longer exist in the API.
+	if cfg.XAIManagementAPIKey != "" {
+		go func() {
+			client := collections.NewClient(cfg.XAIManagementAPIKey)
+			cols, err := client.ListCollections()
+			if err != nil {
+				return
+			}
+
+			// Prune stale active collection IDs
+			if cfg.Collections != nil && len(cfg.Collections.ActiveCollections) > 0 {
+				validIDs := make(map[string]bool)
+				for _, col := range cols {
+					validIDs[col.ID] = true
+				}
+				var kept []string
+				pruned := 0
+				for _, id := range cfg.Collections.ActiveCollections {
+					if validIDs[id] {
+						kept = append(kept, id)
+					} else {
+						pruned++
+					}
+				}
+				if pruned > 0 {
+					cfg.Collections.ActiveCollections = kept
+					_ = config.Save(cfg)
+					fmt.Fprintf(os.Stderr, "📚 Pruned %d stale collection IDs from config\n", pruned)
+				}
+			}
+
+			activeCount := 0
+			if cfg.Collections != nil {
+				activeCount = len(cfg.Collections.ActiveCollections)
+			}
+			if len(cols) > 0 {
+				fmt.Fprintf(os.Stderr, "📚 %d collections available (%d active) — /collections to manage\n", len(cols), activeCount)
+			}
+		}()
+	}
+
 	// Wire grimoire hooks into the tool registry
 	if projectGrimoire != nil {
 		parsedHooks := hooks.ParseFromGrimoire(projectGrimoire)
@@ -474,6 +529,9 @@ func runChatTUI() {
 	}
 	if codeGraphSummary != "" {
 		app = app.WithCodeGraphSummary(codeGraphSummary)
+	}
+	if indexer != nil {
+		app = app.WithCodeGraphIndexer(indexer)
 	}
 
 	// Restore messages from session if available
@@ -604,29 +662,37 @@ func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.S
 	)
 }
 
-// sendMessageWithCtx performs the actual LLM call using the provided context.
-func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel context.CancelFunc, messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
+// readStreamCh returns a Cmd that reads the next message from the stream channel.
+// Each StreamChunkMsg carries this same Cmd as .Next so the TUI can chain reads.
+func readStreamCh(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		defer cancel()
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
 
-		// Log the request with current endpoint info
+// sendMessageWithCtx performs the actual LLM call using the provided context.
+// Streams content deltas to the TUI as StreamChunkMsg via a channel, then sends
+// StreamDoneMsg (or tool calls) when the stream completes.
+func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel context.CancelFunc, messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
+	ch := make(chan tea.Msg, 32)
+
+	go func() {
+		defer cancel()
+		defer close(ch)
+
 		currentConfig := a.client.GetConfig()
 		tui.LogInfo(fmt.Sprintf("→ Sending request to: %s (model: %s)", currentConfig.BaseURL, currentConfig.Model))
 		tui.LogLLMRequest(len(messages), len(tools))
 
-		// Log message details for debugging
 		for i, msg := range messages {
 			tui.LogInfo(fmt.Sprintf("  Message[%d]: role=%s, content_len=%d, tool_calls=%d",
 				i, msg.Role, len(msg.Content), len(msg.ToolCalls)))
 		}
 
-		// Image metadata in tool results is now forwarded to the LLM.
-		// Each backend's convertMessages handles the Metadata map on tool
-		// messages and injects a multimodal user message with the image:
-		//   - OpenAI:  MultiContent with image_url data URI
-		//   - xAI:     MultiContent with image_url data URI
-		//   - Google:  InlineData part with decoded bytes
-		// Log detected images for observability.
 		for _, msg := range messages {
 			if msg.Role == "tool" && msg.Metadata != nil {
 				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
@@ -636,22 +702,29 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 			}
 		}
 
-		// Check if we're sending tools to Venice uncensored (which may not support function calling)
 		if strings.Contains(currentConfig.BaseURL, "venice") && currentConfig.Model == "venice-uncensored" && len(tools) > 0 {
 			tui.LogInfo(fmt.Sprintf("  ⚠️  WARNING: Sending %d tools to venice-uncensored model", len(tools)))
-			tui.LogInfo("     Venice Uncensored may not support function calling")
-			tui.LogInfo("     Consider using llama-3.3-70b or qwen3-235b for function calling")
 		}
 
 		var fullContent string
 		var usage *llm.TokenUsage
 		var finishReason string
+		isFirst := true
 		acc := llm.NewToolUseAccumulator()
 
 		err := a.client.SendMessageStreamEvents(ctx, messages, tools, func(event llm.StreamEvent) {
 			switch event.Type {
 			case llm.EventContentDelta:
 				fullContent += event.ContentDelta
+				// Send each content delta to the TUI for real-time display
+				ch <- tui.StreamChunkMsg{
+					Chunk: tui.StreamChunk{
+						Content: event.ContentDelta,
+						IsFirst: isFirst,
+					},
+					Next: readStreamCh(ch),
+				}
+				isFirst = false
 			case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
 				acc.HandleEvent(event)
 			case llm.EventMessageDone:
@@ -661,42 +734,25 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 		})
 
 		if err != nil {
-			// Extract detailed error information
 			errorMsg := err.Error()
 			tui.LogInfo(fmt.Sprintf("LLM error: %s", errorMsg))
-
-			// Log additional context
 			tui.LogInfo(fmt.Sprintf("  Endpoint: %s", currentConfig.BaseURL))
 			tui.LogInfo(fmt.Sprintf("  Model: %s", currentConfig.Model))
-			tui.LogInfo(fmt.Sprintf("  Message count: %d", len(messages)))
-			tui.LogInfo(fmt.Sprintf("  Full error type: %T", err))
-
-			// Show helpful hint for Venice 400 errors
-			if strings.Contains(errorMsg, "400") && strings.Contains(currentConfig.BaseURL, "venice") {
-				tui.LogInfo("  💡 Venice.ai 400 error - possible causes:")
-				tui.LogInfo("     - Invalid model name (check model ID matches Venice docs)")
-				tui.LogInfo("     - API key might be invalid or expired")
-				tui.LogInfo("     - Request format incompatibility")
-				tui.LogInfo(fmt.Sprintf("     - Current model: %s", currentConfig.Model))
-			}
-
-			return tui.StreamErrorMsg{Err: err}
+			ch <- tui.StreamErrorMsg{Err: err}
+			return
 		}
 
 		// Collect completed tool calls from accumulator
 		toolCalls := acc.CompletedCalls()
 
-		// Default finish reason to "stop" if not provided by backend
 		if finishReason == "" {
 			finishReason = "stop"
 		}
 
-		// Log the response
 		tui.LogLLMResponse(len(fullContent), len(toolCalls) > 0)
 
 		// Handle tool calls
 		if len(toolCalls) > 0 {
-			// Convert all tool calls to ToolCallInfo
 			toolCallInfos := make([]tui.ToolCallInfo, len(toolCalls))
 			callRequests := make([]tui.SkillCallRequest, len(toolCalls))
 			for i, t := range toolCalls {
@@ -725,22 +781,15 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 				}
 			}
 
-			// If LLM made tool calls without any text content, show a random thinking phrase
-			// This prevents blank "Celeste:" lines during tool execution
-			displayContent := fullContent
-			if strings.TrimSpace(displayContent) == "" {
-				displayContent = getRandomThinkingPhrase()
-				tui.LogInfo(fmt.Sprintf("No assistant content with tool call, using thinking phrase: %s", displayContent))
-			}
-
-			return tui.SkillCallBatchMsg{
+			ch <- tui.SkillCallBatchMsg{
 				Calls:            callRequests,
-				AssistantContent: displayContent, // Show thinking phrase if empty
+				AssistantContent: fullContent,
 				ToolCalls:        toolCallInfos,
 			}
+			return
 		}
 
-		// Convert llm.TokenUsage to tui.TokenUsage and record costs
+		// Convert usage and send done
 		var tuiUsage *tui.TokenUsage
 		if usage != nil {
 			tuiUsage = &tui.TokenUsage{
@@ -755,12 +804,15 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 			}
 		}
 
-		return tui.StreamDoneMsg{
+		ch <- tui.StreamDoneMsg{
 			FullContent:  fullContent,
 			FinishReason: finishReason,
 			Usage:        tuiUsage,
 		}
-	}
+	}()
+
+	// Return the first read — TUI chains subsequent reads via StreamChunkMsg.Next
+	return readStreamCh(ch)
 }
 
 // GetSkills implements tui.LLMClient.
@@ -1344,8 +1396,31 @@ func createConfigTemplate(name string) error {
 	}
 
 	fmt.Printf("Created config '%s' at %s\n", name, configPath)
-	fmt.Printf("\nEdit the file to add your API key, then run:\n")
-	fmt.Printf("  celeste -config %s chat\n", name)
+
+	// Provider-specific setup instructions
+	switch strings.ToLower(name) {
+	case "grok":
+		fmt.Println("\nSetup (xAI/Grok):")
+		fmt.Println("  1. Get your API key from https://console.x.ai")
+		fmt.Printf("     celeste -config %s config --set-key YOUR_XAI_KEY\n", name)
+		fmt.Println("\n  2. (Optional) For Collections/RAG support, get a Management API key:")
+		fmt.Printf("     celeste -config %s config --set-management-key YOUR_MGMT_KEY\n", name)
+		fmt.Println("     Then: celeste collections list")
+	case "openai":
+		fmt.Println("\nSetup (OpenAI):")
+		fmt.Println("  1. Get your API key from https://platform.openai.com/api-keys")
+		fmt.Printf("     celeste -config %s config --set-key YOUR_OPENAI_KEY\n", name)
+	case "venice":
+		fmt.Println("\nSetup (Venice.ai):")
+		fmt.Println("  1. Get your API key from https://venice.ai/settings/api")
+		fmt.Printf("     celeste -config %s config --set-key YOUR_VENICE_KEY\n", name)
+		fmt.Println("  2. Also set in skills.json for NSFW mode:")
+		fmt.Printf("     celeste -config %s config --set-venice-key YOUR_VENICE_KEY\n", name)
+	default:
+		fmt.Printf("\nEdit the file to add your API key, then run:\n")
+	}
+
+	fmt.Printf("\nStart chatting:\n  celeste -config %s chat\n", name)
 	return nil
 }
 

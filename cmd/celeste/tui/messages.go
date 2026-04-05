@@ -46,9 +46,11 @@ type StreamChunk struct {
 
 // --- Bubble Tea Messages ---
 
-// StreamChunkMsg is sent when a new stream chunk arrives.
+// StreamChunkMsg is sent when a new stream chunk arrives from the LLM.
+// Next is the Cmd to call to get the next chunk (channel read pattern).
 type StreamChunkMsg struct {
 	Chunk StreamChunk
+	Next  tea.Cmd // Cmd that reads the next chunk from the stream channel
 }
 
 // TokenUsage holds token usage information from API response

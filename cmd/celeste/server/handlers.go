@@ -21,6 +21,40 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
+// validateWorkspace ensures the workspace path is safe.
+// Rejects paths outside the server's original workspace or the user's home directory.
+func validateWorkspace(requested, serverWorkspace string) error {
+	if requested == "" || requested == serverWorkspace {
+		return nil
+	}
+
+	// Resolve to absolute path
+	absRequested, err := filepath.Abs(requested)
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	// Must be under user's home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory")
+	}
+
+	if !strings.HasPrefix(absRequested, homeDir+"/") {
+		return fmt.Errorf("workspace must be under home directory (%s)", homeDir)
+	}
+
+	// Reject sensitive directories
+	sensitive := []string{".ssh", ".gnupg", ".aws", ".config/gcloud", ".kube"}
+	for _, dir := range sensitive {
+		if strings.Contains(absRequested, "/"+dir) {
+			return fmt.Errorf("access to %s is not allowed", dir)
+		}
+	}
+
+	return nil
+}
+
 // RegisterHandlers registers all three MCP tool handlers on the server.
 func RegisterHandlers(s *Server) {
 	registerCelesteTool(s)
@@ -75,6 +109,12 @@ func registerCelesteTool(s *Server) {
 			workspace = s.config.Workspace
 		}
 
+		// Security: validate workspace is a safe directory
+		// Reject absolute paths outside of user's home to prevent directory traversal
+		if err := validateWorkspace(workspace, s.config.Workspace); err != nil {
+			return nil, fmt.Errorf("workspace rejected: %w", err)
+		}
+
 		cfg := s.config.CelesteConfig
 		if cfg == nil {
 			return nil, fmt.Errorf("celeste config not loaded")
@@ -116,16 +156,76 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 	client.SetSystemPrompt(systemPrompt)
 
+	// Build tool definitions from registry so chat mode can call tools
+	registeredTools := registry.GetTools(tools.ModeChat)
+	var toolDefs []tui.SkillDefinition
+	for _, t := range registeredTools {
+		var params map[string]any
+		if raw := t.Parameters(); raw != nil {
+			_ = json.Unmarshal(raw, &params)
+		}
+		toolDefs = append(toolDefs, tui.SkillDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  params,
+		})
+	}
+
 	messages := []tui.ChatMessage{
 		{Role: "user", Content: prompt, Timestamp: time.Now()},
 	}
 
-	result, err := client.SendMessageSync(ctx, messages, nil)
-	if err != nil {
-		return nil, fmt.Errorf("chat error: %w", err)
+	// Auto-loop: send message, execute tool calls, send results back, repeat
+	maxLoops := 25
+	for i := 0; i < maxLoops; i++ {
+		result, err := client.SendMessageSync(ctx, messages, toolDefs)
+		if err != nil {
+			return nil, fmt.Errorf("chat error: %w", err)
+		}
+
+		// If no tool calls, we're done
+		if len(result.ToolCalls) == 0 {
+			return []ContentBlock{{Type: "text", Text: strings.TrimSpace(result.Content)}}, nil
+		}
+
+		// Add assistant response with tool calls
+		messages = append(messages, tui.ChatMessage{
+			Role:    "assistant",
+			Content: result.Content,
+			ToolCalls: func() []tui.ToolCallInfo {
+				var calls []tui.ToolCallInfo
+				for _, tc := range result.ToolCalls {
+					calls = append(calls, tui.ToolCallInfo{
+						ID:        tc.ID,
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					})
+				}
+				return calls
+			}(),
+		})
+
+		// Execute each tool call and add results
+		for _, tc := range result.ToolCalls {
+			// Parse JSON arguments string to map
+			var args map[string]any
+			if tc.Arguments != "" {
+				_ = json.Unmarshal([]byte(tc.Arguments), &args)
+			}
+			if args == nil {
+				args = make(map[string]any)
+			}
+			toolResult, _ := registry.Execute(ctx, tc.Name, args)
+			messages = append(messages, tui.ChatMessage{
+				Role:       "tool",
+				Content:    toolResult.Content,
+				ToolCallID: tc.ID,
+				Name:       tc.Name,
+			})
+		}
 	}
 
-	return []ContentBlock{{Type: "text", Text: strings.TrimSpace(result.Content)}}, nil
+	return []ContentBlock{{Type: "text", Text: "Tool loop limit reached"}}, nil
 }
 
 // runAgentMode runs a multi-turn agent loop for complex tasks.
@@ -154,16 +254,50 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 		return nil, fmt.Errorf("agent error: %w", err)
 	}
 
-	// Collect the final assistant response
+	// Build response with tool call history for transparency
+	var sb strings.Builder
+
+	// Tool call summary from steps
+	toolSteps := 0
+	for _, step := range state.Steps {
+		if step.Type == "tool_call" || step.Name != "" {
+			toolSteps++
+		}
+	}
+	if toolSteps > 0 {
+		sb.WriteString("## Tool Calls\n\n")
+		for _, step := range state.Steps {
+			if step.Name == "" {
+				continue
+			}
+			preview := step.Content
+			if len(preview) > 200 {
+				preview = preview[:197] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("- **%s** → %s\n", step.Name, preview))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Agent response
 	response := state.LastAssistantResponse
 	if response == "" && outBuf.Len() > 0 {
 		response = outBuf.String()
 	}
-	if response == "" {
-		response = fmt.Sprintf("Agent completed (%s) after %d turns", state.Status, state.Turn)
+	if response != "" {
+		sb.WriteString("## Response\n\n")
+		sb.WriteString(response)
 	}
 
-	return []ContentBlock{{Type: "text", Text: response}}, nil
+	// Metadata
+	sb.WriteString(fmt.Sprintf("\n\n---\n_Agent: %d turns, status: %s_\n", state.Turn, state.Status))
+
+	result := sb.String()
+	if result == "" {
+		result = fmt.Sprintf("Agent completed (%s) after %d turns", state.Status, state.Turn)
+	}
+
+	return []ContentBlock{{Type: "text", Text: result}}, nil
 }
 
 // --- celeste_content tool ---

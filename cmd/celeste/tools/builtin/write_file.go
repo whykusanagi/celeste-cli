@@ -124,6 +124,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		bytesWritten = len(content)
 	}
 
+	// Auto-stamp .grimoire metadata when writing to it
+	if filepath.Base(targetPath) == ".grimoire" {
+		stampGrimoireMetadata(targetPath)
+	}
+
 	// Record new mtime after write
 	if t.tracker != nil {
 		_ = t.tracker.RecordRead(targetPath)

@@ -170,6 +170,14 @@ func (s *SimulatedTyping) Advance() int {
 	return s.displayedLen - oldLen
 }
 
+// Extend appends new content to the typing buffer without resetting position.
+// Used for real streaming: new chunks extend the content while the typing
+// animation continues revealing characters at the current position.
+func (s *SimulatedTyping) Extend(additional string) {
+	s.content += additional
+	s.done = false // More content to reveal
+}
+
 // Reset resets the typing simulation.
 func (s *SimulatedTyping) Reset(content string) {
 	s.content = content

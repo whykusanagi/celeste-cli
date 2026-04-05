@@ -86,7 +86,13 @@ func runResumeCommand(args []string) {
 		os.Exit(1)
 	}
 	if len(args) > 0 {
-		fmt.Printf("Resume session: %s (use `celeste chat` to start with this session)\n", args[0])
+		// Try to load the requested session to verify it exists
+		_, err := mgr.ResumeSession(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Session '%s' not found: %v\n", args[0], err)
+			os.Exit(1)
+		}
+		fmt.Printf("Session '%s' exists. Launch with: celeste --session %s\n", args[0], args[0])
 		return
 	}
 	list, err := mgr.ListSessions()
@@ -101,11 +107,30 @@ func runResumeCommand(args []string) {
 }
 
 func runPlanCommand(args []string) {
-	fmt.Println("Plan mode is available in interactive chat.")
-	fmt.Println("  /plan <goal>       Enter plan mode")
-	fmt.Println("  /plan execute      Execute the plan")
-	fmt.Println("  /plan show         Show current plan")
-	fmt.Println("  /plan cancel       Cancel plan mode")
+	cwd, _ := os.Getwd()
+	planPaths := []string{
+		filepath.Join(cwd, ".celeste", "plan.md"),
+		filepath.Join(cwd, "CODEBASE_FIX_PLAN.md"),
+		filepath.Join(cwd, "PLAN.md"),
+		filepath.Join(cwd, "plan.md"),
+		filepath.Join(cwd, "FIX_PLAN.md"),
+	}
+
+	// Find first existing plan
+	for _, p := range planPaths {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			fmt.Printf("Plan (%s):\n\n%s\n", filepath.Base(p), string(data))
+			return
+		}
+	}
+
+	fmt.Println("No active plan found.")
+	fmt.Println()
+	fmt.Println("To create and execute plans:")
+	fmt.Println("  celeste agent <goal>    Autonomous planning + execution")
+	fmt.Println("  /plan <goal>            Enter plan mode (in interactive chat)")
+	fmt.Println("  celeste plan show       Show current plan")
 }
 
 func runRevertCommand(args []string) {

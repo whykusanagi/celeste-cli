@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -396,6 +397,839 @@ func (idx *Indexer) ProjectSummary() string {
 	}
 
 	return b.String()
+}
+
+// LazyRedirectResult is a scored candidate for lazy redirect detection.
+type LazyRedirectResult struct {
+	Name      string  `json:"name"`
+	File      string  `json:"file"`
+	Line      int     `json:"line"`
+	Kind      string  `json:"kind"`
+	OutEdges  int     `json:"outgoing_edges"`
+	InEdges   int     `json:"incoming_edges"`
+	Score     float64 `json:"divergence_score"`
+	Reason    string  `json:"reason"`
+	Signature string  `json:"signature"`
+}
+
+// actionVerbs are name components that imply a function should DO work beyond
+// just building/formatting strings. Builder/formatter functions are excluded
+// because being string-heavy IS their purpose.
+var actionVerbs = map[string]bool{
+	"handle": true, "execute": true, "run": true, "process": true,
+	"perform": true, "dispatch": true, "invoke": true, "apply": true,
+	"show": true, "display": true,
+	"fetch": true, "load": true, "save": true, "store": true,
+	"send": true, "publish": true, "emit": true, "broadcast": true,
+	"validate": true, "check": true, "verify": true, "analyze": true,
+	"sync": true, "update": true, "refresh": true, "register": true,
+	"deploy": true, "install": true, "setup": true, "configure": true,
+}
+
+// builderPrefixes are name prefixes for functions whose purpose IS to build
+// strings, templates, or data structures — being string-heavy is expected.
+var builderPrefixes = []string{
+	"build", "format", "render", "create", "generate", "compose",
+	"compute", "calculate", "transform", "convert", "parse", "marshal",
+	"encode", "decode", "serialize", "template", "compile", "assemble",
+}
+
+// FindLazyRedirects uses structural analysis to detect functions whose names
+// imply complex behavior but whose graph structure shows they're trivially simple.
+// This goes beyond grep-based detection by measuring the divergence between a
+// function's semantic vocabulary (shingles) and its actual call graph connectivity.
+//
+// Scoring factors:
+//   - Name complexity: action verbs in name suggest the function should DO work
+//   - Edge poverty: fewer outgoing edges = less actual work done
+//   - Shingle richness: domain-specific vocabulary in body that doesn't connect to edges
+//
+// Returns results sorted by divergence score (highest = most suspicious).
+func (idx *Indexer) FindLazyRedirects(maxResults int, includeTests bool) ([]LazyRedirectResult, error) {
+	candidates, err := idx.store.FindLazyRedirectCandidates(includeTests)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []LazyRedirectResult
+
+	for _, c := range candidates {
+		if !includeTests && isTestFilePath(c.File) {
+			continue
+		}
+		if isExpectedLeaf(c.Name) {
+			continue
+		}
+
+		absFile := c.File
+		if !filepath.IsAbs(absFile) {
+			absFile = filepath.Join(idx.workspace, absFile)
+		}
+		sourceData, _ := os.ReadFile(absFile)
+		sym := Symbol{Name: c.Name, Line: c.Line}
+		body := ""
+		lowerBody := ""
+		if sourceData != nil {
+			body = findSymbolBody(sourceData, sym)
+			lowerBody = strings.ToLower(body)
+		}
+
+		info := FunctionEdgeInfo{
+			Name: c.Name, File: c.File, Line: c.Line,
+			Kind: c.Kind, Signature: c.Signature,
+			OutEdges: c.OutEdges, InEdges: c.InEdges,
+		}
+		smell, ok := detectLazyRedirect(info, body, lowerBody, sourceData)
+		if !ok {
+			continue
+		}
+
+		results = append(results, LazyRedirectResult{
+			Name:      smell.Name,
+			File:      smell.File,
+			Line:      smell.Line,
+			Kind:      smell.FuncKind,
+			OutEdges:  smell.OutEdges,
+			InEdges:   smell.InEdges,
+			Score:     smell.Score,
+			Reason:    smell.Reason,
+			Signature: smell.Signature,
+		})
+	}
+
+	// Sort by score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > maxResults {
+		results = results[:maxResults]
+	}
+
+	return results, nil
+}
+
+// isTestFilePath returns true if the file path looks like a test file.
+func isTestFilePath(file string) bool {
+	return strings.HasSuffix(file, "_test.go") ||
+		strings.HasSuffix(file, "_test.py") ||
+		strings.HasSuffix(file, ".test.ts") ||
+		strings.HasSuffix(file, ".test.js") ||
+		strings.HasSuffix(file, ".spec.ts") ||
+		strings.HasSuffix(file, ".spec.js") ||
+		strings.Contains(file, "/test/") ||
+		strings.Contains(file, "/tests/")
+}
+
+// isExpectedLeaf returns true if a function name matches patterns that are
+// expected to have few/zero outgoing edges (not lazy redirects).
+func isExpectedLeaf(name string) bool {
+	// Interface implementations and trivial methods
+	leafNames := map[string]bool{
+		"Close": true, "Init": true, "String": true, "Error": true,
+		"Len": true, "Name": true, "Description": true, "Parameters": true,
+		"IsReadOnly": true, "ValidateInput": true, "InterruptBehavior": true,
+		"Less": true, "Swap": true, "MarshalJSON": true, "UnmarshalJSON": true,
+		"Reset": true, "ProtoMessage": true, "View": true, "IsConcurrencySafe": true,
+	}
+	if leafNames[name] {
+		return true
+	}
+
+	// Prefix patterns for constructors, accessors
+	prefixes := []string{"New", "Get", "Set", "Is", "Has", "Test", "Benchmark", "With"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(name, p) && len(name) > len(p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CodeSmellKind categorizes the type of code smell detected.
+type CodeSmellKind string
+
+const (
+	SmellLazyRedirect CodeSmellKind = "LAZY_REDIRECT"
+	SmellStub         CodeSmellKind = "STUB"
+	SmellPlaceholder  CodeSmellKind = "PLACEHOLDER"
+	SmellTodoFixme    CodeSmellKind = "TODO_FIXME"
+	SmellEmptyHandler CodeSmellKind = "EMPTY_HANDLER"
+	SmellHardcoded    CodeSmellKind = "HARDCODED"
+)
+
+// CodeSmell represents a structurally detected code issue.
+type CodeSmell struct {
+	Kind      CodeSmellKind `json:"kind"`
+	Name      string        `json:"name"`
+	File      string        `json:"file"`
+	Line      int           `json:"line"`
+	FuncKind  string        `json:"func_kind"`
+	OutEdges  int           `json:"outgoing_edges"`
+	InEdges   int           `json:"incoming_edges"`
+	Score     float64       `json:"score"`
+	Reason    string        `json:"reason"`
+	Signature string        `json:"signature,omitempty"`
+	Snippet   string        `json:"snippet,omitempty"`
+}
+
+// FindCodeSmells performs a single-pass structural analysis over all functions
+// in the graph, detecting multiple code smell patterns simultaneously.
+// This is more efficient than separate queries and more powerful than grep
+// because it combines graph structure (edges, connectivity) with body analysis.
+func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includeTests bool) ([]CodeSmell, error) {
+	// Build a set of requested kinds for fast lookup
+	wantKind := make(map[CodeSmellKind]bool)
+	for _, k := range kinds {
+		wantKind[k] = true
+	}
+	wantAll := len(kinds) == 0 || wantKind["ALL"]
+
+	// Get all functions/methods with their edge counts
+	candidates, err := idx.store.FindAllFunctionsWithEdges()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []CodeSmell
+
+	// Cache file reads — many symbols share the same file
+	fileCache := make(map[string][]byte)
+
+	for _, c := range candidates {
+		if !includeTests && isTestFilePath(c.File) {
+			continue
+		}
+
+		// Read source file (cached)
+		absFile := c.File
+		if !filepath.IsAbs(absFile) {
+			absFile = filepath.Join(idx.workspace, absFile)
+		}
+		sourceData, cached := fileCache[absFile]
+		if !cached {
+			data, err := os.ReadFile(absFile)
+			if err != nil {
+				// STUB detection still works without source (graph-only)
+				if wantAll || wantKind[SmellStub] {
+					if c.OutEdges == 0 && !isExpectedLeaf(c.Name) {
+						if smell, ok := detectStub(c, 0, nil); ok {
+							results = append(results, smell)
+						}
+					}
+				}
+				continue
+			}
+			sourceData = data
+			fileCache[absFile] = sourceData
+		}
+
+		sym := Symbol{Name: c.Name, Line: c.Line}
+		// Use scoped body extraction to prevent bleed into adjacent functions
+		body := findScopedBody(sourceData, sym)
+		lowerBody := strings.ToLower(body)
+		bodyLines := strings.Split(strings.TrimSpace(body), "\n")
+
+		// Count actual calls in body (source-level, independent of graph edges)
+		bodyCalls := countBodyCalls(body, c.Name)
+
+		// Effective outgoing edge count: use graph edges if available,
+		// otherwise fall back to body call count
+		effectiveOut := c.OutEdges
+		if effectiveOut == 0 {
+			effectiveOut = bodyCalls
+		}
+
+		// --- STUB detection ---
+		if wantAll || wantKind[SmellStub] {
+			if effectiveOut == 0 && !isExpectedLeaf(c.Name) {
+				if smell, ok := detectStub(c, bodyCalls, bodyLines); ok {
+					results = append(results, smell)
+				}
+			}
+		}
+
+		// --- LAZY REDIRECT detection ---
+		if wantAll || wantKind[SmellLazyRedirect] {
+			if effectiveOut <= 2 && !isExpectedLeaf(c.Name) {
+				if smell, ok := detectLazyRedirect(c, body, lowerBody, sourceData); ok {
+					results = append(results, smell)
+				}
+			}
+		}
+
+		// --- PLACEHOLDER detection ---
+		if wantAll || wantKind[SmellPlaceholder] {
+			if smell, ok := detectPlaceholder(c, body, lowerBody, bodyLines); ok {
+				results = append(results, smell)
+			}
+		}
+
+		// --- TODO/FIXME detection ---
+		if wantAll || wantKind[SmellTodoFixme] {
+			if smells := detectTodoFixme(c, body, bodyLines); len(smells) > 0 {
+				results = append(results, smells...)
+			}
+		}
+
+		// --- EMPTY HANDLER detection ---
+		if wantAll || wantKind[SmellEmptyHandler] {
+			if smell, ok := detectEmptyHandler(c, body, lowerBody); ok {
+				results = append(results, smell)
+			}
+		}
+
+		// --- HARDCODED detection ---
+		if wantAll || wantKind[SmellHardcoded] {
+			if smells := detectHardcoded(c, body, bodyLines); len(smells) > 0 {
+				results = append(results, smells...)
+			}
+		}
+	}
+
+	// Sort by score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > maxResults {
+		results = results[:maxResults]
+	}
+
+	return results, nil
+}
+
+// FunctionEdgeInfo holds a function's identity and edge counts for analysis.
+type FunctionEdgeInfo struct {
+	Name      string
+	File      string
+	Line      int
+	Kind      string
+	Signature string
+	OutEdges  int
+	InEdges   int
+}
+
+func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData []byte) (CodeSmell, bool) {
+	nameParts := splitIdentifier(c.Name)
+
+	// Exclude builder/formatter functions — being string-heavy IS their purpose
+	for _, prefix := range builderPrefixes {
+		if strings.HasPrefix(strings.ToLower(c.Name), prefix) {
+			return CodeSmell{}, false
+		}
+	}
+
+	// Exclude registration, detection, and code analysis tool functions
+	if strings.HasPrefix(c.Name, "Register") || strings.HasPrefix(c.Name, "detect") ||
+		strings.HasPrefix(c.Name, "NewCode") {
+		return CodeSmell{}, false
+	}
+	// Skip functions in code analysis tool files (contain patterns as string data)
+	if strings.Contains(c.File, "code_review") || strings.Contains(c.File, "code_smells") ||
+		strings.Contains(c.File, "code_stubs") || strings.Contains(c.File, "code_lazy") {
+		return CodeSmell{}, false
+	}
+
+	actionCount := 0
+	for _, part := range nameParts {
+		if actionVerbs[part] {
+			actionCount++
+		}
+	}
+	if actionCount == 0 {
+		return CodeSmell{}, false
+	}
+
+	// Primary signal: redirect language in body
+	// Strong phrases are high confidence regardless of edge count.
+	// Weak phrases ("run `", "use `") are only flagged if the function has
+	// ZERO outgoing edges — otherwise it does real work and the phrase is
+	// just in a usage/error/help string.
+	hasRedirectLanguage := false
+	reason := ""
+
+	strongPhrases := []string{
+		"available in interactive", "use the cli",
+		"not available", "instead use",
+	}
+	for _, phrase := range strongPhrases {
+		if strings.Contains(lowerBody, phrase) {
+			hasRedirectLanguage = true
+			reason = "contains redirect language ('" + phrase + "')"
+			break
+		}
+	}
+
+	if !hasRedirectLanguage && c.OutEdges == 0 {
+		weakPhrases := []string{"run `", "use `", "see `", "check `", "try running"}
+		for _, phrase := range weakPhrases {
+			if strings.Contains(lowerBody, phrase) {
+				hasRedirectLanguage = true
+				reason = "contains redirect language ('" + phrase + "') with 0 outgoing call edges"
+				break
+			}
+		}
+	}
+
+	if !hasRedirectLanguage {
+		return CodeSmell{}, false
+	}
+
+	// Secondary signal: name/edge divergence with shingle analysis
+	nameScore := float64(actionCount) * float64(len(nameParts))
+	edgePenalty := 1.0 / float64(c.OutEdges+1)
+
+	shingleBoost := 0.0
+	if c.OutEdges == 0 {
+		sym := Symbol{Name: c.Name, Line: c.Line}
+		shingles := ShinglesForSymbol(sym, sourceData)
+		if len(shingles) > 10 {
+			shingleBoost = float64(len(shingles)) * 0.05
+		}
+	}
+
+	score := nameScore * edgePenalty * (5.0 + shingleBoost)
+
+	return CodeSmell{
+		Kind:      SmellLazyRedirect,
+		Name:      c.Name,
+		File:      c.File,
+		Line:      c.Line,
+		FuncKind:  c.Kind,
+		OutEdges:  c.OutEdges,
+		InEdges:   c.InEdges,
+		Score:     score,
+		Reason:    reason,
+		Signature: c.Signature,
+	}, true
+}
+
+func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmell, bool) {
+	// Skip code analysis files
+	if isCodeAnalysisFile(c.File) {
+		return CodeSmell{}, false
+	}
+
+	// If body has calls but graph missed them, not a stub
+	if bodyCalls > 0 {
+		return CodeSmell{}, false
+	}
+
+	// Skip very short utility names (min, max, abs, etc.)
+	if len(c.Name) <= 3 {
+		return CodeSmell{}, false
+	}
+
+	// Check if the body has a return statement with a non-trivial value.
+	// Functions that return struct literals, computed values, or formatted strings
+	// are simple value functions, not stubs.
+	meaningfulLines := 0
+	hasReturn := false
+	for _, line := range bodyLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed == "{" || trimmed == "}" ||
+			strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		meaningfulLines++
+		if strings.HasPrefix(trimmed, "return ") || strings.HasPrefix(trimmed, "return\t") {
+			// Check if it returns something meaningful (not just nil/false/0)
+			returnVal := strings.TrimPrefix(trimmed, "return ")
+			returnVal = strings.TrimPrefix(returnVal, "return\t")
+			returnVal = strings.TrimSpace(returnVal)
+			if returnVal != "" && returnVal != "nil" && returnVal != "false" &&
+				returnVal != "0" && returnVal != "\"\"" && returnVal != "None" &&
+				returnVal != "null" && returnVal != "true" {
+				hasReturn = true
+			}
+		}
+	}
+
+	// If function has a meaningful return value, it's a simple function, not a stub
+	if hasReturn {
+		return CodeSmell{}, false
+	}
+
+	// Score: zero-caller stubs are more likely dead code
+	score := 3.0
+	reason := "zero outgoing calls and zero body calls"
+	if c.InEdges == 0 {
+		score += 2.0
+		reason = "zero outgoing AND incoming edges (likely dead code)"
+	}
+
+	return CodeSmell{
+		Kind:      SmellStub,
+		Name:      c.Name,
+		File:      c.File,
+		Line:      c.Line,
+		FuncKind:  c.Kind,
+		OutEdges:  c.OutEdges,
+		InEdges:   c.InEdges,
+		Score:     score,
+		Reason:    reason,
+		Signature: c.Signature,
+	}, true
+}
+
+func detectPlaceholder(c FunctionEdgeInfo, body, lowerBody string, bodyLines []string) (CodeSmell, bool) {
+	// Structural signal: zero outgoing edges + short body
+	if c.OutEdges > 1 {
+		return CodeSmell{}, false
+	}
+
+	// Must contain placeholder language
+	placeholderPhrases := []string{
+		"not yet implemented", "not implemented", "todo: implement",
+		"fixme: implement", "unimplemented",
+	}
+	// Exclude "stub" and "placeholder" — too many false positives from code that
+	// discusses these concepts (tool descriptions, detection logic, textarea config).
+	found := ""
+	for _, phrase := range placeholderPhrases {
+		if strings.Contains(lowerBody, phrase) {
+			// Verify the match is NOT inside a string literal that's part of a search
+			// pattern, tool description, or code review pattern list
+			found = phrase
+			break
+		}
+	}
+	if found == "" {
+		return CodeSmell{}, false
+	}
+
+	// Skip code analysis tool files (contain pattern strings as data, not actual issues)
+	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
+		return CodeSmell{}, false
+	}
+
+	// Score: short body + zero edges + placeholder language = high confidence
+	meaningfulLines := 0
+	for _, line := range bodyLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && trimmed != "{" && trimmed != "}" && !strings.HasPrefix(trimmed, "//") && !strings.HasPrefix(trimmed, "#") {
+			meaningfulLines++
+		}
+	}
+
+	score := 5.0
+	if meaningfulLines <= 3 {
+		score += 3.0 // very short body
+	}
+	if c.OutEdges == 0 {
+		score += 2.0 // completely isolated
+	}
+
+	// Extract the snippet with the placeholder
+	snippet := ""
+	for _, line := range bodyLines {
+		if strings.Contains(strings.ToLower(line), found) {
+			snippet = strings.TrimSpace(line)
+			break
+		}
+	}
+
+	return CodeSmell{
+		Kind:     SmellPlaceholder,
+		Name:     c.Name,
+		File:     c.File,
+		Line:     c.Line,
+		FuncKind: c.Kind,
+		OutEdges: c.OutEdges,
+		InEdges:  c.InEdges,
+		Score:    score,
+		Reason:   fmt.Sprintf("contains '%s' with only %d meaningful line(s) and %d outgoing edge(s)", found, meaningfulLines, c.OutEdges),
+		Snippet:  snippet,
+	}, true
+}
+
+func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []CodeSmell {
+	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
+		return nil
+	}
+
+	markers := []struct {
+		tag    string
+		weight float64
+	}{
+		{"FIXME:", 4.0},
+		{"HACK:", 3.5},
+		{"XXX:", 3.0},
+		{"TODO:", 2.0},
+	}
+
+	var results []CodeSmell
+	for lineIdx, line := range bodyLines {
+		for _, marker := range markers {
+			if strings.Contains(line, marker.tag) {
+				// Skip if the marker is inside a string literal (e.g., search patterns)
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "\"") || strings.HasPrefix(trimmed, "{\"") ||
+					strings.Contains(trimmed, "Searches:") || strings.Contains(trimmed, "[]string{") {
+					break
+				}
+				// Score boost: TODO in a highly-connected function is more critical
+				score := marker.weight
+				if c.InEdges > 5 {
+					score += 2.0 // many callers = high impact
+				}
+				if c.OutEdges == 0 {
+					score += 1.0 // might be blocking other work
+				}
+
+				snippet := strings.TrimSpace(line)
+				if len(snippet) > 120 {
+					snippet = snippet[:120] + "..."
+				}
+
+				results = append(results, CodeSmell{
+					Kind:     SmellTodoFixme,
+					Name:     c.Name,
+					File:     c.File,
+					Line:     c.Line + lineIdx,
+					FuncKind: c.Kind,
+					OutEdges: c.OutEdges,
+					InEdges:  c.InEdges,
+					Score:    score,
+					Reason:   fmt.Sprintf("%s in %s (called by %d)", marker.tag, c.Name, c.InEdges),
+					Snippet:  snippet,
+				})
+				break // one marker per line
+			}
+		}
+	}
+	return results
+}
+
+func detectEmptyHandler(c FunctionEdgeInfo, body, lowerBody string) (CodeSmell, bool) {
+	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
+		return CodeSmell{}, false
+	}
+
+	// Look for error swallowing patterns
+	swallowPatterns := []struct {
+		pattern string
+		reason  string
+	}{
+		{"_ = err", "assigns error to blank identifier"},
+		{"_ , err", "discards value alongside error"},
+		// ignore error in comment near an error variable
+	}
+
+	for _, sp := range swallowPatterns {
+		if strings.Contains(body, sp.pattern) {
+			// Count how many times errors are swallowed
+			count := strings.Count(body, sp.pattern)
+
+			// Score: more swallowed errors = worse
+			score := float64(count) * 3.0
+			if c.InEdges > 3 {
+				score += 2.0 // high-impact function
+			}
+
+			// Structural signal: if the function has outgoing edges to error-returning
+			// functions but no edges to logging/error-handling functions, that's worse
+			if c.OutEdges > 0 {
+				score += 1.0 // calls things that might return errors
+			}
+
+			return CodeSmell{
+				Kind:     SmellEmptyHandler,
+				Name:     c.Name,
+				File:     c.File,
+				Line:     c.Line,
+				FuncKind: c.Kind,
+				OutEdges: c.OutEdges,
+				InEdges:  c.InEdges,
+				Score:    score,
+				Reason:   fmt.Sprintf("%s (%dx in %s)", sp.reason, count, c.Name),
+			}, true
+		}
+	}
+
+	// Also detect: `// ignore error` comments near error assignments
+	if strings.Contains(lowerBody, "// ignore error") || strings.Contains(lowerBody, "// swallow") {
+		return CodeSmell{
+			Kind:     SmellEmptyHandler,
+			Name:     c.Name,
+			File:     c.File,
+			Line:     c.Line,
+			FuncKind: c.Kind,
+			OutEdges: c.OutEdges,
+			InEdges:  c.InEdges,
+			Score:    2.0,
+			Reason:   "explicit error suppression comment in " + c.Name,
+		}, true
+	}
+
+	return CodeSmell{}, false
+}
+
+func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []CodeSmell {
+	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
+		return nil
+	}
+
+	type hardcodePattern struct {
+		check  func(string) bool
+		reason string
+		weight float64
+	}
+
+	patterns := []hardcodePattern{
+		{
+			check:  func(line string) bool { return strings.Contains(line, "localhost") && strings.Contains(line, "://") },
+			reason: "hardcoded localhost URL",
+			weight: 3.0,
+		},
+		{
+			check: func(line string) bool {
+				return strings.Contains(line, "127.0.0.1") || strings.Contains(line, "0.0.0.0")
+			},
+			reason: "hardcoded IP address",
+			weight: 3.0,
+		},
+		{
+			check: func(line string) bool {
+				// Only flag lines that assign a literal credential value, not field names/keys.
+				// Pattern: variable = "sk-...", "password123", etc. (actual secret values)
+				// Exclude: field names like `api_key`, config reads, struct field declarations
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
+					return false
+				}
+				// Must have an assignment with a string literal value
+				if !strings.Contains(line, "= \"") && !strings.Contains(line, "=\"") {
+					return false
+				}
+				lower := strings.ToLower(line)
+				// Check for actual hardcoded secret patterns (API key prefixes, passwords)
+				return strings.Contains(lower, "sk-") || strings.Contains(lower, "pk-") ||
+					strings.Contains(lower, "password123") || strings.Contains(lower, "changeme") ||
+					strings.Contains(lower, "hunter2")
+			},
+			reason: "potential hardcoded credential value",
+			weight: 5.0,
+		},
+	}
+
+	var results []CodeSmell
+	for lineIdx, line := range bodyLines {
+		for _, p := range patterns {
+			if p.check(line) {
+				snippet := strings.TrimSpace(line)
+				if len(snippet) > 120 {
+					snippet = snippet[:120] + "..."
+				}
+
+				results = append(results, CodeSmell{
+					Kind:     SmellHardcoded,
+					Name:     c.Name,
+					File:     c.File,
+					Line:     c.Line + lineIdx,
+					FuncKind: c.Kind,
+					OutEdges: c.OutEdges,
+					InEdges:  c.InEdges,
+					Score:    p.weight,
+					Reason:   p.reason + " in " + c.Name,
+					Snippet:  snippet,
+				})
+				break // one finding per line
+			}
+		}
+	}
+	return results
+}
+
+// funcDefPattern matches the start of a function/method definition across languages.
+var funcDefPattern = regexp.MustCompile(`(?m)^(?:\s*(?:func|def|function|fn|pub\s+fn|async\s+function|export\s+function|export\s+default\s+function)\s+\w)`)
+
+// bodyCallPattern matches identifier followed by '(' — a call heuristic.
+var bodyCallPattern = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
+
+// bodyCallKeywords are identifiers that look like calls but aren't.
+var bodyCallKeywords = map[string]bool{
+	"if": true, "for": true, "while": true, "switch": true, "catch": true,
+	"func": true, "function": true, "def": true, "fn": true,
+	"return": true, "typeof": true, "instanceof": true, "sizeof": true,
+	"make": true, "new": true, "delete": true, "type": true,
+	"elif": true, "except": true, "with": true, "assert": true,
+	"match": true, "case": true, "select": true, "go": true, "defer": true,
+	"var": true, "let": true, "const": true, "range": true,
+}
+
+// findScopedBody extracts the body of a function, stopping at the next
+// function definition rather than reading a fixed 50-line window.
+// This prevents body bleed in Python/JS where functions aren't brace-delimited.
+func findScopedBody(source []byte, sym Symbol) string {
+	lines := strings.Split(string(source), "\n")
+	if sym.Line <= 0 || sym.Line > len(lines) {
+		return ""
+	}
+
+	start := sym.Line // skip the definition line itself (1-based → 0-indexed body start)
+	if start >= len(lines) {
+		return ""
+	}
+
+	maxEnd := start + 50
+	if maxEnd > len(lines) {
+		maxEnd = len(lines)
+	}
+
+	// Scan forward, stop at the next function definition or 50 lines
+	end := maxEnd
+	for i := start; i < maxEnd; i++ {
+		if funcDefPattern.MatchString(lines[i]) {
+			end = i
+			break
+		}
+	}
+
+	if end <= start {
+		if start < len(lines) {
+			return lines[start]
+		}
+		return ""
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// countBodyCalls counts the number of distinct call-like patterns (name() )
+// in a function body, excluding keywords and the function's own name.
+// This provides a source-level call count independent of graph edge resolution.
+func countBodyCalls(body string, funcName string) int {
+	matches := bodyCallPattern.FindAllStringSubmatch(body, -1)
+	seen := make(map[string]bool)
+	count := 0
+	for _, m := range matches {
+		callee := m[1]
+		if bodyCallKeywords[callee] || callee == funcName || seen[callee] {
+			continue
+		}
+		seen[callee] = true
+		count++
+	}
+	return count
+}
+
+// isCodeAnalysisFile returns true if the file is part of the code analysis
+// tooling itself (code_review, code_smells, code_stubs, code_lazy_redirects).
+// These files contain detection patterns as string data and should not be
+// flagged as having those patterns.
+func isCodeAnalysisFile(file string) bool {
+	return strings.Contains(file, "code_review") ||
+		strings.Contains(file, "code_smells") ||
+		strings.Contains(file, "code_stubs") ||
+		strings.Contains(file, "code_lazy") ||
+		strings.Contains(file, "codegraph/")
+}
+
+// PackageGraph returns package-level connectivity for visualization.
+func (idx *Indexer) PackageGraph() ([]PackageInfo, []PackageEdge, error) {
+	return idx.store.GetPackageGraph()
 }
 
 // fileContentHash computes a SHA-256 hash of a file's content.

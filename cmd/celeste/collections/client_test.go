@@ -58,14 +58,14 @@ func TestClient_ListCollections(t *testing.T) {
 					"collection_name": "Collection 1",
 					"description":     "First collection",
 					"created_at":      "2026-02-17T00:00:00Z",
-					"document_count":  5,
+					"documents_count":  5,
 				},
 				{
 					"collection_id":   "col_2",
 					"collection_name": "Collection 2",
 					"description":     "Second collection",
 					"created_at":      "2026-02-16T00:00:00Z",
-					"document_count":  10,
+					"documents_count":  10,
 				},
 			},
 		})

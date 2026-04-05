@@ -22,31 +22,32 @@
 
 Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
-- 🔮 **34 Built-in Tools** - File I/O, shell execution, web search, code graph, git, and more
-- 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery
+- 🔮 **40 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, and more
+- 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
 - 🧠 **Code Graph + Semantic Search** - MinHash-based concept search without embeddings
+- 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
 - 🔌 **MCP Server Mode** - `celeste serve` lets Claude Code, Codex, or any MCP client delegate tasks to Celeste
 - 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching
-- 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection
-- 🌐 **Multi-Provider** - Grok/xAI, OpenAI, Anthropic (native), Gemini, Venice.ai, Vertex AI, OpenRouter
-- 💰 **Cost Tracking** - Per-model pricing, session cost display
+- 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection and revert
+- 🌐 **Multi-Provider** - Grok/xAI (default), OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter
+- 💰 **Cost Tracking** - Per-model pricing with live session cost display
 - 🪝 **Hooks** - Pre/post tool execution hooks defined in `.grimoire`
-- 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok)
+- 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok) with `/effort` control
 - 🖼️ **Image Input** - Multimodal support for vision-capable models
 - 🎭 **Celeste Personality** - Embedded AI personality with lore-accurate responses
+- 🔗 **Blockchain Tools** - IPFS, Alchemy, wallet security monitoring
 
-### Four Runtime Modes
+### Three Runtime Modes
 
 | Mode | Command | What it does |
 |------|---------|-------------|
-| **Classic** | `celeste chat` (default) | Single request → response. Fast, conversational. |
-| **Claw** | `celeste -mode claw chat` | LLM can call tools repeatedly in one turn. Good for research tasks that need multiple lookups. |
-| **Agent** | `/agent <goal>` (in TUI) | Fully autonomous multi-turn agent with planning, file I/O, checkpointing, and resume. For long-running tasks. |
+| **Chat** | `celeste chat` (default) | Interactive chat with auto-looping tool calls (50-turn safety cap). |
+| **Agent** | `/agent <goal>` (in TUI) or `celeste agent --goal "..."` | Fully autonomous multi-turn agent with planning, file I/O, checkpointing, and resume. For long-running tasks. |
 | **Orchestrator** | `/orchestrate <goal>` (in TUI) | Agent run with a second reviewer model that critiques and debates the output. For high-quality deliverables. |
 
-> **Claw vs Agent**: Claw is a reactive tool loop inside the chat UI — no planning, no persistence.
-> Agent is a separate runtime with its own turn loop, checkpoint store, and workspace awareness.
-> They are independent implementations, not layers on top of each other.
+> **Chat vs Agent**: Chat is interactive with tool auto-looping — you guide the conversation while Celeste
+> calls tools as needed. Agent is a separate autonomous runtime with its own turn loop, planning phase,
+> checkpoint store, and workspace awareness. The orchestrator adds a reviewer model on top of the agent.
 
 ---
 
@@ -89,12 +90,44 @@ cp celeste ~/.local/bin/
 
 ### First Run
 
+**xAI/Grok (default — recommended):**
 ```bash
-# Set up your API key
-celeste config --set-key YOUR_OPENAI_API_KEY
-
-# Start chatting!
+celeste config --set-key YOUR_XAI_KEY
 celeste chat
+```
+
+**With Collections (RAG):**
+```bash
+celeste config --set-key YOUR_XAI_KEY
+celeste config --set-management-key YOUR_XAI_MANAGEMENT_KEY
+celeste collections list          # see available collections
+celeste collections enable <id>   # enable for chat
+celeste chat
+```
+
+**OpenAI:**
+```bash
+celeste config --init openai
+celeste -config openai config --set-key YOUR_OPENAI_KEY
+celeste -config openai chat
+```
+
+**Other providers:** `celeste config --init <name>` where name is: `grok`, `openai`, `venice`, `elevenlabs`
+
+### Project Setup
+
+When you enter a project directory, Celeste auto-initializes:
+```bash
+cd your-project
+celeste chat
+# Creates .grimoire (project context), indexes code graph, loads memories
+```
+
+Or manually:
+```bash
+celeste init          # create .grimoire
+celeste index         # build code graph
+celeste index status  # check graph stats
 ```
 
 ---
@@ -150,15 +183,15 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - [Installation](#-quick-start)
 - [Security & Verification](#-security--verification)
 - [Features](#-features)
-- [Skills System (21 Skills)](#-skills-system-21-skills)
+- [Tool System (40 Tools)](#-tool-system-40-tools)
+- [Claude Code Integration](#-claude-code-integration)
+- [Comparison](#-how-celeste-compares)
 - [LLM Provider Compatibility](#-llm-provider-compatibility)
 - [Function Calling Flow](#-function-calling-flow-mermaid-diagram)
 - [Configuration](#%EF%B8%8F-configuration)
 - [Usage](#-usage)
 - [Architecture](#%EF%B8%8F-architecture)
-- [Development](#-development)
 - [Documentation](#-documentation)
-- [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
 
 ---
@@ -171,17 +204,21 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Input History** - Arrow keys to browse previous messages (like bash history)
 - **Skills Panel** - Real-time skill execution status with demonic eye animation
 - **Corrupted Theme** - Lip Gloss styling with pink/purple abyss aesthetic
-- **Simulated Typing** - Smooth streaming effect (configurable speed)
+- **Real Streaming + Corruption Animation** - Token-by-token streaming with corrupted glitch phrases at the typing cursor
+- **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
-### Skills System (OpenAI Function Calling)
-**21 built-in skills** powered by AI function calling:
-- Divination (Tarot)
-- Content & Media (NSFW, Content Gen, Image Gen)
+### Tool System (v1.8)
+**38 built-in tools** powered by AI function calling:
+- Dev Tools (bash, read/write/patch files, search, list files)
+- Code Graph (semantic search, code review, symbol analysis)
+- Git (status, log)
+- Web (search, fetch)
 - Information Services (Weather, Currency, Twitch, YouTube)
-- Utilities (Conversions, Encoding, Generators)
-- Productivity (Reminders, Notes)
+- Utilities (Conversions, Encoding, Generators, QR codes)
+- Productivity (Reminders, Notes, Todo tracking)
+- Blockchain (IPFS, Alchemy, wallet security)
 
-[See complete skills list below](#-skills-system-21-skills)
+[See complete tool list below](#-tool-system-38-tools)
 
 ### Collections Support (xAI RAG)
 - **Upload Custom Documents** - Create knowledge bases with your own documentation
@@ -204,16 +241,14 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Session Listing** - Browse and load previous sessions by ID
 - **Session Clearing** - Bulk delete sessions when needed
 
-### Multi-Provider Support (8 Providers)
-- ✅ **OpenAI** (gpt-4o-mini, gpt-4o) - Full function calling with streaming • Token tracking ✓
-- ✅ **Grok/xAI** (grok-4-1-fast) - Optimized for tool calling, 2M context • Token tracking ✓
-- ✅ **Venice.ai** (venice-uncensored) - NSFW mode, image generation (no function calling) • Token tracking ✓
-- ✅ **Anthropic Claude** (claude-sonnet-4-5) - Advanced tool use features • Token tracking ✗
-- ✅ **Google Gemini AI** (gemini-2.0-flash) - **RECOMMENDED** - Simple API keys (AIza...), free tier, full streaming + function calling • Token tracking ✓
-- ⚠️ **Google Vertex AI** (gemini-2.0-flash) - **ENTERPRISE** - OAuth2 tokens (ya29...), requires GCP project + billing • Token tracking ✓
+### Multi-Provider Support (7 Providers)
+- ✅ **Grok/xAI** (grok-4-1-fast) - **DEFAULT** - Optimized for tool calling, 2M context • Token tracking ✓
+- ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
+- ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
+- ✅ **Google Gemini AI** (gemini-2.5-flash) - Simple API keys, free tier, full streaming • Token tracking ✓
+- ⚠️ **Google Vertex AI** (gemini-2.5-flash) - Enterprise, requires GCP project + billing • Token tracking ✓
+- ✅ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
-- ⚠️ **DigitalOcean Gradient** (Agent API with RAG) - Cloud-only functions (no local skills) • Token tracking ✓
-- ❓ **ElevenLabs** - Voice AI (function calling support unknown) • Token tracking ✗
 
 **Dynamic Model Selection** - Auto-selects best tool-calling model per provider
 **Capability Indicators** - Visual feedback (✓ skills / ⚠️ no skills) in header
@@ -230,9 +265,31 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 
 ---
 
-## 🔮 Skills System (21 Skills)
+## 🔮 Tool System (40 Tools)
 
-Celeste CLI uses **OpenAI function calling** to power its skills. You don't invoke skills directly—you chat naturally, and the AI decides when to call them.
+Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You don't invoke tools directly — you chat naturally, and the AI decides when to call them.
+
+### Dev Tools (8 Tools)
+
+| Tool | Description |
+|------|-------------|
+| **bash** | Execute shell commands in the workspace |
+| **read_file** | Read files with checkpointing |
+| **write_file** | Write files with snapshot backup |
+| **patch_file** | Apply targeted edits to files |
+| **list_files** | List directory contents with glob patterns |
+| **search** | Search file contents with regex |
+| **git_status** | Show working tree status |
+| **git_log** | Show commit history |
+
+### Code Graph Tools (4 Tools)
+
+| Tool | Description |
+|------|-------------|
+| **code_search** | MinHash semantic search across all indexed symbols |
+| **code_review** | Graph-based code review (6 categories: stubs, lazy redirects, placeholders, TODOs, error swallowing, hardcoded values) |
+| **code_graph** | Query symbol relationships and call chains |
+| **code_symbols** | List symbols in a file or package |
 
 ### Divination & Entertainment
 
@@ -344,6 +401,46 @@ celeste config --set-tarot-token <token>
 
 ---
 
+## 🔌 Claude Code Integration
+
+Use Celeste's graph intelligence from Claude Code via the **[celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)** companion:
+
+```bash
+# Add Celeste as an MCP server
+claude mcp add celeste celeste serve
+
+# Install skills
+git clone https://github.com/whykusanagi/celeste-for-claude.git
+cp celeste-for-claude/skills/*.md ~/.claude/commands/
+```
+
+Available skills: `/celeste-review`, `/celeste-search`, `/celeste-graph`, `/celeste-context`
+
+Claude Code stays in control, Celeste provides the graph intelligence. Each skill makes focused MCP calls — Claude verifies findings and writes the code.
+
+---
+
+## 📊 How Celeste Compares
+
+| | **Celeste CLI** | **OpenClaw** | **Picobot** | **oh-my-pi** | **gptme** |
+|---|---|---|---|---|---|
+| **Focus** | Agentic coding | Personal AI assistant | Lightweight AI bot | CLI coding agent | CLI coding agent |
+| **Language** | Go | TypeScript | Go | TS + Rust | Python |
+| **Deploy** | 54MB binary, zero deps | Node.js (~393MB) | 9MB binary | Bun + Rust | pip package |
+| **RAM** | Low | High (Node.js) | ~10MB | Medium | Medium |
+| **Providers** | 7 (native SDKs) | OpenAI primary | OpenAI only | 6+ | 7+ |
+| **Tools** | 40 | Many | 16 | Many | ~10 |
+| **Code Graph** | Yes (MinHash) | No | No | No | No |
+| **Code Review** | Yes (6 categories) | No | No | No | No |
+| **Collections/RAG** | Yes (xAI) | No | No | No | Yes |
+| **MCP** | Server + client | Partial | Client | Full | Yes |
+
+**Celeste's unique advantages:** Code graph with semantic search, structural code review, persistent project memory, `.grimoire` context with staleness tracking, corruption-aesthetic TUI with typing animation. No other project combines compiled binary + code intelligence + MCP server.
+
+See [docs/COMPARISON.md](docs/COMPARISON.md) for detailed analysis.
+
+---
+
 ## 🌐 LLM Provider Compatibility
 
 Celeste CLI requires **OpenAI-style function calling** for skills to work. Not all LLM providers support this feature.
@@ -359,29 +456,25 @@ Celeste CLI requires **OpenAI-style function calling** for skills to work. Not a
 | **ElevenLabs** | ❓ Unknown | Needs Testing | Unknown |
 | **Local (Ollama)** | ⚠️ Depends on Model | Varies | Medium (model-dependent) |
 
+### ✅ Fully Supported: Grok/xAI (Default)
+
+**Setup:**
+```bash
+celeste config --set-key your-xai-key
+celeste chat
+```
+
+Default config points to xAI (`https://api.x.ai/v1`, model `grok-4-1-fast`). Best value for tool calling with 2M token context.
+
 ### ✅ Fully Supported: OpenAI
 
 **Setup:**
 ```bash
 celeste config --set-key sk-your-openai-key
 celeste config --set-url https://api.openai.com/v1
-celeste config --set-model gpt-4o-mini
+celeste config --set-model gpt-4.1-mini
 celeste chat
 ```
-
-**Why it works:** OpenAI invented function calling and has the most robust implementation.
-
-### ✅ Fully Supported: Grok (xAI)
-
-**Setup:**
-```bash
-celeste config --set-key your-grok-key
-celeste config --set-url https://api.x.ai/v1
-celeste config --set-model grok-beta
-celeste chat
-```
-
-**Why it works:** Grok uses OpenAI-compatible API with full function calling support.
 
 ### ⚠️ Limited Support: DigitalOcean
 
@@ -485,8 +578,8 @@ Celeste CLI uses three config files in `~/.celeste/`:
 ```json
 {
   "api_key": "",
-  "base_url": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini",
+  "base_url": "https://api.x.ai/v1",
+  "model": "grok-4-1-fast",
   "timeout": 60,
   "skip_persona_prompt": false,
   "simulate_typing": true,
