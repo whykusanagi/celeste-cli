@@ -42,43 +42,37 @@ Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provid
 
 ## Component Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Bubble Tea TUI  (cmd/celeste/tui/)            │
-│  app.go · chat.go · input.go · split_panel.go · messages.go     │
-│  Header: provider · model · context %                           │
-│  Chat: message history · turn separators · tool call logs       │
-│  Input: command history (↑/↓) · @file expansion · ctrl+w/u     │
-│  Status: streaming spinner · (Xs · ↑Nk ↓Nk) per response      │
-│  Split panel (orchestrator/agent): action feed · file diffs     │
-└──────────────────┬───────────────────────────────────────────────┘
-                   │  tea.Cmd / tea.Msg
-       ┌───────────┴──────────────────────────────────┐
-       │           Runtime Mode Router                 │
-       │  classic chat │ claw mode │ /agent │ /orch   │
-       └───┬───────────┬───────────┬──────────┬───────┘
-           │           │           │          │
-    ┌──────▼──┐  ┌─────▼──┐  ┌────▼───┐  ┌──▼──────────┐
-    │ Classic │  │  Claw  │  │ Agent  │  │ Orchestrator│
-    │  chat   │  │  mode  │  │ runner │  │             │
-    │ stream  │  │ tool   │  │agent/  │  │orchestrator/│
-    │ chunks  │  │ loop   │  │runtime │  │orchestrator │
-    └────┬────┘  └───┬────┘  └───┬────┘  └──────┬──────┘
-         │           │           │               │
-         └─────────┬─┴───────────┘               │
-                   │                             │
-    ┌──────────────▼─────────────────────────────▼────────┐
-    │              LLM Client  (cmd/celeste/llm/)          │
-    │  OpenAI-compatible streaming · sync · tool calls    │
-    │  Backends: openai · grok · venice · gemini · vertex │
-    └──────────────────────────────────────────────────────┘
-                   │
-    ┌──────────────▼──────────────────────────────────────┐
-    │  Tools (cmd/celeste/tools/builtin/)  ·  40 built-in       │
-    │  Providers (cmd/celeste/providers/)  ·  registry    │
-    │  Config (cmd/celeste/config/)  ·  sessions          │
-    │  Prompts (cmd/celeste/prompts/)  ·  persona         │
-    └─────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph TUI["Bubble Tea TUI (cmd/celeste/tui/)"]
+        Header["Header: provider · model · context%"]
+        Chat["Chat: history · turns · tool logs"]
+        Input["Input: history · typeahead · ctrl+w/u"]
+        Status["Status: streaming · timing · tokens"]
+    end
+
+    TUI -->|"tea.Cmd / tea.Msg"| Router["Mode Router"]
+
+    Router --> ChatMode["Chat Mode\n(auto-loop tools)"]
+    Router --> Agent["Agent Runner\n(agent/runtime.go)"]
+    Router --> Orch["Orchestrator\n(multi-model debate)"]
+
+    ChatMode --> LLM
+    Agent --> LLM
+    Orch --> LLM
+
+    subgraph LLM["LLM Client (cmd/celeste/llm/)"]
+        Backends["Backends: OpenAI · Grok · Anthropic · Gemini · Venice"]
+    end
+
+    LLM --> Tools
+
+    subgraph Tools["Core Packages"]
+        ToolReg["Tools (tools/builtin/) · 40 built-in"]
+        CodeGraph["Code Graph (codegraph/) · MinHash"]
+        Config["Config · Sessions · Memories"]
+        Prompts["Prompts · Persona · Grimoire"]
+    end
 ```
 
 ---
@@ -237,10 +231,9 @@ Both panels are scrollable (`PgUp`/`PgDn`).
    ↓
 7. StreamDoneMsg arrives → token counts captured (lastMsgInTok/Out)
    ├─ Tool calls requested?
-   │   ├─ classic mode: show tool calls inline, no follow-up
-   │   └─ claw mode:   execute tools → streamStart reset →
-   │                   send results back to LLM → repeat from step 6
-   └─ No tool calls → simulated typing animation
+   │   └─ execute tools → streamStart reset →
+   │     send results back to LLM → repeat from step 6 (auto-loop, 50 turn cap)
+   └─ No tool calls → typing animation with corruption at cursor
    ↓
 8. Typing complete → status: "Ready (2.1s · ↑1.2k ↓483)"
    ↓

@@ -6,69 +6,72 @@ How user input is routed through the TUI to modes, tools, and LLM providers.
 
 All slash commands are parsed in `tui/app.go` and dispatched before reaching the LLM:
 
-```
-User Input (/command args)
-    ↓
-Parse as Command (tui/app.go switch)
-    ↓
-├── /agent <goal>        → Agent runtime (agent/runtime.go)
-├── /orchestrate <goal>  → Orchestrator (orchestrator/)
-├── /plan <goal>         → Create plan via LLM → .celeste/plan.md
-├── /graph               → Interactive graph browser view
-├── /index               → Code graph dependency tree
-├── /grimoire            → Read .grimoire from disk
-├── /memories            → Memory manager view
-├── /collections         → Collections manager view
-├── /costs               → Session token/cost stats
-├── /context             → Context budget display
-├── /effort <level>      → Set reasoning effort
-├── /endpoint <name>     → Switch LLM provider
-├── /model <name>        → Change model
-├── /nsfw                → Switch to Venice uncensored
-├── /safe                → Return to safe mode
-├── /clear               → Clear chat history
-├── /help                → Show help
-└── (other)              → commands.Execute() fallback
+```mermaid
+flowchart TD
+    Input["User Input"] --> Parse{"Slash command?"}
+    Parse -->|No| LLM["Send to LLM"]
+    Parse -->|Yes| Dispatch["Command Dispatch"]
+
+    Dispatch --> Agent["/agent → agent/runtime.go"]
+    Dispatch --> Orch["/orchestrate → orchestrator/"]
+    Dispatch --> Plan["/plan → create .celeste/plan.md"]
+    Dispatch --> Graph["/graph → graph browser view"]
+    Dispatch --> Index["/index → dependency tree"]
+    Dispatch --> Grim["/grimoire → read .grimoire"]
+    Dispatch --> Mem["/memories → memory manager"]
+    Dispatch --> Coll["/collections → collections view"]
+    Dispatch --> Settings["/endpoint /model /effort /nsfw /safe"]
+    Dispatch --> Info["/costs /context /help /clear"]
 ```
 
 ## Chat Message Flow
 
-Non-command messages go through the LLM pipeline:
+Non-command messages go through the LLM streaming pipeline:
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant TUI as TUI (app.go)
+    participant Adapter as TUIClientAdapter
+    participant LLM as LLM Backend
+    participant Tools as Tool Registry
+
+    User->>TUI: Send message
+    TUI->>TUI: AddUserMessage
+    TUI->>Adapter: SendMessage()
+    Adapter->>LLM: SendMessageStreamEvents()
+
+    loop Real-time streaming
+        LLM-->>TUI: StreamChunkMsg (content delta)
+        TUI->>TUI: Typing animation + corruption at cursor
+    end
+
+    alt Has tool_calls
+        LLM-->>TUI: SkillCallBatchMsg
+        TUI->>Tools: Registry.Execute() per tool
+        Tools-->>TUI: Tool results
+        TUI->>LLM: Re-send with results (auto-loop)
+    else No tool_calls
+        LLM-->>TUI: StreamDoneMsg
+        TUI->>TUI: Final content + session persist
+    end
 ```
-User Message
-    ↓
-AddUserMessage → chat history
-    ↓
-SendMessage (TUIClientAdapter)
-    ↓
-SendMessageStreamEvents (LLM backend)
-    ↓
-StreamChunkMsg → typing animation (corruption at cursor)
-    ↓
-Tool calls? → SkillCallBatchMsg → execute tools → send results → re-call LLM
-    ↓
-StreamDoneMsg → final content → session persistence
-```
 
-## Tool Execution
+## Tool Execution Loop
 
-Tools auto-loop: the LLM calls tools, results are sent back, LLM decides if more calls are needed. Safety cap at 50 turns.
+Tools auto-loop with a 50-turn safety cap:
 
-```
-LLM Response
-    ↓
-Has tool_calls? ──No──→ Display response
-    ↓ Yes
-SkillCallBatchMsg
-    ↓
-Registry.Execute() for each tool
-    ↓
-Tool results → AddToolResult to chat
-    ↓
-Re-send to LLM (auto-loop)
-    ↓
-Repeat until no tool_calls or cap reached
+```mermaid
+flowchart TD
+    Response["LLM Response"] --> HasTools{"Has tool_calls?"}
+    HasTools -->|No| Display["Display response"]
+    HasTools -->|Yes| Batch["SkillCallBatchMsg"]
+    Batch --> Execute["Registry.Execute() per tool"]
+    Execute --> Results["Add tool results to chat"]
+    Results --> Cap{"Turn < 50?"}
+    Cap -->|Yes| Resend["Re-send to LLM"]
+    Resend --> Response
+    Cap -->|No| Stop["Safety cap reached"]
 ```
 
 ## Provider Detection
@@ -88,12 +91,15 @@ Provider is auto-detected from the `base_url` in config:
 
 When running as an MCP server (`celeste serve`), requests route through:
 
-```
-MCP Client → stdio/SSE → Server.dispatch()
-    ↓
-├── celeste tool        → runChatMode (tools auto-loop) or runAgentMode
-├── celeste_content     → Content generation with persona
-└── celeste_status      → Health/config check
+```mermaid
+flowchart LR
+    Client["MCP Client"] -->|stdio/SSE| Server["Server.dispatch()"]
+    Server --> Celeste["celeste tool"]
+    Server --> Content["celeste_content"]
+    Server --> Status["celeste_status"]
+
+    Celeste -->|chat| Chat["runChatMode\n(tools auto-loop)"]
+    Celeste -->|agent| Agent["runAgentMode\n(autonomous)"]
 ```
 
 Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
