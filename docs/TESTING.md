@@ -1,6 +1,6 @@
-# Testing Guide
+# Celeste's Testing Grimoire
 
-Comprehensive guide to testing Celeste CLI.
+Chaotic, teasing rituals for Celeste CLI perfection. Test thoroughly or face my wrath, cuties~ 💋
 
 ## Table of Contents
 
@@ -77,14 +77,14 @@ go test -run TestExecuteProviders ./cmd/celeste/commands/
 - ✅ **config**: 52.0% (good - session and configuration management)
 - ⚠️ **commands**: 25.8% (moderate - command parsing and execution)
 - ⚠️ **venice**: 22.6% (moderate - media parsing and file handling)
-- ⚠️ **skills**: 12.2% (low - registry only, handlers need mocking)
+- ⚠️ **tools/builtin**: 12.2% (low - registry only, handlers need mocking)
 - ❌ **llm**: 0% (requires HTTP client mocking)
 - ❌ **tui**: 0% (requires Bubble Tea/tcell mocking)
 
 ### Coverage Goals
 
 - **Critical packages** (providers, config, prompts): >70% ✅
-- **Feature packages** (commands, skills, venice): >20% ✅
+- **Feature packages** (commands, tools/builtin, venice): >20% ✅
 - **Infrastructure packages** (llm, tui): Requires mocking infrastructure 🔜
 
 ### Checking Coverage
@@ -289,23 +289,23 @@ go test -v ./cmd/celeste/commands/ -cover
 **Files**:
 - `commands_test.go` (17 test functions)
 
-### Skills Package
+### Builtin Tools Package
 
-Tests skill registry and definitions:
+Tests tool registry and definitions:
 
 ```bash
-go test -v ./cmd/celeste/skills/ -cover
+go test -v ./cmd/celeste/tools/builtin/ -cover
 ```
 
 **What's tested**:
-- Skill registration
+- Tool registration
 - Handler registration
-- Skill retrieval and execution
+- Tool retrieval and execution
 - Tool definition generation
-- Built-in skill registration (18 skills)
+- Built-in tool registration (40 tools)
 
 **What's NOT tested** (requires mocking):
-- Skill handlers (weather, currency, QR codes, etc.)
+- Tool handlers (weather, currency, QR codes, etc.)
 - External API calls
 - File system operations
 
@@ -529,3 +529,5 @@ go test -cover ./cmd/celeste/...
 **Last Updated**: December 14, 2024
 **Version**: v1.2.0
 **Test Coverage**: 17.4%
+
+Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)

@@ -1,4 +1,4 @@
-# Collections Guide
+# Celeste's Collections Grimoire 🖤
 
 ## Overview
 
@@ -14,7 +14,7 @@ Collections enable Celeste to search your custom documents during conversations.
 
 ---
 
-## Backend Architecture
+## collections_search Tool\n\nCeleste's `collections_search` tool performs **hybrid RAG (Retrieval-Augmented Generation)** search via the xAI `documents/search` API.\n\n**Hybrid Search Engine:**\n- **BM25**: Keyword matching for precision\n- **Semantic Embeddings**: Conceptual relevance\n\n**Automatic Workflow:**\n1. Query analyzed for collection relevance\n2. Searches active collections only\n3. Retrieves top snippets with scores\n4. Injects into Grok context\n5. Sources cited in response\n\n**Example Usage (logs):**\n```\n🔍 collections_search called\n   Query: \"Celeste personality\"\n   Sources: 3 from celeste-lore\n✅ 2 sources used\n```\n\nBoosts accuracy with *your* knowledge! 😈\n\n## Backend Architecture
 
 **Collections use the native xAI backend**, which provides:
 - Direct API control for full Collections support
@@ -490,3 +490,5 @@ For issues or feature requests:
 ---
 
 **Happy documenting! 📚**
+
+Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)

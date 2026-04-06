@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -81,6 +82,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	path := getStringArg(input, "path", "")
 	content := getStringArg(input, "content", "")
 	appendMode := getBoolArg(input, "append", false)
+
+	// Unescape literal \n and \t that LLMs sometimes double-escape in JSON
+	content = strings.ReplaceAll(content, `\n`, "\n")
+	content = strings.ReplaceAll(content, `\t`, "\t")
 
 	targetPath, err := resolvePath(t.workspace, path)
 	if err != nil {

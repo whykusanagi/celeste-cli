@@ -88,6 +88,12 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	newString := getStringArg(input, "new_string", "")
 	replaceAll := getBoolArg(input, "replace_all", false)
 
+	// Unescape literal \n and \t that LLMs sometimes double-escape in JSON
+	oldString = strings.ReplaceAll(oldString, `\n`, "\n")
+	oldString = strings.ReplaceAll(oldString, `\t`, "\t")
+	newString = strings.ReplaceAll(newString, `\n`, "\n")
+	newString = strings.ReplaceAll(newString, `\t`, "\t")
+
 	targetPath, err := resolvePath(t.workspace, path)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil

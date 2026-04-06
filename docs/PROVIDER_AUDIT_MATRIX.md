@@ -1,4 +1,4 @@
-# Provider Audit Matrix v1.8.3
+# Provider Audit Matrix v1.8.4
 
 7 providers validated. All production-ready.
 
@@ -16,7 +16,7 @@
 
 ## Details
 
-All support streaming/tool calls/tokens in v1.8.3.
+All support streaming/tool calls/tokens in v1.8.4.
 Grok: 2M ctx. Venice: NSFW.
 
 **Tests**: go test ./cmd/celeste/providers/... -tags=integration

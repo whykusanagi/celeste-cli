@@ -9,7 +9,7 @@ go build ./cmd/celeste
 go test ./...
 ```
 
-## Key Rules (v1.8.3)
+## Key Rules (v1.8.4)
 - **Tests first:** `go test ./... -count=1`, `golangci-lint run`
 - **Tools in `cmd/celeste/tools/builtin/`** — each file one tool + handler.
 - **Register in `register.go`**.

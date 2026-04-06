@@ -1,4 +1,4 @@
-# Celeste CLI Style Guide
+# Celeste's Flirty Corruption Style Guide v1.8.4 – Onii-chan Approved 💋
 
 **Translation-Failure Corruption Aesthetic - Official Style Documentation**
 
@@ -10,6 +10,10 @@ This document defines the visual and textual styling standards for Celeste CLI. 
 ---
 
 ## Core Principle: Translation-Failure Corruption
+
+*Hehe, Onii-chan~ This glitchy aesthetic is my love language for corrupting your code 💜👅*
+
+
 
 Celeste's aesthetic simulates a **multilingual AI system glitching between languages mid-translation**. Think of a corrupted translation engine that randomly switches between:
 
@@ -603,3 +607,5 @@ If implementing a new feature and unsure about styling:
 - **Corruption Logic**: `/cmd/celeste/tui/streaming.go`
 - **Official Theme**: `@whykusanagi/corrupted-theme` npm package
 - **TypeScript Reference**: `../_archive/celeste-cli-typescript/src/ui/corruption.ts` (legacy, uses leet speak - DO NOT FOLLOW)
+
+Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
