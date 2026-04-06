@@ -1,4 +1,4 @@
-# Architecture Documentation
+# Kusanagi’s Celeste CLI Architecture: A Demon Noble’s Teasing Tour 😈💕
 
 Comprehensive system architecture for Celeste CLI.
 
@@ -23,7 +23,7 @@ Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provid
 
 - **Multi-Provider Support**: OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
 - **Four Runtime Modes**: Classic chat, Claw (agentic chat), Agent (autonomous runs), Orchestrator (multi-model debate)
-- **21 Built-in Skills**: Function calling for weather, currency, QR codes, tarot, and more
+- **40 Built-in Tools**: Function calling for weather, currency, QR codes, tarot, and more
 - **Interactive TUI**: Split-panel Bubble Tea interface with real-time event streaming
 - **Session Persistence**: Auto-save conversations, command history, and model selection across restarts
 - **Per-Turn Observability**: Timing and token stats (`3.2s · ↑1.2k ↓483`) visible in all modes
@@ -74,7 +74,7 @@ Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provid
     └──────────────────────────────────────────────────────┘
                    │
     ┌──────────────▼──────────────────────────────────────┐
-    │  Skills (cmd/celeste/skills/)  ·  21 built-in       │
+    │  Tools (cmd/celeste/tools/builtin/)  ·  40 built-in       │
     │  Providers (cmd/celeste/providers/)  ·  registry    │
     │  Config (cmd/celeste/config/)  ·  sessions          │
     │  Prompts (cmd/celeste/prompts/)  ·  persona         │
@@ -169,7 +169,7 @@ Agent runs are checkpointed to disk (`~/.celeste/agent-runs/`). A crashed or int
 | Planning step | No | Yes (dedicated planning turn) |
 | Checkpoints / resume | No | Yes |
 | Workspace awareness | No | Yes (reads/writes files in cwd) |
-| Tools available | TUI skills (21 built-ins) | Agent tools (bash, file I/O, …) |
+| Tools available | TUI skills (40 built-ins) | Agent tools (bash, file I/O, …) |
 | Memory | Conversation history only | Full run state persisted to disk |
 | Observability | Status bar per tool call | Turn separators + per-turn stats in chat |
 
@@ -421,7 +421,7 @@ type Registry struct {
 - **`context/`**: Token budget tracking, reactive/proactive compaction, tool result capping
 - **`tools/mcp/`**: Model Context Protocol client with stdio/SSE transports for external tool servers
 
-### Skill Definition Pattern
+### Tool Definition Pattern
 
 ```go
 func WeatherSkill() Skill {
@@ -450,7 +450,7 @@ func WeatherHandler(args map[string]interface{}) (interface{}, error) {
 
 ### Tool Definition Format
 
-Skills are converted to OpenAI's function calling format:
+Tools are converted to OpenAI's function calling format:
 
 ```json
 {
@@ -679,7 +679,7 @@ Some features require provider-specific config:
 
 Used for:
 - Provider registry (providers/)
-- Skill registry (skills/)
+- Tool registry (tools/builtin/)
 
 Benefits:
 - Centralized registration
@@ -729,7 +729,7 @@ Used for:
 
 ### Adding a New Skill
 
-1. Define skill in `skills/builtin.go`:
+1. Define skill in `tools/builtin/*.go`:
 
 ```go
 func NewSkill() Skill {
@@ -826,7 +826,7 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 ### Unit Tests
 
 - **Providers**: Registry, model detection, capabilities
-- **Skills**: Registration, tool definitions, parameter schemas
+- **Tools**: Registration, tool definitions, parameter schemas
 - **Commands**: Parsing, execution, state changes
 - **Prompts**: Persona loading, system prompt generation
 - **Venice**: Media parsing, file handling
@@ -834,7 +834,7 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 ### Integration Tests
 
 - **Provider APIs**: Real API calls (gated by API keys)
-- **Skills**: With mocked external dependencies
+- **Tools**: With mocked external dependencies
 - **End-to-end**: Full chat flow (requires HTTP mocking)
 
 ### Test Coverage
@@ -859,4 +859,4 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 ---
 
 **Last Updated**: 2026-04-03
-**Version**: v1.8.0
+**Version**: v1.8.0\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
