@@ -1,6 +1,6 @@
 # What Celeste CLI Can Do? 😈
 
-Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.8.3 packs **40 dev-crushing tools**, code graphs that expose every secret, MCP for Claude vibes, collections search, and 7 LLM providers to summon my wit.
+Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.8.4 packs **40 dev-crushing tools**, code graphs that expose every secret, MCP for Claude vibes, collections search, and 7 LLM providers to summon my wit.
 
 ## 🔥 Core Powers
 
@@ -11,7 +11,7 @@ Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beas
 - **Web/Productivity** (8): `web_search`, `web_fetch`, `currency`, `units`, `timezone`
 - **Crypto/Media** (7): `hash`, `qrcode`, `encoding`, Alchemy/IPFS/wallet
 
-**Runtime Modes:** Classic chat, Claw (tool loop), Agent (autonomous), Orchestrator (debate).
+**Runtime Modes:** Chat (auto-loop tools), Agent (autonomous), Orchestrator (debate).
 
 **7 Providers:** Grok/xAI, OpenAI, Anthropic (native), Google Gemini, Venice.ai, Vertex AI, OpenRouter.
 
