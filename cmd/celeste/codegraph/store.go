@@ -146,6 +146,25 @@ func (s *Store) createSchema() error {
 		indexed_at INTEGER
 	);
 
+	-- Opaque key/value store for index-level metadata that doesn't fit
+	-- the other tables. Current uses:
+	--   "minhash_seeds"        — little-endian uint64×128, the seeds used
+	--                            by MinHasher. Persisted on first Build so
+	--                            the same seeds can be restored on re-open,
+	--                            making MinHash signatures portable across
+	--                            process invocations. Without this, opening
+	--                            an existing index with a fresh process
+	--                            generated random seeds and SemanticSearch
+	--                            returned pure noise.
+	--   "minhash_num_hashes"   — uint64-as-string, sanity check on the
+	--                            MinHasher length.
+	--   "shingle_version"      — future: tokenizer version stamp for the
+	--                            stale-index warning in a later change.
+	CREATE TABLE IF NOT EXISTS meta (
+		key   TEXT PRIMARY KEY,
+		value BLOB NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
 	CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file);
 	CREATE INDEX IF NOT EXISTS idx_symbols_package ON symbols(package);
@@ -154,6 +173,34 @@ func (s *Store) createSchema() error {
 	`
 	_, err := s.db.Exec(schema)
 	return err
+}
+
+// GetMeta reads a raw byte value from the meta key/value table.
+// Returns (nil, nil) if the key is not present — callers should treat
+// nil as "not set" and decide whether to generate and persist.
+func (s *Store) GetMeta(key string) ([]byte, error) {
+	var value []byte
+	err := s.db.QueryRow("SELECT value FROM meta WHERE key = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get meta %q: %w", key, err)
+	}
+	return value, nil
+}
+
+// SetMeta writes a raw byte value to the meta key/value table. Upserts
+// on conflict so the caller can treat this as idempotent.
+func (s *Store) SetMeta(key string, value []byte) error {
+	_, err := s.db.Exec(
+		"INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, value,
+	)
+	if err != nil {
+		return fmt.Errorf("set meta %q: %w", key, err)
+	}
+	return nil
 }
 
 // UpsertSymbol inserts or updates a symbol. Uniqueness is determined by

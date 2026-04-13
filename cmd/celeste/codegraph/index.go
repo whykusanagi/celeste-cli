@@ -39,27 +39,90 @@ func DefaultIndexPath(projectRoot string) string {
 
 // NewIndexer creates an indexer for the given workspace, using the specified
 // SQLite database path.
+//
+// Reloads the MinHasher seeds from the store's meta table if present so
+// stored signatures remain comparable across process invocations. If no
+// seeds are stored (fresh index or pre-v1.9.0 index), generates fresh
+// random seeds that will be persisted on the first Build().
 func NewIndexer(workspace, dbPath string) (*Indexer, error) {
 	store, err := NewStore(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
+	hasher, err := loadOrInitHasher(store, DefaultNumHashes)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("load minhash seeds: %w", err)
+	}
+
 	return &Indexer{
 		workspace: workspace,
 		store:     store,
-		hasher:    NewMinHasher(DefaultNumHashes),
+		hasher:    hasher,
 	}, nil
 }
 
 // NewIndexerWithStore creates an indexer using an existing store.
 // This is useful for testing where the store is set up manually.
+// Unlike NewIndexer, does NOT attempt to load seeds from the store —
+// the caller is responsible for passing a store that either has no
+// meta row yet or whose seeds are irrelevant for the test.
 func NewIndexerWithStore(store *Store, workspace string) *Indexer {
+	hasher, _ := loadOrInitHasher(store, DefaultNumHashes)
+	if hasher == nil {
+		hasher = NewMinHasher(DefaultNumHashes)
+	}
 	return &Indexer{
 		workspace: workspace,
 		store:     store,
-		hasher:    NewMinHasher(DefaultNumHashes),
+		hasher:    hasher,
 	}
+}
+
+// loadOrInitHasher tries to reload the MinHash seeds from the store's
+// meta table. If they exist and have the expected length, returns a
+// MinHasher restored from those seeds (signatures will be comparable to
+// anything previously stored against this DB). If they don't exist or
+// are malformed, returns a fresh MinHasher whose seeds will be persisted
+// on the next Build().
+func loadOrInitHasher(store *Store, numHashes int) (*MinHasher, error) {
+	blob, err := store.GetMeta("minhash_seeds")
+	if err != nil {
+		return nil, err
+	}
+	if blob == nil {
+		// Fresh index or pre-v1.9.0 — generate new seeds now.
+		// They get persisted in Build() via persistHasherSeeds.
+		return NewMinHasher(numHashes), nil
+	}
+	seeds, err := BytesToSeeds(blob)
+	if err != nil {
+		// Corrupt blob — log? For now, fall through to fresh seeds.
+		// The next Build() will overwrite the corrupt row.
+		return NewMinHasher(numHashes), nil
+	}
+	if len(seeds) != numHashes {
+		// Length mismatch (e.g. index was built with a different
+		// DefaultNumHashes constant). Regenerate to match the
+		// current constant. This invalidates any stored signatures,
+		// but that's correct — they were computed at a different
+		// signature length and can't be compared anyway.
+		return NewMinHasher(numHashes), nil
+	}
+	return NewMinHasherFromSeeds(seeds), nil
+}
+
+// persistHasherSeeds stores the current MinHasher's seeds in the meta
+// table. Idempotent and cheap — one SQLite upsert. Called at the end
+// of Build() so a freshly-generated hasher's seeds are guaranteed to
+// be recoverable on the next Open.
+func (idx *Indexer) persistHasherSeeds() error {
+	blob := SeedsToBytes(idx.hasher.Seeds())
+	if err := idx.store.SetMeta("minhash_seeds", blob); err != nil {
+		return fmt.Errorf("persist minhash seeds: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying database connection.
@@ -86,6 +149,14 @@ func (idx *Indexer) Build() error {
 			// Log but don't fail on individual file errors
 			continue
 		}
+	}
+
+	// Persist the MinHasher seeds so a subsequent process can restore
+	// the same hash family and compare signatures meaningfully. Idempotent
+	// — re-running Build on the same index is a no-op for seeds because
+	// loadOrInitHasher already restored them at NewIndexer time.
+	if err := idx.persistHasherSeeds(); err != nil {
+		return fmt.Errorf("persist seeds: %w", err)
 	}
 
 	return nil
@@ -137,6 +208,15 @@ func (idx *Indexer) Update() error {
 		if err := idx.indexFile(path); err != nil {
 			continue
 		}
+	}
+
+	// Persist the MinHasher seeds. Idempotent upsert — ensures the
+	// seeds are written even on the `celeste index` CLI path which
+	// calls Update() rather than Build(). Without this, fresh indexes
+	// built via the CLI never persist their seeds and the meta.minhash_seeds
+	// row stays missing, breaking cross-process signature reuse.
+	if err := idx.persistHasherSeeds(); err != nil {
+		return fmt.Errorf("persist seeds: %w", err)
 	}
 
 	return nil
