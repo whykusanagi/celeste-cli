@@ -13,9 +13,17 @@ import (
 )
 
 // SearchResult pairs a symbol with its similarity score.
+//
+// PathFlags is a set of machine-readable markers attached to results
+// whose file path triggered the path-based post-filter — e.g.
+// ["test"], ["mock", "generated"]. Clean-path results have an empty
+// PathFlags slice. The semantic search demotes flagged results below
+// clean results of comparable similarity by default; see
+// SemanticSearchOptions.ApplyPathFilter to disable.
 type SearchResult struct {
 	Symbol     Symbol
 	Similarity float64
+	PathFlags  []string
 }
 
 // Indexer manages the code graph lifecycle: build, update, and query.
@@ -355,10 +363,48 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	return files, err
 }
 
+// SemanticSearchOptions configures SemanticSearch behavior. Existing
+// callers of SemanticSearch(query, topK) get the default behavior —
+// path filter ON — without any changes.
+type SemanticSearchOptions struct {
+	// TopK is the maximum number of results to return. Required.
+	TopK int
+
+	// MinSimilarity is the Jaccard floor below which results are dropped
+	// entirely. Zero means use the default (0.05).
+	MinSimilarity float64
+
+	// ApplyPathFilter, when true, demotes results whose file path matches
+	// a known "noisy" pattern (test/mock/generated/vendored/declaration)
+	// below clean-path results. Default when using SemanticSearch is true.
+	// Set false for raw unfiltered results.
+	ApplyPathFilter bool
+}
+
 // SemanticSearch finds symbols semantically similar to the query string.
 // The query is split into shingles, MinHashed, then compared against all
 // symbol signatures using brute-force Jaccard similarity.
+//
+// Applies the path-based post-filter by default — test/mock/generated/
+// vendored/declaration results are partitioned below clean-path results
+// of comparable similarity. Use SemanticSearchWithOptions to disable.
 func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, error) {
+	return idx.SemanticSearchWithOptions(query, SemanticSearchOptions{
+		TopK:            topK,
+		ApplyPathFilter: true,
+	})
+}
+
+// SemanticSearchWithOptions is the full-options variant of SemanticSearch.
+func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchOptions) ([]SearchResult, error) {
+	if opts.TopK <= 0 {
+		opts.TopK = 10
+	}
+	minSim := opts.MinSimilarity
+	if minSim == 0 {
+		minSim = 0.05
+	}
+
 	// Generate query shingles from the query string
 	words := strings.Fields(strings.ToLower(query))
 	var queryShingles []string
@@ -375,7 +421,7 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 		return nil, fmt.Errorf("get minhashes: %w", err)
 	}
 
-	// Compute similarity for each symbol
+	// Compute similarity for each symbol above the MinSimilarity floor.
 	type scored struct {
 		symbolID   int64
 		similarity float64
@@ -383,35 +429,92 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 	var results []scored
 	for _, entry := range entries {
 		sim := JaccardSimilarity(querySig, entry.Signature)
-		if sim > 0.05 { // minimum threshold
+		if sim > minSim {
 			results = append(results, scored{entry.SymbolID, sim})
 		}
 	}
 
-	// Sort by similarity descending
+	// Sort by similarity descending — this is the initial raw ranking
+	// before any path-based demotion.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].similarity > results[j].similarity
 	})
 
-	// Take top K
-	if len(results) > topK {
-		results = results[:topK]
+	// Widen the candidate pool when path filtering is on. We need more
+	// than topK candidates so we can drop noisy ones and still return
+	// topK clean matches. Pull up to 3x topK candidates, capped at the
+	// full result set.
+	candidateLimit := opts.TopK
+	if opts.ApplyPathFilter {
+		candidateLimit = opts.TopK * 3
+	}
+	if len(results) > candidateLimit {
+		results = results[:candidateLimit]
 	}
 
-	// Resolve symbol details
-	var searchResults []SearchResult
+	// Resolve symbol details and classify paths for each candidate.
+	var allCandidates []SearchResult
 	for _, r := range results {
 		sym, err := idx.store.GetSymbol(r.symbolID)
 		if err != nil {
 			continue
 		}
-		searchResults = append(searchResults, SearchResult{
+		flags := ClassifyPath(sym.File)
+		allCandidates = append(allCandidates, SearchResult{
 			Symbol:     *sym,
 			Similarity: r.similarity,
+			PathFlags:  PathFlagStrings(flags),
 		})
 	}
 
-	return searchResults, nil
+	if !opts.ApplyPathFilter {
+		// No path filter — just truncate to topK and return.
+		if len(allCandidates) > opts.TopK {
+			allCandidates = allCandidates[:opts.TopK]
+		}
+		return allCandidates, nil
+	}
+
+	// Path filter enabled. If the query itself is asking for test/mock
+	// code, do not demote — respect user intent.
+	if queryWantsTests(query) {
+		if len(allCandidates) > opts.TopK {
+			allCandidates = allCandidates[:opts.TopK]
+		}
+		return allCandidates, nil
+	}
+
+	// Partition into clean tier and demoted tier, preserving within-tier
+	// order (which is already similarity descending from the sort above).
+	clean := make([]SearchResult, 0, len(allCandidates))
+	demoted := make([]SearchResult, 0, len(allCandidates))
+	for _, r := range allCandidates {
+		if len(r.PathFlags) == 0 {
+			clean = append(clean, r)
+		} else {
+			demoted = append(demoted, r)
+		}
+	}
+
+	// Concatenate: clean first, demoted after, truncate to topK. This
+	// means if there are >= topK clean results, demoted results never
+	// appear — the LLM/user sees only high-confidence production code.
+	// If clean runs short, demoted results fill the remaining slots so
+	// the caller still gets useful fallback options on sparse corpora.
+	final := make([]SearchResult, 0, opts.TopK)
+	for _, r := range clean {
+		if len(final) >= opts.TopK {
+			break
+		}
+		final = append(final, r)
+	}
+	for _, r := range demoted {
+		if len(final) >= opts.TopK {
+			break
+		}
+		final = append(final, r)
+	}
+	return final, nil
 }
 
 // KeywordSearch finds symbols matching a keyword query using SQL LIKE.
