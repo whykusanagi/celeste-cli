@@ -12,6 +12,7 @@ func TestSplitIdentifier(t *testing.T) {
 		input    string
 		expected []string
 	}{
+		// Unchanged behavior — acronyms of 3+ uppers still split correctly.
 		{"validateSession", []string{"validate", "session"}},
 		{"HTTPServer", []string{"http", "server"}},
 		{"get_user_by_id", []string{"get", "user", "by", "id"}},
@@ -20,6 +21,25 @@ func TestSplitIdentifier(t *testing.T) {
 		{"ID", []string{"id"}},
 		{"x", []string{"x"}},
 		{"HTMLToMarkdown", []string{"html", "to", "markdown"}},
+
+		// Fixed behavior — PascalCase identifiers with a 2-uppercase prefix
+		// followed by a lowercase word are NO LONGER split at the first letter.
+		// These all used to produce single-letter first tokens like ["j", "query"]
+		// or ["i", "foo"], which caused the SPEC §8.2 Issue #1 jQueryStatic
+		// pollution across ~1,650 identifiers in the celeste-stopwords training
+		// corpus (kubernetes, TypeScript, microsoft/playwright, airflow, etc).
+		{"JQuery", []string{"jquery"}},
+		{"JQueryStatic", []string{"jquery", "static"}},
+		{"JQueryElement", []string{"jquery", "element"}},
+		{"IFoo", []string{"ifoo"}},
+		{"IArguments", []string{"iarguments"}},
+		{"IPromise", []string{"ipromise"}},
+		{"IPv4", []string{"ipv4"}},
+		{"IPv6", []string{"ipv6"}},
+		{"OAuth2", []string{"oauth2"}},
+		{"ETag", []string{"etag"}},
+		{"VNode", []string{"vnode"}},
+		{"XDist", []string{"xdist"}},
 	}
 
 	for _, tt := range tests {

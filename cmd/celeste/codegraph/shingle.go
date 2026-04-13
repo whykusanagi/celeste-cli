@@ -58,9 +58,28 @@ func splitIdentifier(name string) []string {
 }
 
 // splitCamelCase splits a camelCase or PascalCase string into words.
-// "HTTPServer" -> ["HTTP", "Server"]
-// "parseJSON" -> ["parse", "JSON"]
+//
+// "HTTPServer"     -> ["HTTP", "Server"]
+// "parseJSON"      -> ["parse", "JSON"]
 // "HTMLToMarkdown" -> ["HTML", "To", "Markdown"]
+// "JQueryStatic"   -> ["JQuery", "Static"]     // fixed — see below
+// "IFoo"           -> ["IFoo"]                 // fixed
+// "IPv4"           -> ["IPv4"]                 // fixed
+// "OAuth2"         -> ["OAuth2"]               // fixed
+//
+// The "end of acronym" rule requires THREE consecutive uppercase letters
+// before a lowercase boundary — not two. Previously, any Upper-Upper-lower
+// triple fired the rule, which split PascalCase identifiers like JQuery
+// and IFoo into single-letter first tokens ["J", "Query"] / ["I", "Foo"].
+// That decomposition caused the jQueryStatic pollution problem documented
+// in celeste-stopwords Issue #1: searches for "query" would match
+// JQueryStatic via the stray "query" token, and ~1,650 other identifiers
+// exhibited the same bug across a 31-repo training corpus.
+//
+// Requiring 3+ uppercase letters treats HTTP/HTML/CSV/XML as acronyms
+// (correct split) while treating JQ/IF/IP/OA/VN/XD as PascalCase word
+// starts (no acronym split). See celeste-stopwords commit 5f0ea41 for
+// the simulation evidence.
 func splitCamelCase(s string) []string {
 	if s == "" {
 		return nil
@@ -78,9 +97,12 @@ func splitCamelCase(s string) []string {
 			continue
 		}
 
-		// Transition: Upper -> Upper -> lower marks end of acronym
-		// "HTTPServer" at position of 'e' (after 'S'): "HTTP" + "Server"
-		if i > 1 && unicode.IsUpper(runes[i-1]) && unicode.IsUpper(runes[i-2]) && unicode.IsLower(runes[i]) {
+		// Transition: Upper -> Upper -> Upper -> lower marks end of acronym.
+		// Requires 3+ consecutive uppers; two caps followed by lower is a
+		// PascalCase word boundary (JQuery, IFoo), not an acronym edge.
+		// "HTTPServer" at i=5 ('e'): runes[2..4] = T,T,P all upper → emit "HTTP".
+		// "JQueryStatic" at i=2 ('u'): only J,Q upper, fails the i>2 gate → skip.
+		if i > 2 && unicode.IsUpper(runes[i-1]) && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(runes[i-3]) && unicode.IsLower(runes[i]) {
 			words = append(words, string(runes[start:i-1]))
 			start = i - 1
 			continue
