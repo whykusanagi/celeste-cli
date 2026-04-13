@@ -171,8 +171,14 @@ func (s *Store) createSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 	CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	// BM25 tables (token_stats, symbol_tokens). Defined in bm25.go so
+	// all BM25-related code lives together. Idempotent CREATE IF NOT
+	// EXISTS so calling on every Open is safe; existing indexes get
+	// the tables lazily without a migration step.
+	return s.createBM25Schema()
 }
 
 // GetMeta reads a raw byte value from the meta key/value table.

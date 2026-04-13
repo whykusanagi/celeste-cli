@@ -38,8 +38,22 @@ import (
 // matches are recognized as such instead of being treated as confident
 // answers.
 type SearchResult struct {
-	Symbol             Symbol
-	Similarity         float64
+	Symbol     Symbol
+	Similarity float64
+
+	// BM25Score is the additive per-symbol BM25 score for this query,
+	// computed alongside the Jaccard similarity at search time. Not a
+	// replacement for Similarity — both signals are returned so callers
+	// (or a downstream re-rank layer) can reason about them independently.
+	// Zero when the BM25 corpus stats table is empty (pre-v1.9.0 index).
+	BM25Score float64
+
+	// MatchedTokens are the query tokens that appeared in this symbol's
+	// filtered shingle set (intersection of query and symbol tokens).
+	// Populated only when BM25 scoring is active. Useful reasoning output
+	// for LLMs: "this result matched because it contains X, Y, Z".
+	MatchedTokens []string
+
 	PathFlags          []string
 	EdgeCount          int
 	ConfidenceWarnings []string
@@ -186,6 +200,14 @@ func (idx *Indexer) Build() error {
 		return fmt.Errorf("persist seeds: %w", err)
 	}
 
+	// Rebuild the BM25 corpus statistics from the symbol_tokens rows
+	// we just wrote. This is a single aggregation pass over the table
+	// and produces the df/idf values used for BM25 scoring at query
+	// time. Cheap compared to the indexing work we just finished.
+	if _, err := idx.store.RebuildTokenStats(); err != nil {
+		return fmt.Errorf("rebuild token stats: %w", err)
+	}
+
 	return nil
 }
 
@@ -246,6 +268,14 @@ func (idx *Indexer) Update() error {
 		return fmt.Errorf("persist seeds: %w", err)
 	}
 
+	// Rebuild BM25 corpus stats after an incremental update so df/idf
+	// reflect the current symbol_tokens contents. Re-running is cheap
+	// (single aggregation pass) and keeps scoring consistent even when
+	// only a handful of files changed.
+	if _, err := idx.store.RebuildTokenStats(); err != nil {
+		return fmt.Errorf("rebuild token stats: %w", err)
+	}
+
 	return nil
 }
 
@@ -289,6 +319,11 @@ func (idx *Indexer) indexFile(relPath string) error {
 			shingles := ShinglesForSymbol(sym, source, lang)
 			sig := idx.hasher.Signature(shingles)
 			_ = idx.store.UpdateMinHash(id, sig)
+			// Persist per-symbol token frequencies so BM25 scoring has
+			// something to read at query time. Same filtered shingle
+			// set the MinHash saw — the two signals stay in lock-step
+			// on what counts as a meaningful token for this symbol.
+			_ = idx.store.UpsertSymbolTokens(id, shingles)
 		}
 	}
 
@@ -489,6 +524,18 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 	// Also compute edge counts and confidence warnings so the caller
 	// has machine-readable reasoning for every result. Each candidate
 	// becomes a fully-annotated SearchResult.
+	//
+	// BM25 scoring: reads one-time corpus stats + IDF table, then scores
+	// each candidate against the query tokens using the symbol's stored
+	// TF map. Pre-v1.9.0 indexes have empty token_stats — scoring then
+	// degenerates to zero across the board and the fused ranking reduces
+	// to pure Jaccard, which is the correct fallback.
+	bm25Stats, _ := idx.store.ReadBM25Stats()
+	var idfMap map[string]float64
+	if bm25Stats != nil && bm25Stats.NumDocs > 0 {
+		idfMap, _ = idx.store.GetIDFs(queryShingles)
+	}
+
 	var allCandidates []SearchResult
 	for _, r := range results {
 		sym, err := idx.store.GetSymbol(r.symbolID)
@@ -507,13 +554,68 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 
 		warnings := computeConfidenceWarnings(*sym, r.similarity, flags, edgeCount)
 
+		// Per-candidate BM25 score + matched-token list. Only computed
+		// if the corpus stats exist (otherwise we'd do pointless table
+		// reads for zero output). MatchedTokens is derived from the
+		// intersection of queryShingles and the symbol's TF map so it
+		// stays in sync with whatever actually contributed to the score.
+		var bm25Score float64
+		var matched []string
+		if bm25Stats != nil && bm25Stats.NumDocs > 0 {
+			docTokens, docLen, tokErr := idx.store.GetSymbolTokens(r.symbolID)
+			if tokErr == nil && docLen > 0 {
+				bm25Score = ComputeBM25Score(queryShingles, docTokens, docLen, idfMap, bm25Stats.AvgDocLength)
+				for _, qt := range queryShingles {
+					if _, ok := docTokens[qt]; ok {
+						matched = append(matched, qt)
+					}
+				}
+			}
+		}
+
 		allCandidates = append(allCandidates, SearchResult{
 			Symbol:             *sym,
 			Similarity:         r.similarity,
+			BM25Score:          bm25Score,
+			MatchedTokens:      matched,
 			PathFlags:          PathFlagStrings(flags),
 			EdgeCount:          edgeCount,
 			ConfidenceWarnings: warnings,
 		})
+	}
+
+	// Rank-fuse Jaccard and BM25 using Reciprocal Rank Fusion. This is
+	// the point where the two signals merge into a single ordering. Both
+	// raw scores stay on each SearchResult so callers can audit; only
+	// the slice order reflects the fused view. If BM25 is disabled
+	// (empty corpus stats) every BM25Score is 0, the BM25 rank map is
+	// a flat tie, and RRF gracefully degrades toward the Jaccard ranking.
+	if len(allCandidates) > 1 {
+		jaccardRanks := make(map[int64]int, len(allCandidates))
+		bm25Ranked := make([]SearchResult, len(allCandidates))
+		copy(bm25Ranked, allCandidates)
+		for i, c := range allCandidates {
+			jaccardRanks[c.Symbol.ID] = i + 1
+		}
+		sort.SliceStable(bm25Ranked, func(i, j int) bool {
+			return bm25Ranked[i].BM25Score > bm25Ranked[j].BM25Score
+		})
+		bm25Ranks := make(map[int64]int, len(bm25Ranked))
+		for i, c := range bm25Ranked {
+			bm25Ranks[c.Symbol.ID] = i + 1
+		}
+		fusedOrder := ComputeFusedRanking(jaccardRanks, bm25Ranks)
+		byID := make(map[int64]SearchResult, len(allCandidates))
+		for _, c := range allCandidates {
+			byID[c.Symbol.ID] = c
+		}
+		fused := make([]SearchResult, 0, len(allCandidates))
+		for _, id := range fusedOrder {
+			if c, ok := byID[id]; ok {
+				fused = append(fused, c)
+			}
+		}
+		allCandidates = fused
 	}
 
 	if !opts.ApplyPathFilter {
