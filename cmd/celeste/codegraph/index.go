@@ -12,18 +12,37 @@ import (
 	"strings"
 )
 
-// SearchResult pairs a symbol with its similarity score.
+// SearchResult pairs a symbol with its similarity score and a set of
+// machine-readable reasoning fields that tell an LLM (or a human) WHY
+// this result was returned and how confident celeste is in it.
 //
-// PathFlags is a set of machine-readable markers attached to results
-// whose file path triggered the path-based post-filter — e.g.
-// ["test"], ["mock", "generated"]. Clean-path results have an empty
-// PathFlags slice. The semantic search demotes flagged results below
-// clean results of comparable similarity by default; see
+// PathFlags: markers attached when the symbol's file path triggered the
+// path-based post-filter — e.g. ["test"], ["mock", "generated"]. Clean-
+// path results have an empty PathFlags slice. SemanticSearch demotes
+// flagged results below clean results by default; see
 // SemanticSearchOptions.ApplyPathFilter to disable.
+//
+// EdgeCount: total incoming + outgoing edges on this symbol in the code
+// graph. A function that is called from 4 places and calls 2 others has
+// EdgeCount=6. Zero-edge symbols are suspicious — they may be genuine
+// dead code, but they may also be symbols the parser failed to resolve
+// (especially TS/Python/Rust where the regex parser can't follow call
+// sites through type definitions). SPEC §8.2 Issue #2 documents this
+// ambiguity explicitly; LLMs should NOT treat EdgeCount=0 as proof of
+// dead code without corroborating evidence.
+//
+// ConfidenceWarnings: human-readable strings describing caveats about
+// this result. Derived at query time from PathFlags, EdgeCount, Kind,
+// and Similarity — no schema change, no precomputation. Callers should
+// surface these to whoever consumes the search results so low-quality
+// matches are recognized as such instead of being treated as confident
+// answers.
 type SearchResult struct {
-	Symbol     Symbol
-	Similarity float64
-	PathFlags  []string
+	Symbol             Symbol
+	Similarity         float64
+	PathFlags          []string
+	EdgeCount          int
+	ConfidenceWarnings []string
 }
 
 // Indexer manages the code graph lifecycle: build, update, and query.
@@ -453,6 +472,9 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 	}
 
 	// Resolve symbol details and classify paths for each candidate.
+	// Also compute edge counts and confidence warnings so the caller
+	// has machine-readable reasoning for every result. Each candidate
+	// becomes a fully-annotated SearchResult.
 	var allCandidates []SearchResult
 	for _, r := range results {
 		sym, err := idx.store.GetSymbol(r.symbolID)
@@ -460,10 +482,23 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 			continue
 		}
 		flags := ClassifyPath(sym.File)
+
+		// Cheap edge-count lookup. Both GetEdgesFrom and GetEdgesTo
+		// already have covering SQL indexes (idx_edges_source / _target)
+		// so these are O(log N) lookups with tiny result sets. For the
+		// ~30 candidates we process per query the cost is negligible.
+		edgesOut, _ := idx.store.GetEdgesFrom(r.symbolID)
+		edgesIn, _ := idx.store.GetEdgesTo(r.symbolID)
+		edgeCount := len(edgesOut) + len(edgesIn)
+
+		warnings := computeConfidenceWarnings(*sym, r.similarity, flags, edgeCount)
+
 		allCandidates = append(allCandidates, SearchResult{
-			Symbol:     *sym,
-			Similarity: r.similarity,
-			PathFlags:  PathFlagStrings(flags),
+			Symbol:             *sym,
+			Similarity:         r.similarity,
+			PathFlags:          PathFlagStrings(flags),
+			EdgeCount:          edgeCount,
+			ConfidenceWarnings: warnings,
 		})
 	}
 

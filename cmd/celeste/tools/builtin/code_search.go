@@ -24,7 +24,15 @@ func NewCodeSearchTool(indexer *codegraph.Indexer) *CodeSearchTool {
 			ToolName: "code_search",
 			ToolDescription: "Search the codebase for symbols (functions, types, interfaces) by concept or keyword. " +
 				"Use mode 'semantic' to find code related to a concept (e.g., 'authentication session validation'). " +
-				"Use mode 'keyword' for exact name matching (e.g., 'HandleRequest').",
+				"Use mode 'keyword' for exact name matching (e.g., 'HandleRequest'). " +
+				"Semantic results include per-result confidence metadata: a match % (MinHash Jaccard " +
+				"estimate), an edge count (how many incoming/outgoing call-graph edges the symbol has), " +
+				"and a list of warnings like 'demoted: mock path', 'zero edges', 'low confidence', or " +
+				"'demoted: declaration-only file'. Use these warnings to decide which results to trust — " +
+				"a clean-path result with edges > 0 and no warnings is a strong match; a result with " +
+				"'demoted' warnings is test/mock code that was pushed below production matches; a result " +
+				"with 'zero edges' on a non-Go language may be a parser limitation (see SPEC §8.2 Issue #2), " +
+				"not actual dead code.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -78,13 +86,20 @@ func (t *CodeSearchTool) Execute(ctx context.Context, input map[string]any, prog
 		} else {
 			var b strings.Builder
 			fmt.Fprintf(&b, "Found %d symbols matching '%s':\n\n", len(results), query)
+			fmt.Fprintln(&b, "Each result shows similarity %, edge count, and any confidence warnings.")
+			fmt.Fprintln(&b, "Warnings like 'demoted: mock path', 'zero edges', and 'low confidence' tell")
+			fmt.Fprintln(&b, "you WHY to be skeptical — a clean-path result with edges is your strongest match.")
+			fmt.Fprintln(&b)
 			for i, r := range results {
-				fmt.Fprintf(&b, "%d. %s (%s) — %s:%d [%.0f%% match]\n",
+				fmt.Fprintf(&b, "%d. %s (%s) — %s:%d [%.0f%% match, edges=%d]\n",
 					i+1, r.Symbol.Name, r.Symbol.Kind,
 					r.Symbol.File, r.Symbol.Line,
-					r.Similarity*100)
+					r.Similarity*100, r.EdgeCount)
 				if r.Symbol.Signature != "" {
 					fmt.Fprintf(&b, "   %s\n", r.Symbol.Signature)
+				}
+				if len(r.ConfidenceWarnings) > 0 {
+					fmt.Fprintf(&b, "   ⚠ %s\n", strings.Join(r.ConfidenceWarnings, "; "))
 				}
 			}
 			resultText = b.String()
