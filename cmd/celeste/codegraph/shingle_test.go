@@ -77,21 +77,35 @@ func TestShinglesForSymbol(t *testing.T) {
 	return user, nil
 }`)
 
-	shingles := ShinglesForSymbol(sym, source)
+	shingles := ShinglesForSymbol(sym, source, "go")
 	require.NotEmpty(t, shingles)
 
-	// Should contain name parts
+	// Should contain name parts — "validate" and "session" are in the
+	// benchmark preserve list so they survive the stopword filter even
+	// though they have high DF in the training corpus.
 	assert.Contains(t, shingles, "validate")
 	assert.Contains(t, shingles, "session")
 
-	// Should contain package name
+	// Should contain package name.
 	assert.Contains(t, shingles, "auth")
 
-	// Should contain type tokens
+	// Should contain type tokens that aren't on the stopword list.
+	// "token" is in the preserve list (SPEC §5 benchmark queries) so it
+	// survives. "user" is low-DF, keeps.
 	assert.Contains(t, shingles, "token")
-	assert.Contains(t, shingles, "string")
 	assert.Contains(t, shingles, "user")
-	assert.Contains(t, shingles, "error")
+
+	// NOTE: "string" and "error" are NO LONGER in the result set under
+	// v1.9.0 — they're both in the universal stopword list (type noise +
+	// ubiquitous respectively). This is intentional: the stopwords runtime
+	// integration filters them from the symbol's shingle set at index
+	// time so they don't consume MinHash slots. Pre-v1.9.0 this assertion
+	// said shingles SHOULD contain "string" and "error"; post-v1.9.0 it
+	// asserts the opposite to prove the filter is active.
+	assert.NotContains(t, shingles, "string",
+		"'string' is in the universal stopword list and should be filtered out")
+	assert.NotContains(t, shingles, "error",
+		"'error' is in the universal stopword list and should be filtered out")
 }
 
 func TestDeduplicateLowercase(t *testing.T) {

@@ -9,7 +9,13 @@ import (
 // ShinglesForSymbol generates enriched shingles for a symbol, used as input
 // to MinHash for semantic similarity search. Each shingle is a lowercased token
 // derived from the symbol's name, types, body references, package, and comments.
-func ShinglesForSymbol(sym Symbol, source []byte) []string {
+//
+// The final token list is filtered through the embedded stopwords.json
+// (celeste-stopwords v1.0.0, CC BY 4.0) via stopWords.Filter. The filter
+// applies the universal set plus the per-language set identified by lang.
+// Pass "" for lang to apply only the universal set — this is the right
+// choice for callers that don't know the file's language.
+func ShinglesForSymbol(sym Symbol, source []byte, lang string) []string {
 	var shingles []string
 
 	// 1. Name parts (split camelCase/snake_case)
@@ -35,12 +41,40 @@ func ShinglesForSymbol(sym Symbol, source []byte) []string {
 		shingles = append(shingles, extractCommentTokens(source, sym)...)
 	}
 
-	return deduplicateLowercase(shingles)
+	deduped := deduplicateLowercase(shingles)
+
+	// Apply the embedded stop-word filter. Removes universal-noise
+	// tokens ("get", "set", "error", "string") and per-language noise
+	// ("ctx", "err" for Go; "self", "none" for Python; etc.) from the
+	// final shingle set. The filtered set becomes the MinHash input,
+	// meaning stopped tokens never consume MinHash signature slots and
+	// search precision improves materially for queries that share any
+	// of these common tokens.
+	//
+	// The filter is a no-op (returns input) when stopWords is nil.
+	if stopWords != nil {
+		deduped = stopWords.Filter(deduped, lang)
+	}
+	return deduped
 }
 
 // splitIdentifier splits a camelCase, PascalCase, or snake_case identifier
-// into its constituent words, all lowercased.
+// into its constituent words, all lowercased. Compound identifiers
+// registered in stopwords.json (e.g. "jquery", "github", "mysql") are
+// preserved as a single atomic token — this prevents proper-noun
+// framework names from decomposing into common English words that
+// pollute search, complementing the splitCamelCase 3+ uppercase fix
+// with a belt-and-suspenders check for full-name matches.
 func splitIdentifier(name string) []string {
+	// Compound check: if the full lowercased name is a known compound
+	// identifier, emit it atomically and skip splitting entirely. This
+	// handles the case where the identifier IS the compound name (e.g.,
+	// a variable named `jquery` or `mysql`). splitCamelCase already
+	// handles JQueryStatic → [JQuery, Static] for PascalCase cases.
+	if stopWords != nil && stopWords.IsCompound(name) {
+		return []string{strings.ToLower(name)}
+	}
+
 	// First handle snake_case
 	if strings.Contains(name, "_") {
 		parts := strings.Split(name, "_")

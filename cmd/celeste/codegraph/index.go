@@ -286,7 +286,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 
 		// Compute MinHash for non-import symbols
 		if sym.Kind != SymbolImport {
-			shingles := ShinglesForSymbol(sym, source)
+			shingles := ShinglesForSymbol(sym, source, lang)
 			sig := idx.hasher.Signature(shingles)
 			_ = idx.store.UpdateMinHash(id, sig)
 		}
@@ -431,6 +431,20 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 		queryShingles = append(queryShingles, splitIdentifier(w)...)
 	}
 	queryShingles = deduplicateLowercase(queryShingles)
+
+	// Apply stop-word filter to the query side. This is SPEC §6.2
+	// application point 2: the query tokenization must pass through
+	// the same filter that the symbol shingle sets went through at
+	// index time, otherwise a stop-worded token in the symbol set
+	// would still match against a non-stop-worded token in the query
+	// and vice versa, producing asymmetric Jaccard scores.
+	//
+	// Queries aren't language-tagged (a free-form "database connection
+	// pool query" could target Go, Python, TS, or any mix), so we pass
+	// "" for lang and apply only the universal set.
+	if stopWords != nil {
+		queryShingles = stopWords.Filter(queryShingles, "")
+	}
 
 	querySig := idx.hasher.Signature(queryShingles)
 
@@ -1001,8 +1015,10 @@ func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData [
 
 	shingleBoost := 0.0
 	if c.OutEdges == 0 {
-		sym := Symbol{Name: c.Name, Line: c.Line}
-		shingles := ShinglesForSymbol(sym, sourceData)
+		sym := Symbol{Name: c.Name, Line: c.Line, File: c.File}
+		// Detect language from file path so per-language stopwords apply.
+		lang := DetectLanguage(c.File)
+		shingles := ShinglesForSymbol(sym, sourceData, lang)
 		if len(shingles) > 10 {
 			shingleBoost = float64(len(shingles)) * 0.05
 		}
