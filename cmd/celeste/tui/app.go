@@ -62,6 +62,26 @@ type AppModel struct {
 	typingPos     int    // Current position in content
 	animFrame     int    // Animation frame counter
 
+	// streamDone is true once StreamDoneMsg has been received for the
+	// currently-rendering assistant message. It coordinates the typing
+	// animation with the network stream:
+	//
+	//   - While streamDone == false, the TickMsg handler MUST keep the
+	//     ticker alive even after typingPos catches up to len(typingContent),
+	//     because more chunks may still be arriving and extending the buffer.
+	//   - Once streamDone == true, the TickMsg tick-complete branch can
+	//     safely commit the final content to session history and stop.
+	//
+	// Without this coordination, a short first chunk (1-3 chars) drained
+	// the typing animation before the second chunk arrived, committed that
+	// single character to session persistence as the "complete" assistant
+	// reply, and left every subsequent chunk to pile up in a zombie buffer
+	// with no active ticker to render it. The session and the next LLM
+	// request would both see content_len=1 — the "O" truncation bug.
+	// See log /Users/kusanagi/.celeste/logs/celeste_2026-04-13.log for a
+	// captured reproduction.
+	streamDone bool
+
 	// Pending tool call tracking
 	pendingToolCallID  string // Track tool call ID for sending result back to LLM
 	pendingToolCalls   []pendingToolCall
@@ -1268,18 +1288,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StreamChunkMsg:
 		if msg.Chunk.IsFirst {
-			// First chunk: start the assistant message and typing animation
+			// First chunk: start the assistant message and typing animation.
+			// Reset streamDone here — the tick handler uses it to decide
+			// whether to commit when typing catches up.
 			m.chat = m.chat.AddAssistantMessage("")
 			m.typingContent = msg.Chunk.Content
 			m.typingPos = 0
 			m.streaming = true
+			m.streamDone = false
 			m.status = m.status.SetStreaming(true)
 			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
 			cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
 				return TickMsg{Time: t}
 			}))
 		} else {
-			// Subsequent chunks: extend the typing buffer
+			// Subsequent chunks: extend the typing buffer. The running
+			// ticker will pick up the extension on its next fire. If the
+			// ticker happened to die right before this chunk arrived (the
+			// "O" race — see the streamDone comment on AppModel), the
+			// tick handler's new `!streamDone` guard would have kept it
+			// alive, so this append is safe to land without rescheduling.
 			m.typingContent += msg.Chunk.Content
 		}
 		// Chain the next read from the stream channel
@@ -1293,9 +1321,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamDoneMsg:
-		// Clear cancel function — operation completed
+		// Clear cancel function — operation completed.
+		// Flip streamDone so the TickMsg tick-complete branch can commit
+		// the final content once the typing animation catches up.
 		m.cancelFunc = nil
 		m.interruptPending = false
+		m.streamDone = true
 		// Update token counts from API response
 		if msg.Usage != nil && (msg.Usage.PromptTokens > 0 || msg.Usage.CompletionTokens > 0) {
 			m.lastMsgInTok = msg.Usage.PromptTokens
@@ -1457,9 +1488,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streamStart = time.Now().Add(-msg.Duration)
 			}
 			// Feed the response through SimulatedTyping — same path as regular chat.
+			// Agent responses are not streamed (the whole text arrives in one
+			// msg.Text), so mark streamDone=true up front: the TickMsg
+			// tick-complete branch will commit as soon as typing catches up
+			// instead of idling forever waiting for a StreamDoneMsg that the
+			// agent path never sends.
 			if strings.TrimSpace(msg.Text) != "" {
 				m.typingContent = msg.Text
 				m.typingPos = 0
+				m.streamDone = true
 				m.chat = m.chat.AddAssistantMessage("")
 				m.status = m.status.SetText("Agent: typing response...")
 				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
@@ -1843,12 +1880,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
 
 			if m.typingPos < len(m.typingContent) {
-				// Schedule next typing tick
+				// More content to display — reschedule the typing tick.
+				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
+					return TickMsg{Time: t}
+				}))
+			} else if !m.streamDone {
+				// Typing caught up to the end of the current buffer, but the
+				// network stream is still in flight — a late chunk may extend
+				// typingContent at any moment. Keep the ticker alive in an
+				// idle state so the next tick picks up any extension. Do NOT
+				// commit the content to session history yet; that's what
+				// caused the v1.9.0 "O" truncation bug. See the streamDone
+				// field doc on AppModel for the full story.
 				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
 					return TickMsg{Time: t}
 				}))
 			} else {
-				// Typing complete - show final content without corruption
+				// Typing complete and stream is done — show final content
+				// without corruption and commit to session history.
 				m.chat = m.chat.SetLastAssistantContent(m.typingContent)
 
 				// Add assistant message to session for persistence
@@ -1866,6 +1915,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.typingContent = ""
 				m.typingPos = 0
 				m.streaming = false
+				m.streamDone = false
 				m.status = m.status.SetStreaming(false)
 				elapsed := time.Since(m.streamStart)
 				inTok, outTok := m.lastMsgInTok, m.lastMsgOutTok
