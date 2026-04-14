@@ -64,6 +64,11 @@ type Indexer struct {
 	workspace string
 	store     *Store
 	hasher    *MinHasher
+	// tsParser is lazily initialized on the first .ts/.tsx file seen
+	// during indexFile. Holding one long-lived parser and reusing it
+	// across files avoids the native-allocation cost of a per-file
+	// tree-sitter setup. Nil until first TS file; Close() releases it.
+	tsParser *TSParser
 }
 
 // DefaultIndexPath returns the path to the code graph database for a project.
@@ -166,8 +171,13 @@ func (idx *Indexer) persistHasherSeeds() error {
 	return nil
 }
 
-// Close releases the underlying database connection.
+// Close releases the underlying database connection and any native
+// resources held by the tree-sitter TS parser.
 func (idx *Indexer) Close() error {
+	if idx.tsParser != nil {
+		idx.tsParser.Close()
+		idx.tsParser = nil
+	}
 	return idx.store.Close()
 }
 
@@ -290,6 +300,13 @@ func (idx *Indexer) indexFile(relPath string) error {
 	if lang == "go" {
 		parser := NewGoParser()
 		result, err = parser.ParseFile(absPath)
+	} else if lang == "typescript" {
+		// Tree-sitter backed TS parser. Lazily allocated on first use
+		// so pure-Go / Python projects pay no CGo startup cost.
+		if idx.tsParser == nil {
+			idx.tsParser = NewTSParser()
+		}
+		result, err = idx.tsParser.ParseFile(absPath)
 	} else if indexableLanguages[lang] {
 		parser := NewGenericParser(lang)
 		result, err = parser.ParseFile(absPath)
