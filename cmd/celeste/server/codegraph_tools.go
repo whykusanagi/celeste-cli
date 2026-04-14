@@ -357,48 +357,56 @@ func celesteCodeReviewToolDef() mcp.MCPToolDef {
 
 // --- celeste_code_graph ---
 
+// The underlying builtin code_graph tool expects {symbol, direction, depth}
+// and validates symbol as required. Mirror its schema 1:1 so the MCP
+// wrapper doesn't advertise fields the tool can't accept.
 func celesteCodeGraphToolDef() mcp.MCPToolDef {
 	schema := json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"action": {
-				"type": "string",
-				"description": "Graph operation: stats, package_graph, file_graph, edges_from, edges_to, ..."
-			},
 			"symbol": {
 				"type": "string",
-				"description": "Symbol name to center the query on (required for edges_from / edges_to)."
+				"description": "Symbol name to query relationships for. Use celeste_code_search first to find it."
+			},
+			"direction": {
+				"type": "string",
+				"enum": ["callers", "callees", "both"],
+				"description": "Edge direction: callers (who calls this), callees (what this calls), both. Default: both."
+			},
+			"depth": {
+				"type": "number",
+				"description": "Number of hops to traverse. Default 1, max 3."
 			},
 			"workspace": {
 				"type": "string",
 				"description": "Absolute workspace path (defaults to the server's cwd)."
 			}
-		}
+		},
+		"required": ["symbol"]
 	}`)
 	return mcp.MCPToolDef{
 		Name:        "celeste_code_graph",
-		Description: "Query the celeste codegraph for structural information: call edges, package connections, file-to-file dependencies. Reads the cached index.",
+		Description: "Query structural relationships in the celeste codegraph: who calls a function, what it calls, implements, references. Reads the cached index.",
 		InputSchema: schema,
 	}
 }
 
 // --- celeste_code_symbols ---
 
+// The underlying builtin code_symbols tool expects {file, package} and
+// requires at least one. Mirror the real schema — name-only lookups
+// aren't supported; the dedicated semantic search tool handles those.
 func celesteCodeSymbolsToolDef() mcp.MCPToolDef {
 	schema := json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"name": {
-				"type": "string",
-				"description": "Symbol name to look up (exact or substring)."
-			},
 			"file": {
 				"type": "string",
-				"description": "Return all symbols in the given file."
+				"description": "Relative file path to list symbols for."
 			},
 			"package": {
 				"type": "string",
-				"description": "Return all symbols in the given package."
+				"description": "Package name to list symbols for."
 			},
 			"workspace": {
 				"type": "string",
@@ -408,7 +416,7 @@ func celesteCodeSymbolsToolDef() mcp.MCPToolDef {
 	}`)
 	return mcp.MCPToolDef{
 		Name:        "celeste_code_symbols",
-		Description: "Look up symbols in the celeste codegraph by name, file, or package. Reads the cached index.",
+		Description: "List all symbols in a file or package from the celeste codegraph. Provide either file or package. Reads the cached index. For name-based search, use celeste_code_search instead.",
 		InputSchema: schema,
 	}
 }
