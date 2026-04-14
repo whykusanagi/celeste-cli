@@ -1,11 +1,13 @@
+//go:build cgo
+
 // TypeScript parser backed by tree-sitter. Replaces GenericParser for
-// .ts and .tsx files. The regex-based GenericParser produced symbols
-// that matched identifier shapes but could not resolve call-graph edges
-// through TypeScript's type-aware method dispatch, leaving most TS
-// interfaces with edgeCount=0 in the codegraph (documented in SPEC §8.2
-// and surfaced by the Task 19 ⚠ zero-edge warning). An AST-based parser
-// sees the real call sites and writes the edges that were previously
-// missing.
+// .ts and .tsx files when celeste is built with CGo enabled. The
+// regex-based GenericParser produced symbols that matched identifier
+// shapes but could not resolve call-graph edges through TypeScript's
+// type-aware method dispatch, leaving most TS interfaces with
+// edgeCount=0 in the codegraph (documented in SPEC §8.2 and surfaced
+// by the Task 19 ⚠ zero-edge warning). An AST-based parser sees the
+// real call sites and writes the edges that were previously missing.
 //
 // Scope for v2.0.0: TypeScript (.ts and .tsx) only. Python and Rust stay
 // on the regex GenericParser for now — they aren't the validation
@@ -13,9 +15,16 @@
 // bundled benchmark corpus.
 //
 // CGo caveat: this file and its dependencies pull in tree-sitter's C
-// runtime and the bundled TypeScript/TSX grammars. Building celeste
-// from source therefore requires a working C toolchain. This is a real
-// user-visible cost knowingly accepted at Task 23 ship decision.
+// runtime and the bundled TypeScript/TSX grammars. The //go:build cgo
+// constraint at the top gates compilation on CGO_ENABLED=1 — when
+// cross-building release binaries from a Linux host for darwin/windows
+// the Go toolchain disables CGo implicitly, and the stub in
+// parser_ts_stub.go takes over. Stub builds fall back to the regex
+// GenericParser for TypeScript files; they still work, just without
+// the tree-sitter edge-resolution improvement. Users who want the
+// full experience must either build from source with CGo enabled or
+// wait for the v2.1.0 release workflow which will cross-compile
+// against a proper C toolchain (zig CC or matrix of native runners).
 package codegraph
 
 import (

@@ -1,3 +1,9 @@
+//go:build cgo
+
+// Tree-sitter TypeScript parser tests. Only compiled when CGo is
+// available — the CGO_ENABLED=0 stub in parser_ts_stub.go delegates
+// everything to GenericParser and has no independent behavior to test.
+
 package codegraph
 
 import (
