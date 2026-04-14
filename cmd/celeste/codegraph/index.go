@@ -436,7 +436,7 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 
 // SemanticSearchOptions configures SemanticSearch behavior. Existing
 // callers of SemanticSearch(query, topK) get the default behavior —
-// path filter ON — without any changes.
+// path filter ON, structural rerank ON — without any changes.
 type SemanticSearchOptions struct {
 	// TopK is the maximum number of results to return. Required.
 	TopK int
@@ -450,6 +450,22 @@ type SemanticSearchOptions struct {
 	// below clean-path results. Default when using SemanticSearch is true.
 	// Set false for raw unfiltered results.
 	ApplyPathFilter bool
+
+	// Reranker, when non-nil, is applied to the candidate list after
+	// the Jaccard + BM25 fusion and before the path filter tiering.
+	// A pluggable seam — the default (set via SemanticSearch) is
+	// StructuralReranker which does pure-Go feature-based rescoring.
+	// Future cloud/local embedding rerankers can implement this
+	// interface without touching the search pipeline.
+	//
+	// Pass a zero value (nil) together with
+	// DisableRerank=true to get the pre-Task-24 behavior (fusion-only).
+	Reranker Reranker
+
+	// DisableRerank bypasses the Reranker even if one is set.
+	// Useful for A/B testing and for callers that want the raw
+	// fused ordering without any structural adjustments.
+	DisableRerank bool
 }
 
 // SemanticSearch finds symbols semantically similar to the query string.
@@ -463,6 +479,7 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 	return idx.SemanticSearchWithOptions(query, SemanticSearchOptions{
 		TopK:            topK,
 		ApplyPathFilter: true,
+		Reranker:        NewStructuralReranker(),
 	})
 }
 
@@ -633,6 +650,17 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 			}
 		}
 		allCandidates = fused
+	}
+
+	// Structural rerank. Applied after the Jaccard+BM25 fusion and
+	// before the path-filter tier partitioning so that rerank
+	// adjustments (matched-token-ratio boost, edge-density boost,
+	// zero-edge penalty) reorder candidates within each would-be tier
+	// without reshuffling clean-vs-demoted boundaries. Skipped when
+	// DisableRerank is set or when no Reranker is installed — then
+	// the caller gets the raw fused ordering.
+	if !opts.DisableRerank && opts.Reranker != nil && len(allCandidates) > 1 {
+		allCandidates = opts.Reranker.Rerank(allCandidates, len(queryShingles))
 	}
 
 	if !opts.ApplyPathFilter {

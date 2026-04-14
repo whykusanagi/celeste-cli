@@ -75,40 +75,53 @@ func main() {
 	fmt.Fprintf(&buf, "Opening: %s\n", db)
 	fmt.Fprintf(&buf, "  %d files, %d symbols, %d edges\n\n", stats.TotalFiles, stats.TotalSymbols, stats.TotalEdges)
 
-	for _, q := range queries {
-		fmt.Fprintf(&buf, "### %s: %q\n", q.ID, q.Text)
-		results, err := idx.SemanticSearchWithOptions(q.Text, codegraph.SemanticSearchOptions{
-			TopK:            10,
-			ApplyPathFilter: true,
-		})
-		if err != nil {
-			fmt.Fprintf(&buf, "  ERROR: %v\n\n", err)
-			continue
-		}
-		if len(results) == 0 {
-			fmt.Fprintln(&buf, "  (no results)")
-		}
-		for i, r := range results {
-			flagStr := ""
-			if len(r.PathFlags) > 0 {
-				flagStr = " [" + strings.Join(r.PathFlags, ",") + "]"
+	// Run each benchmark query twice: once with rerank disabled
+	// (fusion-only baseline) and once with the default structural
+	// reranker. Both share the same Indexer + same MinHash seeds so
+	// the only variable is the rerank layer. Anything other than
+	// rerank behavior reflects the shared state, not test noise.
+	runOne := func(label string, reranker codegraph.Reranker, disable bool) {
+		fmt.Fprintf(&buf, "## %s\n\n", label)
+		for _, q := range queries {
+			fmt.Fprintf(&buf, "### %s: %q\n", q.ID, q.Text)
+			results, err := idx.SemanticSearchWithOptions(q.Text, codegraph.SemanticSearchOptions{
+				TopK:            10,
+				ApplyPathFilter: true,
+				Reranker:        reranker,
+				DisableRerank:   disable,
+			})
+			if err != nil {
+				fmt.Fprintf(&buf, "  ERROR: %v\n\n", err)
+				continue
 			}
-			matched := ""
-			if len(r.MatchedTokens) > 0 {
-				matched = " {" + strings.Join(r.MatchedTokens, ",") + "}"
+			if len(results) == 0 {
+				fmt.Fprintln(&buf, "  (no results)")
 			}
-			fmt.Fprintf(&buf,
-				"  %2d.  jac=%.4f  bm25=%.2f  edges=%-3d %-42s %-10s %s:%d%s%s\n",
-				i+1, r.Similarity, r.BM25Score, r.EdgeCount,
-				r.Symbol.Name, r.Symbol.Kind,
-				r.Symbol.File, r.Symbol.Line, flagStr, matched,
-			)
-			for _, w := range r.ConfidenceWarnings {
-				fmt.Fprintf(&buf, "         ⚠ %s\n", w)
+			for i, r := range results {
+				flagStr := ""
+				if len(r.PathFlags) > 0 {
+					flagStr = " [" + strings.Join(r.PathFlags, ",") + "]"
+				}
+				matched := ""
+				if len(r.MatchedTokens) > 0 {
+					matched = " {" + strings.Join(r.MatchedTokens, ",") + "}"
+				}
+				fmt.Fprintf(&buf,
+					"  %2d.  jac=%.4f  bm25=%.2f  edges=%-3d %-42s %-10s %s:%d%s%s\n",
+					i+1, r.Similarity, r.BM25Score, r.EdgeCount,
+					r.Symbol.Name, r.Symbol.Kind,
+					r.Symbol.File, r.Symbol.Line, flagStr, matched,
+				)
+				for _, w := range r.ConfidenceWarnings {
+					fmt.Fprintf(&buf, "         ⚠ %s\n", w)
+				}
 			}
+			fmt.Fprintln(&buf)
 		}
-		fmt.Fprintln(&buf)
 	}
+
+	runOne("FUSION ONLY (rerank disabled)", nil, true)
+	runOne("FUSION + STRUCTURAL RERANK", codegraph.NewStructuralReranker(), false)
 
 	if err := os.WriteFile(*out, []byte(buf.String()), 0644); err != nil {
 		log.Fatalf("write out: %v", err)
