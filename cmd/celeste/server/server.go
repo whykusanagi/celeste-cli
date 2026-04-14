@@ -10,13 +10,14 @@ import (
 	"log"
 	"sync"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 )
 
 const (
 	serverName    = "celeste"
-	serverVersion = "1.8.0"
+	serverVersion = "1.9.0"
 )
 
 // Config holds MCP server configuration.
@@ -62,6 +63,13 @@ type Server struct {
 	handlers map[string]ToolHandler
 	mu       sync.RWMutex
 	done     chan struct{}
+
+	// indexers caches one *codegraph.Indexer per workspace path so
+	// direct-query MCP tools (celeste_code_search, celeste_code_review,
+	// ...) don't re-open the SQLite store on every call. Lazily
+	// populated on first use via indexerFor. Released on Close.
+	indexerMu sync.Mutex
+	indexers  map[string]*codegraph.Indexer
 }
 
 // New creates a new MCP server with the given configuration.
@@ -70,8 +78,55 @@ func New(cfg Config) *Server {
 		config:   cfg,
 		handlers: make(map[string]ToolHandler),
 		done:     make(chan struct{}),
+		indexers: make(map[string]*codegraph.Indexer),
 	}
 	return s
+}
+
+// Close releases resources held by the server. Must be called on
+// shutdown — the indexer cache holds SQLite connections that won't
+// flush otherwise. Safe to call multiple times; second and subsequent
+// calls are no-ops.
+func (s *Server) Close() error {
+	s.indexerMu.Lock()
+	defer s.indexerMu.Unlock()
+	for path, idx := range s.indexers {
+		if idx != nil {
+			_ = idx.Close()
+		}
+		delete(s.indexers, path)
+	}
+	return nil
+}
+
+// indexerFor returns the cached *codegraph.Indexer for the given
+// workspace, opening a new one if none is cached. Opening is lazy
+// and non-destructive: it does NOT auto-build the index — callers
+// that want a fresh index must invoke the celeste_index tool with
+// operation="rebuild" or "update". If no codegraph.db exists for the
+// workspace yet, the returned indexer will be backed by an empty
+// store and queries will return empty results until the first index
+// is built.
+//
+// The bool return is true when the indexer already existed in the
+// cache (cache hit) and false when we just opened it (cache miss).
+// Tests use the flag; callers normally ignore it.
+func (s *Server) indexerFor(workspace string) (*codegraph.Indexer, bool, error) {
+	if workspace == "" {
+		workspace = s.config.Workspace
+	}
+	s.indexerMu.Lock()
+	defer s.indexerMu.Unlock()
+	if idx, ok := s.indexers[workspace]; ok && idx != nil {
+		return idx, true, nil
+	}
+	dbPath := codegraph.DefaultIndexPath(workspace)
+	idx, err := codegraph.NewIndexer(workspace, dbPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("open indexer for %s: %w", workspace, err)
+	}
+	s.indexers[workspace] = idx
+	return idx, false, nil
 }
 
 // RegisterTool adds a tool definition and its handler to the server.

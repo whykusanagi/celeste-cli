@@ -55,11 +55,27 @@ func validateWorkspace(requested, serverWorkspace string) error {
 	return nil
 }
 
-// RegisterHandlers registers all three MCP tool handlers on the server.
+// RegisterHandlers registers all MCP tool handlers on the server.
+// Persona tools (celeste / celeste_content / celeste_status) route
+// through a chat LLM and are kept for the "ask Celeste a question" use
+// case. Direct codegraph tools (celeste_index + celeste_code_* family)
+// skip the LLM and serve queries straight from the cached graph — use
+// those for tool-driven workflows that need verbatim results.
 func RegisterHandlers(s *Server) {
 	registerCelesteTool(s)
 	registerCelesteContentTool(s)
 	registerCelesteStatusTool(s)
+	registerCodegraphTools(s)
+}
+
+// removeIfExists deletes a file at path if present, swallowing
+// not-found errors. Used by indexRebuild to clear stale SQLite files
+// before re-opening.
+func removeIfExists(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	return os.Remove(path)
 }
 
 // --- celeste tool ---

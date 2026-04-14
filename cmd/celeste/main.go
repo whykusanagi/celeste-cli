@@ -2017,6 +2017,10 @@ func runServeCommand(args []string) {
 
 	srv := server.New(serverCfg)
 	server.RegisterHandlers(srv)
+	// Close releases the per-workspace codegraph indexers the server
+	// has opened on demand. Without this, SQLite WAL files aren't
+	// flushed when celeste serve exits and the next run sees stale state.
+	defer srv.Close()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
