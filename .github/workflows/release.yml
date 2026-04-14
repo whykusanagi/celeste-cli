@@ -22,13 +22,24 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.1'
+        go-version: '1.26.2'
 
     - name: Get version from tag
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
     - name: Build binaries
+      env:
+        # v1.9.0 introduces a CGo tree-sitter TypeScript parser behind a
+        # //go:build cgo constraint. Release binaries are built pure-Go
+        # (CGO_ENABLED=0) so every platform in the release matrix gets
+        # the same fully-static artifact and the parser_ts_stub.go
+        # fallback. Users who want the tree-sitter improvement can
+        # build from source with CGo enabled. The v2.1.0 release
+        # workflow will replace this with a zig-cc cross-toolchain or
+        # a native-runner matrix so the tree-sitter parser ships with
+        # pre-built binaries too.
+        CGO_ENABLED: "0"
       run: |
         # Linux
         GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-linux-amd64 ./cmd/celeste
@@ -62,7 +73,7 @@ jobs:
           --version "${{ steps.get_version.outputs.VERSION }}" \
           --commit "${{ github.sha }}" \
           --tag "v${{ steps.get_version.outputs.VERSION }}" \
-          --go-version "1.26.1" \
+          --go-version "1.26.2" \
           --dist-dir dist \
           --output dist/manifest.json
 
