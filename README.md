@@ -24,9 +24,9 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
 - 🔮 **40 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
-- 🧠 **Code Graph + Semantic Search** - MinHash-based concept search without embeddings
+- 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
-- 🔌 **MCP Server Mode** - `celeste serve` lets Claude Code, Codex, or any MCP client delegate tasks to Celeste
+- 🔌 **Direct Codegraph MCP Tools** - `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` served verbatim from the cached graph (no chat-LLM round-trip, no `max_tokens` ceiling, streaming progress notifications)
 - 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching
 - 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection and revert
 - 🌐 **Multi-Provider** - Grok/xAI (default), OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter
@@ -207,10 +207,11 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Real Streaming + Corruption Animation** - Token-by-token streaming with corrupted glitch phrases at the typing cursor
 - **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
-### Tool System (v1.8)
-**38 built-in tools** powered by AI function calling:
+### Tool System (v1.9)
+**40+ built-in tools** powered by AI function calling:
 - Dev Tools (bash, read/write/patch files, search, list files)
-- Code Graph (semantic search, code review, symbol analysis)
+- Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter TypeScript parsing)
+- Direct Codegraph MCP Tools (`celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim, no chat-LLM round-trip)
 - Git (status, log)
 - Web (search, fetch)
 - Information Services (Weather, Currency, Twitch, YouTube)
@@ -403,20 +404,36 @@ celeste config --set-tarot-token <token>
 
 ## 🔌 Claude Code Integration
 
-Use Celeste's graph intelligence from Claude Code via the **[celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)** companion:
+Celeste v1.9.0+ exposes the codegraph as **first-class MCP tools** (no chat-LLM
+round-trip, no output-token ceiling, verbatim results). Register `celeste serve`
+once per workspace and any MCP client — Claude Code, Codex, Cursor, etc. — gets:
+
+- `celeste_index` — `status`, `update`, `rebuild` operations with `notifications/progress` streaming
+- `celeste_code_search` — semantic search (MinHash Jaccard + BM25 fusion + structural rerank)
+- `celeste_code_review` — structural code review findings as verbatim JSON
+- `celeste_code_graph` — symbol callers, callees, references
+- `celeste_code_symbols` — list symbols in a file or package
+
+Indexing is **explicit**: query tools never auto-reindex. After code changes, the
+caller invokes `celeste_index { operation: "update" }` to refresh the graph.
 
 ```bash
-# Add Celeste as an MCP server
+# Add Celeste as an MCP server (once per workspace you want indexed)
 claude mcp add celeste celeste serve
+```
 
-# Install skills
+Optionally, install the [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)
+companion for the persona-routed skill command wrappers (`/celeste-review`,
+`/celeste-search`, `/celeste-graph`, `/celeste-context`):
+
+```bash
 git clone https://github.com/whykusanagi/celeste-for-claude.git
 cp celeste-for-claude/skills/*.md ~/.claude/commands/
 ```
 
-Available skills: `/celeste-review`, `/celeste-search`, `/celeste-graph`, `/celeste-context`
-
-Claude Code stays in control, Celeste provides the graph intelligence. Each skill makes focused MCP calls — Claude verifies findings and writes the code.
+Claude Code stays in control, Celeste provides the graph intelligence. The
+direct tools are preferred for tool-driven workflows; the persona-routed skills
+are a convenience for natural-language interactions.
 
 ---
 

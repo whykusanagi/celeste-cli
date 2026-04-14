@@ -413,6 +413,43 @@ type Registry struct {
 - **`permissions/`**: Multi-layer allow/deny/ask rules with pattern matching and persistent config
 - **`context/`**: Token budget tracking, reactive/proactive compaction, tool result capping
 - **`tools/mcp/`**: Model Context Protocol client with stdio/SSE transports for external tool servers
+- **`server/`**: Celeste's own MCP server. Exposes persona tools (`celeste`, `celeste_content`,
+  `celeste_status`) that route through a chat LLM, plus **direct codegraph tools** added in
+  v1.9.0 that bypass the LLM entirely — see the section below.
+
+### Direct Codegraph MCP Tools (v1.9.0+)
+
+`server/codegraph_tools.go` registers five MCP tools that serve codegraph queries
+directly from a per-workspace cached `*codegraph.Indexer`, with no chat-LLM
+round-trip:
+
+| Tool | Purpose |
+|---|---|
+| `celeste_index` | `status` / `update` / `rebuild` operations on the workspace index |
+| `celeste_code_search` | Semantic search (MinHash Jaccard + BM25 fusion + structural rerank) |
+| `celeste_code_review` | Structural code review findings returned as verbatim JSON |
+| `celeste_code_graph` | Symbol callers/callees/references |
+| `celeste_code_symbols` | List symbols by file or package |
+
+Key design rules:
+
+- **Indexing is explicit.** Query tools never auto-reindex. Callers must invoke
+  `celeste_index { operation: "update" }` after code changes.
+- **Per-workspace indexer cache.** `Server.indexerFor(workspace)` lazily opens
+  the SQLite-backed indexer on first use and caches it; `Server.Close()` walks
+  the cache and releases each one on shutdown so WAL files flush cleanly.
+- **Progress notifications.** The stdio transport binds a `Notifier` to each
+  request context and extracts a client-supplied `progressToken` from
+  `params._meta`. Long-running operations (`celeste_index rebuild/update`) call
+  `SendProgress(ctx, msg, pct)` to emit `notifications/progress` events that
+  stream back to the MCP client in real time.
+- **Verbatim results.** Tool output is returned as-is in an MCP `ContentBlock`,
+  not summarized by a persona LLM. There's no `max_tokens` ceiling to truncate
+  large findings — the only limit is the transport's raw byte buffer.
+
+The legacy persona tools (`celeste`, `celeste_content`, `celeste_status`) are
+still registered for "ask Celeste a question" use cases, but tool-driven
+workflows should prefer the direct codegraph tools.
 
 ### Tool Definition Pattern
 
@@ -852,4 +889,4 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 ---
 
 **Last Updated**: 2026-04-03
-**Version**: v1.8.0\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
+**Version**: v1.9.1\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)

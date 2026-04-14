@@ -7,7 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-04-14
+
+### Fixed
+
+- **TUI streaming tick-complete race truncated short first chunks.** When grok streamed an
+  assistant reply that started with a 1-3 character first delta (e.g. `"O"`), the typing
+  animation exhausted its buffer on the very first `TickMsg` (50ms later, `charsPerTick=3`),
+  committed that single character to session history, and stopped the ticker. Subsequent SSE
+  chunks appended to a zombie buffer with no active renderer — the TUI chat bubble froze at
+  the first chunk, session persistence wrote the 1-char string to disk, and the next LLM
+  request was sent with `content_len=1` for that assistant message, losing the rest of the
+  response as conversation context.
+
+  Root cause was in `cmd/celeste/tui/app.go` — the `TickMsg` handler used
+  `typingPos == len(typingContent)` as the sole termination condition without checking whether
+  the network stream had actually finished. Fix adds an `AppModel.streamDone bool` that tracks
+  `EventMessageDone` receipt; the tick-complete branch now has three cases:
+
+  | `typingPos` vs `len` | `streamDone` | Action |
+  |---|---|---|
+  | `pos < len` | any | advance + reschedule (unchanged) |
+  | `pos == len` | `false` | **idle**: reschedule a no-op tick so any late chunk gets picked up |
+  | `pos == len` | `true` | commit to session + stop |
+
+  `StreamChunkMsg(IsFirst=true)` resets `streamDone=false`. `StreamDoneMsg` sets it to true.
+  `AgentProgressResponse` (non-streaming agent reply path that reuses the typing animation)
+  primes `streamDone=true` up front so its animation commits on catch-up instead of idling
+  forever waiting for a done event the agent path never sends.
+
+  Validation: four new regression tests in `cmd/celeste/tui/streaming_race_test.go` reproduce
+  the exact scenario and pin the new invariants. Confirmed in a live TUI session against
+  grok-4-1-fast with a 630-character response rendered correctly on the first try — no
+  re-prompt needed, no trailing anomalies in `~/.celeste/logs/celeste_2026-04-13.log`.
+
+### Details
+
+- Changed files: `cmd/celeste/tui/app.go`, `cmd/celeste/tui/streaming_race_test.go` (new),
+  `cmd/celeste/main.go` (version constant), `cmd/celeste/server/server.go` (version constant),
+  matching test assertions.
+- Scope: this is the **only** behavioral change in v1.9.1. Everything else from v1.9.0 is
+  untouched.
+
 ## [1.9.0] - 2026-04-13
+
+Major search-quality bundle and MCP architecture rework. Eleven commits, ten closed feature
+tasks, empirical A/B validation archives under
+[celeste-stopwords/results/](https://github.com/whykusanagi/celeste-stopwords/tree/main/results).
+
+SPEC §5.3 acceptance criteria all met on the grafana benchmark:
+`JQueryStatic` absent from Q3 top 10, aggregate relevance 22/50 → 35/50 (+59% absolute),
+no TP regressions on Q2/Q5, stopword list < 500 entries, corpus Apache-2.0/MIT.
+
+### Added
+
+- **Direct codegraph MCP tools.** Five new first-class MCP tools that bypass the chat LLM
+  entirely so Claude Code / Cursor / any MCP client can call the codegraph directly:
+  - `celeste_index` (operations: `status`, `update`, `rebuild`) — indexing is explicit; the
+    query tools never auto-reindex. Progress notifications (`notifications/progress`) stream
+    back through the stdio transport when the client provides a `progressToken`.
+  - `celeste_code_search` — semantic search with MinHash+BM25 fusion + structural rerank
+  - `celeste_code_review` — structural code review findings as verbatim JSON
+  - `celeste_code_graph` — symbol callers/callees/references
+  - `celeste_code_symbols` — list all symbols in a file or package
+
+  Per-workspace `*codegraph.Indexer` cached on the server, lazy-opened, released on shutdown.
+  Results returned verbatim as MCP `ContentBlock`s with no chat-LLM summarization and no
+  `max_tokens` ceiling.
+
+- **BM25 fused ranking.** Per-symbol term frequency and per-corpus IDF persisted in two new
+  SQLite tables (`symbol_tokens`, `token_stats`). Query time merges Jaccard and BM25 via
+  Reciprocal Rank Fusion (k=60). `SearchResult` gains `BM25Score` + `MatchedTokens`. Q1
+  ("authentication session token validate") flipped from 2/10 relevant to 8/10 relevant on
+  grafana after this landed — IDF-weighted tiebreaking on session/token tokens lifted the
+  real auth API functions above the noise.
+
+- **Tree-sitter TypeScript parser** (behind `//go:build cgo`). Replaces the regex-based
+  `GenericParser` for `.ts` and `.tsx` files when celeste is built with CGo enabled. Accurate
+  `call_expression` edge resolution instead of the old `\bname(` body-scan heuristic. On
+  content-control (21 TS files) the edge count drops 445 → 211 (real, not overcounted) and
+  zero-edge top-10 warnings drop 3 → 0. Python and Rust stay on the regex parser for v1.9.0;
+  tracked for v2.1.0 as #18 and #19.
+
+  `parser_ts_stub.go` provides a `//go:build !cgo` fallback that delegates to `GenericParser`
+  so pure-Go cross-compile release binaries still work — they just lose the tree-sitter
+  improvement. Users building from source get the full experience automatically.
+
+- **Structural feature rerank layer.** `StructuralReranker` rescores candidates using features
+  the RRF fusion can't see: matched-token-ratio, log-normalized edge density, function/method
+  kind boost, zero-edge penalty. Pure Go, zero dependencies. Exposed via a `Reranker` interface
+  on `SemanticSearchOptions` so a future embedding-based reranker (local llama.cpp bridge,
+  grok/xAI embeddings, ONNX) can drop in without touching the pipeline.
+
+- **Stopwords runtime integration.** Embedded `celeste-stopwords` v1.0.0 (CC BY 4.0) applied
+  at both index time and query time. Filters universal + per-language noise tokens from
+  shingle sets before MinHash so common tokens like `get`/`set`/`error`/`string` don't consume
+  signature slots. Includes a downstream patch removing `query` from the TypeScript set to
+  avoid asymmetric filtering breaking Q3 on TS codebases, plus `TestStopWords_PreserveTokensNotStopped`
+  regression guard.
+
+- **Reasoning metadata on `SearchResult`.** `EdgeCount`, `PathFlags`, `ConfidenceWarnings`,
+  `MatchedTokens` — downstream LLMs can audit every search result instead of trusting a
+  single similarity number. Confidence warnings surface zero-edge interfaces, low-confidence
+  scores, declaration-only types, and path-demotion reasons.
+
+- **Path-based post-ranking filter.** Tier-partitions `test` / `mock` / `generated` /
+  `vendored` / `declaration` results below clean-path results with explicit `[mock]` etc.
+  flags. Q2 ("http request handler middleware") previously had 100% mock handlers dominating
+  the top 10 on grafana; v1.9.0 tiers them below production handlers. If the query itself
+  asks for test/mock code (`queryWantsTests`), the filter backs off to respect user intent.
+
+- **MinHash seed persistence.** Replaced `hash/maphash` (opaque, unserializable) with seeded
+  FNV-1a (serializable uint64 seeds). The 128 seed values are stored in a new `meta` SQLite
+  table at first `Build()`, so a subsequent process loading the same index restores the same
+  hash family and signatures stay comparable across process invocations. Without this, the
+  `celeste serve` MCP bridge silently returned noise because every new server process rolled
+  fresh random seeds that had no relationship to the signatures already stored in the database.
+
+### Changed
+
+- **Anthropic backend default `max_tokens` raised from 8192 → 32768.** The old 8192 ceiling
+  truncated the chat-mode MCP path mid-response when a sub-tool returned a multi-KB JSON blob
+  and the chat LLM was asked to echo it. Claude opus/sonnet 4.x support up to 64K output
+  tokens; 32K is a 4× budget with no downside (only used tokens are billed).
+
+- **`ShinglesForSymbol` signature.** Now takes `lang string` so the embedded stopwords
+  filter can apply the per-language set alongside the universal set. Callers that don't know
+  the file language should pass `""` to get universal-only filtering.
+
+- **`SearchResult` struct.** Extended with `BM25Score`, `MatchedTokens`, `EdgeCount`,
+  `PathFlags`, `ConfidenceWarnings`. `Similarity` (Jaccard) is unchanged — existing callers
+  that only read `Symbol` + `Similarity` keep working.
+
+- **MinHash signatures computed by celeste-cli < 1.9.0 are semantically stale.** Existing
+  indexes still work for symbol lookups, edges, and keyword search, but semantic search
+  accuracy improves if you rebuild:
+
+  ```bash
+  # Via the CLI
+  celeste index --rebuild
+
+  # Via the MCP bridge
+  # call celeste_index { operation: "rebuild", workspace: "/path/to/project" }
+  ```
 
 ### Fixed
 
@@ -26,28 +168,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `IFoo` / `IArguments` / `IPromise` / `ICache` / any `I`-prefixed TypeScript interface
   - `IPv4` / `IPv6` / `VNode` / `ETag` / `OAuth2` / `XDist`
 
-### Changed
+- **Two direct-tool MCP schema mismatches.** `celeste_code_symbols` advertised a `name` field
+  that the underlying builtin tool doesn't accept; `celeste_code_graph` advertised an `action`
+  discriminator that doesn't exist. Both schemas now mirror the real builtin tool parameters
+  1:1 — name-based lookups go through `celeste_code_search` instead.
 
-- **MinHash signatures computed by previous versions are now semantically stale.** Any codegraph
-  index built with celeste-cli < 1.9.0 carries MinHashes derived from the old `splitCamelCase`
-  tokenization. Existing indexes continue to work — symbol lookups, edges, and keyword search
-  are unaffected — but semantic search accuracy improves if you rebuild:
+### CI / Release
 
-  ```bash
-  celeste index --rebuild
-  ```
-
-  A future release will add automatic detection of stale indexes and surface a rebuild prompt.
+- **Go toolchain bumped 1.26.1 → 1.26.2** in `.github/workflows/ci.yml` and `release.yml`.
+  1.26.1 stdlib has 5 CVEs (`crypto/x509` × 3, `crypto/tls`, `html/template`) fixed in 1.26.2;
+  `govulncheck` now returns "No vulnerabilities found".
+- **Release workflow pins `CGO_ENABLED=0`** for cross-platform binary builds. Released
+  artifacts ship with the pure-Go `parser_ts_stub.go` fallback for portability; users who want
+  the tree-sitter improvement can `go install` from source with CGo enabled. A proper CGo
+  cross-toolchain release workflow (zig cc or native-runner matrix) is queued for v2.1.0.
+- **Dockerfile builder adds `build-base`** and sets `CGO_ENABLED=1` on the test-compile step
+  so the codegraph test binary can link the tree-sitter C runtime. Runtime container still
+  uses `CGO_ENABLED=0`; only test compilation needs the C toolchain.
 
 ### Details
 
-- Only `cmd/celeste/codegraph/shingle.go:splitCamelCase` changed. The fix adds one more
-  `unicode.IsUpper(runes[i-3])` check and raises the loop guard from `i > 1` to `i > 2`.
-- All existing `TestSplitIdentifier` cases still pass (no regressions on `validateSession`,
-  `HTTPServer`, `parseJSON`, `XMLParser`, `HTMLToMarkdown`, `get_user_by_id`, `ID`, `x`).
-- 12 new anchor cases added in `shingle_test.go` for the fixed identifier families.
-- See `celeste-stopwords/results/simulation_report.md` for the empirical analysis: 3,249
-  symbols in a 1.6M-symbol training corpus have name re-splits under the fix.
+- 14 commits on `feat/v1.9-quality-bundle` (PR #16) plus a schema fix direct to main plus
+  PR #17 hardening `release.yml` for the tag build.
+- Empirical validation archives under `celeste-stopwords/results/`:
+  - `ab_test_TASK19_v1.9.0_grafana_app.txt` (path filter + reasoning metadata)
+  - `ab_test_TASK20_v1.9.0_grafana_app.txt` (BM25 fused ranking)
+  - `ab_test_TASK21_v1.9.0_grafana_app.txt` (stopwords runtime)
+  - `ab_test_TASK24_rerank_content_control.txt` (structural rerank, shared-index A/B)
+  - `ship_decision_v1.9.0.md` (full GO decision document)
+- Known v2.1.0 follow-ups: #18 (tree-sitter Python), #19 (tree-sitter Rust), release workflow
+  CGo cross-toolchain for pre-built TS parser.
 
 ## [1.8.0] - 2026-04-03
 

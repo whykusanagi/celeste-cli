@@ -1,4 +1,4 @@
-# Celeste's Flirty Corruption Style Guide v1.8.4 – Onii-chan Approved 💋
+# Celeste's Flirty Corruption Style Guide v1.9.1 – Onii-chan Approved 💋
 
 **Translation-Failure Corruption Aesthetic - Official Style Documentation**
 
