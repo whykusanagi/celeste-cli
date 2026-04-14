@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.26.1']
+        go: ['1.26.2']
 
     steps:
     - name: Check out code
@@ -45,7 +45,7 @@ jobs:
       run: go test -v -race -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
 
     - name: Check coverage threshold
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.1'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.2'
       run: |
         coverage=$(go tool cover -func=coverage.txt | grep total | awk '{print $3}' | sed 's/%//')
         echo "Total coverage: ${coverage}%"
@@ -56,7 +56,7 @@ jobs:
         echo "✅ Coverage ${coverage}% meets 5% threshold"
 
     - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.1'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.2'
       uses: codecov/codecov-action@v4
       with:
         files: ./coverage.txt
@@ -74,7 +74,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.1'
+        go-version: '1.26.2'
         cache: true
 
     - name: Run golangci-lint
@@ -145,7 +145,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.1'
+        go-version: '1.26.2'
         cache: true
 
     - name: Run Gitleaks
@@ -170,7 +170,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.1'
+        go-version: '1.26.2'
         cache: true
 
     - name: Build for multiple platforms
