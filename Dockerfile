@@ -7,8 +7,14 @@ FROM golang:1.26-alpine AS builder
 LABEL maintainer="whykusanagi"
 LABEL description="CelesteCLI test environment"
 
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates
+# Install build dependencies.
+# build-base (gcc + make + musl-dev) is required for CGo — the codegraph
+# package pulls in github.com/tree-sitter/go-tree-sitter which embeds the
+# tree-sitter C runtime + TypeScript/TSX grammars via CGo. Without a C
+# toolchain the tree-sitter-typescript bindings file has all its Go
+# files build-constraint-excluded, and go test -c fails with
+# "build constraints exclude all Go files in .../bindings/go".
+RUN apk add --no-cache git ca-certificates build-base
 
 # Set working directory
 WORKDIR /app
@@ -20,7 +26,12 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build test binaries for all packages
+# Build test binaries for all packages.
+# CGO_ENABLED=1 is required because the codegraph package links the
+# tree-sitter C runtime statically. The runtime container still runs
+# CGO_ENABLED=0 for the final celeste binary — only test compilation
+# needs the C toolchain.
+ENV CGO_ENABLED=1
 RUN mkdir -p /tmp/tests && \
     go test -c -o /tmp/tests/config_test ./cmd/celeste/config && \
     go test -c -o /tmp/tests/llm_test ./cmd/celeste/llm && \

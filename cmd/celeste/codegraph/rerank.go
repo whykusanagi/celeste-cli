@@ -131,8 +131,8 @@ func (r *StructuralReranker) Rerank(results []SearchResult, queryTokenCount int)
 	}
 
 	type scored struct {
-		result SearchResult
-		score  float64
+		result  SearchResult
+		score   float64
 		origIdx int
 	}
 	scoredList := make([]scored, len(results))

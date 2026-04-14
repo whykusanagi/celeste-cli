@@ -33,8 +33,8 @@ import (
 // extension. The underlying tree_sitter.Parser is re-used across files
 // (Parse() resets the internal state) so allocation stays cheap.
 type TSParser struct {
-	parser *tree_sitter.Parser
-	tsLang *tree_sitter.Language
+	parser  *tree_sitter.Parser
+	tsLang  *tree_sitter.Language
 	tsxLang *tree_sitter.Language
 }
 

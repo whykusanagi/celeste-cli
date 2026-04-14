@@ -4,7 +4,8 @@
 // results in the same format used by prior ab_test_TASK*.txt archives.
 //
 // Usage:
-//   go run ./cmd/celeste-bench-bm25 -workspace <dir> -out <file>
+//
+//	go run ./cmd/celeste-bench-bm25 -workspace <dir> -out <file>
 package main
 
 import (
