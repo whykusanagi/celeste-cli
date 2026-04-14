@@ -9,7 +9,13 @@ import (
 // ShinglesForSymbol generates enriched shingles for a symbol, used as input
 // to MinHash for semantic similarity search. Each shingle is a lowercased token
 // derived from the symbol's name, types, body references, package, and comments.
-func ShinglesForSymbol(sym Symbol, source []byte) []string {
+//
+// The final token list is filtered through the embedded stopwords.json
+// (celeste-stopwords v1.0.0, CC BY 4.0) via stopWords.Filter. The filter
+// applies the universal set plus the per-language set identified by lang.
+// Pass "" for lang to apply only the universal set — this is the right
+// choice for callers that don't know the file's language.
+func ShinglesForSymbol(sym Symbol, source []byte, lang string) []string {
 	var shingles []string
 
 	// 1. Name parts (split camelCase/snake_case)
@@ -35,12 +41,40 @@ func ShinglesForSymbol(sym Symbol, source []byte) []string {
 		shingles = append(shingles, extractCommentTokens(source, sym)...)
 	}
 
-	return deduplicateLowercase(shingles)
+	deduped := deduplicateLowercase(shingles)
+
+	// Apply the embedded stop-word filter. Removes universal-noise
+	// tokens ("get", "set", "error", "string") and per-language noise
+	// ("ctx", "err" for Go; "self", "none" for Python; etc.) from the
+	// final shingle set. The filtered set becomes the MinHash input,
+	// meaning stopped tokens never consume MinHash signature slots and
+	// search precision improves materially for queries that share any
+	// of these common tokens.
+	//
+	// The filter is a no-op (returns input) when stopWords is nil.
+	if stopWords != nil {
+		deduped = stopWords.Filter(deduped, lang)
+	}
+	return deduped
 }
 
 // splitIdentifier splits a camelCase, PascalCase, or snake_case identifier
-// into its constituent words, all lowercased.
+// into its constituent words, all lowercased. Compound identifiers
+// registered in stopwords.json (e.g. "jquery", "github", "mysql") are
+// preserved as a single atomic token — this prevents proper-noun
+// framework names from decomposing into common English words that
+// pollute search, complementing the splitCamelCase 3+ uppercase fix
+// with a belt-and-suspenders check for full-name matches.
 func splitIdentifier(name string) []string {
+	// Compound check: if the full lowercased name is a known compound
+	// identifier, emit it atomically and skip splitting entirely. This
+	// handles the case where the identifier IS the compound name (e.g.,
+	// a variable named `jquery` or `mysql`). splitCamelCase already
+	// handles JQueryStatic → [JQuery, Static] for PascalCase cases.
+	if stopWords != nil && stopWords.IsCompound(name) {
+		return []string{strings.ToLower(name)}
+	}
+
 	// First handle snake_case
 	if strings.Contains(name, "_") {
 		parts := strings.Split(name, "_")
@@ -58,9 +92,28 @@ func splitIdentifier(name string) []string {
 }
 
 // splitCamelCase splits a camelCase or PascalCase string into words.
-// "HTTPServer" -> ["HTTP", "Server"]
-// "parseJSON" -> ["parse", "JSON"]
+//
+// "HTTPServer"     -> ["HTTP", "Server"]
+// "parseJSON"      -> ["parse", "JSON"]
 // "HTMLToMarkdown" -> ["HTML", "To", "Markdown"]
+// "JQueryStatic"   -> ["JQuery", "Static"]     // fixed — see below
+// "IFoo"           -> ["IFoo"]                 // fixed
+// "IPv4"           -> ["IPv4"]                 // fixed
+// "OAuth2"         -> ["OAuth2"]               // fixed
+//
+// The "end of acronym" rule requires THREE consecutive uppercase letters
+// before a lowercase boundary — not two. Previously, any Upper-Upper-lower
+// triple fired the rule, which split PascalCase identifiers like JQuery
+// and IFoo into single-letter first tokens ["J", "Query"] / ["I", "Foo"].
+// That decomposition caused the jQueryStatic pollution problem documented
+// in celeste-stopwords Issue #1: searches for "query" would match
+// JQueryStatic via the stray "query" token, and ~1,650 other identifiers
+// exhibited the same bug across a 31-repo training corpus.
+//
+// Requiring 3+ uppercase letters treats HTTP/HTML/CSV/XML as acronyms
+// (correct split) while treating JQ/IF/IP/OA/VN/XD as PascalCase word
+// starts (no acronym split). See celeste-stopwords commit 5f0ea41 for
+// the simulation evidence.
 func splitCamelCase(s string) []string {
 	if s == "" {
 		return nil
@@ -78,9 +131,12 @@ func splitCamelCase(s string) []string {
 			continue
 		}
 
-		// Transition: Upper -> Upper -> lower marks end of acronym
-		// "HTTPServer" at position of 'e' (after 'S'): "HTTP" + "Server"
-		if i > 1 && unicode.IsUpper(runes[i-1]) && unicode.IsUpper(runes[i-2]) && unicode.IsLower(runes[i]) {
+		// Transition: Upper -> Upper -> Upper -> lower marks end of acronym.
+		// Requires 3+ consecutive uppers; two caps followed by lower is a
+		// PascalCase word boundary (JQuery, IFoo), not an acronym edge.
+		// "HTTPServer" at i=5 ('e'): runes[2..4] = T,T,P all upper → emit "HTTP".
+		// "JQueryStatic" at i=2 ('u'): only J,Q upper, fails the i>2 gate → skip.
+		if i > 2 && unicode.IsUpper(runes[i-1]) && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(runes[i-3]) && unicode.IsLower(runes[i]) {
 			words = append(words, string(runes[start:i-1]))
 			start = i - 1
 			continue

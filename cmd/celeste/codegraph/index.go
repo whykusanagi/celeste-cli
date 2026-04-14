@@ -12,10 +12,51 @@ import (
 	"strings"
 )
 
-// SearchResult pairs a symbol with its similarity score.
+// SearchResult pairs a symbol with its similarity score and a set of
+// machine-readable reasoning fields that tell an LLM (or a human) WHY
+// this result was returned and how confident celeste is in it.
+//
+// PathFlags: markers attached when the symbol's file path triggered the
+// path-based post-filter — e.g. ["test"], ["mock", "generated"]. Clean-
+// path results have an empty PathFlags slice. SemanticSearch demotes
+// flagged results below clean results by default; see
+// SemanticSearchOptions.ApplyPathFilter to disable.
+//
+// EdgeCount: total incoming + outgoing edges on this symbol in the code
+// graph. A function that is called from 4 places and calls 2 others has
+// EdgeCount=6. Zero-edge symbols are suspicious — they may be genuine
+// dead code, but they may also be symbols the parser failed to resolve
+// (especially TS/Python/Rust where the regex parser can't follow call
+// sites through type definitions). SPEC §8.2 Issue #2 documents this
+// ambiguity explicitly; LLMs should NOT treat EdgeCount=0 as proof of
+// dead code without corroborating evidence.
+//
+// ConfidenceWarnings: human-readable strings describing caveats about
+// this result. Derived at query time from PathFlags, EdgeCount, Kind,
+// and Similarity — no schema change, no precomputation. Callers should
+// surface these to whoever consumes the search results so low-quality
+// matches are recognized as such instead of being treated as confident
+// answers.
 type SearchResult struct {
 	Symbol     Symbol
 	Similarity float64
+
+	// BM25Score is the additive per-symbol BM25 score for this query,
+	// computed alongside the Jaccard similarity at search time. Not a
+	// replacement for Similarity — both signals are returned so callers
+	// (or a downstream re-rank layer) can reason about them independently.
+	// Zero when the BM25 corpus stats table is empty (pre-v1.9.0 index).
+	BM25Score float64
+
+	// MatchedTokens are the query tokens that appeared in this symbol's
+	// filtered shingle set (intersection of query and symbol tokens).
+	// Populated only when BM25 scoring is active. Useful reasoning output
+	// for LLMs: "this result matched because it contains X, Y, Z".
+	MatchedTokens []string
+
+	PathFlags          []string
+	EdgeCount          int
+	ConfidenceWarnings []string
 }
 
 // Indexer manages the code graph lifecycle: build, update, and query.
@@ -23,6 +64,11 @@ type Indexer struct {
 	workspace string
 	store     *Store
 	hasher    *MinHasher
+	// tsParser is lazily initialized on the first .ts/.tsx file seen
+	// during indexFile. Holding one long-lived parser and reusing it
+	// across files avoids the native-allocation cost of a per-file
+	// tree-sitter setup. Nil until first TS file; Close() releases it.
+	tsParser *TSParser
 }
 
 // DefaultIndexPath returns the path to the code graph database for a project.
@@ -39,31 +85,99 @@ func DefaultIndexPath(projectRoot string) string {
 
 // NewIndexer creates an indexer for the given workspace, using the specified
 // SQLite database path.
+//
+// Reloads the MinHasher seeds from the store's meta table if present so
+// stored signatures remain comparable across process invocations. If no
+// seeds are stored (fresh index or pre-v1.9.0 index), generates fresh
+// random seeds that will be persisted on the first Build().
 func NewIndexer(workspace, dbPath string) (*Indexer, error) {
 	store, err := NewStore(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
+	hasher, err := loadOrInitHasher(store, DefaultNumHashes)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("load minhash seeds: %w", err)
+	}
+
 	return &Indexer{
 		workspace: workspace,
 		store:     store,
-		hasher:    NewMinHasher(DefaultNumHashes),
+		hasher:    hasher,
 	}, nil
 }
 
 // NewIndexerWithStore creates an indexer using an existing store.
 // This is useful for testing where the store is set up manually.
+// Unlike NewIndexer, does NOT attempt to load seeds from the store —
+// the caller is responsible for passing a store that either has no
+// meta row yet or whose seeds are irrelevant for the test.
 func NewIndexerWithStore(store *Store, workspace string) *Indexer {
+	hasher, _ := loadOrInitHasher(store, DefaultNumHashes)
+	if hasher == nil {
+		hasher = NewMinHasher(DefaultNumHashes)
+	}
 	return &Indexer{
 		workspace: workspace,
 		store:     store,
-		hasher:    NewMinHasher(DefaultNumHashes),
+		hasher:    hasher,
 	}
 }
 
-// Close releases the underlying database connection.
+// loadOrInitHasher tries to reload the MinHash seeds from the store's
+// meta table. If they exist and have the expected length, returns a
+// MinHasher restored from those seeds (signatures will be comparable to
+// anything previously stored against this DB). If they don't exist or
+// are malformed, returns a fresh MinHasher whose seeds will be persisted
+// on the next Build().
+func loadOrInitHasher(store *Store, numHashes int) (*MinHasher, error) {
+	blob, err := store.GetMeta("minhash_seeds")
+	if err != nil {
+		return nil, err
+	}
+	if blob == nil {
+		// Fresh index or pre-v1.9.0 — generate new seeds now.
+		// They get persisted in Build() via persistHasherSeeds.
+		return NewMinHasher(numHashes), nil
+	}
+	seeds, err := BytesToSeeds(blob)
+	if err != nil {
+		// Corrupt blob — log? For now, fall through to fresh seeds.
+		// The next Build() will overwrite the corrupt row.
+		return NewMinHasher(numHashes), nil
+	}
+	if len(seeds) != numHashes {
+		// Length mismatch (e.g. index was built with a different
+		// DefaultNumHashes constant). Regenerate to match the
+		// current constant. This invalidates any stored signatures,
+		// but that's correct — they were computed at a different
+		// signature length and can't be compared anyway.
+		return NewMinHasher(numHashes), nil
+	}
+	return NewMinHasherFromSeeds(seeds), nil
+}
+
+// persistHasherSeeds stores the current MinHasher's seeds in the meta
+// table. Idempotent and cheap — one SQLite upsert. Called at the end
+// of Build() so a freshly-generated hasher's seeds are guaranteed to
+// be recoverable on the next Open.
+func (idx *Indexer) persistHasherSeeds() error {
+	blob := SeedsToBytes(idx.hasher.Seeds())
+	if err := idx.store.SetMeta("minhash_seeds", blob); err != nil {
+		return fmt.Errorf("persist minhash seeds: %w", err)
+	}
+	return nil
+}
+
+// Close releases the underlying database connection and any native
+// resources held by the tree-sitter TS parser.
 func (idx *Indexer) Close() error {
+	if idx.tsParser != nil {
+		idx.tsParser.Close()
+		idx.tsParser = nil
+	}
 	return idx.store.Close()
 }
 
@@ -86,6 +200,22 @@ func (idx *Indexer) Build() error {
 			// Log but don't fail on individual file errors
 			continue
 		}
+	}
+
+	// Persist the MinHasher seeds so a subsequent process can restore
+	// the same hash family and compare signatures meaningfully. Idempotent
+	// — re-running Build on the same index is a no-op for seeds because
+	// loadOrInitHasher already restored them at NewIndexer time.
+	if err := idx.persistHasherSeeds(); err != nil {
+		return fmt.Errorf("persist seeds: %w", err)
+	}
+
+	// Rebuild the BM25 corpus statistics from the symbol_tokens rows
+	// we just wrote. This is a single aggregation pass over the table
+	// and produces the df/idf values used for BM25 scoring at query
+	// time. Cheap compared to the indexing work we just finished.
+	if _, err := idx.store.RebuildTokenStats(); err != nil {
+		return fmt.Errorf("rebuild token stats: %w", err)
 	}
 
 	return nil
@@ -139,6 +269,23 @@ func (idx *Indexer) Update() error {
 		}
 	}
 
+	// Persist the MinHasher seeds. Idempotent upsert — ensures the
+	// seeds are written even on the `celeste index` CLI path which
+	// calls Update() rather than Build(). Without this, fresh indexes
+	// built via the CLI never persist their seeds and the meta.minhash_seeds
+	// row stays missing, breaking cross-process signature reuse.
+	if err := idx.persistHasherSeeds(); err != nil {
+		return fmt.Errorf("persist seeds: %w", err)
+	}
+
+	// Rebuild BM25 corpus stats after an incremental update so df/idf
+	// reflect the current symbol_tokens contents. Re-running is cheap
+	// (single aggregation pass) and keeps scoring consistent even when
+	// only a handful of files changed.
+	if _, err := idx.store.RebuildTokenStats(); err != nil {
+		return fmt.Errorf("rebuild token stats: %w", err)
+	}
+
 	return nil
 }
 
@@ -153,6 +300,13 @@ func (idx *Indexer) indexFile(relPath string) error {
 	if lang == "go" {
 		parser := NewGoParser()
 		result, err = parser.ParseFile(absPath)
+	} else if lang == "typescript" {
+		// Tree-sitter backed TS parser. Lazily allocated on first use
+		// so pure-Go / Python projects pay no CGo startup cost.
+		if idx.tsParser == nil {
+			idx.tsParser = NewTSParser()
+		}
+		result, err = idx.tsParser.ParseFile(absPath)
 	} else if indexableLanguages[lang] {
 		parser := NewGenericParser(lang)
 		result, err = parser.ParseFile(absPath)
@@ -179,9 +333,14 @@ func (idx *Indexer) indexFile(relPath string) error {
 
 		// Compute MinHash for non-import symbols
 		if sym.Kind != SymbolImport {
-			shingles := ShinglesForSymbol(sym, source)
+			shingles := ShinglesForSymbol(sym, source, lang)
 			sig := idx.hasher.Signature(shingles)
 			_ = idx.store.UpdateMinHash(id, sig)
+			// Persist per-symbol token frequencies so BM25 scoring has
+			// something to read at query time. Same filtered shingle
+			// set the MinHash saw — the two signals stay in lock-step
+			// on what counts as a meaningful token for this symbol.
+			_ = idx.store.UpsertSymbolTokens(id, shingles)
 		}
 	}
 
@@ -275,10 +434,65 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	return files, err
 }
 
+// SemanticSearchOptions configures SemanticSearch behavior. Existing
+// callers of SemanticSearch(query, topK) get the default behavior —
+// path filter ON, structural rerank ON — without any changes.
+type SemanticSearchOptions struct {
+	// TopK is the maximum number of results to return. Required.
+	TopK int
+
+	// MinSimilarity is the Jaccard floor below which results are dropped
+	// entirely. Zero means use the default (0.05).
+	MinSimilarity float64
+
+	// ApplyPathFilter, when true, demotes results whose file path matches
+	// a known "noisy" pattern (test/mock/generated/vendored/declaration)
+	// below clean-path results. Default when using SemanticSearch is true.
+	// Set false for raw unfiltered results.
+	ApplyPathFilter bool
+
+	// Reranker, when non-nil, is applied to the candidate list after
+	// the Jaccard + BM25 fusion and before the path filter tiering.
+	// A pluggable seam — the default (set via SemanticSearch) is
+	// StructuralReranker which does pure-Go feature-based rescoring.
+	// Future cloud/local embedding rerankers can implement this
+	// interface without touching the search pipeline.
+	//
+	// Pass a zero value (nil) together with
+	// DisableRerank=true to get the pre-Task-24 behavior (fusion-only).
+	Reranker Reranker
+
+	// DisableRerank bypasses the Reranker even if one is set.
+	// Useful for A/B testing and for callers that want the raw
+	// fused ordering without any structural adjustments.
+	DisableRerank bool
+}
+
 // SemanticSearch finds symbols semantically similar to the query string.
 // The query is split into shingles, MinHashed, then compared against all
 // symbol signatures using brute-force Jaccard similarity.
+//
+// Applies the path-based post-filter by default — test/mock/generated/
+// vendored/declaration results are partitioned below clean-path results
+// of comparable similarity. Use SemanticSearchWithOptions to disable.
 func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, error) {
+	return idx.SemanticSearchWithOptions(query, SemanticSearchOptions{
+		TopK:            topK,
+		ApplyPathFilter: true,
+		Reranker:        NewStructuralReranker(),
+	})
+}
+
+// SemanticSearchWithOptions is the full-options variant of SemanticSearch.
+func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchOptions) ([]SearchResult, error) {
+	if opts.TopK <= 0 {
+		opts.TopK = 10
+	}
+	minSim := opts.MinSimilarity
+	if minSim == 0 {
+		minSim = 0.05
+	}
+
 	// Generate query shingles from the query string
 	words := strings.Fields(strings.ToLower(query))
 	var queryShingles []string
@@ -286,6 +500,20 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 		queryShingles = append(queryShingles, splitIdentifier(w)...)
 	}
 	queryShingles = deduplicateLowercase(queryShingles)
+
+	// Apply stop-word filter to the query side. This is SPEC §6.2
+	// application point 2: the query tokenization must pass through
+	// the same filter that the symbol shingle sets went through at
+	// index time, otherwise a stop-worded token in the symbol set
+	// would still match against a non-stop-worded token in the query
+	// and vice versa, producing asymmetric Jaccard scores.
+	//
+	// Queries aren't language-tagged (a free-form "database connection
+	// pool query" could target Go, Python, TS, or any mix), so we pass
+	// "" for lang and apply only the universal set.
+	if stopWords != nil {
+		queryShingles = stopWords.Filter(queryShingles, "")
+	}
 
 	querySig := idx.hasher.Signature(queryShingles)
 
@@ -295,7 +523,7 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 		return nil, fmt.Errorf("get minhashes: %w", err)
 	}
 
-	// Compute similarity for each symbol
+	// Compute similarity for each symbol above the MinSimilarity floor.
 	type scored struct {
 		symbolID   int64
 		similarity float64
@@ -303,35 +531,186 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 	var results []scored
 	for _, entry := range entries {
 		sim := JaccardSimilarity(querySig, entry.Signature)
-		if sim > 0.05 { // minimum threshold
+		if sim > minSim {
 			results = append(results, scored{entry.SymbolID, sim})
 		}
 	}
 
-	// Sort by similarity descending
+	// Sort by similarity descending — this is the initial raw ranking
+	// before any path-based demotion.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].similarity > results[j].similarity
 	})
 
-	// Take top K
-	if len(results) > topK {
-		results = results[:topK]
+	// Widen the candidate pool when path filtering is on. We need more
+	// than topK candidates so we can drop noisy ones and still return
+	// topK clean matches. Pull up to 3x topK candidates, capped at the
+	// full result set.
+	candidateLimit := opts.TopK
+	if opts.ApplyPathFilter {
+		candidateLimit = opts.TopK * 3
+	}
+	if len(results) > candidateLimit {
+		results = results[:candidateLimit]
 	}
 
-	// Resolve symbol details
-	var searchResults []SearchResult
+	// Resolve symbol details and classify paths for each candidate.
+	// Also compute edge counts and confidence warnings so the caller
+	// has machine-readable reasoning for every result. Each candidate
+	// becomes a fully-annotated SearchResult.
+	//
+	// BM25 scoring: reads one-time corpus stats + IDF table, then scores
+	// each candidate against the query tokens using the symbol's stored
+	// TF map. Pre-v1.9.0 indexes have empty token_stats — scoring then
+	// degenerates to zero across the board and the fused ranking reduces
+	// to pure Jaccard, which is the correct fallback.
+	bm25Stats, _ := idx.store.ReadBM25Stats()
+	var idfMap map[string]float64
+	if bm25Stats != nil && bm25Stats.NumDocs > 0 {
+		idfMap, _ = idx.store.GetIDFs(queryShingles)
+	}
+
+	var allCandidates []SearchResult
 	for _, r := range results {
 		sym, err := idx.store.GetSymbol(r.symbolID)
 		if err != nil {
 			continue
 		}
-		searchResults = append(searchResults, SearchResult{
-			Symbol:     *sym,
-			Similarity: r.similarity,
+		flags := ClassifyPath(sym.File)
+
+		// Cheap edge-count lookup. Both GetEdgesFrom and GetEdgesTo
+		// already have covering SQL indexes (idx_edges_source / _target)
+		// so these are O(log N) lookups with tiny result sets. For the
+		// ~30 candidates we process per query the cost is negligible.
+		edgesOut, _ := idx.store.GetEdgesFrom(r.symbolID)
+		edgesIn, _ := idx.store.GetEdgesTo(r.symbolID)
+		edgeCount := len(edgesOut) + len(edgesIn)
+
+		warnings := computeConfidenceWarnings(*sym, r.similarity, flags, edgeCount)
+
+		// Per-candidate BM25 score + matched-token list. Only computed
+		// if the corpus stats exist (otherwise we'd do pointless table
+		// reads for zero output). MatchedTokens is derived from the
+		// intersection of queryShingles and the symbol's TF map so it
+		// stays in sync with whatever actually contributed to the score.
+		var bm25Score float64
+		var matched []string
+		if bm25Stats != nil && bm25Stats.NumDocs > 0 {
+			docTokens, docLen, tokErr := idx.store.GetSymbolTokens(r.symbolID)
+			if tokErr == nil && docLen > 0 {
+				bm25Score = ComputeBM25Score(queryShingles, docTokens, docLen, idfMap, bm25Stats.AvgDocLength)
+				for _, qt := range queryShingles {
+					if _, ok := docTokens[qt]; ok {
+						matched = append(matched, qt)
+					}
+				}
+			}
+		}
+
+		allCandidates = append(allCandidates, SearchResult{
+			Symbol:             *sym,
+			Similarity:         r.similarity,
+			BM25Score:          bm25Score,
+			MatchedTokens:      matched,
+			PathFlags:          PathFlagStrings(flags),
+			EdgeCount:          edgeCount,
+			ConfidenceWarnings: warnings,
 		})
 	}
 
-	return searchResults, nil
+	// Rank-fuse Jaccard and BM25 using Reciprocal Rank Fusion. This is
+	// the point where the two signals merge into a single ordering. Both
+	// raw scores stay on each SearchResult so callers can audit; only
+	// the slice order reflects the fused view. If BM25 is disabled
+	// (empty corpus stats) every BM25Score is 0, the BM25 rank map is
+	// a flat tie, and RRF gracefully degrades toward the Jaccard ranking.
+	if len(allCandidates) > 1 {
+		jaccardRanks := make(map[int64]int, len(allCandidates))
+		bm25Ranked := make([]SearchResult, len(allCandidates))
+		copy(bm25Ranked, allCandidates)
+		for i, c := range allCandidates {
+			jaccardRanks[c.Symbol.ID] = i + 1
+		}
+		sort.SliceStable(bm25Ranked, func(i, j int) bool {
+			return bm25Ranked[i].BM25Score > bm25Ranked[j].BM25Score
+		})
+		bm25Ranks := make(map[int64]int, len(bm25Ranked))
+		for i, c := range bm25Ranked {
+			bm25Ranks[c.Symbol.ID] = i + 1
+		}
+		fusedOrder := ComputeFusedRanking(jaccardRanks, bm25Ranks)
+		byID := make(map[int64]SearchResult, len(allCandidates))
+		for _, c := range allCandidates {
+			byID[c.Symbol.ID] = c
+		}
+		fused := make([]SearchResult, 0, len(allCandidates))
+		for _, id := range fusedOrder {
+			if c, ok := byID[id]; ok {
+				fused = append(fused, c)
+			}
+		}
+		allCandidates = fused
+	}
+
+	// Structural rerank. Applied after the Jaccard+BM25 fusion and
+	// before the path-filter tier partitioning so that rerank
+	// adjustments (matched-token-ratio boost, edge-density boost,
+	// zero-edge penalty) reorder candidates within each would-be tier
+	// without reshuffling clean-vs-demoted boundaries. Skipped when
+	// DisableRerank is set or when no Reranker is installed — then
+	// the caller gets the raw fused ordering.
+	if !opts.DisableRerank && opts.Reranker != nil && len(allCandidates) > 1 {
+		allCandidates = opts.Reranker.Rerank(allCandidates, len(queryShingles))
+	}
+
+	if !opts.ApplyPathFilter {
+		// No path filter — just truncate to topK and return.
+		if len(allCandidates) > opts.TopK {
+			allCandidates = allCandidates[:opts.TopK]
+		}
+		return allCandidates, nil
+	}
+
+	// Path filter enabled. If the query itself is asking for test/mock
+	// code, do not demote — respect user intent.
+	if queryWantsTests(query) {
+		if len(allCandidates) > opts.TopK {
+			allCandidates = allCandidates[:opts.TopK]
+		}
+		return allCandidates, nil
+	}
+
+	// Partition into clean tier and demoted tier, preserving within-tier
+	// order (which is already similarity descending from the sort above).
+	clean := make([]SearchResult, 0, len(allCandidates))
+	demoted := make([]SearchResult, 0, len(allCandidates))
+	for _, r := range allCandidates {
+		if len(r.PathFlags) == 0 {
+			clean = append(clean, r)
+		} else {
+			demoted = append(demoted, r)
+		}
+	}
+
+	// Concatenate: clean first, demoted after, truncate to topK. This
+	// means if there are >= topK clean results, demoted results never
+	// appear — the LLM/user sees only high-confidence production code.
+	// If clean runs short, demoted results fill the remaining slots so
+	// the caller still gets useful fallback options on sparse corpora.
+	final := make([]SearchResult, 0, opts.TopK)
+	for _, r := range clean {
+		if len(final) >= opts.TopK {
+			break
+		}
+		final = append(final, r)
+	}
+	for _, r := range demoted {
+		if len(final) >= opts.TopK {
+			break
+		}
+		final = append(final, r)
+	}
+	return final, nil
 }
 
 // KeywordSearch finds symbols matching a keyword query using SQL LIKE.
@@ -783,8 +1162,10 @@ func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData [
 
 	shingleBoost := 0.0
 	if c.OutEdges == 0 {
-		sym := Symbol{Name: c.Name, Line: c.Line}
-		shingles := ShinglesForSymbol(sym, sourceData)
+		sym := Symbol{Name: c.Name, Line: c.Line, File: c.File}
+		// Detect language from file path so per-language stopwords apply.
+		lang := DetectLanguage(c.File)
+		shingles := ShinglesForSymbol(sym, sourceData, lang)
 		if len(shingles) > 10 {
 			shingleBoost = float64(len(shingles)) * 0.05
 		}

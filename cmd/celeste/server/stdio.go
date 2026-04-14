@@ -69,7 +69,19 @@ func (s *Server) serveStdioStreams(ctx context.Context, r io.Reader, w io.Writer
 			continue
 		}
 
-		resp, err := s.dispatch(ctx, &req)
+		// Bind a Notifier + progress token to the request context before
+		// dispatching. The notifier writes JSON-RPC notifications to the
+		// same stdout stream as the eventual response. Because the stdio
+		// transport loop processes one request at a time, interleaving
+		// notifications with the pending response is race-free.
+		reqCtx := WithNotifier(ctx, makeStdioNotifier(func(v any) error {
+			return s.writeJSON(w, v)
+		}))
+		if token := extractProgressToken(req.Params); token != nil {
+			reqCtx = WithProgressToken(reqCtx, token)
+		}
+
+		resp, err := s.dispatch(reqCtx, &req)
 		if err != nil {
 			errResp := s.errorResponse(req.ID, -32603, err.Error(), nil)
 			_ = s.writeJSON(w, errResp)
@@ -96,4 +108,22 @@ func (s *Server) writeJSON(w io.Writer, v any) error {
 	data = append(data, '\n')
 	_, err = w.Write(data)
 	return err
+}
+
+// extractProgressToken pulls params._meta.progressToken from a raw
+// JSON-RPC params blob per the MCP progress spec. Returns nil if the
+// client didn't request progress or the params don't contain a token.
+func extractProgressToken(rawParams json.RawMessage) any {
+	if len(rawParams) == 0 {
+		return nil
+	}
+	var envelope struct {
+		Meta struct {
+			ProgressToken any `json:"progressToken"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(rawParams, &envelope); err != nil {
+		return nil
+	}
+	return envelope.Meta.ProgressToken
 }

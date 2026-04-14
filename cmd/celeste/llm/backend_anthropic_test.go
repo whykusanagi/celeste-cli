@@ -176,8 +176,11 @@ func TestAnthropicSetThinkingConfig(t *testing.T) {
 
 func TestAnthropicMaxTokens(t *testing.T) {
 	t.Run("default without thinking", func(t *testing.T) {
+		// 32768 — raised from 8192 in v1.9.0 so the MCP chat path can
+		// return large tool outputs (like code_review JSON dumps) without
+		// hitting the Anthropic max_tokens ceiling mid-response.
 		backend := &AnthropicBackend{config: &Config{}}
-		assert.Equal(t, int64(8192), backend.maxTokens())
+		assert.Equal(t, int64(32768), backend.maxTokens())
 	})
 
 	t.Run("increased with thinking", func(t *testing.T) {

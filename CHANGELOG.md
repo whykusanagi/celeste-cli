@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-04-13
+
+### Fixed
+
+- **`splitCamelCase` end-of-acronym rule now requires 3+ consecutive uppercase letters.** Two
+  uppercase letters followed by a lowercase word is a PascalCase boundary, not an acronym edge.
+  Previously, `JQueryStatic` decomposed into `["J", "Query", "Static"]`, which caused the
+  `jQueryStatic` pollution problem documented in
+  [celeste-stopwords Issue #1](https://github.com/whykusanagi/celeste-stopwords/blob/main/docs/KNOWN_QUALITY_ISSUES.md):
+  searches for "query" would match `JQueryStatic` via the stray `query` token, and ~1,650 other
+  identifiers exhibited the same bug across a 31-repo training corpus. `HTTPServer`,
+  `HTMLToMarkdown`, `CSVParser`, and every other 3+ consecutive-uppercase acronym still splits
+  correctly.
+
+  Affected identifier families now atomize correctly:
+  - `JQuery` / `JQueryStatic` / `JQueryElement` / `JQueryPromise`
+  - `IFoo` / `IArguments` / `IPromise` / `ICache` / any `I`-prefixed TypeScript interface
+  - `IPv4` / `IPv6` / `VNode` / `ETag` / `OAuth2` / `XDist`
+
+### Changed
+
+- **MinHash signatures computed by previous versions are now semantically stale.** Any codegraph
+  index built with celeste-cli < 1.9.0 carries MinHashes derived from the old `splitCamelCase`
+  tokenization. Existing indexes continue to work — symbol lookups, edges, and keyword search
+  are unaffected — but semantic search accuracy improves if you rebuild:
+
+  ```bash
+  celeste index --rebuild
+  ```
+
+  A future release will add automatic detection of stale indexes and surface a rebuild prompt.
+
+### Details
+
+- Only `cmd/celeste/codegraph/shingle.go:splitCamelCase` changed. The fix adds one more
+  `unicode.IsUpper(runes[i-3])` check and raises the loop guard from `i > 1` to `i > 2`.
+- All existing `TestSplitIdentifier` cases still pass (no regressions on `validateSession`,
+  `HTTPServer`, `parseJSON`, `XMLParser`, `HTMLToMarkdown`, `get_user_by_id`, `ID`, `x`).
+- 12 new anchor cases added in `shingle_test.go` for the fixed identifier families.
+- See `celeste-stopwords/results/simulation_report.md` for the empirical analysis: 3,249
+  symbols in a 1.6M-symbol training corpus have name re-splits under the fix.
+
 ## [1.8.0] - 2026-04-03
 
 ### Added

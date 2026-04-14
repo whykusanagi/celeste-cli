@@ -62,6 +62,15 @@ func (b *AnthropicBackend) Close() error {
 // maxTokens returns the max_tokens value for the request.
 // When thinking is enabled, Anthropic requires a higher max_tokens that
 // encompasses both thinking and output tokens.
+//
+// The non-thinking default is 32768 (was 8192 through v1.8.x). The old
+// 8192 ceiling was too small for the MCP `celeste` tool in chat mode:
+// when a sub-tool like code_review returned a multi-KB JSON blob and
+// the chat LLM was asked to echo it back, the model hit the output-
+// token cap and the MCP response truncated mid-dump. Claude opus and
+// sonnet 4.x both support up to 64K output tokens; 32K is a 4x budget
+// with no downside for normal chat turns (short responses don't consume
+// the budget, only the used tokens are billed).
 func (b *AnthropicBackend) maxTokens() int64 {
 	if b.thinkingConfig.Enabled && b.thinkingConfig.Level != "off" {
 		budget := b.thinkingConfig.LevelToBudget()
@@ -71,7 +80,7 @@ func (b *AnthropicBackend) maxTokens() int64 {
 		}
 		return 65536 // sensible default when thinking is on
 	}
-	return 8192 // default for non-thinking requests
+	return 32768 // default for non-thinking requests
 }
 
 // buildParams constructs the MessageNewParams shared by sync and streaming requests.

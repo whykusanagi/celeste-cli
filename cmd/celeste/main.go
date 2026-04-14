@@ -45,7 +45,7 @@ import (
 // CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
 // When not set by ldflags, defaults are used.
 var (
-	Version   = "1.8.4"
+	Version   = "1.9.0"
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
 )
@@ -2017,6 +2017,10 @@ func runServeCommand(args []string) {
 
 	srv := server.New(serverCfg)
 	server.RegisterHandlers(srv)
+	// Close releases the per-workspace codegraph indexers the server
+	// has opened on demand. Without this, SQLite WAL files aren't
+	// flushed when celeste serve exits and the next run sees stale state.
+	defer srv.Close()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
