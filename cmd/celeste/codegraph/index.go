@@ -535,26 +535,35 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 	}
 	var results []scored
 
+	usedLSH := false
 	if idx.store.HasLSHData() {
-		// LSH path: compute query band hashes → candidate set → Jaccard rank
+		// LSH path: compute query band hashes → candidate set → Jaccard rank.
 		queryBands := ComputeBandHashes(querySig)
 		candidateIDs, err := idx.store.QueryLSHCandidates(queryBands)
 		if err != nil {
 			return nil, fmt.Errorf("lsh candidates: %w", err)
 		}
-		for _, id := range candidateIDs {
-			sig, err := idx.store.GetMinHash(id)
-			if err != nil || sig == nil {
-				continue
-			}
-			sim := JaccardSimilarity(querySig, sig)
-			if sim > minSim {
-				results = append(results, scored{id, sim})
+		if len(candidateIDs) > 0 {
+			usedLSH = true
+			for _, id := range candidateIDs {
+				sig, err := idx.store.GetMinHash(id)
+				if err != nil || sig == nil {
+					continue
+				}
+				sim := JaccardSimilarity(querySig, sig)
+				if sim > minSim {
+					results = append(results, scored{id, sim})
+				}
 			}
 		}
-	} else {
-		// Brute-force fallback: load all signatures, compare exhaustively.
-		// This path is used for pre-LSH indexes that haven't been rebuilt.
+		// If LSH returned 0 candidates (can happen on very small corpora
+		// where the 64×2 band hash space is too sparse for any collision),
+		// fall through to brute-force below so the query still produces
+		// results. LSH provides no speedup on tiny indexes anyway.
+	}
+	if !usedLSH {
+		// Brute-force: load all signatures, compare exhaustively. Used for
+		// pre-LSH indexes AND as a safety net when LSH returns no candidates.
 		entries, err := idx.store.GetAllMinHashes()
 		if err != nil {
 			return nil, fmt.Errorf("get minhashes: %w", err)
