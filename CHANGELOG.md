@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-04-17
+
+### Added
+
+- **Persisted LSH band table for sub-linear semantic search.** 64 bands × 2 elements from
+  the 128-element MinHash signature, stored in a new `lsh_bands` SQLite table with an index
+  on `(band_id, band_hash)`. At query time, `SemanticSearchWithOptions` computes the query's
+  64 band hashes and retrieves candidate symbol IDs directly from the table — typically 0.1-1%
+  of the corpus — then ranks only those candidates by exact Jaccard similarity. Falls back to
+  brute-force for pre-LSH indexes that haven't been rebuilt.
+
+  The 64×2 band configuration is empirically derived from the CODEGRAPH_LSH_RESEARCH.md
+  validation: conventional 16×8 and 32×4 configs produce 0% recall on code search because the
+  Jaccard similarity range for code queries (0.05-0.20) is far below document similarity
+  (0.5-0.8). At grafana scale (77,420 symbols), validated at 20× speedup over brute-force
+  (89ms → 4.3ms) by eliminating the full signature BLOB load.
+
+- **TUI `/index rebuild` and `/index update` subcommands.** Previously `/index` was
+  display-only — users had to exit the TUI and run `celeste index --rebuild` from the shell.
+  Now the TUI can trigger a full or incremental re-index directly, with async execution and
+  status reporting via the typing animation.
+
+- **TUI `/config set-key`, `/config set-model`, `/config set-url` subcommands.** Users can
+  now modify API key, model, and base URL from the TUI without exiting. Previously required
+  shelling out to `celeste config --set-*`.
+
+### Changed
+
+- `SemanticSearchWithOptions` now uses LSH candidate lookup when `lsh_bands` data exists,
+  brute-force fallback when it doesn't. BM25, RRF fusion, structural rerank, and path filter
+  are all unchanged — LSH is a pre-filter that narrows the candidate pool without affecting
+  downstream scoring.
+- Users must rebuild their index once to populate LSH band data:
+  `/index rebuild` in TUI or `celeste_index { operation: "rebuild" }` via MCP.
+
 ## [1.9.1] - 2026-04-14
 
 ### Fixed

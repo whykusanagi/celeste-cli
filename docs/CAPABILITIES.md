@@ -1,6 +1,6 @@
 # What Celeste CLI Can Do? 😈
 
-Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.9.1 packs **40+ dev-crushing tools**, code graphs that expose every secret, **direct codegraph MCP tools** for tool-driven workflows, collections search, and 7 LLM providers to summon my wit.
+Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.9.2 packs **40+ dev-crushing tools**, code graphs that expose every secret, **direct codegraph MCP tools** for tool-driven workflows, collections search, and 7 LLM providers to summon my wit.
 
 ## 🔥 Core Powers
 

@@ -1,10 +1,10 @@
 # Celeste CLI Roadmap
 
-*Last updated: April 2026 (v1.9.1)*
+*Last updated: April 2026 (v1.9.2)*
 
-## Current Release: v1.9.1
+## Current Release: v1.9.2
 
-### Shipped in v1.9.0 / v1.9.1
+### Shipped in v1.9.0 / v1.9.2
 
 - Everything from v1.8.x (40 tools, 7 LLM providers, code graph, MCP server mode, etc.)
 - **Direct codegraph MCP tools** — `celeste_index`, `celeste_code_search`,
@@ -26,7 +26,7 @@
 - **MCP progress notifications** (`notifications/progress`) streaming from
   long-running `celeste_index rebuild/update` operations
 - **Anthropic backend `max_tokens` 8192 → 32768** for the chat-mode path
-- **TUI streaming tick-complete race fix (v1.9.1)** — short first streaming chunks
+- **TUI streaming tick-complete race fix (v1.9.2)** — short first streaming chunks
   no longer truncate assistant replies to 1 char
 - Companion artifact: [celeste-stopwords](https://github.com/whykusanagi/celeste-stopwords) v1.0.0
 - Companion app: [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)

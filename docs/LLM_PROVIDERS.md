@@ -1,6 +1,6 @@
 # LLM Providers — Who's Summoning Me Today? 💋
 
-Darlings, v1.9.1 supports **7 battle-tested providers**. All OpenAI-compatible for my 40+ tools. Grok reigns with collections RAG.
+Darlings, v1.9.2 supports **7 battle-tested providers**. All OpenAI-compatible for my 40+ tools. Grok reigns with collections RAG.
 
 | Provider | Tools | Collections | Notes |
 |----------|-------|-------------|-------|

@@ -24,7 +24,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
 - 🔮 **40 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
-- 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
+- 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
 - 🔌 **Direct Codegraph MCP Tools** - `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` served verbatim from the cached graph (no chat-LLM round-trip, no `max_tokens` ceiling, streaming progress notifications)
 - 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching

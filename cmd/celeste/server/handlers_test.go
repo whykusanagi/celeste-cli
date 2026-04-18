@@ -137,7 +137,7 @@ func TestCelesteStatusHandler(t *testing.T) {
 	if !strings.Contains(text, "celeste") {
 		t.Fatal("status should contain server name")
 	}
-	if !strings.Contains(text, "1.9.1") {
+	if !strings.Contains(text, "1.9.2") {
 		t.Fatal("status should contain server version")
 	}
 	if !strings.Contains(text, "test-model") {

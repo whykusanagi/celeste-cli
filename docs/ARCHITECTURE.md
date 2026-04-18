@@ -889,4 +889,4 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 ---
 
 **Last Updated**: 2026-04-03
-**Version**: v1.9.1\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
+**Version**: v1.9.2\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
