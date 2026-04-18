@@ -178,7 +178,11 @@ func (s *Store) createSchema() error {
 	// all BM25-related code lives together. Idempotent CREATE IF NOT
 	// EXISTS so calling on every Open is safe; existing indexes get
 	// the tables lazily without a migration step.
-	return s.createBM25Schema()
+	if err := s.createBM25Schema(); err != nil {
+		return err
+	}
+	// LSH band table for sub-linear semantic search. Defined in lsh.go.
+	return s.createLSHSchema()
 }
 
 // GetMeta reads a raw byte value from the meta key/value table.

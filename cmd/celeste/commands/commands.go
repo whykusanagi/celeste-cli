@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
@@ -472,14 +473,104 @@ func handleConfig(cmd *Command) *CommandResult {
 		return listAvailableConfigs()
 	}
 
-	configName := cmd.Args[0]
-	return &CommandResult{
-		Success:      true,
-		Message:      fmt.Sprintf("⚙️  Loaded config profile: %s", configName),
-		ShouldRender: true,
-		StateChange: &StateChange{
-			EndpointChange: &configName,
-		},
+	subCmd := strings.ToLower(cmd.Args[0])
+
+	switch subCmd {
+	case "set-key":
+		if len(cmd.Args) < 2 {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: "Usage: /config set-key <api-key>",
+			}
+		}
+		key := cmd.Args[1]
+		cfg, err := config.Load()
+		if err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to load config: %v", err),
+			}
+		}
+		cfg.APIKey = key
+		if err := config.Save(cfg); err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to save config: %v", err),
+			}
+		}
+		// Also save to secrets file for backward compat
+		_ = config.SaveSecrets(cfg)
+		masked := key[:4] + "..." + key[len(key)-4:]
+		return &CommandResult{
+			Success: true, ShouldRender: true,
+			Message: fmt.Sprintf("⚙️  API key updated: %s\nRestart or /config to apply.", masked),
+		}
+
+	case "set-model":
+		if len(cmd.Args) < 2 {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: "Usage: /config set-model <model-name>\nExamples: grok-4-1-fast, claude-sonnet-4-5, gpt-4.1-mini",
+			}
+		}
+		model := cmd.Args[1]
+		cfg, err := config.Load()
+		if err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to load config: %v", err),
+			}
+		}
+		cfg.Model = model
+		if err := config.Save(cfg); err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to save config: %v", err),
+			}
+		}
+		return &CommandResult{
+			Success: true, ShouldRender: true,
+			Message: fmt.Sprintf("⚙️  Model changed to: %s\nTakes effect on next LLM call.", model),
+		}
+
+	case "set-url":
+		if len(cmd.Args) < 2 {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: "Usage: /config set-url <base-url>\nExamples: https://api.x.ai/v1, https://api.openai.com/v1",
+			}
+		}
+		url := cmd.Args[1]
+		cfg, err := config.Load()
+		if err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to load config: %v", err),
+			}
+		}
+		cfg.BaseURL = url
+		if err := config.Save(cfg); err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to save config: %v", err),
+			}
+		}
+		return &CommandResult{
+			Success: true, ShouldRender: true,
+			Message: fmt.Sprintf("⚙️  Base URL changed to: %s\nRestart or /config to apply.", url),
+		}
+
+	default:
+		// Treat as profile name (original behavior)
+		configName := cmd.Args[0]
+		return &CommandResult{
+			Success:      true,
+			Message:      fmt.Sprintf("⚙️  Loaded config profile: %s", configName),
+			ShouldRender: true,
+			StateChange: &StateChange{
+				EndpointChange: &configName,
+			},
+		}
 	}
 }
 
@@ -704,13 +795,19 @@ Chat:
   /clear             Clear conversation history
   /help              Show this help message
   /endpoint <name>   Switch AI provider (openai, venice, grok, google)
-  /config <name>     Load a named config profile
+  /config             List available config profiles
+  /config <name>      Load a named config profile
+  /config set-key <k> Set API key
+  /config set-model   Set LLM model (e.g. grok-4-1-fast)
+  /config set-url     Set API base URL
   /model <name>      Change the model
 
 Project:
   /memories          List project memories
   /grimoire          Show project grimoire
   /index             Show code graph status
+  /index rebuild     Full re-index (populates LSH + BM25)
+  /index update      Incremental re-index (changed files only)
   /plan [show]       Show current plan
   /context           Show context/token usage
   /costs             Show session costs
