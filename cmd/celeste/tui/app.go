@@ -767,18 +767,59 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "index":
-				if m.codeGraphIndexer != nil {
-					// Re-query live indexer for fresh stats
+				if m.codeGraphIndexer == nil {
+					m.chat = m.chat.AddSystemMessage("No code graph index loaded.\nRun `celeste index` to build one.")
+					return m, nil
+				}
+
+				subCmd := "status"
+				if len(cmd.Args) > 0 {
+					subCmd = strings.ToLower(cmd.Args[0])
+				}
+
+				switch subCmd {
+				case "rebuild":
+					m.chat = m.chat.AddSystemMessage("Rebuilding code graph index...")
+					m.streaming = true
+					m.status = m.status.SetStreaming(true)
+					m.status = m.status.SetText("Rebuilding index...")
+					indexer := m.codeGraphIndexer
+					return m, func() tea.Msg {
+						err := indexer.Build()
+						if err != nil {
+							return StreamErrorMsg{Err: fmt.Errorf("rebuild failed: %w", err)}
+						}
+						stats, _ := indexer.Stats()
+						msg := fmt.Sprintf("Index rebuilt: %d files, %d symbols, %d edges",
+							stats.TotalFiles, stats.TotalSymbols, stats.TotalEdges)
+						return AgentProgressMsg{Kind: AgentProgressResponse, Text: msg}
+					}
+
+				case "update":
+					m.chat = m.chat.AddSystemMessage("Updating code graph index (incremental)...")
+					m.streaming = true
+					m.status = m.status.SetStreaming(true)
+					m.status = m.status.SetText("Updating index...")
+					indexer := m.codeGraphIndexer
+					return m, func() tea.Msg {
+						err := indexer.Update()
+						if err != nil {
+							return StreamErrorMsg{Err: fmt.Errorf("update failed: %w", err)}
+						}
+						stats, _ := indexer.Stats()
+						msg := fmt.Sprintf("Index updated: %d files, %d symbols, %d edges",
+							stats.TotalFiles, stats.TotalSymbols, stats.TotalEdges)
+						return AgentProgressMsg{Kind: AgentProgressResponse, Text: msg}
+					}
+
+				default: // "status" or no args
 					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.width)
 					if viz != "" {
 						m.chat = m.chat.AddSystemMessage(viz)
 					} else {
-						// Fallback: refresh summary from live indexer
 						m.codeGraphSummary = m.codeGraphIndexer.ProjectSummary()
 						m.chat = m.chat.AddSystemMessage("Code Graph:\n" + m.codeGraphSummary)
 					}
-				} else {
-					m.chat = m.chat.AddSystemMessage("No code graph index loaded.\nRun `celeste index` to build one.")
 				}
 				return m, nil
 

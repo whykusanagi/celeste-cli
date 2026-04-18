@@ -711,6 +711,8 @@ Project:
   /memories          List project memories
   /grimoire          Show project grimoire
   /index             Show code graph status
+  /index rebuild     Full re-index (populates LSH + BM25)
+  /index update      Incremental re-index (changed files only)
   /plan [show]       Show current plan
   /context           Show context/token usage
   /costs             Show session costs
