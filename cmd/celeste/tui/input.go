@@ -14,7 +14,7 @@ import (
 var knownCommands = []string{
 	"agent", "clear", "collections", "config", "context", "costs", "diff",
 	"effort", "endpoint", "export", "graph", "grimoire", "help", "index", "mcp",
-	"memories", "menu", "model", "nsfw", "orch", "orchestrate",
+	"memories", "menu", "model", "nsfw", "orch", "orchestrate", "persona",
 	"plan", "providers", "safe", "session", "set-model", "skills",
 	"stats", "tools", "undo",
 }

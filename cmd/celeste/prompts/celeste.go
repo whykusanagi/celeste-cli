@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
 // Embedded persona prompt for when no external file is available
@@ -74,7 +76,9 @@ func LoadEssence() (*CelesteEssence, error) {
 	return &essence, nil
 }
 
-// GetSystemPrompt generates the system prompt from the essence.
+// GetSystemPrompt generates the system prompt from the essence,
+// with slider-composed voice modulation inserted at position 6
+// in the assembly order.
 func GetSystemPrompt(skipPrompt bool) string {
 	if skipPrompt {
 		return ""
@@ -86,7 +90,17 @@ func GetSystemPrompt(skipPrompt bool) string {
 		return getBasicPrompt()
 	}
 
-	return buildPromptFromEssence(essence)
+	base := buildPromptFromEssence(essence)
+
+	// Compose slider modulation (position 6 in assembly order).
+	// Loads from ~/.celeste/slider.json; uses defaults if absent.
+	sliders := config.LoadSliders()
+	sliderBlock := ComposeSliderPrompt(sliders)
+	if sliderBlock != "" {
+		base += "\n" + sliderBlock
+	}
+
+	return base
 }
 
 // buildPromptFromEssence constructs a system prompt from the essence data.

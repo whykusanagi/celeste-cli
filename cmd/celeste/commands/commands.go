@@ -795,6 +795,7 @@ Chat:
   /clear             Clear conversation history
   /help              Show this help message
   /endpoint <name>   Switch AI provider (openai, venice, grok, google)
+  /persona           Personality sliders (flirt, warmth, speech, lewdness)
   /config             List available config profiles
   /config <name>      Load a named config profile
   /config set-key <k> Set API key

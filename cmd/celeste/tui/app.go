@@ -112,6 +112,7 @@ type AppModel struct {
 	skillsBrowser    *SkillsBrowserModel
 	graphModel       *GraphModel
 	memoryManager    *MemoryManagerModel
+	personaPanel     *PersonaPanelModel
 	viewMode         string // "chat", "collections", "menu", "skills", "graph", "memories"
 
 	// Code graph indexer (for /graph view)
@@ -342,6 +343,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if updatedModel, ok := updated.(GraphModel); ok {
 				*m.graphModel = updatedModel
 			}
+			return m, cmd
+		}
+	} else if m.viewMode == "persona" {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if msg.String() == "esc" || msg.String() == "q" {
+				// Save on close if modified
+				if m.personaPanel != nil && m.personaPanel.Modified() {
+					_ = m.personaPanel.Save()
+					m.chat = m.chat.AddSystemMessage("✨ Persona sliders saved.")
+				}
+				m.viewMode = "chat"
+				return m, nil
+			}
+		}
+		if m.personaPanel != nil {
+			updated, cmd := m.personaPanel.Update(msg)
+			*m.personaPanel = updated
 			return m, cmd
 		}
 	} else if m.viewMode == "memories" {
@@ -821,6 +840,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.chat = m.chat.AddSystemMessage("Code Graph:\n" + m.codeGraphSummary)
 					}
 				}
+				return m, nil
+
+			case "persona":
+				m.viewMode = "persona"
+				panel := NewPersonaPanelModel()
+				panel = panel.SetWidth(m.width)
+				m.personaPanel = &panel
 				return m, nil
 
 			case "graph":
@@ -2030,6 +2056,11 @@ func (m AppModel) View() string {
 	// Show skills view if in that mode
 	if m.viewMode == "skills" && m.skillsBrowser != nil {
 		return m.skillsBrowser.View()
+	}
+
+	// Show persona panel if in that mode
+	if m.viewMode == "persona" && m.personaPanel != nil {
+		return m.personaPanel.View()
 	}
 
 	// Show graph view if in that mode
