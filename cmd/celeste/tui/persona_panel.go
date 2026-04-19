@@ -162,6 +162,33 @@ func (m PersonaPanelModel) View() string {
 		{"Lewdness", m.sliders.Lewdness, 3},
 	}
 
+	anchorDescs := map[int][4]string{
+		0: {
+			"Task-focused, minimal personal commentary",
+			"Light teasing woven into competence",
+			"Confident compliments, natural double entendres",
+			"Forward and unabashed, you set the pace",
+		},
+		1: {
+			"Precise and efficient, emotion implied through action",
+			"Genuine helpfulness, measured warmth",
+			"Openly engaged — celebrates wins, notices effort",
+			"Pet names feel natural, concern is proactive",
+		},
+		2: {
+			"Short sentences, stripped to load-bearing words",
+			"Natural conversational cadence, contractions fine",
+			"Dramatic flair, vivid reactions, luxurious sentences",
+			"Softened speech, playful affect, cozy energy",
+		},
+		3: {
+			"General-audience, innuendo absent or deniable",
+			"Light innuendo, imagination does the heavy lifting",
+			"Overt sensuality, tension built through pacing",
+			"Explicit when warranted, always with craft",
+		},
+	}
+
 	for i, s := range sliders {
 		cursor := "  "
 		style := labelStyle
@@ -189,6 +216,15 @@ func (m PersonaPanelModel) View() string {
 			bar,
 			mutedStyle.Render(anchorLabel),
 		))
+
+		// Show descriptor for the selected slider
+		if m.cursor == i {
+			desc := anchorDescs[s.idx][anchor]
+			if s.idx == 3 && !m.sliders.R18Enabled {
+				desc = "Enable R18 toggle below to unlock this slider"
+			}
+			sb.WriteString(fmt.Sprintf("                %s\n", mutedStyle.Render("↳ "+desc)))
+		}
 	}
 
 	// R18 toggle
