@@ -232,12 +232,13 @@ func runChatTUI() {
 	builtin.RegisterCollectionsTools(registry, cfg)
 	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
 
-	// Register subagent spawning tool
+	// Register subagent spawning tool — available in all modes so chat
+	// users can delegate subtasks and parameterize subagent persona.
 	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
 	subMgr := subagents.NewManager(cfg, cwd, isChild)
 	registry.RegisterWithModes(
 		subagents.NewSpawnAgentTool(subMgr),
-		tools.ModeAgent, tools.ModeClaw,
+		tools.ModeAgent, tools.ModeClaw, tools.ModeChat,
 	)
 
 	// Load permissions and set checker

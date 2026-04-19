@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -24,7 +26,7 @@ func NewSpawnAgentTool(manager *Manager) *SpawnAgentTool {
 func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 
 func (t *SpawnAgentTool) Description() string {
-	return "Spawn a subagent to handle a subtask. The subagent has the same tools, permissions, and persona as you. It runs to completion and returns its result. Use this for independent subtasks that benefit from a fresh context."
+	return "Spawn a subagent to handle a subtask. The subagent runs to completion and returns its result. Use this for independent subtasks that benefit from a fresh context. You can override the subagent's personality via the persona parameter — useful for creating content in different voices (e.g., 'write this in a warm, theatrical style' vs 'write this in a cold, clipped operator style')."
 }
 
 func (t *SpawnAgentTool) Parameters() json.RawMessage {
@@ -38,6 +40,36 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 			"workspace": {
 				"type": "string",
 				"description": "Working directory for the subagent (defaults to current workspace)"
+			},
+			"persona": {
+				"type": "object",
+				"description": "Override the subagent's personality sliders. Omit to inherit the parent's current sliders.",
+				"properties": {
+					"preset": {
+						"type": "string",
+						"description": "Load a named persona preset (from /persona saved presets)"
+					},
+					"flirt": {
+						"type": "integer",
+						"description": "Flirt level 0-10 (0=professional, 3=playful, 7=flirty, 10=aggressive)"
+					},
+					"warmth": {
+						"type": "integer",
+						"description": "Warmth level 0-10 (0=cold, 3=polite, 7=warm, 10=affectionate)"
+					},
+					"register": {
+						"type": "integer",
+						"description": "Speech style 0-10 (0=operator, 3=standard, 7=theatrical, 10=uwu)"
+					},
+					"lewdness": {
+						"type": "integer",
+						"description": "Content level 0-10 (requires r18=true to have effect)"
+					},
+					"r18": {
+						"type": "boolean",
+						"description": "Enable R18 content eligibility for this subagent"
+					}
+				}
 			}
 		},
 		"required": ["goal"]
@@ -62,6 +94,19 @@ func (t *SpawnAgentTool) ValidateInput(input map[string]any) error {
 func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
 	goal := input["goal"].(string)
 	workspace, _ := input["workspace"].(string)
+
+	// Parse persona override if provided
+	if persona, ok := input["persona"].(map[string]any); ok {
+		sliderOverride := buildSliderOverride(persona)
+		if sliderOverride != "" {
+			// Prepend persona instructions to the goal so the subagent's
+			// system prompt reflects the override. The subagent reads
+			// slider.json from disk by default; we override by injecting
+			// explicit voice modulation into the goal itself, which the
+			// agent runtime prepends to the system context.
+			goal = "[PERSONA OVERRIDE]\n" + sliderOverride + "\n[END PERSONA OVERRIDE]\n\n" + goal
+		}
+	}
 
 	// Emit progress so the TUI shows what is happening
 	if progress != nil {
@@ -91,6 +136,38 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 			"status":      run.Status,
 		},
 	}, nil
+}
+
+// buildSliderOverride constructs a voice modulation prompt from the
+// persona parameter map. Returns empty string if no overrides specified.
+func buildSliderOverride(persona map[string]any) string {
+	// Check for a named preset first
+	if preset, ok := persona["preset"].(string); ok && preset != "" {
+		sliders := config.LoadSliders()
+		if sliders.LoadPreset(preset) {
+			return prompts.ComposeSliderPrompt(sliders)
+		}
+	}
+
+	// Build from individual slider values
+	sliders := config.LoadSliders() // start from current defaults
+	if v, ok := persona["flirt"].(float64); ok {
+		sliders.Flirt = int(v)
+	}
+	if v, ok := persona["warmth"].(float64); ok {
+		sliders.Warmth = int(v)
+	}
+	if v, ok := persona["register"].(float64); ok {
+		sliders.Register = int(v)
+	}
+	if v, ok := persona["lewdness"].(float64); ok {
+		sliders.Lewdness = int(v)
+	}
+	if v, ok := persona["r18"].(bool); ok {
+		sliders.R18Enabled = v
+	}
+
+	return prompts.ComposeSliderPrompt(sliders)
 }
 
 // truncate shortens s to maxLen characters, appending "..." if truncated.
