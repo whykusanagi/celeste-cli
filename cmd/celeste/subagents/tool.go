@@ -76,7 +76,7 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 	}`)
 }
 
-func (t *SpawnAgentTool) IsConcurrencySafe(input map[string]any) bool { return false }
+func (t *SpawnAgentTool) IsConcurrencySafe(input map[string]any) bool { return true }
 func (t *SpawnAgentTool) IsReadOnly() bool                            { return false }
 
 func (t *SpawnAgentTool) InterruptBehavior() tools.InterruptBehavior {
@@ -124,16 +124,28 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}, nil
 	}
 
-	// Format result with metadata
-	result := fmt.Sprintf("Subagent %s completed in %d turns (%s)\n\n%s",
-		run.ID, run.Turns, run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond), run.Result)
+	// Emit completion with element name
+	if progress != nil {
+		progress <- tools.ProgressEvent{
+			ToolName: "spawn_agent",
+			Message:  fmt.Sprintf("〔%s〕 completed %d turns", run.Name, run.Turns),
+		}
+	}
+
+	// Format result with element identity
+	result := fmt.Sprintf("〔%s〕 (%s) — completed in %d turns (%s)\n\n%s",
+		run.Name, run.Element,
+		run.Turns, run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
+		run.Result)
 
 	return tools.ToolResult{
 		Content: result,
 		Metadata: map[string]any{
-			"subagent_id": run.ID,
-			"turns":       run.Turns,
-			"status":      run.Status,
+			"subagent_id":   run.ID,
+			"subagent_name": run.Name,
+			"element":       run.Element,
+			"turns":         run.Turns,
+			"status":        run.Status,
 		},
 	}, nil
 }

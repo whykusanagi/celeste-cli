@@ -22,9 +22,27 @@ import (
 // is rejected.
 const recursionMarker = "[celeste-subagent]"
 
+// elementNames are the named identities for the first 6 subagents,
+// using Japanese elemental kanji from the corruption-theme aesthetic.
+// After 6, falls back to numbered names (七号, 八号, ...).
+var elementNames = []struct {
+	Kanji   string // display character
+	Romaji  string // romanized name
+	Element string // english meaning
+}{
+	{"地", "chi", "earth"},
+	{"火", "hi", "fire"},
+	{"水", "mizu", "water"},
+	{"光", "hikari", "light"},
+	{"闇", "yami", "dark"},
+	{"風", "kaze", "wind"},
+}
+
 // SubagentRun tracks the state and result of a spawned subagent.
 type SubagentRun struct {
 	ID        string    `json:"id"`
+	Name      string    `json:"name"`      // display name (e.g., "火 hi")
+	Element   string    `json:"element"`   // english element (e.g., "fire")
 	Goal      string    `json:"goal"`
 	Workspace string    `json:"workspace"`
 	Status    string    `json:"status"` // "running", "completed", "failed"
@@ -75,9 +93,24 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string) (*Su
 
 	m.mu.Lock()
 	m.counter++
+	idx := m.counter - 1
 	id := fmt.Sprintf("sub-%d-%d", time.Now().Unix(), m.counter)
+
+	// Assign element name from the kanji table
+	var name, element string
+	if idx < len(elementNames) {
+		e := elementNames[idx]
+		name = fmt.Sprintf("%s %s", e.Kanji, e.Romaji)
+		element = e.Element
+	} else {
+		name = fmt.Sprintf("第%d号", m.counter)
+		element = fmt.Sprintf("agent-%d", m.counter)
+	}
+
 	run := &SubagentRun{
 		ID:        id,
+		Name:      name,
+		Element:   element,
 		Goal:      goal,
 		Workspace: workspace,
 		Status:    "running",

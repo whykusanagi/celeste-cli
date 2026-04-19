@@ -72,8 +72,8 @@ func TestSpawnAgentToolIsReadOnly(t *testing.T) {
 func TestSpawnAgentToolIsConcurrencySafe(t *testing.T) {
 	m := NewManager(&config.Config{}, "/tmp", false)
 	tool := NewSpawnAgentTool(m)
-	if tool.IsConcurrencySafe(nil) {
-		t.Fatal("spawn_agent should not be concurrency safe")
+	if !tool.IsConcurrencySafe(nil) {
+		t.Fatal("spawn_agent should be concurrency safe (parallel subagent dispatch)")
 	}
 }
 
