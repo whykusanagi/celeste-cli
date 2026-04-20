@@ -53,6 +53,11 @@ type SubagentRun struct {
 	Turns     int       `json:"turns"`
 }
 
+// StaggerDelay is the configurable pause between concurrent subagent
+// launches to avoid hitting provider rate limits. Zero means no delay.
+// Default 500ms — safe for xAI's grok-4-1-fast at 6 concurrent agents.
+var StaggerDelay = 500 * time.Millisecond
+
 // Manager handles subagent lifecycle and execution.
 type Manager struct {
 	cfg       *config.Config
@@ -74,10 +79,15 @@ func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
 	}
 }
 
+// TurnCallback is called on each subagent turn so the parent can
+// display nested progress. turn is 1-indexed, toolName is the tool
+// being called on this turn (empty if the turn is a text response).
+type TurnCallback func(turn int, maxTurns int, toolName string)
+
 // Spawn creates and runs a subagent with the given goal. It blocks until the
-// subagent completes or the context is cancelled. Returns the subagent's final
-// response text.
-func (m *Manager) Spawn(ctx context.Context, goal string, workspace string) (*SubagentRun, error) {
+// subagent completes or the context is cancelled. The optional turnCb streams
+// per-turn activity to the caller for nested TUI progress display.
+func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turnCb ...TurnCallback) (*SubagentRun, error) {
 	if m.isChild {
 		return nil, fmt.Errorf("recursive subagent spawning is not allowed")
 	}
@@ -123,11 +133,41 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string) (*Su
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)
 
+	// Stagger concurrent launches to avoid rate limiting
+	if StaggerDelay > 0 && m.counter > 1 {
+		delay := StaggerDelay * time.Duration(m.counter-1)
+		if delay > 3*time.Second {
+			delay = 3 * time.Second // cap at 3s max stagger
+		}
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			run.Status = "failed"
+			run.Error = "cancelled during stagger delay"
+			run.EndedAt = time.Now()
+			return run, ctx.Err()
+		}
+	}
+
 	var outBuf, errBuf bytes.Buffer
 	opts := agent.Options{
 		Workspace: workspace,
 		MaxTurns:  20,
 		Verbose:   false,
+	}
+
+	// Wire turn callback via OnTurnStats — the agent runner fires
+	// this after each LLM call so we can forward nested progress
+	// to the parent's TUI for real-time subagent visibility.
+	if len(turnCb) > 0 && turnCb[0] != nil {
+		cb := turnCb[0]
+		opts.OnTurnStats = func(stats agent.TurnStats) {
+			toolName := ""
+			if len(stats.ToolCalls) > 0 {
+				toolName = strings.Join(stats.ToolCalls, ", ")
+			}
+			cb(stats.Turn, stats.MaxTurns, toolName)
+		}
 	}
 
 	runner, err := agent.NewRunner(m.cfg, opts, &outBuf, &errBuf)

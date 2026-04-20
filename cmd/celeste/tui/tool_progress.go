@@ -16,12 +16,14 @@ var brailleSpinner = []rune{'⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '�
 
 // toolProgressEntry tracks the state of a single tool execution.
 type toolProgressEntry struct {
-	callID    string
-	name      string
-	state     string // executing, done, failed, aborted
-	message   string
-	startedAt time.Time
-	doneAt    time.Time
+	callID      string
+	name        string
+	displayName string // optional override for element-named subagents
+	state       string // executing, done, failed, aborted
+	message     string
+	subMessage  string // nested status (subagent turn/tool)
+	startedAt   time.Time
+	doneAt      time.Time
 }
 
 // ToolProgressModel displays stacked tool execution cards.
@@ -76,8 +78,13 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 		if e.callID == msg.ToolCallID {
 			m.entries[i].state = msg.State
 			m.entries[i].message = msg.Message
+			if msg.DisplayName != "" {
+				m.entries[i].displayName = msg.DisplayName
+			}
+			if msg.SubMessage != "" {
+				m.entries[i].subMessage = msg.SubMessage
+			}
 			if msg.State == "executing" && e.state != "executing" {
-				// Tool is starting now (was queued) — reset start time
 				m.entries[i].startedAt = time.Now()
 			} else if msg.State != "executing" {
 				m.entries[i].doneAt = time.Now()
@@ -87,11 +94,13 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 	}
 	// New entry
 	entry := toolProgressEntry{
-		callID:    msg.ToolCallID,
-		name:      msg.ToolName,
-		state:     msg.State,
-		message:   msg.Message,
-		startedAt: time.Now(),
+		callID:      msg.ToolCallID,
+		name:        msg.ToolName,
+		displayName: msg.DisplayName,
+		state:       msg.State,
+		message:     msg.Message,
+		subMessage:  msg.SubMessage,
+		startedAt:   time.Now(),
 	}
 	if msg.State != "executing" {
 		entry.doneAt = time.Now()
@@ -150,10 +159,24 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 
 	elapsedStr := fmt.Sprintf("%.1fs", elapsed.Seconds())
 
-	return fmt.Sprintf(" %s %s %s %s",
+	// Use display name if set (element-named subagents), otherwise tool name
+	displayName := e.name
+	if e.displayName != "" {
+		displayName = e.displayName
+	}
+
+	line := fmt.Sprintf(" %s %s %s %s",
 		stateStyle.Render(icon),
-		lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render(e.name),
+		lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render(displayName),
 		stateStyle.Render(e.state),
 		lipgloss.NewStyle().Foreground(ColorTextMuted).Render(elapsedStr),
 	)
+
+	// Show nested subagent activity on a second line if present
+	if e.subMessage != "" && e.state == "executing" {
+		subStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6d28d9"))
+		line += "\n   " + subStyle.Render("└─ "+e.subMessage)
+	}
+
+	return line
 }

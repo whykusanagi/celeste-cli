@@ -108,7 +108,8 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	// Emit progress so the TUI shows what is happening
+	// Emit initial progress with the element name (assigned by Spawn)
+	// We don't know the name yet, so emit a generic start first.
 	if progress != nil {
 		progress <- tools.ProgressEvent{
 			ToolName: "spawn_agent",
@@ -116,7 +117,23 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	run, err := t.manager.Spawn(ctx, goal, workspace)
+	// Create a callback that streams subagent internal activity to
+	// the parent's progress channel so the TUI can show nested turns.
+	var turnCallback func(turn int, maxTurns int, toolName string)
+	if progress != nil {
+		turnCallback = func(turn int, maxTurns int, toolName string) {
+			msg := fmt.Sprintf("turn %d/%d", turn, maxTurns)
+			if toolName != "" {
+				msg += " · " + toolName
+			}
+			progress <- tools.ProgressEvent{
+				ToolName: "spawn_agent",
+				Message:  msg,
+			}
+		}
+	}
+
+	run, err := t.manager.Spawn(ctx, goal, workspace, turnCallback)
 	if err != nil {
 		return tools.ToolResult{
 			Content: fmt.Sprintf("Subagent failed: %v", err),
