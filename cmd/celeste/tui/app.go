@@ -1843,10 +1843,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if isBatchResult {
-			if len(m.pendingToolCalls) > 0 {
+			// Track how many parallel results are still outstanding.
+			// Parallel calls were dispatched and removed from pendingToolCalls,
+			// so we track them via the tool progress entries.
+			parallelStillRunning := false
+			for _, entry := range m.toolProgress.entries {
+				if entry.state == "executing" {
+					parallelStillRunning = true
+					break
+				}
+			}
+
+			if len(m.pendingToolCalls) > 0 && !parallelStillRunning {
+				// Serial queue has items and all parallel tools are done —
+				// start the next serial tool.
 				nextCall := m.pendingToolCalls[0]
 				m.skills = m.skills.SetExecuting(nextCall.name)
 				m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", nextCall.name))
+				m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+					ToolCallID: nextCall.toolCallID,
+					ToolName:   nextCall.name,
+					State:      "executing",
+				})
 				nextCmd := m.executePendingToolCall(nextCall)
 				if nextCmd != nil {
 					cmds = append(cmds, nextCmd)
@@ -1854,7 +1872,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingToolCalls = nil
 					m.toolBatchActive = false
 				}
-			} else {
+			} else if len(m.pendingToolCalls) == 0 && !parallelStillRunning {
+				// All tools (parallel + serial) are done — follow up with LLM.
 				m.pendingToolCallID = ""
 				m.toolBatchActive = false
 				if shouldFollowUp {
@@ -1863,6 +1882,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, followCmds...)
 				}
 			}
+			// else: parallel tools still running — wait for more results
 		} else {
 			m.pendingToolCallID = ""
 			if shouldFollowUp {
@@ -2217,43 +2237,77 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 		})
 	}
 
-	// Emit progress events for all tool calls in the batch
-	for _, call := range m.pendingToolCalls {
-		summary := call.name
-		if args := call.args; args != nil {
-			if p, ok := args["path"].(string); ok {
-				summary += " " + p
-			} else if q, ok := args["query"].(string); ok {
-				summary += " " + q
-			} else if c, ok := args["command"].(string); ok {
-				if len(c) > 60 {
-					c = c[:60] + "..."
-				}
-				summary += " " + c
-			}
-		}
-		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
-			ToolCallID: call.toolCallID,
-			ToolName:   call.name,
-			State:      "executing",
-			Message:    summary,
-		})
-	}
+	// Note: progress events are emitted when tools actually start executing,
+	// not here. Parallel tools get their "executing" state in the dispatch
+	// loop below; serial tools get it when they're popped from the queue.
 
-	firstCall := m.pendingToolCalls[0]
-	m.pendingToolCallID = firstCall.toolCallID
-	m.skills = m.skills.SetExecuting(firstCall.name)
-	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", firstCall.name))
 	LogInfo(fmt.Sprintf("Starting execution of %d skill call(s)", len(m.pendingToolCalls)))
 
-	nextCmd := m.executePendingToolCall(firstCall)
-	if nextCmd == nil {
-		m.pendingToolCalls = nil
-		m.toolBatchActive = false
-		return m, nil
+	// Dispatch ALL concurrency-safe tools in parallel. Non-safe tools
+	// queue behind: the first non-safe tool blocks until all prior
+	// safe tools have finished, then runs alone.
+	var batchCmds []tea.Cmd
+	var serialQueue []pendingToolCall
+
+	for _, call := range m.pendingToolCalls {
+		// Check if this tool is concurrency-safe by looking it up
+		// in the registry. If we can't determine safety, default to serial.
+		isSafe := false
+		if m.llmClient != nil {
+			isSafe = m.isToolConcurrencySafe(call.name, call.args)
+		}
+
+		if isSafe && len(serialQueue) == 0 {
+			// Safe tool with no serial blockers ahead — dispatch immediately
+			cmd := m.executePendingToolCall(call)
+			if cmd != nil {
+				batchCmds = append(batchCmds, cmd)
+			}
+			m.skills = m.skills.SetExecuting(call.name)
+			m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+				ToolCallID: call.toolCallID,
+				ToolName:   call.name,
+				State:      "executing",
+			})
+		} else {
+			// Queue for sequential execution after parallel batch
+			serialQueue = append(serialQueue, call)
+		}
 	}
 
-	return m, []tea.Cmd{nextCmd}
+	// Replace pendingToolCalls with only the serial queue — parallel
+	// ones are already dispatched and will come back as SkillResultMsg.
+	m.pendingToolCalls = serialQueue
+
+	if len(batchCmds) > 0 {
+		// Multiple tools running in parallel
+		m.pendingToolCallID = "" // no single active ID
+		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing %d tools in parallel", len(batchCmds)))
+		return m, batchCmds
+	}
+
+	// No parallel tools — fall back to sequential dispatch
+	if len(m.pendingToolCalls) > 0 {
+		firstCall := m.pendingToolCalls[0]
+		m.pendingToolCallID = firstCall.toolCallID
+		m.skills = m.skills.SetExecuting(firstCall.name)
+		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", firstCall.name))
+		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+			ToolCallID: firstCall.toolCallID,
+			ToolName:   firstCall.name,
+			State:      "executing",
+		})
+		nextCmd := m.executePendingToolCall(firstCall)
+		if nextCmd == nil {
+			m.pendingToolCalls = nil
+			m.toolBatchActive = false
+			return m, nil
+		}
+		return m, []tea.Cmd{nextCmd}
+	}
+
+	m.toolBatchActive = false
+	return m, nil
 }
 
 func (m AppModel) executePendingToolCall(call pendingToolCall) tea.Cmd {
@@ -2274,6 +2328,32 @@ func (m AppModel) executePendingToolCall(call pendingToolCall) tea.Cmd {
 	}
 
 	return m.llmClient.ExecuteSkill(call.name, call.args, call.toolCallID)
+}
+
+// concurrencySafeTools lists tools that can be dispatched in parallel.
+// These correspond to tools that return IsConcurrencySafe=true in the
+// builtin registry. Maintained here because the TUI doesn't have direct
+// access to the tool registry at dispatch time.
+var concurrencySafeTools = map[string]bool{
+	"spawn_agent":        true,
+	"read_file":          true,
+	"list_files":         true,
+	"search":             true,
+	"code_search":        true,
+	"code_review":        true,
+	"code_graph":         true,
+	"code_symbols":       true,
+	"git_status":         true,
+	"git_log":            true,
+	"web_search":         true,
+	"web_fetch":          true,
+	"collections_search": true,
+}
+
+// isToolConcurrencySafe checks if a tool can be dispatched in parallel
+// with other safe tools.
+func (m AppModel) isToolConcurrencySafe(name string, args map[string]any) bool {
+	return concurrencySafeTools[name]
 }
 
 func (m *AppModel) popPendingToolCall(toolCallID string) {
