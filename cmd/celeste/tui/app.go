@@ -1773,11 +1773,21 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			state = "failed"
 		}
-		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+		progMsg := ToolProgressMsg{
 			ToolCallID: msg.ToolCallID,
 			ToolName:   msg.Name,
 			State:      state,
-		})
+		}
+		// Inject element identity for subagent results
+		if msg.Name == "spawn_agent" && msg.Metadata != nil {
+			if name, ok := msg.Metadata["subagent_name"].(string); ok {
+				progMsg.DisplayName = "〔" + name + "〕"
+			}
+			if elem, ok := msg.Metadata["element"].(string); ok {
+				progMsg.Element = elem
+			}
+		}
+		m.toolProgress, _ = m.toolProgress.Update(progMsg)
 
 		isBatchResult := m.toolBatchActive
 		shouldFollowUp := msg.ToolCallID != ""

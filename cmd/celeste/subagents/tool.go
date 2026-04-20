@@ -108,12 +108,25 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	// Emit initial progress with the element name (assigned by Spawn)
-	// We don't know the name yet, so emit a generic start first.
+	// Pre-peek the element name for the initial progress event.
+	// The manager assigns names sequentially, so we can predict it.
+	t.manager.mu.Lock()
+	nextIdx := t.manager.counter
+	var predictedName, predictedElement string
+	if nextIdx < len(elementNames) {
+		e := elementNames[nextIdx]
+		predictedName = fmt.Sprintf("〔%s %s〕", e.Kanji, e.Romaji)
+		predictedElement = e.Element
+	} else {
+		predictedName = fmt.Sprintf("〔第%d号〕", nextIdx+1)
+		predictedElement = ""
+	}
+	t.manager.mu.Unlock()
+
 	if progress != nil {
 		progress <- tools.ProgressEvent{
 			ToolName: "spawn_agent",
-			Message:  fmt.Sprintf("Spawning subagent: %s", truncate(goal, 80)),
+			Message:  fmt.Sprintf("%s spawning: %s", predictedName, truncate(goal, 60)),
 		}
 	}
 
@@ -129,9 +142,12 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 			progress <- tools.ProgressEvent{
 				ToolName: "spawn_agent",
 				Message:  msg,
+				Percent:  float64(turn) / float64(maxTurns),
 			}
 		}
 	}
+
+	_ = predictedElement // will be used when TUI integration sends element via metadata
 
 	run, err := t.manager.Spawn(ctx, goal, workspace, turnCallback)
 	if err != nil {
