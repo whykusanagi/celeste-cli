@@ -67,6 +67,8 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	registry.RegisterWithModes(NewQRCodeTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewUnitConverterTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewTimezoneConverterTool(), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewTTSTool(), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewAudioProjectTool(), tools.ModeChat, tools.ModeClaw, tools.ModeAgent)
 
 	// Memory tool — available in all modes with workspace
 	if workspace != "" {
@@ -93,6 +95,8 @@ func RegisterCodeGraphTools(registry *tools.Registry, indexer *codegraph.Indexer
 	registry.RegisterWithModes(NewCodeGraphTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewCodeSymbolsTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewCodeReviewTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewCodeImpactTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(NewCodeSnapshotTool(indexer), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 }
 
 // RegisterCollectionsTools registers collections search if active collections exist.

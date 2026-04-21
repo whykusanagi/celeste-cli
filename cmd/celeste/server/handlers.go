@@ -371,6 +371,15 @@ func registerCelesteContentTool(s *Server) {
 		// Use the content-specific prompt variant
 		contentPrompt := prompts.GetContentPrompt("", format, "", "")
 		contentPrompt += fmt.Sprintf("\n\nOutput format: %s\n", format)
+
+		// Inject workspace grimoire if available (project-specific rules/context)
+		cwd, _ := os.Getwd()
+		if cwd != "" {
+			if projectGrimoire, err := grimoire.LoadAll(cwd); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
+				contentPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+			}
+		}
+
 		client.SetSystemPrompt(contentPrompt)
 
 		messages := []tui.ChatMessage{

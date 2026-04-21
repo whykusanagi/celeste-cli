@@ -69,6 +69,9 @@ type Indexer struct {
 	// across files avoids the native-allocation cost of a per-file
 	// tree-sitter setup. Nil until first TS file; Close() releases it.
 	tsParser *TSParser
+	// multiParser handles all languages with tree-sitter grammars
+	// (Python, Rust, Java, C, C++, etc). Lazily initialized.
+	multiParser *MultiLangParser
 }
 
 // DefaultIndexPath returns the path to the code graph database for a project.
@@ -177,6 +180,10 @@ func (idx *Indexer) Close() error {
 	if idx.tsParser != nil {
 		idx.tsParser.Close()
 		idx.tsParser = nil
+	}
+	if idx.multiParser != nil {
+		idx.multiParser.Close()
+		idx.multiParser = nil
 	}
 	return idx.store.Close()
 }
@@ -298,11 +305,17 @@ func (idx *Indexer) indexFile(relPath string) error {
 	var err error
 
 	if lang == "go" {
+		// Go uses its own AST parser (go/parser, not tree-sitter)
 		parser := NewGoParser()
 		result, err = parser.ParseFile(absPath)
+	} else if idx.tryMultiParser(absPath) {
+		// Multi-language tree-sitter parser (Python, Rust, Java, C, C++, etc.)
+		if idx.multiParser == nil {
+			idx.multiParser = NewMultiLangParser()
+		}
+		result, err = idx.multiParser.ParseFile(absPath)
 	} else if lang == "typescript" {
-		// Tree-sitter backed TS parser. Lazily allocated on first use
-		// so pure-Go / Python projects pay no CGo startup cost.
+		// Dedicated TS parser (preserves existing behavior for TS-only builds)
 		if idx.tsParser == nil {
 			idx.tsParser = NewTSParser()
 		}

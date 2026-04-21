@@ -8,7 +8,43 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
+
+// taskExecutionPrompt is always injected. It ensures multi-step plans
+// are completed sequentially without stopping for intermediate reports.
+const taskExecutionPrompt = `Task Execution Rules:
+When you have a multi-step plan (e.g., generate 3 audio clips then mix them):
+1. Present the plan ONCE at the start with numbered steps and timeline
+2. Execute ALL steps sequentially WITHOUT stopping to report between steps
+3. Use tool calls back-to-back — do NOT insert text responses between tool calls in the same plan
+4. Only respond with a final summary AFTER all steps are complete
+5. If a step fails, note it and continue with remaining steps — report all results at the end
+6. For audio mixing: plan the timeline with specific timestamps BEFORE calling the mix tool
+
+DO NOT: stop after each tool call to describe what you did. DO NOT: ask "should I continue?" mid-plan.
+DO: chain tool calls silently until the plan is complete, then give one comprehensive result.
+IMPORTANT — choosing direct tools vs subagent orchestration:
+- Simple tasks (1-2 tool calls, no dependencies): call tools directly.
+- Complex multi-step workflows (generate multiple files then combine them): use spawn_agent with DAG dependencies.
+  Each generation step gets its own subagent with a task_id. The combination/render step gets depends_on listing all generation task_ids.
+  This guarantees files exist before the combiner runs. Without depends_on, everything runs simultaneously and downstream steps fail.
+  Example audio production: spawn_agent task_id="voice" (generate voice), spawn_agent task_id="sfx1" (generate SFX),
+  spawn_agent task_id="project" depends_on=["voice","sfx1"] (create audio project), spawn_agent task_id="render" depends_on=["project"] (render).
+
+IMPORTANT filename rule: When generating audio that will be mixed later, ALWAYS pass an explicit 'filename' parameter so you know the exact path for the mix step.
+Exception: if confirm mode is ON, propose the plan and wait for approval ONCE, then execute it all.`
+
+// confirmModePrompt is injected when confirm_actions is enabled in config.
+// It instructs Celeste to propose plans before executing write/generate operations.
+const confirmModePrompt = `Action Confirmation Mode:
+Before executing any action that creates, modifies, or generates content (writing files, spawning subagents for content generation, running destructive commands), you MUST:
+1. Present a brief summary of what you plan to do (files to create/modify, content type, scope)
+2. Wait for explicit user approval before proceeding
+3. Only execute after receiving confirmation (e.g., "yes", "go", "do it", "approved")
+Read-only operations (listing files, reading, searching, status checks) do not require confirmation.
+This applies to ALL write paths: direct file writes, subagent spawns for generation, bash commands that modify state.`
 
 // Embedded persona prompt for when no external file is available
 //
@@ -16,22 +52,27 @@ import (
 var embeddedEssence []byte
 
 // CelesteEssence holds the parsed essence configuration.
+// Supports both v1.x (structured fields) and v3.x (system_prompt blob) schemas.
 type CelesteEssence struct {
 	Version     string `json:"version"`
-	Character   string `json:"character"`
-	Description string `json:"description"`
+	Character   string `json:"character"`       // v1.x
+	Description string `json:"description"`     // v1.x
 	Voice       struct {
 		Style       string   `json:"style"`
 		Constraints []string `json:"constraints"`
 		EmojiUsage  string   `json:"emoji_usage"`
 		EmotesUsage string   `json:"emotes_usage"`
-	} `json:"voice"`
-	CoreRules        []string          `json:"core_rules"`
-	BehaviorTiers    []BehaviorTier    `json:"behavior_tiers"`
-	Safety           SafetyConfig      `json:"safety"`
+	} `json:"voice"` // v1.x
+	CoreRules        []string          `json:"core_rules"`        // v1.x
+	BehaviorTiers    []BehaviorTier    `json:"behavior_tiers"`    // v1.x
+	Safety           SafetyConfig      `json:"safety"`            // v1.x
 	OperationalLaws  map[string]string `json:"operational_laws"`
 	InteractionRules []string          `json:"interaction_rules"`
 	KnowledgeUsage   string            `json:"knowledge_usage"`
+	// v3.x fields
+	SystemPrompt  string `json:"system_prompt"`   // canonical prompt blob (v3.0.0+)
+	CanonicalName string `json:"canonical_name"`  // "Celeste" (v3.0.0+)
+	CharacterID   string `json:"character_id"`    // "celeste" (v3.0.0+)
 }
 
 // BehaviorTier defines behavior based on score.
@@ -74,7 +115,9 @@ func LoadEssence() (*CelesteEssence, error) {
 	return &essence, nil
 }
 
-// GetSystemPrompt generates the system prompt from the essence.
+// GetSystemPrompt generates the system prompt from the essence,
+// with slider-composed voice modulation inserted at position 6
+// in the assembly order.
 func GetSystemPrompt(skipPrompt bool) string {
 	if skipPrompt {
 		return ""
@@ -86,11 +129,45 @@ func GetSystemPrompt(skipPrompt bool) string {
 		return getBasicPrompt()
 	}
 
-	return buildPromptFromEssence(essence)
+	base := buildPromptFromEssence(essence)
+
+	// Inject user identity block (position 5.5 — after persona, before sliders).
+	// Tells Celeste who she's talking to so she doesn't call everyone "twin."
+	user := config.LoadUser()
+	userBlock := ComposeUserPrompt(user)
+	if userBlock != "" {
+		base += "\n" + userBlock
+	}
+
+	// Compose slider modulation (position 6 in assembly order).
+	// Loads from ~/.celeste/slider.json; uses defaults if absent.
+	sliders := config.LoadSliders()
+	sliderBlock := ComposeSliderPrompt(sliders)
+	if sliderBlock != "" {
+		base += "\n" + sliderBlock
+	}
+
+	// Task execution rules (always active — ensures multi-step plans complete)
+	base += "\n" + taskExecutionPrompt
+
+	// Confirm mode (position 8): when enabled, require user approval
+	// before executing write/generate operations.
+	if cfg, err := config.Load(); err == nil && cfg.ConfirmActions {
+		base += "\n" + confirmModePrompt
+	}
+
+	return base
 }
 
 // buildPromptFromEssence constructs a system prompt from the essence data.
+// v3.0.0+ uses the system_prompt blob directly; v1.x assembles from structured fields.
 func buildPromptFromEssence(e *CelesteEssence) string {
+	// v3.0.0+: system_prompt contains the canonical prompt blob
+	if e.SystemPrompt != "" {
+		return e.SystemPrompt
+	}
+
+	// v1.x fallback: assemble from structured fields
 	var sb strings.Builder
 
 	// Character introduction

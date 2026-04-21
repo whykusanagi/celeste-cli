@@ -257,11 +257,14 @@ func (m OrchestratorEventMsg) ReadNext() tea.Cmd {
 
 // ToolProgressMsg reports real-time tool execution status.
 type ToolProgressMsg struct {
-	ToolCallID string
-	ToolName   string
-	State      string // "executing", "done", "failed", "aborted"
-	Message    string // progress message
-	Elapsed    time.Duration
+	ToolCallID  string
+	ToolName    string
+	DisplayName string // optional override (e.g., "〔火 hi〕" for element-named subagents)
+	Element     string // element type for color/animation (earth/fire/water/light/dark/wind)
+	State       string // "executing", "done", "failed", "aborted"
+	Message     string // progress message
+	SubMessage  string // nested status line (e.g., subagent turn/tool activity)
+	Elapsed     time.Duration
 }
 
 // PermissionRequestMsg asks the user for permission to run a tool.

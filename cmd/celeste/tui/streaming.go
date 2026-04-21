@@ -224,6 +224,54 @@ func GetRandomCorruption() string {
 	}
 }
 
+// GetFixedWidthCorruption returns a corruption buffer padded/truncated to
+// exactly `width` visible characters, styled with ANSI color. This mirrors
+// the JS TypingTextReveal "buffer window" pattern: the corruption phrase
+// flickers at a fixed width so the viewport layout never reflows.
+// The caller MUST skip Glamour rendering for the message containing this
+// string — the ANSI codes will break markdown parsing.
+func GetFixedWidthCorruption(width int) string {
+	if width <= 0 {
+		width = 16
+	}
+
+	// Pick a phrase (same distribution as GetRandomCorruption)
+	var phrase string
+	r := rand.Float64()
+	if r < 0.25 {
+		phrase = japaneseGlitch[rand.Intn(len(japaneseGlitch))]
+	} else if r < 0.45 {
+		phrase = japanesePhrases[rand.Intn(len(japanesePhrases))]
+	} else if r < 0.60 {
+		phrase = romajiGlitch[rand.Intn(len(romajiGlitch))]
+	} else if r < 0.75 {
+		phrase = englishPhrases[rand.Intn(len(englishPhrases))]
+	} else {
+		// Build a block-char string
+		buf := make([]rune, width)
+		for i := range buf {
+			buf[i] = corruptChars[rand.Intn(len(corruptChars))]
+		}
+		phrase = string(buf)
+	}
+
+	// Measure visible rune count and pad/truncate
+	runes := []rune(phrase)
+	if len(runes) > width {
+		runes = runes[:width]
+	} else {
+		for len(runes) < width {
+			runes = append(runes, corruptChars[rand.Intn(len(corruptChars))])
+		}
+	}
+
+	// Style: alternate magenta/purple per tick for flicker effect
+	if rand.Float64() < 0.5 {
+		return corruptMagenta.Render(string(runes))
+	}
+	return corruptPurple.Render(string(runes))
+}
+
 // GetRandomCorruptionPlain returns corruption without color (for status bar).
 func GetRandomCorruptionPlain() string {
 	r := rand.Float64()

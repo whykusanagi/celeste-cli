@@ -78,7 +78,7 @@ func TestRegisterReadOnlyDevTools(t *testing.T) {
 func TestToolCount(t *testing.T) {
 	registry := tools.NewRegistry()
 	RegisterAll(registry, t.TempDir(), nil, nil, nil)
-	// 6 dev tools + 2 git tools + 2 web tools + 1 save_memory + 14 config-free skills + 1 todo = 26
+	// 6 dev tools + 2 git tools + 2 web tools + 1 save_memory + 14 config-free skills + 1 todo + 1 tts + 1 audio_render = 28
 	// (config-dependent and code graph tools not registered when configLoader/indexer is nil)
-	assert.Equal(t, 26, registry.Count(), "expected 26 tools without configLoader")
+	assert.Equal(t, 28, registry.Count(), "expected 28 tools without configLoader")
 }

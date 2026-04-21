@@ -11,17 +11,34 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// brailleSpinner is the braille spinner cycle for executing tools.
+// brailleSpinner is the braille spinner cycle for regular tools.
 var brailleSpinner = []rune{'⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'}
+
+// corruptionGlyphs are substituted for 1 frame during the glitch effect
+// on element-named subagents — corruption-theme aesthetic.
+var corruptionGlyphs = []string{"◈", "◆", "⬡", "⬢", "▣", "◉", "⊕", "⊗", "⌬", "☍", "✦", "⟐"}
+
+// elementColors maps element names to their ANSI color codes.
+var elementColors = map[string]string{
+	"earth": "#10b981", // green
+	"fire":  "#f59e0b", // amber
+	"water": "#0891b2", // cyan
+	"light": "#f0ecf8", // white
+	"dark":  "#8b5cf6", // purple
+	"wind":  "#d94f90", // pink
+}
 
 // toolProgressEntry tracks the state of a single tool execution.
 type toolProgressEntry struct {
-	callID    string
-	name      string
-	state     string // executing, done, failed, aborted
-	message   string
-	startedAt time.Time
-	doneAt    time.Time
+	callID      string
+	name        string
+	displayName string // optional override for element-named subagents
+	element     string // element type (earth/fire/water/etc) for color + animation
+	state       string // executing, done, failed, aborted
+	message     string
+	subMessage  string // nested status (subagent turn/tool)
+	startedAt   time.Time
+	doneAt      time.Time
 }
 
 // ToolProgressModel displays stacked tool execution cards.
@@ -52,7 +69,7 @@ func (m *ToolProgressModel) SetSize(width, _ int) {
 func (m *ToolProgressModel) ClearCompleted() {
 	kept := m.entries[:0]
 	for _, e := range m.entries {
-		if e.state == "executing" {
+		if e.state == "executing" || e.state == "waiting" {
 			kept = append(kept, e)
 		}
 	}
@@ -76,8 +93,16 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 		if e.callID == msg.ToolCallID {
 			m.entries[i].state = msg.State
 			m.entries[i].message = msg.Message
+			if msg.DisplayName != "" {
+				m.entries[i].displayName = msg.DisplayName
+			}
+			if msg.Element != "" {
+				m.entries[i].element = msg.Element
+			}
+			if msg.SubMessage != "" {
+				m.entries[i].subMessage = msg.SubMessage
+			}
 			if msg.State == "executing" && e.state != "executing" {
-				// Tool is starting now (was queued) — reset start time
 				m.entries[i].startedAt = time.Now()
 			} else if msg.State != "executing" {
 				m.entries[i].doneAt = time.Now()
@@ -87,11 +112,14 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 	}
 	// New entry
 	entry := toolProgressEntry{
-		callID:    msg.ToolCallID,
-		name:      msg.ToolName,
-		state:     msg.State,
-		message:   msg.Message,
-		startedAt: time.Now(),
+		callID:      msg.ToolCallID,
+		name:        msg.ToolName,
+		displayName: msg.DisplayName,
+		element:     msg.Element,
+		state:       msg.State,
+		message:     msg.Message,
+		subMessage:  msg.SubMessage,
+		startedAt:   time.Now(),
 	}
 	if msg.State != "executing" {
 		entry.doneAt = time.Now()
@@ -120,15 +148,42 @@ func (m ToolProgressModel) View() string {
 
 // renderEntry renders a single tool progress line.
 func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
+	// Determine the element color (if this is a named subagent)
+	elemColor := ""
+	if e.element != "" {
+		elemColor = elementColors[e.element]
+	}
+
 	var icon string
 	var stateStyle lipgloss.Style
+
 	switch e.state {
+	case "waiting":
+		// DAG-blocked subagent: dim element icon, muted style
+		if e.element != "" && elemColor != "" {
+			icon = "◇"
+			stateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(elemColor)).Faint(true)
+		} else {
+			icon = "◇"
+			stateStyle = lipgloss.NewStyle().Foreground(ColorTextMuted)
+		}
 	case "executing":
-		icon = string(brailleSpinner[m.spinFrame])
-		stateStyle = lipgloss.NewStyle().Foreground(ColorWarning)
+		if e.element != "" && elemColor != "" {
+			// Element-named subagent: kanji pulse + corruption glitch
+			icon = m.elementSpinnerIcon(e.displayName, e.element)
+			stateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(elemColor))
+		} else {
+			// Regular tool: standard braille spinner
+			icon = string(brailleSpinner[m.spinFrame])
+			stateStyle = lipgloss.NewStyle().Foreground(ColorWarning)
+		}
 	case "done":
 		icon = "✓"
-		stateStyle = lipgloss.NewStyle().Foreground(ColorSuccess)
+		if elemColor != "" {
+			stateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(elemColor))
+		} else {
+			stateStyle = lipgloss.NewStyle().Foreground(ColorSuccess)
+		}
 	case "failed":
 		icon = "✗"
 		stateStyle = lipgloss.NewStyle().Foreground(ColorError)
@@ -140,20 +195,72 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 		stateStyle = lipgloss.NewStyle().Foreground(ColorTextMuted)
 	}
 
-	// Compute elapsed from startedAt
 	var elapsed time.Duration
 	if e.state == "executing" {
 		elapsed = time.Since(e.startedAt)
 	} else if !e.doneAt.IsZero() {
 		elapsed = e.doneAt.Sub(e.startedAt)
 	}
-
 	elapsedStr := fmt.Sprintf("%.1fs", elapsed.Seconds())
 
-	return fmt.Sprintf(" %s %s %s %s",
+	displayName := e.name
+	if e.displayName != "" {
+		displayName = e.displayName
+	}
+
+	// Name style — element color or default purple
+	nameStyle := lipgloss.NewStyle().Foreground(ColorPurple).Bold(true)
+	if elemColor != "" {
+		nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(elemColor)).Bold(true)
+	}
+
+	line := fmt.Sprintf(" %s %s %s %s",
 		stateStyle.Render(icon),
-		lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render(e.name),
+		nameStyle.Render(displayName),
 		stateStyle.Render(e.state),
 		lipgloss.NewStyle().Foreground(ColorTextMuted).Render(elapsedStr),
 	)
+
+	// Nested subagent activity with element-colored prefix
+	if e.subMessage != "" && (e.state == "executing" || e.state == "waiting") {
+		subColor := lipgloss.Color("#6d28d9")
+		if elemColor != "" {
+			subColor = lipgloss.Color(elemColor)
+		}
+		subStyle := lipgloss.NewStyle().Foreground(subColor)
+		line += "\n   " + subStyle.Render("└─ "+e.subMessage)
+	}
+
+	return line
+}
+
+// elementSpinnerIcon returns the animated icon for element-named subagents.
+// Three effects layered:
+//   1. Element kanji as the base character (instead of braille)
+//   2. Pulse: alternates bold/dim every other frame
+//   3. Corruption glitch: ~1 in 8 frames replaces kanji with a corruption glyph
+func (m ToolProgressModel) elementSpinnerIcon(displayName, element string) string {
+	// Extract the kanji from displayName (first rune of "〔火 hi〕" → "火")
+	kanji := "◈" // fallback
+	for _, r := range displayName {
+		if r != '〔' && r != ' ' && r != '〕' {
+			kanji = string(r)
+			break
+		}
+	}
+
+	// Corruption glitch: 1 in 8 frames, replace with a random corruption glyph
+	if m.spinFrame%8 == 3 {
+		glyphIdx := (m.spinFrame / 8) % len(corruptionGlyphs)
+		return corruptionGlyphs[glyphIdx]
+	}
+
+	// Kanji pulse: bold on even frames, dim (no bold) on odd
+	if m.spinFrame%2 == 0 {
+		return kanji
+	}
+	// Return the kanji but it'll be rendered dim by the caller's stateStyle
+	// which already has the element color — the bold/non-bold alternation
+	// creates the pulse effect.
+	return kanji
 }

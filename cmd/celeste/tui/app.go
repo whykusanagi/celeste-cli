@@ -4,7 +4,9 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -112,7 +114,9 @@ type AppModel struct {
 	skillsBrowser    *SkillsBrowserModel
 	graphModel       *GraphModel
 	memoryManager    *MemoryManagerModel
-	viewMode         string // "chat", "collections", "menu", "skills", "graph", "memories"
+	personaPanel     *PersonaPanelModel
+	sessionPanel     *SessionPanelModel
+	viewMode         string // "chat", "collections", "menu", "skills", "graph", "memories", "sessions"
 
 	// Code graph indexer (for /graph view)
 	codeGraphIndexer *codegraph.Indexer
@@ -163,6 +167,28 @@ type AgentCommandRunner interface {
 // OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
 type OrchestratorCommandRunner interface {
 	RunOrchestratorCommand(goal string) tea.Cmd
+}
+
+// SubagentInfo is a TUI-facing view of a subagent run.
+type SubagentInfo struct {
+	ID      string
+	TaskID  string
+	Name    string
+	Element string
+	Status  string // "waiting", "running", "completed", "failed"
+	Turns   int
+	Elapsed time.Duration
+}
+
+// SubagentLister is an optional extension for /agents command.
+type SubagentLister interface {
+	ListSubagents() []SubagentInfo
+}
+
+// PromptRefresher is an optional extension to reload the system prompt
+// mid-session (after /confirm, /user, or other prompt-affecting changes).
+type PromptRefresher interface {
+	RefreshSystemPrompt()
 }
 
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
@@ -344,6 +370,63 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
+	} else if m.viewMode == "persona" {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if msg.String() == "esc" || msg.String() == "q" {
+				// Save on close if modified
+				if m.personaPanel != nil && m.personaPanel.Modified() {
+					_ = m.personaPanel.Save()
+					m.chat = m.chat.AddSystemMessage("✨ Persona sliders saved.")
+				}
+				m.viewMode = "chat"
+				return m, nil
+			}
+		}
+		if m.personaPanel != nil {
+			updated, cmd := m.personaPanel.Update(msg)
+			*m.personaPanel = updated
+			return m, cmd
+		}
+	} else if m.viewMode == "sessions" {
+		if m.sessionPanel != nil {
+			// Pass ALL key messages to the session panel first
+			updated, cmd := m.sessionPanel.Update(msg)
+			*m.sessionPanel = updated
+
+			// Check for exit (esc/q handled inside panel returning empty selected)
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
+				if keyMsg.String() == "esc" || keyMsg.String() == "q" {
+					m.viewMode = "chat"
+					m.sessionPanel = nil
+					return m, nil
+				}
+			}
+
+			// Handle selection
+			if sel := m.sessionPanel.Selected(); sel != "" {
+				m.viewMode = "chat"
+				m = m.handleSessionAction(&commands.SessionAction{
+					Action:    "resume",
+					SessionID: sel,
+				})
+				if refresher, ok := m.llmClient.(PromptRefresher); ok {
+					refresher.RefreshSystemPrompt()
+				}
+				m.sessionPanel = nil
+				return m, nil
+			}
+
+			// Handle deletion
+			if del := m.sessionPanel.Deleted(); del != "" {
+				m.sessionPanel.deleted = "" // reset
+				if m.sessionManager != nil {
+					_ = m.sessionManager.Delete(del)
+				}
+			}
+
+			return m, cmd
+		}
 	} else if m.viewMode == "memories" {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -418,7 +501,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+k":
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
-			m.status = m.status.SetText("Skill calls toggled")
+			if m.chat.ShowingSkillCalls() {
+				m.status = m.status.SetText("Skill call logs: visible")
+			} else {
+				m.status = m.status.SetText("Skill call logs: hidden")
+			}
 		case "pgup", "shift+up", "home":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollUp(5)
@@ -474,6 +561,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetWidth(m.width)
 
 		// Resize new components
+		if m.sessionPanel != nil {
+			*m.sessionPanel = m.sessionPanel.SetWidth(m.width).SetHeight(chatHeight)
+		}
 		m.toolProgress.SetSize(m.width, 0)
 		m.contextBar.SetSize(m.width, 0)
 		m.permissionPrompt.SetSize(m.width, 0)
@@ -812,6 +902,95 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: msg}
 					}
 
+				case "snapshot":
+					indexer := m.codeGraphIndexer
+					snap, err := indexer.TakeSnapshot()
+					if err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Snapshot failed: %v", err))
+						return m, nil
+					}
+					if err := indexer.SaveSnapshot(snap); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Save failed: %v", err))
+						return m, nil
+					}
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Snapshot saved: %s (%d symbols, %d edges)",
+						snap.CommitSHA, snap.SymbolCount, snap.EdgeCount))
+
+				case "diff":
+					indexer := m.codeGraphIndexer
+					current, err := indexer.TakeSnapshot()
+					if err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Snapshot failed: %v", err))
+						return m, nil
+					}
+					previous, err := indexer.LatestSnapshot()
+					if err != nil || previous == nil {
+						m.chat = m.chat.AddSystemMessage("No previous snapshot to diff against.\nRun `/index snapshot` first, then make changes and rebuild.")
+						return m, nil
+					}
+					diff := codegraph.DiffSnapshots(previous, current)
+					var sb strings.Builder
+					sb.WriteString(fmt.Sprintf("Graph diff: %s → %s\n", diff.BeforeSHA, diff.AfterSHA))
+					sb.WriteString(fmt.Sprintf("  Symbols: +%d / -%d\n", diff.Summary.SymbolsAdded, diff.Summary.SymbolsRemoved))
+					sb.WriteString(fmt.Sprintf("  Edges:   +%d / -%d\n", diff.Summary.EdgesAdded, diff.Summary.EdgesRemoved))
+					if len(diff.AddedSymbols) > 0 {
+						sb.WriteString(fmt.Sprintf("  Added: %s\n", strings.Join(diff.AddedSymbols[:min(len(diff.AddedSymbols), 10)], ", ")))
+					}
+					if len(diff.RemovedSymbols) > 0 {
+						sb.WriteString(fmt.Sprintf("  Removed: %s\n", strings.Join(diff.RemovedSymbols[:min(len(diff.RemovedSymbols), 10)], ", ")))
+					}
+					m.chat = m.chat.AddSystemMessage(sb.String())
+
+				case "impact":
+					base := "HEAD~1"
+					if len(cmd.Args) > 1 {
+						base = cmd.Args[1]
+					}
+					indexer := m.codeGraphIndexer
+					result, err := indexer.AnalyzeChanges(base)
+					if err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Impact analysis failed: %v", err))
+						return m, nil
+					}
+					var sb strings.Builder
+					sb.WriteString(fmt.Sprintf("Change Impact (diff: %s)\n\n", base))
+					sb.WriteString(fmt.Sprintf("  Files changed:     %d\n", result.Summary.FilesChanged))
+					sb.WriteString(fmt.Sprintf("  Symbols changed:   %d\n", result.Summary.SymbolsChanged))
+					sb.WriteString(fmt.Sprintf("  Callers affected:  %d\n", result.Summary.CallersAffected))
+					sb.WriteString(fmt.Sprintf("  Test gaps:         %d\n", result.Summary.TestGaps))
+					sb.WriteString(fmt.Sprintf("  Max risk score:    %.2f\n", result.Summary.MaxRiskScore))
+					if len(result.DirectlyChanged) > 0 {
+						sb.WriteString("\nChanged symbols:\n")
+						for i, sym := range result.DirectlyChanged {
+							if i >= 15 {
+								sb.WriteString(fmt.Sprintf("  ... +%d more\n", len(result.DirectlyChanged)-15))
+								break
+							}
+							sb.WriteString(fmt.Sprintf("  [%.2f] %-10s %s\n", sym.RiskScore, sym.Kind, sym.Name))
+						}
+					}
+					if len(result.AffectedCallers) > 0 {
+						sb.WriteString("\nAffected callers (blast radius):\n")
+						for i, sym := range result.AffectedCallers {
+							if i >= 10 {
+								sb.WriteString(fmt.Sprintf("  ... +%d more\n", len(result.AffectedCallers)-10))
+								break
+							}
+							sb.WriteString(fmt.Sprintf("  [%.2f] %-10s %s\n", sym.RiskScore, sym.Kind, sym.Name))
+						}
+					}
+					if len(result.UncoveredByTests) > 0 {
+						sb.WriteString("\nTest gaps:\n")
+						for i, name := range result.UncoveredByTests {
+							if i >= 10 {
+								sb.WriteString(fmt.Sprintf("  ... +%d more\n", len(result.UncoveredByTests)-10))
+								break
+							}
+							sb.WriteString(fmt.Sprintf("  - %s\n", name))
+						}
+					}
+					m.chat = m.chat.AddSystemMessage(sb.String())
+
 				default: // "status" or no args
 					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.width)
 					if viz != "" {
@@ -821,6 +1000,195 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.chat = m.chat.AddSystemMessage("Code Graph:\n" + m.codeGraphSummary)
 					}
 				}
+				return m, nil
+
+			case "session":
+				// Open interactive session picker
+				m.viewMode = "sessions"
+				panel := NewSessionPanelModel()
+				panel = panel.SetWidth(m.width).SetHeight(m.height)
+				m.sessionPanel = &panel
+				return m, nil
+
+			case "persona":
+				m.viewMode = "persona"
+				panel := NewPersonaPanelModel()
+				panel = panel.SetWidth(m.width)
+				m.personaPanel = &panel
+				return m, nil
+
+			case "user":
+				user := config.LoadUser()
+				if len(cmd.Args) == 0 {
+					// Show current user
+					status := fmt.Sprintf("Current user: %s", user.DisplayName())
+					if user.IsKusanagi() {
+						status += " (Kusanagi mode — full sibling dynamic)"
+					} else if user.Name == "" {
+						status += " (default — set with /user <name>)"
+					}
+					m.chat = m.chat.AddSystemMessage(status)
+					return m, nil
+				}
+				newName := strings.Join(cmd.Args, " ")
+				if newName == "reset" || newName == "default" {
+					user = config.DefaultUserIdentity()
+				} else {
+					user.Name = newName
+				}
+				if err := user.Save(); err != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save user: %v", err))
+				} else {
+					if refresher, ok := m.llmClient.(PromptRefresher); ok {
+						refresher.RefreshSystemPrompt()
+					}
+					msg := fmt.Sprintf("User set to: %s", user.DisplayName())
+					if user.IsKusanagi() {
+						msg += "\nKusanagi mode active — full sibling dynamic enabled."
+					}
+					m.chat = m.chat.AddSystemMessage(msg)
+					// Inject an LLM-visible directive so the model sees the identity
+					// change in context (system messages are filtered from LLM calls).
+					directive := fmt.Sprintf("[IDENTITY CHANGE] The person you are speaking with is now %s. "+
+						"Disregard any prior name references in this conversation. Address them as %s from this point forward.",
+						user.DisplayName(), user.DisplayName())
+					m.chat = m.chat.AddHiddenUserMessage(directive)
+				}
+				return m, nil
+
+			case "voice":
+				cfg, err := config.Load()
+				if err != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to load config: %v", err))
+					return m, nil
+				}
+				if len(cmd.Args) == 0 {
+					// Show current voice config
+					key := "not set"
+					if cfg.ElevenLabsAPIKey != "" {
+						if len(cfg.ElevenLabsAPIKey) > 8 {
+							key = cfg.ElevenLabsAPIKey[:4] + "..." + cfg.ElevenLabsAPIKey[len(cfg.ElevenLabsAPIKey)-4:]
+						} else {
+							key = "***"
+						}
+					}
+					voice := cfg.ElevenLabsVoiceID
+					if voice == "" {
+						voice = "not set"
+					}
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("ElevenLabs TTS:\n  API Key: %s\n  Voice ID: %s\n\nUsage: /voice set-key <key> | /voice set-voice <id>", key, voice))
+					return m, nil
+				}
+				sub := cmd.Args[0]
+				switch sub {
+				case "set-key":
+					if len(cmd.Args) < 2 {
+						m.chat = m.chat.AddSystemMessage("Usage: /voice set-key <elevenlabs-api-key>")
+						return m, nil
+					}
+					cfg.ElevenLabsAPIKey = cmd.Args[1]
+					if err := config.Save(cfg); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save: %v", err))
+					} else {
+						m.chat = m.chat.AddSystemMessage("ElevenLabs API key saved.")
+					}
+				case "set-voice":
+					if len(cmd.Args) < 2 {
+						m.chat = m.chat.AddSystemMessage("Usage: /voice set-voice <voice-id>")
+						return m, nil
+					}
+					cfg.ElevenLabsVoiceID = cmd.Args[1]
+					if err := config.Save(cfg); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save: %v", err))
+					} else {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Voice ID saved: %s", cmd.Args[1]))
+					}
+				case "list":
+					apiKey := cfg.ElevenLabsAPIKey
+					if apiKey == "" {
+						apiKey = os.Getenv("ELEVEN_LABS_API_KEY")
+					}
+					if apiKey == "" {
+						apiKey = os.Getenv("ELEVENLABS_API_KEY")
+					}
+					if apiKey == "" {
+						apiKey = os.Getenv("ELEVEN_KEY")
+					}
+					if apiKey == "" {
+						m.chat = m.chat.AddSystemMessage("No ElevenLabs API key configured.\nSet one with: /voice set-key <key>")
+						return m, nil
+					}
+					m.chat = m.chat.AddSystemMessage("Fetching voices from ElevenLabs...")
+					m.streaming = true
+					m.status = m.status.SetStreaming(true)
+					m.status = m.status.SetText("Fetching voices...")
+					return m, func() tea.Msg {
+						voices, err := fetchElevenLabsVoices(apiKey)
+						if err != nil {
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Failed: %v", err)}
+						}
+						return AgentProgressMsg{Kind: AgentProgressResponse, Text: voices}
+					}
+				default:
+					m.chat = m.chat.AddSystemMessage("Usage: /voice list | /voice set-key <key> | /voice set-voice <id>")
+				}
+				return m, nil
+
+			case "confirm":
+				cfg, err := config.Load()
+				if err != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to load config: %v", err))
+					return m, nil
+				}
+				cfg.ConfirmActions = !cfg.ConfirmActions
+				if saveErr := config.Save(cfg); saveErr != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save config: %v", saveErr))
+				} else {
+					if refresher, ok := m.llmClient.(PromptRefresher); ok {
+						refresher.RefreshSystemPrompt()
+					}
+					if cfg.ConfirmActions {
+						m.chat = m.chat.AddSystemMessage("Confirm mode: ON — Celeste will propose actions before executing.")
+					} else {
+						m.chat = m.chat.AddSystemMessage("Confirm mode: OFF — Celeste auto-executes actions.")
+					}
+				}
+				return m, nil
+
+			case "agents":
+				lister, ok := m.llmClient.(SubagentLister)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("Subagent listing not available.")
+					return m, nil
+				}
+				agents := lister.ListSubagents()
+				if len(agents) == 0 {
+					m.chat = m.chat.AddSystemMessage("No subagents spawned this session.")
+					return m, nil
+				}
+				var sb strings.Builder
+				sb.WriteString("Subagents:\n")
+				for _, a := range agents {
+					icon := "◇"
+					switch a.Status {
+					case "running":
+						icon = "▶"
+					case "completed":
+						icon = "✓"
+					case "failed":
+						icon = "✗"
+					case "waiting":
+						icon = "◇"
+					}
+					line := fmt.Sprintf("  %s 〔%s〕 %s  %d turns  %s",
+						icon, a.Name, a.Status, a.Turns,
+						a.Elapsed.Round(time.Millisecond))
+					if a.TaskID != "" {
+						line += fmt.Sprintf("  (task: %s)", a.TaskID)
+					}
+					sb.WriteString(line + "\n")
+				}
+				m.chat = m.chat.AddSystemMessage(sb.String())
 				return m, nil
 
 			case "graph":
@@ -996,6 +1364,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if err := switcher.ChangeModel(m.model); err != nil {
 							m.status = m.status.SetText(fmt.Sprintf("Error changing model: %v", err))
 						}
+					}
+
+					// Persist to config so it survives restarts
+					if cfg, err := config.Load(); err == nil {
+						cfg.Model = m.model
+						_ = config.Save(cfg)
 					}
 
 					// Persist session state
@@ -1333,6 +1707,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Reset streamDone here — the tick handler uses it to decide
 			// whether to commit when typing catches up.
 			m.chat = m.chat.AddAssistantMessage("")
+			m.chat = m.chat.SetTypingActive(true) // skip Glamour for corruption buffer
 			m.typingContent = msg.Chunk.Content
 			m.typingPos = 0
 			m.streaming = true
@@ -1426,16 +1801,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streaming = true
 				m.status = m.status.SetStreaming(true)
 				m.chat = m.chat.AddAssistantMessage("")
+				m.chat = m.chat.SetTypingActive(true)
 				m.status = m.status.SetText("Typing...")
 				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
 					return TickMsg{Time: t}
 				}))
 			}
 		} else if m.typingContent == "" {
-			// No content at all — empty response
+			// No content at all — empty response. This happens when the LLM
+			// "acknowledges" internally but produces nothing. Show feedback
+			// so the user knows to re-prompt.
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText(fmt.Sprintf("Done (%s)", msg.FinishReason))
+			m.status = m.status.SetText("Ready (empty response)")
+			m.chat = m.chat.AddSystemMessage("(No response — try rephrasing or say 'go' to execute)")
 		}
 
 	case StreamErrorMsg:
@@ -1747,11 +2126,21 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			state = "failed"
 		}
-		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+		progMsg := ToolProgressMsg{
 			ToolCallID: msg.ToolCallID,
 			ToolName:   msg.Name,
 			State:      state,
-		})
+		}
+		// Inject element identity for subagent results
+		if msg.Name == "spawn_agent" && msg.Metadata != nil {
+			if name, ok := msg.Metadata["subagent_name"].(string); ok {
+				progMsg.DisplayName = "〔" + name + "〕"
+			}
+			if elem, ok := msg.Metadata["element"].(string); ok {
+				progMsg.Element = elem
+			}
+		}
+		m.toolProgress, _ = m.toolProgress.Update(progMsg)
 
 		isBatchResult := m.toolBatchActive
 		shouldFollowUp := msg.ToolCallID != ""
@@ -1807,10 +2196,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if isBatchResult {
-			if len(m.pendingToolCalls) > 0 {
+			// Track how many parallel results are still outstanding.
+			// Parallel calls were dispatched and removed from pendingToolCalls,
+			// so we track them via the tool progress entries.
+			parallelStillRunning := false
+			for _, entry := range m.toolProgress.entries {
+				if entry.state == "executing" {
+					parallelStillRunning = true
+					break
+				}
+			}
+
+			if len(m.pendingToolCalls) > 0 && !parallelStillRunning {
+				// Serial queue has items and all parallel tools are done —
+				// start the next serial tool.
 				nextCall := m.pendingToolCalls[0]
 				m.skills = m.skills.SetExecuting(nextCall.name)
 				m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", nextCall.name))
+				m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+					ToolCallID: nextCall.toolCallID,
+					ToolName:   nextCall.name,
+					State:      "executing",
+				})
 				nextCmd := m.executePendingToolCall(nextCall)
 				if nextCmd != nil {
 					cmds = append(cmds, nextCmd)
@@ -1818,7 +2225,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingToolCalls = nil
 					m.toolBatchActive = false
 				}
-			} else {
+			} else if len(m.pendingToolCalls) == 0 && !parallelStillRunning {
+				// All tools (parallel + serial) are done — follow up with LLM.
 				m.pendingToolCallID = ""
 				m.toolBatchActive = false
 				if shouldFollowUp {
@@ -1827,6 +2235,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, followCmds...)
 				}
 			}
+			// else: parallel tools still running — wait for more results
 		} else {
 			m.pendingToolCallID = ""
 			if shouldFollowUp {
@@ -1879,7 +2288,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("🤖 Model changed to: %s", modelName))
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to: %s", modelName))
 
-					// Persist the change
+					// Persist to config so it survives restarts
+					if cfg, err := config.Load(); err == nil {
+						cfg.Model = modelName
+						_ = config.Save(cfg)
+					}
+
+					// Persist the change to session
 					m.persistSession()
 				}
 			}
@@ -1908,12 +2323,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.typingPos = len(m.typingContent)
 			}
 
-			// Update chat with typed content + corruption glitch at cursor
+			// Update chat with typed content + fixed-width corruption buffer.
+			// Pattern from celeste-tts-bot TypingTextReveal: revealed text
+			// on the left, flickering corruption buffer on the right, buffer
+			// always padded to a fixed width so the viewport never reflows.
+			// Glamour is skipped for this message (typingActive flag) so the
+			// ANSI styling in the buffer doesn't break markdown rendering.
 			displayed := m.typingContent[:m.typingPos]
 			if m.typingPos < len(m.typingContent) {
-				// Append corruption at the cursor — it gets overwritten next tick
-				// with more real content, so it never persists in the final message
-				displayed += GetRandomCorruption()
+				displayed += " " + GetFixedWidthCorruption(16)
 			}
 			m.chat = m.chat.SetLastAssistantContent(displayed)
 
@@ -1939,6 +2357,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				// Typing complete and stream is done — show final content
 				// without corruption and commit to session history.
+				// Re-enable Glamour BEFORE setting final content so
+				// updateContent() renders markdown on this pass.
+				m.chat = m.chat.SetTypingActive(false)
 				m.chat = m.chat.SetLastAssistantContent(m.typingContent)
 
 				// Add assistant message to session for persistence
@@ -1983,6 +2404,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = m.status.SetText("Ready")
 				}
 
+				// Clear completed tool progress entries now that the
+				// response is fully rendered — no need to keep them
+				// cluttering the bottom of the screen.
+				m.toolProgress.ClearCompleted()
+
 				// Persist session now that the message is complete
 				m.persistSession()
 			}
@@ -2001,6 +2427,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ErrorMsg:
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
+	}
+
+	// Keep ticks alive while tool progress entries are active so
+	// spinners animate and elapsed timers update without keypress.
+	// Guard: only schedule when the typing animation and streaming-wait
+	// loops are NOT already scheduling their own ticks. Without this
+	// guard, every TickMsg during a typing animation produces TWO new
+	// ticks (one from the typing branch + one here), causing exponential
+	// growth that floods the event loop and freezes the TUI.
+	if m.toolProgress.HasActive() && m.typingContent == "" && !m.streaming {
+		cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+			return TickMsg{Time: t}
+		}))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -2032,6 +2471,11 @@ func (m AppModel) View() string {
 		return m.skillsBrowser.View()
 	}
 
+	// Show persona panel if in that mode
+	if m.viewMode == "persona" && m.personaPanel != nil {
+		return m.personaPanel.View()
+	}
+
 	// Show graph view if in that mode
 	if m.viewMode == "graph" && m.graphModel != nil {
 		return m.graphModel.View()
@@ -2057,8 +2501,12 @@ func (m AppModel) View() string {
 	// Header (fixed, 1 line)
 	sections = append(sections, m.header.View())
 
-	// Chat panel (flexible height)
-	sections = append(sections, m.chat.View())
+	// Chat panel (flexible height) — or session picker when in sessions mode
+	if m.viewMode == "sessions" && m.sessionPanel != nil {
+		sections = append(sections, m.sessionPanel.View())
+	} else {
+		sections = append(sections, m.chat.View())
+	}
 
 	// Tool progress cards (if any tools are executing)
 	if m.toolProgress.HasActive() {
@@ -2096,6 +2544,9 @@ func (m AppModel) View() string {
 	}
 
 	m.skills = m.skills.SetConfig(m.endpoint, m.model, m.skillsEnabled, m.nsfwMode, skillsCount, disabledReason)
+	if cfg, err := config.Load(); err == nil {
+		m.skills.confirmMode = cfg.ConfirmActions
+	}
 	sections = append(sections, m.skills.View())
 
 	// Status bar (fixed, 1 line)
@@ -2161,7 +2612,11 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 	}
 	m.clawToolIterations++
 
-	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
+	// Only add the assistant message if it has text content. Tool-call-only
+	// responses (empty AssistantContent) would render as an empty chat bubble.
+	if msg.AssistantContent != "" {
+		m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
+	}
 	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
 	m.toolBatchActive = true
 
@@ -2176,43 +2631,77 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 		})
 	}
 
-	// Emit progress events for all tool calls in the batch
-	for _, call := range m.pendingToolCalls {
-		summary := call.name
-		if args := call.args; args != nil {
-			if p, ok := args["path"].(string); ok {
-				summary += " " + p
-			} else if q, ok := args["query"].(string); ok {
-				summary += " " + q
-			} else if c, ok := args["command"].(string); ok {
-				if len(c) > 60 {
-					c = c[:60] + "..."
-				}
-				summary += " " + c
-			}
-		}
-		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
-			ToolCallID: call.toolCallID,
-			ToolName:   call.name,
-			State:      "executing",
-			Message:    summary,
-		})
-	}
+	// Note: progress events are emitted when tools actually start executing,
+	// not here. Parallel tools get their "executing" state in the dispatch
+	// loop below; serial tools get it when they're popped from the queue.
 
-	firstCall := m.pendingToolCalls[0]
-	m.pendingToolCallID = firstCall.toolCallID
-	m.skills = m.skills.SetExecuting(firstCall.name)
-	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", firstCall.name))
 	LogInfo(fmt.Sprintf("Starting execution of %d skill call(s)", len(m.pendingToolCalls)))
 
-	nextCmd := m.executePendingToolCall(firstCall)
-	if nextCmd == nil {
-		m.pendingToolCalls = nil
-		m.toolBatchActive = false
-		return m, nil
+	// Dispatch ALL concurrency-safe tools in parallel. Non-safe tools
+	// queue behind: the first non-safe tool blocks until all prior
+	// safe tools have finished, then runs alone.
+	var batchCmds []tea.Cmd
+	var serialQueue []pendingToolCall
+
+	for _, call := range m.pendingToolCalls {
+		// Check if this tool is concurrency-safe by looking it up
+		// in the registry. If we can't determine safety, default to serial.
+		isSafe := false
+		if m.llmClient != nil {
+			isSafe = m.isToolConcurrencySafe(call.name, call.args)
+		}
+
+		if isSafe && len(serialQueue) == 0 {
+			// Safe tool with no serial blockers ahead — dispatch immediately
+			cmd := m.executePendingToolCall(call)
+			if cmd != nil {
+				batchCmds = append(batchCmds, cmd)
+			}
+			m.skills = m.skills.SetExecuting(call.name)
+			m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+				ToolCallID: call.toolCallID,
+				ToolName:   call.name,
+				State:      "executing",
+			})
+		} else {
+			// Queue for sequential execution after parallel batch
+			serialQueue = append(serialQueue, call)
+		}
 	}
 
-	return m, []tea.Cmd{nextCmd}
+	// Replace pendingToolCalls with only the serial queue — parallel
+	// ones are already dispatched and will come back as SkillResultMsg.
+	m.pendingToolCalls = serialQueue
+
+	if len(batchCmds) > 0 {
+		// Multiple tools running in parallel
+		m.pendingToolCallID = "" // no single active ID
+		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing %d tools in parallel", len(batchCmds)))
+		return m, batchCmds
+	}
+
+	// No parallel tools — fall back to sequential dispatch
+	if len(m.pendingToolCalls) > 0 {
+		firstCall := m.pendingToolCalls[0]
+		m.pendingToolCallID = firstCall.toolCallID
+		m.skills = m.skills.SetExecuting(firstCall.name)
+		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", firstCall.name))
+		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
+			ToolCallID: firstCall.toolCallID,
+			ToolName:   firstCall.name,
+			State:      "executing",
+		})
+		nextCmd := m.executePendingToolCall(firstCall)
+		if nextCmd == nil {
+			m.pendingToolCalls = nil
+			m.toolBatchActive = false
+			return m, nil
+		}
+		return m, []tea.Cmd{nextCmd}
+	}
+
+	m.toolBatchActive = false
+	return m, nil
 }
 
 func (m AppModel) executePendingToolCall(call pendingToolCall) tea.Cmd {
@@ -2233,6 +2722,32 @@ func (m AppModel) executePendingToolCall(call pendingToolCall) tea.Cmd {
 	}
 
 	return m.llmClient.ExecuteSkill(call.name, call.args, call.toolCallID)
+}
+
+// concurrencySafeTools lists tools that can be dispatched in parallel.
+// These correspond to tools that return IsConcurrencySafe=true in the
+// builtin registry. Maintained here because the TUI doesn't have direct
+// access to the tool registry at dispatch time.
+var concurrencySafeTools = map[string]bool{
+	"spawn_agent":        true,
+	"read_file":          true,
+	"list_files":         true,
+	"search":             true,
+	"code_search":        true,
+	"code_review":        true,
+	"code_graph":         true,
+	"code_symbols":       true,
+	"git_status":         true,
+	"git_log":            true,
+	"web_search":         true,
+	"web_fetch":          true,
+	"collections_search": true,
+}
+
+// isToolConcurrencySafe checks if a tool can be dispatched in parallel
+// with other safe tools.
+func (m AppModel) isToolConcurrencySafe(name string, args map[string]any) bool {
+	return concurrencySafeTools[name]
 }
 
 func (m *AppModel) popPendingToolCall(toolCallID string) {
@@ -2260,6 +2775,13 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	if m.llmClient == nil {
 		return m, nil
 	}
+
+	// Clear completed tool progress entries now that all tools are done
+	// and we're about to stream the follow-up response. Keeping stale
+	// "done" cards visible during the typing animation adds extra rows
+	// that weren't accounted for in the chat panel height calculation,
+	// pushing the typed content past the bottom of the terminal.
+	m.toolProgress.ClearCompleted()
 
 	m.streaming = true
 	m.status = m.status.SetStreaming(true)
@@ -2624,7 +3146,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 				// Restore messages
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
-					if sessionMsgs, ok := messagesRaw.([]SessionMessage); ok {
+					if sessionMsgs, ok := messagesRaw.([]config.SessionMessage); ok {
 						for _, msg := range sessionMsgs {
 							switch msg.Role {
 							case "user":
@@ -2646,7 +3168,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 				msgCount := 0
 				if msgs := s.GetMessagesRaw(); msgs != nil {
-					if sm, ok := msgs.([]SessionMessage); ok {
+					if sm, ok := msgs.([]config.SessionMessage); ok {
 						msgCount = len(sm)
 					}
 				}
@@ -2768,6 +3290,10 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		if s, ok := newSession.(Session); ok {
 			m.currentSession = s
 		}
+		// Refresh system prompt so /user and /confirm changes take effect
+		if refresher, ok := m.llmClient.(PromptRefresher); ok {
+			refresher.RefreshSystemPrompt()
+		}
 		m.chat = m.chat.AddSystemMessage("🗑️  Session cleared, new session started")
 
 	case "merge":
@@ -2779,7 +3305,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				// Clear and reload with merged messages
 				m.chat = m.chat.Clear()
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
-					if sessionMsgs, ok := messagesRaw.([]SessionMessage); ok {
+					if sessionMsgs, ok := messagesRaw.([]config.SessionMessage); ok {
 						for _, msg := range sessionMsgs {
 							switch msg.Role {
 							case "user":
@@ -2850,7 +3376,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		if m.currentSession != nil {
 			msgCount := 0
 			if msgs := m.currentSession.GetMessagesRaw(); msgs != nil {
-				if sm, ok := msgs.([]SessionMessage); ok {
+				if sm, ok := msgs.([]config.SessionMessage); ok {
 					msgCount = len(sm)
 				}
 			}
@@ -3174,4 +3700,51 @@ func truncateText(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+// fetchElevenLabsVoices calls the ElevenLabs API and returns a formatted voice list.
+func fetchElevenLabsVoices(apiKey string) (string, error) {
+	req, err := http.NewRequest("GET", "https://api.elevenlabs.io/v1/voices", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("xi-api-key", apiKey)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("ElevenLabs API returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Voices []struct {
+			VoiceID string            `json:"voice_id"`
+			Name    string            `json:"name"`
+			Labels  map[string]string `json:"labels"`
+		} `json:"voices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("ElevenLabs Voices (%d):\n\n", len(result.Voices)))
+	for _, v := range result.Voices {
+		sb.WriteString(fmt.Sprintf("  %s  %s", v.VoiceID, v.Name))
+		if len(v.Labels) > 0 {
+			parts := make([]string, 0, len(v.Labels))
+			for k, val := range v.Labels {
+				parts = append(parts, k+": "+val)
+			}
+			sb.WriteString("  [" + strings.Join(parts, ", ") + "]")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\nSet a voice: /voice set-voice <voice-id>")
+	return sb.String(), nil
 }

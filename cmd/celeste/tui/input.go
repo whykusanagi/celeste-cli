@@ -12,11 +12,11 @@ import (
 
 // knownCommands is the authoritative list of slash commands for typeahead.
 var knownCommands = []string{
-	"agent", "clear", "collections", "config", "context", "costs", "diff",
-	"effort", "endpoint", "export", "graph", "grimoire", "help", "index", "mcp",
-	"memories", "menu", "model", "nsfw", "orch", "orchestrate",
-	"plan", "providers", "safe", "session", "set-model", "skills",
-	"stats", "tools", "undo",
+	"agent", "agents", "clear", "collections", "config", "confirm", "context",
+	"costs", "diff", "effort", "endpoint", "export", "graph", "grimoire",
+	"help", "index", "mcp", "memories", "menu", "model", "nsfw", "orch",
+	"orchestrate", "persona", "plan", "providers", "safe", "session",
+	"set-model", "skills", "stats", "tools", "undo", "user", "voice",
 }
 
 var (
@@ -25,21 +25,53 @@ var (
 	suggestionDimStyle    = lipgloss.NewStyle().Foreground(ColorTextMuted)
 )
 
-// computeSuggestions returns commands that start with the partial, excluding exact match.
+// knownSubcommands maps parent commands to their valid subcommands.
+var knownSubcommands = map[string][]string{
+	"index":   {"rebuild", "update", "snapshot", "diff", "impact"},
+	"config":  {"set-key", "set-model", "set-url"},
+	"voice":   {"list", "set-key", "set-voice"},
+	"user":    {"reset"},
+	"session": {"list", "load", "delete", "clear"},
+	"agent":   {"list-runs", "resume"},
+	"plan":    {"show"},
+}
+
+// computeSuggestions returns commands or subcommands that match the input.
+// For "/ind" → suggests "/index". For "/index " → suggests subcommands.
 func computeSuggestions(value string) []string {
 	if !strings.HasPrefix(value, "/") {
 		return nil
 	}
-	partial := strings.TrimPrefix(value, "/")
-	partial = strings.TrimSpace(partial)
-	if partial == "" {
+	raw := strings.TrimPrefix(value, "/")
+	if raw == "" {
 		return nil
 	}
 
+	parts := strings.SplitN(raw, " ", 2)
+	cmd := parts[0]
+
+	// If there's a space, we're in subcommand territory
+	if len(parts) == 2 {
+		subPartial := strings.TrimSpace(parts[1])
+		subs, ok := knownSubcommands[cmd]
+		if !ok {
+			return nil
+		}
+		// Show matching subcommands (or all if partial is empty)
+		var matches []string
+		for _, sub := range subs {
+			if subPartial == "" || (strings.HasPrefix(sub, subPartial) && sub != subPartial) {
+				matches = append(matches, cmd+" "+sub)
+			}
+		}
+		return matches
+	}
+
+	// First word: match top-level commands
 	var matches []string
-	for _, cmd := range knownCommands {
-		if strings.HasPrefix(cmd, partial) && cmd != partial {
-			matches = append(matches, cmd)
+	for _, known := range knownCommands {
+		if strings.HasPrefix(known, cmd) && known != cmd {
+			matches = append(matches, known)
 		}
 	}
 	return matches
@@ -176,6 +208,15 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 				}
 				return m, nil
 			}
+
+		case "esc":
+			// Clear input if non-empty, otherwise no-op
+			if strings.TrimSpace(m.textArea.Value()) != "" {
+				m.textArea.Reset()
+				m.suggestions = nil
+				m.suggestionIdx = 0
+			}
+			return m, nil
 
 		case "ctrl+u":
 			// Clear input line
