@@ -937,6 +937,10 @@ func IsContentPolicyRefusal(response string) bool {
 	refusalPatterns := []string{
 		"i can't assist",
 		"i cannot assist",
+		"i can't create",
+		"i cannot create",
+		"i can't generate",
+		"i cannot generate",
 		"i can't help with",
 		"i cannot help with",
 		"i'm not able to",
