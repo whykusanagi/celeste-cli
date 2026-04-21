@@ -926,16 +926,25 @@ func IsImageGenerationRequest(message string) bool {
 func IsContentPolicyRefusal(response string) bool {
 	lower := strings.ToLower(response)
 
+	// Only flag as a refusal if the response is short (typical refusals
+	// are 1-3 sentences) AND contains a refusal phrase. Long responses
+	// that happen to contain words like "inappropriate" in story/code
+	// context are almost certainly not refusals.
+	if len(response) > 600 {
+		return false
+	}
+
 	refusalPatterns := []string{
-		"i can't",
-		"i cannot",
+		"i can't assist",
+		"i cannot assist",
+		"i can't help with",
+		"i cannot help with",
 		"i'm not able to",
 		"i'm unable to",
-		"against my",
+		"against my guidelines",
 		"content policy",
 		"usage policy",
 		"i don't feel comfortable",
-		"inappropriate",
 		"i'm designed to be helpful, harmless, and honest",
 	}
 

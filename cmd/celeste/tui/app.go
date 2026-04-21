@@ -1707,6 +1707,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Reset streamDone here — the tick handler uses it to decide
 			// whether to commit when typing catches up.
 			m.chat = m.chat.AddAssistantMessage("")
+			m.chat = m.chat.SetTypingActive(true) // skip Glamour for corruption buffer
 			m.typingContent = msg.Chunk.Content
 			m.typingPos = 0
 			m.streaming = true
@@ -1800,6 +1801,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streaming = true
 				m.status = m.status.SetStreaming(true)
 				m.chat = m.chat.AddAssistantMessage("")
+				m.chat = m.chat.SetTypingActive(true)
 				m.status = m.status.SetText("Typing...")
 				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
 					return TickMsg{Time: t}
@@ -2321,12 +2323,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.typingPos = len(m.typingContent)
 			}
 
-			// Update chat with typed content + corruption glitch at cursor
+			// Update chat with typed content + fixed-width corruption buffer.
+			// Pattern from celeste-tts-bot TypingTextReveal: revealed text
+			// on the left, flickering corruption buffer on the right, buffer
+			// always padded to a fixed width so the viewport never reflows.
+			// Glamour is skipped for this message (typingActive flag) so the
+			// ANSI styling in the buffer doesn't break markdown rendering.
 			displayed := m.typingContent[:m.typingPos]
 			if m.typingPos < len(m.typingContent) {
-				// Append corruption at the cursor — it gets overwritten next tick
-				// with more real content, so it never persists in the final message
-				displayed += GetRandomCorruption()
+				displayed += " " + GetFixedWidthCorruption(16)
 			}
 			m.chat = m.chat.SetLastAssistantContent(displayed)
 
@@ -2352,6 +2357,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				// Typing complete and stream is done — show final content
 				// without corruption and commit to session history.
+				// Re-enable Glamour BEFORE setting final content so
+				// updateContent() renders markdown on this pass.
+				m.chat = m.chat.SetTypingActive(false)
 				m.chat = m.chat.SetLastAssistantContent(m.typingContent)
 
 				// Add assistant message to session for persistence
@@ -2423,7 +2431,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Keep ticks alive while tool progress entries are active so
 	// spinners animate and elapsed timers update without keypress.
-	if m.toolProgress.HasActive() {
+	// Guard: only schedule when the typing animation and streaming-wait
+	// loops are NOT already scheduling their own ticks. Without this
+	// guard, every TickMsg during a typing animation produces TWO new
+	// ticks (one from the typing branch + one here), causing exponential
+	// growth that floods the event loop and freezes the TUI.
+	if m.toolProgress.HasActive() && m.typingContent == "" && !m.streaming {
 		cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 			return TickMsg{Time: t}
 		}))
@@ -2762,6 +2775,13 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	if m.llmClient == nil {
 		return m, nil
 	}
+
+	// Clear completed tool progress entries now that all tools are done
+	// and we're about to stream the follow-up response. Keeping stale
+	// "done" cards visible during the typing animation adds extra rows
+	// that weren't accounted for in the chat panel height calculation,
+	// pushing the typed content past the bottom of the terminal.
+	m.toolProgress.ClearCompleted()
 
 	m.streaming = true
 	m.status = m.status.SetStreaming(true)

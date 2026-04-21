@@ -22,6 +22,7 @@ type ChatModel struct {
 	ready          bool
 	userScrolled   bool // Track if user has scrolled manually
 	showSkillCalls bool // Toggle to show/hide skill call logs
+	typingActive   bool // Skip Glamour for the last assistant message during typing
 }
 
 // NewChatModel creates a new chat model.
@@ -202,6 +203,14 @@ func (m ChatModel) AppendToLastAssistant(content string) ChatModel {
 	return m
 }
 
+// SetTypingActive marks whether the typing animation is running.
+// When true, the last assistant message skips Glamour markdown rendering
+// so that ANSI-styled corruption glyphs at the cursor don't break the layout.
+func (m ChatModel) SetTypingActive(active bool) ChatModel {
+	m.typingActive = active
+	return m
+}
+
 // SetLastAssistantContent sets the content of the last assistant message.
 func (m ChatModel) SetLastAssistantContent(content string) ChatModel {
 	for i := len(m.messages) - 1; i >= 0; i-- {
@@ -286,7 +295,19 @@ func (m *ChatModel) updateContent() {
 	contentWidth := m.width - 4 // Account for padding and some margin
 
 	// Render messages (skip tool results - only LLM needs to see them)
-	for _, msg := range m.messages {
+	// Find the index of the last assistant message so we know which one
+	// is currently being typed (skip Glamour for it).
+	lastAssistantIdx := -1
+	if m.typingActive {
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == "assistant" {
+				lastAssistantIdx = i
+				break
+			}
+		}
+	}
+
+	for i, msg := range m.messages {
 		// Don't render tool results in UI - they're for LLM only
 		if msg.Role == "tool" {
 			continue
@@ -297,7 +318,8 @@ func (m *ChatModel) updateContent() {
 				continue
 			}
 		}
-		lines = append(lines, m.renderMessage(msg, contentWidth))
+		skipMarkdown := (i == lastAssistantIdx)
+		lines = append(lines, m.renderMessageOpt(msg, contentWidth, skipMarkdown))
 		lines = append(lines, "") // Spacing between messages
 	}
 
@@ -312,8 +334,16 @@ func (m *ChatModel) updateContent() {
 	m.viewport.SetContent(content)
 }
 
-// renderMessage renders a single chat message.
+// renderMessage renders a single chat message with Glamour markdown.
 func (m ChatModel) renderMessage(msg ChatMessage, width int) string {
+	return m.renderMessageOpt(msg, width, false)
+}
+
+// renderMessageOpt renders a chat message, optionally skipping Glamour.
+// skipMarkdown is set during the typing animation so that ANSI-styled
+// corruption glyphs at the cursor don't pass through the markdown
+// renderer (which garbles them and causes viewport reflow).
+func (m ChatModel) renderMessageOpt(msg ChatMessage, width int, skipMarkdown bool) string {
 	// Format timestamp
 	ts := msg.Timestamp.Format("15:04")
 	timestamp := TimestampStyle.Render(ts)
@@ -334,7 +364,7 @@ func (m ChatModel) renderMessage(msg ChatMessage, width int) string {
 
 	// Try markdown rendering for assistant messages
 	var styledContent string
-	if msg.Role == "assistant" || msg.Role == "system" {
+	if !skipMarkdown && (msg.Role == "assistant" || msg.Role == "system") {
 		rendered := renderMarkdown(msg.Content, width-2)
 		if rendered != msg.Content {
 			// Glamour handled it — already styled
@@ -345,7 +375,7 @@ func (m ChatModel) renderMessage(msg ChatMessage, width int) string {
 			styledContent = contentStyle.Render(wrapText(msg.Content, width-2))
 		}
 	} else {
-		// User messages: simple wrap with role style
+		// User messages or typing-active: simple wrap with role style
 		contentStyle := MessageRoleStyle(msg.Role)
 		styledContent = contentStyle.Render(wrapText(msg.Content, width-2))
 	}
