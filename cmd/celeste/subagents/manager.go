@@ -46,7 +46,7 @@ type SubagentRun struct {
 	Element   string    `json:"element"`           // english element (e.g., "fire")
 	Goal      string    `json:"goal"`
 	Workspace string    `json:"workspace"`
-	Status    string    `json:"status"` // "waiting", "running", "completed", "failed"
+	Status    string    `json:"status"`               // "waiting", "running", "completed", "failed"
 	DependsOn []string  `json:"depends_on,omitempty"` // task_ids that must complete first
 	Result    string    `json:"result"`
 	Error     string    `json:"error,omitempty"`
@@ -77,7 +77,7 @@ type Manager struct {
 	mu        sync.Mutex
 	runs      map[string]*SubagentRun
 	counter   int
-	isChild   bool // true if this manager is inside a subagent (blocks recursion)
+	isChild   bool        // true if this manager is inside a subagent (blocks recursion)
 	dagQueue  []*DAGEntry // tasks waiting for dependencies
 }
 
@@ -101,8 +101,8 @@ type TurnCallback func(turn int, maxTurns int, toolName string)
 type SpawnOptions struct {
 	TaskID    string       // user-assigned task ID for DAG references
 	DependsOn []string     // task IDs that must complete before this starts
-	TurnCb   TurnCallback // nested progress callback
-	MaxTurns int          // 0 = default (20)
+	TurnCb    TurnCallback // nested progress callback
+	MaxTurns  int          // 0 = default (20)
 }
 
 // Spawn creates and runs a subagent with the given goal. It blocks until the
@@ -187,9 +187,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 				seen[peer.TaskID] = true
 			}
 		}
-		if len(opts.DependsOn) > 0 {
-			// DAG auto-detected (logged via TUI progress events)
-		}
+		// DAG auto-detect complete (dependencies logged via TUI progress events)
 	}
 
 	// Check if dependencies are met

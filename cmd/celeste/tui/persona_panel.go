@@ -194,7 +194,7 @@ func (m PersonaPanelModel) View() string {
 		style := labelStyle
 		if m.cursor == i {
 			cursor = "▸ "
-			style = labelStyle.Copy().Foreground(lipgloss.Color("#d94f90"))
+			style = labelStyle.Foreground(lipgloss.Color("#d94f90"))
 		}
 
 		// Render the slider bar

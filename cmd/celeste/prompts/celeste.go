@@ -55,24 +55,24 @@ var embeddedEssence []byte
 // Supports both v1.x (structured fields) and v3.x (system_prompt blob) schemas.
 type CelesteEssence struct {
 	Version     string `json:"version"`
-	Character   string `json:"character"`       // v1.x
-	Description string `json:"description"`     // v1.x
+	Character   string `json:"character"`   // v1.x
+	Description string `json:"description"` // v1.x
 	Voice       struct {
 		Style       string   `json:"style"`
 		Constraints []string `json:"constraints"`
 		EmojiUsage  string   `json:"emoji_usage"`
 		EmotesUsage string   `json:"emotes_usage"`
 	} `json:"voice"` // v1.x
-	CoreRules        []string          `json:"core_rules"`        // v1.x
-	BehaviorTiers    []BehaviorTier    `json:"behavior_tiers"`    // v1.x
-	Safety           SafetyConfig      `json:"safety"`            // v1.x
+	CoreRules        []string          `json:"core_rules"`     // v1.x
+	BehaviorTiers    []BehaviorTier    `json:"behavior_tiers"` // v1.x
+	Safety           SafetyConfig      `json:"safety"`         // v1.x
 	OperationalLaws  map[string]string `json:"operational_laws"`
 	InteractionRules []string          `json:"interaction_rules"`
 	KnowledgeUsage   string            `json:"knowledge_usage"`
 	// v3.x fields
-	SystemPrompt  string `json:"system_prompt"`   // canonical prompt blob (v3.0.0+)
-	CanonicalName string `json:"canonical_name"`  // "Celeste" (v3.0.0+)
-	CharacterID   string `json:"character_id"`    // "celeste" (v3.0.0+)
+	SystemPrompt  string `json:"system_prompt"`  // canonical prompt blob (v3.0.0+)
+	CanonicalName string `json:"canonical_name"` // "Celeste" (v3.0.0+)
+	CharacterID   string `json:"character_id"`   // "celeste" (v3.0.0+)
 }
 
 // BehaviorTier defines behavior based on score.

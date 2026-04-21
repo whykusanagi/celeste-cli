@@ -21,18 +21,18 @@ type Snapshot struct {
 	Timestamp   time.Time         `json:"timestamp"`
 	SymbolCount int               `json:"symbol_count"`
 	EdgeCount   int               `json:"edge_count"`
-	Symbols     map[string]string `json:"symbols"`      // name → kind
-	Edges       []string          `json:"edges"`         // "source→target:kind"
+	Symbols     map[string]string `json:"symbols"` // name → kind
+	Edges       []string          `json:"edges"`   // "source→target:kind"
 }
 
 // SnapshotDiff describes what changed between two graph states.
 type SnapshotDiff struct {
-	BeforeSHA      string   `json:"before_sha"`
-	AfterSHA       string   `json:"after_sha"`
-	AddedSymbols   []string `json:"added_symbols"`
-	RemovedSymbols []string `json:"removed_symbols"`
-	AddedEdges     []string `json:"added_edges"`
-	RemovedEdges   []string `json:"removed_edges"`
+	BeforeSHA      string      `json:"before_sha"`
+	AfterSHA       string      `json:"after_sha"`
+	AddedSymbols   []string    `json:"added_symbols"`
+	RemovedSymbols []string    `json:"removed_symbols"`
+	AddedEdges     []string    `json:"added_edges"`
+	RemovedEdges   []string    `json:"removed_edges"`
 	Summary        DiffSummary `json:"summary"`
 }
 

@@ -105,7 +105,7 @@ type Config struct {
 	ConfirmActions bool `json:"confirm_actions,omitempty"`
 
 	// ElevenLabs TTS settings
-	ElevenLabsAPIKey string `json:"elevenlabs_api_key,omitempty"`
+	ElevenLabsAPIKey  string `json:"elevenlabs_api_key,omitempty"`
 	ElevenLabsVoiceID string `json:"elevenlabs_voice_id,omitempty"`
 
 	// Streaming settings

@@ -9,7 +9,7 @@ import (
 
 // ensureSnapshotsTable creates the snapshots table if it doesn't exist.
 func (s *Store) ensureSnapshotsTable() {
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS snapshots (
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS snapshots (
 		commit_sha TEXT PRIMARY KEY,
 		created_at INTEGER NOT NULL,
 		data BLOB NOT NULL
@@ -145,14 +145,14 @@ func (s *Store) CallerCount(targetName string) int {
 		FROM edges e
 		JOIN symbols s2 ON e.target_id = s2.id
 		WHERE s2.name = ? AND e.kind = 'calls'
-	`, targetName).Scan(&count)
+	`, targetName).Scan(&count) //nolint:errcheck // best-effort count
 	return count
 }
 
 // EdgeCount returns the total number of edges connected to a symbol.
 func (s *Store) EdgeCount(name string) int {
 	var count int
-	s.db.QueryRow(`
+	_ = s.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM edges e
 		JOIN symbols s ON (e.source_id = s.id OR e.target_id = s.id)
@@ -164,7 +164,7 @@ func (s *Store) EdgeCount(name string) int {
 // HasTestCoverage returns true if a symbol has any callers from test files.
 func (s *Store) HasTestCoverage(name string) bool {
 	var count int
-	s.db.QueryRow(`
+	_ = s.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM edges e
 		JOIN symbols s1 ON e.source_id = s1.id

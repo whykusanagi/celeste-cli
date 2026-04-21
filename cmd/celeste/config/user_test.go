@@ -30,7 +30,7 @@ func TestUserIdentityDisplayName(t *testing.T) {
 		{"", "Summoner", "Summoner"},
 		{"Alice", "", "Alice"},
 		{"Kusanagi", "", "Kusanagi"},
-		{"", "", "Summoner"}, // fallback
+		{"", "", "Summoner"},      // fallback
 		{"Bob", "Visitor", "Bob"}, // name takes precedence
 	}
 	for _, tt := range tests {

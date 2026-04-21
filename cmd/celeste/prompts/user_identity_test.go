@@ -44,8 +44,7 @@ func TestComposeUserPromptCustomName(t *testing.T) {
 		t.Fatal("should clarify user is not Kusanagi")
 	}
 	if contains(got, "twin") {
-		// The block should tell her NOT to use twin — but it shouldn't contain
-		// "twin" itself as an instruction to USE it
+		t.Log("block mentions 'twin' — acceptable if it says NOT to use it")
 	}
 }
 
