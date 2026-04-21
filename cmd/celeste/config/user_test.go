@@ -63,9 +63,9 @@ func TestIsKusanagi(t *testing.T) {
 
 func TestUserSaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	// os.UserHomeDir() uses HOME on Unix, USERPROFILE on Windows
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	// Ensure config dir exists
 	os.MkdirAll(filepath.Join(tmpDir, ".celeste"), 0755)
@@ -98,9 +98,8 @@ func TestUserSaveAndLoad(t *testing.T) {
 
 func TestLoadUserDefault(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	// No file exists — should return default
 	u := LoadUser()
