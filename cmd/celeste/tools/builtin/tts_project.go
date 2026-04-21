@@ -29,13 +29,13 @@ type AudioProject struct {
 
 // AudioTrack is a single audio element on the timeline.
 type AudioTrack struct {
-	File   string  `json:"file"`              // path to audio file
-	Role   string  `json:"role"`              // "voice", "bed", "sfx" — determines behavior
-	Volume float64 `json:"volume"`            // 0.0-1.0
-	Start  float64 `json:"start"`             // start time in seconds on timeline
-	End    float64 `json:"end,omitempty"`     // optional: cut at this second (0 = play full)
-	Loop   bool    `json:"loop,omitempty"`    // loop for full output duration (beds only)
-	Label  string  `json:"label,omitempty"`   // human-readable label for progress display
+	File   string  `json:"file"`            // path to audio file
+	Role   string  `json:"role"`            // "voice", "bed", "sfx" — determines behavior
+	Volume float64 `json:"volume"`          // 0.0-1.0
+	Start  float64 `json:"start"`           // start time in seconds on timeline
+	End    float64 `json:"end,omitempty"`   // optional: cut at this second (0 = play full)
+	Loop   bool    `json:"loop,omitempty"`  // loop for full output duration (beds only)
+	Label  string  `json:"label,omitempty"` // human-readable label for progress display
 }
 
 // AudioProjectTool handles the project-based render pipeline.
