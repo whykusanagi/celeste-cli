@@ -69,7 +69,7 @@ func (m *ToolProgressModel) SetSize(width, _ int) {
 func (m *ToolProgressModel) ClearCompleted() {
 	kept := m.entries[:0]
 	for _, e := range m.entries {
-		if e.state == "executing" {
+		if e.state == "executing" || e.state == "waiting" {
 			kept = append(kept, e)
 		}
 	}
@@ -158,6 +158,15 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 	var stateStyle lipgloss.Style
 
 	switch e.state {
+	case "waiting":
+		// DAG-blocked subagent: dim element icon, muted style
+		if e.element != "" && elemColor != "" {
+			icon = "◇"
+			stateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(elemColor)).Faint(true)
+		} else {
+			icon = "◇"
+			stateStyle = lipgloss.NewStyle().Foreground(ColorTextMuted)
+		}
 	case "executing":
 		if e.element != "" && elemColor != "" {
 			// Element-named subagent: kanji pulse + corruption glitch
@@ -213,7 +222,7 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 	)
 
 	// Nested subagent activity with element-colored prefix
-	if e.subMessage != "" && e.state == "executing" {
+	if e.subMessage != "" && (e.state == "executing" || e.state == "waiting") {
 		subColor := lipgloss.Color("#6d28d9")
 		if elemColor != "" {
 			subColor = lipgloss.Color(elemColor)

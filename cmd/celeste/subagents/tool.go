@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -26,7 +28,13 @@ func NewSpawnAgentTool(manager *Manager) *SpawnAgentTool {
 func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 
 func (t *SpawnAgentTool) Description() string {
-	return "Spawn a subagent to handle a subtask. The subagent runs to completion and returns its result. Use this for independent subtasks that benefit from a fresh context. You can override the subagent's personality via the persona parameter — useful for creating content in different voices (e.g., 'write this in a warm, theatrical style' vs 'write this in a cold, clipped operator style')."
+	return "Spawn a subagent to handle a subtask. Returns its result when complete. " +
+		"CRITICAL: For multi-step workflows where later steps depend on earlier steps (e.g., generate clips THEN mix them), " +
+		"you MUST use task_id and depends_on parameters to create a DAG. " +
+		"Example: spawn voice generation with task_id='voice', spawn SFX with task_id='sfx1', " +
+		"then spawn the mixer with task_id='mix' and depends_on=['voice','sfx1']. " +
+		"The mixer agent will WAIT until voice and sfx1 complete before starting. " +
+		"Without depends_on, all agents run simultaneously and downstream agents will fail because files don't exist yet."
 }
 
 func (t *SpawnAgentTool) Parameters() json.RawMessage {
@@ -40,6 +48,19 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 			"workspace": {
 				"type": "string",
 				"description": "Working directory for the subagent (defaults to current workspace)"
+			},
+			"task_id": {
+				"type": "string",
+				"description": "Unique task identifier for DAG dependency references. Other subagents can depend on this ID via depends_on."
+			},
+			"depends_on": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "Task IDs that must complete before this subagent starts. The subagent will wait in 'waiting' state until all dependencies finish, then auto-start with their results injected into its goal context."
+			},
+			"max_turns": {
+				"type": "integer",
+				"description": "Maximum agent turns before the subagent stops. Default 20. Increase for complex multi-step tasks (e.g., 40 for large content generation). Decrease for simple lookups (e.g., 5)."
 			},
 			"persona": {
 				"type": "object",
@@ -147,13 +168,97 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	_ = predictedElement // will be used when TUI integration sends element via metadata
+	// Build spawn options with DAG dependencies
+	spawnOpts := SpawnOptions{
+		TurnCb: turnCallback,
+	}
 
-	run, err := t.manager.Spawn(ctx, goal, workspace, turnCallback)
+	// 1. Accept explicit params from the model
+	if taskID, ok := input["task_id"].(string); ok && taskID != "" {
+		spawnOpts.TaskID = taskID
+	}
+	if deps, ok := input["depends_on"].([]any); ok {
+		for _, d := range deps {
+			if depID, ok := d.(string); ok && depID != "" {
+				spawnOpts.DependsOn = append(spawnOpts.DependsOn, depID)
+			}
+		}
+	}
+	if mt, ok := input["max_turns"].(float64); ok && mt > 0 {
+		spawnOpts.MaxTurns = int(mt)
+	}
+
+	// 2. Extract task_id from goal text (grok embeds it there)
+	if spawnOpts.TaskID == "" {
+		if idx := strings.Index(goal, "task_id:"); idx >= 0 {
+			rest := goal[idx+8:]
+			end := len(rest)
+			for i, c := range rest {
+				if c == ' ' || c == '\n' || c == ',' || c == ']' || c == '}' {
+					end = i
+					break
+				}
+			}
+			spawnOpts.TaskID = strings.TrimSpace(rest[:end])
+		}
+	}
+
+	// 3. Auto-assign task_id from element name if still empty
+	if spawnOpts.TaskID == "" && predictedElement != "" {
+		spawnOpts.TaskID = predictedElement
+	}
+
+	// 4. Extract depends_on — explicit syntax from goal text
+	if len(spawnOpts.DependsOn) == 0 {
+		if idx := strings.Index(goal, "depends_on:["); idx >= 0 {
+			rest := goal[idx+12:]
+			endBracket := strings.Index(rest, "]")
+			if endBracket > 0 {
+				for _, part := range strings.Split(rest[:endBracket], ",") {
+					dep := strings.Trim(strings.TrimSpace(part), "'\"")
+					if dep != "" && !containsDep(spawnOpts.DependsOn, dep) {
+						spawnOpts.DependsOn = append(spawnOpts.DependsOn, dep)
+					}
+				}
+			}
+		}
+	}
+
+	// 5. Auto-detect dependencies: handled inside SpawnWithOptions after
+	// registration, where it has the lock and can see all registered runs.
+
+	// Log DAG for visibility
+	if spawnOpts.TaskID != "" && len(spawnOpts.DependsOn) > 0 {
+		fmt.Fprintf(os.Stderr, "[DAG] %s depends_on: %v\n", spawnOpts.TaskID, spawnOpts.DependsOn)
+	}
+
+	// Emit waiting state if there are unmet dependencies
+	if len(spawnOpts.DependsOn) > 0 && progress != nil {
+		progress <- tools.ProgressEvent{
+			ToolName: "spawn_agent",
+			Message:  fmt.Sprintf("%s waiting for dependencies: %s", predictedName, strings.Join(spawnOpts.DependsOn, ", ")),
+		}
+	}
+
+	run, err := t.manager.SpawnWithOptions(ctx, goal, workspace, spawnOpts)
 	if err != nil {
+		// Include partial results if the subagent made any progress
+		content := fmt.Sprintf("Subagent failed: %v", err)
+		meta := map[string]any{"status": "failed"}
+		if run != nil {
+			if run.Result != "" {
+				content = fmt.Sprintf("〔%s〕 (%s) — FAILED after %d turns (%s)\n\n%s",
+					run.Name, run.Element, run.Turns,
+					run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
+					run.Result)
+			}
+			meta["subagent_id"] = run.ID
+			meta["turns"] = run.Turns
+		}
 		return tools.ToolResult{
-			Content: fmt.Sprintf("Subagent failed: %v", err),
-			Error:   true,
+			Content:  content,
+			Error:    true,
+			Metadata: meta,
 		}, nil
 	}
 
@@ -216,6 +321,39 @@ func buildSliderOverride(persona map[string]any) string {
 }
 
 // truncate shortens s to maxLen characters, appending "..." if truncated.
+// containsWholeWord checks if s contains word as a whole word (not substring).
+// e.g., "after step1 completes" contains "step1" but "step10" does not match "step1".
+func containsWholeWord(s, word string) bool {
+	idx := 0
+	for {
+		pos := strings.Index(s[idx:], word)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+		// Check boundaries
+		before := pos == 0 || !isWordChar(s[pos-1])
+		after := pos+len(word) >= len(s) || !isWordChar(s[pos+len(word)])
+		if before && after {
+			return true
+		}
+		idx = pos + 1
+	}
+}
+
+func isWordChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+func containsDep(deps []string, dep string) bool {
+	for _, d := range deps {
+		if strings.EqualFold(d, dep) {
+			return true
+		}
+	}
+	return false
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

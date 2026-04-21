@@ -55,6 +55,15 @@ func TestSpawnAgentToolParameters(t *testing.T) {
 	if _, ok := props["goal"]; !ok {
 		t.Fatal("schema missing 'goal' property")
 	}
+	if _, ok := props["task_id"]; !ok {
+		t.Fatal("schema missing 'task_id' property (DAG orchestration)")
+	}
+	if _, ok := props["depends_on"]; !ok {
+		t.Fatal("schema missing 'depends_on' property (DAG orchestration)")
+	}
+	if _, ok := props["persona"]; !ok {
+		t.Fatal("schema missing 'persona' property")
+	}
 	required := schema["required"].([]any)
 	if len(required) != 1 || required[0] != "goal" {
 		t.Fatalf("expected required=[goal], got %v", required)
@@ -82,6 +91,74 @@ func TestSpawnAgentToolInterruptBehavior(t *testing.T) {
 	tool := NewSpawnAgentTool(m)
 	if tool.InterruptBehavior() != tools.InterruptCancel {
 		t.Fatal("spawn_agent should have InterruptCancel behavior")
+	}
+}
+
+func TestDAGUnmetDependencies(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+
+	// No runs registered — all deps are unmet
+	unmet := m.unmetDependencies([]string{"taskA", "taskB"})
+	if len(unmet) != 2 {
+		t.Fatalf("expected 2 unmet deps, got %d", len(unmet))
+	}
+
+	// Register a completed run
+	m.runs["taskA"] = &SubagentRun{ID: "sub-1", TaskID: "taskA", Status: "completed"}
+	unmet = m.unmetDependencies([]string{"taskA", "taskB"})
+	if len(unmet) != 1 || unmet[0] != "taskB" {
+		t.Fatalf("expected [taskB] unmet, got %v", unmet)
+	}
+
+	// Register second as running (not completed yet)
+	m.runs["taskB"] = &SubagentRun{ID: "sub-2", TaskID: "taskB", Status: "running"}
+	unmet = m.unmetDependencies([]string{"taskA", "taskB"})
+	if len(unmet) != 1 || unmet[0] != "taskB" {
+		t.Fatalf("expected [taskB] still unmet (running), got %v", unmet)
+	}
+
+	// Complete taskB
+	m.runs["taskB"].Status = "completed"
+	unmet = m.unmetDependencies([]string{"taskA", "taskB"})
+	if len(unmet) != 0 {
+		t.Fatalf("expected 0 unmet deps, got %v", unmet)
+	}
+}
+
+func TestDAGElementNaming(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+
+	// First 6 agents get element names
+	expected := []struct{ name, element string }{
+		{"地 chi", "earth"},
+		{"火 hi", "fire"},
+		{"水 mizu", "water"},
+		{"光 hikari", "light"},
+		{"闇 yami", "dark"},
+		{"風 kaze", "wind"},
+	}
+
+	for i, e := range expected {
+		m.counter++
+		idx := m.counter - 1
+		var name, element string
+		if idx < len(elementNames) {
+			el := elementNames[idx]
+			name = el.Kanji + " " + el.Romaji
+			element = el.Element
+		}
+		if name != e.name {
+			t.Fatalf("agent %d: expected name %q, got %q", i, e.name, name)
+		}
+		if element != e.element {
+			t.Fatalf("agent %d: expected element %q, got %q", i, e.element, element)
+		}
+	}
+
+	// 7th agent falls back to numbered
+	m.counter++
+	if m.counter != 7 {
+		t.Fatalf("expected counter 7, got %d", m.counter)
 	}
 }
 

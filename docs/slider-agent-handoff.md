@@ -1,8 +1,7 @@
 # Slider Agent Handoff — CLI Personality Sliders
 
 *Companion artifact to `celeste_core_prompt.json` v3.0.0 and
-`docs/superpowers/specs/2026-04-19-celeste-persona-v3-registers-texture-design.md`
-(both live in the `celeste-core-persona` repo).*
+`docs/superpowers/specs/2026-04-19-celeste-persona-v3-registers-texture-design.md`.*
 
 This doc is self-contained. You should be able to execute without
 reading the parent spec. Optional deep-dive links are in §11.

@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // SkillsModel renders lightweight runtime status for skill/tool usage in chat view.
@@ -23,6 +25,7 @@ type SkillsModel struct {
 	lastCompleted  string
 	lastErrorSkill string
 	lastError      string
+	confirmMode    bool // show confirm/auto indicator
 }
 
 func NewSkillsModel() SkillsModel {
@@ -80,9 +83,13 @@ func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, 
 }
 
 func (s SkillsModel) View() string {
+	modeLabel := "auto"
+	if s.confirmMode {
+		modeLabel = "confirm"
+	}
 	lines := []string{
 		skillsHeaderLine(s.skillsEnabled, s.skillsCount),
-		fmt.Sprintf("Backend: %s | Model: %s", safeLabel(s.endpoint), safeLabel(s.model)),
+		fmt.Sprintf("Backend: %s | Model: %s | Mode: %s", safeLabel(s.endpoint), safeLabel(s.model), modeLabel),
 	}
 
 	if s.executingSkill != "" {
@@ -104,6 +111,11 @@ func (s SkillsModel) View() string {
 	if hint := skillsInputHint(s.currentInput, s.nsfw, s.skillsEnabled); hint != "" {
 		lines = append(lines, hint)
 	}
+
+	// Navigation keybinds
+	navHint := lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7280")).Render(
+		"⇧↑/⇧↓ scroll  PgUp/PgDn page  Home/End jump  Ctrl+K calls  Ctrl+C×2 quit")
+	lines = append(lines, navHint)
 
 	content := strings.Join(lines, "\n")
 	style := SkillsPanelStyle

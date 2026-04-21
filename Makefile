@@ -1,4 +1,4 @@
-.PHONY: build install clean help test dev verify import-key
+.PHONY: build install clean help test dev verify import-key sync-persona
 
 # Default target
 help:
@@ -57,6 +57,13 @@ verify:
 	@echo "🔒 Verifying $(FILE)..."
 	@chmod +x scripts/verify.sh
 	@./scripts/verify.sh $(FILE)
+
+# Sync persona files from celeste-core-persona repo
+sync-persona:
+	@echo "🔄 Syncing persona files from celeste-core-persona..."
+	@cp ../celeste-core-persona/cli-prompts/celeste_core.json cmd/celeste/prompts/celeste_essence.json
+	@cp ../celeste-core-persona/docs/slider-agent-handoff.md docs/slider-agent-handoff.md
+	@echo "✅ Persona synced. Run 'go build' and smoke-test prompt load."
 
 # Import GPG signing key from Keybase
 import-key:

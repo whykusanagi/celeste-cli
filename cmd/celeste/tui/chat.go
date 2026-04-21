@@ -124,6 +124,19 @@ func (m ChatModel) AddUserMessage(content string) ChatModel {
 	return m
 }
 
+// AddHiddenUserMessage adds a user-role message that the LLM sees but
+// the chat UI does not render. Used for directives like identity changes.
+func (m ChatModel) AddHiddenUserMessage(content string) ChatModel {
+	m.messages = append(m.messages, ChatMessage{
+		Role:      "user",
+		Content:   content,
+		Timestamp: time.Now(),
+		Metadata:  map[string]any{"hidden": true},
+	})
+	// No updateContent/GotoBottom — invisible to the user
+	return m
+}
+
 // AddAssistantMessage adds an assistant message to the chat.
 func (m ChatModel) AddAssistantMessage(content string) ChatModel {
 	return m.AddAssistantMessageWithToolCalls(content, nil)
@@ -258,6 +271,11 @@ func (m ChatModel) ToggleSkillCalls() ChatModel {
 	return m
 }
 
+// ShowingSkillCalls returns whether skill call logs are currently visible.
+func (m ChatModel) ShowingSkillCalls() bool {
+	return m.showSkillCalls
+}
+
 // updateContent rebuilds the viewport content from messages.
 func (m *ChatModel) updateContent() {
 	if !m.ready {
@@ -272,6 +290,12 @@ func (m *ChatModel) updateContent() {
 		// Don't render tool results in UI - they're for LLM only
 		if msg.Role == "tool" {
 			continue
+		}
+		// Skip hidden messages (LLM directives like identity changes)
+		if msg.Metadata != nil {
+			if hidden, ok := msg.Metadata["hidden"].(bool); ok && hidden {
+				continue
+			}
 		}
 		lines = append(lines, m.renderMessage(msg, contentWidth))
 		lines = append(lines, "") // Spacing between messages

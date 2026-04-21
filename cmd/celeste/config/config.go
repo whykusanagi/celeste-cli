@@ -100,6 +100,14 @@ type Config struct {
 	// Persona settings
 	SkipPersonaPrompt bool `json:"skip_persona_prompt"`
 
+	// Confirm mode: when true, Celeste proposes actions before executing
+	// write/generate operations. When false, she auto-executes.
+	ConfirmActions bool `json:"confirm_actions,omitempty"`
+
+	// ElevenLabs TTS settings
+	ElevenLabsAPIKey string `json:"elevenlabs_api_key,omitempty"`
+	ElevenLabsVoiceID string `json:"elevenlabs_voice_id,omitempty"`
+
 	// Streaming settings
 	SimulateTyping bool `json:"simulate_typing"`
 	TypingSpeed    int  `json:"typing_speed"` // chars per second

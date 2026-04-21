@@ -4,7 +4,9 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -113,7 +115,8 @@ type AppModel struct {
 	graphModel       *GraphModel
 	memoryManager    *MemoryManagerModel
 	personaPanel     *PersonaPanelModel
-	viewMode         string // "chat", "collections", "menu", "skills", "graph", "memories"
+	sessionPanel     *SessionPanelModel
+	viewMode         string // "chat", "collections", "menu", "skills", "graph", "memories", "sessions"
 
 	// Code graph indexer (for /graph view)
 	codeGraphIndexer *codegraph.Indexer
@@ -164,6 +167,28 @@ type AgentCommandRunner interface {
 // OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
 type OrchestratorCommandRunner interface {
 	RunOrchestratorCommand(goal string) tea.Cmd
+}
+
+// SubagentInfo is a TUI-facing view of a subagent run.
+type SubagentInfo struct {
+	ID      string
+	TaskID  string
+	Name    string
+	Element string
+	Status  string // "waiting", "running", "completed", "failed"
+	Turns   int
+	Elapsed time.Duration
+}
+
+// SubagentLister is an optional extension for /agents command.
+type SubagentLister interface {
+	ListSubagents() []SubagentInfo
+}
+
+// PromptRefresher is an optional extension to reload the system prompt
+// mid-session (after /confirm, /user, or other prompt-affecting changes).
+type PromptRefresher interface {
+	RefreshSystemPrompt()
 }
 
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
@@ -363,6 +388,45 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			*m.personaPanel = updated
 			return m, cmd
 		}
+	} else if m.viewMode == "sessions" {
+		if m.sessionPanel != nil {
+			// Pass ALL key messages to the session panel first
+			updated, cmd := m.sessionPanel.Update(msg)
+			*m.sessionPanel = updated
+
+			// Check for exit (esc/q handled inside panel returning empty selected)
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
+				if keyMsg.String() == "esc" || keyMsg.String() == "q" {
+					m.viewMode = "chat"
+					m.sessionPanel = nil
+					return m, nil
+				}
+			}
+
+			// Handle selection
+			if sel := m.sessionPanel.Selected(); sel != "" {
+				m.viewMode = "chat"
+				m = m.handleSessionAction(&commands.SessionAction{
+					Action:    "resume",
+					SessionID: sel,
+				})
+				if refresher, ok := m.llmClient.(PromptRefresher); ok {
+					refresher.RefreshSystemPrompt()
+				}
+				m.sessionPanel = nil
+				return m, nil
+			}
+
+			// Handle deletion
+			if del := m.sessionPanel.Deleted(); del != "" {
+				m.sessionPanel.deleted = "" // reset
+				if m.sessionManager != nil {
+					_ = m.sessionManager.Delete(del)
+				}
+			}
+
+			return m, cmd
+		}
 	} else if m.viewMode == "memories" {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -437,7 +501,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+k":
 			// Toggle skill call logs visibility
 			m.chat = m.chat.ToggleSkillCalls()
-			m.status = m.status.SetText("Skill calls toggled")
+			if m.chat.ShowingSkillCalls() {
+				m.status = m.status.SetText("Skill call logs: visible")
+			} else {
+				m.status = m.status.SetText("Skill call logs: hidden")
+			}
 		case "pgup", "shift+up", "home":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollUp(5)
@@ -493,6 +561,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetWidth(m.width)
 
 		// Resize new components
+		if m.sessionPanel != nil {
+			*m.sessionPanel = m.sessionPanel.SetWidth(m.width).SetHeight(chatHeight)
+		}
 		m.toolProgress.SetSize(m.width, 0)
 		m.contextBar.SetSize(m.width, 0)
 		m.permissionPrompt.SetSize(m.width, 0)
@@ -831,6 +902,95 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: msg}
 					}
 
+				case "snapshot":
+					indexer := m.codeGraphIndexer
+					snap, err := indexer.TakeSnapshot()
+					if err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Snapshot failed: %v", err))
+						return m, nil
+					}
+					if err := indexer.SaveSnapshot(snap); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Save failed: %v", err))
+						return m, nil
+					}
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Snapshot saved: %s (%d symbols, %d edges)",
+						snap.CommitSHA, snap.SymbolCount, snap.EdgeCount))
+
+				case "diff":
+					indexer := m.codeGraphIndexer
+					current, err := indexer.TakeSnapshot()
+					if err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Snapshot failed: %v", err))
+						return m, nil
+					}
+					previous, err := indexer.LatestSnapshot()
+					if err != nil || previous == nil {
+						m.chat = m.chat.AddSystemMessage("No previous snapshot to diff against.\nRun `/index snapshot` first, then make changes and rebuild.")
+						return m, nil
+					}
+					diff := codegraph.DiffSnapshots(previous, current)
+					var sb strings.Builder
+					sb.WriteString(fmt.Sprintf("Graph diff: %s → %s\n", diff.BeforeSHA, diff.AfterSHA))
+					sb.WriteString(fmt.Sprintf("  Symbols: +%d / -%d\n", diff.Summary.SymbolsAdded, diff.Summary.SymbolsRemoved))
+					sb.WriteString(fmt.Sprintf("  Edges:   +%d / -%d\n", diff.Summary.EdgesAdded, diff.Summary.EdgesRemoved))
+					if len(diff.AddedSymbols) > 0 {
+						sb.WriteString(fmt.Sprintf("  Added: %s\n", strings.Join(diff.AddedSymbols[:min(len(diff.AddedSymbols), 10)], ", ")))
+					}
+					if len(diff.RemovedSymbols) > 0 {
+						sb.WriteString(fmt.Sprintf("  Removed: %s\n", strings.Join(diff.RemovedSymbols[:min(len(diff.RemovedSymbols), 10)], ", ")))
+					}
+					m.chat = m.chat.AddSystemMessage(sb.String())
+
+				case "impact":
+					base := "HEAD~1"
+					if len(cmd.Args) > 1 {
+						base = cmd.Args[1]
+					}
+					indexer := m.codeGraphIndexer
+					result, err := indexer.AnalyzeChanges(base)
+					if err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Impact analysis failed: %v", err))
+						return m, nil
+					}
+					var sb strings.Builder
+					sb.WriteString(fmt.Sprintf("Change Impact (diff: %s)\n\n", base))
+					sb.WriteString(fmt.Sprintf("  Files changed:     %d\n", result.Summary.FilesChanged))
+					sb.WriteString(fmt.Sprintf("  Symbols changed:   %d\n", result.Summary.SymbolsChanged))
+					sb.WriteString(fmt.Sprintf("  Callers affected:  %d\n", result.Summary.CallersAffected))
+					sb.WriteString(fmt.Sprintf("  Test gaps:         %d\n", result.Summary.TestGaps))
+					sb.WriteString(fmt.Sprintf("  Max risk score:    %.2f\n", result.Summary.MaxRiskScore))
+					if len(result.DirectlyChanged) > 0 {
+						sb.WriteString("\nChanged symbols:\n")
+						for i, sym := range result.DirectlyChanged {
+							if i >= 15 {
+								sb.WriteString(fmt.Sprintf("  ... +%d more\n", len(result.DirectlyChanged)-15))
+								break
+							}
+							sb.WriteString(fmt.Sprintf("  [%.2f] %-10s %s\n", sym.RiskScore, sym.Kind, sym.Name))
+						}
+					}
+					if len(result.AffectedCallers) > 0 {
+						sb.WriteString("\nAffected callers (blast radius):\n")
+						for i, sym := range result.AffectedCallers {
+							if i >= 10 {
+								sb.WriteString(fmt.Sprintf("  ... +%d more\n", len(result.AffectedCallers)-10))
+								break
+							}
+							sb.WriteString(fmt.Sprintf("  [%.2f] %-10s %s\n", sym.RiskScore, sym.Kind, sym.Name))
+						}
+					}
+					if len(result.UncoveredByTests) > 0 {
+						sb.WriteString("\nTest gaps:\n")
+						for i, name := range result.UncoveredByTests {
+							if i >= 10 {
+								sb.WriteString(fmt.Sprintf("  ... +%d more\n", len(result.UncoveredByTests)-10))
+								break
+							}
+							sb.WriteString(fmt.Sprintf("  - %s\n", name))
+						}
+					}
+					m.chat = m.chat.AddSystemMessage(sb.String())
+
 				default: // "status" or no args
 					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.width)
 					if viz != "" {
@@ -842,11 +1002,193 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			case "session":
+				// Open interactive session picker
+				m.viewMode = "sessions"
+				panel := NewSessionPanelModel()
+				panel = panel.SetWidth(m.width).SetHeight(m.height)
+				m.sessionPanel = &panel
+				return m, nil
+
 			case "persona":
 				m.viewMode = "persona"
 				panel := NewPersonaPanelModel()
 				panel = panel.SetWidth(m.width)
 				m.personaPanel = &panel
+				return m, nil
+
+			case "user":
+				user := config.LoadUser()
+				if len(cmd.Args) == 0 {
+					// Show current user
+					status := fmt.Sprintf("Current user: %s", user.DisplayName())
+					if user.IsKusanagi() {
+						status += " (Kusanagi mode — full sibling dynamic)"
+					} else if user.Name == "" {
+						status += " (default — set with /user <name>)"
+					}
+					m.chat = m.chat.AddSystemMessage(status)
+					return m, nil
+				}
+				newName := strings.Join(cmd.Args, " ")
+				if newName == "reset" || newName == "default" {
+					user = config.DefaultUserIdentity()
+				} else {
+					user.Name = newName
+				}
+				if err := user.Save(); err != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save user: %v", err))
+				} else {
+					if refresher, ok := m.llmClient.(PromptRefresher); ok {
+						refresher.RefreshSystemPrompt()
+					}
+					msg := fmt.Sprintf("User set to: %s", user.DisplayName())
+					if user.IsKusanagi() {
+						msg += "\nKusanagi mode active — full sibling dynamic enabled."
+					}
+					m.chat = m.chat.AddSystemMessage(msg)
+					// Inject an LLM-visible directive so the model sees the identity
+					// change in context (system messages are filtered from LLM calls).
+					directive := fmt.Sprintf("[IDENTITY CHANGE] The person you are speaking with is now %s. "+
+						"Disregard any prior name references in this conversation. Address them as %s from this point forward.",
+						user.DisplayName(), user.DisplayName())
+					m.chat = m.chat.AddHiddenUserMessage(directive)
+				}
+				return m, nil
+
+			case "voice":
+				cfg, err := config.Load()
+				if err != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to load config: %v", err))
+					return m, nil
+				}
+				if len(cmd.Args) == 0 {
+					// Show current voice config
+					key := "not set"
+					if cfg.ElevenLabsAPIKey != "" {
+						if len(cfg.ElevenLabsAPIKey) > 8 {
+							key = cfg.ElevenLabsAPIKey[:4] + "..." + cfg.ElevenLabsAPIKey[len(cfg.ElevenLabsAPIKey)-4:]
+						} else {
+							key = "***"
+						}
+					}
+					voice := cfg.ElevenLabsVoiceID
+					if voice == "" {
+						voice = "not set"
+					}
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("ElevenLabs TTS:\n  API Key: %s\n  Voice ID: %s\n\nUsage: /voice set-key <key> | /voice set-voice <id>", key, voice))
+					return m, nil
+				}
+				sub := cmd.Args[0]
+				switch sub {
+				case "set-key":
+					if len(cmd.Args) < 2 {
+						m.chat = m.chat.AddSystemMessage("Usage: /voice set-key <elevenlabs-api-key>")
+						return m, nil
+					}
+					cfg.ElevenLabsAPIKey = cmd.Args[1]
+					if err := config.Save(cfg); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save: %v", err))
+					} else {
+						m.chat = m.chat.AddSystemMessage("ElevenLabs API key saved.")
+					}
+				case "set-voice":
+					if len(cmd.Args) < 2 {
+						m.chat = m.chat.AddSystemMessage("Usage: /voice set-voice <voice-id>")
+						return m, nil
+					}
+					cfg.ElevenLabsVoiceID = cmd.Args[1]
+					if err := config.Save(cfg); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save: %v", err))
+					} else {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Voice ID saved: %s", cmd.Args[1]))
+					}
+				case "list":
+					apiKey := cfg.ElevenLabsAPIKey
+					if apiKey == "" {
+						apiKey = os.Getenv("ELEVEN_LABS_API_KEY")
+					}
+					if apiKey == "" {
+						apiKey = os.Getenv("ELEVENLABS_API_KEY")
+					}
+					if apiKey == "" {
+						apiKey = os.Getenv("ELEVEN_KEY")
+					}
+					if apiKey == "" {
+						m.chat = m.chat.AddSystemMessage("No ElevenLabs API key configured.\nSet one with: /voice set-key <key>")
+						return m, nil
+					}
+					m.chat = m.chat.AddSystemMessage("Fetching voices from ElevenLabs...")
+					m.streaming = true
+					m.status = m.status.SetStreaming(true)
+					m.status = m.status.SetText("Fetching voices...")
+					return m, func() tea.Msg {
+						voices, err := fetchElevenLabsVoices(apiKey)
+						if err != nil {
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Failed: %v", err)}
+						}
+						return AgentProgressMsg{Kind: AgentProgressResponse, Text: voices}
+					}
+				default:
+					m.chat = m.chat.AddSystemMessage("Usage: /voice list | /voice set-key <key> | /voice set-voice <id>")
+				}
+				return m, nil
+
+			case "confirm":
+				cfg, err := config.Load()
+				if err != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to load config: %v", err))
+					return m, nil
+				}
+				cfg.ConfirmActions = !cfg.ConfirmActions
+				if saveErr := config.Save(cfg); saveErr != nil {
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save config: %v", saveErr))
+				} else {
+					if refresher, ok := m.llmClient.(PromptRefresher); ok {
+						refresher.RefreshSystemPrompt()
+					}
+					if cfg.ConfirmActions {
+						m.chat = m.chat.AddSystemMessage("Confirm mode: ON — Celeste will propose actions before executing.")
+					} else {
+						m.chat = m.chat.AddSystemMessage("Confirm mode: OFF — Celeste auto-executes actions.")
+					}
+				}
+				return m, nil
+
+			case "agents":
+				lister, ok := m.llmClient.(SubagentLister)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("Subagent listing not available.")
+					return m, nil
+				}
+				agents := lister.ListSubagents()
+				if len(agents) == 0 {
+					m.chat = m.chat.AddSystemMessage("No subagents spawned this session.")
+					return m, nil
+				}
+				var sb strings.Builder
+				sb.WriteString("Subagents:\n")
+				for _, a := range agents {
+					icon := "◇"
+					switch a.Status {
+					case "running":
+						icon = "▶"
+					case "completed":
+						icon = "✓"
+					case "failed":
+						icon = "✗"
+					case "waiting":
+						icon = "◇"
+					}
+					line := fmt.Sprintf("  %s 〔%s〕 %s  %d turns  %s",
+						icon, a.Name, a.Status, a.Turns,
+						a.Elapsed.Round(time.Millisecond))
+					if a.TaskID != "" {
+						line += fmt.Sprintf("  (task: %s)", a.TaskID)
+					}
+					sb.WriteString(line + "\n")
+				}
+				m.chat = m.chat.AddSystemMessage(sb.String())
 				return m, nil
 
 			case "graph":
@@ -1022,6 +1364,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if err := switcher.ChangeModel(m.model); err != nil {
 							m.status = m.status.SetText(fmt.Sprintf("Error changing model: %v", err))
 						}
+					}
+
+					// Persist to config so it survives restarts
+					if cfg, err := config.Load(); err == nil {
+						cfg.Model = m.model
+						_ = config.Save(cfg)
 					}
 
 					// Persist session state
@@ -1458,10 +1806,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}))
 			}
 		} else if m.typingContent == "" {
-			// No content at all — empty response
+			// No content at all — empty response. This happens when the LLM
+			// "acknowledges" internally but produces nothing. Show feedback
+			// so the user knows to re-prompt.
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText(fmt.Sprintf("Done (%s)", msg.FinishReason))
+			m.status = m.status.SetText("Ready (empty response)")
+			m.chat = m.chat.AddSystemMessage("(No response — try rephrasing or say 'go' to execute)")
 		}
 
 	case StreamErrorMsg:
@@ -1935,7 +2286,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("🤖 Model changed to: %s", modelName))
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to: %s", modelName))
 
-					// Persist the change
+					// Persist to config so it survives restarts
+					if cfg, err := config.Load(); err == nil {
+						cfg.Model = modelName
+						_ = config.Save(cfg)
+					}
+
+					// Persist the change to session
 					m.persistSession()
 				}
 			}
@@ -2039,6 +2396,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = m.status.SetText("Ready")
 				}
 
+				// Clear completed tool progress entries now that the
+				// response is fully rendered — no need to keep them
+				// cluttering the bottom of the screen.
+				m.toolProgress.ClearCompleted()
+
 				// Persist session now that the message is complete
 				m.persistSession()
 			}
@@ -2057,6 +2419,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ErrorMsg:
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
+	}
+
+	// Keep ticks alive while tool progress entries are active so
+	// spinners animate and elapsed timers update without keypress.
+	if m.toolProgress.HasActive() {
+		cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
+			return TickMsg{Time: t}
+		}))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -2118,8 +2488,12 @@ func (m AppModel) View() string {
 	// Header (fixed, 1 line)
 	sections = append(sections, m.header.View())
 
-	// Chat panel (flexible height)
-	sections = append(sections, m.chat.View())
+	// Chat panel (flexible height) — or session picker when in sessions mode
+	if m.viewMode == "sessions" && m.sessionPanel != nil {
+		sections = append(sections, m.sessionPanel.View())
+	} else {
+		sections = append(sections, m.chat.View())
+	}
 
 	// Tool progress cards (if any tools are executing)
 	if m.toolProgress.HasActive() {
@@ -2157,6 +2531,9 @@ func (m AppModel) View() string {
 	}
 
 	m.skills = m.skills.SetConfig(m.endpoint, m.model, m.skillsEnabled, m.nsfwMode, skillsCount, disabledReason)
+	if cfg, err := config.Load(); err == nil {
+		m.skills.confirmMode = cfg.ConfirmActions
+	}
 	sections = append(sections, m.skills.View())
 
 	// Status bar (fixed, 1 line)
@@ -2222,7 +2599,11 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 	}
 	m.clawToolIterations++
 
-	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
+	// Only add the assistant message if it has text content. Tool-call-only
+	// responses (empty AssistantContent) would render as an empty chat bubble.
+	if msg.AssistantContent != "" {
+		m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
+	}
 	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
 	m.toolBatchActive = true
 
@@ -2745,7 +3126,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 				// Restore messages
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
-					if sessionMsgs, ok := messagesRaw.([]SessionMessage); ok {
+					if sessionMsgs, ok := messagesRaw.([]config.SessionMessage); ok {
 						for _, msg := range sessionMsgs {
 							switch msg.Role {
 							case "user":
@@ -2767,7 +3148,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 				msgCount := 0
 				if msgs := s.GetMessagesRaw(); msgs != nil {
-					if sm, ok := msgs.([]SessionMessage); ok {
+					if sm, ok := msgs.([]config.SessionMessage); ok {
 						msgCount = len(sm)
 					}
 				}
@@ -2889,6 +3270,10 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		if s, ok := newSession.(Session); ok {
 			m.currentSession = s
 		}
+		// Refresh system prompt so /user and /confirm changes take effect
+		if refresher, ok := m.llmClient.(PromptRefresher); ok {
+			refresher.RefreshSystemPrompt()
+		}
 		m.chat = m.chat.AddSystemMessage("🗑️  Session cleared, new session started")
 
 	case "merge":
@@ -2900,7 +3285,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				// Clear and reload with merged messages
 				m.chat = m.chat.Clear()
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
-					if sessionMsgs, ok := messagesRaw.([]SessionMessage); ok {
+					if sessionMsgs, ok := messagesRaw.([]config.SessionMessage); ok {
 						for _, msg := range sessionMsgs {
 							switch msg.Role {
 							case "user":
@@ -2971,7 +3356,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		if m.currentSession != nil {
 			msgCount := 0
 			if msgs := m.currentSession.GetMessagesRaw(); msgs != nil {
-				if sm, ok := msgs.([]SessionMessage); ok {
+				if sm, ok := msgs.([]config.SessionMessage); ok {
 					msgCount = len(sm)
 				}
 			}
@@ -3295,4 +3680,51 @@ func truncateText(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+// fetchElevenLabsVoices calls the ElevenLabs API and returns a formatted voice list.
+func fetchElevenLabsVoices(apiKey string) (string, error) {
+	req, err := http.NewRequest("GET", "https://api.elevenlabs.io/v1/voices", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("xi-api-key", apiKey)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("ElevenLabs API returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Voices []struct {
+			VoiceID string            `json:"voice_id"`
+			Name    string            `json:"name"`
+			Labels  map[string]string `json:"labels"`
+		} `json:"voices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("ElevenLabs Voices (%d):\n\n", len(result.Voices)))
+	for _, v := range result.Voices {
+		sb.WriteString(fmt.Sprintf("  %s  %s", v.VoiceID, v.Name))
+		if len(v.Labels) > 0 {
+			parts := make([]string, 0, len(v.Labels))
+			for k, val := range v.Labels {
+				parts = append(parts, k+": "+val)
+			}
+			sb.WriteString("  [" + strings.Join(parts, ", ") + "]")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\nSet a voice: /voice set-voice <voice-id>")
+	return sb.String(), nil
 }

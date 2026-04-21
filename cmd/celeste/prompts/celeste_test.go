@@ -18,12 +18,12 @@ func TestLoadEssence(t *testing.T) {
 	require.NoError(t, err, "Should load embedded essence")
 	assert.NotNil(t, essence, "Essence should not be nil")
 
-	// Verify essential fields are populated
+	// Verify essential fields are populated (v3.0.0 schema)
 	assert.NotEmpty(t, essence.Version, "Version should be set")
-	assert.NotEmpty(t, essence.Character, "Character should be set")
-	assert.NotEmpty(t, essence.Description, "Description should be set")
-	assert.NotEmpty(t, essence.Voice.Style, "Voice style should be set")
-	assert.NotEmpty(t, essence.CoreRules, "Core rules should be set")
+	assert.NotEmpty(t, essence.SystemPrompt, "SystemPrompt should be set (v3.0.0)")
+	assert.NotEmpty(t, essence.CanonicalName, "CanonicalName should be set (v3.0.0)")
+	assert.NotEmpty(t, essence.OperationalLaws, "OperationalLaws should be set")
+	assert.NotEmpty(t, essence.InteractionRules, "InteractionRules should be set")
 }
 
 // TestLoadEssenceFromFile tests loading essence from custom file
@@ -107,6 +107,18 @@ func TestBuildPromptFromEssence(t *testing.T) {
 	assert.Contains(t, prompt, "refuse1, refuse2", "Should include refuse list")
 	assert.Contains(t, prompt, "Test alternatives", "Should include safe alternatives")
 	assert.Contains(t, prompt, "Test knowledge usage", "Should include knowledge usage")
+}
+
+// TestBuildPromptFromEssenceV3 tests that v3.0.0 system_prompt is used directly
+func TestBuildPromptFromEssenceV3(t *testing.T) {
+	essence := &CelesteEssence{
+		Version:      "3.0.0",
+		SystemPrompt: "You are Celeste, a test v3 prompt.",
+	}
+
+	prompt := buildPromptFromEssence(essence)
+	assert.Equal(t, "You are Celeste, a test v3 prompt.", prompt,
+		"v3.0.0 should use system_prompt directly")
 }
 
 // TestBuildPromptWithMinimalEssence tests prompt with minimal data
@@ -251,15 +263,15 @@ func TestGetContentPromptFormats(t *testing.T) {
 func TestPromptStructure(t *testing.T) {
 	prompt := GetSystemPrompt(false)
 
-	// Check for essential sections
-	expectedSections := []string{
-		"Voice",
-		"Core Rules",
-		"Safety",
+	// Check for essential content present in both v1.x and v3.0.0 schemas
+	expectedContent := []string{
+		"Celeste",
+		"Kusanagi",
+		"TONE",
 	}
 
-	for _, section := range expectedSections {
-		assert.Contains(t, prompt, section, "Prompt should contain section: %s", section)
+	for _, content := range expectedContent {
+		assert.Contains(t, prompt, content, "Prompt should contain: %s", content)
 	}
 }
 
@@ -268,16 +280,13 @@ func TestEssenceValidation(t *testing.T) {
 	essence, err := LoadEssence()
 	require.NoError(t, err)
 
-	// Validate Voice structure
-	assert.NotEmpty(t, essence.Voice.Style, "Voice style should be set")
-	assert.NotEmpty(t, essence.Voice.EmojiUsage, "Emoji usage should be defined")
+	// v3.0.0: system_prompt is the canonical prompt blob
+	assert.NotEmpty(t, essence.SystemPrompt, "SystemPrompt should be set")
+	assert.Contains(t, essence.SystemPrompt, "Celeste", "SystemPrompt should mention Celeste")
 
-	// Validate Safety structure
-	assert.NotEmpty(t, essence.Safety.PlatformSafety, "Platform safety should be defined")
-	assert.NotEmpty(t, essence.Safety.RefuseList, "Refuse list should be defined")
-
-	// Validate OperationalLaws
+	// Validate OperationalLaws (present in both v1.x and v3.0.0)
 	assert.NotEmpty(t, essence.OperationalLaws, "Operational laws should be defined")
+	assert.Contains(t, essence.OperationalLaws, "law_0", "Should have law_0")
 }
 
 // TestGetSystemPromptConsistency tests that repeated calls return same result

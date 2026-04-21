@@ -41,16 +41,28 @@ var elementNames = []struct {
 // SubagentRun tracks the state and result of a spawned subagent.
 type SubagentRun struct {
 	ID        string    `json:"id"`
-	Name      string    `json:"name"`      // display name (e.g., "火 hi")
-	Element   string    `json:"element"`   // english element (e.g., "fire")
+	TaskID    string    `json:"task_id,omitempty"` // user-assigned ID for DAG dependencies
+	Name      string    `json:"name"`              // display name (e.g., "火 hi")
+	Element   string    `json:"element"`           // english element (e.g., "fire")
 	Goal      string    `json:"goal"`
 	Workspace string    `json:"workspace"`
-	Status    string    `json:"status"` // "running", "completed", "failed"
+	Status    string    `json:"status"` // "waiting", "running", "completed", "failed"
+	DependsOn []string  `json:"depends_on,omitempty"` // task_ids that must complete first
 	Result    string    `json:"result"`
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitempty"`
 	Turns     int       `json:"turns"`
+}
+
+// DAGEntry is a queued subagent waiting for dependencies to clear.
+type DAGEntry struct {
+	Run       *SubagentRun
+	Goal      string // the full goal including persona overrides
+	Workspace string
+	TurnCb    TurnCallback
+	MaxTurns  int
+	ResultCh  chan *SubagentRun // result sent here when complete
 }
 
 // StaggerDelay is the configurable pause between concurrent subagent
@@ -66,6 +78,7 @@ type Manager struct {
 	runs      map[string]*SubagentRun
 	counter   int
 	isChild   bool // true if this manager is inside a subagent (blocks recursion)
+	dagQueue  []*DAGEntry // tasks waiting for dependencies
 }
 
 // NewManager creates a subagent manager. Pass isChild=true when the manager
@@ -84,15 +97,33 @@ func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
 // being called on this turn (empty if the turn is a text response).
 type TurnCallback func(turn int, maxTurns int, toolName string)
 
+// SpawnOptions holds optional parameters for Spawn.
+type SpawnOptions struct {
+	TaskID    string       // user-assigned task ID for DAG references
+	DependsOn []string     // task IDs that must complete before this starts
+	TurnCb   TurnCallback // nested progress callback
+	MaxTurns int          // 0 = default (20)
+}
+
 // Spawn creates and runs a subagent with the given goal. It blocks until the
-// subagent completes or the context is cancelled. The optional turnCb streams
-// per-turn activity to the caller for nested TUI progress display.
+// subagent completes or the context is cancelled.
 func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turnCb ...TurnCallback) (*SubagentRun, error) {
+	opts := SpawnOptions{}
+	if len(turnCb) > 0 {
+		opts.TurnCb = turnCb[0]
+	}
+	return m.SpawnWithOptions(ctx, goal, workspace, opts)
+}
+
+// SpawnWithOptions creates and runs a subagent with full options including
+// DAG dependencies. If depends_on contains task IDs that haven't completed
+// yet, the subagent blocks in "waiting" state until all dependencies clear,
+// then auto-starts.
+func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace string, opts SpawnOptions) (*SubagentRun, error) {
 	if m.isChild {
 		return nil, fmt.Errorf("recursive subagent spawning is not allowed")
 	}
 
-	// Check for recursion marker in the goal itself (defense in depth)
 	if strings.Contains(goal, recursionMarker) {
 		return nil, fmt.Errorf("recursive subagent spawning detected")
 	}
@@ -106,7 +137,6 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 	idx := m.counter - 1
 	id := fmt.Sprintf("sub-%d-%d", time.Now().Unix(), m.counter)
 
-	// Assign element name from the kanji table
 	var name, element string
 	if idx < len(elementNames) {
 		e := elementNames[idx]
@@ -119,23 +149,107 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 
 	run := &SubagentRun{
 		ID:        id,
+		TaskID:    opts.TaskID,
 		Name:      name,
 		Element:   element,
 		Goal:      goal,
 		Workspace: workspace,
 		Status:    "running",
+		DependsOn: opts.DependsOn,
 		StartedAt: time.Now(),
 	}
+
+	if opts.TaskID != "" {
+		// Register by task ID so dependencies can reference it
+		m.runs[opts.TaskID] = run
+	}
 	m.runs[id] = run
+
+	// Auto-detect dependencies from goal text.
+	// Release lock briefly so peer agents in the same batch can register,
+	// then re-acquire and scan for references to their task_ids.
+	if len(opts.DependsOn) == 0 && opts.TaskID != "" {
+		m.mu.Unlock()
+		time.Sleep(200 * time.Millisecond) // let batch peers register
+		m.mu.Lock()
+
+		seen := make(map[string]bool)
+		for key, peer := range m.runs {
+			if peer.TaskID == "" || peer.TaskID != key || peer.TaskID == opts.TaskID {
+				continue
+			}
+			if seen[peer.TaskID] {
+				continue
+			}
+			if containsWholeWord(goal, peer.TaskID) || (peer.Element != "" && containsWholeWord(goal, peer.Element)) {
+				opts.DependsOn = append(opts.DependsOn, peer.TaskID)
+				run.DependsOn = append(run.DependsOn, peer.TaskID)
+				seen[peer.TaskID] = true
+			}
+		}
+		if len(opts.DependsOn) > 0 {
+			// DAG auto-detected (logged via TUI progress events)
+		}
+	}
+
+	// Check if dependencies are met
+	if len(opts.DependsOn) > 0 {
+		unmet := m.unmetDependencies(opts.DependsOn)
+		if len(unmet) > 0 {
+			run.Status = "waiting"
+			resultCh := make(chan *SubagentRun, 1)
+			m.dagQueue = append(m.dagQueue, &DAGEntry{
+				Run:       run,
+				Goal:      goal,
+				Workspace: workspace,
+				TurnCb:    opts.TurnCb,
+				MaxTurns:  opts.MaxTurns,
+				ResultCh:  resultCh,
+			})
+			m.mu.Unlock()
+
+			// Block until dependencies clear and the entry is executed
+			// DAG waiting (visible via TUI tool progress)
+			select {
+			case completed := <-resultCh:
+				// DAG unblocked
+				return completed, nil
+			case <-ctx.Done():
+				// DAG cancelled — tool context expired
+				m.mu.Lock()
+				run.Status = "failed"
+				run.Error = "cancelled while waiting for dependencies"
+				run.EndedAt = time.Now()
+				m.mu.Unlock()
+				return run, ctx.Err()
+			}
+		}
+	}
 	m.mu.Unlock()
 
+	return m.executeSubagent(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns)
+}
+
+// executeSubagent runs the actual agent loop for a SubagentRun. Called from
+// both the direct SpawnWithOptions path and from drainDAGQueue goroutines.
+func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal string, workspace string, turnCb TurnCallback, maxTurns int) (*SubagentRun, error) {
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)
 
-	// Stagger concurrent launches to avoid rate limiting
-	if StaggerDelay > 0 && m.counter > 1 {
-		delay := StaggerDelay * time.Duration(m.counter-1)
+	// Stagger concurrent launches based on currently running agents
+	// to avoid rate limiting. Uses active count, not total-ever count,
+	// so later batches don't get penalized by earlier completions.
+	m.mu.Lock()
+	activeCount := 0
+	for _, r := range m.runs {
+		if r.Status == "running" {
+			activeCount++
+		}
+	}
+	m.mu.Unlock()
+	if StaggerDelay > 0 && activeCount > 1 {
+		delay := StaggerDelay * time.Duration(activeCount-1)
 		if delay > 3*time.Second {
 			delay = 3 * time.Second // cap at 3s max stagger
 		}
@@ -149,19 +263,21 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 		}
 	}
 
+	if maxTurns <= 0 {
+		maxTurns = 20
+	}
+
 	var outBuf, errBuf bytes.Buffer
-	opts := agent.Options{
+	agentOpts := agent.Options{
 		Workspace: workspace,
-		MaxTurns:  20,
+		MaxTurns:  maxTurns,
 		Verbose:   false,
 	}
 
-	// Wire turn callback via OnTurnStats — the agent runner fires
-	// this after each LLM call so we can forward nested progress
-	// to the parent's TUI for real-time subagent visibility.
-	if len(turnCb) > 0 && turnCb[0] != nil {
-		cb := turnCb[0]
-		opts.OnTurnStats = func(stats agent.TurnStats) {
+	// Wire turn callback via OnTurnStats
+	if turnCb != nil {
+		cb := turnCb
+		agentOpts.OnTurnStats = func(stats agent.TurnStats) {
 			toolName := ""
 			if len(stats.ToolCalls) > 0 {
 				toolName = strings.Join(stats.ToolCalls, ", ")
@@ -170,7 +286,7 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 		}
 	}
 
-	runner, err := agent.NewRunner(m.cfg, opts, &outBuf, &errBuf)
+	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
@@ -182,13 +298,22 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 	state, err := runner.RunGoal(ctx, markedGoal)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	run.EndedAt = time.Now()
 
 	if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
+		run.Turns = state.Turn
+		// Capture partial progress — whatever the subagent accomplished
+		// before failing. This prevents total work loss on timeout/network errors.
+		if state.LastAssistantResponse != "" {
+			run.Result = fmt.Sprintf("[Partial result — failed after %d turns: %s]\n\n%s",
+				state.Turn, err.Error(), state.LastAssistantResponse)
+		}
+		m.mu.Unlock()
+		// Still drain — other tasks may be unblocked by earlier completions
+		drainCtx2 := context.Background()
+		m.drainDAGQueue(drainCtx2)
 		return run, fmt.Errorf("subagent execution: %w", err)
 	}
 
@@ -203,8 +328,78 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 	if run.Result == "" {
 		run.Result = fmt.Sprintf("Subagent completed after %d turns (status: %s)", state.Turn, state.Status)
 	}
+	// Truncate oversized results to avoid blowing up the parent's context
+	const maxResultChars = 100_000
+	if len(run.Result) > maxResultChars {
+		run.Result = run.Result[:maxResultChars] + "\n\n[Result truncated at 100k chars]"
+	}
+	m.mu.Unlock()
+
+	// Drain the DAG queue — this task's completion may unblock waiting entries.
+	// Use a fresh context. DO NOT defer cancel — the drain goroutines need
+	// the context to stay alive after this function returns.
+	drainCtx := context.Background()
+	m.drainDAGQueue(drainCtx)
 
 	return run, nil
+}
+
+// unmetDependencies returns the task IDs from deps that haven't completed.
+// Must be called with m.mu held.
+func (m *Manager) unmetDependencies(deps []string) []string {
+	var unmet []string
+	for _, depID := range deps {
+		run, ok := m.runs[depID]
+		if !ok || run.Status != "completed" {
+			unmet = append(unmet, depID)
+		}
+	}
+	return unmet
+}
+
+// drainDAGQueue checks all waiting entries and starts any whose
+// dependencies are now fully met. Called after every task completion.
+func (m *Manager) drainDAGQueue(ctx context.Context) {
+	m.mu.Lock()
+	var stillWaiting []*DAGEntry
+	var ready []*DAGEntry
+	for _, entry := range m.dagQueue {
+		unmet := m.unmetDependencies(entry.Run.DependsOn)
+		if len(unmet) == 0 {
+			ready = append(ready, entry)
+		} else {
+			stillWaiting = append(stillWaiting, entry)
+		}
+	}
+	m.dagQueue = stillWaiting
+	m.mu.Unlock()
+
+	// Execute ready entries in goroutines
+	for _, entry := range ready {
+		go func(e *DAGEntry) {
+			// Inject dependency results into the goal context
+			m.mu.Lock()
+			var depContext strings.Builder
+			for _, depID := range e.Run.DependsOn {
+				if depRun, ok := m.runs[depID]; ok && depRun.Status == "completed" {
+					depContext.WriteString(fmt.Sprintf("[DEPENDENCY RESULT: %s (%s)]\n%s\n[END DEPENDENCY]\n\n",
+						depRun.Name, depID, depRun.Result))
+				}
+			}
+			e.Run.Status = "running"
+			e.Run.StartedAt = time.Now()
+			m.mu.Unlock()
+
+			enrichedGoal := e.Goal
+			if depContext.Len() > 0 {
+				enrichedGoal = depContext.String() + enrichedGoal
+			}
+
+			// Run the actual subagent (reuse the execution path)
+			result, _ := m.executeSubagent(ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns)
+			e.ResultCh <- result
+		}(entry)
+	}
 }
 
 // GetRun returns a subagent run by ID.

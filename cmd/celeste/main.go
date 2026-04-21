@@ -45,7 +45,7 @@ import (
 // CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
 // When not set by ldflags, defaults are used.
 var (
-	Version   = "1.9.2"
+	Version   = "1.9.3"
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
 )
@@ -454,6 +454,7 @@ func runChatTUI() {
 		registry:    registry,
 		baseConfig:  cfg,
 		costTracker: costs.NewSessionTracker(),
+		subMgr:      subMgr,
 	}
 
 	// Initialize logging for skill calls
@@ -606,6 +607,7 @@ type TUIClientAdapter struct {
 	registry    *tools.Registry
 	baseConfig  *config.Config // Store base config for loading named configs
 	costTracker *costs.SessionTracker
+	subMgr      *subagents.Manager // exposed for /agents TUI command
 }
 
 // SendMessage implements tui.LLMClient.
@@ -782,11 +784,24 @@ func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
 // ExecuteSkill implements tui.LLMClient.
 func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Long-running tools (spawn_agent, bash) get extended timeouts.
+		// Short tools (read_file, list_files, search) use the default 30s.
+		timeout := 30 * time.Second
+		switch name {
+		case "spawn_agent":
+			timeout = 10 * time.Minute // subagents manage their own turn limits
+		case "bash":
+			timeout = 5 * time.Minute
+		case "generate_speech":
+			timeout = 5 * time.Minute // TTS generation for long scripts + batch
+		case "audio_render":
+			timeout = 2 * time.Minute // ffmpeg rendering
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		startTime := time.Now()
-		tui.LogInfo(fmt.Sprintf("Executing skill '%s' with timeout: 30s", name))
+		tui.LogInfo(fmt.Sprintf("Executing skill '%s' with timeout: %s", name, timeout))
 
 		// Convert args to JSON
 		argsJSON, err := json.Marshal(args)
@@ -978,6 +993,41 @@ func (a *TUIClientAdapter) SetThinkingLevel(level string) {
 		Level:   level,
 	})
 	tui.LogInfo(fmt.Sprintf("Thinking config set: level=%s, enabled=%v", level, enabled))
+}
+
+// ListSubagents implements tui.SubagentLister.
+func (a *TUIClientAdapter) ListSubagents() []tui.SubagentInfo {
+	if a.subMgr == nil {
+		return nil
+	}
+	runs := a.subMgr.ListRuns()
+	infos := make([]tui.SubagentInfo, len(runs))
+	for i, r := range runs {
+		elapsed := r.EndedAt.Sub(r.StartedAt)
+		if r.Status == "running" || r.Status == "waiting" {
+			elapsed = time.Since(r.StartedAt)
+		}
+		infos[i] = tui.SubagentInfo{
+			ID:      r.ID,
+			TaskID:  r.TaskID,
+			Name:    r.Name,
+			Element: r.Element,
+			Status:  r.Status,
+			Turns:   r.Turns,
+			Elapsed: elapsed,
+		}
+	}
+	return infos
+}
+
+// RefreshSystemPrompt recomposes and re-injects the system prompt.
+// Called after /confirm, /user, or other prompt-affecting changes.
+func (a *TUIClientAdapter) RefreshSystemPrompt() {
+	if a.baseConfig != nil && a.baseConfig.SkipPersonaPrompt {
+		return
+	}
+	a.client.SetSystemPrompt(prompts.GetSystemPrompt(false))
+	tui.LogInfo("✓ System prompt refreshed (confirm/user/persona change)")
 }
 
 func parseArgs(argsJSON string) (map[string]any, error) {

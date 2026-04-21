@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-04-21
+
+### Added
+
+- **Subagent orchestration with DAG dependencies.** Element-named agents (地火水光闇風)
+  with auto-detected dependency chains from goal text. Agents that reference another
+  agent's task_id automatically wait until the dependency completes before starting.
+  Parallel dispatch for independent tasks, sequential execution for dependent chains.
+- **Multi-language tree-sitter code graph.** Native Go parsers for 10 languages
+  (Python, Rust, TypeScript, JavaScript, Java, C, C++, Ruby, PHP, TSX). 67-140%
+  more symbols extracted vs regex. Node type mappings derived from code-review-graph.
+- **Graph snapshots and change impact analysis.** `/index snapshot` saves graph state,
+  `/index diff` compares against last snapshot, `/index impact` maps git diff to affected
+  symbols with risk scoring and test gap detection. MCP tools: `code_impact`, `code_snapshot`.
+- **Audio production pipeline.** ElevenLabs TTS (generate, speak, play, batch, history,
+  download), sound effects generation, timeline-aware ffmpeg mixer with loop/delay/volume,
+  `audio_render` project pipeline with Gantt chart visualization. Idempotent batch with
+  timeout recovery. SSML tags auto-stripped (ElevenLabs v3 doesn't support them).
+- **User identity system.** `/user` command with Kusanagi mode vs Summoner default.
+  Prompt refreshes mid-session on identity change. Hidden LLM-visible directives.
+- **Session picker panel.** Interactive paginated session browser (↑/↓/PgUp/PgDn/Enter/d)
+  rendered inline in the TUI. Session resume loads full conversation history.
+- **ElevenLabs voice management.** `/voice list`, `/voice set-key`, `/voice set-voice`
+  commands. Config persisted to disk, loaded fresh on each tool call.
+- **Confirm mode.** `/confirm` toggle with status bar indicator. Task execution prompt
+  for sequential multi-step plan completion.
+- **Subcommand typeahead.** Purple hints for `/index rebuild`, `/voice list`, etc.
+  Escape clears input. Navigation keybinds in status bar.
+
+### Changed
+
+- **v3.0.0 persona sync.** `system_prompt` field used directly for v3.0.0 essence,
+  v1.x structured assembly preserved as fallback. Fraternal twin gender clarified.
+  Anti-confabulation appearance fix ("No tail. No wings.").
+- **Tool timeout tiers.** 30s for reads, 5min for bash/TTS, 10min for subagents,
+  2min for audio render. Prevents long-running tools from being killed.
+- **Model changes persist to config.** `/model` and `/config set-model` write to
+  `config.json` so the setting survives restarts.
+- **Empty response detection.** Shows "(No response — try rephrasing)" instead of
+  appearing frozen when LLM returns empty.
+- **Tool progress auto-clear.** Completed entries clear when response finishes,
+  not on next user message.
+- **Ctrl+K shows on/off state** for skill call logs visibility.
+- **Grimoire injection for MCP content tool.** `celeste_content` now reads `.grimoire`
+  from CWD for project-specific rules.
+- **Tick animation during tool execution.** Spinners and elapsed timers now animate
+  continuously while tools run, without requiring keypress.
+
+### Fixed
+
+- Empty assistant bubble for tool-call-only responses.
+- Session resume type assertion mismatch (`tui.SessionMessage` vs `config.SessionMessage`).
+- Subagent partial result recovery on failure (returns last assistant response).
+- Mix validation rejects stacked audio (all tracks at delay:0 with no loops).
+- DAG drain context cancellation (was killing queued agents immediately).
+- Stagger delay based on active agent count, not total-ever spawned.
+- Nil guard on failed spawn preventing panic.
+
 ## [1.9.2] - 2026-04-17
 
 ### Added
