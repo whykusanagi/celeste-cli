@@ -249,12 +249,12 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		return tools.ToolResult{
 			Content: result,
 			Metadata: map[string]any{
-				"filename":  filename,
-				"bytes":     len(audioData),
-				"text_len":  len(text),
-				"voice_id":  voiceID,
-				"ssml":      useSSML,
-				"played":    action == "speak",
+				"filename": filename,
+				"bytes":    len(audioData),
+				"text_len": len(text),
+				"voice_id": voiceID,
+				"ssml":     useSSML,
+				"played":   action == "speak",
 			},
 		}, nil
 
@@ -373,13 +373,13 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 // clipsFile represents both v1 (plain text) and v2 (SSML) clip formats.
 type clipsFile struct {
 	Clips []struct {
-		Name           string   `json:"name"`
-		Script         string   `json:"script"`
-		DurationEstimate string `json:"duration_estimate"`
-		Tags           []string `json:"tags"`
+		Name             string   `json:"name"`
+		Script           string   `json:"script"`
+		DurationEstimate string   `json:"duration_estimate"`
+		Tags             []string `json:"tags"`
 	} `json:"clips"`
-	Version      string `json:"version"`
-	Persona      string `json:"persona"`
+	Version       string `json:"version"`
+	Persona       string `json:"persona"`
 	SSMLOptimized bool   `json:"ssml_optimized"`
 }
 
@@ -526,8 +526,8 @@ func listVoices(ctx context.Context, apiKey string) (tools.ToolResult, error) {
 
 	var result struct {
 		Voices []struct {
-			VoiceID string `json:"voice_id"`
-			Name    string `json:"name"`
+			VoiceID string            `json:"voice_id"`
+			Name    string            `json:"name"`
 			Labels  map[string]string `json:"labels"`
 		} `json:"voices"`
 	}
@@ -885,8 +885,9 @@ func probeDuration(filename string) float64 {
 // stripTagsAndCues removes SSML/XML tags and bracketed action cues from text.
 // ElevenLabs v3 speaks these as literal words — they need to be removed.
 // Examples: <prosody rate="slow">text</prosody> → text
-//           [laughs] → (removed)
-//           [whispers] text [/whispers] → text
+//
+//	[laughs] → (removed)
+//	[whispers] text [/whispers] → text
 func stripTagsAndCues(text string) string {
 	// Strip XML/SSML tags
 	result := text

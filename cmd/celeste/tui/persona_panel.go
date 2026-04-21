@@ -241,7 +241,7 @@ func (m PersonaPanelModel) View() string {
 	}
 	r18Name := labelStyle.Render("R18 Toggle")
 	if m.cursor == 4 {
-		r18Name = labelStyle.Copy().Foreground(lipgloss.Color("#d94f90")).Render("R18 Toggle")
+		r18Name = labelStyle.Foreground(lipgloss.Color("#d94f90")).Render("R18 Toggle")
 	}
 	sb.WriteString(fmt.Sprintf("%s%s %s\n", r18Cursor, r18Name, r18Style.Render(r18Label)))
 
