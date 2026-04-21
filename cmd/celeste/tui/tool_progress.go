@@ -236,9 +236,9 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 
 // elementSpinnerIcon returns the animated icon for element-named subagents.
 // Three effects layered:
-//   1. Element kanji as the base character (instead of braille)
-//   2. Pulse: alternates bold/dim every other frame
-//   3. Corruption glitch: ~1 in 8 frames replaces kanji with a corruption glyph
+//  1. Element kanji as the base character (instead of braille)
+//  2. Pulse: alternates bold/dim every other frame
+//  3. Corruption glitch: ~1 in 8 frames replaces kanji with a corruption glyph
 func (m ToolProgressModel) elementSpinnerIcon(displayName, element string) string {
 	// Extract the kanji from displayName (first rune of "〔火 hi〕" → "火")
 	kanji := "◈" // fallback
