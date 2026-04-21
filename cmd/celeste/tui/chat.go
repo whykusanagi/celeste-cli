@@ -334,11 +334,6 @@ func (m *ChatModel) updateContent() {
 	m.viewport.SetContent(content)
 }
 
-// renderMessage renders a single chat message with Glamour markdown.
-func (m ChatModel) renderMessage(msg ChatMessage, width int) string {
-	return m.renderMessageOpt(msg, width, false)
-}
-
 // renderMessageOpt renders a chat message, optionally skipping Glamour.
 // skipMarkdown is set during the typing animation so that ANSI-styled
 // corruption glyphs at the cursor don't pass through the markdown
