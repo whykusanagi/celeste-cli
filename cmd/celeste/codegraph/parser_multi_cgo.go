@@ -279,6 +279,32 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 		return
 	}
 
+	// Attribute assignment `obj.attr = v` may invoke a @property.setter. Emit a
+	// call edge from the current function to the attribute's tail name so setter
+	// methods aren't reported as edge-less. (#45)
+	//
+	// Confirmed AST shape (tree-sitter Python, diagnostic run 2026-06-02):
+	//   assignment
+	//     left: attribute ("c.x")
+	//       object: identifier ("c")
+	//       attribute: identifier ("x")   ← tail name we emit
+	//     right: integer ("5")
+	if w.lang == "python" && kind == "assignment" && currentFn != "" {
+		if left := node.ChildByFieldName("left"); left != nil && left.Kind() == "attribute" {
+			if attr := left.ChildByFieldName("attribute"); attr != nil {
+				if name := w.nodeText(attr); name != "" {
+					w.result.Edges = append(w.result.Edges, RawEdge{
+						SourceName: currentFn,
+						TargetName: name,
+						Kind:       EdgeCalls,
+					})
+				}
+			}
+		}
+		// Do NOT return here — fall through to the default recursion below so
+		// the RHS (e.g. `c.x = make()`) still visits child call nodes.
+	}
+
 	// Default: recurse
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		w.walk(node.NamedChild(i), currentFn)
