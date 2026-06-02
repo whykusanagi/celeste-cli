@@ -557,3 +557,39 @@ func TestConfigLoader(t *testing.T) {
 	assert.Equal(t, "youtube-key", youtubeConfig.APIKey)
 	assert.Equal(t, "test-channel", youtubeConfig.DefaultChannel)
 }
+
+func TestReconcileModel(t *testing.T) {
+	def := DefaultConfig().Model
+
+	t.Run("empty model falls back to default", func(t *testing.T) {
+		c := &Config{Model: ""}
+		changed, from, to := reconcileModel(c)
+		assert.True(t, changed)
+		assert.Equal(t, "", from)
+		assert.Equal(t, def, to)
+		assert.Equal(t, def, c.Model)
+	})
+
+	t.Run("deprecated reasoning model migrates to grok-build-0.1", func(t *testing.T) {
+		c := &Config{Model: "grok-4-1-fast-reasoning"}
+		changed, from, to := reconcileModel(c)
+		assert.True(t, changed)
+		assert.Equal(t, "grok-4-1-fast-reasoning", from)
+		assert.Equal(t, "grok-build-0.1", to)
+		assert.Equal(t, "grok-build-0.1", c.Model)
+	})
+
+	t.Run("supported model is left unchanged", func(t *testing.T) {
+		c := &Config{Model: "grok-build-0.1"}
+		changed, _, _ := reconcileModel(c)
+		assert.False(t, changed)
+		assert.Equal(t, "grok-build-0.1", c.Model)
+	})
+
+	t.Run("non-grok model is left unchanged", func(t *testing.T) {
+		c := &Config{Model: "gpt-4.1-mini"}
+		changed, _, _ := reconcileModel(c)
+		assert.False(t, changed)
+		assert.Equal(t, "gpt-4.1-mini", c.Model)
+	})
+}
