@@ -39,7 +39,7 @@ func TestGetStaticModels(t *testing.T) {
 		hasToolModels bool
 		checkModelID  string // Specific model to verify
 	}{
-		{"grok", 4, true, "grok-4-1-fast"},
+		{"grok", 5, true, "grok-build-0.1"},
 		{"openai", 4, true, "gpt-4.1-nano"},
 		{"venice", 3, true, "llama-3.3-70b"},
 		{"anthropic", 2, true, "claude-sonnet-4-5-20250929"},
@@ -92,7 +92,7 @@ func TestGetBestToolModel(t *testing.T) {
 		expectedModel string
 	}{
 		{"openai", "gpt-4.1-nano"},
-		{"grok", "grok-4-1-fast"},
+		{"grok", "grok-build-0.1"},
 		{"venice", ""}, // Venice uncensored has no tool model
 		{"anthropic", "claude-sonnet-4-5-20250929"},
 		{"gemini", "gemini-2.0-flash"},
@@ -129,7 +129,8 @@ func TestModelDetection(t *testing.T) {
 		{"grok", "grok-4-1-fast", true},
 		{"grok", "grok-4-1", true},
 		{"grok", "grok-beta", true},
-		{"grok", "grok-4-latest", true}, // Contains grok-4
+		{"grok", "grok-4-latest", true},  // Contains grok-4
+		{"grok", "grok-build-0.1", true}, // Default tool model; matcher: contains "grok-build"
 
 		// Venice
 		{"venice", "llama-3.3-70b", true},
@@ -325,15 +326,23 @@ func TestGrokStaticModels(t *testing.T) {
 	service := NewModelService("test-key", "", "grok")
 	models := service.getStaticModels()
 
-	// Find grok-4-1-fast (recommended tool model)
-	var fastModel *ModelInfo
-	for i := range models {
-		if models[i].ID == "grok-4-1-fast" {
-			fastModel = &models[i]
-			break
+	// findGrokModel is a local helper to look up a model by ID in the catalog.
+	findGrokModel := func(id string) *ModelInfo {
+		for i := range models {
+			if models[i].ID == id {
+				return &models[i]
+			}
 		}
+		return nil
 	}
 
+	// grok-build-0.1 is the current default/recommended tool model.
+	buildModel := findGrokModel("grok-build-0.1")
+	assert.NotNil(t, buildModel, "Should have grok-build-0.1 model")
+	assert.True(t, buildModel.SupportsTools, "grok-build-0.1 should support tools")
+
+	// grok-4-1-fast back-compat assertion: still in the static catalog.
+	fastModel := findGrokModel("grok-4-1-fast")
 	assert.NotNil(t, fastModel, "Should have grok-4-1-fast model")
 	assert.True(t, fastModel.SupportsTools, "grok-4-1-fast should support tools")
 	assert.Equal(t, 2000000, fastModel.ContextWindow, "Should have 2M context")

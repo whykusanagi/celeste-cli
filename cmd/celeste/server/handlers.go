@@ -145,6 +145,12 @@ func registerCelesteTool(s *Server) {
 	})
 }
 
+// toolErrorJSON builds a properly-escaped JSON tool-error payload.
+func toolErrorJSON(msg string) string {
+	b, _ := json.Marshal(map[string]any{"error": true, "message": msg})
+	return string(b)
+}
+
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
@@ -191,6 +197,11 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 		{Role: "user", Content: prompt, Timestamp: time.Now()},
 	}
 
+	// ttsRan tracks whether generate_speech executed successfully this session.
+	// The flag is session-scoped (persists across turns) and is used to detect
+	// hallucinated "Audio saved:" prose when TTS never ran.
+	ttsRan := false
+
 	// Auto-loop: send message, execute tool calls, send results back, repeat
 	maxLoops := 25
 	for i := 0; i < maxLoops; i++ {
@@ -201,7 +212,8 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 		// If no tool calls, we're done
 		if len(result.ToolCalls) == 0 {
-			return []ContentBlock{{Type: "text", Text: strings.TrimSpace(result.Content)}}, nil
+			text := llm.StripUnbackedAudioClaim(strings.TrimSpace(result.Content), ttsRan)
+			return []ContentBlock{{Type: "text", Text: text}}, nil
 		}
 
 		// Add assistant response with tool calls
@@ -221,17 +233,49 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 			}(),
 		})
 
-		// Execute each tool call and add results
+		// Execute each tool call and add results.
 		for _, tc := range result.ToolCalls {
-			// Parse JSON arguments string to map
+			// Corruption detected upstream (dropped stream delta): never run the
+			// tool with empty args — surface an error so the model can retry.
+			if tc.ArgsError != "" {
+				messages = append(messages, tui.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Content:    toolErrorJSON(tc.ArgsError),
+				})
+				continue
+			}
+
 			var args map[string]any
 			if tc.Arguments != "" {
-				_ = json.Unmarshal([]byte(tc.Arguments), &args)
+				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+					messages = append(messages, tui.ChatMessage{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Name:       tc.Name,
+						Content:    toolErrorJSON(fmt.Sprintf("invalid tool arguments JSON: %v", err)),
+					})
+					continue
+				}
 			}
 			if args == nil {
 				args = make(map[string]any)
 			}
-			toolResult, _ := registry.Execute(ctx, tc.Name, args)
+
+			toolResult, err := registry.Execute(ctx, tc.Name, args)
+			if err != nil {
+				messages = append(messages, tui.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Content:    toolErrorJSON(fmt.Sprintf("tool execution failed: %v", err)),
+				})
+				continue
+			}
+			if tc.Name == "generate_speech" && !toolResult.Error {
+				ttsRan = true
+			}
 			messages = append(messages, tui.ChatMessage{
 				Role:       "tool",
 				Content:    toolResult.Content,

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -37,13 +38,15 @@ const (
 
 // Symbol represents a code entity (function, type, interface, etc.).
 type Symbol struct {
-	ID        int64
-	Name      string
-	Kind      SymbolKind
-	Package   string
-	File      string
-	Line      int
-	Signature string
+	ID          int64
+	Name        string
+	Kind        SymbolKind
+	Package     string
+	File        string
+	Line        int
+	Signature   string
+	Decorators  string // comma-separated decorator names captured at parse time
+	BaseClasses string // comma-separated base-class names of the enclosing class
 }
 
 // Edge represents a relationship between two symbols.
@@ -128,6 +131,8 @@ func (s *Store) createSchema() error {
 		file TEXT NOT NULL,
 		line INTEGER,
 		signature TEXT,
+		decorators TEXT,
+		base_classes TEXT,
 		minhash BLOB
 	);
 
@@ -173,6 +178,17 @@ func (s *Store) createSchema() error {
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
+	}
+	// Idempotent migration: add decorators/base_classes columns to existing DBs
+	// that were created before this schema version. The columns exist in new DBs
+	// from the CREATE TABLE above; for existing DBs ALTER TABLE adds them.
+	for _, col := range []string{
+		"ALTER TABLE symbols ADD COLUMN decorators TEXT",
+		"ALTER TABLE symbols ADD COLUMN base_classes TEXT",
+	} {
+		if _, err := s.db.Exec(col); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migrate symbols: %w", err)
+		}
 	}
 	// BM25 tables (token_stats, symbol_tokens). Defined in bm25.go so
 	// all BM25-related code lives together. Idempotent CREATE IF NOT
@@ -226,17 +242,17 @@ func (s *Store) UpsertSymbol(sym Symbol) (int64, error) {
 	if err == nil {
 		// Update existing row.
 		_, err = s.db.Exec(
-			`UPDATE symbols SET line = ?, signature = ? WHERE id = ?`,
-			sym.Line, sym.Signature, existingID,
+			`UPDATE symbols SET line = ?, signature = ?, decorators = ?, base_classes = ? WHERE id = ?`,
+			sym.Line, sym.Signature, sym.Decorators, sym.BaseClasses, existingID,
 		)
 		return existingID, err
 	}
 
 	// Insert new row.
 	result, err := s.db.Exec(
-		`INSERT INTO symbols (name, kind, package, file, line, signature)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		sym.Name, sym.Kind, sym.Package, sym.File, sym.Line, sym.Signature,
+		`INSERT INTO symbols (name, kind, package, file, line, signature, decorators, base_classes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sym.Name, sym.Kind, sym.Package, sym.File, sym.Line, sym.Signature, sym.Decorators, sym.BaseClasses,
 	)
 	if err != nil {
 		return 0, err
@@ -248,9 +264,11 @@ func (s *Store) UpsertSymbol(sym Symbol) (int64, error) {
 func (s *Store) GetSymbol(id int64) (*Symbol, error) {
 	sym := &Symbol{}
 	err := s.db.QueryRow(
-		`SELECT id, name, kind, package, file, line, COALESCE(signature, '')
+		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
+		        COALESCE(decorators, ''), COALESCE(base_classes, '')
 		 FROM symbols WHERE id = ?`, id,
-	).Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature)
+	).Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature,
+		&sym.Decorators, &sym.BaseClasses)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +370,8 @@ func (s *Store) DeleteFileSymbols(file string) error {
 // GetSymbolsByFile returns all symbols in the given file.
 func (s *Store) GetSymbolsByFile(file string) ([]Symbol, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, kind, package, file, line, COALESCE(signature, '')
+		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
+		        COALESCE(decorators, ''), COALESCE(base_classes, '')
 		 FROM symbols WHERE file = ? ORDER BY line`, file,
 	)
 	if err != nil {
@@ -365,7 +384,8 @@ func (s *Store) GetSymbolsByFile(file string) ([]Symbol, error) {
 // GetSymbolsByPackage returns all symbols in the given package.
 func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, kind, package, file, line, COALESCE(signature, '')
+		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
+		        COALESCE(decorators, ''), COALESCE(base_classes, '')
 		 FROM symbols WHERE package = ? ORDER BY file, line`, pkg,
 	)
 	if err != nil {
@@ -378,7 +398,8 @@ func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 // SearchSymbolsByName returns symbols whose name contains the query (case-insensitive).
 func (s *Store) SearchSymbolsByName(query string) ([]Symbol, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, kind, package, file, line, COALESCE(signature, '')
+		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
+		        COALESCE(decorators, ''), COALESCE(base_classes, '')
 		 FROM symbols WHERE name LIKE ? ORDER BY name`,
 		"%"+query+"%",
 	)
@@ -393,7 +414,8 @@ func scanSymbols(rows *sql.Rows) ([]Symbol, error) {
 	var syms []Symbol
 	for rows.Next() {
 		var sym Symbol
-		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature); err != nil {
+		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature,
+			&sym.Decorators, &sym.BaseClasses); err != nil {
 			return nil, err
 		}
 		syms = append(syms, sym)
@@ -701,6 +723,7 @@ func (s *Store) FindLazyRedirectCandidates(includeTests bool) ([]LazyRedirectCan
 func (s *Store) FindAllFunctionsWithEdges() ([]FunctionEdgeInfo, error) {
 	query := `
 		SELECT s.name, s.file, s.line, s.kind, COALESCE(s.signature, ''),
+		       COALESCE(s.decorators, ''), COALESCE(s.base_classes, ''),
 		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
 		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
 		FROM symbols s
@@ -717,7 +740,8 @@ func (s *Store) FindAllFunctionsWithEdges() ([]FunctionEdgeInfo, error) {
 	var results []FunctionEdgeInfo
 	for rows.Next() {
 		var r FunctionEdgeInfo
-		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.Signature, &r.OutEdges, &r.InEdges); err != nil {
+		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.Signature,
+			&r.Decorators, &r.BaseClasses, &r.OutEdges, &r.InEdges); err != nil {
 			return nil, err
 		}
 		results = append(results, r)

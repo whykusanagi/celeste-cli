@@ -311,6 +311,7 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 						ID:        tc.ID,
 						Name:      tc.Function.Name,
 						Arguments: tc.Function.Arguments,
+						ArgsError: validateToolArgs(tc.Function.Name, tc.Function.Arguments),
 					})
 				}
 				sc := StreamChunk{
@@ -501,7 +502,8 @@ func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui
 		return fmt.Errorf("read stream: %w", err)
 	}
 
-	// Emit ToolUseDone for each accumulated tool call
+	// Emit ToolUseDone for each accumulated tool call.
+	// NOTE: arg validity is re-checked in agent/runtime.go executeToolCall before execution (#48).
 	for _, tc := range toolCallsByIndex {
 		if tc.id != "" {
 			callback(StreamEvent{

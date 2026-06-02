@@ -10,10 +10,77 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 )
+
+// PermissionRequest describes a pending tool invocation that requires user approval.
+// It is passed to PromptFunc when the permission checker returns Ask.
+type PermissionRequest struct {
+	ToolName     string
+	InputSummary string // short human-readable summary of what the tool will do
+	RiskLevel    string // "read", "write", or "destructive"
+}
+
+// PermissionResponse carries the user's decision from an interactive prompt.
+type PermissionResponse struct {
+	Decision string // "allow_once", "always_allow", "deny", "always_deny"
+	Pattern  string // rule pattern for "always" decisions
+}
+
+// PromptFunc is a blocking callback invoked when a tool execution requires
+// interactive approval. It runs in the tool-execution goroutine (off the Bubble
+// Tea Update loop), so it may safely block until the user responds.
+// Returning a zero-value PermissionResponse (empty Decision) is treated as deny.
+type PromptFunc func(req PermissionRequest) PermissionResponse
+
+// classifyRiskLevel returns "read", "write", or "destructive" for a tool.
+// Called after the checker returns Ask (so the tool is not read-only and not
+// in an always-allow list). We apply simple heuristics on the tool name.
+func classifyRiskLevel(toolName string) string {
+	lower := strings.ToLower(toolName)
+	switch {
+	case strings.Contains(lower, "delete") ||
+		strings.Contains(lower, "remove") ||
+		strings.Contains(lower, "drop") ||
+		strings.Contains(lower, "destroy") ||
+		strings.Contains(lower, "truncate") ||
+		lower == "bash":
+		return "destructive"
+	default:
+		return "write"
+	}
+}
+
+// inputSummary produces a short (<80 char) human-readable summary of the tool input.
+func inputSummary(input map[string]any) string {
+	if len(input) == 0 {
+		return "(no args)"
+	}
+	// Try priority keys first
+	for _, key := range []string{"command", "path", "content", "pattern", "query"} {
+		if v, ok := input[key]; ok {
+			if s, ok := v.(string); ok {
+				if len(s) > 60 {
+					s = s[:57] + "..."
+				}
+				return s
+			}
+		}
+	}
+	// Fallback: JSON-encode with truncation
+	b, err := json.Marshal(input)
+	if err != nil {
+		return "(args)"
+	}
+	s := string(b)
+	if len(s) > 60 {
+		s = s[:57] + "..."
+	}
+	return s
+}
 
 // toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
 // Tool has Name() while ToolInfo expects ToolName().
@@ -39,11 +106,12 @@ type HookRunner interface {
 
 // Registry manages the collection of available tools and their mode associations.
 type Registry struct {
-	mu      sync.RWMutex
-	tools   map[string]Tool
-	modes   map[string][]RuntimeMode // tool name -> allowed modes (nil = all modes)
-	checker *permissions.Checker     // optional, nil = allow all
-	hooks   HookRunner               // optional, nil = no hooks
+	mu       sync.RWMutex
+	tools    map[string]Tool
+	modes    map[string][]RuntimeMode // tool name -> allowed modes (nil = all modes)
+	checker  *permissions.Checker     // optional, nil = allow all
+	hooks    HookRunner               // optional, nil = no hooks
+	promptFn PromptFunc               // optional; nil = deny on Ask
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -165,8 +233,13 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	}
 
 	// Permission check
-	if r.checker != nil {
-		result := r.checker.Check(&toolInfoAdapter{tool: tool}, input)
+	r.mu.RLock()
+	checker := r.checker
+	prompt := r.promptFn
+	r.mu.RUnlock()
+
+	if checker != nil {
+		result := checker.Check(&toolInfoAdapter{tool: tool}, input)
 		switch result.Decision {
 		case permissions.Deny:
 			return ToolResult{
@@ -174,9 +247,59 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 				Error:   true,
 			}, nil
 		case permissions.Ask:
-			// Auto-allow in TUI mode — user is present and initiated the action.
-			// Log to tui.log instead of stderr to avoid clobbering the TUI layout.
-			// TODO: Plan 6 will add interactive permission prompts
+			// Hard permission gate: invoke the prompt callback if configured.
+			// If no prompt is configured (headless / non-TUI), deny by default
+			// so the gate cannot be silently bypassed.
+			if prompt == nil {
+				return ToolResult{
+					Content: fmt.Sprintf("Permission denied: interactive approval required for %q but no prompt is configured", name),
+					Error:   true,
+				}, nil
+			}
+			// Build the request and block for the user's response.
+			// This call runs inside a tea.Cmd goroutine (off the Bubble Tea
+			// Update loop), so blocking here is safe.
+			req := PermissionRequest{
+				ToolName:     name,
+				InputSummary: inputSummary(input),
+				RiskLevel:    classifyRiskLevel(name),
+			}
+			resp := prompt(req)
+			switch resp.Decision {
+			case "allow_once":
+				// Proceed; no rule persisted.
+			case "always_allow":
+				// Persist an allow rule for future invocations.
+				pattern := resp.Pattern
+				if pattern == "" {
+					pattern = name
+				}
+				_ = checker.AddPersistentAllow(permissions.Rule{
+					ToolPattern: pattern,
+					Decision:    permissions.Allow,
+				})
+			case "deny", "always_deny":
+				if resp.Decision == "always_deny" {
+					pattern := resp.Pattern
+					if pattern == "" {
+						pattern = name
+					}
+					_ = checker.AddPersistentDeny(permissions.Rule{
+						ToolPattern: pattern,
+						Decision:    permissions.Deny,
+					})
+				}
+				return ToolResult{
+					Content: fmt.Sprintf("Permission denied: user denied execution of %q", name),
+					Error:   true,
+				}, nil
+			default:
+				// Empty or unknown decision → deny (safe default).
+				return ToolResult{
+					Content: fmt.Sprintf("Permission denied: no decision received for %q", name),
+					Error:   true,
+				}, nil
+			}
 		}
 	}
 
@@ -222,6 +345,18 @@ func (r *Registry) SetHookRunner(runner HookRunner) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hooks = runner
+}
+
+// SetPromptFunc configures the interactive permission prompt callback.
+// When the permission checker returns Ask for a tool, the registry calls fn
+// to get the user's decision. fn runs in the tool-execution goroutine (off
+// the Bubble Tea Update loop), so it may safely block.
+// If fn is nil (the default), any Ask decision is treated as Deny — the gate
+// cannot be silently bypassed in headless or non-TUI contexts.
+func (r *Registry) SetPromptFunc(fn PromptFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.promptFn = fn
 }
 
 // Count returns the number of registered tools.

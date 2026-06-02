@@ -185,9 +185,16 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if apiKey == "" {
 			return tools.ToolResult{Content: "ELEVEN_LABS_API_KEY not set", Error: true}, nil
 		}
-		text, _ := input["text"].(string)
+		textVal, hasText := input["text"]
+		if !hasText {
+			return tools.ToolResult{
+				Content: "'text' field missing from tool arguments — this usually means the tool-call arguments were corrupted in transit (a dropped stream delta), not that you omitted the text. Retry the call with the same text.",
+				Error:   true,
+			}, nil
+		}
+		text, _ := textVal.(string)
 		if strings.TrimSpace(text) == "" {
-			return tools.ToolResult{Content: "'text' is required for speak/generate", Error: true}, nil
+			return tools.ToolResult{Content: "'text' is required for speak/generate (received an empty string)", Error: true}, nil
 		}
 
 		voiceID, _ := input["voice_id"].(string)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -196,18 +197,35 @@ func (idx *Indexer) Store() *Store {
 // Build performs a full index of the workspace. Walks the file tree,
 // parses source files, extracts symbols and edges, computes MinHash
 // signatures, and stores everything in SQLite.
+//
+// Two-pass design (fix for issue #47): all symbols are stored in the first
+// pass so that cross-file call edges can be resolved in the second pass
+// regardless of file processing order. Without the two-pass approach, files
+// processed alphabetically before their callee files (e.g. a.py calling
+// in_databricks defined in util.py) would silently drop their edges because
+// the target symbol didn't exist in the DB yet.
 func (idx *Indexer) Build() error {
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
 	}
 
+	// Pass 1: store all symbols, MinHash, tokens, LSH bands, and file records.
+	// Collect raw edges for deferred resolution in pass 2.
+	var allRawEdges []RawEdge
 	for _, path := range files {
-		if err := idx.indexFile(path); err != nil {
+		raw, err := idx.indexFileSymbols(path)
+		if err != nil {
 			// Log but don't fail on individual file errors
 			continue
 		}
+		allRawEdges = append(allRawEdges, raw...)
 	}
+
+	// Pass 2: resolve and store all edges now that every symbol is in the DB.
+	// Cross-file call targets that weren't available during pass 1 are now
+	// resolvable via GetSymbolIDByName.
+	idx.resolveAndStoreEdges(allRawEdges)
 
 	// Persist the MinHasher seeds so a subsequent process can restore
 	// the same hash family and compare signatures meaningfully. Idempotent
@@ -294,6 +312,95 @@ func (idx *Indexer) Update() error {
 	}
 
 	return nil
+}
+
+// indexFileSymbols parses a file, stores its symbols (with MinHash / LSH / tokens)
+// and the file record, then returns the raw (unresolved) edges for deferred
+// resolution. Used by Build() in its first pass so all symbols exist in the DB
+// before any edges are inserted (fixing cross-file caller-count issue #47).
+func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
+	absPath := filepath.Join(idx.workspace, relPath)
+	lang := DetectLanguage(relPath)
+
+	var result *ParseResult
+	var err error
+
+	if lang == "go" {
+		parser := NewGoParser()
+		result, err = parser.ParseFile(absPath)
+	} else if idx.tryMultiParser(absPath) {
+		if idx.multiParser == nil {
+			idx.multiParser = NewMultiLangParser()
+		}
+		result, err = idx.multiParser.ParseFile(absPath)
+	} else if lang == "typescript" {
+		if idx.tsParser == nil {
+			idx.tsParser = NewTSParser()
+		}
+		result, err = idx.tsParser.ParseFile(absPath)
+	} else if indexableLanguages[lang] {
+		parser := NewGenericParser(lang)
+		result, err = parser.ParseFile(absPath)
+	} else {
+		return nil, nil // no parser for this language
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	source, _ := os.ReadFile(absPath)
+
+	for _, sym := range result.Symbols {
+		sym.File = relPath
+		id, err := idx.store.UpsertSymbol(sym)
+		if err != nil {
+			continue
+		}
+		if sym.Kind != SymbolImport {
+			shingles := ShinglesForSymbol(sym, source, lang)
+			sig := idx.hasher.Signature(shingles)
+			_ = idx.store.UpdateMinHash(id, sig)
+			_ = idx.store.UpsertSymbolTokens(id, shingles)
+			bands := ComputeBandHashes(sig)
+			_ = idx.store.UpsertLSHBands(id, bands)
+		}
+	}
+
+	info, _ := os.Stat(absPath)
+	hash, _ := fileContentHash(absPath)
+	var size int64
+	if info != nil {
+		size = info.Size()
+	}
+	_ = idx.store.UpsertFile(FileRecord{
+		Path:        relPath,
+		Language:    lang,
+		Size:        size,
+		ContentHash: hash,
+	})
+
+	return result.Edges, nil
+}
+
+// resolveAndStoreEdges resolves raw (name-based) edges to symbol IDs and
+// inserts them into the edges table. Called by Build() after indexFileSymbols
+// has run over all files, ensuring every target symbol is already present.
+func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
+	for _, edge := range edges {
+		sourceID, ok1 := idx.store.GetSymbolIDByName(edge.SourceName)
+		targetID, ok2 := idx.store.GetSymbolIDByName(edge.TargetName)
+		// Try unqualified name: "pkg.Func" -> "Func"
+		if !ok2 {
+			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
+				unqualified := edge.TargetName[dotIdx+1:]
+				targetID, ok2 = idx.store.GetSymbolIDByName(unqualified)
+			}
+		}
+		if ok1 && ok2 {
+			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
+		}
+	}
 }
 
 // indexFile parses a single file and stores its symbols, edges, and MinHash.
@@ -943,14 +1050,30 @@ func (idx *Indexer) FindLazyRedirects(maxResults int, includeTests bool) ([]Lazy
 
 // isTestFilePath returns true if the file path looks like a test file.
 func isTestFilePath(file string) bool {
-	return strings.HasSuffix(file, "_test.go") ||
+	// Suffix-based test files.
+	if strings.HasSuffix(file, "_test.go") ||
 		strings.HasSuffix(file, "_test.py") ||
 		strings.HasSuffix(file, ".test.ts") ||
 		strings.HasSuffix(file, ".test.js") ||
 		strings.HasSuffix(file, ".spec.ts") ||
-		strings.HasSuffix(file, ".spec.js") ||
-		strings.Contains(file, "/test/") ||
-		strings.Contains(file, "/tests/")
+		strings.HasSuffix(file, ".spec.js") {
+		return true
+	}
+	// Python conventions.
+	base := path.Base(file)
+	if strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") {
+		return true
+	}
+	if base == "conftest.py" {
+		return true
+	}
+	// "test"/"tests" as a path segment at ANY depth, including top-level.
+	for _, seg := range strings.Split(file, "/") {
+		if seg == "test" || seg == "tests" {
+			return true
+		}
+	}
+	return false
 }
 
 // isExpectedLeaf returns true if a function name matches patterns that are
@@ -1134,13 +1257,15 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 // FunctionEdgeInfo holds a function's identity and edge counts for analysis.
 type FunctionEdgeInfo struct {
-	Name      string
-	File      string
-	Line      int
-	Kind      string
-	Signature string
-	OutEdges  int
-	InEdges   int
+	Name        string
+	File        string
+	Line        int
+	Kind        string
+	Signature   string
+	Decorators  string // comma-separated decorator names captured at parse time
+	BaseClasses string // comma-separated base-class names of the enclosing class
+	OutEdges    int
+	InEdges     int
 }
 
 func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData []byte) (CodeSmell, bool) {
@@ -1244,6 +1369,31 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 	// Skip code analysis files
 	if isCodeAnalysisFile(c.File) {
 		return CodeSmell{}, false
+	}
+
+	// Dunder methods (__init__, __lt__, …) are invoked implicitly by the
+	// runtime; the AST cannot trace SomeClass(...) -> __init__, so they always
+	// look edge-less. Never a stub. (#42)
+	if strings.HasPrefix(c.Name, "__") && strings.HasSuffix(c.Name, "__") && len(c.Name) > 4 {
+		return CodeSmell{}, false
+	}
+
+	// @abstractmethod-decorated methods are interface declarations, never stubs. (#43)
+	for _, dec := range strings.Split(c.Decorators, ",") {
+		if strings.TrimSpace(dec) == "abstractmethod" {
+			return CodeSmell{}, false
+		}
+	}
+	// Methods on Protocol/ABC classes have empty bodies by design. The
+	// HasSuffix("Protocol") check intentionally also skips classes named *Protocol
+	// (e.g. AuthManagerProtocol) — acceptable because Protocol classes are
+	// definitionally interface-only, so silencing a rare concrete *Protocol class
+	// is preferable to false-positive stub reports. (#43)
+	for _, base := range strings.Split(c.BaseClasses, ",") {
+		base = strings.TrimSpace(base)
+		if base == "Protocol" || base == "ABC" || base == "ABCMeta" || strings.HasSuffix(base, "Protocol") {
+			return CodeSmell{}, false
+		}
 	}
 
 	// If body has calls but graph missed them, not a stub

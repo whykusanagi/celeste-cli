@@ -240,6 +240,13 @@ func runChatTUI() {
 		subagents.NewSpawnAgentTool(subMgr),
 		tools.ModeAgent, tools.ModeClaw, tools.ModeChat,
 	)
+	// Register inter-agent mailbox messaging tool (#31). The top-level
+	// orchestrator posts as "parent"; subagents receive a per-element
+	// instance via their own tool registry (future work — see #31).
+	registry.RegisterWithModes(
+		subagents.NewPostMessageTool(subMgr, "parent"),
+		tools.ModeAgent, tools.ModeClaw, tools.ModeChat,
+	)
 
 	// Load permissions and set checker
 	permConfigPath := filepath.Join(homeDir, ".celeste", "permissions.json")
@@ -250,6 +257,7 @@ func runChatTUI() {
 		permConfig = &defaultCfg
 	}
 	checker := permissions.NewChecker(*permConfig)
+	checker.SetConfigPath(permConfigPath)
 	registry.SetPermissionChecker(checker)
 
 	// Initialize MCP servers (external tool providers) with 5-second timeout
@@ -568,6 +576,37 @@ func runChatTUI() {
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
+
+	// Wire the interactive permission prompt now that we have the program handle.
+	// The prompt function runs inside a tea.Cmd goroutine (off the Update loop),
+	// so the blocking channel receive is safe. It sends a PermissionRequestMsg to
+	// the TUI via p.Send, which delivers it to the Update loop asynchronously.
+	registry.SetPromptFunc(func(req tools.PermissionRequest) tools.PermissionResponse {
+		respCh := make(chan tools.PermissionResponse, 1)
+		p.Send(tui.PermissionRequestMsg{
+			ToolName:     req.ToolName,
+			InputSummary: req.InputSummary,
+			RiskLevel:    req.RiskLevel,
+			Response: func() chan tui.PermissionResponse {
+				// Bridge: the TUI uses chan tui.PermissionResponse; we use chan tools.PermissionResponse.
+				// Create a tui-typed channel and relay the response back.
+				tuiCh := make(chan tui.PermissionResponse, 1)
+				go func() {
+					tuiResp, ok := <-tuiCh
+					if !ok {
+						respCh <- tools.PermissionResponse{Decision: "deny"}
+						return
+					}
+					respCh <- tools.PermissionResponse{
+						Decision: tuiResp.Decision,
+						Pattern:  tuiResp.Pattern,
+					}
+				}()
+				return tuiCh
+			}(),
+		})
+		return <-respCh
+	})
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
@@ -1020,6 +1059,19 @@ func (a *TUIClientAdapter) ListSubagents() []tui.SubagentInfo {
 	return infos
 }
 
+// ResumeSubagent implements tui.SubagentResumer.
+// It continues a previously-failed subagent from its last saved checkpoint.
+func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID string) (string, error) {
+	if a.subMgr == nil {
+		return "", fmt.Errorf("subagent manager not available")
+	}
+	run, err := a.subMgr.Resume(ctx, checkpointID, nil)
+	if err != nil {
+		return "", err
+	}
+	return run.Result, nil
+}
+
 // RefreshSystemPrompt recomposes and re-injects the system prompt.
 // Called after /confirm, /user, or other prompt-affecting changes.
 func (a *TUIClientAdapter) RefreshSystemPrompt() {
@@ -1322,7 +1374,7 @@ func createConfigTemplate(name string) error {
 		},
 		"grok": {
 			BaseURL:               "https://api.x.ai/v1",
-			Model:                 "grok-4-1-fast",
+			Model:                 "grok-build-0.1", // current supported Grok code variant (#51)
 			Timeout:               60,
 			SkipPersonaPrompt:     false, // Grok needs persona injection
 			SimulateTyping:        true,

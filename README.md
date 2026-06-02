@@ -243,7 +243,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Session Clearing** - Bulk delete sessions when needed
 
 ### Multi-Provider Support (7 Providers)
-- ✅ **Grok/xAI** (grok-4-1-fast) - **DEFAULT** - Optimized for tool calling, 2M context • Token tracking ✓
+- ✅ **Grok/xAI** (grok-build-0.1) - **DEFAULT** - Optimized for tool calling, large context • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-2.5-flash) - Simple API keys, free tier, full streaming • Token tracking ✓
@@ -481,7 +481,7 @@ celeste config --set-key your-xai-key
 celeste chat
 ```
 
-Default config points to xAI (`https://api.x.ai/v1`, model `grok-4-1-fast`). Best value for tool calling with 2M token context.
+Default config points to xAI (`https://api.x.ai/v1`, model `grok-build-0.1`). Best value for tool calling with large context.
 
 ### ✅ Fully Supported: OpenAI
 
@@ -596,7 +596,7 @@ Celeste CLI uses three config files in `~/.celeste/`:
 {
   "api_key": "",
   "base_url": "https://api.x.ai/v1",
-  "model": "grok-4-1-fast",
+  "model": "grok-build-0.1",
   "timeout": 60,
   "skip_persona_prompt": false,
   "simulate_typing": true,
@@ -728,13 +728,13 @@ celeste -config grok chat
 
 **Examples:**
 ```bash
-# Switch to Grok (auto-selects grok-4-1-fast for tool calling)
+# Switch to Grok (auto-selects grok-build-0.1 for tool calling)
 /endpoint grok
 
 # List Grok models with capability indicators
 /set-model
 # Output:
-# ✓ grok-4-1-fast - Best for tool calling (2000k context)
+# ✓ grok-build-0.1 - Current supported Grok code variant (default)
 # ✓ grok-4-1 - High-quality reasoning
 #   grok-4-latest - Latest general model (no skills)
 
@@ -756,7 +756,7 @@ celeste -config grok chat
 
 ✅ **Full Support** (Returns usage data with automatic token tracking):
 - OpenAI (gpt-4o, gpt-4o-mini, etc.)
-- xAI/Grok (grok-4-1-fast, grok-4-1, etc.)
+- xAI/Grok (grok-build-0.1, grok-4-1-fast, grok-4-1, etc.)
 - Venice.ai (venice-uncensored, etc.)
 - Google Gemini AI Studio (gemini-2.0-flash, etc.)
 - Google Vertex AI (gemini models via OpenAI endpoint)

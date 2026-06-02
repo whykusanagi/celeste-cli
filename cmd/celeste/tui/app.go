@@ -185,6 +185,11 @@ type SubagentLister interface {
 	ListSubagents() []SubagentInfo
 }
 
+// SubagentResumer is an optional extension for /agents resume <id>.
+type SubagentResumer interface {
+	ResumeSubagent(ctx context.Context, checkpointID string) (string, error)
+}
+
 // PromptRefresher is an optional extension to reload the system prompt
 // mid-session (after /confirm, /user, or other prompt-affecting changes).
 type PromptRefresher interface {
@@ -1156,6 +1161,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "agents":
+				// /agents resume <checkpoint-id>
+				if len(cmd.Args) >= 2 && strings.ToLower(cmd.Args[0]) == "resume" {
+					checkpointID := cmd.Args[1]
+					resumer, ok := m.llmClient.(SubagentResumer)
+					if !ok {
+						m.chat = m.chat.AddSystemMessage("Subagent resume not available.")
+						return m, nil
+					}
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Resuming subagent from checkpoint %s...", checkpointID))
+					return m, func() tea.Msg {
+						result, err := resumer.ResumeSubagent(context.Background(), checkpointID)
+						if err != nil {
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resume failed: %v", err)}
+						}
+						return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resumed subagent completed.\n\n%s", result)}
+					}
+				}
+
 				lister, ok := m.llmClient.(SubagentLister)
 				if !ok {
 					m.chat = m.chat.AddSystemMessage("Subagent listing not available.")

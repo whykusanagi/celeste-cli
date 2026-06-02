@@ -227,6 +227,88 @@ export function Counter(props: { initial: number }) {
 	assert.Equal(t, SymbolFunction, names["increment"])
 }
 
+func TestDecoratorEdges(t *testing.T) {
+	// @otel_traced def foo(): bar() should produce an edge foo → otel_traced
+	// in addition to the regular body edge foo → bar. Decorators are function
+	// calls at import time; without this fix they reported incoming_edges: 0.
+	src := "@otel_traced\ndef foo():\n    bar()\n"
+	path := writeTempFile(t, "decorated.py", src)
+
+	p := NewMultiLangParser()
+	defer p.Close()
+	res, err := p.ParseFile(path)
+	require.NoError(t, err)
+
+	if !hasDecoratorEdge(res.Edges, "foo", "otel_traced") {
+		t.Fatalf("expected edge foo -> otel_traced, edges=%v", res.Edges)
+	}
+	// Body call edge must still be present.
+	if !hasDecoratorEdge(res.Edges, "foo", "bar") {
+		t.Fatalf("expected body edge foo -> bar, edges=%v", res.Edges)
+	}
+
+	// @a.b attribute decorator.
+	src2 := "@a.b\ndef baz():\n    pass\n"
+	path2 := writeTempFile(t, "attr_dec.py", src2)
+	res2, err := p.ParseFile(path2)
+	require.NoError(t, err)
+	if !hasDecoratorEdge(res2.Edges, "baz", "a.b") {
+		t.Fatalf("expected edge baz -> a.b, edges=%v", res2.Edges)
+	}
+
+	// @foo(arg) call decorator.
+	src3 := "@router.get('/path')\ndef handler():\n    pass\n"
+	path3 := writeTempFile(t, "call_dec.py", src3)
+	res3, err := p.ParseFile(path3)
+	require.NoError(t, err)
+	if !hasDecoratorEdge(res3.Edges, "handler", "router.get") {
+		t.Fatalf("expected edge handler -> router.get, edges=%v", res3.Edges)
+	}
+}
+
+func TestSetterEdges(t *testing.T) {
+	// Attribute assignment `c.x = 5` must emit an edge from the enclosing
+	// function to the property tail name so @property.setter methods are not
+	// reported as having zero incoming edges. (#45)
+	src := []byte("class C:\n    @property\n    def x(self): return self._x\n    @x.setter\n    def x(self, v): self._x = v\n\ndef use(c):\n    c.x = 5\n")
+	path := writeTempFile(t, "setter.py", string(src))
+
+	p := NewMultiLangParser()
+	defer p.Close()
+	res, err := p.ParseFile(path)
+	require.NoError(t, err)
+
+	if !hasDecoratorEdge(res.Edges, "use", "x") {
+		t.Fatalf("expected edge use -> x (setter), edges=%v", res.Edges)
+	}
+}
+
+func TestAttrAssignStillCapturesRHSCall(t *testing.T) {
+	// Regression guard: RHS call edges must still be emitted even when the
+	// LHS is an attribute assignment (the assignment branch must not return
+	// early before recursing into children). (#45)
+	src := []byte("def use(c):\n    c.x = make()\n")
+	path := writeTempFile(t, "rhs.py", string(src))
+
+	p := NewMultiLangParser()
+	defer p.Close()
+	res, err := p.ParseFile(path)
+	require.NoError(t, err)
+
+	if !hasDecoratorEdge(res.Edges, "use", "make") {
+		t.Fatalf("RHS call edge use -> make must still be captured, edges=%v", res.Edges)
+	}
+}
+
+func hasDecoratorEdge(edges []RawEdge, src, tgt string) bool {
+	for _, e := range edges {
+		if e.SourceName == src && e.TargetName == tgt && e.Kind == EdgeCalls {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTSParser_NestedCallEdgeAttribution(t *testing.T) {
 	// Nested functions: an inner function's calls should attribute to
 	// the inner name, not the outer one.
