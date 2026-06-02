@@ -229,6 +229,32 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	return m.executeSubagent(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns)
 }
 
+// buildAgentOptions constructs the agent runner options shared by spawn and
+// resume so the two paths can't drift. maxTurns <= 0 falls back to the
+// default of 20. The options set are Workspace, MaxTurns, Verbose, and the
+// OnTurnStats callback wired from turnCb (nil turnCb → no callback).
+func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback) agent.Options {
+	if maxTurns <= 0 {
+		maxTurns = 20
+	}
+	opts := agent.Options{
+		Workspace: workspace,
+		MaxTurns:  maxTurns,
+		Verbose:   false,
+	}
+	if turnCb != nil {
+		cb := turnCb
+		opts.OnTurnStats = func(stats agent.TurnStats) {
+			toolName := ""
+			if len(stats.ToolCalls) > 0 {
+				toolName = strings.Join(stats.ToolCalls, ", ")
+			}
+			cb(stats.Turn, stats.MaxTurns, toolName)
+		}
+	}
+	return opts
+}
+
 // executeSubagent runs the actual agent loop for a SubagentRun. Called from
 // both the direct SpawnWithOptions path and from drainDAGQueue goroutines.
 func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal string, workspace string, turnCb TurnCallback, maxTurns int) (*SubagentRun, error) {
@@ -262,28 +288,8 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		}
 	}
 
-	if maxTurns <= 0 {
-		maxTurns = 20
-	}
-
 	var outBuf, errBuf bytes.Buffer
-	agentOpts := agent.Options{
-		Workspace: workspace,
-		MaxTurns:  maxTurns,
-		Verbose:   false,
-	}
-
-	// Wire turn callback via OnTurnStats
-	if turnCb != nil {
-		cb := turnCb
-		agentOpts.OnTurnStats = func(stats agent.TurnStats) {
-			toolName := ""
-			if len(stats.ToolCalls) > 0 {
-				toolName = strings.Join(stats.ToolCalls, ", ")
-			}
-			cb(stats.Turn, stats.MaxTurns, toolName)
-		}
-	}
+	agentOpts := m.buildAgentOptions(workspace, maxTurns, turnCb)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -436,21 +442,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	}
 	m.mu.Unlock()
 
-	agentOpts := agent.Options{
-		Workspace: workspace,
-		MaxTurns:  20,
-		Verbose:   false,
-	}
-	if turnCb != nil {
-		cb := turnCb
-		agentOpts.OnTurnStats = func(stats agent.TurnStats) {
-			toolName := ""
-			if len(stats.ToolCalls) > 0 {
-				toolName = strings.Join(stats.ToolCalls, ", ")
-			}
-			cb(stats.Turn, stats.MaxTurns, toolName)
-		}
-	}
+	agentOpts := m.buildAgentOptions(workspace, 0, turnCb)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -465,12 +457,23 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		Status:       "running",
 	}
 
+	// Register the resumed run so ListRuns/GetRun reflect it.
+	m.mu.Lock()
+	m.runs[run.ID] = run
+	m.mu.Unlock()
+
 	state, err := runner.Resume(ctx, checkpointID)
 	run.EndedAt = time.Now()
 	if state != nil {
-		run.CheckpointID = state.RunID
+		// CheckpointID stays as set in the struct literal (checkpointID); do
+		// not overwrite it with state.RunID — the id is already known here.
 		run.Result = state.LastAssistantResponse
 		run.Turns = state.Turn
+	}
+	// Apply the same outBuf fallback as executeSubagent so a resumed run
+	// whose LastAssistantResponse is empty still surfaces captured output.
+	if run.Result == "" && outBuf.Len() > 0 {
+		run.Result = outBuf.String()
 	}
 	if err != nil {
 		run.Status = "failed"
