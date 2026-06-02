@@ -110,15 +110,16 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 
 	result := &ParseResult{Source: data}
 	w := &multiWalker{
-		src:       data,
-		path:      path,
-		lang:      lang,
-		spec:      &spec,
-		result:    result,
-		classSet:  nodeTypeSet(spec.ClassTypes),
-		funcSet:   nodeTypeSet(spec.FunctionTypes),
-		importSet: nodeTypeSet(spec.ImportTypes),
-		callSet:   nodeTypeSet(spec.CallTypes),
+		src:          data,
+		path:         path,
+		lang:         lang,
+		spec:         &spec,
+		result:       result,
+		classSet:     nodeTypeSet(spec.ClassTypes),
+		funcSet:      nodeTypeSet(spec.FunctionTypes),
+		importSet:    nodeTypeSet(spec.ImportTypes),
+		callSet:      nodeTypeSet(spec.CallTypes),
+		decoratorSet: nodeTypeSet(spec.DecoratorTypes),
 	}
 	w.walk(tree.RootNode(), "")
 
@@ -129,15 +130,16 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 // multiWalker traverses a tree-sitter AST using language-specific
 // node type mappings to extract symbols and edges.
 type multiWalker struct {
-	src       []byte
-	path      string
-	lang      string
-	spec      *langSpec
-	result    *ParseResult
-	classSet  map[string]bool
-	funcSet   map[string]bool
-	importSet map[string]bool
-	callSet   map[string]bool
+	src          []byte
+	path         string
+	lang         string
+	spec         *langSpec
+	result       *ParseResult
+	classSet     map[string]bool
+	funcSet      map[string]bool
+	importSet    map[string]bool
+	callSet      map[string]bool
+	decoratorSet map[string]bool
 }
 
 func (w *multiWalker) nodeText(n *tree_sitter.Node) string {
@@ -198,6 +200,32 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				Line:      int(node.StartPosition().Row) + 1,
 				Signature: sig,
 			})
+
+			// Emit call edges for decorator @syntax. If this function is
+			// wrapped in a decorated_definition node, each decorator child
+			// produces an edge: functionName → decoratorTarget.
+			// Confirmed AST shape (tree-sitter Python):
+			//   decorated_definition
+			//     decorator  (@otel_traced → identifier child)
+			//     decorator  (@a.b       → attribute child)
+			//     decorator  (@foo(arg)  → call child)
+			//     function_definition
+			if len(w.decoratorSet) > 0 {
+				if parent := node.Parent(); parent != nil && parent.Kind() == "decorated_definition" {
+					for i := uint(0); i < parent.NamedChildCount(); i++ {
+						dec := parent.NamedChild(i)
+						if dec != nil && w.decoratorSet[dec.Kind()] {
+							if target := w.decoratorTarget(dec); target != "" {
+								w.result.Edges = append(w.result.Edges, RawEdge{
+									SourceName: name,
+									TargetName: target,
+									Kind:       EdgeCalls,
+								})
+							}
+						}
+					}
+				}
+			}
 		}
 		fnName := name
 		if fnName == "" {
@@ -344,6 +372,27 @@ func (w *multiWalker) extractCallTarget(node *tree_sitter.Node) string {
 	// Python: call node has first child as the callee
 	if w.lang == "python" && node.NamedChildCount() > 0 {
 		return w.identFromExpr(node.NamedChild(0))
+	}
+	return ""
+}
+
+// decoratorTarget returns the callable name from a Python decorator node.
+// Handles three forms confirmed by AST diagnostic:
+//   - @foo       → decorator has identifier child → returns "foo"
+//   - @a.b       → decorator has attribute child → returns "a.b"
+//   - @foo(arg)  → decorator has call child → delegates to extractCallTarget
+func (w *multiWalker) decoratorTarget(dec *tree_sitter.Node) string {
+	for i := uint(0); i < dec.NamedChildCount(); i++ {
+		child := dec.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if child.Kind() == "call" {
+			return w.extractCallTarget(child)
+		}
+		if t := w.identFromExpr(child); t != "" {
+			return t
+		}
 	}
 	return ""
 }
