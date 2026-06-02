@@ -207,7 +207,13 @@ type ToolCallResult struct {
 // SendMessageSync sends a message synchronously and returns the result.
 // This delegates to the appropriate backend (OpenAI or Google).
 func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	return c.backend.SendMessageSync(ctx, messages, tools)
+	var res *ChatCompletionResult
+	err := withRetry(func() error {
+		var e error
+		res, e = c.backend.SendMessageSync(ctx, messages, tools)
+		return e
+	}, func(d time.Duration) { time.Sleep(d) })
+	return res, err
 }
 
 // StreamCallback is called for each chunk during streaming.
@@ -233,13 +239,29 @@ type StreamChunk struct {
 // SendMessageStream sends a message with streaming callback.
 // This delegates to the appropriate backend (OpenAI or Google).
 func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	return c.backend.SendMessageStream(ctx, messages, tools, callback)
+	return withRetry(func() error {
+		started := false
+		wrapped := func(chunk StreamChunk) { started = true; callback(chunk) }
+		err := c.backend.SendMessageStream(ctx, messages, tools, wrapped)
+		if err != nil && started {
+			return fatalErr(err)
+		}
+		return err
+	}, func(d time.Duration) { time.Sleep(d) })
 }
 
 // SendMessageStreamEvents sends a message with granular streaming events.
 // This delegates to the appropriate backend.
 func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
-	return c.backend.SendMessageStreamEvents(ctx, messages, tools, callback)
+	return withRetry(func() error {
+		started := false
+		wrapped := func(ev StreamEvent) { started = true; callback(ev) }
+		err := c.backend.SendMessageStreamEvents(ctx, messages, tools, wrapped)
+		if err != nil && started {
+			return fatalErr(err)
+		}
+		return err
+	}, func(d time.Duration) { time.Sleep(d) })
 }
 
 // GetSkills returns skill definitions for the TUI.
