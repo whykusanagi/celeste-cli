@@ -198,6 +198,10 @@ type ToolCallResult struct {
 	ID        string
 	Name      string
 	Arguments string
+	// ArgsError is non-empty when the streamed Arguments could not be assembled
+	// into valid JSON (e.g. a dropped stream delta). Empty means no detected
+	// corruption — consumers still validate required fields themselves.
+	ArgsError string
 }
 
 // SendMessageSync sends a message synchronously and returns the result.
