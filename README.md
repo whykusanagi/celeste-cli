@@ -22,7 +22,7 @@
 
 Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
-- 🔮 **40 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, and more
+- 🔮 **44 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
 - 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
@@ -183,7 +183,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - [Installation](#-quick-start)
 - [Security & Verification](#-security--verification)
 - [Features](#-features)
-- [Tool System (40 Tools)](#-tool-system-40-tools)
+- [Tool System (44 Tools)](#-tool-system-44-tools)
 - [Claude Code Integration](#-claude-code-integration)
 - [Comparison](#-how-celeste-compares)
 - [LLM Provider Compatibility](#-llm-provider-compatibility)
@@ -207,8 +207,8 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Real Streaming + Corruption Animation** - Token-by-token streaming with corrupted glitch phrases at the typing cursor
 - **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
-### Tool System (v1.9)
-**40+ built-in tools** powered by AI function calling:
+### Tool System (v1.10)
+**44 built-in tools** powered by AI function calling:
 - Dev Tools (bash, read/write/patch files, search, list files)
 - Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter TypeScript parsing)
 - Direct Codegraph MCP Tools (`celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim, no chat-LLM round-trip)
@@ -218,8 +218,9 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - Utilities (Conversions, Encoding, Generators, QR codes)
 - Productivity (Reminders, Notes, Todo tracking)
 - Blockchain (IPFS, Alchemy, wallet security)
+- Subagent Orchestration (`spawn_agent`, `post_message`)
 
-[See complete tool list below](#-tool-system-38-tools)
+[See complete tool list below](#-tool-system-44-tools)
 
 ### Collections Support (xAI RAG)
 - **Upload Custom Documents** - Create knowledge bases with your own documentation
@@ -243,7 +244,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Session Clearing** - Bulk delete sessions when needed
 
 ### Multi-Provider Support (7 Providers)
-- ✅ **Grok/xAI** (grok-build-0.1) - **DEFAULT** - Optimized for tool calling, large context • Token tracking ✓
+- ✅ **Grok/xAI** (grok-build-0.1) - **DEFAULT** - Optimized for tool calling, 256K context • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-2.5-flash) - Simple API keys, free tier, full streaming • Token tracking ✓
@@ -266,7 +267,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 
 ---
 
-## 🔮 Tool System (40 Tools)
+## 🔮 Tool System (44 Tools)
 
 Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You don't invoke tools directly — you chat naturally, and the AI decides when to call them.
 
@@ -283,7 +284,7 @@ Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You 
 | **git_status** | Show working tree status |
 | **git_log** | Show commit history |
 
-### Code Graph Tools (4 Tools)
+### Code Graph Tools (6 Tools)
 
 | Tool | Description |
 |------|-------------|
@@ -291,6 +292,68 @@ Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You 
 | **code_review** | Graph-based code review (6 categories: stubs, lazy redirects, placeholders, TODOs, error swallowing, hardcoded values) |
 | **code_graph** | Query symbol relationships and call chains |
 | **code_symbols** | List symbols in a file or package |
+| **code_impact** | Blast-radius analysis: which callers are affected by a changed symbol |
+| **code_snapshot** | Save and diff graph state to track what changed between sessions |
+
+> **v1.10 accuracy improvements:** STUB detection now skips dunder methods (`__init__`, `__lt__`, …), `@abstractmethod`-decorated methods, and methods on `Protocol`/`ABC`/`ABCMeta` classes — eliminating the largest classes of false positives. Decorator `@syntax` calls and `@property.setter` assignments are now captured as call edges, producing more accurate impact/caller counts.
+
+### Subagent Orchestration Tools (2 Tools)
+
+| Tool | Description |
+|------|-------------|
+| **spawn_agent** | Spawn a subagent to handle a subtask; supports DAG dependencies, worktree isolation, and background execution |
+| **post_message** | Post a message to another subagent's mailbox by element name for loosely-coupled coordination |
+
+You never call these directly — you describe multi-step work in chat and Celeste decides when to delegate. The parameters below show what the model can specify:
+
+**`spawn_agent` parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `goal` | string | **(required)** What the subagent should accomplish |
+| `workspace` | string | Working directory (defaults to current workspace) |
+| `task_id` | string | Unique ID for DAG dependency references |
+| `depends_on` | array of strings | Task IDs that must finish before this subagent starts |
+| `max_turns` | integer | Max agent turns (default 20; raise for complex tasks, lower for simple lookups) |
+| `isolate_worktree` | boolean | Run in its own git worktree so concurrent subagents can't conflict on the same files; merged back on success, removed afterward. Requires a git repo. Default `false`. |
+| `background_after` | integer | Seconds before auto-backgrounding a slow subagent so the parent resumes immediately. Result appears in `/agents` when it finishes. `0` = foreground/blocking (default). |
+| `persona` | object | Override personality sliders (`flirt`, `warmth`, `register`, `lewdness`, `r18`) or load a named `preset` |
+
+**`post_message` parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `to` | string | **(required)** Recipient element name (`fire`, `water`, `earth`, `light`, `dark`, `wind`, …) |
+| `message` | string | **(required)** Message body delivered when the recipient agent next starts |
+
+**TUI commands:**
+
+```
+/agents                   List all spawned subagents and their status (waiting/running/completed/failed)
+/agents resume <id>       Resume a failed subagent from its last checkpoint
+```
+
+**Example — parallel audio production with DAG:**
+
+When you ask Celeste to produce audio with voice and SFX mixed together, the model emits a DAG like:
+
+```json
+{ "goal": "generate voice narration", "task_id": "voice" }
+{ "goal": "generate SFX layer",       "task_id": "sfx" }
+{ "goal": "mix voice and SFX tracks", "task_id": "mix", "depends_on": ["voice", "sfx"] }
+```
+
+The mixer waits until both voice and sfx complete, then starts with their results injected into its context.
+
+**Example — isolated file edits with worktree:**
+
+```json
+{ "goal": "refactor auth module", "isolate_worktree": true }
+```
+
+The subagent works in a separate git worktree so its changes don't conflict with the parent or other subagents editing the same files simultaneously. On success the changes merge back; the worktree is removed either way.
+
+**Reliability:** transient LLM errors (429 rate limits, 5xx, network drops) are automatically retried with exponential backoff — 429s retry up to 3× (2 s / 4 s / 8 s), server errors up to 2× (1 s / 2 s), network errors up to 2× (1 s / 2 s). This applies to both the main loop and all subagents. 4xx errors (other than 429) fail immediately.
 
 ### Divination & Entertainment
 
@@ -400,6 +463,30 @@ celeste config --set-youtube-key <key>
 celeste config --set-tarot-token <token>
 ```
 
+### 🔒 Permission Gate
+
+Celeste runs a **hard permission gate** on every tool execution in TUI mode. In the default permission mode:
+
+- **Read-only tools** (read_file, search, list_files, code_search, git_status, …) auto-approve silently.
+- **Write/destructive tools** (write_file, patch_file, bash, spawn_agent, …) pause and show a modal before executing.
+
+When the modal appears, press one of:
+
+| Key | Action |
+|-----|--------|
+| `a` | Allow this invocation once |
+| `A` | Always allow this tool (persists a rule to `~/.celeste/permissions.json`) |
+| `d` | Deny this invocation |
+| `D` | Always deny this tool (persists a deny rule) |
+
+In headless or non-TUI contexts, any tool that would trigger the modal is **denied by default** — the gate cannot be silently bypassed.
+
+**`/confirm`** — toggles a complementary LLM-level behavior: when on, Celeste proposes a plain-language summary of what it plans to do and waits for your approval before issuing write tool calls. This is prompt-level, not the hard modal gate.
+
+```
+/confirm    # toggle — Celeste narrates plans and waits before writing
+```
+
 ---
 
 ## 🔌 Claude Code Integration
@@ -446,7 +533,7 @@ are a convenience for natural-language interactions.
 | **Deploy** | 54MB binary, zero deps | Node.js (~393MB) | 9MB binary | Bun + Rust | pip package |
 | **RAM** | Low | High (Node.js) | ~10MB | Medium | Medium |
 | **Providers** | 7 (native SDKs) | OpenAI primary | OpenAI only | 6+ | 7+ |
-| **Tools** | 40 | Many | 16 | Many | ~10 |
+| **Tools** | 44 | Many | 16 | Many | ~10 |
 | **Code Graph** | Yes (MinHash) | No | No | No | No |
 | **Code Review** | Yes (6 categories) | No | No | No | No |
 | **Collections/RAG** | Yes (xAI) | No | No | No | Yes |
@@ -481,7 +568,7 @@ celeste config --set-key your-xai-key
 celeste chat
 ```
 
-Default config points to xAI (`https://api.x.ai/v1`, model `grok-build-0.1`). Best value for tool calling with large context.
+Default config points to xAI (`https://api.x.ai/v1`, model `grok-build-0.1`). Best value for tool calling with a 256K context window.
 
 ### ✅ Fully Supported: OpenAI
 

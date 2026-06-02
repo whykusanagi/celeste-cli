@@ -62,6 +62,14 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 				"type": "integer",
 				"description": "Maximum agent turns before the subagent stops. Default 20. Increase for complex multi-step tasks (e.g., 40 for large content generation). Decrease for simple lookups (e.g., 5)."
 			},
+			"isolate_worktree": {
+				"type": "boolean",
+				"description": "Run this subagent in its own isolated git worktree so concurrent subagents can't conflict on the same files. Results merge back to the parent branch on success; the worktree is removed afterward. Requires the workspace to be a git repo. Default false."
+			},
+			"background_after": {
+				"type": "integer",
+				"description": "Seconds to wait before auto-transitioning this subagent to the background. If it runs longer than this, the parent resumes immediately and the result is delivered when it finishes (visible via /agents). 0 (default) keeps it foreground/blocking."
+			},
 			"persona": {
 				"type": "object",
 				"description": "Override the subagent's personality sliders. Omit to inherit the parent's current sliders.",
@@ -186,6 +194,12 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 	if mt, ok := input["max_turns"].(float64); ok && mt > 0 {
 		spawnOpts.MaxTurns = int(mt)
+	}
+	if iso, ok := input["isolate_worktree"].(bool); ok {
+		spawnOpts.IsolateWorktree = iso
+	}
+	if ba, ok := input["background_after"].(float64); ok && ba > 0 {
+		spawnOpts.BackgroundAfter = time.Duration(ba) * time.Second
 	}
 
 	// 2. Extract task_id from goal text (grok embeds it there)
