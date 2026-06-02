@@ -1,7 +1,10 @@
 // cmd/celeste/permissions/checker.go
 package permissions
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 // ToolInfo is the minimal interface the Checker needs from a tool.
 // This avoids importing the tools package (preventing circular dependencies).
@@ -20,10 +23,12 @@ type ToolInfo interface {
 //  4. patternRules — if any match, return the rule's decision
 //  5. Mode fallthrough — default asks for writes, strict asks for all, trust allows all
 type Checker struct {
+	mu           sync.RWMutex
 	alwaysDeny   []Rule
 	alwaysAllow  []Rule
 	patternRules []Rule
 	mode         PermissionMode
+	configPath   string // path to persist rule additions; empty = no persistence
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -41,6 +46,51 @@ func NewChecker(config PermissionConfig) *Checker {
 	}
 }
 
+// SetConfigPath sets the file path used to persist rule additions from
+// interactive prompts (always_allow / always_deny decisions).
+// If unset, AddPersistentAllow and AddPersistentDeny still update the
+// in-memory rule lists but skip disk writes.
+func (c *Checker) SetConfigPath(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.configPath = path
+}
+
+// AddPersistentAllow appends an always-allow rule and, if a config path is
+// set, saves the updated config to disk.
+func (c *Checker) AddPersistentAllow(rule Rule) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rule.Decision = Allow
+	c.alwaysAllow = append(c.alwaysAllow, rule)
+	return c.saveUnlocked()
+}
+
+// AddPersistentDeny appends an always-deny rule and, if a config path is
+// set, saves the updated config to disk.
+func (c *Checker) AddPersistentDeny(rule Rule) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rule.Decision = Deny
+	c.alwaysDeny = append(c.alwaysDeny, rule)
+	return c.saveUnlocked()
+}
+
+// saveUnlocked writes the current rule lists to configPath.
+// Must be called with mu held.
+func (c *Checker) saveUnlocked() error {
+	if c.configPath == "" {
+		return nil
+	}
+	cfg := PermissionConfig{
+		Mode:         c.mode,
+		AlwaysAllow:  c.alwaysAllow,
+		AlwaysDeny:   c.alwaysDeny,
+		PatternRules: c.patternRules,
+	}
+	return SaveConfig(c.configPath, &cfg)
+}
+
 // Check evaluates whether the given tool invocation is permitted.
 //
 // The tool parameter provides tool metadata (name, read-only status).
@@ -48,6 +98,9 @@ func NewChecker(config PermissionConfig) *Checker {
 //
 // If tool is nil, it is treated as a non-read-only tool with an empty name.
 func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	toolName := ""
 	readOnly := false
 	if tool != nil {
@@ -124,5 +177,7 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 // Mode returns the current permission mode.
 func (c *Checker) Mode() PermissionMode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.mode
 }

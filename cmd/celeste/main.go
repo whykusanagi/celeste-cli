@@ -250,6 +250,7 @@ func runChatTUI() {
 		permConfig = &defaultCfg
 	}
 	checker := permissions.NewChecker(*permConfig)
+	checker.SetConfigPath(permConfigPath)
 	registry.SetPermissionChecker(checker)
 
 	// Initialize MCP servers (external tool providers) with 5-second timeout
@@ -568,6 +569,37 @@ func runChatTUI() {
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
+
+	// Wire the interactive permission prompt now that we have the program handle.
+	// The prompt function runs inside a tea.Cmd goroutine (off the Update loop),
+	// so the blocking channel receive is safe. It sends a PermissionRequestMsg to
+	// the TUI via p.Send, which delivers it to the Update loop asynchronously.
+	registry.SetPromptFunc(func(req tools.PermissionRequest) tools.PermissionResponse {
+		respCh := make(chan tools.PermissionResponse, 1)
+		p.Send(tui.PermissionRequestMsg{
+			ToolName:     req.ToolName,
+			InputSummary: req.InputSummary,
+			RiskLevel:    req.RiskLevel,
+			Response: func() chan tui.PermissionResponse {
+				// Bridge: the TUI uses chan tui.PermissionResponse; we use chan tools.PermissionResponse.
+				// Create a tui-typed channel and relay the response back.
+				tuiCh := make(chan tui.PermissionResponse, 1)
+				go func() {
+					tuiResp, ok := <-tuiCh
+					if !ok {
+						respCh <- tools.PermissionResponse{Decision: "deny"}
+						return
+					}
+					respCh <- tools.PermissionResponse{
+						Decision: tuiResp.Decision,
+						Pattern:  tuiResp.Pattern,
+					}
+				}()
+				return tuiCh
+			}(),
+		})
+		return <-respCh
+	})
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
