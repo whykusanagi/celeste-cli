@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -583,7 +584,45 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Reconcile the model so the saved config reflects what's actually used (#51):
+	// an empty model falls back to the default, and models xAI no longer supports
+	// are migrated to their replacement. Persisted so the header, config file, and
+	// the model sent to the API all agree instead of silently diverging.
+	if changed, from, to := reconcileModel(config); changed {
+		if from == "" {
+			log.Printf("[config] no model set — using default %q (saved)", to)
+		} else {
+			log.Printf("[config] model %q is no longer supported — migrated to %q (saved)", from, to)
+		}
+		_ = Save(config)
+	}
+
 	return config, nil
+}
+
+// deprecatedModels maps Grok models xAI no longer serves to their supported
+// replacement. Loading a config on one of these silently fell back to a
+// cost-prohibitive variant server-side; migrate it instead (#51).
+var deprecatedModels = map[string]string{
+	"grok-4-1-fast-reasoning":     "grok-build-0.1",
+	"grok-4-1-fast-non-reasoning": "grok-build-0.1",
+	"grok-4-1-reasoning":          "grok-build-0.1",
+}
+
+// reconcileModel fills an empty model with the default and migrates a known-
+// deprecated model to its replacement. Returns whether config.Model changed,
+// the previous value (empty if it was unset), and the new value.
+func reconcileModel(config *Config) (changed bool, from, to string) {
+	if config.Model == "" {
+		config.Model = DefaultConfig().Model
+		return true, "", config.Model
+	}
+	if repl, ok := deprecatedModels[config.Model]; ok && repl != config.Model {
+		from = config.Model
+		config.Model = repl
+		return true, from, repl
+	}
+	return false, "", ""
 }
 
 // Save saves configuration to file.
