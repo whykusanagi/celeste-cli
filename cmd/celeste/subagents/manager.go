@@ -87,6 +87,7 @@ type Manager struct {
 	counter   int
 	isChild   bool        // true if this manager is inside a subagent (blocks recursion)
 	dagQueue  []*DAGEntry // tasks waiting for dependencies
+	mailbox   *Mailbox    // inter-agent message store (#31)
 
 	// execFn is the execution backend. Defaults to m.executeSubagent.
 	// Tests may replace this with a stub that doesn't require a live LLM.
@@ -107,6 +108,7 @@ func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
 		workspace: workspace,
 		runs:      make(map[string]*SubagentRun),
 		isChild:   isChild,
+		mailbox:   NewMailbox(),
 	}
 	m.execFn = m.executeSubagent
 	return m
@@ -406,6 +408,21 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 // a future Resume call finds a stable directory even after the worktree is
 // cleaned up.
 func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal string, workspace string, turnCb TurnCallback, maxTurns int, isolate bool) (*SubagentRun, error) {
+	// Inject any queued mailbox messages for this agent's address. The block
+	// is prepended to the goal so the agent sees it at context start, mirroring
+	// the DAG-dependency prefix style. Drain is a no-op when there are no messages.
+	if run.Element != "" {
+		if msgs := m.mailbox.Drain(run.Element); len(msgs) > 0 {
+			var mb strings.Builder
+			mb.WriteString("[MAILBOX MESSAGES]\n")
+			for _, msg := range msgs {
+				mb.WriteString(fmt.Sprintf("from %s: %s\n", msg.From, msg.Body))
+			}
+			mb.WriteString("[END MAILBOX]\n\n")
+			goal = mb.String() + goal
+		}
+	}
+
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)

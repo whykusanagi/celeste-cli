@@ -240,6 +240,13 @@ func runChatTUI() {
 		subagents.NewSpawnAgentTool(subMgr),
 		tools.ModeAgent, tools.ModeClaw, tools.ModeChat,
 	)
+	// Register inter-agent mailbox messaging tool (#31). The top-level
+	// orchestrator posts as "parent"; subagents receive a per-element
+	// instance via their own tool registry (future work — see #31).
+	registry.RegisterWithModes(
+		subagents.NewPostMessageTool(subMgr, "parent"),
+		tools.ModeAgent, tools.ModeClaw, tools.ModeChat,
+	)
 
 	// Load permissions and set checker
 	permConfigPath := filepath.Join(homeDir, ".celeste", "permissions.json")
