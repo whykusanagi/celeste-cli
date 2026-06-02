@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -387,6 +388,8 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			toolCalls = toolCalls[:state.Options.MaxToolCallsPerTurn]
 		}
 
+		// anyInvalidArgs tracks whether ANY tool call in this turn had invalid args;
+		// a single corrupted-args call is a signal worth acting on, so the whole turn counts as invalid.
 		anyInvalidArgs := false
 		for _, tc := range toolCalls {
 			r.emitProgress(ProgressToolCall, tc.Name, state.Turn, state.Options.MaxTurns)
@@ -403,11 +406,12 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			state.Error = fmt.Sprintf("tool-call arguments were invalid JSON %d turns in a row — aborting to avoid an unbounded retry loop (likely upstream stream corruption)", state.ConsecutiveInvalidToolArgs)
 			now := time.Now()
 			state.CompletedAt = &now
+			state.UpdatedAt = time.Now()
 			if !state.Options.DisableCheckpoints {
 				_ = r.store.Save(state)
 			}
 			r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
-			return state, fmt.Errorf("%s", state.Error)
+			return state, errors.New(state.Error)
 		}
 
 		if !state.Options.DisableCheckpoints {

@@ -7,8 +7,8 @@ func TestConsecutiveInvalidToolArgsCap(t *testing.T) {
 	for turn := 0; turn < 3; turn++ {
 		n = nextConsecutiveInvalid(n, true)
 	}
-	if n < 3 {
-		t.Fatalf("expected >=3 after 3 invalid turns, got %d", n)
+	if n != 3 {
+		t.Fatalf("expected exactly 3 after 3 invalid turns, got %d", n)
 	}
 	n = nextConsecutiveInvalid(n, false)
 	if n != 0 {

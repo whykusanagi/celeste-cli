@@ -39,24 +39,24 @@ const (
 )
 
 type Options struct {
-	Workspace                 string        `json:"workspace"`
-	MaxTurns                  int           `json:"max_turns"`
-	MaxToolCallsPerTurn       int           `json:"max_tool_calls_per_turn"`
-	MaxConsecutiveNoToolTurns    int           `json:"max_consecutive_no_tool_turns"`
+	Workspace                     string        `json:"workspace"`
+	MaxTurns                      int           `json:"max_turns"`
+	MaxToolCallsPerTurn           int           `json:"max_tool_calls_per_turn"`
+	MaxConsecutiveNoToolTurns     int           `json:"max_consecutive_no_tool_turns"`
 	MaxConsecutiveInvalidToolArgs int           `json:"max_consecutive_invalid_tool_args"`
-	RequestTimeout            time.Duration `json:"request_timeout"`
-	ToolTimeout               time.Duration `json:"tool_timeout"`
-	RequireCompletionMarker   bool          `json:"require_completion_marker"`
-	CompletionMarker          string        `json:"completion_marker"`
-	EnablePlanning            bool          `json:"enable_planning"`
-	PlanMaxSteps              int           `json:"plan_max_steps"`
-	RequireVerification       bool          `json:"require_verification"`
-	VerificationCommands      []string      `json:"verification_commands,omitempty"`
-	VerifyTimeout             time.Duration `json:"verify_timeout"`
-	EmitArtifacts             bool          `json:"emit_artifacts"`
-	ArtifactDir               string        `json:"artifact_dir,omitempty"`
-	DisableCheckpoints        bool          `json:"disable_checkpoints"`
-	Verbose                   bool          `json:"verbose"`
+	RequestTimeout                time.Duration `json:"request_timeout"`
+	ToolTimeout                   time.Duration `json:"tool_timeout"`
+	RequireCompletionMarker       bool          `json:"require_completion_marker"`
+	CompletionMarker              string        `json:"completion_marker"`
+	EnablePlanning                bool          `json:"enable_planning"`
+	PlanMaxSteps                  int           `json:"plan_max_steps"`
+	RequireVerification           bool          `json:"require_verification"`
+	VerificationCommands          []string      `json:"verification_commands,omitempty"`
+	VerifyTimeout                 time.Duration `json:"verify_timeout"`
+	EmitArtifacts                 bool          `json:"emit_artifacts"`
+	ArtifactDir                   string        `json:"artifact_dir,omitempty"`
+	DisableCheckpoints            bool          `json:"disable_checkpoints"`
+	Verbose                       bool          `json:"verbose"`
 	// OnProgress is an optional callback invoked at key agent events.
 	// text is a human-readable label. turn/maxTurns are 0 for non-turn events.
 	// This field is not serialised to JSON (func types are not JSON-safe).
@@ -79,23 +79,23 @@ type TurnStats struct {
 
 func DefaultOptions() Options {
 	return Options{
-		MaxTurns:                  50,
-		MaxToolCallsPerTurn:       8,
-		MaxConsecutiveNoToolTurns:    3,
+		MaxTurns:                      50,
+		MaxToolCallsPerTurn:           8,
+		MaxConsecutiveNoToolTurns:     3,
 		MaxConsecutiveInvalidToolArgs: 3,
-		RequestTimeout:            90 * time.Second,
-		ToolTimeout:               45 * time.Second,
-		RequireCompletionMarker:   true,
-		CompletionMarker:          "TASK_COMPLETE:",
-		EnablePlanning:            true,
-		PlanMaxSteps:              8,
-		RequireVerification:       false,
-		VerificationCommands:      nil,
-		VerifyTimeout:             120 * time.Second,
-		EmitArtifacts:             true,
-		ArtifactDir:               "",
-		DisableCheckpoints:        false,
-		Verbose:                   true,
+		RequestTimeout:                90 * time.Second,
+		ToolTimeout:                   45 * time.Second,
+		RequireCompletionMarker:       true,
+		CompletionMarker:              "TASK_COMPLETE:",
+		EnablePlanning:                true,
+		PlanMaxSteps:                  8,
+		RequireVerification:           false,
+		VerificationCommands:          nil,
+		VerifyTimeout:                 120 * time.Second,
+		EmitArtifacts:                 true,
+		ArtifactDir:                   "",
+		DisableCheckpoints:            false,
+		Verbose:                       true,
 	}
 }
 
@@ -124,26 +124,26 @@ type Step struct {
 }
 
 type RunState struct {
-	RunID                  string              `json:"run_id"`
-	Goal                   string              `json:"goal"`
-	Status                 string              `json:"status"`
-	CreatedAt              time.Time           `json:"created_at"`
-	UpdatedAt              time.Time           `json:"updated_at"`
-	CompletedAt            *time.Time          `json:"completed_at,omitempty"`
-	Turn                   int                 `json:"turn"`
-	ConsecutiveNoToolTurns    int                 `json:"consecutive_no_tool_turns"`
+	RunID                      string              `json:"run_id"`
+	Goal                       string              `json:"goal"`
+	Status                     string              `json:"status"`
+	CreatedAt                  time.Time           `json:"created_at"`
+	UpdatedAt                  time.Time           `json:"updated_at"`
+	CompletedAt                *time.Time          `json:"completed_at,omitempty"`
+	Turn                       int                 `json:"turn"`
+	ConsecutiveNoToolTurns     int                 `json:"consecutive_no_tool_turns"`
 	ConsecutiveInvalidToolArgs int                 `json:"consecutive_invalid_tool_args"`
-	ToolCallCount          int                 `json:"tool_call_count"`
-	Messages               []tui.ChatMessage   `json:"messages"`
-	Steps                  []Step              `json:"steps"`
-	Phase                  string              `json:"phase"`
-	Plan                   []PlanStep          `json:"plan,omitempty"`
-	ActivePlanStep         int                 `json:"active_plan_step,omitempty"`
-	Verification           []VerificationCheck `json:"verification,omitempty"`
-	LastAssistantResponse  string              `json:"last_assistant_response,omitempty"`
-	ArtifactBundlePath     string              `json:"artifact_bundle_path,omitempty"`
-	Error                  string              `json:"error,omitempty"`
-	Options                Options             `json:"options"`
+	ToolCallCount              int                 `json:"tool_call_count"`
+	Messages                   []tui.ChatMessage   `json:"messages"`
+	Steps                      []Step              `json:"steps"`
+	Phase                      string              `json:"phase"`
+	Plan                       []PlanStep          `json:"plan,omitempty"`
+	ActivePlanStep             int                 `json:"active_plan_step,omitempty"`
+	Verification               []VerificationCheck `json:"verification,omitempty"`
+	LastAssistantResponse      string              `json:"last_assistant_response,omitempty"`
+	ArtifactBundlePath         string              `json:"artifact_bundle_path,omitempty"`
+	Error                      string              `json:"error,omitempty"`
+	Options                    Options             `json:"options"`
 }
 
 func NewRunState(goal string, options Options) *RunState {
