@@ -69,7 +69,7 @@ type DAGEntry struct {
 
 // StaggerDelay is the configurable pause between concurrent subagent
 // launches to avoid hitting provider rate limits. Zero means no delay.
-// Default 500ms — safe for xAI's grok-4-1-fast at 6 concurrent agents.
+// Default 500ms — safe for xAI's grok-build-0.1 at 6 concurrent agents.
 var StaggerDelay = 500 * time.Millisecond
 
 // Manager handles subagent lifecycle and execution.

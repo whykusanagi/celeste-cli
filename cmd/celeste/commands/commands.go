@@ -450,7 +450,7 @@ func listAvailableModels(ctx *CommandContext, caps providers.ProviderCapabilitie
 func getCommonModelsHelp(provider string) string {
 	switch provider {
 	case "grok":
-		return "  • grok-4-1-fast (recommended for skills)\n  • grok-4-1\n  • grok-beta"
+		return "  • grok-build-0.1 (recommended for skills)\n  • grok-4-1\n  • grok-beta"
 	case "openai":
 		return "  • gpt-4o-mini (recommended)\n  • gpt-4o\n  • gpt-4-turbo"
 	case "venice":
@@ -510,7 +510,7 @@ func handleConfig(cmd *Command) *CommandResult {
 		if len(cmd.Args) < 2 {
 			return &CommandResult{
 				Success: false, ShouldRender: true,
-				Message: "Usage: /config set-model <model-name>\nExamples: grok-4-1-fast, claude-sonnet-4-5, gpt-4.1-mini",
+				Message: "Usage: /config set-model <model-name>\nExamples: grok-build-0.1, claude-sonnet-4-5, gpt-4.1-mini",
 			}
 		}
 		model := cmd.Args[1]
@@ -808,7 +808,7 @@ Chat:
   /config             List available config profiles
   /config <name>      Load a named config profile
   /config set-key <k> Set API key
-  /config set-model   Set LLM model (e.g. grok-4-1-fast)
+  /config set-model   Set LLM model (e.g. grok-build-0.1)
   /config set-url     Set API base URL
   /model <name>      Change the model
 
@@ -843,7 +843,7 @@ Examples:
   /agent fix tests       → Run autonomous code-fix loop
   /orch write a script   → Multi-model orchestrated run
   /endpoint google       → Switch to Google Vertex AI
-  /model grok-4-1-fast   → Use Grok model
+  /model grok-build-0.1   → Use Grok model
 
 Tip: Type / and press Tab for command autocomplete.`
 	}

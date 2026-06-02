@@ -240,7 +240,7 @@ func TestGrokProvider(t *testing.T) {
 	assert.True(t, caps.SupportsModelListing)
 	assert.True(t, caps.SupportsTokenTracking)
 	assert.True(t, caps.IsOpenAICompatible)
-	assert.Contains(t, caps.Notes, "2M context", "Grok should mention 2M context")
+	assert.Contains(t, caps.Notes, "grok-build-0.1", "Grok notes should mention the default model")
 }
 
 // TestVeniceProvider specifically tests the Venice provider
@@ -285,7 +285,7 @@ func TestProviderNotes(t *testing.T) {
 		shouldContain string
 	}{
 		{"openai", "Gold standard"},
-		{"grok", "2M context"},
+		{"grok", "grok-build-0.1"},
 		{"venice", "NSFW"},
 		{"anthropic", "Native API"},
 		{"gemini", "aistudio.google.com"},

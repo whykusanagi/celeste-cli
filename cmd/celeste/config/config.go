@@ -214,7 +214,7 @@ type OrchestratorConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		BaseURL:               "https://api.x.ai/v1",
-		Model:                 "grok-4-1-fast",
+		Model:                 "grok-build-0.1", // current supported Grok code variant (#51)
 		Timeout:               60,
 		SkipPersonaPrompt:     false,
 		SimulateTyping:        true,

@@ -1367,7 +1367,7 @@ func createConfigTemplate(name string) error {
 		},
 		"grok": {
 			BaseURL:               "https://api.x.ai/v1",
-			Model:                 "grok-4-1-fast",
+			Model:                 "grok-build-0.1", // current supported Grok code variant (#51)
 			Timeout:               60,
 			SkipPersonaPrompt:     false, // Grok needs persona injection
 			SimulateTyping:        true,

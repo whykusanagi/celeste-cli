@@ -112,6 +112,14 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 	case "grok":
 		return []ModelInfo{
 			{
+				ID:            "grok-build-0.1",
+				Name:          "Grok Build 0.1",
+				Provider:      "grok",
+				SupportsTools: true,
+				ContextWindow: 2000000, // TODO(#51): confirm grok-build-0.1 context window
+				Description:   "Current supported Grok code variant — default for tool calling (#51)",
+			},
+			{
 				ID:            "grok-4-1-fast",
 				Name:          "Grok 4.1 Fast",
 				Provider:      "grok",

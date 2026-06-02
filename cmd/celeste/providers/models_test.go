@@ -39,7 +39,7 @@ func TestGetStaticModels(t *testing.T) {
 		hasToolModels bool
 		checkModelID  string // Specific model to verify
 	}{
-		{"grok", 4, true, "grok-4-1-fast"},
+		{"grok", 5, true, "grok-build-0.1"},
 		{"openai", 4, true, "gpt-4.1-nano"},
 		{"venice", 3, true, "llama-3.3-70b"},
 		{"anthropic", 2, true, "claude-sonnet-4-5-20250929"},
@@ -92,7 +92,7 @@ func TestGetBestToolModel(t *testing.T) {
 		expectedModel string
 	}{
 		{"openai", "gpt-4.1-nano"},
-		{"grok", "grok-4-1-fast"},
+		{"grok", "grok-build-0.1"},
 		{"venice", ""}, // Venice uncensored has no tool model
 		{"anthropic", "claude-sonnet-4-5-20250929"},
 		{"gemini", "gemini-2.0-flash"},

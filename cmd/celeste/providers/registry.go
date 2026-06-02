@@ -51,11 +51,11 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    true,
 		SupportsTokenTracking:   true, // OpenAI-compatible token tracking
-		DefaultModel:            "grok-4-1-fast",
-		PreferredToolModel:      "grok-4-1-fast", // Specifically trained for tool calling
+		DefaultModel:            "grok-build-0.1",
+		PreferredToolModel:      "grok-build-0.1", // current supported Grok code variant (#51)
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
-		Notes:                   "Use grok-4-1-fast for best tool calling performance. 2M context window.",
+		Notes:                   "Use grok-build-0.1 for best tool calling performance. Large context window.",
 	},
 
 	"venice": {
@@ -253,9 +253,9 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "gpt-4") || contains(modelID, "gpt-3.5-turbo")
 
 	case "grok":
-		// grok-4-1-fast, grok-4-1, grok-4, grok-beta support tools
+		// grok-build-0.1, grok-4-1-fast, grok-4-1, grok-4, grok-beta support tools
 		// grok-4-latest may or may not support tools well
-		return contains(modelID, "grok-4") || contains(modelID, "grok-beta")
+		return contains(modelID, "grok-build") || contains(modelID, "grok-4") || contains(modelID, "grok-beta")
 
 	case "venice":
 		// Only certain Venice models support tools

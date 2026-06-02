@@ -33,6 +33,7 @@ var ModelPricing = map[string]PricingTier{
 	// This legacy table only needs entries for models that appear in
 	// existing session history for cost display purposes.
 	"gpt-4.1-nano":      {0.15, 0.60},
+	"grok-build-0.1":    {0.20, 0.50}, // TODO(#51): confirm grok-build-0.1 pricing
 	"grok-4-1-fast":     {0.20, 0.50},
 	"claude-sonnet-4":   {3.00, 15.00},
 	"gemini-2.0-flash":  {0.10, 0.40},
