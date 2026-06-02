@@ -243,7 +243,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Session Clearing** - Bulk delete sessions when needed
 
 ### Multi-Provider Support (7 Providers)
-- ✅ **Grok/xAI** (grok-build-0.1) - **DEFAULT** - Optimized for tool calling, large context • Token tracking ✓
+- ✅ **Grok/xAI** (grok-build-0.1) - **DEFAULT** - Optimized for tool calling, 256K context • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-2.5-flash) - Simple API keys, free tier, full streaming • Token tracking ✓
@@ -481,7 +481,7 @@ celeste config --set-key your-xai-key
 celeste chat
 ```
 
-Default config points to xAI (`https://api.x.ai/v1`, model `grok-build-0.1`). Best value for tool calling with large context.
+Default config points to xAI (`https://api.x.ai/v1`, model `grok-build-0.1`). Best value for tool calling with a 256K context window.
 
 ### ✅ Fully Supported: OpenAI
 
