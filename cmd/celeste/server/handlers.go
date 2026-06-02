@@ -151,6 +151,21 @@ func toolErrorJSON(msg string) string {
 	return string(b)
 }
 
+// singleToolName returns the tool name when every call in the batch is the same
+// tool (the shape of a stuck loop), or "" for empty/mixed-tool batches. Used by
+// the repetition guard so only same-single-tool turns count toward the streak.
+func singleToolName(calls []llm.ToolCallResult) string {
+	name := ""
+	for _, c := range calls {
+		if name == "" {
+			name = c.Name
+		} else if c.Name != name {
+			return ""
+		}
+	}
+	return name
+}
+
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
@@ -204,6 +219,9 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 	// Auto-loop: send message, execute tool calls, send results back, repeat
 	maxLoops := 25
+	const maxSameToolStreak = 5 // stop a stuck single-tool loop (mirrors the TUI guard)
+	lastToolSig := ""
+	sameToolStreak := 0
 	for i := 0; i < maxLoops; i++ {
 		result, err := client.SendMessageSync(ctx, messages, toolDefs)
 		if err != nil {
@@ -214,6 +232,23 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 		if len(result.ToolCalls) == 0 {
 			text := llm.StripUnbackedAudioClaim(strings.TrimSpace(result.Content), ttsRan)
 			return []ContentBlock{{Type: "text", Text: text}}, nil
+		}
+
+		// Repetition guard: stop the model hammering the same single tool turn
+		// after turn without finishing the task (e.g. regenerating greetings).
+		if sig := singleToolName(result.ToolCalls); sig != "" {
+			if sig == lastToolSig {
+				sameToolStreak++
+			} else {
+				sameToolStreak = 1
+				lastToolSig = sig
+			}
+			if sameToolStreak >= maxSameToolStreak {
+				return []ContentBlock{{Type: "text", Text: fmt.Sprintf("Stopped: %s was called %d times in a row without finishing the task — the model looks stuck on one step.", sig, sameToolStreak)}}, nil
+			}
+		} else {
+			sameToolStreak = 0
+			lastToolSig = ""
 		}
 
 		// Add assistant response with tool calls
