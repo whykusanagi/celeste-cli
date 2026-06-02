@@ -21,7 +21,7 @@ var ModelPricing = map[string]ModelCost{
 	"o3":            {Input: 2.50, Output: 15.00},
 	"o4-mini":       {Input: 0.75, Output: 4.50},
 	// xAI Grok — current generation (from pricing page, 2026-04)
-	"grok-build-0.1":               {Input: 0.20, Output: 0.50}, // TODO(#51): confirm grok-build-0.1 pricing
+	"grok-build-0.1":               {Input: 1.00, Output: 2.00}, // grok code model (cached input $0.20/1M not modeled here)
 	"grok-4-1-fast":                {Input: 0.20, Output: 0.50},
 	"grok-4-1-fast-reasoning":      {Input: 0.20, Output: 0.50},
 	"grok-4-1-fast-non-reasoning":  {Input: 0.20, Output: 0.50},
