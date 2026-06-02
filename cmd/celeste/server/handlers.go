@@ -145,6 +145,12 @@ func registerCelesteTool(s *Server) {
 	})
 }
 
+// toolErrorJSON builds a properly-escaped JSON tool-error payload.
+func toolErrorJSON(msg string) string {
+	b, _ := json.Marshal(map[string]any{"error": true, "message": msg})
+	return string(b)
+}
+
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
@@ -192,7 +198,8 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 	}
 
 	// ttsRan tracks whether generate_speech executed successfully this session.
-	// Used to detect hallucinated "Audio saved:" prose when TTS never ran.
+	// The flag is session-scoped (persists across turns) and is used to detect
+	// hallucinated "Audio saved:" prose when TTS never ran.
 	ttsRan := false
 
 	// Auto-loop: send message, execute tool calls, send results back, repeat
@@ -235,7 +242,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 					Role:       "tool",
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
-					Content:    fmt.Sprintf(`{"error": true, "message": %q}`, tc.ArgsError),
+					Content:    toolErrorJSON(tc.ArgsError),
 				})
 				continue
 			}
@@ -247,7 +254,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 						Role:       "tool",
 						ToolCallID: tc.ID,
 						Name:       tc.Name,
-						Content:    fmt.Sprintf(`{"error": true, "message": "invalid tool arguments JSON: %v"}`, err),
+						Content:    toolErrorJSON(fmt.Sprintf("invalid tool arguments JSON: %v", err)),
 					})
 					continue
 				}
@@ -262,7 +269,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 					Role:       "tool",
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
-					Content:    fmt.Sprintf(`{"error": true, "message": "tool execution failed: %v"}`, err),
+					Content:    toolErrorJSON(fmt.Sprintf("tool execution failed: %v", err)),
 				})
 				continue
 			}
