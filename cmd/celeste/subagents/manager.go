@@ -423,8 +423,21 @@ func (m *Manager) GetRun(id string) (*SubagentRun, bool) {
 func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCallback) (*SubagentRun, error) {
 	var outBuf, errBuf bytes.Buffer
 
+	// Resume in the same workspace the subagent originally ran in (e.g. an
+	// isolated worktree), falling back to the manager default if the original
+	// run isn't in memory (e.g. after a process restart).
+	workspace := m.workspace
+	m.mu.Lock()
+	for _, r := range m.runs {
+		if r.CheckpointID == checkpointID && r.Workspace != "" {
+			workspace = r.Workspace
+			break
+		}
+	}
+	m.mu.Unlock()
+
 	agentOpts := agent.Options{
-		Workspace: m.workspace,
+		Workspace: workspace,
 		MaxTurns:  20,
 		Verbose:   false,
 	}
