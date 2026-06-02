@@ -42,7 +42,8 @@ type Options struct {
 	Workspace                 string        `json:"workspace"`
 	MaxTurns                  int           `json:"max_turns"`
 	MaxToolCallsPerTurn       int           `json:"max_tool_calls_per_turn"`
-	MaxConsecutiveNoToolTurns int           `json:"max_consecutive_no_tool_turns"`
+	MaxConsecutiveNoToolTurns    int           `json:"max_consecutive_no_tool_turns"`
+	MaxConsecutiveInvalidToolArgs int           `json:"max_consecutive_invalid_tool_args"`
 	RequestTimeout            time.Duration `json:"request_timeout"`
 	ToolTimeout               time.Duration `json:"tool_timeout"`
 	RequireCompletionMarker   bool          `json:"require_completion_marker"`
@@ -80,7 +81,8 @@ func DefaultOptions() Options {
 	return Options{
 		MaxTurns:                  50,
 		MaxToolCallsPerTurn:       8,
-		MaxConsecutiveNoToolTurns: 3,
+		MaxConsecutiveNoToolTurns:    3,
+		MaxConsecutiveInvalidToolArgs: 3,
 		RequestTimeout:            90 * time.Second,
 		ToolTimeout:               45 * time.Second,
 		RequireCompletionMarker:   true,
@@ -129,7 +131,8 @@ type RunState struct {
 	UpdatedAt              time.Time           `json:"updated_at"`
 	CompletedAt            *time.Time          `json:"completed_at,omitempty"`
 	Turn                   int                 `json:"turn"`
-	ConsecutiveNoToolTurns int                 `json:"consecutive_no_tool_turns"`
+	ConsecutiveNoToolTurns    int                 `json:"consecutive_no_tool_turns"`
+	ConsecutiveInvalidToolArgs int                 `json:"consecutive_invalid_tool_args"`
 	ToolCallCount          int                 `json:"tool_call_count"`
 	Messages               []tui.ChatMessage   `json:"messages"`
 	Steps                  []Step              `json:"steps"`

@@ -387,11 +387,27 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			toolCalls = toolCalls[:state.Options.MaxToolCallsPerTurn]
 		}
 
+		anyInvalidArgs := false
 		for _, tc := range toolCalls {
 			r.emitProgress(ProgressToolCall, tc.Name, state.Turn, state.Options.MaxTurns)
-			toolMsg := r.executeToolCall(ctx, state, tc)
+			toolMsg, argsValid := r.executeToolCall(ctx, state, tc)
 			state.Messages = append(state.Messages, toolMsg)
 			state.ToolCallCount++
+			if !argsValid {
+				anyInvalidArgs = true
+			}
+		}
+		state.ConsecutiveInvalidToolArgs = nextConsecutiveInvalid(state.ConsecutiveInvalidToolArgs, anyInvalidArgs)
+		if state.ConsecutiveInvalidToolArgs >= state.Options.MaxConsecutiveInvalidToolArgs {
+			state.Status = StatusFailed
+			state.Error = fmt.Sprintf("tool-call arguments were invalid JSON %d turns in a row — aborting to avoid an unbounded retry loop (likely upstream stream corruption)", state.ConsecutiveInvalidToolArgs)
+			now := time.Now()
+			state.CompletedAt = &now
+			if !state.Options.DisableCheckpoints {
+				_ = r.store.Save(state)
+			}
+			r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
+			return state, fmt.Errorf("%s", state.Error)
 		}
 
 		if !state.Options.DisableCheckpoints {
@@ -547,7 +563,7 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 	return false, nil
 }
 
-func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) tui.ChatMessage {
+func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) (tui.ChatMessage, bool) {
 	toolName := tc.Name
 	if state.Options.Verbose {
 		fmt.Fprintf(r.out, "[tool] %s\n", toolName)
@@ -558,8 +574,13 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 
 	argsJSON := tc.Arguments
 	resultContent := ""
+	argsValid := true
 
-	if !json.Valid([]byte(argsJSON)) {
+	if tc.ArgsError != "" {
+		argsValid = false
+		resultContent = fmt.Sprintf(`{"error": true, "message": "stream-corrupted tool arguments", "detail": %q, "tool": %q}`, tc.ArgsError, toolName)
+	} else if !json.Valid([]byte(argsJSON)) {
+		argsValid = false
 		resultContent = fmt.Sprintf(`{"error": true, "message": "invalid tool arguments JSON", "tool": %q}`, toolName)
 	} else {
 		execution, err := r.client.ExecuteSkill(toolCtx, toolName, argsJSON)
@@ -583,7 +604,7 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 			Role:      "user",
 			Content:   fmt.Sprintf("[Tool Result: %s]\n%s", toolName, resultContent),
 			Timestamp: time.Now(),
-		}
+		}, argsValid
 	}
 
 	return tui.ChatMessage{
@@ -592,7 +613,7 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		Name:       toolName,
 		Content:    resultContent,
 		Timestamp:  time.Now(),
-	}
+	}, argsValid
 }
 
 func executeVerificationCommand(parent context.Context, workspace, command string, timeout time.Duration) VerificationCheck {
@@ -640,6 +661,9 @@ func normalizeOptions(options *Options) {
 	}
 	if options.MaxConsecutiveNoToolTurns <= 0 {
 		options.MaxConsecutiveNoToolTurns = defaults.MaxConsecutiveNoToolTurns
+	}
+	if options.MaxConsecutiveInvalidToolArgs <= 0 {
+		options.MaxConsecutiveInvalidToolArgs = defaults.MaxConsecutiveInvalidToolArgs
 	}
 	if options.RequestTimeout <= 0 {
 		options.RequestTimeout = defaults.RequestTimeout
@@ -1079,4 +1103,13 @@ func truncateForStep(s string) string {
 		return s[:200] + "..."
 	}
 	return s
+}
+
+// nextConsecutiveInvalid increments the running count when a turn had any
+// invalid-args tool call, and resets to zero otherwise.
+func nextConsecutiveInvalid(prev int, anyInvalid bool) int {
+	if anyInvalid {
+		return prev + 1
+	}
+	return 0
 }
