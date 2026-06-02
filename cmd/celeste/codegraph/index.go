@@ -1272,11 +1272,17 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 		return CodeSmell{}, false
 	}
 
-	// Methods on Protocol/ABC classes or marked @abstractmethod have empty
-	// bodies by design — never stubs. (#43)
-	if strings.Contains(c.Decorators, "abstractmethod") {
-		return CodeSmell{}, false
+	// @abstractmethod-decorated methods are interface declarations, never stubs. (#43)
+	for _, dec := range strings.Split(c.Decorators, ",") {
+		if strings.TrimSpace(dec) == "abstractmethod" {
+			return CodeSmell{}, false
+		}
 	}
+	// Methods on Protocol/ABC classes have empty bodies by design. The
+	// HasSuffix("Protocol") check intentionally also skips classes named *Protocol
+	// (e.g. AuthManagerProtocol) — acceptable because Protocol classes are
+	// definitionally interface-only, so silencing a rare concrete *Protocol class
+	// is preferable to false-positive stub reports. (#43)
 	for _, base := range strings.Split(c.BaseClasses, ",") {
 		base = strings.TrimSpace(base)
 		if base == "Protocol" || base == "ABC" || base == "ABCMeta" || strings.HasSuffix(base, "Protocol") {

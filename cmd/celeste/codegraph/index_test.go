@@ -345,6 +345,12 @@ func TestDetectStub_SkipsProtocolAndAbstract(t *testing.T) {
 	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
 		t.Errorf("concrete empty method should still be flagged")
 	}
+	// A decorator named "abstractmethod_factory" is NOT the same as "abstractmethod"
+	// and must NOT suppress stub detection (exact-match guard, #43).
+	cFactory := FunctionEdgeInfo{Name: "handle_factory", File: "p.py", Line: 30, Kind: "method", Decorators: "abstractmethod_factory"}
+	if _, ok := detectStub(cFactory, 0, []string{"pass"}); !ok {
+		t.Errorf("decorator %q should not suppress stub detection (not an exact abstractmethod match)", cFactory.Decorators)
+	}
 }
 
 func writeFile(t *testing.T, dir, name, content string) {
