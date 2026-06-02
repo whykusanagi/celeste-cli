@@ -294,6 +294,20 @@ func TestDefaultIndexPath(t *testing.T) {
 	assert.NotEqual(t, path, path3)
 }
 
+func TestDetectStub_SkipsDunders(t *testing.T) {
+	dunders := []string{"__init__", "__lt__", "__setstate__", "__repr__"}
+	for _, name := range dunders {
+		c := FunctionEdgeInfo{Name: name, File: "mod.py", Line: 5, Kind: "method"}
+		if _, ok := detectStub(c, 0, []string{"pass"}); ok {
+			t.Errorf("dunder %q should not be flagged as a stub", name)
+		}
+	}
+	c := FunctionEdgeInfo{Name: "process_records", File: "mod.py", Line: 9, Kind: "method"}
+	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
+		t.Errorf("non-dunder empty method should still be flagged")
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)

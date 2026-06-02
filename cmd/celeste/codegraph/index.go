@@ -1246,6 +1246,13 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 		return CodeSmell{}, false
 	}
 
+	// Dunder methods (__init__, __lt__, …) are invoked implicitly by the
+	// runtime; the AST cannot trace SomeClass(...) -> __init__, so they always
+	// look edge-less. Never a stub. (#42)
+	if strings.HasPrefix(c.Name, "__") && strings.HasSuffix(c.Name, "__") && len(c.Name) > 4 {
+		return CodeSmell{}, false
+	}
+
 	// If body has calls but graph missed them, not a stub
 	if bodyCalls > 0 {
 		return CodeSmell{}, false
