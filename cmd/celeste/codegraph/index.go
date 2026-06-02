@@ -1151,13 +1151,15 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 // FunctionEdgeInfo holds a function's identity and edge counts for analysis.
 type FunctionEdgeInfo struct {
-	Name      string
-	File      string
-	Line      int
-	Kind      string
-	Signature string
-	OutEdges  int
-	InEdges   int
+	Name        string
+	File        string
+	Line        int
+	Kind        string
+	Signature   string
+	Decorators  string // comma-separated decorator names captured at parse time
+	BaseClasses string // comma-separated base-class names of the enclosing class
+	OutEdges    int
+	InEdges     int
 }
 
 func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData []byte) (CodeSmell, bool) {
@@ -1268,6 +1270,18 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 	// look edge-less. Never a stub. (#42)
 	if strings.HasPrefix(c.Name, "__") && strings.HasSuffix(c.Name, "__") && len(c.Name) > 4 {
 		return CodeSmell{}, false
+	}
+
+	// Methods on Protocol/ABC classes or marked @abstractmethod have empty
+	// bodies by design — never stubs. (#43)
+	if strings.Contains(c.Decorators, "abstractmethod") {
+		return CodeSmell{}, false
+	}
+	for _, base := range strings.Split(c.BaseClasses, ",") {
+		base = strings.TrimSpace(base)
+		if base == "Protocol" || base == "ABC" || base == "ABCMeta" || strings.HasSuffix(base, "Protocol") {
+			return CodeSmell{}, false
+		}
 	}
 
 	// If body has calls but graph missed them, not a stub

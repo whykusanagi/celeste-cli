@@ -329,6 +329,24 @@ func TestIsTestFilePath(t *testing.T) {
 	}
 }
 
+func TestDetectStub_SkipsProtocolAndAbstract(t *testing.T) {
+	cases := []FunctionEdgeInfo{
+		{Name: "render", File: "p.py", Line: 3, Kind: "method", BaseClasses: "Protocol"},
+		{Name: "auth", File: "p.py", Line: 7, Kind: "method", BaseClasses: "AuthManagerProtocol,Protocol"},
+		{Name: "do_it", File: "p.py", Line: 9, Kind: "method", Decorators: "abstractmethod"},
+		{Name: "compute", File: "p.py", Line: 11, Kind: "method", BaseClasses: "ABC"},
+	}
+	for _, c := range cases {
+		if _, ok := detectStub(c, 0, []string{"..."}); ok {
+			t.Errorf("%q (bases %q decorators %q) should not be a stub", c.Name, c.BaseClasses, c.Decorators)
+		}
+	}
+	c := FunctionEdgeInfo{Name: "handle_request", File: "p.py", Line: 20, Kind: "method", BaseClasses: "object"}
+	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
+		t.Errorf("concrete empty method should still be flagged")
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
