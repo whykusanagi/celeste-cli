@@ -77,6 +77,7 @@ type Manager struct {
 	cfg       *config.Config
 	workspace string
 	mu        sync.Mutex
+	mergeMu   sync.Mutex // serializes git merge operations across concurrent subagents
 	runs      map[string]*SubagentRun
 	counter   int
 	isChild   bool        // true if this manager is inside a subagent (blocks recursion)
@@ -293,7 +294,10 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		execWorkspace = w.Path
 		defer func() {
 			if run.Status == "completed" {
-				if mErr := MergeWorktree(workspace, wt); mErr != nil {
+				m.mergeMu.Lock()
+				mErr := MergeWorktree(workspace, wt)
+				m.mergeMu.Unlock()
+				if mErr != nil {
 					// Keep run result intact; note merge failure in the error field.
 					run.Error = strings.TrimSpace(run.Error + " (worktree merge failed: " + mErr.Error() + ")")
 				}

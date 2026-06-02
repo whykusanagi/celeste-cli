@@ -23,9 +23,33 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// sanitizeWorktreeName returns a safe slug from name, keeping only ASCII
+// letters, digits, hyphens, and underscores. Any other character (including
+// path separators and spaces) is replaced with '-'. An empty result falls
+// back to "subagent".
+func sanitizeWorktreeName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	s := b.String()
+	if s == "" {
+		s = "subagent"
+	}
+	return s
+}
+
 // AddWorktree creates a worktree for `name` on a new branch under
 // <repo>/.celeste/worktrees/<name>.
 func AddWorktree(repo, name string) (*Worktree, error) {
+	// Defensive: keep the worktree dir name to a safe slug so a caller-supplied
+	// name can't escape the worktrees directory.
+	name = sanitizeWorktreeName(name)
 	branch := "subagent/" + name
 	path := filepath.Join(repo, ".celeste", "worktrees", name)
 	if _, err := runGit(repo, "worktree", "add", "-b", branch, path); err != nil {
