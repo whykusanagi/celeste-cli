@@ -88,8 +88,10 @@ type AppModel struct {
 	pendingToolCallID  string // Track tool call ID for sending result back to LLM
 	pendingToolCalls   []pendingToolCall
 	toolBatchActive    bool
-	clawToolIterations int // Assistant tool-call turns in the current user turn
-	clawMaxIterations  int // Safety cap for claw mode tool loops
+	clawToolIterations int    // Assistant tool-call turns in the current user turn
+	clawMaxIterations  int    // Safety cap for claw mode tool loops
+	lastToolSig        string // signature of the previous tool-call batch (repetition guard)
+	sameToolStreak     int    // consecutive identical single-tool batches (repetition guard)
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -1565,6 +1567,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Add user message to chat
 		m.chat = m.chat.AddUserMessage(content)
 		m.clawToolIterations = 0
+		m.lastToolSig = ""
+		m.sameToolStreak = 0
 		m.streaming = true
 		m.status = m.status.SetStreaming(true)
 		m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
@@ -2603,6 +2607,21 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 // isClawMode is deprecated — tools always auto-loop now.
 // Kept for backward compatibility with config files that set runtime_mode.
 
+// toolBatchSignature returns the tool name for a single-tool batch (the shape of
+// a stuck loop), or "" for empty or mixed-tool batches. Used by the repetition
+// guard so only same-single-tool turns count toward the streak.
+func toolBatchSignature(calls []SkillCallRequest) string {
+	name := ""
+	for _, c := range calls {
+		if name == "" {
+			name = c.Call.Name
+		} else if c.Call.Name != name {
+			return ""
+		}
+	}
+	return name
+}
+
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
 		return m, nil
@@ -2634,6 +2653,37 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 		return m, nil
 	}
 	m.clawToolIterations++
+
+	// Repetition guard: detect the model hammering the SAME single tool turn after
+	// turn without finishing the task (e.g. regenerating greeting after greeting and
+	// never advancing to the next step). Trips far sooner than the turn cap. Only
+	// single-tool batches count, so legitimate mixed-tool work isn't penalized.
+	// This is a safety net — it stops the runaway; it does not make the model
+	// complete the task. (#48 follow-up)
+	const maxSameToolStreak = 5
+	if sig := toolBatchSignature(msg.Calls); sig != "" {
+		if sig == m.lastToolSig {
+			m.sameToolStreak++
+		} else {
+			m.sameToolStreak = 1
+			m.lastToolSig = sig
+		}
+		if m.sameToolStreak >= maxSameToolStreak {
+			LogInfo(fmt.Sprintf("Repetition guard: %q called %d turns in a row — stopping", sig, m.sameToolStreak))
+			m.streaming = false
+			m.status = m.status.SetStreaming(false)
+			m.status = m.status.SetText("Stopped: repeated tool call")
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf(
+				"⚠️ Stopped: %s was called %d times in a row without finishing the task — the model looks stuck on one step. Send another message (or rephrase the goal) to continue.",
+				sig, m.sameToolStreak))
+			m.sameToolStreak = 0
+			m.lastToolSig = ""
+			return m, nil
+		}
+	} else {
+		m.sameToolStreak = 0
+		m.lastToolSig = ""
+	}
 
 	// Only add the assistant message if it has text content. Tool-call-only
 	// responses (empty AssistantContent) would render as an empty chat bubble.
