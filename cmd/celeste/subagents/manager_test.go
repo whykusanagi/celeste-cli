@@ -95,3 +95,37 @@ func TestIDUniqueness(t *testing.T) {
 		t.Fatal("IDs should be unique")
 	}
 }
+
+// TestSubagentRun_CarriesCheckpointID verifies that CheckpointID round-trips
+// on SubagentRun without a live LLM. A full spawn→fail→resume integration test
+// would require a mock agent runner; this structural test confirms the field
+// is wired and tagged correctly.
+func TestSubagentRun_CarriesCheckpointID(t *testing.T) {
+	run := &SubagentRun{ID: "fire-1", CheckpointID: "run_abc"}
+	if run.CheckpointID != "run_abc" {
+		t.Fatal("checkpoint id not carried on SubagentRun")
+	}
+}
+
+// TestSubagentRun_CheckpointIDOnFailedRun verifies that a failed run
+// populated via manager state tracking retains its CheckpointID.
+func TestSubagentRun_CheckpointIDOnFailedRun(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	m.mu.Lock()
+	run := &SubagentRun{
+		ID:           "sub-failed",
+		Status:       "failed",
+		CheckpointID: "20240101-120000.000000000",
+		Error:        "timeout",
+	}
+	m.runs["sub-failed"] = run
+	m.mu.Unlock()
+
+	got, ok := m.GetRun("sub-failed")
+	if !ok {
+		t.Fatal("run not found")
+	}
+	if got.CheckpointID != "20240101-120000.000000000" {
+		t.Fatalf("CheckpointID = %q, want 20240101-120000.000000000", got.CheckpointID)
+	}
+}

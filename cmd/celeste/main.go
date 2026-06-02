@@ -1020,6 +1020,19 @@ func (a *TUIClientAdapter) ListSubagents() []tui.SubagentInfo {
 	return infos
 }
 
+// ResumeSubagent implements tui.SubagentResumer.
+// It continues a previously-failed subagent from its last saved checkpoint.
+func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID string) (string, error) {
+	if a.subMgr == nil {
+		return "", fmt.Errorf("subagent manager not available")
+	}
+	run, err := a.subMgr.Resume(ctx, checkpointID, nil)
+	if err != nil {
+		return "", err
+	}
+	return run.Result, nil
+}
+
 // RefreshSystemPrompt recomposes and re-injects the system prompt.
 // Called after /confirm, /user, or other prompt-affecting changes.
 func (a *TUIClientAdapter) RefreshSystemPrompt() {

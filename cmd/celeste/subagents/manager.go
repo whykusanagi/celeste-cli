@@ -40,19 +40,20 @@ var elementNames = []struct {
 
 // SubagentRun tracks the state and result of a spawned subagent.
 type SubagentRun struct {
-	ID        string    `json:"id"`
-	TaskID    string    `json:"task_id,omitempty"` // user-assigned ID for DAG dependencies
-	Name      string    `json:"name"`              // display name (e.g., "火 hi")
-	Element   string    `json:"element"`           // english element (e.g., "fire")
-	Goal      string    `json:"goal"`
-	Workspace string    `json:"workspace"`
-	Status    string    `json:"status"`               // "waiting", "running", "completed", "failed"
-	DependsOn []string  `json:"depends_on,omitempty"` // task_ids that must complete first
-	Result    string    `json:"result"`
-	Error     string    `json:"error,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
-	Turns     int       `json:"turns"`
+	ID           string    `json:"id"`
+	TaskID       string    `json:"task_id,omitempty"` // user-assigned ID for DAG dependencies
+	Name         string    `json:"name"`              // display name (e.g., "火 hi")
+	Element      string    `json:"element"`           // english element (e.g., "fire")
+	Goal         string    `json:"goal"`
+	Workspace    string    `json:"workspace"`
+	Status       string    `json:"status"`               // "waiting", "running", "completed", "failed"
+	DependsOn    []string  `json:"depends_on,omitempty"` // task_ids that must complete first
+	Result       string    `json:"result"`
+	Error        string    `json:"error,omitempty"`
+	StartedAt    time.Time `json:"started_at"`
+	EndedAt      time.Time `json:"ended_at,omitempty"`
+	Turns        int       `json:"turns"`
+	CheckpointID string    `json:"checkpoint_id,omitempty"` // run id to resume from on failure
 }
 
 // DAGEntry is a queued subagent waiting for dependencies to clear.
@@ -298,13 +299,20 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	m.mu.Lock()
 	run.EndedAt = time.Now()
 
+	// Always capture the checkpoint id so the caller can resume on failure.
+	if state != nil {
+		run.CheckpointID = state.RunID
+	}
+
 	if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
-		run.Turns = state.Turn
+		if state != nil {
+			run.Turns = state.Turn
+		}
 		// Capture partial progress — whatever the subagent accomplished
 		// before failing. This prevents total work loss on timeout/network errors.
-		if state.LastAssistantResponse != "" {
+		if state != nil && state.LastAssistantResponse != "" {
 			run.Result = fmt.Sprintf("[Partial result — failed after %d turns: %s]\n\n%s",
 				state.Turn, err.Error(), state.LastAssistantResponse)
 		}
@@ -406,6 +414,58 @@ func (m *Manager) GetRun(id string) (*SubagentRun, bool) {
 	defer m.mu.Unlock()
 	run, ok := m.runs[id]
 	return run, ok
+}
+
+// Resume continues a previously-failed subagent from its last checkpoint.
+// checkpointID is the RunID returned by RunGoal and stored in SubagentRun.CheckpointID.
+// It constructs a runner with the same options as executeSubagent so the
+// resumed run shares the same workspace, turn limits, and callback wiring.
+func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCallback) (*SubagentRun, error) {
+	var outBuf, errBuf bytes.Buffer
+
+	agentOpts := agent.Options{
+		Workspace: m.workspace,
+		MaxTurns:  20,
+		Verbose:   false,
+	}
+	if turnCb != nil {
+		cb := turnCb
+		agentOpts.OnTurnStats = func(stats agent.TurnStats) {
+			toolName := ""
+			if len(stats.ToolCalls) > 0 {
+				toolName = strings.Join(stats.ToolCalls, ", ")
+			}
+			cb(stats.Turn, stats.MaxTurns, toolName)
+		}
+	}
+
+	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
+	if err != nil {
+		return nil, fmt.Errorf("create runner for resume: %w", err)
+	}
+	defer runner.Close()
+
+	run := &SubagentRun{
+		ID:           checkpointID,
+		CheckpointID: checkpointID,
+		StartedAt:    time.Now(),
+		Status:       "running",
+	}
+
+	state, err := runner.Resume(ctx, checkpointID)
+	run.EndedAt = time.Now()
+	if state != nil {
+		run.CheckpointID = state.RunID
+		run.Result = state.LastAssistantResponse
+		run.Turns = state.Turn
+	}
+	if err != nil {
+		run.Status = "failed"
+		run.Error = err.Error()
+		return run, fmt.Errorf("resume subagent: %w", err)
+	}
+	run.Status = "completed"
+	return run, nil
 }
 
 // ListRuns returns all subagent runs, most recent first.
