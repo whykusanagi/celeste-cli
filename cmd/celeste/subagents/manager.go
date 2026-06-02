@@ -332,12 +332,19 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	select {
 	case final := <-resultCh:
 		// Finished before threshold — return synchronously as if foreground.
+		// Propagate the real error so a failed pre-threshold run is not hidden.
+		if final != nil && final.Status == "failed" {
+			return final, fmt.Errorf("%s", final.Error)
+		}
 		return final, nil
 
 	case <-time.After(opts.BackgroundAfter):
 		// Threshold exceeded — transition to background.
+		// Snapshot the callback under the lock before launching the watcher
+		// goroutine so the read is not a data race with concurrent TUI writes.
 		m.mu.Lock()
 		run.Status = "background"
+		cb := m.OnBackgroundComplete
 		m.mu.Unlock()
 
 		// Watcher goroutine: wait for completion, update state, fire callback.
@@ -354,7 +361,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 			run.CheckpointID = final.CheckpointID
 			m.mu.Unlock()
 
-			if cb := m.OnBackgroundComplete; cb != nil {
+			if cb != nil {
 				cb(run)
 			}
 		}()
@@ -443,7 +450,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	m.mu.Lock()
 	activeCount := 0
 	for _, r := range m.runs {
-		if r.Status == "running" {
+		if r.Status == "running" || r.Status == "background" {
 			activeCount++
 		}
 	}

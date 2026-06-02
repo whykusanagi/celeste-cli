@@ -302,6 +302,49 @@ func TestSpawnWithOptions_SlowTask_TransitionsToBackground(t *testing.T) {
 	}
 }
 
+// fakeExecFailedFor returns an execFunc that sleeps for the given duration, then
+// marks the run as "failed" with an error message and returns it (with a nil
+// error from the execFunc itself — matching how executeSubagent conveys failure
+// via run.Status/run.Error when the error is already on the run).
+// We test that SpawnWithOptions reconstructs the error from the run fields.
+func fakeExecFailedFor(m *Manager, sleep time.Duration, errMsg string) execFunc {
+	return func(_ context.Context, run *SubagentRun, _, _ string, _ TurnCallback, _ int, _ bool) (*SubagentRun, error) {
+		time.Sleep(sleep)
+		m.mu.Lock()
+		run.Status = "failed"
+		run.Error = errMsg
+		run.EndedAt = time.Now()
+		m.mu.Unlock()
+		return run, nil // execFn drops the error into the run; SpawnWithOptions must reconstruct it
+	}
+}
+
+// TestSpawnWithOptions_PreThresholdFailure verifies that when a subagent fails
+// before the BackgroundAfter threshold, SpawnWithOptions returns a non-nil
+// error (Bug 1 fix). Previously this path returned nil error even on failure.
+func TestSpawnWithOptions_PreThresholdFailure(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	const wantErrMsg = "the subagent exploded"
+	// Task fails in 5ms; threshold is 500ms — guaranteed pre-threshold.
+	m.execFn = fakeExecFailedFor(m, 5*time.Millisecond, wantErrMsg)
+
+	run, err := m.SpawnWithOptions(context.Background(), "failing goal", "/tmp", SpawnOptions{
+		BackgroundAfter: 500 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatalf("expected non-nil error for pre-threshold failure, got nil (run.Status=%q)", run.Status)
+	}
+	if err.Error() != wantErrMsg {
+		t.Fatalf("err = %q, want %q", err.Error(), wantErrMsg)
+	}
+	if run == nil {
+		t.Fatal("run should not be nil even on failure")
+	}
+	if run.Status != "failed" {
+		t.Fatalf("run.Status = %q, want \"failed\"", run.Status)
+	}
+}
+
 // TestSpawnWithOptions_NoCallbackOnNilOnBackgroundComplete verifies that a nil
 // OnBackgroundComplete does not panic when a background task completes.
 func TestSpawnWithOptions_NoCallbackOnNilOnBackgroundComplete(t *testing.T) {
