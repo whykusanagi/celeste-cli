@@ -85,8 +85,13 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 }
 
 // buildPattern constructs a rule pattern from the current tool info.
+// It returns the bare tool name so that the persisted always-allow/deny rule
+// matches ANY future invocation of the same tool, regardless of arguments.
+// MatchRule treats a bare name as an exact tool-name match with no argument
+// glob, which is the correct "always allow/deny this tool" semantic.
+// The truncated inputSummary is used for display only (modal text), not here.
 func (m PermissionPromptModel) buildPattern() string {
-	return fmt.Sprintf("%s(%s)", m.toolName, m.inputSummary)
+	return m.toolName
 }
 
 // View renders the permission prompt dialog.

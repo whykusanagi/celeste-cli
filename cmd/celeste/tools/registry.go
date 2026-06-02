@@ -233,12 +233,13 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	}
 
 	// Permission check
-	if r.checker != nil {
-		r.mu.RLock()
-		prompt := r.promptFn
-		r.mu.RUnlock()
+	r.mu.RLock()
+	checker := r.checker
+	prompt := r.promptFn
+	r.mu.RUnlock()
 
-		result := r.checker.Check(&toolInfoAdapter{tool: tool}, input)
+	if checker != nil {
+		result := checker.Check(&toolInfoAdapter{tool: tool}, input)
 		switch result.Decision {
 		case permissions.Deny:
 			return ToolResult{
@@ -273,7 +274,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 				if pattern == "" {
 					pattern = name
 				}
-				_ = r.checker.AddPersistentAllow(permissions.Rule{
+				_ = checker.AddPersistentAllow(permissions.Rule{
 					ToolPattern: pattern,
 					Decision:    permissions.Allow,
 				})
@@ -283,7 +284,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 					if pattern == "" {
 						pattern = name
 					}
-					_ = r.checker.AddPersistentDeny(permissions.Rule{
+					_ = checker.AddPersistentDeny(permissions.Rule{
 						ToolPattern: pattern,
 						Decision:    permissions.Deny,
 					})

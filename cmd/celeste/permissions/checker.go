@@ -58,37 +58,46 @@ func (c *Checker) SetConfigPath(path string) {
 
 // AddPersistentAllow appends an always-allow rule and, if a config path is
 // set, saves the updated config to disk.
+// The in-memory mutation happens under the lock; disk I/O happens after
+// releasing it so that concurrent Check() calls are not blocked.
 func (c *Checker) AddPersistentAllow(rule Rule) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	rule.Decision = Allow
 	c.alwaysAllow = append(c.alwaysAllow, rule)
-	return c.saveUnlocked()
+	cfg, path := c.snapshotConfigLocked()
+	c.mu.Unlock()
+	if path == "" {
+		return nil
+	}
+	return SaveConfig(path, &cfg)
 }
 
 // AddPersistentDeny appends an always-deny rule and, if a config path is
 // set, saves the updated config to disk.
+// The in-memory mutation happens under the lock; disk I/O happens after
+// releasing it so that concurrent Check() calls are not blocked.
 func (c *Checker) AddPersistentDeny(rule Rule) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	rule.Decision = Deny
 	c.alwaysDeny = append(c.alwaysDeny, rule)
-	return c.saveUnlocked()
-}
-
-// saveUnlocked writes the current rule lists to configPath.
-// Must be called with mu held.
-func (c *Checker) saveUnlocked() error {
-	if c.configPath == "" {
+	cfg, path := c.snapshotConfigLocked()
+	c.mu.Unlock()
+	if path == "" {
 		return nil
 	}
+	return SaveConfig(path, &cfg)
+}
+
+// snapshotConfigLocked returns a copy of the current PermissionConfig and the
+// configPath. Must be called with mu held.
+func (c *Checker) snapshotConfigLocked() (PermissionConfig, string) {
 	cfg := PermissionConfig{
 		Mode:         c.mode,
-		AlwaysAllow:  c.alwaysAllow,
-		AlwaysDeny:   c.alwaysDeny,
-		PatternRules: c.patternRules,
+		AlwaysAllow:  append([]Rule(nil), c.alwaysAllow...),
+		AlwaysDeny:   append([]Rule(nil), c.alwaysDeny...),
+		PatternRules: append([]Rule(nil), c.patternRules...),
 	}
-	return SaveConfig(c.configPath, &cfg)
+	return cfg, c.configPath
 }
 
 // Check evaluates whether the given tool invocation is permitted.
