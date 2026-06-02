@@ -81,12 +81,20 @@ Alternatively, build from source:
 git clone https://github.com/whykusanagi/celeste-cli.git
 cd celeste-cli
 
-# Build the binary
-go build -o celeste ./cmd/celeste
-
-# Install to PATH (optional)
-cp celeste ~/.local/bin/
+# Build + install to ~/.local/bin (handles macOS code-signing for you)
+make install
 ```
+
+> **macOS note:** don't `cp` the binary over an existing `~/.local/bin/celeste` —
+> on Apple Silicon that invalidates its ad-hoc code signature and the kernel will
+> SIGKILL it at launch (`zsh: killed celeste`). `make install` builds straight to
+> the destination and re-signs. If you install by hand, build directly to the
+> target and re-sign:
+>
+> ```bash
+> go build -o ~/.local/bin/celeste ./cmd/celeste
+> codesign --force --sign - ~/.local/bin/celeste   # macOS only
+> ```
 
 ### First Run
 
