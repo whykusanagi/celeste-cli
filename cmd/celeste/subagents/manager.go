@@ -1,8 +1,9 @@
-// Package subagents provides foreground subagent spawning for task delegation.
-// A subagent is a fully independent agent loop with its own LLM client, tool
-// registry, and message history. It inherits the parent's config, persona,
-// grimoire, and permissions but runs in isolation. For v1.8, subagents run
-// in the foreground (blocking) with no inter-agent messaging.
+// Package subagents provides foreground and background subagent spawning for
+// task delegation. A subagent is a fully independent agent loop with its own
+// LLM client, tool registry, and message history. It inherits the parent's
+// config, persona, grimoire, and permissions but runs in isolation.
+// Subagents may run in the foreground (blocking) or transition to background
+// after a configurable threshold (#30), delivering their result via a channel.
 package subagents
 
 import (
@@ -46,7 +47,7 @@ type SubagentRun struct {
 	Element      string    `json:"element"`           // english element (e.g., "fire")
 	Goal         string    `json:"goal"`
 	Workspace    string    `json:"workspace"`
-	Status       string    `json:"status"`               // "waiting", "running", "completed", "failed"
+	Status       string    `json:"status"`               // "waiting", "running", "background", "completed", "failed"
 	DependsOn    []string  `json:"depends_on,omitempty"` // task_ids that must complete first
 	Result       string    `json:"result"`
 	Error        string    `json:"error,omitempty"`
@@ -72,6 +73,10 @@ type DAGEntry struct {
 // Default 500ms — safe for xAI's grok-build-0.1 at 6 concurrent agents.
 var StaggerDelay = 500 * time.Millisecond
 
+// execFunc is the function signature for running a subagent. The default
+// implementation is m.executeSubagent; tests may inject a fake via Manager.execFn.
+type execFunc func(ctx context.Context, run *SubagentRun, goal, workspace string, turnCb TurnCallback, maxTurns int, isolate bool) (*SubagentRun, error)
+
 // Manager handles subagent lifecycle and execution.
 type Manager struct {
 	cfg       *config.Config
@@ -82,17 +87,29 @@ type Manager struct {
 	counter   int
 	isChild   bool        // true if this manager is inside a subagent (blocks recursion)
 	dagQueue  []*DAGEntry // tasks waiting for dependencies
+
+	// execFn is the execution backend. Defaults to m.executeSubagent.
+	// Tests may replace this with a stub that doesn't require a live LLM.
+	execFn execFunc
+
+	// OnBackgroundComplete is an optional callback invoked when a backgrounded
+	// subagent finishes. The TUI may set this to surface a completion notice.
+	// It is called from a goroutine; implementations must be goroutine-safe.
+	// nil = no notification (default; non-TUI callers are unaffected).
+	OnBackgroundComplete func(*SubagentRun)
 }
 
 // NewManager creates a subagent manager. Pass isChild=true when the manager
 // itself is running inside a subagent to block recursive spawning.
 func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
-	return &Manager{
+	m := &Manager{
 		cfg:       cfg,
 		workspace: workspace,
 		runs:      make(map[string]*SubagentRun),
 		isChild:   isChild,
 	}
+	m.execFn = m.executeSubagent
+	return m
 }
 
 // TurnCallback is called on each subagent turn so the parent can
@@ -102,11 +119,12 @@ type TurnCallback func(turn int, maxTurns int, toolName string)
 
 // SpawnOptions holds optional parameters for Spawn.
 type SpawnOptions struct {
-	TaskID          string       // user-assigned task ID for DAG references
-	DependsOn       []string     // task IDs that must complete before this starts
-	TurnCb          TurnCallback // nested progress callback
-	MaxTurns        int          // 0 = default (20)
-	IsolateWorktree bool         // run this subagent in its own git worktree (#32)
+	TaskID          string        // user-assigned task ID for DAG references
+	DependsOn       []string      // task IDs that must complete before this starts
+	TurnCb          TurnCallback  // nested progress callback
+	MaxTurns        int           // 0 = default (20)
+	IsolateWorktree bool          // run this subagent in its own git worktree (#32)
+	BackgroundAfter time.Duration // >0: auto-transition to background if the subagent runs longer than this (#30). 0 = always foreground (unchanged).
 }
 
 // Spawn creates and runs a subagent with the given goal. It blocks until the
@@ -119,10 +137,78 @@ func (m *Manager) Spawn(ctx context.Context, goal string, workspace string, turn
 	return m.SpawnWithOptions(ctx, goal, workspace, opts)
 }
 
+// buildRun allocates and registers a new SubagentRun under m.mu. The caller
+// must hold m.mu on entry; it is released (and possibly re-acquired) inside
+// the auto-detect block but is always released before buildRun returns.
+// Returns the registered run and the resolved workspace; the caller owns the
+// run from this point on and must NOT hold m.mu.
+func (m *Manager) buildRun(goal, workspace string, opts SpawnOptions) (*SubagentRun, string) {
+	m.counter++
+	idx := m.counter - 1
+	id := fmt.Sprintf("sub-%d-%d", time.Now().Unix(), m.counter)
+
+	var name, element string
+	if idx < len(elementNames) {
+		e := elementNames[idx]
+		name = fmt.Sprintf("%s %s", e.Kanji, e.Romaji)
+		element = e.Element
+	} else {
+		name = fmt.Sprintf("第%d号", m.counter)
+		element = fmt.Sprintf("agent-%d", m.counter)
+	}
+
+	run := &SubagentRun{
+		ID:        id,
+		TaskID:    opts.TaskID,
+		Name:      name,
+		Element:   element,
+		Goal:      goal,
+		Workspace: workspace,
+		Status:    "running",
+		DependsOn: opts.DependsOn,
+		StartedAt: time.Now(),
+	}
+
+	if opts.TaskID != "" {
+		m.runs[opts.TaskID] = run
+	}
+	m.runs[id] = run
+	return run, workspace
+}
+
+// SpawnAsync starts a subagent in a goroutine and returns a buffered channel
+// that receives the final *SubagentRun when it completes, plus the live run
+// handle (status "running"). The channel has capacity 1 so the exec goroutine
+// never blocks or leaks if the caller abandons the channel. The caller may
+// wait on the channel or ignore it (e.g., after transitioning to background).
+//
+// SpawnAsync does NOT handle DAG dependencies; use SpawnWithOptions for that.
+func (m *Manager) SpawnAsync(ctx context.Context, goal, workspace string, opts SpawnOptions) (<-chan *SubagentRun, *SubagentRun) {
+	m.mu.Lock()
+	run, ws := m.buildRun(goal, workspace, opts)
+	m.mu.Unlock()
+
+	resultCh := make(chan *SubagentRun, 1)
+	go func() {
+		final, _ := m.execFn(ctx, run, goal, ws, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		resultCh <- final
+	}()
+	return resultCh, run
+}
+
 // SpawnWithOptions creates and runs a subagent with full options including
 // DAG dependencies. If depends_on contains task IDs that haven't completed
 // yet, the subagent blocks in "waiting" state until all dependencies clear,
 // then auto-starts.
+//
+// When opts.BackgroundAfter > 0, the call blocks up to that duration waiting
+// for the subagent to finish. If the subagent is still running at the
+// threshold, it transitions to "background" status and SpawnWithOptions
+// returns the live (background) run immediately so the parent can resume.
+// The result is later delivered via a goroutine that updates the run state
+// and invokes m.OnBackgroundComplete (if set).
+//
+// Default behavior (BackgroundAfter == 0) is unchanged: fully blocking.
 func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace string, opts SpawnOptions) (*SubagentRun, error) {
 	if m.isChild {
 		return nil, fmt.Errorf("recursive subagent spawning is not allowed")
@@ -230,7 +316,52 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	}
 	m.mu.Unlock()
 
-	return m.executeSubagent(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+	// Fast path: no background threshold — run synchronously (default behavior).
+	if opts.BackgroundAfter <= 0 {
+		return m.execFn(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+	}
+
+	// Background-threshold path: start the execution in a goroutine and race
+	// against the threshold timer.
+	resultCh := make(chan *SubagentRun, 1)
+	go func() {
+		final, _ := m.execFn(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		resultCh <- final
+	}()
+
+	select {
+	case final := <-resultCh:
+		// Finished before threshold — return synchronously as if foreground.
+		return final, nil
+
+	case <-time.After(opts.BackgroundAfter):
+		// Threshold exceeded — transition to background.
+		m.mu.Lock()
+		run.Status = "background"
+		m.mu.Unlock()
+
+		// Watcher goroutine: wait for completion, update state, fire callback.
+		go func() {
+			final := <-resultCh
+			// final already has its Status/EndedAt set by execFn; mirror to
+			// the registered run so ListRuns sees the terminal state.
+			m.mu.Lock()
+			run.Status = final.Status
+			run.Result = final.Result
+			run.Error = final.Error
+			run.EndedAt = final.EndedAt
+			run.Turns = final.Turns
+			run.CheckpointID = final.CheckpointID
+			m.mu.Unlock()
+
+			if cb := m.OnBackgroundComplete; cb != nil {
+				cb(run)
+			}
+		}()
+
+		// Return the live (background) run so the parent resumes immediately.
+		return run, nil
+	}
 }
 
 // buildAgentOptions constructs the agent runner options shared by spawn and
@@ -454,7 +585,7 @@ func (m *Manager) drainDAGQueue(ctx context.Context) {
 			}
 
 			// Run the actual subagent (reuse the execution path)
-			result, _ := m.executeSubagent(ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns, e.IsolateWorktree)
+			result, _ := m.execFn(ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns, e.IsolateWorktree)
 			e.ResultCh <- result
 		}(entry)
 	}
