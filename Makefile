@@ -1,5 +1,8 @@
 .PHONY: build install clean help test dev verify import-key sync-persona
 
+# Install destination (override with: make install BIN=/custom/path/celeste)
+BIN ?= $(HOME)/.local/bin/celeste
+
 # Default target
 help:
 	@echo "Celeste CLI Build Commands"
@@ -22,12 +25,21 @@ build:
 	@cd cmd/celeste && go build -o ../../celeste .
 	@echo "✅ Build complete: ./celeste"
 
-# Build and install to PATH
-install: build
-	@echo "📦 Installing to PATH..."
-	@cp celeste ~/.local/bin/celeste
-	@chmod +x ~/.local/bin/celeste
-	@echo "✅ celeste installed to ~/.local/bin/celeste"
+# Build and install to PATH.
+# Builds straight to the destination (go writes via temp+rename → fresh inode)
+# rather than `cp`-ing over the existing binary. On macOS, copying over an
+# existing binary invalidates its ad-hoc code signature, so the kernel (AMFI)
+# SIGKILLs it at launch ("zsh: killed celeste") even though `codesign -v` still
+# reports valid-on-disk. We re-sign explicitly on Darwin to be safe.
+install:
+	@echo "📦 Installing to $(BIN)..."
+	@mkdir -p "$(dir $(BIN))"
+	@go build -o "$(BIN)" ./cmd/celeste
+	@chmod +x "$(BIN)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		codesign --force --sign - "$(BIN)" && echo "🔏 ad-hoc signed (macOS AMFI)"; \
+	fi
+	@echo "✅ celeste installed to $(BIN)"
 
 # Development workflow: build, install, and test
 dev: install
