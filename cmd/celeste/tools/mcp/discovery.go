@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
@@ -18,10 +19,16 @@ func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Re
 		return fmt.Errorf("discover tools from %s: %w", serverName, err)
 	}
 
+	// Per-tool registration is noisy (dozens of lines at startup, and in TUI
+	// mode it interleaves with the rendered UI). Gate it behind CELESTE_MCP_DEBUG;
+	// the summary line below is enough for normal use.
+	verbose := os.Getenv("CELESTE_MCP_DEBUG") != ""
 	for _, def := range defs {
 		tool := NewMCPTool(def, client, serverName)
 		registry.Register(tool)
-		log.Printf("[mcp] registered tool %q from server %q", def.Name, serverName)
+		if verbose {
+			log.Printf("[mcp] registered tool %q from server %q", def.Name, serverName)
+		}
 	}
 
 	if len(defs) > 0 {
