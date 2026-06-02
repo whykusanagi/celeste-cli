@@ -22,7 +22,7 @@
 
 Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
-- 🔮 **42 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
+- 🔮 **44 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
 - 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
@@ -183,7 +183,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - [Installation](#-quick-start)
 - [Security & Verification](#-security--verification)
 - [Features](#-features)
-- [Tool System (42 Tools)](#-tool-system-42-tools)
+- [Tool System (44 Tools)](#-tool-system-44-tools)
 - [Claude Code Integration](#-claude-code-integration)
 - [Comparison](#-how-celeste-compares)
 - [LLM Provider Compatibility](#-llm-provider-compatibility)
@@ -208,7 +208,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
 ### Tool System (v1.10)
-**42 built-in tools** powered by AI function calling:
+**44 built-in tools** powered by AI function calling:
 - Dev Tools (bash, read/write/patch files, search, list files)
 - Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter TypeScript parsing)
 - Direct Codegraph MCP Tools (`celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim, no chat-LLM round-trip)
@@ -220,7 +220,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - Blockchain (IPFS, Alchemy, wallet security)
 - Subagent Orchestration (`spawn_agent`, `post_message`)
 
-[See complete tool list below](#-tool-system-42-tools)
+[See complete tool list below](#-tool-system-44-tools)
 
 ### Collections Support (xAI RAG)
 - **Upload Custom Documents** - Create knowledge bases with your own documentation
@@ -267,7 +267,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 
 ---
 
-## 🔮 Tool System (42 Tools)
+## 🔮 Tool System (44 Tools)
 
 Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You don't invoke tools directly — you chat naturally, and the AI decides when to call them.
 
@@ -533,7 +533,7 @@ are a convenience for natural-language interactions.
 | **Deploy** | 54MB binary, zero deps | Node.js (~393MB) | 9MB binary | Bun + Rust | pip package |
 | **RAM** | Low | High (Node.js) | ~10MB | Medium | Medium |
 | **Providers** | 7 (native SDKs) | OpenAI primary | OpenAI only | 6+ | 7+ |
-| **Tools** | 42 | Many | 16 | Many | ~10 |
+| **Tools** | 44 | Many | 16 | Many | ~10 |
 | **Code Graph** | Yes (MinHash) | No | No | No | No |
 | **Code Review** | Yes (6 categories) | No | No | No | No |
 | **Collections/RAG** | Yes (xAI) | No | No | No | Yes |
