@@ -353,6 +353,51 @@ func TestDetectStub_SkipsProtocolAndAbstract(t *testing.T) {
 	}
 }
 
+// TestTodoFixme_CrossFileCaller is the regression test for issue #47.
+// A FIXME-tagged function (in_databricks in util.py) must show InEdges >= 2
+// when it has two callers in other files (a.py and b.py).
+//
+// This tests the two-pass Build() fix: a.py and b.py sort alphabetically
+// before util.py, so without the fix the cross-file call edges were resolved
+// via GetSymbolIDByName before in_databricks was stored — silently dropping
+// both edges and leaving InEdges==0. Build() now indexes all symbols first
+// (via indexFileSymbols) then resolves edges (via resolveAndStoreEdges).
+func TestTodoFixme_CrossFileCaller(t *testing.T) {
+	dir := t.TempDir()
+
+	// util.py defines the FIXME-tagged function — sorts AFTER a.py and b.py
+	writeFile(t, dir, "util.py", "def in_databricks():  # FIXME: this is a hack\n    return False\n")
+	// a.py and b.py each call in_databricks — these sort BEFORE util.py
+	writeFile(t, dir, "a.py", "from util import in_databricks\ndef a():\n    return in_databricks()\n")
+	writeFile(t, dir, "b.py", "from util import in_databricks\ndef b():\n    return in_databricks()\n")
+
+	dbPath := filepath.Join(dir, "codegraph-issue47.db")
+
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+
+	require.NoError(t, idx.Build())
+
+	funcs, err := idx.Store().FindAllFunctionsWithEdges()
+	require.NoError(t, err)
+
+	var inEdges int
+	found := false
+	for _, f := range funcs {
+		if f.Name == "in_databricks" {
+			found = true
+			inEdges = f.InEdges
+			break
+		}
+	}
+	require.True(t, found, "in_databricks must be indexed as a symbol")
+	assert.GreaterOrEqual(t, inEdges, 2,
+		"in_databricks should have at least 2 incoming edges (called by a() and b()); "+
+			"regression for issue #47 — cross-file plain-call edges were silently dropped "+
+			"when the callee file was indexed before the caller files")
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)

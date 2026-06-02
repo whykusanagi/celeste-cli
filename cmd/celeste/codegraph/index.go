@@ -197,18 +197,35 @@ func (idx *Indexer) Store() *Store {
 // Build performs a full index of the workspace. Walks the file tree,
 // parses source files, extracts symbols and edges, computes MinHash
 // signatures, and stores everything in SQLite.
+//
+// Two-pass design (fix for issue #47): all symbols are stored in the first
+// pass so that cross-file call edges can be resolved in the second pass
+// regardless of file processing order. Without the two-pass approach, files
+// processed alphabetically before their callee files (e.g. a.py calling
+// in_databricks defined in util.py) would silently drop their edges because
+// the target symbol didn't exist in the DB yet.
 func (idx *Indexer) Build() error {
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
 	}
 
+	// Pass 1: store all symbols, MinHash, tokens, LSH bands, and file records.
+	// Collect raw edges for deferred resolution in pass 2.
+	var allRawEdges []RawEdge
 	for _, path := range files {
-		if err := idx.indexFile(path); err != nil {
+		raw, err := idx.indexFileSymbols(path)
+		if err != nil {
 			// Log but don't fail on individual file errors
 			continue
 		}
+		allRawEdges = append(allRawEdges, raw...)
 	}
+
+	// Pass 2: resolve and store all edges now that every symbol is in the DB.
+	// Cross-file call targets that weren't available during pass 1 are now
+	// resolvable via GetSymbolIDByName.
+	idx.resolveAndStoreEdges(allRawEdges)
 
 	// Persist the MinHasher seeds so a subsequent process can restore
 	// the same hash family and compare signatures meaningfully. Idempotent
@@ -295,6 +312,95 @@ func (idx *Indexer) Update() error {
 	}
 
 	return nil
+}
+
+// indexFileSymbols parses a file, stores its symbols (with MinHash / LSH / tokens)
+// and the file record, then returns the raw (unresolved) edges for deferred
+// resolution. Used by Build() in its first pass so all symbols exist in the DB
+// before any edges are inserted (fixing cross-file caller-count issue #47).
+func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
+	absPath := filepath.Join(idx.workspace, relPath)
+	lang := DetectLanguage(relPath)
+
+	var result *ParseResult
+	var err error
+
+	if lang == "go" {
+		parser := NewGoParser()
+		result, err = parser.ParseFile(absPath)
+	} else if idx.tryMultiParser(absPath) {
+		if idx.multiParser == nil {
+			idx.multiParser = NewMultiLangParser()
+		}
+		result, err = idx.multiParser.ParseFile(absPath)
+	} else if lang == "typescript" {
+		if idx.tsParser == nil {
+			idx.tsParser = NewTSParser()
+		}
+		result, err = idx.tsParser.ParseFile(absPath)
+	} else if indexableLanguages[lang] {
+		parser := NewGenericParser(lang)
+		result, err = parser.ParseFile(absPath)
+	} else {
+		return nil, nil // no parser for this language
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	source, _ := os.ReadFile(absPath)
+
+	for _, sym := range result.Symbols {
+		sym.File = relPath
+		id, err := idx.store.UpsertSymbol(sym)
+		if err != nil {
+			continue
+		}
+		if sym.Kind != SymbolImport {
+			shingles := ShinglesForSymbol(sym, source, lang)
+			sig := idx.hasher.Signature(shingles)
+			_ = idx.store.UpdateMinHash(id, sig)
+			_ = idx.store.UpsertSymbolTokens(id, shingles)
+			bands := ComputeBandHashes(sig)
+			_ = idx.store.UpsertLSHBands(id, bands)
+		}
+	}
+
+	info, _ := os.Stat(absPath)
+	hash, _ := fileContentHash(absPath)
+	var size int64
+	if info != nil {
+		size = info.Size()
+	}
+	_ = idx.store.UpsertFile(FileRecord{
+		Path:        relPath,
+		Language:    lang,
+		Size:        size,
+		ContentHash: hash,
+	})
+
+	return result.Edges, nil
+}
+
+// resolveAndStoreEdges resolves raw (name-based) edges to symbol IDs and
+// inserts them into the edges table. Called by Build() after indexFileSymbols
+// has run over all files, ensuring every target symbol is already present.
+func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
+	for _, edge := range edges {
+		sourceID, ok1 := idx.store.GetSymbolIDByName(edge.SourceName)
+		targetID, ok2 := idx.store.GetSymbolIDByName(edge.TargetName)
+		// Try unqualified name: "pkg.Func" -> "Func"
+		if !ok2 {
+			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
+				unqualified := edge.TargetName[dotIdx+1:]
+				targetID, ok2 = idx.store.GetSymbolIDByName(unqualified)
+			}
+		}
+		if ok1 && ok2 {
+			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
+		}
+	}
 }
 
 // indexFile parses a single file and stores its symbols, edges, and MinHash.
