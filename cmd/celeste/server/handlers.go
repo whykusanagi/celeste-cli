@@ -273,7 +273,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 				})
 				continue
 			}
-			if tc.Name == "generate_speech" {
+			if tc.Name == "generate_speech" && !toolResult.Error {
 				ttsRan = true
 			}
 			messages = append(messages, tui.ChatMessage{
