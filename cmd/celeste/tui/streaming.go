@@ -14,9 +14,9 @@ import (
 // Corruption colors
 var (
 	corruptMagenta = lipgloss.NewStyle().Foreground(lipgloss.Color("#d94f90"))
-	corruptRed     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff4757"))
+	corruptRed     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")) // canonical corrupted-red (#49)
 	corruptPurple  = lipgloss.NewStyle().Foreground(lipgloss.Color("#8b5cf6"))
-	corruptCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
+	corruptCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffff")) // canonical corrupted-cyan (#49)
 )
 
 // SimulatedTyping handles simulated typing effect for non-streaming responses.
@@ -486,7 +486,7 @@ func CorruptCodeLine(codeLine string, intensity float64) string {
 // GetCodeBlockStyle returns a lipgloss style for code blocks in corrupted theme
 func GetCodeBlockStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00d4ff")). // Cyan - digital/glitch aesthetic
+		Foreground(lipgloss.Color("#00ffff")). // canonical corrupted-cyan (#49)
 		Background(lipgloss.Color("#0f0f1a")). // Darker background
 		Padding(0, 1)
 }
