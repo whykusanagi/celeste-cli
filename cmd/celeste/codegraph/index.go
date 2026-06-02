@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -943,14 +944,30 @@ func (idx *Indexer) FindLazyRedirects(maxResults int, includeTests bool) ([]Lazy
 
 // isTestFilePath returns true if the file path looks like a test file.
 func isTestFilePath(file string) bool {
-	return strings.HasSuffix(file, "_test.go") ||
+	// Suffix-based test files.
+	if strings.HasSuffix(file, "_test.go") ||
 		strings.HasSuffix(file, "_test.py") ||
 		strings.HasSuffix(file, ".test.ts") ||
 		strings.HasSuffix(file, ".test.js") ||
 		strings.HasSuffix(file, ".spec.ts") ||
-		strings.HasSuffix(file, ".spec.js") ||
-		strings.Contains(file, "/test/") ||
-		strings.Contains(file, "/tests/")
+		strings.HasSuffix(file, ".spec.js") {
+		return true
+	}
+	// Python conventions.
+	base := path.Base(file)
+	if strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") {
+		return true
+	}
+	if base == "conftest.py" {
+		return true
+	}
+	// "test"/"tests" as a path segment at ANY depth, including top-level.
+	for _, seg := range strings.Split(file, "/") {
+		if seg == "test" || seg == "tests" {
+			return true
+		}
+	}
+	return false
 }
 
 // isExpectedLeaf returns true if a function name matches patterns that are

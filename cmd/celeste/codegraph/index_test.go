@@ -308,6 +308,27 @@ func TestDetectStub_SkipsDunders(t *testing.T) {
 	}
 }
 
+func TestIsTestFilePath(t *testing.T) {
+	cases := map[string]bool{
+		"tests/foo.py":            true,
+		"test/foo.py":             true,
+		"graphistry/tests/foo.py": true,
+		"a/b/test/c.py":           true,
+		"pkg/foo_test.go":         true,
+		"pkg/foo_test.py":         true,
+		"src/foo.spec.ts":         true,
+		"graphistry/util.py":      false,
+		"src/testing_utils.py":    false,
+		"contestants/foo.py":      false,
+		"pkg/conftest.py":         true,
+	}
+	for path, want := range cases {
+		if got := isTestFilePath(path); got != want {
+			t.Errorf("isTestFilePath(%q) = %v; want %v", path, got, want)
+		}
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
