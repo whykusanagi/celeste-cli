@@ -58,12 +58,13 @@ type SubagentRun struct {
 
 // DAGEntry is a queued subagent waiting for dependencies to clear.
 type DAGEntry struct {
-	Run       *SubagentRun
-	Goal      string // the full goal including persona overrides
-	Workspace string
-	TurnCb    TurnCallback
-	MaxTurns  int
-	ResultCh  chan *SubagentRun // result sent here when complete
+	Run             *SubagentRun
+	Goal            string // the full goal including persona overrides
+	Workspace       string
+	TurnCb          TurnCallback
+	MaxTurns        int
+	IsolateWorktree bool
+	ResultCh        chan *SubagentRun // result sent here when complete
 }
 
 // StaggerDelay is the configurable pause between concurrent subagent
@@ -100,10 +101,11 @@ type TurnCallback func(turn int, maxTurns int, toolName string)
 
 // SpawnOptions holds optional parameters for Spawn.
 type SpawnOptions struct {
-	TaskID    string       // user-assigned task ID for DAG references
-	DependsOn []string     // task IDs that must complete before this starts
-	TurnCb    TurnCallback // nested progress callback
-	MaxTurns  int          // 0 = default (20)
+	TaskID          string       // user-assigned task ID for DAG references
+	DependsOn       []string     // task IDs that must complete before this starts
+	TurnCb          TurnCallback // nested progress callback
+	MaxTurns        int          // 0 = default (20)
+	IsolateWorktree bool         // run this subagent in its own git worktree (#32)
 }
 
 // Spawn creates and runs a subagent with the given goal. It blocks until the
@@ -198,12 +200,13 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 			run.Status = "waiting"
 			resultCh := make(chan *SubagentRun, 1)
 			m.dagQueue = append(m.dagQueue, &DAGEntry{
-				Run:       run,
-				Goal:      goal,
-				Workspace: workspace,
-				TurnCb:    opts.TurnCb,
-				MaxTurns:  opts.MaxTurns,
-				ResultCh:  resultCh,
+				Run:             run,
+				Goal:            goal,
+				Workspace:       workspace,
+				TurnCb:          opts.TurnCb,
+				MaxTurns:        opts.MaxTurns,
+				IsolateWorktree: opts.IsolateWorktree,
+				ResultCh:        resultCh,
 			})
 			m.mu.Unlock()
 
@@ -226,7 +229,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	}
 	m.mu.Unlock()
 
-	return m.executeSubagent(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns)
+	return m.executeSubagent(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
 }
 
 // buildAgentOptions constructs the agent runner options shared by spawn and
@@ -257,10 +260,47 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 
 // executeSubagent runs the actual agent loop for a SubagentRun. Called from
 // both the direct SpawnWithOptions path and from drainDAGQueue goroutines.
-func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal string, workspace string, turnCb TurnCallback, maxTurns int) (*SubagentRun, error) {
+// When isolate is true, a dedicated git worktree is created under workspace,
+// the subagent runs there, and on success the branch is merged back. The
+// worktree is always removed when done (defer). run.Workspace is left pointing
+// at the durable repo (workspace) — not the ephemeral worktree path — so that
+// a future Resume call finds a stable directory even after the worktree is
+// cleaned up.
+func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal string, workspace string, turnCb TurnCallback, maxTurns int, isolate bool) (*SubagentRun, error) {
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)
+
+	// Resolve the execution workspace. When isolation is requested, create a
+	// dedicated git worktree. The element name (e.g. "fire") is used as the
+	// directory name; fall back to the run ID if element is empty or contains
+	// characters that would be unsafe in a path.
+	execWorkspace := workspace
+	var wt *Worktree
+	if isolate {
+		wtName := run.Element
+		if wtName == "" {
+			wtName = run.ID
+		}
+		w, err := AddWorktree(workspace, wtName)
+		if err != nil {
+			run.Status = "failed"
+			run.Error = fmt.Sprintf("worktree setup: %v", err)
+			run.EndedAt = time.Now()
+			return run, err
+		}
+		wt = w
+		execWorkspace = w.Path
+		defer func() {
+			if run.Status == "completed" {
+				if mErr := MergeWorktree(workspace, wt); mErr != nil {
+					// Keep run result intact; note merge failure in the error field.
+					run.Error = strings.TrimSpace(run.Error + " (worktree merge failed: " + mErr.Error() + ")")
+				}
+			}
+			_ = RemoveWorktree(workspace, wt)
+		}()
+	}
 
 	// Stagger concurrent launches based on currently running agents
 	// to avoid rate limiting. Uses active count, not total-ever count,
@@ -289,7 +329,9 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	}
 
 	var outBuf, errBuf bytes.Buffer
-	agentOpts := m.buildAgentOptions(workspace, maxTurns, turnCb)
+	// Use execWorkspace (worktree path when isolated, otherwise workspace) for
+	// the actual agent run. run.Workspace retains the durable repo path.
+	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -408,7 +450,7 @@ func (m *Manager) drainDAGQueue(ctx context.Context) {
 			}
 
 			// Run the actual subagent (reuse the execution path)
-			result, _ := m.executeSubagent(ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns)
+			result, _ := m.executeSubagent(ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns, e.IsolateWorktree)
 			e.ResultCh <- result
 		}(entry)
 	}
