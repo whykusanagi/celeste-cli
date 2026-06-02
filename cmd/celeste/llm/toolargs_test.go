@@ -1,6 +1,9 @@
 package llm
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateToolArgs(t *testing.T) {
 	cases := []struct {
@@ -23,6 +26,25 @@ func TestValidateToolArgs(t *testing.T) {
 				t.Fatalf("validateToolArgs(%q, %q) = %q; wantErr=%v", c.tool, c.args, got, c.wantErr)
 			}
 		})
+	}
+}
+
+func TestStripUnbackedAudioClaim(t *testing.T) {
+	claim := "Done! Audio saved: speech_1700000000.mp3 (12345 bytes)"
+	plain := "Here is the answer to your question."
+
+	got := StripUnbackedAudioClaim(claim, false)
+	if strings.Contains(got, "Audio saved:") {
+		t.Fatalf("expected audio claim stripped when no TTS ran, got %q", got)
+	}
+	if got == "" {
+		t.Fatalf("expected a replacement message, got empty")
+	}
+	if got := StripUnbackedAudioClaim(claim, true); got != claim {
+		t.Fatalf("expected claim preserved when TTS ran, got %q", got)
+	}
+	if got := StripUnbackedAudioClaim(plain, false); got != plain {
+		t.Fatalf("expected plain text untouched, got %q", got)
 	}
 }
 
