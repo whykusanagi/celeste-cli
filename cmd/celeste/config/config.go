@@ -588,12 +588,27 @@ func Load() (*Config, error) {
 	// an empty model falls back to the default, and models xAI no longer supports
 	// are migrated to their replacement. Persisted so the header, config file, and
 	// the model sent to the API all agree instead of silently diverging.
+	dirty := false
 	if changed, from, to := reconcileModel(config); changed {
 		if from == "" {
 			log.Printf("[config] no model set — using default %q (saved)", to)
 		} else {
 			log.Printf("[config] model %q is no longer supported — migrated to %q (saved)", from, to)
 		}
+		dirty = true
+	}
+	// Clamp a stale context_limit override that exceeds the (possibly migrated)
+	// model's real window — e.g. a 2M limit carried over onto a 256K model. A
+	// limit larger than the model supports is always invalid, so reset to the
+	// model default (#51).
+	if config.ContextLimit > 0 {
+		if maxLimit := GetModelLimit(config.Model); config.ContextLimit > maxLimit {
+			log.Printf("[config] context_limit %d exceeds %q's %d-token window — using model default (saved)", config.ContextLimit, config.Model, maxLimit)
+			config.ContextLimit = 0
+			dirty = true
+		}
+	}
+	if dirty {
 		_ = Save(config)
 	}
 
