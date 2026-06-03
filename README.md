@@ -558,6 +558,33 @@ See [docs/COMPARISON.md](docs/COMPARISON.md) for detailed analysis.
 
 Celeste CLI requires **OpenAI-style function calling** for skills to work. Not all LLM providers support this feature.
 
+### ⚠️ Chat model vs Agent model (read this — provider-agnostic gotcha)
+
+Plain **chat** works with any model. But **tools/skills, subagents, and `/orchestrate`** need a model that supports **function calling** — and on *every* provider, some models do and some don't:
+
+- **Venice.ai** — `venice-uncensored` does **not** support tools
+- **OpenRouter** — many models lack tool/function-calling support
+- **OpenAI** — older/instruct models don't; `gpt-4.1*`/`gpt-4o*` do
+- **Grok/xAI** — non-reasoning models can technically call tools but are weak at *driving* multi-step agent flows (they may flail and even fabricate a result, e.g. claim they spawned a subagent they didn't)
+
+If your single model can't (or can't reliably) call tools, **chat looks fine but agent mode breaks** — confusingly, often by hallucinating success rather than erroring.
+
+**Celeste splits the model in two so you don't get trapped:**
+
+| Field | Used for | Requirement |
+|-------|----------|-------------|
+| `model` | chat, TTS | anything (a cheap or uncensored non-tool model is fine) |
+| `agent_model` | agent / `/orchestrate` / subagents | **must support tool calling** (falls back to `model` if unset) |
+
+```json
+{
+  "model": "venice-uncensored",
+  "agent_model": "gpt-4.1-mini"
+}
+```
+
+Celeste prints a **loud warning at agent start** if the resolved agent model doesn't support tool calling, so you catch it immediately instead of debugging a "hallucinated" agent. Leave `agent_model` unset and it just uses `model`.
+
 ### Quick Reference Matrix
 
 | Provider | Function Calling | Status | Setup Difficulty |
@@ -565,7 +592,8 @@ Celeste CLI requires **OpenAI-style function calling** for skills to work. Not a
 | **OpenAI** | ✅ Native | Fully Supported | Easy |
 | **Grok (xAI)** | ✅ OpenAI-Compatible | Fully Supported | Easy |
 | **DigitalOcean** | ⚠️ Cloud Functions Only | Limited | Advanced (requires cloud deployment) |
-| **Venice.ai** | ❓ Unknown | Needs Testing | Unknown |
+| **Venice.ai** | ⚠️ Model-dependent | `venice-uncensored` = NO tools; pick a tool-capable model for `agent_model` | Medium |
+| **OpenRouter** | ⚠️ Model-dependent | Many models lack tools; check before using as `agent_model` | Medium |
 | **ElevenLabs** | ❓ Unknown | Needs Testing | Unknown |
 | **Local (Ollama)** | ⚠️ Depends on Model | Varies | Medium (model-dependent) |
 
