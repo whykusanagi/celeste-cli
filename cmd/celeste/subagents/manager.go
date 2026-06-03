@@ -320,11 +320,24 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	}
 	m.mu.Unlock()
 
-	// Per-run cancellation: wrap the caller ctx so `/agents kill <id>` can stop
-	// THIS run specifically (task 6ffb5a7c). Registered under the run id (and
-	// task id) and cleared when execution finishes. Combined with the runtime's
-	// ctx-honoring fix (349f1f14), cancelling actually stops the run.
-	runCtx, cancel := context.WithCancel(ctx)
+	// Per-run cancellation + correct lifetime.
+	//
+	// Foreground spawns are tied to the caller's ctx (the spawn_agent tool call
+	// blocks until done, so cancelling the parent should stop the child).
+	//
+	// BACKGROUND spawns must be DETACHED from the caller's ctx: the run outlives
+	// the spawn_agent tool call, and the parent cancels that tool ctx the instant
+	// the call returns. Since the runtime now honors ctx (349f1f14), a child tied
+	// to the tool ctx is killed the moment it backgrounds — observed as a
+	// backgrounded subagent "failing" at ~3 turns and being un-killable
+	// ("already finished") forever after. Base it on context.Background() so only
+	// /agents kill (the registered cancel) — or the run's own MaxTurns/tool
+	// timeouts — ends it (task 6ffb5a7c / bug 1dc.. follow-up).
+	runBase := ctx
+	if opts.BackgroundAfter > 0 {
+		runBase = context.Background()
+	}
+	runCtx, cancel := context.WithCancel(runBase)
 	m.registerCancel(run, cancel)
 
 	// Fast path: no background threshold — run synchronously (default behavior).

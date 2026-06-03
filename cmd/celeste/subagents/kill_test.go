@@ -123,6 +123,37 @@ func TestKill_ByElementName(t *testing.T) {
 	}
 }
 
+// A backgrounded subagent must survive the parent (tool-call) context being
+// cancelled — which happens the instant spawn_agent returns. Only /agents kill
+// (or the run's own limits) should end it. Regression for the "backgrounded
+// agent dies at ~3 turns / always 'already finished'" bug.
+func TestBackgroundRun_SurvivesParentCtxCancel(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	started := make(chan struct{})
+	m.execFn = blockingExecFor(m, started)
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	run, err := m.SpawnWithOptions(parent, "task", "/tmp", SpawnOptions{
+		BackgroundAfter: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	<-started
+	cancelParent() // parent tool ctx cancelled — must NOT kill the backgrounded run
+	time.Sleep(60 * time.Millisecond)
+
+	m.mu.Lock()
+	status := run.Status
+	m.mu.Unlock()
+	if status == "failed" || status == "cancelled" {
+		t.Fatalf("backgrounded run was killed by parent ctx cancel (status=%q) — must be detached", status)
+	}
+	if !m.Kill(run.ID) {
+		t.Fatal("Kill should still stop the detached background run")
+	}
+}
+
 // A run with a task_id is registered under both its id and task_id; ListRuns
 // must return it once, not twice (the /agents duplicate-row bug).
 func TestListRuns_DedupesTaskIDRuns(t *testing.T) {
