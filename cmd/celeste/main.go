@@ -1059,6 +1059,16 @@ func (a *TUIClientAdapter) ListSubagents() []tui.SubagentInfo {
 	return infos
 }
 
+// KillSubagent implements tui.SubagentKiller. It cancels a specific in-flight
+// subagent by id or task id (task 6ffb5a7c). Returns false if no cancellable run
+// matches (already finished or unknown id).
+func (a *TUIClientAdapter) KillSubagent(id string) bool {
+	if a.subMgr == nil {
+		return false
+	}
+	return a.subMgr.Kill(id)
+}
+
 // ResumeSubagent implements tui.SubagentResumer.
 // It continues a previously-failed subagent from its last saved checkpoint.
 func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID string) (string, error) {

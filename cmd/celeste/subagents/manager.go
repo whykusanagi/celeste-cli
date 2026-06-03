@@ -84,6 +84,7 @@ type Manager struct {
 	mu        sync.Mutex
 	mergeMu   sync.Mutex // serializes git merge operations across concurrent subagents
 	runs      map[string]*SubagentRun
+	cancels   map[string]context.CancelFunc // per-run cancel funcs so Kill(id) can stop a specific run (task 6ffb5a7c)
 	counter   int
 	isChild   bool        // true if this manager is inside a subagent (blocks recursion)
 	dagQueue  []*DAGEntry // tasks waiting for dependencies
@@ -107,6 +108,7 @@ func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
 		cfg:       cfg,
 		workspace: workspace,
 		runs:      make(map[string]*SubagentRun),
+		cancels:   make(map[string]context.CancelFunc),
 		isChild:   isChild,
 		mailbox:   NewMailbox(),
 	}
@@ -318,16 +320,26 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	}
 	m.mu.Unlock()
 
+	// Per-run cancellation: wrap the caller ctx so `/agents kill <id>` can stop
+	// THIS run specifically (task 6ffb5a7c). Registered under the run id (and
+	// task id) and cleared when execution finishes. Combined with the runtime's
+	// ctx-honoring fix (349f1f14), cancelling actually stops the run.
+	runCtx, cancel := context.WithCancel(ctx)
+	m.registerCancel(run, cancel)
+
 	// Fast path: no background threshold — run synchronously (default behavior).
 	if opts.BackgroundAfter <= 0 {
-		return m.execFn(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		final, err := m.execFn(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		m.clearCancel(run)
+		cancel()
+		return final, err
 	}
 
 	// Background-threshold path: start the execution in a goroutine and race
 	// against the threshold timer.
 	resultCh := make(chan *SubagentRun, 1)
 	go func() {
-		final, _ := m.execFn(ctx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		final, _ := m.execFn(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
 		resultCh <- final
 	}()
 
@@ -335,6 +347,8 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	case final := <-resultCh:
 		// Finished before threshold — return synchronously as if foreground.
 		// Propagate the real error so a failed pre-threshold run is not hidden.
+		m.clearCancel(run)
+		cancel()
 		if final != nil && final.Status == "failed" {
 			return final, fmt.Errorf("%s", final.Error)
 		}
@@ -362,6 +376,8 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 			run.Turns = final.Turns
 			run.CheckpointID = final.CheckpointID
 			m.mu.Unlock()
+			m.clearCancel(run)
+			cancel()
 
 			if cb != nil {
 				cb(run)
@@ -621,6 +637,51 @@ func (m *Manager) GetRun(id string) (*SubagentRun, bool) {
 	defer m.mu.Unlock()
 	run, ok := m.runs[id]
 	return run, ok
+}
+
+// registerCancel records the cancel func for a run under both its id and task id
+// so Kill can find it by either handle.
+func (m *Manager) registerCancel(run *SubagentRun, cancel context.CancelFunc) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cancels[run.ID] = cancel
+	if run.TaskID != "" {
+		m.cancels[run.TaskID] = cancel
+	}
+}
+
+// clearCancel removes the cancel handles for a finished run.
+func (m *Manager) clearCancel(run *SubagentRun) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.cancels, run.ID)
+	if run.TaskID != "" {
+		delete(m.cancels, run.TaskID)
+	}
+}
+
+// Kill cancels a specific in-flight subagent by id or task id (task 6ffb5a7c).
+// It returns true if a cancellable run was found. The run's context is cancelled
+// (which the runtime now honors — task 349f1f14) and its status is marked failed
+// so ListRuns reflects the kill immediately. A run that has already finished is
+// left untouched and returns false.
+func (m *Manager) Kill(id string) bool {
+	m.mu.Lock()
+	cancel := m.cancels[id]
+	run := m.runs[id]
+	if cancel == nil {
+		m.mu.Unlock()
+		return false
+	}
+	if run != nil && (run.Status == "running" || run.Status == "background" || run.Status == "waiting") {
+		run.Status = "failed"
+		run.Error = "killed by user"
+		run.EndedAt = time.Now()
+	}
+	m.mu.Unlock()
+
+	cancel()
+	return true
 }
 
 // Resume continues a previously-failed subagent from its last checkpoint.

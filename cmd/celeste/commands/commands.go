@@ -801,6 +801,8 @@ Chat:
   /user reset        Reset to default (Summoner)
   /confirm           Toggle confirm mode (propose actions before executing)
   /agents            List spawned subagents and their status
+  /agents resume <id> Resume a failed subagent from its last checkpoint
+  /agents kill <id>  Cancel a specific in-flight subagent
   /voice             Show ElevenLabs TTS config
   /voice list        List available ElevenLabs voices
   /voice set-key     Set ElevenLabs API key

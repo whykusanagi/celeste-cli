@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/agents kill <id>` cancels a specific in-flight subagent (task 6ffb5a7c).** The
+  manager now tracks a per-run cancel function (keyed by run id and task id) and
+  exposes `Manager.Kill`; the TUI wires `/agents kill <id>` (with autocomplete and
+  help text). Combined with the runtime ctx-honoring fix, this gives a manual escape
+  hatch for a stuck subagent instead of having to kill the whole TUI.
+
 ### Fixed
 
 - **Subagent/agent runtime no longer hangs uncancellably on a stuck tool (task 349f1f14).**

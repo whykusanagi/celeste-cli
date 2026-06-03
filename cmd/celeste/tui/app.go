@@ -192,6 +192,12 @@ type SubagentResumer interface {
 	ResumeSubagent(ctx context.Context, checkpointID string) (string, error)
 }
 
+// SubagentKiller is an optional extension for /agents kill <id>. It cancels a
+// specific in-flight subagent (task 6ffb5a7c).
+type SubagentKiller interface {
+	KillSubagent(id string) bool
+}
+
 // PromptRefresher is an optional extension to reload the system prompt
 // mid-session (after /confirm, /user, or other prompt-affecting changes).
 type PromptRefresher interface {
@@ -1179,6 +1185,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resumed subagent completed.\n\n%s", result)}
 					}
+				}
+
+				// /agents kill <id> — cancel a specific in-flight subagent (task 6ffb5a7c)
+				if len(cmd.Args) >= 2 && strings.ToLower(cmd.Args[0]) == "kill" {
+					id := cmd.Args[1]
+					killer, ok := m.llmClient.(SubagentKiller)
+					if !ok {
+						m.chat = m.chat.AddSystemMessage("Subagent kill not available.")
+						return m, nil
+					}
+					if killer.KillSubagent(id) {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Killed subagent %s.", id))
+					} else {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("No in-flight subagent matching %q (already finished or unknown id).", id))
+					}
+					return m, nil
 				}
 
 				lister, ok := m.llmClient.(SubagentLister)
