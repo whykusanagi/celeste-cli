@@ -163,6 +163,40 @@ func toolCallBatchSig(calls []llm.ToolCallResult) string {
 	return strings.Join(parts, ",")
 }
 
+// maxNoProgressStreak is how many turns of byte-identical tool RESULTS (same
+// tool name producing the same output) trip the progress guard. Higher than the
+// args-based maxSameCallStreak because args may legitimately vary; what signals
+// a true stuck loop is the model getting the same result over and over.
+const maxNoProgressStreak = 6
+
+// progressGuard catches a stuck loop the args-based guard misses (task 8f02ed3d):
+// the model re-calls the same tool with slightly-varying args but gets identical
+// results turn after turn. It keys on the RESULT, not the args, so legitimate
+// bulk work — where each call produces a distinct result (e.g. a new mp3 file) —
+// never trips it.
+type progressGuard struct {
+	lastSig string
+	streak  int
+}
+
+// observe records a turn's tool-result signature and reports whether the loop has
+// produced identical results maxNoProgressStreak times in a row. An empty
+// signature (no tool calls this turn) resets the streak.
+func (g *progressGuard) observe(sig string) bool {
+	if sig == "" {
+		g.streak = 0
+		g.lastSig = ""
+		return false
+	}
+	if sig == g.lastSig {
+		g.streak++
+	} else {
+		g.streak = 1
+		g.lastSig = sig
+	}
+	return g.streak >= maxNoProgressStreak
+}
+
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
@@ -219,6 +253,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 	const maxSameCallStreak = 3 // stop a true stuck loop: the IDENTICAL call repeated (mirrors the TUI guard)
 	lastToolSig := ""
 	sameToolStreak := 0
+	var progress progressGuard // result-based guard for args-varying loops (task 8f02ed3d)
 	for i := 0; i < maxLoops; i++ {
 		result, err := client.SendMessageSync(ctx, messages, toolDefs)
 		if err != nil {
@@ -267,29 +302,36 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 			}(),
 		})
 
-		// Execute each tool call and add results.
+		// Execute each tool call and add results. turnResults captures the
+		// (tool name | result) of each call so the progress guard can detect a
+		// loop that produces identical results despite varying args.
+		var turnResults []string
 		for _, tc := range result.ToolCalls {
 			// Corruption detected upstream (dropped stream delta): never run the
 			// tool with empty args — surface an error so the model can retry.
 			if tc.ArgsError != "" {
+				content := toolErrorJSON(tc.ArgsError)
 				messages = append(messages, tui.ChatMessage{
 					Role:       "tool",
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
-					Content:    toolErrorJSON(tc.ArgsError),
+					Content:    content,
 				})
+				turnResults = append(turnResults, tc.Name+"|"+content)
 				continue
 			}
 
 			var args map[string]any
 			if tc.Arguments != "" {
 				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+					content := toolErrorJSON(fmt.Sprintf("invalid tool arguments JSON: %v", err))
 					messages = append(messages, tui.ChatMessage{
 						Role:       "tool",
 						ToolCallID: tc.ID,
 						Name:       tc.Name,
-						Content:    toolErrorJSON(fmt.Sprintf("invalid tool arguments JSON: %v", err)),
+						Content:    content,
 					})
+					turnResults = append(turnResults, tc.Name+"|"+content)
 					continue
 				}
 			}
@@ -299,12 +341,14 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 			toolResult, err := registry.Execute(ctx, tc.Name, args)
 			if err != nil {
+				content := toolErrorJSON(fmt.Sprintf("tool execution failed: %v", err))
 				messages = append(messages, tui.ChatMessage{
 					Role:       "tool",
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
-					Content:    toolErrorJSON(fmt.Sprintf("tool execution failed: %v", err)),
+					Content:    content,
 				})
+				turnResults = append(turnResults, tc.Name+"|"+content)
 				continue
 			}
 			if tc.Name == "generate_speech" && !toolResult.Error {
@@ -316,6 +360,14 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 				ToolCallID: tc.ID,
 				Name:       tc.Name,
 			})
+			turnResults = append(turnResults, tc.Name+"|"+toolResult.Content)
+		}
+
+		// Progress guard: stop if the same tool(s) return identical results turn
+		// after turn (a stuck loop the args-based guard misses). Distinct results
+		// (e.g. bulk TTS writing a new file each call) reset the streak.
+		if progress.observe(strings.Join(turnResults, ",")) {
+			return []ContentBlock{{Type: "text", Text: fmt.Sprintf("Stopped: the model called the same tool with no new result %d turns in a row (stuck loop).", maxNoProgressStreak)}}, nil
 		}
 	}
 

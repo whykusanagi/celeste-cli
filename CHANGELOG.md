@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Progress-aware repetition guard (task 8f02ed3d).** The chat/message loop now
+  stops a stuck loop where the model re-calls the same tool with slightly-varying
+  args but gets byte-identical results turn after turn — a case the args-based guard
+  missed. It keys on the result, not the args, so legitimate bulk work (each call
+  producing a distinct result, e.g. a new mp3 file) is never blocked.
 - **Subagent/agent runtime no longer hangs uncancellably on a stuck tool (task 349f1f14).**
   A tool that ignores its context (e.g. a codegraph call spinning on the DB) used to
   block the turn loop forever — the per-tool timeout fired on the context but nothing
