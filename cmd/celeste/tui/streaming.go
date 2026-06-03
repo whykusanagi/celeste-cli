@@ -491,7 +491,7 @@ func CorruptCodeLine(codeLine string, intensity float64) string {
 func GetCodeBlockStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(theme.Hex("cyan"))). // canonical corrupted-cyan (#49)
-		Background(lipgloss.Color("#0f0f1a")). // Darker background
+		Background(lipgloss.Color("#0f0f1a")).         // Darker background
 		Padding(0, 1)
 }
 

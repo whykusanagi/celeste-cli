@@ -57,16 +57,16 @@ type Options struct {
 	// Model overrides the LLM model for this run (the model-router seam). Empty
 	// uses cfg.Model. Agent/orchestrate/subagent callers set this to
 	// cfg.ResolveAgentModel() so agent work can use a tool-capable/reasoning model.
-	Model                         string        `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
 	// AutoApproveTools runs the permission checker in Trust mode (allow all).
 	// Set for subagents, which are headless and would otherwise deny every
 	// write/exec tool ("Ask" with no prompt). Spawning the subagent is the
 	// approval. Never set for the interactive main agent.
-	AutoApproveTools              bool          `json:"auto_approve_tools"`
-	EmitArtifacts                 bool          `json:"emit_artifacts"`
-	ArtifactDir                   string        `json:"artifact_dir,omitempty"`
-	DisableCheckpoints            bool          `json:"disable_checkpoints"`
-	Verbose                       bool          `json:"verbose"`
+	AutoApproveTools   bool   `json:"auto_approve_tools"`
+	EmitArtifacts      bool   `json:"emit_artifacts"`
+	ArtifactDir        string `json:"artifact_dir,omitempty"`
+	DisableCheckpoints bool   `json:"disable_checkpoints"`
+	Verbose            bool   `json:"verbose"`
 	// OnProgress is an optional callback invoked at key agent events.
 	// text is a human-readable label. turn/maxTurns are 0 for non-turn events.
 	// This field is not serialised to JSON (func types are not JSON-safe).

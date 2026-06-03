@@ -15,7 +15,7 @@ func TestParseVeniceToolSupport(t *testing.T) {
 	m := parseVeniceToolSupport(body)
 
 	cases := map[string]bool{
-		"venice-uncensored-1-2":        true,  // heuristic would WRONGLY block this
+		"venice-uncensored-1-2":        true, // heuristic would WRONGLY block this
 		"e2ee-venice-uncensored-24b-p": false,
 		"zai-org-glm-5":                true,
 		"some-image-model":             false, // no capabilities -> false

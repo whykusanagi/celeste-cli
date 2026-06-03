@@ -85,9 +85,9 @@ const (
 // Config holds all configuration for Celeste CLI.
 type Config struct {
 	// API settings
-	APIKey       string `json:"api_key"`
-	BaseURL      string `json:"base_url"`
-	Model        string `json:"model"`
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
 	// AgentModel is the model used for agent / orchestrate / subagent work
 	// (free tool-selection). Chat/TTS use Model. Empty falls back to Model.
 	// Lets you pin a reasoning/tool-capable model for agent work while keeping a

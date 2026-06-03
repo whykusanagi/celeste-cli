@@ -27,10 +27,10 @@ var ModelLimits = map[string]int{
 	"claude-sonnet-4-6": 1000000,
 	"claude-haiku-4-5":  200000,
 	// xAI Grok — current generation (from /v1/models API, 2026-04)
-	"grok-build-0.1":               256000, // grok code model — 256K context
-	"grok-4-1-fast":                2000000, // dead (migrated away on load); kept for old logs
-	"grok-4-1-fast-reasoning":      2000000,
-	"grok-4-1-fast-non-reasoning":  2000000,
+	"grok-build-0.1":              256000,  // grok code model — 256K context
+	"grok-4-1-fast":               2000000, // dead (migrated away on load); kept for old logs
+	"grok-4-1-fast-reasoning":     2000000,
+	"grok-4-1-fast-non-reasoning": 2000000,
 	// grok-4.x family: 1M context per docs.x.ai (2026-06). NOTE: corrected down
 	// from 2M — overstating the window let history grow past the real API limit.
 	"grok-4.3":                     1000000,
