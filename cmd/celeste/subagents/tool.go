@@ -276,6 +276,32 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}, nil
 	}
 
+	// Background path: the run was returned still in flight (background_after
+	// elapsed). It has no EndedAt/turns yet, so do NOT format it as "completed in
+	// 0 turns (…)" — that misleads the model into thinking the spawn did nothing
+	// and re-spawning in a loop (db9b9282). Tell it the agent is running and to
+	// check /agents instead.
+	if run.Status == "background" || run.Status == "running" {
+		if progress != nil {
+			progress <- tools.ProgressEvent{
+				ToolName: "spawn_agent",
+				Message:  fmt.Sprintf("〔%s〕 running in background", run.Name),
+			}
+		}
+		bg := fmt.Sprintf("〔%s〕 (%s) is running in the background (id:%s). Do NOT spawn it again — check status with /agents, and cancel with /agents kill %s if needed. Its result will arrive when it finishes.",
+			run.Name, run.Element, run.ID, run.Element)
+		return tools.ToolResult{
+			Content: bg,
+			Metadata: map[string]any{
+				"subagent_id":   run.ID,
+				"subagent_name": run.Name,
+				"element":       run.Element,
+				"status":        run.Status,
+				"background":    true,
+			},
+		}, nil
+	}
+
 	// Emit completion with element name
 	if progress != nil {
 		progress <- tools.ProgressEvent{
@@ -284,11 +310,14 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	// Format result with element identity
+	// Format result with element identity. Guard the duration against a zero
+	// EndedAt (defensive — a terminal run should always have it set).
+	elapsed := "—"
+	if !run.EndedAt.IsZero() {
+		elapsed = run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond).String()
+	}
 	result := fmt.Sprintf("〔%s〕 (%s) — completed in %d turns (%s)\n\n%s",
-		run.Name, run.Element,
-		run.Turns, run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
-		run.Result)
+		run.Name, run.Element, run.Turns, elapsed, run.Result)
 
 	return tools.ToolResult{
 		Content: result,
