@@ -215,7 +215,7 @@ type OrchestratorConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		BaseURL:               "https://api.x.ai/v1",
-		Model:                 "grok-build-0.1", // current supported Grok code variant (#51)
+		Model:                 "grok-4.20-0309-non-reasoning", // non-reasoning: no reasoning-token burn, no routing to grok-4.3, reliable tool use (#51)
 		Timeout:               60,
 		SkipPersonaPrompt:     false,
 		SimulateTyping:        true,
@@ -618,10 +618,16 @@ func Load() (*Config, error) {
 // deprecatedModels maps Grok models xAI no longer serves to their supported
 // replacement. Loading a config on one of these silently fell back to a
 // cost-prohibitive variant server-side; migrate it instead (#51).
+// deprecatedModels maps Grok models that xAI silently ROUTES to the
+// cost-prohibitive grok-4.3 (the grok-4-1-* family) to a safe replacement.
+// Using any of these burns grok-4.3 pricing + reasoning tokens without the user
+// knowing — migrate them to the non-reasoning default instead (#51).
 var deprecatedModels = map[string]string{
-	"grok-4-1-fast-reasoning":     "grok-build-0.1",
-	"grok-4-1-fast-non-reasoning": "grok-build-0.1",
-	"grok-4-1-reasoning":          "grok-build-0.1",
+	"grok-4-1-fast":               "grok-4.20-0309-non-reasoning",
+	"grok-4-1-fast-reasoning":     "grok-4.20-0309-non-reasoning",
+	"grok-4-1-fast-non-reasoning": "grok-4.20-0309-non-reasoning",
+	"grok-4-1-reasoning":          "grok-4.20-0309-non-reasoning",
+	"grok-4-1":                    "grok-4.20-0309-non-reasoning",
 }
 
 // reconcileModel fills an empty model with the default and migrates a known-

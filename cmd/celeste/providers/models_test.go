@@ -39,7 +39,7 @@ func TestGetStaticModels(t *testing.T) {
 		hasToolModels bool
 		checkModelID  string // Specific model to verify
 	}{
-		{"grok", 5, true, "grok-build-0.1"},
+		{"grok", 4, true, "grok-4.20-0309-non-reasoning"},
 		{"openai", 4, true, "gpt-4.1-nano"},
 		{"venice", 3, true, "llama-3.3-70b"},
 		{"anthropic", 2, true, "claude-sonnet-4-5-20250929"},
@@ -92,7 +92,7 @@ func TestGetBestToolModel(t *testing.T) {
 		expectedModel string
 	}{
 		{"openai", "gpt-4.1-nano"},
-		{"grok", "grok-build-0.1"},
+		{"grok", "grok-4.20-0309-non-reasoning"},
 		{"venice", ""}, // Venice uncensored has no tool model
 		{"anthropic", "claude-sonnet-4-5-20250929"},
 		{"gemini", "gemini-2.0-flash"},
@@ -223,7 +223,7 @@ func TestGetModelDescription(t *testing.T) {
 	}{
 		{"openai", "gpt-4.1-nano", "Fast, affordable"},
 		{"openai", "gpt-4-turbo", "Previous flagship"},
-		{"grok", "grok-4-1-fast", "Best for tool calling"},
+		{"grok", "grok-4.20-0309-non-reasoning", "tool calling"},
 		{"anthropic", "claude-opus-4-5-20251101", "Most capable"},
 		{"anthropic", "claude-sonnet-4-5-20250929", "advanced tool use"},
 		{"venice", "venice-uncensored", "NSFW uncensored"},
@@ -336,17 +336,20 @@ func TestGrokStaticModels(t *testing.T) {
 		return nil
 	}
 
-	// grok-build-0.1 is the current default/recommended tool model.
+	// grok-4.20-0309-non-reasoning is the current default/recommended tool model.
+	defModel := findGrokModel("grok-4.20-0309-non-reasoning")
+	assert.NotNil(t, defModel, "Should have grok-4.20-0309-non-reasoning model")
+	assert.True(t, defModel.SupportsTools, "grok-4.20-0309-non-reasoning should support tools")
+
+	// grok-build-0.1 remains in the static catalog as a selectable option.
 	buildModel := findGrokModel("grok-build-0.1")
 	assert.NotNil(t, buildModel, "Should have grok-build-0.1 model")
 	assert.True(t, buildModel.SupportsTools, "grok-build-0.1 should support tools")
 
-	// grok-4-1-fast back-compat assertion: still in the static catalog.
-	fastModel := findGrokModel("grok-4-1-fast")
-	assert.NotNil(t, fastModel, "Should have grok-4-1-fast model")
-	assert.True(t, fastModel.SupportsTools, "grok-4-1-fast should support tools")
-	assert.Equal(t, 2000000, fastModel.ContextWindow, "Should have 2M context")
-	assert.Contains(t, fastModel.Description, "2M context", "Should mention context in description")
+	// The grok-4-1-* family routes to the cost-prohibitive grok-4.3 and must NOT
+	// be offered in the catalog.
+	assert.Nil(t, findGrokModel("grok-4-1-fast"), "grok-4-1-fast must not be in the catalog (routes to grok-4.3)")
+	assert.Nil(t, findGrokModel("grok-4-1"), "grok-4-1 must not be in the catalog (routes to grok-4.3)")
 }
 
 // TestOpenAIStaticModels specifically tests OpenAI models

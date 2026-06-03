@@ -51,11 +51,11 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    true,
 		SupportsTokenTracking:   true, // OpenAI-compatible token tracking
-		DefaultModel:            "grok-build-0.1",
-		PreferredToolModel:      "grok-build-0.1", // current supported Grok code variant (#51)
+		DefaultModel:            "grok-4.20-0309-non-reasoning",
+		PreferredToolModel:      "grok-4.20-0309-non-reasoning", // non-reasoning: reliable tool use, no reasoning burn, no grok-4.3 routing (#51)
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
-		Notes:                   "Use grok-build-0.1 for best tool calling performance. Large context window.",
+		Notes:                   "Default grok-4.20-0309-non-reasoning: reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3. Avoid grok-4-1-* (they route to grok-4.3).",
 	},
 
 	"venice": {
