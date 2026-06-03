@@ -77,7 +77,11 @@ func (t *CodeSearchTool) Execute(ctx context.Context, input map[string]any, prog
 
 	switch mode {
 	case "semantic":
-		results, err := t.indexer.SemanticSearch(query, limit)
+		results, err := t.indexer.SemanticSearchWithContext(ctx, query, codegraph.SemanticSearchOptions{
+			TopK:            limit,
+			ApplyPathFilter: true,
+			Reranker:        codegraph.NewStructuralReranker(),
+		})
 		if err != nil {
 			return tools.ToolResult{Error: true, Content: fmt.Sprintf("semantic search error: %s", err)}, nil
 		}

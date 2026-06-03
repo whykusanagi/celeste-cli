@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -205,6 +206,16 @@ func (idx *Indexer) Store() *Store {
 // in_databricks defined in util.py) would silently drop their edges because
 // the target symbol didn't exist in the DB yet.
 func (idx *Indexer) Build() error {
+	return idx.BuildWithContext(context.Background())
+}
+
+// BuildWithContext is the cancellable variant of Build. It checks ctx between
+// files so an index build started under a tool deadline can abort instead of
+// walking the whole repo (task 349f1f14 complement).
+func (idx *Indexer) BuildWithContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
@@ -213,7 +224,12 @@ func (idx *Indexer) Build() error {
 	// Pass 1: store all symbols, MinHash, tokens, LSH bands, and file records.
 	// Collect raw edges for deferred resolution in pass 2.
 	var allRawEdges []RawEdge
-	for _, path := range files {
+	for i, path := range files {
+		if i&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		raw, err := idx.indexFileSymbols(path)
 		if err != nil {
 			// Log but don't fail on individual file errors
@@ -250,6 +266,16 @@ func (idx *Indexer) Build() error {
 // content hash has changed since the last index. Removes symbols for
 // deleted files.
 func (idx *Indexer) Update() error {
+	return idx.UpdateWithContext(context.Background())
+}
+
+// UpdateWithContext is the cancellable variant of Update. It checks ctx between
+// re-indexed files so an incremental update started under a tool deadline can
+// abort instead of re-parsing the whole repo (task 349f1f14 complement).
+func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Get currently indexed files
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
@@ -279,7 +305,12 @@ func (idx *Indexer) Update() error {
 	}
 
 	// Index new or changed files
-	for _, path := range currentFiles {
+	for i, path := range currentFiles {
+		if i&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		hash, err := fileContentHash(filepath.Join(idx.workspace, path))
 		if err != nil {
 			continue
@@ -610,6 +641,17 @@ func (idx *Indexer) SemanticSearch(query string, topK int) ([]SearchResult, erro
 
 // SemanticSearchWithOptions is the full-options variant of SemanticSearch.
 func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchOptions) ([]SearchResult, error) {
+	return idx.SemanticSearchWithContext(context.Background(), query, opts)
+}
+
+// SemanticSearchWithContext is the cancellable variant. It checks ctx before the
+// expensive candidate-scoring loops so a search invoked as a tool can be aborted
+// at the agent's tool deadline instead of spinning the corpus to completion
+// (task 349f1f14 complement — stops the abandoned goroutine's CPU burn).
+func (idx *Indexer) SemanticSearchWithContext(ctx context.Context, query string, opts SemanticSearchOptions) ([]SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if opts.TopK <= 0 {
 		opts.TopK = 10
 	}
@@ -665,7 +707,12 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 		}
 		if len(candidateIDs) > 0 {
 			usedLSH = true
-			for _, id := range candidateIDs {
+			for i, id := range candidateIDs {
+				if i&511 == 0 {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+				}
 				sig, err := idx.store.GetMinHash(id)
 				if err != nil || sig == nil {
 					continue
@@ -688,7 +735,12 @@ func (idx *Indexer) SemanticSearchWithOptions(query string, opts SemanticSearchO
 		if err != nil {
 			return nil, fmt.Errorf("get minhashes: %w", err)
 		}
-		for _, entry := range entries {
+		for i, entry := range entries {
+			if i&511 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			sim := JaccardSimilarity(querySig, entry.Signature)
 			if sim > minSim {
 				results = append(results, scored{entry.SymbolID, sim})

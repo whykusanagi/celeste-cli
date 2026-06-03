@@ -227,7 +227,7 @@ func (s *Server) indexUpdate(ctx context.Context, workspace string) ([]ContentBl
 	}
 	SendProgress(ctx, fmt.Sprintf("starting incremental update on %s", workspace), 0)
 	start := time.Now()
-	if err := idx.Update(); err != nil {
+	if err := idx.UpdateWithContext(ctx); err != nil {
 		return nil, fmt.Errorf("update: %w", err)
 	}
 	elapsed := time.Since(start).Round(time.Millisecond)
@@ -274,7 +274,7 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	}
 	SendProgress(ctx, fmt.Sprintf("starting full rebuild on %s", workspace), 0)
 	start := time.Now()
-	if err := idx.Build(); err != nil {
+	if err := idx.BuildWithContext(ctx); err != nil {
 		return nil, fmt.Errorf("build: %w", err)
 	}
 	elapsed := time.Since(start).Round(time.Millisecond)

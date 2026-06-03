@@ -16,7 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline even if the tool keeps running, and the turn loop checks `ctx.Err()` between
   turns so an expired parent deadline (a subagent's overall timeout) stops it promptly.
   New `StatusCancelled` run status. (Caveat: an uncooperative tool's goroutine is
-  abandoned rather than force-killed; making long-running tools honor ctx is a follow-up.)
+  abandoned rather than force-killed; the codegraph complement below addresses the
+  most common offender.)
+- **Codegraph operations honor context cancellation.** `SemanticSearch`,
+  `Build`, and `Update` gained `*WithContext` variants that check `ctx` before and
+  during their hot loops, so a `code_search`/`code_index` tool call (the goroutine
+  most likely left spinning by the bug above) actually stops at the tool deadline
+  instead of scanning the whole corpus/repo. The `code_search` tool and the
+  server index tools now pass their request context through. Non-ctx signatures
+  are preserved as `context.Background()` wrappers.
 
 ## [1.10.0] - 2026-06-02
 
