@@ -69,3 +69,48 @@ func TestKill_UnknownIDReturnsFalse(t *testing.T) {
 		t.Fatal("Kill should return false for an unknown id")
 	}
 }
+
+// Concurrent Kill + ListRuns + completion must be race-free (run under -race).
+// Guards the per-run cancel map and the run-status writes the security review
+// flagged (registerCancel/clearCancel/Kill/ListRuns all touch shared state).
+func TestKill_ConcurrentWithListRunsRaceFree(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	started := make(chan struct{}, 4)
+	m.execFn = func(ctx context.Context, run *SubagentRun, _, _ string, _ TurnCallback, _ int, _ bool) (*SubagentRun, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		m.mu.Lock()
+		if run.Status != "failed" {
+			run.Status = "cancelled"
+		}
+		run.EndedAt = time.Now()
+		m.mu.Unlock()
+		return run, ctx.Err()
+	}
+
+	var runs []*SubagentRun
+	for i := 0; i < 4; i++ {
+		r, err := m.SpawnWithOptions(context.Background(), "task", "/tmp", SpawnOptions{
+			BackgroundAfter: time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("spawn %d: %v", i, err)
+		}
+		runs = append(runs, r)
+	}
+	for i := 0; i < 4; i++ {
+		<-started
+	}
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 200; i++ {
+			_ = m.ListRuns()
+		}
+		close(done)
+	}()
+	for _, r := range runs {
+		m.Kill(r.ID)
+	}
+	<-done
+}

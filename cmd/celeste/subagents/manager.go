@@ -328,11 +328,13 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 	m.registerCancel(run, cancel)
 
 	// Fast path: no background threshold — run synchronously (default behavior).
+	// Cleanup via defer so a panic in execFn can't leak the cancel-map entry.
 	if opts.BackgroundAfter <= 0 {
-		final, err := m.execFn(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
-		m.clearCancel(run)
-		cancel()
-		return final, err
+		defer func() {
+			m.clearCancel(run)
+			cancel()
+		}()
+		return m.execFn(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
 	}
 
 	// Background-threshold path: start the execution in a goroutine and race
@@ -456,21 +458,29 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		}
 		w, err := AddWorktree(workspace, wtName)
 		if err != nil {
+			m.mu.Lock()
 			run.Status = "failed"
 			run.Error = fmt.Sprintf("worktree setup: %v", err)
 			run.EndedAt = time.Now()
+			m.mu.Unlock()
 			return run, err
 		}
 		wt = w
 		execWorkspace = w.Path
 		defer func() {
-			if run.Status == "completed" {
+			// run.Status/Error may be written concurrently by Kill — guard reads/writes.
+			m.mu.Lock()
+			completed := run.Status == "completed"
+			m.mu.Unlock()
+			if completed {
 				m.mergeMu.Lock()
 				mErr := MergeWorktree(workspace, wt)
 				m.mergeMu.Unlock()
 				if mErr != nil {
 					// Keep run result intact; note merge failure in the error field.
+					m.mu.Lock()
 					run.Error = strings.TrimSpace(run.Error + " (worktree merge failed: " + mErr.Error() + ")")
+					m.mu.Unlock()
 				}
 			}
 			_ = RemoveWorktree(workspace, wt)
@@ -496,9 +506,11 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
+			m.mu.Lock()
 			run.Status = "failed"
 			run.Error = "cancelled during stagger delay"
 			run.EndedAt = time.Now()
+			m.mu.Unlock()
 			return run, ctx.Err()
 		}
 	}
@@ -510,9 +522,11 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
+		m.mu.Lock()
 		run.Status = "failed"
 		run.Error = err.Error()
 		run.EndedAt = time.Now()
+		m.mu.Unlock()
 		return run, fmt.Errorf("create subagent: %w", err)
 	}
 	defer runner.Close()
