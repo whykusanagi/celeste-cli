@@ -779,8 +779,15 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 func (m *Manager) ListRuns() []*SubagentRun {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// A run with a task_id is registered under BOTH its id and its task_id, so
+	// dedupe by run id to avoid showing it twice in /agents (#d15ac448 follow-up).
+	seen := make(map[string]bool, len(m.runs))
 	runs := make([]*SubagentRun, 0, len(m.runs))
 	for _, r := range m.runs {
+		if seen[r.ID] {
+			continue
+		}
+		seen[r.ID] = true
 		runs = append(runs, r)
 	}
 	// Sort by start time descending

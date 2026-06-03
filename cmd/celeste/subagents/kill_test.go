@@ -123,6 +123,19 @@ func TestKill_ByElementName(t *testing.T) {
 	}
 }
 
+// A run with a task_id is registered under both its id and task_id; ListRuns
+// must return it once, not twice (the /agents duplicate-row bug).
+func TestListRuns_DedupesTaskIDRuns(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	m.execFn = fakeExecFor(m, time.Millisecond)
+	if _, err := m.SpawnWithOptions(context.Background(), "task", "/tmp", SpawnOptions{TaskID: "summarizer"}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got := len(m.ListRuns()); got != 1 {
+		t.Fatalf("expected 1 deduped run, got %d", got)
+	}
+}
+
 // Kill on an unknown id returns false rather than panicking.
 func TestKill_UnknownIDReturnsFalse(t *testing.T) {
 	m := NewManager(&config.Config{}, "/tmp", false)
