@@ -54,6 +54,10 @@ type Options struct {
 	RequireVerification           bool          `json:"require_verification"`
 	VerificationCommands          []string      `json:"verification_commands,omitempty"`
 	VerifyTimeout                 time.Duration `json:"verify_timeout"`
+	// Model overrides the LLM model for this run (the model-router seam). Empty
+	// uses cfg.Model. Agent/orchestrate/subagent callers set this to
+	// cfg.ResolveAgentModel() so agent work can use a tool-capable/reasoning model.
+	Model                         string        `json:"model,omitempty"`
 	// AutoApproveTools runs the permission checker in Trust mode (allow all).
 	// Set for subagents, which are headless and would otherwise deny every
 	// write/exec tool ("Ask" with no prompt). Spawning the subagent is the

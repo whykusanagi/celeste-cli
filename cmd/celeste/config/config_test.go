@@ -593,3 +593,25 @@ func TestReconcileModel(t *testing.T) {
 		assert.Equal(t, "gpt-4.1-mini", c.Model)
 	})
 }
+
+func TestResolveAgentModel(t *testing.T) {
+	// Empty AgentModel falls back to chat Model.
+	c := &Config{Model: "grok-4.20-0309-non-reasoning"}
+	if got := c.ResolveAgentModel(); got != "grok-4.20-0309-non-reasoning" {
+		t.Fatalf("empty AgentModel should fall back to Model, got %q", got)
+	}
+	// Set AgentModel is used for agent work.
+	c.AgentModel = "grok-4.20-0309-reasoning"
+	if got := c.ResolveAgentModel(); got != "grok-4.20-0309-reasoning" {
+		t.Fatalf("ResolveAgentModel should return AgentModel, got %q", got)
+	}
+}
+
+func TestReconcileMigratesAgentModel(t *testing.T) {
+	// A deprecated AgentModel (grok-4-1-* trap) is migrated to the safe default.
+	c := &Config{Model: "grok-4.20-0309-non-reasoning", AgentModel: "grok-4-1-fast"}
+	reconcileModel(c)
+	if c.AgentModel == "grok-4-1-fast" {
+		t.Fatalf("deprecated AgentModel should be migrated, still %q", c.AgentModel)
+	}
+}

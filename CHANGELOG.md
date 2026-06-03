@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Model router + capability guardrail (task e8775b91).** New `agent_model` config
+  field: agent / orchestrate / subagent work uses `ResolveAgentModel()` (agent_model
+  if set, else the chat model), so you can pin a reasoning/tool-capable model for
+  agent work while keeping a cheap non-reasoning model for chat. The agent runner
+  warns loudly when the chosen model doesn't support tool calling (it will flail /
+  hallucinate in agent mode). `reconcileModel` migrates the grok-4-1-* trap on
+  `agent_model` too. (`Options.Model` is the per-run override seam.)
+- **Subagents + MCP agent mode auto-approve tools** so they can actually do work
+  (write/commit/bash) headlessly — spawning / invoking is the approval. The
+  interactive main agent stays `/confirm`-gated.
 - **Corruption colors are sourced from the canonical corrupted-theme palette
   (task 7aa133c9).** New `cmd/celeste/tui/theme` package embeds `colors.json`
   (synced from corrupted-theme `src/data/colors.json` via `make sync-theme`);

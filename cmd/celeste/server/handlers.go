@@ -393,6 +393,8 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 	opts := agent.Options{
 		Workspace: workspace,
 		MaxTurns:  50,
+		// Route MCP agent-mode work to the agent model (task e8775b91).
+		Model:     cfg.ResolveAgentModel(),
 		// MCP `celeste agent` mode is headless (no approval modal), like a
 		// subagent. Without this, every write/exec tool resolves to "Ask" and is
 		// denied, so the MCP-driven agent can't bash/write/commit. Invoking the

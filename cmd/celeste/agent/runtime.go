@@ -22,6 +22,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -117,10 +118,25 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
 
+	// Model-router seam: agent/orchestrate/subagent callers may override the model
+	// (cfg.ResolveAgentModel()) so agent work uses a tool-capable/reasoning model
+	// while chat keeps a cheaper one (task e8775b91). Guardrail: warn loudly if the
+	// chosen model doesn't support tool calling — that model will flail/hallucinate
+	// in agent mode (observed with non-reasoning grok failing to drive spawn_agent).
+	model := cfg.Model
+	if options.Model != "" {
+		model = options.Model
+	}
+	if provider := providers.DetectProvider(cfg.BaseURL); provider != "" {
+		if !providers.NewModelDetection(provider).SupportsTools(model) {
+			fmt.Fprintf(errOut, "⚠️  agent model %q (%s) may not support tool calling — agent/subagent work can fail or hallucinate; consider setting a tool-capable agent_model\n", model, provider)
+		}
+	}
+
 	llmConfig := &llm.Config{
 		APIKey:                cfg.APIKey,
 		BaseURL:               cfg.BaseURL,
-		Model:                 cfg.Model,
+		Model:                 model,
 		Timeout:               cfg.GetTimeout(),
 		SkipPersonaPrompt:     cfg.SkipPersonaPrompt,
 		SimulateTyping:        cfg.SimulateTyping,
@@ -161,7 +177,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	// Create a token budget for context tracking.
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
-	budget := ctxmgr.NewTokenBudgetForModel(cfg.Model, systemPromptTokens, 0)
+	budget := ctxmgr.NewTokenBudgetForModel(model, systemPromptTokens, 0)
 
 	return &Runner{
 		client:   client,

@@ -88,6 +88,11 @@ type Config struct {
 	APIKey       string `json:"api_key"`
 	BaseURL      string `json:"base_url"`
 	Model        string `json:"model"`
+	// AgentModel is the model used for agent / orchestrate / subagent work
+	// (free tool-selection). Chat/TTS use Model. Empty falls back to Model.
+	// Lets you pin a reasoning/tool-capable model for agent work while keeping a
+	// cheap non-reasoning model for chat (model-router guardrail, task e8775b91).
+	AgentModel   string `json:"agent_model,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 
@@ -634,6 +639,14 @@ var deprecatedModels = map[string]string{
 // deprecated model to its replacement. Returns whether config.Model changed,
 // the previous value (empty if it was unset), and the new value.
 func reconcileModel(config *Config) (changed bool, from, to string) {
+	// Migrate AgentModel too (if set) so the same grok-4-1-* trap protection
+	// applies to the agent-router model. Reported via the chat-model return only;
+	// the agent-model migration is silent (best-effort).
+	if config.AgentModel != "" {
+		if repl, ok := deprecatedModels[config.AgentModel]; ok && repl != config.AgentModel {
+			config.AgentModel = repl
+		}
+	}
 	if config.Model == "" {
 		config.Model = DefaultConfig().Model
 		return true, "", config.Model
@@ -644,6 +657,16 @@ func reconcileModel(config *Config) (changed bool, from, to string) {
 		return true, from, repl
 	}
 	return false, "", ""
+}
+
+// ResolveAgentModel returns the model to use for agent / orchestrate / subagent
+// work: AgentModel if set, otherwise the chat Model. This is the router seam —
+// callers entering agent mode use this instead of Model.
+func (c *Config) ResolveAgentModel() string {
+	if c.AgentModel != "" {
+		return c.AgentModel
+	}
+	return c.Model
 }
 
 // Save saves configuration to file.

@@ -415,6 +415,9 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 	opts := agent.Options{
 		Workspace: workspace,
 		MaxTurns:  maxTurns,
+		// Route subagent work to the agent model (reasoning/tool-capable if set;
+		// falls back to chat model) — task e8775b91.
+		Model:     m.cfg.ResolveAgentModel(),
 		Verbose:   false,
 		// Subagents are headless — spawning them is the user's approval, so they
 		// run in Trust mode (allow all tools). Without this, every write/exec tool
