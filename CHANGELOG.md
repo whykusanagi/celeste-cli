@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Subagent/agent runtime no longer hangs uncancellably on a stuck tool (task 349f1f14).**
+  A tool that ignores its context (e.g. a codegraph call spinning on the DB) used to
+  block the turn loop forever — the per-tool timeout fired on the context but nothing
+  observed it. Tool execution now runs under `runToolWithTimeout`, which returns at the
+  deadline even if the tool keeps running, and the turn loop checks `ctx.Err()` between
+  turns so an expired parent deadline (a subagent's overall timeout) stops it promptly.
+  New `StatusCancelled` run status. (Caveat: an uncooperative tool's goroutine is
+  abandoned rather than force-killed; making long-running tools honor ctx is a follow-up.)
+
+## [1.10.0] - 2026-06-02
+
+### Added
+
+- **Subagent resilience and orchestration.** Transient-error retry with backoff at the
+  LLM client layer — 429 honors `Retry-After`, 5xx and network errors retry with capped
+  exponential backoff, 4xx fails fast (#29). Background subagents with auto-transition
+  after a threshold, exposed via the `spawn_agent` `background_after` param (#30).
+  Inter-agent mailbox messaging with a `post_message` tool for spawn-time injection (#31).
+  Opt-in git worktree isolation per subagent (`isolate_worktree` param), with serialized
+  merges and sanitized worktree names (#32). Checkpoint persistence with `/agents resume`
+  to continue a failed subagent from its last completed turn (#33).
+- **TUI hard permission gate (#34).** Modal confirmation that blocks tool execution:
+  reads auto-approve, writes require approval. Options for yes / no / yes-for-this-tool /
+  yes-all-this-session, with rule persistence.
+- **Codegraph accuracy improvements.** STUB detection now skips dunder methods (#42),
+  `Protocol`/`ABC`/`@abstractmethod` members (#43); decorator `@syntax` calls (#44) and
+  `@property.setter` assignments (#45) are captured as call edges; `include_tests` now
+  matches top-level test dirs and pytest conventions (#46); two-pass `Build()` fixes
+  dropped cross-file caller counts (#47).
+
+### Changed
+
+- **Default model is now `grok-4.20-0309-non-reasoning`** — reliable tool calling, zero
+  reasoning-token burn, never routes to the cost-prohibitive grok-4.3.
+
+### Fixed
+
+- **xAI streaming tool-call JSON corruption / TTS hallucination (#48).** Validate
+  assembled tool-call JSON at stream finish, chat-mode error-handling parity with agent
+  mode, block hallucinated `Audio saved:` claims when no file is written, distinguish
+  missing vs empty TTS text, and cap consecutive invalid-args turns instead of retrying
+  unbounded.
+- **Model routing safety (#51).** Auto-migrate deprecated `grok-4-1-*` models (xAI
+  silently routes them to grok-4.3 — the cost trap) and fill empty model on load; clamp
+  a stale `context_limit` that exceeds the model window; correct `grok-build-0.1` to its
+  real 256K window and pricing.
+- **Repetition guard** in both the TUI and server message loops — the call signature now
+  includes args, so it only trips on identical repeated calls and does not block bulk
+  distinct work (e.g. batch TTS).
+- **macOS install** no longer produces `zsh: killed` — `make install` builds to the
+  destination and re-applies an ad-hoc code signature instead of `cp`-over-existing.
+- **Theme color drift (#49)** — corruption cyan/red aligned to canonical corrupted-theme
+  0.2.0 (`#00ffff` / `#ff0000`).
+- **Quiet MCP startup** — per-tool registration logging is now gated behind
+  `CELESTE_MCP_DEBUG`.
+
+### Security
+
+- **Hard permission gate (#34)** blocks tool execution pending explicit approval,
+  closing the prompt-injection bypass of the previous soft `/confirm`.
+- **Subagent worktree isolation (#32)** contains the blast radius of any single subagent.
+- **grok-4-1-\* migration guard (#51)** prevents silent routing to the cost-prohibitive
+  grok-4.3 model.
+
 ## [1.9.3] - 2026-04-21
 
 ### Added
