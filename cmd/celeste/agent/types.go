@@ -54,6 +54,11 @@ type Options struct {
 	RequireVerification           bool          `json:"require_verification"`
 	VerificationCommands          []string      `json:"verification_commands,omitempty"`
 	VerifyTimeout                 time.Duration `json:"verify_timeout"`
+	// AutoApproveTools runs the permission checker in Trust mode (allow all).
+	// Set for subagents, which are headless and would otherwise deny every
+	// write/exec tool ("Ask" with no prompt). Spawning the subagent is the
+	// approval. Never set for the interactive main agent.
+	AutoApproveTools              bool          `json:"auto_approve_tools"`
 	EmitArtifacts                 bool          `json:"emit_artifacts"`
 	ArtifactDir                   string        `json:"artifact_dir,omitempty"`
 	DisableCheckpoints            bool          `json:"disable_checkpoints"`

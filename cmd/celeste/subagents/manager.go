@@ -416,6 +416,11 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 		Workspace: workspace,
 		MaxTurns:  maxTurns,
 		Verbose:   false,
+		// Subagents are headless — spawning them is the user's approval, so they
+		// run in Trust mode (allow all tools). Without this, every write/exec tool
+		// resolves to "Ask" with no prompt and is denied, so the subagent can't
+		// write/commit/bash (broke worktree work + made background agents inert).
+		AutoApproveTools: true,
 	}
 	if turnCb != nil {
 		cb := turnCb

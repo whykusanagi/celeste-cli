@@ -108,6 +108,13 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		defaultCfg := permissions.DefaultConfig()
 		permConfig = &defaultCfg
 	}
+	// Subagents run headless (no interactive approval modal), so any tool that
+	// resolves to "Ask" would be denied — crippling them (can't write/commit/bash,
+	// which broke worktree work). When AutoApproveTools is set, spawning IS the
+	// approval: run in Trust mode so the subagent can do real work unattended.
+	if options.AutoApproveTools {
+		permConfig.Mode = permissions.ModeTrust
+	}
 	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
 
 	llmConfig := &llm.Config{
