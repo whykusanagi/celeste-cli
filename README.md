@@ -562,8 +562,8 @@ Celeste CLI requires **OpenAI-style function calling** for skills to work. Not a
 
 Plain **chat** works with any model. But **tools/skills, subagents, and `/orchestrate`** need a model that supports **function calling** — and on *every* provider, some models do and some don't:
 
-- **Venice.ai** — `venice-uncensored` does **not** support tools
-- **OpenRouter** — many models lack tool/function-calling support
+- **Venice.ai** — varies per model; Celeste checks the **live Venice catalog** (some `*-uncensored` models *do* support tools, some `e2ee-*` ones don't)
+- **OpenRouter** — many models lack tool/function-calling support; Celeste checks the **live OpenRouter catalog**
 - **OpenAI** — older/instruct models don't; `gpt-4.1*`/`gpt-4o*` do
 - **Grok/xAI** — non-reasoning models can technically call tools but are weak at *driving* multi-step agent flows (they may flail and even fabricate a result, e.g. claim they spawned a subagent they didn't)
 
@@ -592,8 +592,8 @@ Celeste prints a **loud warning at agent start** if the resolved agent model doe
 | **OpenAI** | ✅ Native | Fully Supported | Easy |
 | **Grok (xAI)** | ✅ OpenAI-Compatible | Fully Supported | Easy |
 | **DigitalOcean** | ⚠️ Cloud Functions Only | Limited | Advanced (requires cloud deployment) |
-| **Venice.ai** | ⚠️ Model-dependent | `venice-uncensored` = NO tools; pick a tool-capable model for `agent_model` | Medium |
-| **OpenRouter** | ⚠️ Model-dependent | Many models lack tools; check before using as `agent_model` | Medium |
+| **Venice.ai** | ⚠️ Model-dependent (catalog-checked) | per-model via live catalog; pick a tool-capable model for `agent_model` | Medium |
+| **OpenRouter** | ⚠️ Model-dependent (catalog-checked) | per-model via live catalog; check before using as `agent_model` | Medium |
 | **ElevenLabs** | ❓ Unknown | Needs Testing | Unknown |
 | **Local (Ollama)** | ⚠️ Depends on Model | Varies | Medium (model-dependent) |
 

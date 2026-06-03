@@ -116,11 +116,16 @@ flowchart TD
   warning is printed. This is **provider-agnostic** — it catches Venice
   `venice-uncensored`, tool-less OpenRouter models, older OpenAI/instruct models,
   etc., not just grok.
-- **OpenRouter capability is authoritative**: for the OpenRouter provider,
-  `SupportsTools` consults the live catalog (`https://openrouter.ai/api/v1/models`,
-  per-model `supported_parameters` includes `"tools"`), cached best-effort, falling
-  back to a name heuristic if the catalog is unreachable. (A future task adds an
-  interactive picker that shows capability + cost from this same catalog.)
+- **Live catalogs are authoritative** for providers that publish capability:
+  - **OpenRouter** — `https://openrouter.ai/api/v1/models`, per-model
+    `supported_parameters` includes `"tools"`.
+  - **Venice** — `https://api.venice.ai/api/v1/models`, per-model
+    `model_spec.capabilities.supportsFunctionCalling`.
+  Both are fetched best-effort (cached), and `SupportsTools` falls back to a name
+  heuristic only if the catalog is unreachable. This is far more accurate than
+  guessing from the name (e.g. Venice `venice-uncensored-1-2` *does* support tools
+  while some `e2ee-*-uncensored` models don't). A future task adds an interactive
+  picker that surfaces capability + cost from these same catalogs.
 - `reconcileModel` applies the same deprecated-model migration (the grok-4-1-*
   trap) to `agent_model` as to `model`.
 
