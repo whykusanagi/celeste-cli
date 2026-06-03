@@ -247,6 +247,9 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 	// The flag is session-scoped (persists across turns) and is used to detect
 	// hallucinated "Audio saved:" prose when TTS never ran.
 	ttsRan := false
+	// spawnRan tracks whether spawn_agent actually executed this session, used to
+	// strip fabricated "subagent spawned (id: …)" prose (task 04d48b1e).
+	spawnRan := false
 
 	// Auto-loop: send message, execute tool calls, send results back, repeat
 	maxLoops := 25
@@ -263,6 +266,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 		// If no tool calls, we're done
 		if len(result.ToolCalls) == 0 {
 			text := llm.StripUnbackedAudioClaim(strings.TrimSpace(result.Content), ttsRan)
+			text = llm.StripUnbackedSpawnClaim(text, spawnRan)
 			return []ContentBlock{{Type: "text", Text: text}}, nil
 		}
 
@@ -354,6 +358,9 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 			if tc.Name == "generate_speech" && !toolResult.Error {
 				ttsRan = true
 			}
+			if tc.Name == "spawn_agent" && !toolResult.Error {
+				spawnRan = true
+			}
 			messages = append(messages, tui.ChatMessage{
 				Role:       "tool",
 				Content:    toolResult.Content,
@@ -386,7 +393,12 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 	opts := agent.Options{
 		Workspace: workspace,
 		MaxTurns:  50,
-		Verbose:   false,
+		// MCP `celeste agent` mode is headless (no approval modal), like a
+		// subagent. Without this, every write/exec tool resolves to "Ask" and is
+		// denied, so the MCP-driven agent can't bash/write/commit. Invoking the
+		// MCP agent tool IS the approval (task a035f219).
+		AutoApproveTools: true,
+		Verbose:          false,
 	}
 
 	runner, err := agent.NewRunner(cfg, opts, &outBuf, &errBuf)
@@ -425,11 +437,21 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 		sb.WriteString("\n")
 	}
 
-	// Agent response
+	// Agent response. Strip a fabricated "subagent spawned (id: …)" claim if
+	// spawn_agent never actually ran this turn (task 04d48b1e — a weak model
+	// flails then hallucinates a spawn).
+	spawnRan := false
+	for _, step := range state.Steps {
+		if step.Name == "spawn_agent" {
+			spawnRan = true
+			break
+		}
+	}
 	response := state.LastAssistantResponse
 	if response == "" && outBuf.Len() > 0 {
 		response = outBuf.String()
 	}
+	response = llm.StripUnbackedSpawnClaim(response, spawnRan)
 	if response != "" {
 		sb.WriteString("## Response\n\n")
 		sb.WriteString(response)
