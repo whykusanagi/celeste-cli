@@ -25,9 +25,11 @@ var ModelPricing = map[string]ModelCost{
 	"grok-4-1-fast":                {Input: 0.20, Output: 0.50},
 	"grok-4-1-fast-reasoning":      {Input: 0.20, Output: 0.50},
 	"grok-4-1-fast-non-reasoning":  {Input: 0.20, Output: 0.50},
-	"grok-4.20-0309-reasoning":     {Input: 2.00, Output: 6.00},
-	"grok-4.20-0309-non-reasoning": {Input: 2.00, Output: 6.00},
-	"grok-4.20-multi-agent-0309":   {Input: 2.00, Output: 6.00},
+	// grok-4.x family: $1.25 in / $2.50 out per 1M (docs.x.ai, 2026-06)
+	"grok-4.3":                     {Input: 1.25, Output: 2.50},
+	"grok-4.20-0309-reasoning":     {Input: 1.25, Output: 2.50},
+	"grok-4.20-0309-non-reasoning": {Input: 1.25, Output: 2.50},
+	"grok-4.20-multi-agent-0309":   {Input: 1.25, Output: 2.50},
 	"grok-code-fast-1":             {Input: 0.20, Output: 0.50},
 	// Google
 	"gemini-2.0-flash": {Input: 0.10, Output: 0.40},

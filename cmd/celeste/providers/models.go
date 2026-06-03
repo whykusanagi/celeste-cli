@@ -116,7 +116,7 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Name:          "Grok 4.20 (non-reasoning)",
 				Provider:      "grok",
 				SupportsTools: true,
-				ContextWindow: 2000000,
+				ContextWindow: 1000000,
 				Description:   "Default — reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 (#51)",
 			},
 			{

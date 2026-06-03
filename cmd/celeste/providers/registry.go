@@ -253,8 +253,10 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "gpt-4") || contains(modelID, "gpt-3.5-turbo")
 
 	case "grok":
-		// grok-build-0.1, grok-4-1-fast, grok-4-1, grok-4, grok-beta support tools
-		// grok-4-latest may or may not support tools well
+		// xAI text models support tools: grok-4.3, grok-4.20-* (reasoning /
+		// non-reasoning / multi-agent), grok-build-0.1, grok-beta (docs.x.ai).
+		// grok-imagine-* (image/video) and voice models do NOT — they don't match
+		// "grok-4"/"grok-build" so they correctly return false here.
 		return contains(modelID, "grok-build") || contains(modelID, "grok-4") || contains(modelID, "grok-beta")
 
 	case "venice":
