@@ -240,6 +240,23 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	}
 
 	for state.Turn < state.Options.MaxTurns {
+		// Honor cancellation/deadline between turns. The per-request and per-tool
+		// contexts cover work *within* a turn; this stops the loop from starting a
+		// new turn after the parent context (e.g. a subagent's overall timeout)
+		// has expired (task 349f1f14).
+		if err := ctx.Err(); err != nil {
+			state.Status = StatusCancelled
+			state.Error = fmt.Sprintf("run cancelled: %v", err)
+			now := time.Now()
+			state.CompletedAt = &now
+			state.UpdatedAt = now
+			if !state.Options.DisableCheckpoints {
+				_ = r.store.Save(state)
+			}
+			r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
+			return state, err
+		}
+
 		state.Turn++
 		state.Status = StatusRunning
 		state.Phase = PhaseExecution
@@ -587,7 +604,9 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		argsValid = false
 		resultContent = fmt.Sprintf(`{"error": true, "message": "invalid tool arguments JSON", "tool": %q}`, toolName)
 	} else {
-		execution, err := r.client.ExecuteSkill(toolCtx, toolName, argsJSON)
+		execution, err := runToolWithTimeout(toolCtx, func() (*llm.ExecutionResult, error) {
+			return r.client.ExecuteSkill(toolCtx, toolName, argsJSON)
+		})
 		resultContent = formatToolResult(toolName, execution, err)
 	}
 
@@ -618,6 +637,34 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		Content:    resultContent,
 		Timestamp:  time.Now(),
 	}, argsValid
+}
+
+// runToolWithTimeout runs fn but returns as soon as ctx is cancelled, even if fn
+// itself ignores the context. fn runs in its own goroutine; if it is stuck in a
+// loop that never checks ctx (the v1.10 codegraph spin — task 349f1f14), the
+// goroutine is abandoned but the caller is unblocked so the agent loop can honor
+// its deadline instead of hanging forever. The send channel is buffered so the
+// abandoned goroutine can still complete its send and exit cleanly.
+//
+// Caveat: an abandoned goroutine keeps running until it returns on its own; this
+// makes the *run* terminable on deadline but does not by itself stop a tool that
+// busy-loops. The complementary fix is for long-running tools to honor ctx.
+func runToolWithTimeout(ctx context.Context, fn func() (*llm.ExecutionResult, error)) (*llm.ExecutionResult, error) {
+	type toolOutcome struct {
+		exec *llm.ExecutionResult
+		err  error
+	}
+	done := make(chan toolOutcome, 1)
+	go func() {
+		exec, err := fn()
+		done <- toolOutcome{exec: exec, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("tool execution exceeded timeout: %w", ctx.Err())
+	case out := <-done:
+		return out.exec, out.err
+	}
 }
 
 func executeVerificationCommand(parent context.Context, workspace, command string, timeout time.Duration) VerificationCheck {

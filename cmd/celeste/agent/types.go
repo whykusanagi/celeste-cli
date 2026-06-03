@@ -12,6 +12,7 @@ const (
 	StatusFailed            = "failed"
 	StatusMaxTurnsReached   = "max_turns_reached"
 	StatusNoProgressStopped = "no_progress_stopped"
+	StatusCancelled         = "cancelled"
 )
 
 const (
