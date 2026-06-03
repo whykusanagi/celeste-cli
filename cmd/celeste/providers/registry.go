@@ -258,8 +258,12 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "grok-build") || contains(modelID, "grok-4") || contains(modelID, "grok-beta")
 
 	case "venice":
-		// Only certain Venice models support tools
-		// venice-uncensored does NOT support tools
+		// Prefer Venice's live catalog (model_spec.capabilities.supportsFunctionCalling).
+		// The old name heuristic was wrong both ways (some *-uncensored models DO
+		// support tools; some do not). Fall back to it only if the catalog is down.
+		if supported, known := VeniceToolSupport(modelID); known {
+			return supported
+		}
 		return !contains(modelID, "uncensored")
 
 	case "anthropic":
