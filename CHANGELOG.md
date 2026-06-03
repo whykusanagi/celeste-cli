@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-06-03
+
 ### Added
 
 - **Corruption colors are sourced from the canonical corrupted-theme palette
@@ -20,35 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exposes `Manager.Kill`; the TUI wires `/agents kill <id>` (with autocomplete and
   help text). Combined with the runtime ctx-honoring fix, this gives a manual escape
   hatch for a stuck subagent instead of having to kill the whole TUI.
-
-### Fixed
-
-- **Progress-aware repetition guard (task 8f02ed3d).** The chat/message loop now
-  stops a stuck loop where the model re-calls the same tool with slightly-varying
-  args but gets byte-identical results turn after turn — a case the args-based guard
-  missed. It keys on the result, not the args, so legitimate bulk work (each call
-  producing a distinct result, e.g. a new mp3 file) is never blocked.
-- **Subagent/agent runtime no longer hangs uncancellably on a stuck tool (task 349f1f14).**
-  A tool that ignores its context (e.g. a codegraph call spinning on the DB) used to
-  block the turn loop forever — the per-tool timeout fired on the context but nothing
-  observed it. Tool execution now runs under `runToolWithTimeout`, which returns at the
-  deadline even if the tool keeps running, and the turn loop checks `ctx.Err()` between
-  turns so an expired parent deadline (a subagent's overall timeout) stops it promptly.
-  New `StatusCancelled` run status. (Caveat: an uncooperative tool's goroutine is
-  abandoned rather than force-killed; the codegraph complement below addresses the
-  most common offender.)
-- **Codegraph operations honor context cancellation.** `SemanticSearch`,
-  `Build`, and `Update` gained `*WithContext` variants that check `ctx` before and
-  during their hot loops, so a `code_search`/`code_index` tool call (the goroutine
-  most likely left spinning by the bug above) actually stops at the tool deadline
-  instead of scanning the whole corpus/repo. The `code_search` tool and the
-  server index tools now pass their request context through. Non-ctx signatures
-  are preserved as `context.Background()` wrappers.
-
-## [1.10.0] - 2026-06-02
-
-### Added
-
 - **Subagent resilience and orchestration.** Transient-error retry with backoff at the
   LLM client layer — 429 honors `Retry-After`, 5xx and network errors retry with capped
   exponential backoff, 4xx fails fast (#29). Background subagents with auto-transition
@@ -73,6 +46,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Subagent/agent runtime no longer hangs uncancellably on a stuck tool (task 349f1f14).**
+  A tool that ignores its context (e.g. a codegraph call spinning on the DB) used to
+  block the turn loop forever — the per-tool timeout fired on the context but nothing
+  observed it. Tool execution now runs under `runToolWithTimeout`, which returns at the
+  deadline even if the tool keeps running, and the turn loop checks `ctx.Err()` between
+  turns so an expired parent deadline (a subagent's overall timeout) stops it promptly.
+  New `StatusCancelled` run status.
+- **Codegraph operations honor context cancellation (task 349f1f14).** `SemanticSearch`,
+  `Build`, and `Update` gained `*WithContext` variants that check `ctx` before and during
+  their hot loops, so a `code_search`/`code_index` tool call stops at the tool deadline
+  instead of scanning the whole corpus/repo. The `code_search` tool and the server index
+  tools pass their request context through; non-ctx signatures are preserved as
+  `context.Background()` wrappers.
+- **Progress-aware repetition guard (task 8f02ed3d).** The chat/message loop now stops a
+  loop where the model re-calls the same tool with slightly-varying args but gets
+  byte-identical results turn after turn — a case the args-based guard missed. It keys on
+  the result, not the args, so legitimate bulk work (each call producing a distinct
+  result, e.g. a new mp3 file) is never blocked.
 - **xAI streaming tool-call JSON corruption / TTS hallucination (#48).** Validate
   assembled tool-call JSON at stream finish, chat-mode error-handling parity with agent
   mode, block hallucinated `Audio saved:` claims when no file is written, distinguish
