@@ -1230,11 +1230,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					line := fmt.Sprintf("  %s 〔%s〕 %s  %d turns  %s",
 						icon, a.Name, a.Status, a.Turns,
 						a.Elapsed.Round(time.Millisecond))
+					if a.ID != "" {
+						line += fmt.Sprintf("  id:%s", a.ID)
+					}
 					if a.TaskID != "" {
 						line += fmt.Sprintf("  (task: %s)", a.TaskID)
 					}
 					sb.WriteString(line + "\n")
 				}
+				sb.WriteString("\nCancel one with: /agents kill <id|name>  (e.g. the 〔name〕 shown above)\n")
 				m.chat = m.chat.AddSystemMessage(sb.String())
 				return m, nil
 
