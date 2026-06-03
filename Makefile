@@ -1,4 +1,4 @@
-.PHONY: build install clean help test dev verify import-key sync-persona
+.PHONY: build install clean help test dev verify import-key sync-persona sync-theme
 
 # Install destination (override with: make install BIN=/custom/path/celeste)
 BIN ?= $(HOME)/.local/bin/celeste
@@ -76,6 +76,14 @@ sync-persona:
 	@cp ../celeste-core-persona/cli-prompts/celeste_core.json cmd/celeste/prompts/celeste_essence.json
 	@cp ../celeste-core-persona/docs/slider-agent-handoff.md docs/slider-agent-handoff.md
 	@echo "✅ Persona synced. Run 'go build' and smoke-test prompt load."
+
+# Sync the canonical corrupted-theme color palette into the embedded copy.
+# streaming.go consumes cmd/celeste/tui/theme/colors.json via //go:embed, so the
+# corruption colors track the theme repo instead of drifting (task 7aa133c9).
+sync-theme:
+	@echo "🎨 Syncing color palette from corrupted-theme..."
+	@cp ../corrupted-theme/src/data/colors.json cmd/celeste/tui/theme/colors.json
+	@echo "✅ Theme colors synced. Run 'go build' and 'go test ./cmd/celeste/tui/theme/'."
 
 # Import GPG signing key from Keybase
 import-key:

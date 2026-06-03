@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Corruption colors are sourced from the canonical corrupted-theme palette
+  (task 7aa133c9).** New `cmd/celeste/tui/theme` package embeds `colors.json`
+  (synced from corrupted-theme `src/data/colors.json` via `make sync-theme`);
+  `streaming.go` consumes it via `theme.Hex(...)` instead of hardcoded hex, so the
+  #00ffff/#ff0000 colors track the theme repo. Corruption phrase/glitch pools are
+  intentionally left in code (animation-critical).
 - **`/agents kill <id>` cancels a specific in-flight subagent (task 6ffb5a7c).** The
   manager now tracks a per-run cancel function (keyed by run id and task id) and
   exposes `Manager.Kill`; the TUI wires `/agents kill <id>` (with autocomplete and
