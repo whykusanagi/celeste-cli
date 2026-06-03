@@ -112,28 +112,20 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 	case "grok":
 		return []ModelInfo{
 			{
+				ID:            "grok-4.20-0309-non-reasoning",
+				Name:          "Grok 4.20 (non-reasoning)",
+				Provider:      "grok",
+				SupportsTools: true,
+				ContextWindow: 2000000,
+				Description:   "Default — reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 (#51)",
+			},
+			{
 				ID:            "grok-build-0.1",
 				Name:          "Grok Build 0.1",
 				Provider:      "grok",
 				SupportsTools: true,
-				ContextWindow: 256000, // grok code model — 256K context
-				Description:   "Current supported Grok code variant — default for tool calling (#51)",
-			},
-			{
-				ID:            "grok-4-1-fast",
-				Name:          "Grok 4.1 Fast",
-				Provider:      "grok",
-				SupportsTools: true,
-				ContextWindow: 2000000, // 2M tokens
-				Description:   "Best for tool calling (2M context, optimized for agentic tasks)",
-			},
-			{
-				ID:            "grok-4-1",
-				Name:          "Grok 4.1",
-				Provider:      "grok",
-				SupportsTools: true,
-				ContextWindow: 131072,
-				Description:   "High-quality reasoning with tool support",
+				ContextWindow: 256000,
+				Description:   "Grok code variant (256K). Note: still emits reasoning tokens.",
 			},
 			{
 				ID:            "grok-beta",

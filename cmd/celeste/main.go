@@ -1374,7 +1374,7 @@ func createConfigTemplate(name string) error {
 		},
 		"grok": {
 			BaseURL:               "https://api.x.ai/v1",
-			Model:                 "grok-build-0.1", // current supported Grok code variant (#51)
+			Model:                 "grok-4.20-0309-non-reasoning", // non-reasoning Grok: no reasoning burn, no grok-4.3 routing (#51)
 			Timeout:               60,
 			SkipPersonaPrompt:     false, // Grok needs persona injection
 			SimulateTyping:        true,

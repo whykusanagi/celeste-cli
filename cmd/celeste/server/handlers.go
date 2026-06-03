@@ -151,19 +151,16 @@ func toolErrorJSON(msg string) string {
 	return string(b)
 }
 
-// singleToolName returns the tool name when every call in the batch is the same
-// tool (the shape of a stuck loop), or "" for empty/mixed-tool batches. Used by
-// the repetition guard so only same-single-tool turns count toward the streak.
-func singleToolName(calls []llm.ToolCallResult) string {
-	name := ""
+// toolCallBatchSig returns a signature of a tool-call batch INCLUDING arguments,
+// so the repetition guard only trips on the model re-issuing the IDENTICAL call
+// (a true stuck loop), never on legitimate bulk work where each call has distinct
+// args (e.g. 30 different mp3 lines).
+func toolCallBatchSig(calls []llm.ToolCallResult) string {
+	parts := make([]string, 0, len(calls))
 	for _, c := range calls {
-		if name == "" {
-			name = c.Name
-		} else if c.Name != name {
-			return ""
-		}
+		parts = append(parts, c.Name+"("+c.Arguments+")")
 	}
-	return name
+	return strings.Join(parts, ",")
 }
 
 // runChatMode executes a single-turn chat with Celeste's persona.
@@ -219,7 +216,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 	// Auto-loop: send message, execute tool calls, send results back, repeat
 	maxLoops := 25
-	const maxSameToolStreak = 5 // stop a stuck single-tool loop (mirrors the TUI guard)
+	const maxSameCallStreak = 3 // stop a true stuck loop: the IDENTICAL call repeated (mirrors the TUI guard)
 	lastToolSig := ""
 	sameToolStreak := 0
 	for i := 0; i < maxLoops; i++ {
@@ -234,17 +231,19 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 			return []ContentBlock{{Type: "text", Text: text}}, nil
 		}
 
-		// Repetition guard: stop the model hammering the same single tool turn
-		// after turn without finishing the task (e.g. regenerating greetings).
-		if sig := singleToolName(result.ToolCalls); sig != "" {
+		// Repetition guard: stop only when the model re-issues the IDENTICAL call
+		// (same tool AND args) several turns in a row — a true stuck loop. The
+		// signature includes args, so legitimate bulk work (distinct lines) is
+		// never blocked.
+		if sig := toolCallBatchSig(result.ToolCalls); sig != "" {
 			if sig == lastToolSig {
 				sameToolStreak++
 			} else {
 				sameToolStreak = 1
 				lastToolSig = sig
 			}
-			if sameToolStreak >= maxSameToolStreak {
-				return []ContentBlock{{Type: "text", Text: fmt.Sprintf("Stopped: %s was called %d times in a row without finishing the task — the model looks stuck on one step.", sig, sameToolStreak)}}, nil
+			if sameToolStreak >= maxSameCallStreak {
+				return []ContentBlock{{Type: "text", Text: fmt.Sprintf("Stopped: the model made the identical tool call %d times in a row (stuck loop).", sameToolStreak)}}, nil
 			}
 		} else {
 			sameToolStreak = 0

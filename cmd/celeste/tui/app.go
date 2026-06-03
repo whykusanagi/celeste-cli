@@ -2607,19 +2607,17 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 // isClawMode is deprecated — tools always auto-loop now.
 // Kept for backward compatibility with config files that set runtime_mode.
 
-// toolBatchSignature returns the tool name for a single-tool batch (the shape of
-// a stuck loop), or "" for empty or mixed-tool batches. Used by the repetition
-// guard so only same-single-tool turns count toward the streak.
+// toolBatchSignature returns a signature of a tool-call batch that INCLUDES the
+// arguments, so the repetition guard only trips when the model re-issues the
+// IDENTICAL call (a true stuck loop) — never on legitimate bulk work where each
+// call has distinct args (e.g. generating 30 different mp3 lines).
 func toolBatchSignature(calls []SkillCallRequest) string {
-	name := ""
+	parts := make([]string, 0, len(calls))
 	for _, c := range calls {
-		if name == "" {
-			name = c.Call.Name
-		} else if c.Call.Name != name {
-			return ""
-		}
+		b, _ := json.Marshal(c.Call.Arguments)
+		parts = append(parts, c.Call.Name+"("+string(b)+")")
 	}
-	return name
+	return strings.Join(parts, ",")
 }
 
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
@@ -2654,13 +2652,12 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 	}
 	m.clawToolIterations++
 
-	// Repetition guard: detect the model hammering the SAME single tool turn after
-	// turn without finishing the task (e.g. regenerating greeting after greeting and
-	// never advancing to the next step). Trips far sooner than the turn cap. Only
-	// single-tool batches count, so legitimate mixed-tool work isn't penalized.
-	// This is a safety net — it stops the runaway; it does not make the model
-	// complete the task. (#48 follow-up)
-	const maxSameToolStreak = 5
+	// Repetition guard: stop only when the model re-issues the IDENTICAL call
+	// (same tool AND same args) several turns in a row — a genuine stuck loop.
+	// Because the signature includes args, legitimate bulk work (e.g. 30 distinct
+	// mp3 lines) is NEVER blocked; only true "spinning on the same thing" trips it.
+	// Safety net — it halts a runaway, it doesn't make the model finish. (#48 follow-up)
+	const maxSameCallStreak = 3
 	if sig := toolBatchSignature(msg.Calls); sig != "" {
 		if sig == m.lastToolSig {
 			m.sameToolStreak++
@@ -2668,14 +2665,14 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 			m.sameToolStreak = 1
 			m.lastToolSig = sig
 		}
-		if m.sameToolStreak >= maxSameToolStreak {
-			LogInfo(fmt.Sprintf("Repetition guard: %q called %d turns in a row — stopping", sig, m.sameToolStreak))
+		if m.sameToolStreak >= maxSameCallStreak {
+			LogInfo(fmt.Sprintf("Repetition guard: identical call repeated %d turns — stopping", m.sameToolStreak))
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText("Stopped: repeated tool call")
+			m.status = m.status.SetText("Stopped: identical tool call repeated")
 			m.chat = m.chat.AddSystemMessage(fmt.Sprintf(
-				"⚠️ Stopped: %s was called %d times in a row without finishing the task — the model looks stuck on one step. Send another message (or rephrase the goal) to continue.",
-				sig, m.sameToolStreak))
+				"⚠️ Stopped: the model made the identical tool call %d times in a row (stuck loop). Send another message (or rephrase the goal) to continue.",
+				m.sameToolStreak))
 			m.sameToolStreak = 0
 			m.lastToolSig = ""
 			return m, nil

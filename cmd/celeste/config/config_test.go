@@ -17,7 +17,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	assert.NotNil(t, config)
 	assert.Equal(t, "https://api.x.ai/v1", config.BaseURL)
-	assert.Equal(t, "grok-build-0.1", config.Model)
+	assert.Equal(t, "grok-4.20-0309-non-reasoning", config.Model)
 	assert.Equal(t, 60, config.Timeout)
 	assert.False(t, config.SkipPersonaPrompt)
 	assert.True(t, config.SimulateTyping)
@@ -570,20 +570,20 @@ func TestReconcileModel(t *testing.T) {
 		assert.Equal(t, def, c.Model)
 	})
 
-	t.Run("deprecated reasoning model migrates to grok-build-0.1", func(t *testing.T) {
-		c := &Config{Model: "grok-4-1-fast-reasoning"}
+	t.Run("4.3-routing model migrates to the non-reasoning default", func(t *testing.T) {
+		c := &Config{Model: "grok-4-1-fast"}
 		changed, from, to := reconcileModel(c)
 		assert.True(t, changed)
-		assert.Equal(t, "grok-4-1-fast-reasoning", from)
-		assert.Equal(t, "grok-build-0.1", to)
-		assert.Equal(t, "grok-build-0.1", c.Model)
+		assert.Equal(t, "grok-4-1-fast", from)
+		assert.Equal(t, "grok-4.20-0309-non-reasoning", to)
+		assert.Equal(t, "grok-4.20-0309-non-reasoning", c.Model)
 	})
 
 	t.Run("supported model is left unchanged", func(t *testing.T) {
-		c := &Config{Model: "grok-build-0.1"}
+		c := &Config{Model: "grok-4.20-0309-non-reasoning"}
 		changed, _, _ := reconcileModel(c)
 		assert.False(t, changed)
-		assert.Equal(t, "grok-build-0.1", c.Model)
+		assert.Equal(t, "grok-4.20-0309-non-reasoning", c.Model)
 	})
 
 	t.Run("non-grok model is left unchanged", func(t *testing.T) {
