@@ -2,6 +2,7 @@ package subagents
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,66 @@ func TestKill_CancelsRunningSubagent(t *testing.T) {
 			t.Fatalf("run did not reach failed status after Kill, got %q", status)
 		case <-time.After(5 * time.Millisecond):
 		}
+	}
+}
+
+// Kill must resolve the on-screen name (element like "water" or the Romaji like
+// "mizu" from the "水 mizu" display name) — what the user actually sees in /agents
+// — not just the internal run id (#d15ac448).
+func TestKill_ByOnScreenName(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	started := make(chan struct{})
+	m.execFn = blockingExecFor(m, started)
+
+	run, err := m.SpawnWithOptions(context.Background(), "task", "/tmp", SpawnOptions{
+		BackgroundAfter: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	<-started
+
+	// The user types the Romaji shown on screen (e.g. "mizu"), not the sub-… id.
+	parts := strings.Fields(run.Name)
+	onScreen := parts[len(parts)-1]
+	if !m.Kill(onScreen) {
+		t.Fatalf("Kill by on-screen name %q failed (Name=%q Element=%q)", onScreen, run.Name, run.Element)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		m.mu.Lock()
+		status := run.Status
+		m.mu.Unlock()
+		if status == "failed" {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("run not failed after Kill(%q), got %q", onScreen, status)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// Kill must also resolve the english element name ("water").
+func TestKill_ByElementName(t *testing.T) {
+	m := NewManager(&config.Config{}, "/tmp", false)
+	started := make(chan struct{})
+	m.execFn = blockingExecFor(m, started)
+
+	run, err := m.SpawnWithOptions(context.Background(), "task", "/tmp", SpawnOptions{
+		BackgroundAfter: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	<-started
+	if run.Element == "" {
+		t.Skip("run has no element name to match")
+	}
+	if !m.Kill(run.Element) {
+		t.Fatalf("Kill by element %q failed", run.Element)
 	}
 }
 

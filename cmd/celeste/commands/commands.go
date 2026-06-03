@@ -802,7 +802,7 @@ Chat:
   /confirm           Toggle confirm mode (propose actions before executing)
   /agents            List spawned subagents and their status
   /agents resume <id> Resume a failed subagent from its last checkpoint
-  /agents kill <id>  Cancel a specific in-flight subagent
+  /agents kill <id|name> Cancel a specific in-flight subagent (id, task id, or on-screen name)
   /voice             Show ElevenLabs TTS config
   /voice list        List available ElevenLabs voices
   /voice set-key     Set ElevenLabs API key

@@ -674,15 +674,30 @@ func (m *Manager) clearCancel(run *SubagentRun) {
 	}
 }
 
-// Kill cancels a specific in-flight subagent by id or task id (task 6ffb5a7c).
-// It returns true if a cancellable run was found. The run's context is cancelled
-// (which the runtime now honors — task 349f1f14) and its status is marked failed
-// so ListRuns reflects the kill immediately. A run that has already finished is
-// left untouched and returns false.
-func (m *Manager) Kill(id string) bool {
+// Kill cancels a specific in-flight subagent (task 6ffb5a7c). The selector may be
+// the run id, the task id, OR the element/display name the user sees in /agents
+// (e.g. "mizu" or "water") — users refer to agents by the name on screen, not the
+// internal id (#d15ac448). Returns true if a cancellable run was found. The run's
+// context is cancelled (which the runtime honors — task 349f1f14) and its status
+// is marked failed so ListRuns reflects the kill immediately. A run that has
+// already finished is left untouched and returns false.
+func (m *Manager) Kill(selector string) bool {
 	m.mu.Lock()
-	cancel := m.cancels[id]
-	run := m.runs[id]
+	cancel := m.cancels[selector]
+	run := m.runs[selector]
+	if cancel == nil {
+		// Fall back to the on-screen name: match element ("water") or the
+		// Kanji+Romaji display name ("水 mizu" contains "mizu"), case-insensitive.
+		want := strings.ToLower(selector)
+		for _, r := range m.runs {
+			if strings.EqualFold(r.Element, selector) || strings.Contains(strings.ToLower(r.Name), want) {
+				if c := m.cancels[r.ID]; c != nil {
+					cancel, run = c, r
+					break
+				}
+			}
+		}
+	}
 	if cancel == nil {
 		m.mu.Unlock()
 		return false

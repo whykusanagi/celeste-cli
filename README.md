@@ -339,7 +339,7 @@ You never call these directly — you describe multi-step work in chat and Celes
 ```
 /agents                   List all spawned subagents and their status (waiting/running/completed/failed)
 /agents resume <id>       Resume a failed subagent from its last checkpoint
-/agents kill <id>         Cancel a specific in-flight subagent (id or task id)
+/agents kill <id|name>    Cancel a specific in-flight subagent (by id, task id, or the on-screen name e.g. "mizu")
 ```
 
 **Example — parallel audio production with DAG:**
