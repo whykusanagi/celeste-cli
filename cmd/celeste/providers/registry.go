@@ -271,8 +271,12 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "gemini")
 
 	case "openrouter":
-		// OpenRouter prefixes models with provider name
-		// Assume most models support tools if they're from tool-capable providers
+		// Prefer OpenRouter's live catalog (authoritative per-model capability:
+		// supported_parameters includes "tools"). Falls through to a name
+		// heuristic only when the catalog is unreachable.
+		if supported, known := OpenRouterToolSupport(modelID); known {
+			return supported
+		}
 		return contains(modelID, "gpt-") || contains(modelID, "claude-") || contains(modelID, "gemini-")
 
 	default:
