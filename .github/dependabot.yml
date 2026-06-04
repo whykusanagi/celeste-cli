@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Go modules — surfaces vulnerable/outdated deps as PRs (e.g. the golang.org/x/net
+  # CVE that govulncheck caught for v1.10 would arrive here automatically).
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "go"]
+    commit-message:
+      # Conventional-commit prefixes so release-please classifies these correctly
+      # (fix(deps) -> patch release; chore(deps) -> no release).
+      prefix: "fix(deps)"
+      prefix-development: "chore(deps)"
+    groups:
+      # golang.org/x/* move in lockstep — group them into one PR.
+      golang-x:
+        patterns: ["golang.org/x/*"]
+
+  # GitHub Actions used by the workflows (keeps actions/* and the release/lint
+  # actions current; also nudges off the Node 20 deprecation we saw in CI logs).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci(deps)"
