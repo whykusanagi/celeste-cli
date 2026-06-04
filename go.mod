@@ -2,6 +2,8 @@ module github.com/whykusanagi/celeste-cli
 
 go 1.26.0
 
+toolchain go1.26.4
+
 require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/anthropics/anthropic-sdk-go v1.30.0
