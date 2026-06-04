@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,9 +85,14 @@ const (
 // Config holds all configuration for Celeste CLI.
 type Config struct {
 	// API settings
-	APIKey       string `json:"api_key"`
-	BaseURL      string `json:"base_url"`
-	Model        string `json:"model"`
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	// AgentModel is the model used for agent / orchestrate / subagent work
+	// (free tool-selection). Chat/TTS use Model. Empty falls back to Model.
+	// Lets you pin a reasoning/tool-capable model for agent work while keeping a
+	// cheap non-reasoning model for chat (model-router guardrail, task e8775b91).
+	AgentModel   string `json:"agent_model,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 
@@ -214,7 +220,7 @@ type OrchestratorConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		BaseURL:               "https://api.x.ai/v1",
-		Model:                 "grok-4-1-fast",
+		Model:                 "grok-4.20-0309-non-reasoning", // non-reasoning: no reasoning-token burn, no routing to grok-4.3, reliable tool use (#51)
 		Timeout:               60,
 		SkipPersonaPrompt:     false,
 		SimulateTyping:        true,
@@ -583,7 +589,84 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Reconcile the model so the saved config reflects what's actually used (#51):
+	// an empty model falls back to the default, and models xAI no longer supports
+	// are migrated to their replacement. Persisted so the header, config file, and
+	// the model sent to the API all agree instead of silently diverging.
+	dirty := false
+	if changed, from, to := reconcileModel(config); changed {
+		if from == "" {
+			log.Printf("[config] no model set — using default %q (saved)", to)
+		} else {
+			log.Printf("[config] model %q is no longer supported — migrated to %q (saved)", from, to)
+		}
+		dirty = true
+	}
+	// Clamp a stale context_limit override that exceeds the (possibly migrated)
+	// model's real window — e.g. a 2M limit carried over onto a 256K model. A
+	// limit larger than the model supports is always invalid, so reset to the
+	// model default (#51).
+	if config.ContextLimit > 0 {
+		if maxLimit := GetModelLimit(config.Model); config.ContextLimit > maxLimit {
+			log.Printf("[config] context_limit %d exceeds %q's %d-token window — using model default (saved)", config.ContextLimit, config.Model, maxLimit)
+			config.ContextLimit = 0
+			dirty = true
+		}
+	}
+	if dirty {
+		_ = Save(config)
+	}
+
 	return config, nil
+}
+
+// deprecatedModels maps Grok models xAI no longer serves to their supported
+// replacement. Loading a config on one of these silently fell back to a
+// cost-prohibitive variant server-side; migrate it instead (#51).
+// deprecatedModels maps Grok models that xAI silently ROUTES to the
+// cost-prohibitive grok-4.3 (the grok-4-1-* family) to a safe replacement.
+// Using any of these burns grok-4.3 pricing + reasoning tokens without the user
+// knowing — migrate them to the non-reasoning default instead (#51).
+var deprecatedModels = map[string]string{
+	"grok-4-1-fast":               "grok-4.20-0309-non-reasoning",
+	"grok-4-1-fast-reasoning":     "grok-4.20-0309-non-reasoning",
+	"grok-4-1-fast-non-reasoning": "grok-4.20-0309-non-reasoning",
+	"grok-4-1-reasoning":          "grok-4.20-0309-non-reasoning",
+	"grok-4-1":                    "grok-4.20-0309-non-reasoning",
+}
+
+// reconcileModel fills an empty model with the default and migrates a known-
+// deprecated model to its replacement. Returns whether config.Model changed,
+// the previous value (empty if it was unset), and the new value.
+func reconcileModel(config *Config) (changed bool, from, to string) {
+	// Migrate AgentModel too (if set) so the same grok-4-1-* trap protection
+	// applies to the agent-router model. Reported via the chat-model return only;
+	// the agent-model migration is silent (best-effort).
+	if config.AgentModel != "" {
+		if repl, ok := deprecatedModels[config.AgentModel]; ok && repl != config.AgentModel {
+			config.AgentModel = repl
+		}
+	}
+	if config.Model == "" {
+		config.Model = DefaultConfig().Model
+		return true, "", config.Model
+	}
+	if repl, ok := deprecatedModels[config.Model]; ok && repl != config.Model {
+		from = config.Model
+		config.Model = repl
+		return true, from, repl
+	}
+	return false, "", ""
+}
+
+// ResolveAgentModel returns the model to use for agent / orchestrate / subagent
+// work: AgentModel if set, otherwise the chat Model. This is the router seam —
+// callers entering agent mode use this instead of Model.
+func (c *Config) ResolveAgentModel() string {
+	if c.AgentModel != "" {
+		return c.AgentModel
+	}
+	return c.Model
 }
 
 // Save saves configuration to file.

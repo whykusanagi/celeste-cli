@@ -158,4 +158,8 @@ jobs:
           ### Changes
           See [CHANGELOG.md](https://github.com/whykusanagi/celeste-cli/blob/main/CHANGELOG.md) for details.
         draft: false
-        prerelease: false
+        # Pre-release tags carry a hyphenated suffix (e.g. v1.10.0-rc.1, v1.10.0-dev.2);
+        # publish those as GitHub pre-releases (not marked "latest"). Stable v1.10.0
+        # tags publish as a normal release.
+        prerelease: ${{ contains(github.ref_name, '-') }}
+        make_latest: ${{ !contains(github.ref_name, '-') }}

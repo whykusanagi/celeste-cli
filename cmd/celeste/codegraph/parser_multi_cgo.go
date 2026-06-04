@@ -110,15 +110,16 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 
 	result := &ParseResult{Source: data}
 	w := &multiWalker{
-		src:       data,
-		path:      path,
-		lang:      lang,
-		spec:      &spec,
-		result:    result,
-		classSet:  nodeTypeSet(spec.ClassTypes),
-		funcSet:   nodeTypeSet(spec.FunctionTypes),
-		importSet: nodeTypeSet(spec.ImportTypes),
-		callSet:   nodeTypeSet(spec.CallTypes),
+		src:          data,
+		path:         path,
+		lang:         lang,
+		spec:         &spec,
+		result:       result,
+		classSet:     nodeTypeSet(spec.ClassTypes),
+		funcSet:      nodeTypeSet(spec.FunctionTypes),
+		importSet:    nodeTypeSet(spec.ImportTypes),
+		callSet:      nodeTypeSet(spec.CallTypes),
+		decoratorSet: nodeTypeSet(spec.DecoratorTypes),
 	}
 	w.walk(tree.RootNode(), "")
 
@@ -129,15 +130,17 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 // multiWalker traverses a tree-sitter AST using language-specific
 // node type mappings to extract symbols and edges.
 type multiWalker struct {
-	src       []byte
-	path      string
-	lang      string
-	spec      *langSpec
-	result    *ParseResult
-	classSet  map[string]bool
-	funcSet   map[string]bool
-	importSet map[string]bool
-	callSet   map[string]bool
+	src               []byte
+	path              string
+	lang              string
+	spec              *langSpec
+	result            *ParseResult
+	classSet          map[string]bool
+	funcSet           map[string]bool
+	importSet         map[string]bool
+	callSet           map[string]bool
+	decoratorSet      map[string]bool
+	currentClassBases string // base-class names for the innermost class being walked
 }
 
 func (w *multiWalker) nodeText(n *tree_sitter.Node) string {
@@ -164,19 +167,25 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 	// Class/struct/enum/trait declarations
 	if w.classSet[kind] {
 		name := w.extractName(node)
+		bases := w.classBaseNames(node)
 		if name != "" {
 			symKind := w.classifyClassKind(kind)
 			w.result.Symbols = append(w.result.Symbols, Symbol{
-				Name: name,
-				Kind: symKind,
-				File: w.path,
-				Line: int(node.StartPosition().Row) + 1,
+				Name:        name,
+				Kind:        symKind,
+				File:        w.path,
+				Line:        int(node.StartPosition().Row) + 1,
+				BaseClasses: bases,
 			})
 		}
+		// Save and restore currentClassBases so nested classes don't leak.
+		prevBases := w.currentClassBases
+		w.currentClassBases = bases
 		// Recurse into class body for methods
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), currentFn)
 		}
+		w.currentClassBases = prevBases
 		return
 	}
 
@@ -191,12 +200,43 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				symKind = SymbolMethod
 			}
 			sig := w.buildSignature(node, name)
+
+			// Collect decorator names and emit call edges. If this function is
+			// wrapped in a decorated_definition node, each decorator child
+			// produces an edge: functionName → decoratorTarget.
+			// Confirmed AST shape (tree-sitter Python):
+			//   decorated_definition
+			//     decorator  (@otel_traced → identifier child)
+			//     decorator  (@a.b       → attribute child)
+			//     decorator  (@foo(arg)  → call child)
+			//     function_definition
+			var decNames []string
+			if len(w.decoratorSet) > 0 {
+				if parent := node.Parent(); parent != nil && parent.Kind() == "decorated_definition" {
+					for i := uint(0); i < parent.NamedChildCount(); i++ {
+						dec := parent.NamedChild(i)
+						if dec != nil && w.decoratorSet[dec.Kind()] {
+							if target := w.decoratorTarget(dec); target != "" {
+								decNames = append(decNames, target)
+								w.result.Edges = append(w.result.Edges, RawEdge{
+									SourceName: name,
+									TargetName: target,
+									Kind:       EdgeCalls,
+								})
+							}
+						}
+					}
+				}
+			}
+
 			w.result.Symbols = append(w.result.Symbols, Symbol{
-				Name:      name,
-				Kind:      symKind,
-				File:      w.path,
-				Line:      int(node.StartPosition().Row) + 1,
-				Signature: sig,
+				Name:        name,
+				Kind:        symKind,
+				File:        w.path,
+				Line:        int(node.StartPosition().Row) + 1,
+				Signature:   sig,
+				Decorators:  strings.Join(decNames, ","),
+				BaseClasses: w.currentClassBases,
 			})
 		}
 		fnName := name
@@ -249,6 +289,32 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 			}
 		}
 		return
+	}
+
+	// Attribute assignment `obj.attr = v` may invoke a @property.setter. Emit a
+	// call edge from the current function to the attribute's tail name so setter
+	// methods aren't reported as edge-less. (#45)
+	//
+	// Confirmed AST shape (tree-sitter Python, diagnostic run 2026-06-02):
+	//   assignment
+	//     left: attribute ("c.x")
+	//       object: identifier ("c")
+	//       attribute: identifier ("x")   ← tail name we emit
+	//     right: integer ("5")
+	if w.lang == "python" && kind == "assignment" && currentFn != "" {
+		if left := node.ChildByFieldName("left"); left != nil && left.Kind() == "attribute" {
+			if attr := left.ChildByFieldName("attribute"); attr != nil {
+				if name := w.nodeText(attr); name != "" {
+					w.result.Edges = append(w.result.Edges, RawEdge{
+						SourceName: currentFn,
+						TargetName: name,
+						Kind:       EdgeCalls,
+					})
+				}
+			}
+		}
+		// Do NOT return here — fall through to the default recursion below so
+		// the RHS (e.g. `c.x = make()`) still visits child call nodes.
 	}
 
 	// Default: recurse
@@ -346,6 +412,54 @@ func (w *multiWalker) extractCallTarget(node *tree_sitter.Node) string {
 		return w.identFromExpr(node.NamedChild(0))
 	}
 	return ""
+}
+
+// decoratorTarget returns the callable name from a Python decorator node.
+// Handles three forms confirmed by AST diagnostic:
+//   - @foo       → decorator has identifier child → returns "foo"
+//   - @a.b       → decorator has attribute child → returns "a.b"
+//   - @foo(arg)  → decorator has call child → delegates to extractCallTarget
+func (w *multiWalker) decoratorTarget(dec *tree_sitter.Node) string {
+	for i := uint(0); i < dec.NamedChildCount(); i++ {
+		child := dec.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if child.Kind() == "call" {
+			return w.extractCallTarget(child)
+		}
+		if t := w.identFromExpr(child); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// classBaseNames extracts base-class names from a class definition node.
+// For Python, the class_definition has a "superclasses" field of kind
+// argument_list; each named child is an identifier or attribute node.
+// Confirmed AST shape via diagnostic (2026-06-02):
+//
+//	class Plottable(Protocol):
+//	  superclasses → argument_list → [identifier "Protocol"]
+//
+// Returns a comma-separated string of names, or "" if there are no bases.
+func (w *multiWalker) classBaseNames(classNode *tree_sitter.Node) string {
+	superclasses := classNode.ChildByFieldName("superclasses")
+	if superclasses == nil {
+		return ""
+	}
+	var names []string
+	for i := uint(0); i < superclasses.NamedChildCount(); i++ {
+		child := superclasses.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if name := w.identFromExpr(child); name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ",")
 }
 
 // identFromExpr extracts an identifier from an expression node.

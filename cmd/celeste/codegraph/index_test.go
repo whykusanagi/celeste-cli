@@ -294,6 +294,110 @@ func TestDefaultIndexPath(t *testing.T) {
 	assert.NotEqual(t, path, path3)
 }
 
+func TestDetectStub_SkipsDunders(t *testing.T) {
+	dunders := []string{"__init__", "__lt__", "__setstate__", "__repr__"}
+	for _, name := range dunders {
+		c := FunctionEdgeInfo{Name: name, File: "mod.py", Line: 5, Kind: "method"}
+		if _, ok := detectStub(c, 0, []string{"pass"}); ok {
+			t.Errorf("dunder %q should not be flagged as a stub", name)
+		}
+	}
+	c := FunctionEdgeInfo{Name: "process_records", File: "mod.py", Line: 9, Kind: "method"}
+	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
+		t.Errorf("non-dunder empty method should still be flagged")
+	}
+}
+
+func TestIsTestFilePath(t *testing.T) {
+	cases := map[string]bool{
+		"tests/foo.py":            true,
+		"test/foo.py":             true,
+		"graphistry/tests/foo.py": true,
+		"a/b/test/c.py":           true,
+		"pkg/foo_test.go":         true,
+		"pkg/foo_test.py":         true,
+		"src/foo.spec.ts":         true,
+		"graphistry/util.py":      false,
+		"src/testing_utils.py":    false,
+		"contestants/foo.py":      false,
+		"pkg/conftest.py":         true,
+	}
+	for path, want := range cases {
+		if got := isTestFilePath(path); got != want {
+			t.Errorf("isTestFilePath(%q) = %v; want %v", path, got, want)
+		}
+	}
+}
+
+func TestDetectStub_SkipsProtocolAndAbstract(t *testing.T) {
+	cases := []FunctionEdgeInfo{
+		{Name: "render", File: "p.py", Line: 3, Kind: "method", BaseClasses: "Protocol"},
+		{Name: "auth", File: "p.py", Line: 7, Kind: "method", BaseClasses: "AuthManagerProtocol,Protocol"},
+		{Name: "do_it", File: "p.py", Line: 9, Kind: "method", Decorators: "abstractmethod"},
+		{Name: "compute", File: "p.py", Line: 11, Kind: "method", BaseClasses: "ABC"},
+	}
+	for _, c := range cases {
+		if _, ok := detectStub(c, 0, []string{"..."}); ok {
+			t.Errorf("%q (bases %q decorators %q) should not be a stub", c.Name, c.BaseClasses, c.Decorators)
+		}
+	}
+	c := FunctionEdgeInfo{Name: "handle_request", File: "p.py", Line: 20, Kind: "method", BaseClasses: "object"}
+	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
+		t.Errorf("concrete empty method should still be flagged")
+	}
+	// A decorator named "abstractmethod_factory" is NOT the same as "abstractmethod"
+	// and must NOT suppress stub detection (exact-match guard, #43).
+	cFactory := FunctionEdgeInfo{Name: "handle_factory", File: "p.py", Line: 30, Kind: "method", Decorators: "abstractmethod_factory"}
+	if _, ok := detectStub(cFactory, 0, []string{"pass"}); !ok {
+		t.Errorf("decorator %q should not suppress stub detection (not an exact abstractmethod match)", cFactory.Decorators)
+	}
+}
+
+// TestTodoFixme_CrossFileCaller is the regression test for issue #47.
+// A FIXME-tagged function (in_databricks in util.py) must show InEdges >= 2
+// when it has two callers in other files (a.py and b.py).
+//
+// This tests the two-pass Build() fix: a.py and b.py sort alphabetically
+// before util.py, so without the fix the cross-file call edges were resolved
+// via GetSymbolIDByName before in_databricks was stored — silently dropping
+// both edges and leaving InEdges==0. Build() now indexes all symbols first
+// (via indexFileSymbols) then resolves edges (via resolveAndStoreEdges).
+func TestTodoFixme_CrossFileCaller(t *testing.T) {
+	dir := t.TempDir()
+
+	// util.py defines the FIXME-tagged function — sorts AFTER a.py and b.py
+	writeFile(t, dir, "util.py", "def in_databricks():  # FIXME: this is a hack\n    return False\n")
+	// a.py and b.py each call in_databricks — these sort BEFORE util.py
+	writeFile(t, dir, "a.py", "from util import in_databricks\ndef a():\n    return in_databricks()\n")
+	writeFile(t, dir, "b.py", "from util import in_databricks\ndef b():\n    return in_databricks()\n")
+
+	dbPath := filepath.Join(dir, "codegraph-issue47.db")
+
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+
+	require.NoError(t, idx.Build())
+
+	funcs, err := idx.Store().FindAllFunctionsWithEdges()
+	require.NoError(t, err)
+
+	var inEdges int
+	found := false
+	for _, f := range funcs {
+		if f.Name == "in_databricks" {
+			found = true
+			inEdges = f.InEdges
+			break
+		}
+	}
+	require.True(t, found, "in_databricks must be indexed as a symbol")
+	assert.GreaterOrEqual(t, inEdges, 2,
+		"in_databricks should have at least 2 incoming edges (called by a() and b()); "+
+			"regression for issue #47 — cross-file plain-call edges were silently dropped "+
+			"when the callee file was indexed before the caller files")
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)

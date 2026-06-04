@@ -282,10 +282,10 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString("  • Comprehensive token tracking\n")
 		output.WriteString("  • Dynamic model listing\n")
 	case "grok":
-		output.WriteString("  • 2M context window (grok-4-1-fast)\n")
+		output.WriteString("  • Large context window (grok-build-0.1)\n")
 		output.WriteString("  • Fast response times\n")
 		output.WriteString("  • Full OpenAI compatibility\n")
-		output.WriteString("  • Recommended: grok-4-1-fast for tools\n")
+		output.WriteString("  • Recommended: grok-build-0.1 for tools\n")
 	case "venice":
 		output.WriteString("  • Uncensored models available\n")
 		output.WriteString("  • venice-uncensored: NO function calling\n")

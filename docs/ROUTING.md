@@ -87,6 +87,48 @@ Provider is auto-detected from the `base_url` in config:
 | `generativelanguage.googleapis.com` | Gemini | Free tier |
 | `openrouter.ai` | OpenRouter | Multi-model |
 
+## Model Routing (chat vs agent model)
+
+Celeste resolves the LLM model per **mode**, because chat and agent work have
+different requirements:
+
+| Mode | Model used | Why |
+|---|---|---|
+| chat, TTS | `config.model` | no tool calling required |
+| agent, `/orchestrate`, subagents | `config.ResolveAgentModel()` → `config.agent_model` if set, else `config.model` | **requires function calling** |
+
+```mermaid
+flowchart TD
+    Enter{"Entering a mode"} -->|chat / TTS| ChatM["use config.model"]
+    Enter -->|agent / orchestrate / subagent| Resolve["ResolveAgentModel()"]
+    Resolve -->|agent_model set| AgentM["use config.agent_model"]
+    Resolve -->|unset| Fallback["fall back to config.model"]
+    AgentM --> Guard{"SupportsTools?"}
+    Fallback --> Guard
+    Guard -->|no| Warn["⚠️ warn: model can't call tools — agent work may flail/hallucinate"]
+    Guard -->|yes| Run["run"]
+```
+
+- The seam is `agent.Options.Model` (per-run override). The subagent manager
+  (`buildAgentOptions`) and MCP `runAgentMode` set it to `ResolveAgentModel()`.
+- **Capability guardrail** (`agent/runtime.go`): on runner start, if the resolved
+  model fails `providers.NewModelDetection(provider).SupportsTools(model)`, a loud
+  warning is printed. This is **provider-agnostic** — it catches Venice
+  `venice-uncensored`, tool-less OpenRouter models, older OpenAI/instruct models,
+  etc., not just grok.
+- **Live catalogs are authoritative** for providers that publish capability:
+  - **OpenRouter** — `https://openrouter.ai/api/v1/models`, per-model
+    `supported_parameters` includes `"tools"`.
+  - **Venice** — `https://api.venice.ai/api/v1/models`, per-model
+    `model_spec.capabilities.supportsFunctionCalling`.
+  Both are fetched best-effort (cached), and `SupportsTools` falls back to a name
+  heuristic only if the catalog is unreachable. This is far more accurate than
+  guessing from the name (e.g. Venice `venice-uncensored-1-2` *does* support tools
+  while some `e2ee-*-uncensored` models don't). A future task adds an interactive
+  picker that surfaces capability + cost from these same catalogs.
+- `reconcileModel` applies the same deprecated-model migration (the grok-4-1-*
+  trap) to `agent_model` as to `model`.
+
 ## MCP Routing
 
 When running as an MCP server (`celeste serve`), requests route through:

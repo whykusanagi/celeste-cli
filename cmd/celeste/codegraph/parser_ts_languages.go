@@ -27,6 +27,12 @@ type langSpec struct {
 	// CallTypes are AST node types for function/method invocations.
 	CallTypes []string
 
+	// DecoratorTypes are AST node types for decorator application (@foo).
+	// When a function/method is wrapped by a decorated_definition parent,
+	// each decorator child produces a call edge from the function to the
+	// decorator target (e.g. foo → otel_traced for @otel_traced def foo).
+	DecoratorTypes []string
+
 	// NameField is the field name used to extract the identifier from
 	// declarations (usually "name", but some grammars differ).
 	NameField string
@@ -39,12 +45,13 @@ type langSpec struct {
 // mappings. Extension-to-language mapping is in extToLang below.
 var langSpecs = map[string]langSpec{
 	"python": {
-		ClassTypes:    []string{"class_definition"},
-		FunctionTypes: []string{"function_definition"},
-		ImportTypes:   []string{"import_statement", "import_from_statement"},
-		CallTypes:     []string{"call"},
-		NameField:     "name",
-		TestPatterns:  []string{"test_", "Test"},
+		ClassTypes:     []string{"class_definition"},
+		FunctionTypes:  []string{"function_definition"},
+		ImportTypes:    []string{"import_statement", "import_from_statement"},
+		CallTypes:      []string{"call"},
+		DecoratorTypes: []string{"decorator"},
+		NameField:      "name",
+		TestPatterns:   []string{"test_", "Test"},
 	},
 	"rust": {
 		ClassTypes:    []string{"struct_item", "enum_item", "impl_item", "trait_item"},

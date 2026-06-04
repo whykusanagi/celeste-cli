@@ -9,14 +9,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui/theme"
 )
 
-// Corruption colors
+// Corruption colors — sourced from the canonical corrupted-theme palette
+// (embedded colors.json) instead of hardcoded hex, so they stay in lockstep
+// with the theme (task 7aa133c9; #49 color-drift fix).
 var (
-	corruptMagenta = lipgloss.NewStyle().Foreground(lipgloss.Color("#d94f90"))
-	corruptRed     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff4757"))
-	corruptPurple  = lipgloss.NewStyle().Foreground(lipgloss.Color("#8b5cf6"))
-	corruptCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
+	corruptMagenta = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Hex("magenta2")))
+	corruptRed     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Hex("red")))
+	corruptPurple  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Hex("purple")))
+	corruptCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Hex("cyan")))
 )
 
 // SimulatedTyping handles simulated typing effect for non-streaming responses.
@@ -486,8 +490,8 @@ func CorruptCodeLine(codeLine string, intensity float64) string {
 // GetCodeBlockStyle returns a lipgloss style for code blocks in corrupted theme
 func GetCodeBlockStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00d4ff")). // Cyan - digital/glitch aesthetic
-		Background(lipgloss.Color("#0f0f1a")). // Darker background
+		Foreground(lipgloss.Color(theme.Hex("cyan"))). // canonical corrupted-cyan (#49)
+		Background(lipgloss.Color("#0f0f1a")).         // Darker background
 		Padding(0, 1)
 }
 

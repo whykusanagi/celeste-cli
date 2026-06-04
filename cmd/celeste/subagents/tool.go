@@ -62,6 +62,14 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 				"type": "integer",
 				"description": "Maximum agent turns before the subagent stops. Default 20. Increase for complex multi-step tasks (e.g., 40 for large content generation). Decrease for simple lookups (e.g., 5)."
 			},
+			"isolate_worktree": {
+				"type": "boolean",
+				"description": "Run this subagent in its own isolated git worktree so concurrent subagents can't conflict on the same files. Results merge back to the parent branch on success; the worktree is removed afterward. Requires the workspace to be a git repo. Default false."
+			},
+			"background_after": {
+				"type": "integer",
+				"description": "Seconds to wait before auto-transitioning this subagent to the background. If it runs longer than this, the parent resumes immediately and the result is delivered when it finishes (visible via /agents). 0 (default) keeps it foreground/blocking."
+			},
 			"persona": {
 				"type": "object",
 				"description": "Override the subagent's personality sliders. Omit to inherit the parent's current sliders.",
@@ -187,6 +195,12 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	if mt, ok := input["max_turns"].(float64); ok && mt > 0 {
 		spawnOpts.MaxTurns = int(mt)
 	}
+	if iso, ok := input["isolate_worktree"].(bool); ok {
+		spawnOpts.IsolateWorktree = iso
+	}
+	if ba, ok := input["background_after"].(float64); ok && ba > 0 {
+		spawnOpts.BackgroundAfter = time.Duration(ba) * time.Second
+	}
 
 	// 2. Extract task_id from goal text (grok embeds it there)
 	if spawnOpts.TaskID == "" {
@@ -262,6 +276,32 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}, nil
 	}
 
+	// Background path: the run was returned still in flight (background_after
+	// elapsed). It has no EndedAt/turns yet, so do NOT format it as "completed in
+	// 0 turns (…)" — that misleads the model into thinking the spawn did nothing
+	// and re-spawning in a loop (db9b9282). Tell it the agent is running and to
+	// check /agents instead.
+	if run.Status == "background" || run.Status == "running" {
+		if progress != nil {
+			progress <- tools.ProgressEvent{
+				ToolName: "spawn_agent",
+				Message:  fmt.Sprintf("〔%s〕 running in background", run.Name),
+			}
+		}
+		bg := fmt.Sprintf("〔%s〕 (%s) is running in the background (id:%s). Do NOT spawn it again — check status with /agents, and cancel with /agents kill %s if needed. Its result will arrive when it finishes.",
+			run.Name, run.Element, run.ID, run.Element)
+		return tools.ToolResult{
+			Content: bg,
+			Metadata: map[string]any{
+				"subagent_id":   run.ID,
+				"subagent_name": run.Name,
+				"element":       run.Element,
+				"status":        run.Status,
+				"background":    true,
+			},
+		}, nil
+	}
+
 	// Emit completion with element name
 	if progress != nil {
 		progress <- tools.ProgressEvent{
@@ -270,11 +310,14 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	// Format result with element identity
+	// Format result with element identity. Guard the duration against a zero
+	// EndedAt (defensive — a terminal run should always have it set).
+	elapsed := "—"
+	if !run.EndedAt.IsZero() {
+		elapsed = run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond).String()
+	}
 	result := fmt.Sprintf("〔%s〕 (%s) — completed in %d turns (%s)\n\n%s",
-		run.Name, run.Element,
-		run.Turns, run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
-		run.Result)
+		run.Name, run.Element, run.Turns, elapsed, run.Result)
 
 	return tools.ToolResult{
 		Content: result,

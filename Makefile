@@ -1,4 +1,7 @@
-.PHONY: build install clean help test dev verify import-key sync-persona
+.PHONY: build install clean help test dev verify import-key sync-persona sync-theme
+
+# Install destination (override with: make install BIN=/custom/path/celeste)
+BIN ?= $(HOME)/.local/bin/celeste
 
 # Default target
 help:
@@ -22,12 +25,21 @@ build:
 	@cd cmd/celeste && go build -o ../../celeste .
 	@echo "✅ Build complete: ./celeste"
 
-# Build and install to PATH
-install: build
-	@echo "📦 Installing to PATH..."
-	@cp celeste ~/.local/bin/celeste
-	@chmod +x ~/.local/bin/celeste
-	@echo "✅ celeste installed to ~/.local/bin/celeste"
+# Build and install to PATH.
+# Builds straight to the destination (go writes via temp+rename → fresh inode)
+# rather than `cp`-ing over the existing binary. On macOS, copying over an
+# existing binary invalidates its ad-hoc code signature, so the kernel (AMFI)
+# SIGKILLs it at launch ("zsh: killed celeste") even though `codesign -v` still
+# reports valid-on-disk. We re-sign explicitly on Darwin to be safe.
+install:
+	@echo "📦 Installing to $(BIN)..."
+	@mkdir -p "$(dir $(BIN))"
+	@go build -o "$(BIN)" ./cmd/celeste
+	@chmod +x "$(BIN)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		codesign --force --sign - "$(BIN)" && echo "🔏 ad-hoc signed (macOS AMFI)"; \
+	fi
+	@echo "✅ celeste installed to $(BIN)"
 
 # Development workflow: build, install, and test
 dev: install
@@ -64,6 +76,14 @@ sync-persona:
 	@cp ../celeste-core-persona/cli-prompts/celeste_core.json cmd/celeste/prompts/celeste_essence.json
 	@cp ../celeste-core-persona/docs/slider-agent-handoff.md docs/slider-agent-handoff.md
 	@echo "✅ Persona synced. Run 'go build' and smoke-test prompt load."
+
+# Sync the canonical corrupted-theme color palette into the embedded copy.
+# streaming.go consumes cmd/celeste/tui/theme/colors.json via //go:embed, so the
+# corruption colors track the theme repo instead of drifting (task 7aa133c9).
+sync-theme:
+	@echo "🎨 Syncing color palette from corrupted-theme..."
+	@cp ../corrupted-theme/src/data/colors.json cmd/celeste/tui/theme/colors.json
+	@echo "✅ Theme colors synced. Run 'go build' and 'go test ./cmd/celeste/tui/theme/'."
 
 # Import GPG signing key from Keybase
 import-key:

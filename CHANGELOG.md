@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-06-03
+
+### Added
+
+- **Model router + capability guardrail (task e8775b91).** New `agent_model` config
+  field: agent / orchestrate / subagent work uses `ResolveAgentModel()` (agent_model
+  if set, else the chat model), so you can pin a reasoning/tool-capable model for
+  agent work while keeping a cheap non-reasoning model for chat. The agent runner
+  warns loudly when the chosen model doesn't support tool calling (it will flail /
+  hallucinate in agent mode). `reconcileModel` migrates the grok-4-1-* trap on
+  `agent_model` too. (`Options.Model` is the per-run override seam.)
+- **Subagents + MCP agent mode auto-approve tools** so they can actually do work
+  (write/commit/bash) headlessly — spawning / invoking is the approval. The
+  interactive main agent stays `/confirm`-gated.
+- **Corruption colors are sourced from the canonical corrupted-theme palette
+  (task 7aa133c9).** New `cmd/celeste/tui/theme` package embeds `colors.json`
+  (synced from corrupted-theme `src/data/colors.json` via `make sync-theme`);
+  `streaming.go` consumes it via `theme.Hex(...)` instead of hardcoded hex, so the
+  #00ffff/#ff0000 colors track the theme repo. Corruption phrase/glitch pools are
+  intentionally left in code (animation-critical).
+- **`/agents kill <id>` cancels a specific in-flight subagent (task 6ffb5a7c).** The
+  manager now tracks a per-run cancel function (keyed by run id and task id) and
+  exposes `Manager.Kill`; the TUI wires `/agents kill <id>` (with autocomplete and
+  help text). Combined with the runtime ctx-honoring fix, this gives a manual escape
+  hatch for a stuck subagent instead of having to kill the whole TUI.
+- **Subagent resilience and orchestration.** Transient-error retry with backoff at the
+  LLM client layer — 429 honors `Retry-After`, 5xx and network errors retry with capped
+  exponential backoff, 4xx fails fast (#29). Background subagents with auto-transition
+  after a threshold, exposed via the `spawn_agent` `background_after` param (#30).
+  Inter-agent mailbox messaging with a `post_message` tool for spawn-time injection (#31).
+  Opt-in git worktree isolation per subagent (`isolate_worktree` param), with serialized
+  merges and sanitized worktree names (#32). Checkpoint persistence with `/agents resume`
+  to continue a failed subagent from its last completed turn (#33).
+- **TUI hard permission gate (#34).** Modal confirmation that blocks tool execution:
+  reads auto-approve, writes require approval. Options for yes / no / yes-for-this-tool /
+  yes-all-this-session, with rule persistence.
+- **Codegraph accuracy improvements.** STUB detection now skips dunder methods (#42),
+  `Protocol`/`ABC`/`@abstractmethod` members (#43); decorator `@syntax` calls (#44) and
+  `@property.setter` assignments (#45) are captured as call edges; `include_tests` now
+  matches top-level test dirs and pytest conventions (#46); two-pass `Build()` fixes
+  dropped cross-file caller counts (#47).
+
+### Changed
+
+- **Default model is now `grok-4.20-0309-non-reasoning`** — reliable tool calling, zero
+  reasoning-token burn, never routes to the cost-prohibitive grok-4.3.
+
+### Fixed
+
+- **Subagent/agent runtime no longer hangs uncancellably on a stuck tool (task 349f1f14).**
+  A tool that ignores its context (e.g. a codegraph call spinning on the DB) used to
+  block the turn loop forever — the per-tool timeout fired on the context but nothing
+  observed it. Tool execution now runs under `runToolWithTimeout`, which returns at the
+  deadline even if the tool keeps running, and the turn loop checks `ctx.Err()` between
+  turns so an expired parent deadline (a subagent's overall timeout) stops it promptly.
+  New `StatusCancelled` run status.
+- **Codegraph operations honor context cancellation (task 349f1f14).** `SemanticSearch`,
+  `Build`, and `Update` gained `*WithContext` variants that check `ctx` before and during
+  their hot loops, so a `code_search`/`code_index` tool call stops at the tool deadline
+  instead of scanning the whole corpus/repo. The `code_search` tool and the server index
+  tools pass their request context through; non-ctx signatures are preserved as
+  `context.Background()` wrappers.
+- **Progress-aware repetition guard (task 8f02ed3d).** The chat/message loop now stops a
+  loop where the model re-calls the same tool with slightly-varying args but gets
+  byte-identical results turn after turn — a case the args-based guard missed. It keys on
+  the result, not the args, so legitimate bulk work (each call producing a distinct
+  result, e.g. a new mp3 file) is never blocked.
+- **xAI streaming tool-call JSON corruption / TTS hallucination (#48).** Validate
+  assembled tool-call JSON at stream finish, chat-mode error-handling parity with agent
+  mode, block hallucinated `Audio saved:` claims when no file is written, distinguish
+  missing vs empty TTS text, and cap consecutive invalid-args turns instead of retrying
+  unbounded.
+- **Model routing safety (#51).** Auto-migrate deprecated `grok-4-1-*` models (xAI
+  silently routes them to grok-4.3 — the cost trap) and fill empty model on load; clamp
+  a stale `context_limit` that exceeds the model window; correct `grok-build-0.1` to its
+  real 256K window and pricing.
+- **Repetition guard** in both the TUI and server message loops — the call signature now
+  includes args, so it only trips on identical repeated calls and does not block bulk
+  distinct work (e.g. batch TTS).
+- **macOS install** no longer produces `zsh: killed` — `make install` builds to the
+  destination and re-applies an ad-hoc code signature instead of `cp`-over-existing.
+- **Theme color drift (#49)** — corruption cyan/red aligned to canonical corrupted-theme
+  0.2.0 (`#00ffff` / `#ff0000`).
+- **Quiet MCP startup** — per-tool registration logging is now gated behind
+  `CELESTE_MCP_DEBUG`.
+
+### Security
+
+- **Hard permission gate (#34)** blocks tool execution pending explicit approval,
+  closing the prompt-injection bypass of the previous soft `/confirm`.
+- **Subagent worktree isolation (#32)** contains the blast radius of any single subagent.
+- **grok-4-1-\* migration guard (#51)** prevents silent routing to the cost-prohibitive
+  grok-4.3 model.
+
 ## [1.9.3] - 2026-04-21
 
 ### Added

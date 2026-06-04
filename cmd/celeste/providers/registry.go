@@ -51,11 +51,11 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    true,
 		SupportsTokenTracking:   true, // OpenAI-compatible token tracking
-		DefaultModel:            "grok-4-1-fast",
-		PreferredToolModel:      "grok-4-1-fast", // Specifically trained for tool calling
+		DefaultModel:            "grok-4.20-0309-non-reasoning",
+		PreferredToolModel:      "grok-4.20-0309-non-reasoning", // non-reasoning: reliable tool use, no reasoning burn, no grok-4.3 routing (#51)
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
-		Notes:                   "Use grok-4-1-fast for best tool calling performance. 2M context window.",
+		Notes:                   "Default grok-4.20-0309-non-reasoning: reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3. Avoid grok-4-1-* (they route to grok-4.3).",
 	},
 
 	"venice": {
@@ -253,13 +253,19 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "gpt-4") || contains(modelID, "gpt-3.5-turbo")
 
 	case "grok":
-		// grok-4-1-fast, grok-4-1, grok-4, grok-beta support tools
-		// grok-4-latest may or may not support tools well
-		return contains(modelID, "grok-4") || contains(modelID, "grok-beta")
+		// xAI text models support tools: grok-4.3, grok-4.20-* (reasoning /
+		// non-reasoning / multi-agent), grok-build-0.1, grok-beta (docs.x.ai).
+		// grok-imagine-* (image/video) and voice models do NOT — they don't match
+		// "grok-4"/"grok-build" so they correctly return false here.
+		return contains(modelID, "grok-build") || contains(modelID, "grok-4") || contains(modelID, "grok-beta")
 
 	case "venice":
-		// Only certain Venice models support tools
-		// venice-uncensored does NOT support tools
+		// Prefer Venice's live catalog (model_spec.capabilities.supportsFunctionCalling).
+		// The old name heuristic was wrong both ways (some *-uncensored models DO
+		// support tools; some do not). Fall back to it only if the catalog is down.
+		if supported, known := VeniceToolSupport(modelID); known {
+			return supported
+		}
 		return !contains(modelID, "uncensored")
 
 	case "anthropic":
@@ -271,8 +277,12 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "gemini")
 
 	case "openrouter":
-		// OpenRouter prefixes models with provider name
-		// Assume most models support tools if they're from tool-capable providers
+		// Prefer OpenRouter's live catalog (authoritative per-model capability:
+		// supported_parameters includes "tools"). Falls through to a name
+		// heuristic only when the catalog is unreachable.
+		if supported, known := OpenRouterToolSupport(modelID); known {
+			return supported
+		}
 		return contains(modelID, "gpt-") || contains(modelID, "claude-") || contains(modelID, "gemini-")
 
 	default:

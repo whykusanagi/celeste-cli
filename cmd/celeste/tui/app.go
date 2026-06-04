@@ -88,8 +88,10 @@ type AppModel struct {
 	pendingToolCallID  string // Track tool call ID for sending result back to LLM
 	pendingToolCalls   []pendingToolCall
 	toolBatchActive    bool
-	clawToolIterations int // Assistant tool-call turns in the current user turn
-	clawMaxIterations  int // Safety cap for claw mode tool loops
+	clawToolIterations int    // Assistant tool-call turns in the current user turn
+	clawMaxIterations  int    // Safety cap for claw mode tool loops
+	lastToolSig        string // signature of the previous tool-call batch (repetition guard)
+	sameToolStreak     int    // consecutive identical single-tool batches (repetition guard)
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -183,6 +185,17 @@ type SubagentInfo struct {
 // SubagentLister is an optional extension for /agents command.
 type SubagentLister interface {
 	ListSubagents() []SubagentInfo
+}
+
+// SubagentResumer is an optional extension for /agents resume <id>.
+type SubagentResumer interface {
+	ResumeSubagent(ctx context.Context, checkpointID string) (string, error)
+}
+
+// SubagentKiller is an optional extension for /agents kill <id>. It cancels a
+// specific in-flight subagent (task 6ffb5a7c).
+type SubagentKiller interface {
+	KillSubagent(id string) bool
 }
 
 // PromptRefresher is an optional extension to reload the system prompt
@@ -1156,6 +1169,40 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "agents":
+				// /agents resume <checkpoint-id>
+				if len(cmd.Args) >= 2 && strings.ToLower(cmd.Args[0]) == "resume" {
+					checkpointID := cmd.Args[1]
+					resumer, ok := m.llmClient.(SubagentResumer)
+					if !ok {
+						m.chat = m.chat.AddSystemMessage("Subagent resume not available.")
+						return m, nil
+					}
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Resuming subagent from checkpoint %s...", checkpointID))
+					return m, func() tea.Msg {
+						result, err := resumer.ResumeSubagent(context.Background(), checkpointID)
+						if err != nil {
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resume failed: %v", err)}
+						}
+						return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resumed subagent completed.\n\n%s", result)}
+					}
+				}
+
+				// /agents kill <id> — cancel a specific in-flight subagent (task 6ffb5a7c)
+				if len(cmd.Args) >= 2 && strings.ToLower(cmd.Args[0]) == "kill" {
+					id := cmd.Args[1]
+					killer, ok := m.llmClient.(SubagentKiller)
+					if !ok {
+						m.chat = m.chat.AddSystemMessage("Subagent kill not available.")
+						return m, nil
+					}
+					if killer.KillSubagent(id) {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Killed subagent %s.", id))
+					} else {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("No in-flight subagent matching %q (already finished or unknown id).", id))
+					}
+					return m, nil
+				}
+
 				lister, ok := m.llmClient.(SubagentLister)
 				if !ok {
 					m.chat = m.chat.AddSystemMessage("Subagent listing not available.")
@@ -1183,11 +1230,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					line := fmt.Sprintf("  %s 〔%s〕 %s  %d turns  %s",
 						icon, a.Name, a.Status, a.Turns,
 						a.Elapsed.Round(time.Millisecond))
+					if a.ID != "" {
+						line += fmt.Sprintf("  id:%s", a.ID)
+					}
 					if a.TaskID != "" {
 						line += fmt.Sprintf("  (task: %s)", a.TaskID)
 					}
 					sb.WriteString(line + "\n")
 				}
+				sb.WriteString("\nCancel one with: /agents kill <id|name>  (e.g. the 〔name〕 shown above)\n")
 				m.chat = m.chat.AddSystemMessage(sb.String())
 				return m, nil
 
@@ -1542,6 +1593,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Add user message to chat
 		m.chat = m.chat.AddUserMessage(content)
 		m.clawToolIterations = 0
+		m.lastToolSig = ""
+		m.sameToolStreak = 0
 		m.streaming = true
 		m.status = m.status.SetStreaming(true)
 		m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
@@ -2580,6 +2633,19 @@ func (m AppModel) getToolsForDispatch() []SkillDefinition {
 // isClawMode is deprecated — tools always auto-loop now.
 // Kept for backward compatibility with config files that set runtime_mode.
 
+// toolBatchSignature returns a signature of a tool-call batch that INCLUDES the
+// arguments, so the repetition guard only trips when the model re-issues the
+// IDENTICAL call (a true stuck loop) — never on legitimate bulk work where each
+// call has distinct args (e.g. generating 30 different mp3 lines).
+func toolBatchSignature(calls []SkillCallRequest) string {
+	parts := make([]string, 0, len(calls))
+	for _, c := range calls {
+		b, _ := json.Marshal(c.Call.Arguments)
+		parts = append(parts, c.Call.Name+"("+string(b)+")")
+	}
+	return strings.Join(parts, ",")
+}
+
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
 		return m, nil
@@ -2611,6 +2677,36 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 		return m, nil
 	}
 	m.clawToolIterations++
+
+	// Repetition guard: stop only when the model re-issues the IDENTICAL call
+	// (same tool AND same args) several turns in a row — a genuine stuck loop.
+	// Because the signature includes args, legitimate bulk work (e.g. 30 distinct
+	// mp3 lines) is NEVER blocked; only true "spinning on the same thing" trips it.
+	// Safety net — it halts a runaway, it doesn't make the model finish. (#48 follow-up)
+	const maxSameCallStreak = 3
+	if sig := toolBatchSignature(msg.Calls); sig != "" {
+		if sig == m.lastToolSig {
+			m.sameToolStreak++
+		} else {
+			m.sameToolStreak = 1
+			m.lastToolSig = sig
+		}
+		if m.sameToolStreak >= maxSameCallStreak {
+			LogInfo(fmt.Sprintf("Repetition guard: identical call repeated %d turns — stopping", m.sameToolStreak))
+			m.streaming = false
+			m.status = m.status.SetStreaming(false)
+			m.status = m.status.SetText("Stopped: identical tool call repeated")
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf(
+				"⚠️ Stopped: the model made the identical tool call %d times in a row (stuck loop). Send another message (or rephrase the goal) to continue.",
+				m.sameToolStreak))
+			m.sameToolStreak = 0
+			m.lastToolSig = ""
+			return m, nil
+		}
+	} else {
+		m.sameToolStreak = 0
+		m.lastToolSig = ""
+	}
 
 	// Only add the assistant message if it has text content. Tool-call-only
 	// responses (empty AssistantContent) would render as an empty chat bubble.

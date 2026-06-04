@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -107,12 +109,34 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		defaultCfg := permissions.DefaultConfig()
 		permConfig = &defaultCfg
 	}
+	// Subagents run headless (no interactive approval modal), so any tool that
+	// resolves to "Ask" would be denied — crippling them (can't write/commit/bash,
+	// which broke worktree work). When AutoApproveTools is set, spawning IS the
+	// approval: run in Trust mode so the subagent can do real work unattended.
+	if options.AutoApproveTools {
+		permConfig.Mode = permissions.ModeTrust
+	}
 	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
+
+	// Model-router seam: agent/orchestrate/subagent callers may override the model
+	// (cfg.ResolveAgentModel()) so agent work uses a tool-capable/reasoning model
+	// while chat keeps a cheaper one (task e8775b91). Guardrail: warn loudly if the
+	// chosen model doesn't support tool calling — that model will flail/hallucinate
+	// in agent mode (observed with non-reasoning grok failing to drive spawn_agent).
+	model := cfg.Model
+	if options.Model != "" {
+		model = options.Model
+	}
+	if provider := providers.DetectProvider(cfg.BaseURL); provider != "" {
+		if !providers.NewModelDetection(provider).SupportsTools(model) {
+			fmt.Fprintf(errOut, "⚠️  agent model %q (%s) may not support tool calling — agent/subagent work can fail or hallucinate; consider setting a tool-capable agent_model\n", model, provider)
+		}
+	}
 
 	llmConfig := &llm.Config{
 		APIKey:                cfg.APIKey,
 		BaseURL:               cfg.BaseURL,
-		Model:                 cfg.Model,
+		Model:                 model,
 		Timeout:               cfg.GetTimeout(),
 		SkipPersonaPrompt:     cfg.SkipPersonaPrompt,
 		SimulateTyping:        cfg.SimulateTyping,
@@ -153,7 +177,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	// Create a token budget for context tracking.
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
-	budget := ctxmgr.NewTokenBudgetForModel(cfg.Model, systemPromptTokens, 0)
+	budget := ctxmgr.NewTokenBudgetForModel(model, systemPromptTokens, 0)
 
 	return &Runner{
 		client:   client,
@@ -239,6 +263,23 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	}
 
 	for state.Turn < state.Options.MaxTurns {
+		// Honor cancellation/deadline between turns. The per-request and per-tool
+		// contexts cover work *within* a turn; this stops the loop from starting a
+		// new turn after the parent context (e.g. a subagent's overall timeout)
+		// has expired (task 349f1f14).
+		if err := ctx.Err(); err != nil {
+			state.Status = StatusCancelled
+			state.Error = fmt.Sprintf("run cancelled: %v", err)
+			now := time.Now()
+			state.CompletedAt = &now
+			state.UpdatedAt = now
+			if !state.Options.DisableCheckpoints {
+				_ = r.store.Save(state)
+			}
+			r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
+			return state, err
+		}
+
 		state.Turn++
 		state.Status = StatusRunning
 		state.Phase = PhaseExecution
@@ -387,11 +428,30 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			toolCalls = toolCalls[:state.Options.MaxToolCallsPerTurn]
 		}
 
+		// anyInvalidArgs tracks whether ANY tool call in this turn had invalid args;
+		// a single corrupted-args call is a signal worth acting on, so the whole turn counts as invalid.
+		anyInvalidArgs := false
 		for _, tc := range toolCalls {
 			r.emitProgress(ProgressToolCall, tc.Name, state.Turn, state.Options.MaxTurns)
-			toolMsg := r.executeToolCall(ctx, state, tc)
+			toolMsg, argsValid := r.executeToolCall(ctx, state, tc)
 			state.Messages = append(state.Messages, toolMsg)
 			state.ToolCallCount++
+			if !argsValid {
+				anyInvalidArgs = true
+			}
+		}
+		state.ConsecutiveInvalidToolArgs = nextConsecutiveInvalid(state.ConsecutiveInvalidToolArgs, anyInvalidArgs)
+		if state.ConsecutiveInvalidToolArgs >= state.Options.MaxConsecutiveInvalidToolArgs {
+			state.Status = StatusFailed
+			state.Error = fmt.Sprintf("tool-call arguments were invalid JSON %d turns in a row — aborting to avoid an unbounded retry loop (likely upstream stream corruption)", state.ConsecutiveInvalidToolArgs)
+			now := time.Now()
+			state.CompletedAt = &now
+			state.UpdatedAt = time.Now()
+			if !state.Options.DisableCheckpoints {
+				_ = r.store.Save(state)
+			}
+			r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
+			return state, errors.New(state.Error)
 		}
 
 		if !state.Options.DisableCheckpoints {
@@ -547,7 +607,7 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 	return false, nil
 }
 
-func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) tui.ChatMessage {
+func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) (tui.ChatMessage, bool) {
 	toolName := tc.Name
 	if state.Options.Verbose {
 		fmt.Fprintf(r.out, "[tool] %s\n", toolName)
@@ -558,11 +618,18 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 
 	argsJSON := tc.Arguments
 	resultContent := ""
+	argsValid := true
 
-	if !json.Valid([]byte(argsJSON)) {
+	if tc.ArgsError != "" {
+		argsValid = false
+		resultContent = fmt.Sprintf(`{"error": true, "message": "stream-corrupted tool arguments", "detail": %q, "tool": %q}`, tc.ArgsError, toolName)
+	} else if !json.Valid([]byte(argsJSON)) {
+		argsValid = false
 		resultContent = fmt.Sprintf(`{"error": true, "message": "invalid tool arguments JSON", "tool": %q}`, toolName)
 	} else {
-		execution, err := r.client.ExecuteSkill(toolCtx, toolName, argsJSON)
+		execution, err := runToolWithTimeout(toolCtx, func() (*llm.ExecutionResult, error) {
+			return r.client.ExecuteSkill(toolCtx, toolName, argsJSON)
+		})
 		resultContent = formatToolResult(toolName, execution, err)
 	}
 
@@ -583,7 +650,7 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 			Role:      "user",
 			Content:   fmt.Sprintf("[Tool Result: %s]\n%s", toolName, resultContent),
 			Timestamp: time.Now(),
-		}
+		}, argsValid
 	}
 
 	return tui.ChatMessage{
@@ -592,6 +659,34 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		Name:       toolName,
 		Content:    resultContent,
 		Timestamp:  time.Now(),
+	}, argsValid
+}
+
+// runToolWithTimeout runs fn but returns as soon as ctx is cancelled, even if fn
+// itself ignores the context. fn runs in its own goroutine; if it is stuck in a
+// loop that never checks ctx (the v1.10 codegraph spin — task 349f1f14), the
+// goroutine is abandoned but the caller is unblocked so the agent loop can honor
+// its deadline instead of hanging forever. The send channel is buffered so the
+// abandoned goroutine can still complete its send and exit cleanly.
+//
+// Caveat: an abandoned goroutine keeps running until it returns on its own; this
+// makes the *run* terminable on deadline but does not by itself stop a tool that
+// busy-loops. The complementary fix is for long-running tools to honor ctx.
+func runToolWithTimeout(ctx context.Context, fn func() (*llm.ExecutionResult, error)) (*llm.ExecutionResult, error) {
+	type toolOutcome struct {
+		exec *llm.ExecutionResult
+		err  error
+	}
+	done := make(chan toolOutcome, 1)
+	go func() {
+		exec, err := fn()
+		done <- toolOutcome{exec: exec, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("tool execution exceeded timeout: %w", ctx.Err())
+	case out := <-done:
+		return out.exec, out.err
 	}
 }
 
@@ -640,6 +735,9 @@ func normalizeOptions(options *Options) {
 	}
 	if options.MaxConsecutiveNoToolTurns <= 0 {
 		options.MaxConsecutiveNoToolTurns = defaults.MaxConsecutiveNoToolTurns
+	}
+	if options.MaxConsecutiveInvalidToolArgs <= 0 {
+		options.MaxConsecutiveInvalidToolArgs = defaults.MaxConsecutiveInvalidToolArgs
 	}
 	if options.RequestTimeout <= 0 {
 		options.RequestTimeout = defaults.RequestTimeout
@@ -1079,4 +1177,13 @@ func truncateForStep(s string) string {
 		return s[:200] + "..."
 	}
 	return s
+}
+
+// nextConsecutiveInvalid increments the running count when a turn had any
+// invalid-args tool call, and resets to zero otherwise.
+func nextConsecutiveInvalid(prev int, anyInvalid bool) int {
+	if anyInvalid {
+		return prev + 1
+	}
+	return 0
 }

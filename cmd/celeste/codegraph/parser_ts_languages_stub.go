@@ -7,12 +7,13 @@ package codegraph
 
 // langSpec defines the tree-sitter node types for a single language.
 type langSpec struct {
-	ClassTypes    []string
-	FunctionTypes []string
-	ImportTypes   []string
-	CallTypes     []string
-	NameField     string
-	TestPatterns  []string
+	ClassTypes     []string
+	FunctionTypes  []string
+	ImportTypes    []string
+	CallTypes      []string
+	DecoratorTypes []string
+	NameField      string
+	TestPatterns   []string
 }
 
 // extToLang maps file extensions to language identifiers.

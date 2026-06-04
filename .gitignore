@@ -108,3 +108,4 @@ divide.py
 analyze_logs.sh
 *.log
 __pycache__/
+speech_*.mp3

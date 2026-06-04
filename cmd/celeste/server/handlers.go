@@ -145,6 +145,58 @@ func registerCelesteTool(s *Server) {
 	})
 }
 
+// toolErrorJSON builds a properly-escaped JSON tool-error payload.
+func toolErrorJSON(msg string) string {
+	b, _ := json.Marshal(map[string]any{"error": true, "message": msg})
+	return string(b)
+}
+
+// toolCallBatchSig returns a signature of a tool-call batch INCLUDING arguments,
+// so the repetition guard only trips on the model re-issuing the IDENTICAL call
+// (a true stuck loop), never on legitimate bulk work where each call has distinct
+// args (e.g. 30 different mp3 lines).
+func toolCallBatchSig(calls []llm.ToolCallResult) string {
+	parts := make([]string, 0, len(calls))
+	for _, c := range calls {
+		parts = append(parts, c.Name+"("+c.Arguments+")")
+	}
+	return strings.Join(parts, ",")
+}
+
+// maxNoProgressStreak is how many turns of byte-identical tool RESULTS (same
+// tool name producing the same output) trip the progress guard. Higher than the
+// args-based maxSameCallStreak because args may legitimately vary; what signals
+// a true stuck loop is the model getting the same result over and over.
+const maxNoProgressStreak = 6
+
+// progressGuard catches a stuck loop the args-based guard misses (task 8f02ed3d):
+// the model re-calls the same tool with slightly-varying args but gets identical
+// results turn after turn. It keys on the RESULT, not the args, so legitimate
+// bulk work — where each call produces a distinct result (e.g. a new mp3 file) —
+// never trips it.
+type progressGuard struct {
+	lastSig string
+	streak  int
+}
+
+// observe records a turn's tool-result signature and reports whether the loop has
+// produced identical results maxNoProgressStreak times in a row. An empty
+// signature (no tool calls this turn) resets the streak.
+func (g *progressGuard) observe(sig string) bool {
+	if sig == "" {
+		g.streak = 0
+		g.lastSig = ""
+		return false
+	}
+	if sig == g.lastSig {
+		g.streak++
+	} else {
+		g.streak = 1
+		g.lastSig = sig
+	}
+	return g.streak >= maxNoProgressStreak
+}
+
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
@@ -191,8 +243,20 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 		{Role: "user", Content: prompt, Timestamp: time.Now()},
 	}
 
+	// ttsRan tracks whether generate_speech executed successfully this session.
+	// The flag is session-scoped (persists across turns) and is used to detect
+	// hallucinated "Audio saved:" prose when TTS never ran.
+	ttsRan := false
+	// spawnRan tracks whether spawn_agent actually executed this session, used to
+	// strip fabricated "subagent spawned (id: …)" prose (task 04d48b1e).
+	spawnRan := false
+
 	// Auto-loop: send message, execute tool calls, send results back, repeat
 	maxLoops := 25
+	const maxSameCallStreak = 3 // stop a true stuck loop: the IDENTICAL call repeated (mirrors the TUI guard)
+	lastToolSig := ""
+	sameToolStreak := 0
+	var progress progressGuard // result-based guard for args-varying loops (task 8f02ed3d)
 	for i := 0; i < maxLoops; i++ {
 		result, err := client.SendMessageSync(ctx, messages, toolDefs)
 		if err != nil {
@@ -201,7 +265,28 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 
 		// If no tool calls, we're done
 		if len(result.ToolCalls) == 0 {
-			return []ContentBlock{{Type: "text", Text: strings.TrimSpace(result.Content)}}, nil
+			text := llm.StripUnbackedAudioClaim(strings.TrimSpace(result.Content), ttsRan)
+			text = llm.StripUnbackedSpawnClaim(text, spawnRan)
+			return []ContentBlock{{Type: "text", Text: text}}, nil
+		}
+
+		// Repetition guard: stop only when the model re-issues the IDENTICAL call
+		// (same tool AND args) several turns in a row — a true stuck loop. The
+		// signature includes args, so legitimate bulk work (distinct lines) is
+		// never blocked.
+		if sig := toolCallBatchSig(result.ToolCalls); sig != "" {
+			if sig == lastToolSig {
+				sameToolStreak++
+			} else {
+				sameToolStreak = 1
+				lastToolSig = sig
+			}
+			if sameToolStreak >= maxSameCallStreak {
+				return []ContentBlock{{Type: "text", Text: fmt.Sprintf("Stopped: the model made the identical tool call %d times in a row (stuck loop).", sameToolStreak)}}, nil
+			}
+		} else {
+			sameToolStreak = 0
+			lastToolSig = ""
 		}
 
 		// Add assistant response with tool calls
@@ -221,23 +306,75 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 			}(),
 		})
 
-		// Execute each tool call and add results
+		// Execute each tool call and add results. turnResults captures the
+		// (tool name | result) of each call so the progress guard can detect a
+		// loop that produces identical results despite varying args.
+		var turnResults []string
 		for _, tc := range result.ToolCalls {
-			// Parse JSON arguments string to map
+			// Corruption detected upstream (dropped stream delta): never run the
+			// tool with empty args — surface an error so the model can retry.
+			if tc.ArgsError != "" {
+				content := toolErrorJSON(tc.ArgsError)
+				messages = append(messages, tui.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Content:    content,
+				})
+				turnResults = append(turnResults, tc.Name+"|"+content)
+				continue
+			}
+
 			var args map[string]any
 			if tc.Arguments != "" {
-				_ = json.Unmarshal([]byte(tc.Arguments), &args)
+				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+					content := toolErrorJSON(fmt.Sprintf("invalid tool arguments JSON: %v", err))
+					messages = append(messages, tui.ChatMessage{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Name:       tc.Name,
+						Content:    content,
+					})
+					turnResults = append(turnResults, tc.Name+"|"+content)
+					continue
+				}
 			}
 			if args == nil {
 				args = make(map[string]any)
 			}
-			toolResult, _ := registry.Execute(ctx, tc.Name, args)
+
+			toolResult, err := registry.Execute(ctx, tc.Name, args)
+			if err != nil {
+				content := toolErrorJSON(fmt.Sprintf("tool execution failed: %v", err))
+				messages = append(messages, tui.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Content:    content,
+				})
+				turnResults = append(turnResults, tc.Name+"|"+content)
+				continue
+			}
+			if tc.Name == "generate_speech" && !toolResult.Error {
+				ttsRan = true
+			}
+			if tc.Name == "spawn_agent" && !toolResult.Error {
+				spawnRan = true
+			}
 			messages = append(messages, tui.ChatMessage{
 				Role:       "tool",
 				Content:    toolResult.Content,
 				ToolCallID: tc.ID,
 				Name:       tc.Name,
 			})
+			turnResults = append(turnResults, tc.Name+"|"+toolResult.Content)
+		}
+
+		// Progress guard: stop if the same tool(s) return identical results turn
+		// after turn (a stuck loop the args-based guard misses). Distinct results
+		// (e.g. bulk TTS writing a new file each call) reset the streak.
+		if progress.observe(strings.Join(turnResults, ",")) {
+			return []ContentBlock{{Type: "text", Text: fmt.Sprintf("Stopped: the model called the same tool with no new result %d turns in a row (stuck loop).", maxNoProgressStreak)}}, nil
 		}
 	}
 
@@ -256,7 +393,14 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 	opts := agent.Options{
 		Workspace: workspace,
 		MaxTurns:  50,
-		Verbose:   false,
+		// Route MCP agent-mode work to the agent model (task e8775b91).
+		Model: cfg.ResolveAgentModel(),
+		// MCP `celeste agent` mode is headless (no approval modal), like a
+		// subagent. Without this, every write/exec tool resolves to "Ask" and is
+		// denied, so the MCP-driven agent can't bash/write/commit. Invoking the
+		// MCP agent tool IS the approval (task a035f219).
+		AutoApproveTools: true,
+		Verbose:          false,
 	}
 
 	runner, err := agent.NewRunner(cfg, opts, &outBuf, &errBuf)
@@ -295,11 +439,21 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 		sb.WriteString("\n")
 	}
 
-	// Agent response
+	// Agent response. Strip a fabricated "subagent spawned (id: …)" claim if
+	// spawn_agent never actually ran this turn (task 04d48b1e — a weak model
+	// flails then hallucinates a spawn).
+	spawnRan := false
+	for _, step := range state.Steps {
+		if step.Name == "spawn_agent" {
+			spawnRan = true
+			break
+		}
+	}
 	response := state.LastAssistantResponse
 	if response == "" && outBuf.Len() > 0 {
 		response = outBuf.String()
 	}
+	response = llm.StripUnbackedSpawnClaim(response, spawnRan)
 	if response != "" {
 		sb.WriteString("## Response\n\n")
 		sb.WriteString(response)
