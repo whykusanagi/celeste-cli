@@ -2,13 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [ '**' ]   # run CI on every branch push (dev feedback before a PR exists)
-  pull_request:
-    branches: [ main ]
+    branches: [ main ]   # post-merge sanity on main
+  pull_request:          # every PR (incl. dev branches + Dependabot) gets CI — the gate
+  workflow_dispatch:     # manual re-run for a flaky check
 
-# Cancel superseded runs for the same ref so a rapid push sequence doesn't pile up.
+# Cancel superseded runs for the same PR/ref so new commits don't pile up runs.
+# Keyed on the PR head SHA when available so a branch push and its PR don't both run.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
