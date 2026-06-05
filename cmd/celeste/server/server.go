@@ -17,7 +17,7 @@ import (
 
 const (
 	serverName    = "celeste"
-	serverVersion = "1.10.0"
+	serverVersion = "1.10.0" // x-release-please-version
 )
 
 // Config holds MCP server configuration.
