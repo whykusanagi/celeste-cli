@@ -151,6 +151,12 @@ func TestModelDetection(t *testing.T) {
 		{"openrouter", "anthropic/claude-sonnet-4-5", true},
 		{"openrouter", "meta-llama/llama-2-70b", false}, // Old model
 
+		// Sakana — fugu / fugu-ultra support parallel tool calls; matcher: contains "fugu"
+		{"sakana", "fugu", true},
+		{"sakana", "fugu-ultra", true},
+		{"sakana", "fugu-ultra-20260615", true},
+		{"sakana", "some-other-model", false},
+
 		// Unknown provider
 		{"unknown", "any-model", false},
 	}
@@ -350,6 +356,33 @@ func TestGrokStaticModels(t *testing.T) {
 	// be offered in the catalog.
 	assert.Nil(t, findGrokModel("grok-4-1-fast"), "grok-4-1-fast must not be in the catalog (routes to grok-4.3)")
 	assert.Nil(t, findGrokModel("grok-4-1"), "grok-4-1 must not be in the catalog (routes to grok-4.3)")
+}
+
+// TestSakanaStaticModels specifically tests the Sakana (Fugu) catalog.
+func TestSakanaStaticModels(t *testing.T) {
+	service := NewModelService("test-key", "https://api.sakana.ai/v1", "sakana")
+	models := service.getStaticModels()
+
+	find := func(id string) *ModelInfo {
+		for i := range models {
+			if models[i].ID == id {
+				return &models[i]
+			}
+		}
+		return nil
+	}
+
+	// fugu is the default; fugu-ultra and the dated pin must also be listed so the
+	// catalog stays consistent with ModelLimits (context/budget.go).
+	for _, id := range []string{"fugu", "fugu-ultra", "fugu-ultra-20260615"} {
+		m := find(id)
+		assert.NotNil(t, m, "Should have %s in the Sakana catalog", id)
+		if m != nil {
+			assert.True(t, m.SupportsTools, "%s should support tools", id)
+			assert.Equal(t, 1000000, m.ContextWindow, "%s should report a 1M context window", id)
+			assert.Equal(t, "sakana", m.Provider)
+		}
+	}
 }
 
 // TestOpenAIStaticModels specifically tests OpenAI models
