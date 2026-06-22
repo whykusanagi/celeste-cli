@@ -15,7 +15,7 @@ Darlings, v1.11.0 supports **8 providers**. All OpenAI-compatible for my 40+ too
 
 **Setup:** `celeste config --set-url https://api.x.ai/v1 --set-key xai-...`
 
-**Sakana/Fugu:** `celeste config --set-url https://api.sakana.ai/v1 --set-key <key> --set-model fugu` (or `fugu-ultra`). OpenAI-compatible chat completions; reasoning effort is fixed server-side (default high).
+**Sakana/Fugu:** `celeste config --init sakana` then `celeste -config sakana config --set-url https://api.sakana.ai/v1 --set-key <key> --set-model fugu` (or `fugu-ultra`), then `celeste -config sakana chat`. OpenAI-compatible chat completions; reasoning effort is fixed server-side (default high).
 
 **Collections (Grok only):** Management key + `celeste collections create/upload/enable`.
 

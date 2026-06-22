@@ -120,7 +120,16 @@ celeste -config openai config --set-key YOUR_OPENAI_KEY
 celeste -config openai chat
 ```
 
-**Other providers:** `celeste config --init <name>` where name is: `grok`, `openai`, `venice`, `elevenlabs`
+**Sakana (Fugu):**
+```bash
+celeste config --init sakana
+celeste -config sakana config --set-url https://api.sakana.ai/v1 --set-key YOUR_SAKANA_KEY --set-model fugu
+celeste -config sakana chat
+```
+Get a key from the Fugu install (`curl -fsSL https://sakana.ai/fugu/install | bash`)
+or your Sakana account. Use `--set-model fugu-ultra` for the heavier multi-agent variant.
+
+**Other providers:** `celeste config --init <name>` where name is: `grok`, `openai`, `venice`, `elevenlabs`, `sakana`
 
 ### Project Setup
 
