@@ -695,8 +695,14 @@ func SaveNamed(name string, config *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
+	// Ensure ~/.celeste exists (first-run without --init wouldn't have created it).
+	path := NamedConfigPath(name)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("failed to create config dir: %w", err)
+	}
+
 	// 0600: a named profile carries the API key inline.
-	return os.WriteFile(NamedConfigPath(name), data, 0600)
+	return os.WriteFile(path, data, 0600)
 }
 
 // SaveSecrets saves API key to secrets file (backward compatibility).

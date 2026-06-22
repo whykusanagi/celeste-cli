@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -1178,7 +1179,11 @@ func runConfigCommand(args []string) {
 		cfg, err = config.Load()
 	} else {
 		cfg, err = config.LoadNamed(configName)
-		if err != nil {
+		// Only a MISSING profile is safe to start from defaults (so --set-* can
+		// create it). A profile that exists but is corrupt/unreadable must error,
+		// not silently reset — otherwise SaveNamed would overwrite the user's real
+		// settings with defaults.
+		if err != nil && errors.Is(err, os.ErrNotExist) {
 			cfg, err = config.DefaultConfig(), nil
 		}
 	}

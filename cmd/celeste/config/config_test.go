@@ -475,7 +475,7 @@ func TestSaveNamedRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste"), 0755))
+	// Intentionally do NOT pre-create ~/.celeste — SaveNamed must create it.
 
 	cfg := DefaultConfig()
 	cfg.BaseURL = "https://api.sakana.ai/v1"
