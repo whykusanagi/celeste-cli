@@ -38,6 +38,10 @@ var ModelLimits = map[string]int{
 	"grok-4.20-0309-non-reasoning": 1000000,
 	"grok-4.20-multi-agent-0309":   1000000,
 	"grok-code-fast-1":             2000000,
+	// Sakana AI (from /v1/models, 2026-06)
+	"fugu":                1000000,
+	"fugu-ultra":          1000000,
+	"fugu-ultra-20260615": 1000000, // dated alias pin of fugu-ultra
 	// Venice-unique models (from docs.venice.ai/models/text, 2026-04)
 	"venice-uncensored":                    32000,
 	"venice-uncensored-role-play":          128000,

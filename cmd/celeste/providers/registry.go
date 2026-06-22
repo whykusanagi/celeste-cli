@@ -125,6 +125,24 @@ var Registry = map[string]ProviderCapabilities{
 		Notes:                   "Aggregator for multiple providers. Full OpenAI compatibility. Parallel function calling supported.",
 	},
 
+	"sakana": {
+		Name:                    "Sakana AI",
+		BaseURL:                 "https://api.sakana.ai/v1",
+		SupportsFunctionCalling: true,
+		SupportsModelListing:    true, // exposes /v1/models
+		SupportsTokenTracking:   true, // OpenAI-compatible
+		DefaultModel:            "fugu",
+		PreferredToolModel:      "fugu",
+		RequiresAPIKey:          true,
+		IsOpenAICompatible:      true,
+		// Exposes /v1/chat/completions, /v1/responses, and /v1/models. We use chat
+		// completions (the default OpenAI backend); Sakana recommends the Responses API
+		// for best performance — that'd be a future backend, not required for support.
+		// Reasoning effort is fixed server-side (default high; high/xhigh/max only),
+		// so celeste's o-series reasoning_effort injection correctly skips Fugu.
+		Notes: "Fugu / Fugu Ultra (1M context, deep reasoning). Fugu Ultra routes 1-3 expert agents. OpenAI-compatible chat completions. Install: curl -fsSL https://sakana.ai/fugu/install | bash",
+	},
+
 	// --- Tier 3: Limited or No Function Calling ---
 
 	"digitalocean": {
@@ -212,6 +230,8 @@ func DetectProvider(baseURL string) string {
 		return "vertex"
 	case contains(baseURL, "openrouter.ai"):
 		return "openrouter"
+	case contains(baseURL, "sakana.ai"):
+		return "sakana"
 	case contains(baseURL, "digitalocean"):
 		return "digitalocean"
 	case contains(baseURL, "elevenlabs.io"):
@@ -275,6 +295,10 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 	case "vertex":
 		// Gemini 1.5+ supports function calling
 		return contains(modelID, "gemini")
+
+	case "sakana":
+		// Fugu models support parallel tool calls (supports_parallel_tool_calls).
+		return contains(modelID, "fugu")
 
 	case "openrouter":
 		// Prefer OpenRouter's live catalog (authoritative per-model capability:

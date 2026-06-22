@@ -67,7 +67,7 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	registry.RegisterWithModes(NewQRCodeTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewUnitConverterTool(), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewTimezoneConverterTool(), tools.ModeChat, tools.ModeClaw)
-	registry.RegisterWithModes(NewTTSTool(), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewTTSTool(workspace), tools.ModeChat, tools.ModeClaw)
 	registry.RegisterWithModes(NewAudioProjectTool(), tools.ModeChat, tools.ModeClaw, tools.ModeAgent)
 
 	// Memory tool — available in all modes with workspace

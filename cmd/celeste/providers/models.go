@@ -264,6 +264,34 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 			},
 		}
 
+	case "sakana":
+		return []ModelInfo{
+			{
+				ID:            "fugu",
+				Name:          "Fugu",
+				Provider:      "sakana",
+				SupportsTools: true,
+				ContextWindow: 1000000,
+				Description:   "Default — 1M context, high-effort deep reasoning",
+			},
+			{
+				ID:            "fugu-ultra",
+				Name:          "Fugu Ultra",
+				Provider:      "sakana",
+				SupportsTools: true,
+				ContextWindow: 1000000,
+				Description:   "1M context, deep reasoning with reasoning summaries",
+			},
+			{
+				ID:            "fugu-ultra-20260615",
+				Name:          "Fugu Ultra (2026-06-15)",
+				Provider:      "sakana",
+				SupportsTools: true,
+				ContextWindow: 1000000,
+				Description:   "Dated alias pin of fugu-ultra",
+			},
+		}
+
 	case "digitalocean":
 		return []ModelInfo{
 			{
