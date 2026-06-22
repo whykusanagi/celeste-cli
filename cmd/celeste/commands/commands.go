@@ -118,7 +118,7 @@ func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 	case "endpoint":
 		return handleEndpoint(cmd)
 	case "model":
-		return handleModel(cmd)
+		return handleModel(cmd, ctx)
 	case "image-model", "set-model", "list-models":
 		return handleSetModel(cmd, ctx)
 	case "config":
@@ -237,12 +237,17 @@ func handleEndpoint(cmd *Command) *CommandResult {
 	}
 }
 
-// handleModel handles the /model command.
-func handleModel(cmd *Command) *CommandResult {
+// handleModel handles the /model command (quick switch, no API validation).
+func handleModel(cmd *Command, ctx *CommandContext) *CommandResult {
 	if len(cmd.Args) == 0 {
+		// Show the current provider's real models instead of a stale hardcoded
+		// list. Reuses the same provider-aware lister as /list-models.
+		if caps, ok := providers.GetProvider(ctx.Provider); ok {
+			return listAvailableModels(ctx, caps)
+		}
 		return &CommandResult{
 			Success:      false,
-			Message:      "Usage: /model <name>\n\nCommon models:\n  • gpt-4o-mini\n  • gpt-4o\n  • claude-3-5-sonnet\n  • llama-3.3-70b\n\nExample: /model gpt-4o",
+			Message:      "Usage: /model <name>\n\nRun /list-models to see this provider's models.\nExample: /model fugu",
 			ShouldRender: true,
 		}
 	}
@@ -450,7 +455,9 @@ func listAvailableModels(ctx *CommandContext, caps providers.ProviderCapabilitie
 func getCommonModelsHelp(provider string) string {
 	switch provider {
 	case "grok":
-		return "  • grok-build-0.1 (recommended for skills)\n  • grok-4-1\n  • grok-beta"
+		return "  • grok-4.20-0309-non-reasoning (default)\n  • grok-build-0.1\n  • grok-4-latest"
+	case "sakana":
+		return "  • fugu (default)\n  • fugu-ultra\n  • fugu-ultra-20260615"
 	case "openai":
 		return "  • gpt-4o-mini (recommended)\n  • gpt-4o\n  • gpt-4-turbo"
 	case "venice":
