@@ -5,6 +5,21 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1](https://github.com/whykusanagi/celeste-cli/compare/v1.11.0...v1.11.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/charmbracelet/bubbles from 0.21.0 to 1.0.0 ([#69](https://github.com/whykusanagi/celeste-cli/issues/69)) ([ae00976](https://github.com/whykusanagi/celeste-cli/commit/ae009764174b8c35c95f9766b791401f3bd5903b))
+* **deps:** bump github.com/ethereum/go-ethereum from 1.17.0 to 1.17.4 ([#73](https://github.com/whykusanagi/celeste-cli/issues/73)) ([46a7ab7](https://github.com/whykusanagi/celeste-cli/commit/46a7ab7b9c5061bd9cc7c5a1f4e63904d8f9a7c7))
+* **deps:** bump github.com/ipfs/go-cid from 0.6.0 to 0.6.1 ([#63](https://github.com/whykusanagi/celeste-cli/issues/63)) ([df46df3](https://github.com/whykusanagi/celeste-cli/commit/df46df3e5c1ae1621d219032c396f37d53d3e0f7))
+* **deps:** bump github.com/tree-sitter/tree-sitter-python ([#67](https://github.com/whykusanagi/celeste-cli/issues/67)) ([3eb4644](https://github.com/whykusanagi/celeste-cli/commit/3eb4644733546439368ba84317317a1d3d9b40b2))
+* **deps:** bump github.com/tree-sitter/tree-sitter-rust ([#72](https://github.com/whykusanagi/celeste-cli/issues/72)) ([6515c94](https://github.com/whykusanagi/celeste-cli/commit/6515c942dc9c575f345a081d4a26498b6ed73508))
+* **deps:** bump modernc.org/sqlite from 1.48.1 to 1.53.0 ([#65](https://github.com/whykusanagi/celeste-cli/issues/65)) ([6505021](https://github.com/whykusanagi/celeste-cli/commit/65050215cc2596d4479062f11c51fe25ff18b813))
+* **deps:** upgrade anthropic-sdk-go to v1.51.1; pin govulncheck past its generics panic ([#80](https://github.com/whykusanagi/celeste-cli/issues/80)) ([57c907e](https://github.com/whykusanagi/celeste-cli/commit/57c907e4dfa498c30b1ce8a9fd80633cffc9a89d))
+* make agent RunID unique to stop checkpoint file collisions ([#78](https://github.com/whykusanagi/celeste-cli/issues/78)) ([57b27bd](https://github.com/whykusanagi/celeste-cli/commit/57b27bd436440d47dd15f4c0897673c6d7f1a758))
+* **test:** deterministic MinHash seeds so codegraph ranking test isn't flaky ([#76](https://github.com/whykusanagi/celeste-cli/issues/76)) ([ef76768](https://github.com/whykusanagi/celeste-cli/commit/ef76768c9f947a8eadf9d70d48a773cbfd982a8d))
+
 ## [1.11.0](https://github.com/whykusanagi/celeste-cli/compare/v1.10.0...v1.11.0) (2026-06-22)
 
 
