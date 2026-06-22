@@ -321,6 +321,12 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 		result.ToolCalls = acc.CompletedCalls()
 
+		// Cap native tool calls per turn BEFORE recording them on the assistant
+		// message below, so declared tool_calls == tool results we return next
+		// turn. Otherwise a turn with more calls than the cap leaves orphaned
+		// tool_calls and strict APIs (Sakana Fugu) reject the next request.
+		result.ToolCalls = capToolCalls(result.ToolCalls, state.Options.MaxToolCallsPerTurn)
+
 		// Update token budget with usage from this turn.
 		if r.budget != nil && result.Usage != nil {
 			r.budget.AddTurn(result.Usage.PromptTokens, result.Usage.CompletionTokens)
@@ -423,10 +429,10 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 
 		state.ConsecutiveNoToolTurns = 0
 		updatePlanProgressFromAssistant(state, state.LastAssistantResponse, true)
-		toolCalls := result.ToolCalls
-		if len(toolCalls) > state.Options.MaxToolCallsPerTurn {
-			toolCalls = toolCalls[:state.Options.MaxToolCallsPerTurn]
-		}
+		// Native calls were already capped above (before the assistant message).
+		// Re-apply for the text-tool-call fallback path, which populates
+		// result.ToolCalls after that point.
+		toolCalls := capToolCalls(result.ToolCalls, state.Options.MaxToolCallsPerTurn)
 
 		// anyInvalidArgs tracks whether ANY tool call in this turn had invalid args;
 		// a single corrupted-args call is a signal worth acting on, so the whole turn counts as invalid.
@@ -1111,6 +1117,18 @@ func markAllPlanStepsCompleted(state *RunState) {
 	for i := range state.Plan {
 		state.Plan[i].Status = PlanStatusCompleted
 	}
+}
+
+// capToolCalls limits a turn's tool calls to maxCalls (maxCalls <= 0 means no
+// limit). The cap MUST be applied before the assistant message is recorded so the
+// number of declared tool_calls equals the number of tool results returned next
+// turn — declaring N calls but answering only M makes strict OpenAI-compatible
+// APIs (e.g. Sakana Fugu) reject the conversation as a malformed request.
+func capToolCalls(calls []llm.ToolCallResult, maxCalls int) []llm.ToolCallResult {
+	if maxCalls > 0 && len(calls) > maxCalls {
+		return calls[:maxCalls]
+	}
+	return calls
 }
 
 func convertToolCalls(calls []llm.ToolCallResult) []tui.ToolCallInfo {
