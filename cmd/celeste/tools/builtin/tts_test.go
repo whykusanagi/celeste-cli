@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,9 +13,14 @@ import (
 // relative names join the workspace, absolute names pass through, and with no
 // workspace the name is unchanged (legacy cwd behavior).
 func TestTTSResolveOutput(t *testing.T) {
-	ws := NewTTSTool("/work/space")
-	assert.Equal(t, "/work/space/speech_1.mp3", ws.resolveOutput("speech_1.mp3"), "relative name should join the workspace")
-	assert.Equal(t, "/tmp/out.mp3", ws.resolveOutput("/tmp/out.mp3"), "absolute name should pass through unchanged")
+	// Build paths with filepath so the test is correct on Windows too (separators
+	// and IsAbs semantics differ from Unix).
+	wsDir := filepath.Join(t.TempDir(), "work")
+	ws := NewTTSTool(wsDir)
+	assert.Equal(t, filepath.Join(wsDir, "speech_1.mp3"), ws.resolveOutput("speech_1.mp3"), "relative name should join the workspace")
+
+	abs := filepath.Join(t.TempDir(), "out.mp3") // t.TempDir() is absolute on every OS
+	assert.Equal(t, abs, ws.resolveOutput(abs), "absolute name should pass through unchanged")
 
 	none := NewTTSTool("")
 	assert.Equal(t, "speech_1.mp3", none.resolveOutput("speech_1.mp3"), "no workspace should leave the name unchanged")

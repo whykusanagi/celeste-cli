@@ -60,7 +60,7 @@ func TestHandleInitialize(t *testing.T) {
 		t.Fatalf("expected server name 'celeste', got %v", serverInfo["name"])
 	}
 	if serverInfo["version"] != serverVersion {
-		t.Fatalf("expected server version '%s', got %v", serverVersion, serverInfo["version"])
+		t.Fatalf("expected server version %q, got %v", serverVersion, serverInfo["version"])
 	}
 }
 
