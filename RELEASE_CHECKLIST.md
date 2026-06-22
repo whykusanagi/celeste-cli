@@ -10,6 +10,19 @@ too, but running them locally first avoids red pipelines.
 
 ---
 
+## 0. PR queue hygiene (do this FIRST)
+The security scan, `govulncheck`, and the binary smoke test only mean something if
+they run against the dependencies you will actually ship. Clear the open-PR queue
+BEFORE the gates below. Releasing over a backlog of pending dependency updates
+means your security review validated stale modules.
+```bash
+gh pr list --state open --author app/dependabot   # dependency + CI-action bumps
+gh pr list --state open                            # everything else
+```
+- [ ] Merge or close every pending **Dependabot** PR (dep + action bumps), or consciously defer one with a written reason. Do not ship a release with open dep bumps sitting in the queue.
+- [ ] Any PR **stuck** (not draining)? Diagnose it BEFORE writing new code or cutting the release: behind `main` (rebase / `gh pr update-branch`), red on a **flaky test** (fix the flake at its root, do not just re-run), `go.sum` cascade (merge serially), or genuinely broken (fix on a branch or close). A stuck queue is a signal, not noise.
+- [ ] After the queue is clean, re-run §1 (build) and §2 (govulncheck/security) so they reflect the **shipping** dependency set.
+
 ## 1. Code quality gates (must be green)
 ```bash
 go build ./...                                   # ★ compiles, all targets
@@ -95,3 +108,5 @@ is authoritative; GitHub serves the primary fingerprint as the trust anchor).
 - Tool-output writers (TTS, exports) must honor `--workspace`, not the process cwd.
 - A turn must never declare more `tool_calls` than the tool results it returns (strict APIs 400).
 - Don't ship a setup command in docs without running it first.
+- Drain the PR queue (esp. Dependabot dep bumps) BEFORE the security scan + binary smoke test, or you're reviewing/shipping stale modules (v1.11.0 shipped with 12 pending dep PRs). See §0.
+- A "stuck" PR queue usually means a flaky test or branch-protection serialization, not Dependabot being slow. Diagnose the root before assuming it'll drain on its own.
