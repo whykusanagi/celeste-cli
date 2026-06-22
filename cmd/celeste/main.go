@@ -46,7 +46,7 @@ import (
 // CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
 // When not set by ldflags, defaults are used.
 var (
-	Version   = "1.11.0" // x-release-please-version
+	Version   = "1.11.1" // x-release-please-version
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
 )
