@@ -9,6 +9,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fixedTestHasher returns a MinHasher with a fixed seed family so semantic
+// similarity is reproducible across runs. NewIndexer otherwise picks random
+// crypto seeds per fresh index, which shifts MinHash Jaccard estimates and flips
+// near-tie rankings, making ranking-order assertions flaky (~1-3%).
+func fixedTestHasher() *MinHasher {
+	seeds := make([]uint64, DefaultNumHashes)
+	for i := range seeds {
+		seeds[i] = uint64(i)*0x9E3779B97F4A7C15 + 1 // fixed, well-spread (golden-ratio step)
+	}
+	return NewMinHasherFromSeeds(seeds)
+}
+
 func TestClassifyPath_TestDirectories(t *testing.T) {
 	cases := []struct {
 		path string
@@ -228,6 +240,7 @@ func (s *StubHttpRequestHandler) ServeHTTP(req *Request) error { return nil }
 	idx, err := NewIndexer(dir, dbPath)
 	require.NoError(t, err)
 	defer idx.Close()
+	idx.hasher = fixedTestHasher() // deterministic MinHash; random seeds flip near-tie rankings
 	require.NoError(t, idx.Build())
 
 	// --- Case 1: default path filter ON — clean results lead ---
@@ -315,6 +328,7 @@ func NewMockSession(token string) *MockSession { return &MockSession{token: toke
 	idx, err := NewIndexer(dir, dbPath)
 	require.NoError(t, err)
 	defer idx.Close()
+	idx.hasher = fixedTestHasher() // deterministic MinHash; random seeds flip near-tie rankings
 	require.NoError(t, idx.Build())
 
 	// Query explicitly asks for mocks — path filter should NOT demote.

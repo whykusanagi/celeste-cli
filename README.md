@@ -29,7 +29,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 🔌 **Direct Codegraph MCP Tools** - `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` served verbatim from the cached graph (no chat-LLM round-trip, no `max_tokens` ceiling, streaming progress notifications)
 - 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching
 - 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection and revert
-- 🌐 **Multi-Provider** - Grok/xAI (default), OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter
+- 🌐 **Multi-Provider** - Grok/xAI (default), OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter, Sakana AI
 - 💰 **Cost Tracking** - Per-model pricing with live session cost display
 - 🪝 **Hooks** - Pre/post tool execution hooks defined in `.grimoire`
 - 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok) with `/effort` control
@@ -120,7 +120,16 @@ celeste -config openai config --set-key YOUR_OPENAI_KEY
 celeste -config openai chat
 ```
 
-**Other providers:** `celeste config --init <name>` where name is: `grok`, `openai`, `venice`, `elevenlabs`
+**Sakana (Fugu):**
+```bash
+celeste config --init sakana
+celeste -config sakana config --set-url https://api.sakana.ai/v1 --set-key YOUR_SAKANA_KEY --set-model fugu
+celeste -config sakana chat
+```
+Get a key from the Fugu install (`curl -fsSL https://sakana.ai/fugu/install | bash`)
+or your Sakana account. Use `--set-model fugu-ultra` for the heavier multi-agent variant.
+
+**Other providers:** `celeste config --init <name>` where name is: `grok`, `openai`, `venice`, `elevenlabs`, `sakana`
 
 ### Project Setup
 
@@ -159,7 +168,7 @@ chmod +x verify.sh
 
 ### Manual Verification
 
-For manual verification or more details, see the complete [Verification Guide](VERIFICATION.md).
+For manual verification or more details, see the complete [Verification Guide](VERIFY.md).
 
 **Release Signing:**
 - All commits are GPG-signed
@@ -173,13 +182,16 @@ For manual verification or more details, see the complete [Verification Guide](V
 - **Keybase**: [@whykusanagi](https://keybase.io/whykusanagi)
 - **GitHub**: [whykusanagi.gpg](https://github.com/whykusanagi.gpg)
 
-**Import Key**:
+**Import Key** — use the repository copy; it carries the signing subkey the
+releases are signed with:
 ```bash
-# From Keybase (recommended)
-curl https://keybase.io/whykusanagi/pgp_keys.asc | gpg --import
+# From this repository (recommended — complete key with signing subkey)
+curl -O https://raw.githubusercontent.com/whykusanagi/celeste-cli/main/whykusanagi.asc
+gpg --import whykusanagi.asc
 
-# From GitHub
-curl https://github.com/whykusanagi.gpg | gpg --import
+# Cross-check the primary fingerprint against the key GitHub serves:
+gpg --fingerprint 940490EF09DA31322BF7FD83875849AB1D541C55
+#   → 9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55
 ```
 
 For security issues, see our [Security Policy](SECURITY.md) or contact security@whykusanagi.xyz.
@@ -251,7 +263,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Session Listing** - Browse and load previous sessions by ID
 - **Session Clearing** - Bulk delete sessions when needed
 
-### Multi-Provider Support (7 Providers)
+### Multi-Provider Support (8 Providers)
 - ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - **DEFAULT** - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
@@ -259,6 +271,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - ⚠️ **Google Vertex AI** (gemini-2.5-flash) - Enterprise, requires GCP project + billing • Token tracking ✓
 - ✅ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
+- ✅ **Sakana AI** (fugu, fugu-ultra) - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
 
 **Dynamic Model Selection** - Auto-selects best tool-calling model per provider
 **Capability Indicators** - Visual feedback (✓ skills / ⚠️ no skills) in header
@@ -541,7 +554,7 @@ are a convenience for natural-language interactions.
 | **Language** | Go | TypeScript | Go | TS + Rust | Python |
 | **Deploy** | 54MB binary, zero deps | Node.js (~393MB) | 9MB binary | Bun + Rust | pip package |
 | **RAM** | Low | High (Node.js) | ~10MB | Medium | Medium |
-| **Providers** | 7 (native SDKs) | OpenAI primary | OpenAI only | 6+ | 7+ |
+| **Providers** | 8 (native + OpenAI-compat) | OpenAI primary | OpenAI only | 6+ | 7+ |
 | **Tools** | 44 | Many | 16 | Many | ~10 |
 | **Code Graph** | Yes (MinHash) | No | No | No | No |
 | **Code Review** | Yes (6 categories) | No | No | No | No |

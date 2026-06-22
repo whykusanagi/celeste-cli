@@ -468,6 +468,31 @@ func TestListConfigs(t *testing.T) {
 	assert.Contains(t, configs, "venice")
 }
 
+// TestSaveNamedRoundTrip verifies SaveNamed writes a named profile inline
+// (API key included) and never touches the default config.json — the bug behind
+// `-config <name> config --set-*` silently clobbering the default profile.
+func TestSaveNamedRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// Intentionally do NOT pre-create ~/.celeste — SaveNamed must create it.
+
+	cfg := DefaultConfig()
+	cfg.BaseURL = "https://api.sakana.ai/v1"
+	cfg.Model = "fugu-ultra"
+	cfg.APIKey = "inline-key"
+	require.NoError(t, SaveNamed("sakana", cfg))
+
+	got, err := LoadNamed("sakana")
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.sakana.ai/v1", got.BaseURL)
+	assert.Equal(t, "fugu-ultra", got.Model)
+	assert.Equal(t, "inline-key", got.APIKey, "named profile stores the key inline")
+
+	_, statErr := os.Stat(filepath.Join(home, ".celeste", "config.json"))
+	assert.True(t, os.IsNotExist(statErr), "SaveNamed must not write the default config.json")
+}
+
 // TestConfigLoader tests the ConfigLoader interface implementation
 func TestConfigLoader(t *testing.T) {
 	// Create temporary directory for testing

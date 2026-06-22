@@ -5,6 +5,25 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0](https://github.com/whykusanagi/celeste-cli/compare/v1.10.0...v1.11.0) (2026-06-22)
+
+
+### Features
+
+* add Sakana AI (Fugu) provider ([7de3e35](https://github.com/whykusanagi/celeste-cli/commit/7de3e35520d0cbe30508b6cb6c5c6a96edc77e43))
+* add Sakana AI (Fugu) provider ([a859910](https://github.com/whykusanagi/celeste-cli/commit/a85991005aae1bd10ccb04d47eb76ee4a1de5a87))
+
+
+### Bug Fixes
+
+* address Fugu pre-release review ([7b9c742](https://github.com/whykusanagi/celeste-cli/commit/7b9c7423863f8e6e10688f0717253f031193d83e))
+* cap tool calls before recording them so declared calls match results ([c4d5373](https://github.com/whykusanagi/celeste-cli/commit/c4d537376e4ef2cdba0ae193ca149d1936ac9730))
+* **ci:** version tests read serverVersion constant; stop double-running CI per branch ([#71](https://github.com/whykusanagi/celeste-cli/issues/71)) ([ab8c2a4](https://github.com/whykusanagi/celeste-cli/commit/ab8c2a4038a071436d0cbde058a17215b4fdce9b))
+* **deps:** bump the golang-x group across 1 directory with 2 updates ([#74](https://github.com/whykusanagi/celeste-cli/issues/74)) ([3a1475c](https://github.com/whykusanagi/celeste-cli/commit/3a1475c887072e30a474e4f31b6bb686bf3461be))
+* make 'config --set-*' respect the -config &lt;name&gt; profile ([55dcfda](https://github.com/whykusanagi/celeste-cli/commit/55dcfdac5ab8603c34c1049a0dce104ef8aa7364))
+* **security:** align GPG release verification with celeste-ops ([ed99a7f](https://github.com/whykusanagi/celeste-cli/commit/ed99a7f9b16fcbd018126eccf04dc28ee1961573))
+* write TTS audio to the workspace, not the process cwd ([fa519a4](https://github.com/whykusanagi/celeste-cli/commit/fa519a48202ccaa23d01b43daf3106b879cccc77))
+
 ## [Unreleased]
 
 ## [1.10.0] - 2026-06-03
