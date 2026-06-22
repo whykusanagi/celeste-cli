@@ -1588,7 +1588,7 @@ func runSkillExecuteCommand(args []string) {
 	}
 
 	// Set up registry and executor
-	cfg, err := config.Load()
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1644,7 +1644,7 @@ func runSkillsCommand(args []string) {
 		return
 	}
 
-	cfg, _ := config.Load()
+	cfg, _ := config.LoadNamed(configName)
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	skillsCwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
@@ -1780,7 +1780,7 @@ func runSessionCommand(args []string) {
 // runCollectionsCommand handles collections-related commands.
 func runCollectionsCommand(args []string) {
 	// Load config
-	cfg, err := config.Load()
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1804,7 +1804,7 @@ func runCollectionsCommand(args []string) {
 
 // runSingleMessage sends a single message and prints the response.
 func runSingleMessage(message string) {
-	cfg, err := config.Load()
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1953,7 +1953,7 @@ func (a *builtinConfigAdapter) GetWalletSecurityConfig() (builtin.WalletSecurity
 // runContextCommand handles standalone context status display.
 func runContextCommand(args []string) {
 	// Load config to get model info
-	cfg, err := config.Load()
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1990,7 +1990,7 @@ func runContextCommand(args []string) {
 // runStatsCommand handles standalone stats dashboard display.
 func runStatsCommand(args []string) {
 	// Load config
-	cfg, err := config.Load()
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -2027,7 +2027,7 @@ func runStatsCommand(args []string) {
 // runProvidersCommand handles standalone provider listing and information.
 func runProvidersCommand(args []string) {
 	// Load config to get current provider
-	cfg, err := config.Load()
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
