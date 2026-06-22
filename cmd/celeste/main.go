@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -45,7 +46,7 @@ import (
 // CI/CD sets these: go build -ldflags "-X main.Version=1.8.0 -X main.Build=bubbletea-tui -X main.CommitSHA=abc123"
 // When not set by ldflags, defaults are used.
 var (
-	Version   = "1.10.0" // x-release-please-version
+	Version   = "1.11.0" // x-release-please-version
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
 )
@@ -1168,7 +1169,24 @@ func runConfigCommand(args []string) {
 		return
 	}
 
-	cfg, err := config.Load()
+	// Respect the -config <name> profile flag. The default profile splits the API
+	// key into secrets.json; named profiles store everything inline in
+	// config.<name>.json (see SaveNamed below). If a named profile doesn't exist
+	// yet, start from defaults so --set-* can create it.
+	var cfg *config.Config
+	var err error
+	if configName == "" {
+		cfg, err = config.Load()
+	} else {
+		cfg, err = config.LoadNamed(configName)
+		// Only a MISSING profile is safe to start from defaults (so --set-* can
+		// create it). A profile that exists but is corrupt/unreadable must error,
+		// not silently reset — otherwise SaveNamed would overwrite the user's real
+		// settings with defaults.
+		if err != nil && errors.Is(err, os.ErrNotExist) {
+			cfg, err = config.DefaultConfig(), nil
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1309,13 +1327,22 @@ func runConfigCommand(args []string) {
 	}
 
 	if changed {
-		if err := config.Save(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-			os.Exit(1)
-		}
-		if err := config.SaveSecrets(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving secrets: %v\n", err)
-			os.Exit(1)
+		if configName == "" {
+			// Default profile: config.json + secrets.json (key split out).
+			if err := config.Save(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+				os.Exit(1)
+			}
+			if err := config.SaveSecrets(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving secrets: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Named profile: everything inline in config.<name>.json.
+			if err := config.SaveNamed(configName, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving config '%s': %v\n", configName, err)
+				os.Exit(1)
+			}
 		}
 		fmt.Println("Configuration saved")
 	}
@@ -1412,6 +1439,16 @@ func createConfigTemplate(name string) error {
 			RuntimeMode:           config.RuntimeModeClassic,
 			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
+		"sakana": {
+			BaseURL:               "https://api.sakana.ai/v1",
+			Model:                 "fugu",
+			Timeout:               90, // Fugu Ultra orchestrates 1-3 agents; allow headroom
+			SkipPersonaPrompt:     false,
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
+		},
 		"digitalocean": {
 			BaseURL:               "https://your-agent.ondigitalocean.app/api/v1",
 			Model:                 "gpt-4.1-nano",
@@ -1446,7 +1483,7 @@ func createConfigTemplate(name string) error {
 
 	tmpl, ok := templates[strings.ToLower(name)]
 	if !ok {
-		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, digitalocean, celeste-classic, celeste-claw", name)
+		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean, celeste-classic, celeste-claw", name)
 	}
 
 	configPath := config.NamedConfigPath(name)
@@ -1487,6 +1524,10 @@ func createConfigTemplate(name string) error {
 		fmt.Printf("     celeste -config %s config --set-key YOUR_VENICE_KEY\n", name)
 		fmt.Println("  2. Also set in skills.json for NSFW mode:")
 		fmt.Printf("     celeste -config %s config --set-venice-key YOUR_VENICE_KEY\n", name)
+	case "sakana":
+		fmt.Println("\nSetup (Sakana AI / Fugu):")
+		fmt.Printf("     celeste -config %s config --set-url https://api.sakana.ai/v1 --set-key YOUR_SAKANA_KEY --set-model fugu\n", name)
+		fmt.Println("     (use --set-model fugu-ultra for the Ultra variant)")
 	default:
 		fmt.Printf("\nEdit the file to add your API key, then run:\n")
 	}

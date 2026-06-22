@@ -16,6 +16,19 @@ EXPECTED_KEY="940490EF09DA31322BF7FD83875849AB1D541C55"
 KEYBASE_URL="https://keybase.io/whykusanagi/pgp_keys.asc"
 GITHUB_URL="https://github.com/whykusanagi.gpg"
 REPO_URL="https://github.com/whykusanagi/celeste-cli"
+# Repository copy of the public key. This is the authoritative, complete export
+# (includes the F4C254 signing subkey). Keybase/GitHub/keyserver may lag behind
+# subkey changes, so the repo copy is the default source. Local path is used when
+# running from a clone; otherwise the committed raw file is fetched.
+#
+# Trust model: the repo supplies the key *material* (needed because the external
+# sources omit the signing subkey), but the trust anchor is the primary
+# fingerprint in EXPECTED_KEY, which the user confirms after import and
+# cross-checks against the independent copy GitHub serves at GITHUB_URL. The
+# signing subkey is certified under that primary. So a repo-only compromise does
+# not silently pass verification — the fingerprint cross-check must still match.
+REPO_KEY_URL="https://raw.githubusercontent.com/whykusanagi/celeste-cli/main/whykusanagi.asc"
+REPO_KEY_LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/whykusanagi.asc"
 
 # Output functions
 print_success() { echo -e "${GREEN}✓${NC} $1"; }
@@ -90,32 +103,47 @@ else
     print_info "Signing key not found. Need to import."
     echo ""
     echo "Choose import source:"
-    echo "  1) Keybase (recommended - verified identity)"
-    echo "  2) GitHub (verified account)"
-    echo "  3) Key server (decentralized)"
+    echo "  1) Repository (recommended - complete key with signing subkey)"
+    echo "  2) Keybase (verified identity)"
+    echo "  3) GitHub (verified account)"
+    echo "  4) Key server (decentralized)"
     echo ""
-    read -p "Enter choice [1-3]: " choice
+    print_info "Note: only the Repository copy is guaranteed to include the current"
+    print_info "signing subkey. If 2-4 fail with 'No public key', use option 1."
+    echo ""
+    read -p "Enter choice [1-4]: " choice
 
     case $choice in
         1)
+            print_step "Importing from repository copy..."
+            if [ -f "$REPO_KEY_LOCAL" ] && gpg --import "$REPO_KEY_LOCAL" 2>&1; then
+                print_success "Key imported from local repository copy"
+            elif curl -fsSL "$REPO_KEY_URL" | gpg --import 2>&1; then
+                print_success "Key imported from repository (raw)"
+            else
+                print_error "Failed to import from repository"
+                exit 1
+            fi
+            ;;
+        2)
             print_step "Importing from Keybase..."
-            if curl -s "$KEYBASE_URL" | gpg --import 2>&1; then
+            if curl -fsSL "$KEYBASE_URL" | gpg --import 2>&1; then
                 print_success "Key imported from Keybase"
             else
                 print_error "Failed to import from Keybase"
                 exit 1
             fi
             ;;
-        2)
+        3)
             print_step "Importing from GitHub..."
-            if curl -s "$GITHUB_URL" | gpg --import 2>&1; then
+            if curl -fsSL "$GITHUB_URL" | gpg --import 2>&1; then
                 print_success "Key imported from GitHub"
             else
                 print_error "Failed to import from GitHub"
                 exit 1
             fi
             ;;
-        3)
+        4)
             print_step "Importing from key server..."
             if gpg --keyserver keys.openpgp.org --recv-keys "$EXPECTED_KEY" 2>&1; then
                 print_success "Key imported from key server"
@@ -136,7 +164,10 @@ else
     echo ""
     gpg --fingerprint "$EXPECTED_KEY" 2>/dev/null | grep -A 1 "Key fingerprint"
     echo ""
-    read -p "Does the fingerprint match? [y/N]: " confirm
+    print_info "Cross-check this primary fingerprint against an INDEPENDENT source —"
+    print_info "do not trust the repository alone: $GITHUB_URL"
+    echo ""
+    read -p "Does the fingerprint match that independent source? [y/N]: " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         print_error "Fingerprint verification failed. Aborting."
         exit 1
@@ -248,5 +279,5 @@ echo "  2. Install: sudo mv celeste-* /usr/local/bin/celeste"
 echo "  3. Verify:  celeste --version"
 echo ""
 echo "Documentation:"
-echo "  https://github.com/whykusanagi/celeste-cli/blob/main/VERIFICATION.md"
+echo "  https://github.com/whykusanagi/celeste-cli/blob/main/VERIFY.md"
 echo ""

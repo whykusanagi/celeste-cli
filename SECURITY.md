@@ -33,21 +33,26 @@ All Celeste CLI releases are cryptographically signed to ensure authenticity and
 
 ### Key Distribution
 
-The signing key is available from multiple trusted sources:
+**Import the key from this repository** — it ships the complete key, including the
+signing subkey the releases are signed with:
+- **Repository**: `whykusanagi.asc`. Also served raw at
+  https://raw.githubusercontent.com/whykusanagi/celeste-cli/main/whykusanagi.asc
 
-**Primary Sources**:
-- **Keybase**: https://keybase.io/whykusanagi/pgp_keys.asc (recommended - with social proofs)
+**Cross-check the primary fingerprint** against an independent source. GitHub serves
+the primary key, and the signing subkey is certified under it:
 - **GitHub**: https://github.com/whykusanagi.gpg (verified account)
-
-**Secondary Sources**:
+- **Keybase**: https://keybase.io/whykusanagi/pgp_keys.asc (with social proofs)
 - **Key Servers**: `keys.openpgp.org`, `pgp.mit.edu`
-- **Repository**: `keys/public-key.asc` (in this repository)
 
-All sources serve the identical key with fingerprint `9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55`.
+The trust anchor is the primary fingerprint `9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55`,
+which matches the key GitHub serves. Releases are signed by the subkey
+`F4C2 54F6 EE5D 7F08 6C92  1DEB A6BB 54DD C70E E8FB`, certified under that primary.
+The secondary sources may not carry the signing subkey, so import the verification
+key from the repository copy above and use the others only to confirm the fingerprint.
 
 ### Verification
 
-**Always verify downloads before use**. See [VERIFICATION.md](VERIFICATION.md) for complete instructions.
+**Always verify downloads before use**. See [VERIFY.md](VERIFY.md) for complete instructions.
 
 **Quick Verification**:
 ```bash

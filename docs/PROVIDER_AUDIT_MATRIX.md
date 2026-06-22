@@ -1,8 +1,8 @@
-# Provider Audit Matrix v1.9.2
+# Provider Audit Matrix v1.11.0
 
-7 providers validated. All production-ready.
+8 providers validated. All production-ready.
 
-**Updated**: 2026-04-05 | **Tests**: Unit 100% + Integration ✅
+**Updated**: 2026-06-22 | **Tests**: Unit 100% + Integration ✅
 
 | Provider | Fn Calling | Models | Tokens | Streaming | OpenAI Compat | Status |
 |----------|------------|--------|--------|-----------|---------------|--------|
@@ -13,11 +13,12 @@
 | Gemini | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ✅ Tested |
 | Vertex AI | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ✅ Tested |
 | OpenRouter | ✅ Model-dep | ✅ Dynamic | ✅ | ✅ | ✅ Full | ✅ Tested |
+| Sakana AI | ✅ | ✅ Dynamic | ✅ | ✅ | ✅ Full | ✅ Tested |
 
 ## Details
 
-All support streaming/tool calls/tokens in v1.9.2.
-Grok: 2M ctx. Venice: NSFW.
+All support streaming/tool calls/tokens in v1.11.0.
+Grok: 2M ctx. Venice: NSFW. Sakana: 1M ctx (fugu/fugu-ultra).
 
 **Tests**: go test ./cmd/celeste/providers/... -tags=integration
 
