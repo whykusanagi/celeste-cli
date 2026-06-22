@@ -1168,7 +1168,20 @@ func runConfigCommand(args []string) {
 		return
 	}
 
-	cfg, err := config.Load()
+	// Respect the -config <name> profile flag. The default profile splits the API
+	// key into secrets.json; named profiles store everything inline in
+	// config.<name>.json (see SaveNamed below). If a named profile doesn't exist
+	// yet, start from defaults so --set-* can create it.
+	var cfg *config.Config
+	var err error
+	if configName == "" {
+		cfg, err = config.Load()
+	} else {
+		cfg, err = config.LoadNamed(configName)
+		if err != nil {
+			cfg, err = config.DefaultConfig(), nil
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1309,13 +1322,22 @@ func runConfigCommand(args []string) {
 	}
 
 	if changed {
-		if err := config.Save(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-			os.Exit(1)
-		}
-		if err := config.SaveSecrets(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving secrets: %v\n", err)
-			os.Exit(1)
+		if configName == "" {
+			// Default profile: config.json + secrets.json (key split out).
+			if err := config.Save(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+				os.Exit(1)
+			}
+			if err := config.SaveSecrets(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving secrets: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Named profile: everything inline in config.<name>.json.
+			if err := config.SaveNamed(configName, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving config '%s': %v\n", configName, err)
+				os.Exit(1)
+			}
 		}
 		fmt.Println("Configuration saved")
 	}
