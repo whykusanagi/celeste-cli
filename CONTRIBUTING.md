@@ -387,6 +387,7 @@ celeste-cli/
 - **Questions**: Open a GitHub Discussion
 - **Bugs**: Open a GitHub Issue
 - **Security**: See [SECURITY.md](SECURITY.md)
+- **Releasing**: Follow [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
 - **Chat**: Contact @whykusanagi
 
 ## Recognition

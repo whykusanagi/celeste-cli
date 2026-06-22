@@ -681,6 +681,30 @@ func Save(config *Config) error {
 	return os.WriteFile(configFile, data, 0644)
 }
 
+// SaveNamed writes the config to a named profile file (config.<name>.json).
+// Named profiles store everything inline, including the API key — that is how
+// LoadNamed reads them — so unlike Save there is no separate secrets file. An
+// empty name falls back to the default Save path.
+func SaveNamed(name string, config *Config) error {
+	if name == "" {
+		return Save(config)
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Ensure ~/.celeste exists (first-run without --init wouldn't have created it).
+	path := NamedConfigPath(name)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("failed to create config dir: %w", err)
+	}
+
+	// 0600: a named profile carries the API key inline.
+	return os.WriteFile(path, data, 0600)
+}
+
 // SaveSecrets saves API key to secrets file (backward compatibility).
 func SaveSecrets(config *Config) error {
 	_, _, secretsFile, _ := Paths()
