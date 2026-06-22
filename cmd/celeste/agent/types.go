@@ -1,10 +1,17 @@
 package agent
 
 import (
+	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
+
+// runIDSeq makes run IDs unique even when two runs are created within the
+// clock's resolution. time.Now() is coarse on Windows, so a plain timestamp
+// collides and one checkpoint file (RunID+".json") overwrites another.
+var runIDSeq atomic.Uint64
 
 const (
 	StatusRunning           = "running"
@@ -174,5 +181,5 @@ func NewRunState(goal string, options Options) *RunState {
 }
 
 func generateRunID(t time.Time) string {
-	return t.Format("20060102-150405.000000000")
+	return fmt.Sprintf("%s-%d", t.Format("20060102-150405.000000000"), runIDSeq.Add(1))
 }
