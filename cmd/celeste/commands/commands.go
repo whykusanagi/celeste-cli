@@ -205,21 +205,32 @@ func handleEndpoint(cmd *Command) *CommandResult {
 	if len(cmd.Args) == 0 {
 		return &CommandResult{
 			Success:      false,
-			Message:      "Usage: /endpoint <name>\n\nAvailable endpoints:\n  • openai\n  • venice\n  • grok\n  • elevenlabs\n  • google (for Vertex AI)\n\nExample: /endpoint venice",
+			Message:      "Usage: /endpoint <name>\n\n" + availableEndpoints() + "\nExample: /endpoint sakana",
 			ShouldRender: true,
 		}
 	}
 
 	endpoint := strings.ToLower(cmd.Args[0])
-	validEndpoints := map[string]string{
+
+	// Built-in endpoints have a known base URL even without a named config.
+	builtins := map[string]string{
 		"openai":     "OpenAI",
 		"venice":     "Venice.ai",
 		"grok":       "xAI Grok",
 		"elevenlabs": "ElevenLabs",
 		"google":     "Google Vertex AI",
 	}
+	displayName, ok := builtins[endpoint]
+	if !ok && endpoint != "" {
+		// A named config profile (config.<name>.json) is a valid endpoint too:
+		// SwitchEndpoint loads it via LoadNamed. This is how sakana, vertex,
+		// openrouter, etc. become switchable without a hardcoded list.
+		if _, err := config.LoadNamed(endpoint); err == nil {
+			displayName, ok = endpoint, true
+		}
+	}
 
-	if displayName, ok := validEndpoints[endpoint]; ok {
+	if ok {
 		return &CommandResult{
 			Success:      true,
 			Message:      fmt.Sprintf("🔄 Switched to %s\n\nAll requests will use this endpoint until changed.", displayName),
@@ -232,9 +243,27 @@ func handleEndpoint(cmd *Command) *CommandResult {
 
 	return &CommandResult{
 		Success:      false,
-		Message:      fmt.Sprintf("Unknown endpoint: %s\n\nAvailable: openai, venice, grok, elevenlabs, google", endpoint),
+		Message:      fmt.Sprintf("Unknown endpoint: %s\n\n%s", endpoint, availableEndpoints()),
 		ShouldRender: true,
 	}
+}
+
+// availableEndpoints lists the config profiles the user can switch to, plus the
+// built-in venice endpoint (which loads from skills.json, not a named config).
+// Driven by the actual config dir so it never goes stale.
+func availableEndpoints() string {
+	var b strings.Builder
+	b.WriteString("Available endpoints (config profiles):\n")
+	if cfgs, err := config.ListConfigs(); err == nil {
+		for _, name := range cfgs {
+			if name == "default" {
+				continue // that's config.json; switch by provider name instead
+			}
+			fmt.Fprintf(&b, "  • %s\n", name)
+		}
+	}
+	b.WriteString("  • venice (NSFW, from skills.json)\n")
+	return b.String()
 }
 
 // handleModel handles the /model command (quick switch, no API validation).
