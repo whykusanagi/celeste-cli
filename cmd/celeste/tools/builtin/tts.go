@@ -26,10 +26,22 @@ import (
 // TTSTool generates speech audio via ElevenLabs.
 type TTSTool struct {
 	BaseTool
+	workspace string
 }
 
-func NewTTSTool() *TTSTool {
+// resolveOutput resolves a relative output filename against the tool's workspace
+// so generated audio lands in the agent workspace, not the process cwd. Absolute
+// paths are honored as-is; with no workspace configured it returns name unchanged.
+func (t *TTSTool) resolveOutput(name string) string {
+	if t.workspace != "" && name != "" && !filepath.IsAbs(name) {
+		return filepath.Join(t.workspace, name)
+	}
+	return name
+}
+
+func NewTTSTool(workspace string) *TTSTool {
 	return &TTSTool{
+		workspace: workspace,
 		BaseTool: BaseTool{
 			ToolName: "generate_speech",
 			ToolDescription: "Generate speech audio from text using ElevenLabs TTS. " +
@@ -211,6 +223,7 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filename == "" {
 			filename = fmt.Sprintf("speech_%d.mp3", time.Now().Unix())
 		}
+		filename = t.resolveOutput(filename)
 
 		if progress != nil {
 			mode := "text"
@@ -286,6 +299,7 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if outDir == "" {
 			outDir = filepath.Dir(filePath)
 		}
+		outDir = t.resolveOutput(outDir)
 
 		return executeBatch(ctx, apiKey, voiceID, filePath, outDir, progress)
 
@@ -307,6 +321,7 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filename == "" {
 			filename = fmt.Sprintf("%s.mp3", itemID)
 		}
+		filename = t.resolveOutput(filename)
 		return downloadHistoryItem(ctx, apiKey, itemID, filename)
 
 	case "sound":
@@ -328,6 +343,7 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filename == "" {
 			filename = fmt.Sprintf("sfx_%d.mp3", time.Now().Unix())
 		}
+		filename = t.resolveOutput(filename)
 
 		if progress != nil {
 			progress <- tools.ProgressEvent{
