@@ -13,16 +13,17 @@ func TestProviderRegistryExists(t *testing.T) {
 	assert.NotEmpty(t, Registry, "Registry should contain providers")
 }
 
-// TestProviderCount verifies we have all 9 expected providers
+// TestProviderCount verifies we have all expected providers
 func TestProviderCount(t *testing.T) {
 	expectedProviders := []string{
 		"openai", "grok", "venice",
 		"anthropic", "gemini", "vertex",
 		"openrouter", "digitalocean", "elevenlabs",
+		"sakana",
 	}
 
 	assert.Equal(t, len(expectedProviders), len(Registry),
-		"Registry should contain exactly 9 providers")
+		"Registry should contain exactly %d providers", len(expectedProviders))
 
 	for _, name := range expectedProviders {
 		_, exists := Registry[name]
@@ -64,7 +65,7 @@ func TestListProviders(t *testing.T) {
 	providers := ListProviders()
 
 	assert.NotEmpty(t, providers, "ListProviders should return providers")
-	assert.Equal(t, 9, len(providers), "Should return all 9 providers")
+	assert.Equal(t, 10, len(providers), "Should return all 10 providers")
 	assert.Equal(t, []string{
 		"anthropic",
 		"digitalocean",
@@ -73,6 +74,7 @@ func TestListProviders(t *testing.T) {
 		"grok",
 		"openai",
 		"openrouter",
+		"sakana",
 		"venice",
 		"vertex",
 	}, providers, "Provider list should be deterministic and sorted")
@@ -101,6 +103,7 @@ func TestGetToolCallingProviders(t *testing.T) {
 		"grok",
 		"openai",
 		"openrouter",
+		"sakana",
 		"vertex",
 	}, toolProviders, "Tool provider list should be deterministic and sorted")
 
@@ -154,6 +157,11 @@ func TestDetectProvider(t *testing.T) {
 			name:     "Gemini URL",
 			baseURL:  "https://generativelanguage.googleapis.com/v1beta/openai",
 			expected: "gemini",
+		},
+		{
+			name:     "Sakana URL",
+			baseURL:  "https://api.sakana.ai/v1",
+			expected: "sakana",
 		},
 		{
 			name:     "Partial OpenAI match",

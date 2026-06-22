@@ -1412,6 +1412,16 @@ func createConfigTemplate(name string) error {
 			RuntimeMode:           config.RuntimeModeClassic,
 			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 		},
+		"sakana": {
+			BaseURL:               "https://api.sakana.ai/v1",
+			Model:                 "fugu",
+			Timeout:               90, // Fugu Ultra orchestrates 1-3 agents; allow headroom
+			SkipPersonaPrompt:     false,
+			SimulateTyping:        true,
+			TypingSpeed:           25,
+			RuntimeMode:           config.RuntimeModeClassic,
+			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
+		},
 		"digitalocean": {
 			BaseURL:               "https://your-agent.ondigitalocean.app/api/v1",
 			Model:                 "gpt-4.1-nano",
@@ -1446,7 +1456,7 @@ func createConfigTemplate(name string) error {
 
 	tmpl, ok := templates[strings.ToLower(name)]
 	if !ok {
-		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, digitalocean, celeste-classic, celeste-claw", name)
+		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean, celeste-classic, celeste-claw", name)
 	}
 
 	configPath := config.NamedConfigPath(name)
@@ -1487,6 +1497,10 @@ func createConfigTemplate(name string) error {
 		fmt.Printf("     celeste -config %s config --set-key YOUR_VENICE_KEY\n", name)
 		fmt.Println("  2. Also set in skills.json for NSFW mode:")
 		fmt.Printf("     celeste -config %s config --set-venice-key YOUR_VENICE_KEY\n", name)
+	case "sakana":
+		fmt.Println("\nSetup (Sakana AI / Fugu):")
+		fmt.Printf("     celeste -config %s config --set-url https://api.sakana.ai/v1 --set-key YOUR_SAKANA_KEY --set-model fugu\n", name)
+		fmt.Println("     (use --set-model fugu-ultra for the Ultra variant)")
 	default:
 		fmt.Printf("\nEdit the file to add your API key, then run:\n")
 	}

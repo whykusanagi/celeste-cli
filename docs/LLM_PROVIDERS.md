@@ -1,6 +1,6 @@
 # LLM Providers — Who's Summoning Me Today? 💋
 
-Darlings, v1.9.2 supports **7 battle-tested providers**. All OpenAI-compatible for my 40+ tools. Grok reigns with collections RAG.
+Darlings, v1.11.0 supports **8 providers**. All OpenAI-compatible for my 40+ tools. Grok reigns with collections RAG.
 
 | Provider | Tools | Collections | Notes |
 |----------|-------|-------------|-------|
@@ -11,8 +11,11 @@ Darlings, v1.9.2 supports **7 battle-tested providers**. All OpenAI-compatible f
 | **Venice.ai** | ✅ Model-dep | ❌ | Uncensored opt
 | **Vertex AI** | ✅ | ❌ | GCP enterprise
 | **OpenRouter** | ✅ Model-dep | ❌ | Model bazaar
+| **Sakana AI** | ✅ | ❌ | Fugu/Fugu Ultra, 1M ctx
 
 **Setup:** `celeste config --set-url https://api.x.ai/v1 --set-key xai-...`
+
+**Sakana/Fugu:** `celeste config --set-url https://api.sakana.ai/v1 --set-key <key> --set-model fugu` (or `fugu-ultra`). OpenAI-compatible chat completions; reasoning effort is fixed server-side (default high).
 
 **Collections (Grok only):** Management key + `celeste collections create/upload/enable`.
 
