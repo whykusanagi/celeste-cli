@@ -5,6 +5,13 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.2](https://github.com/whykusanagi/celeste-cli/compare/v1.11.1...v1.11.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* honor -config in read commands; /model lists real provider models in TUI ([#82](https://github.com/whykusanagi/celeste-cli/issues/82)) ([cb7e4df](https://github.com/whykusanagi/celeste-cli/commit/cb7e4df9fa6ebc3467aea7f9666900f2a1432b3b))
+
 ## [1.11.1](https://github.com/whykusanagi/celeste-cli/compare/v1.11.0...v1.11.1) (2026-06-22)
 
 
