@@ -118,7 +118,7 @@ func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 	case "endpoint":
 		return handleEndpoint(cmd)
 	case "model":
-		return handleModel(cmd)
+		return handleModel(cmd, ctx)
 	case "image-model", "set-model", "list-models":
 		return handleSetModel(cmd, ctx)
 	case "config":
@@ -205,21 +205,32 @@ func handleEndpoint(cmd *Command) *CommandResult {
 	if len(cmd.Args) == 0 {
 		return &CommandResult{
 			Success:      false,
-			Message:      "Usage: /endpoint <name>\n\nAvailable endpoints:\n  • openai\n  • venice\n  • grok\n  • elevenlabs\n  • google (for Vertex AI)\n\nExample: /endpoint venice",
+			Message:      "Usage: /endpoint <name>\n\n" + availableEndpoints() + "\nExample: /endpoint sakana",
 			ShouldRender: true,
 		}
 	}
 
 	endpoint := strings.ToLower(cmd.Args[0])
-	validEndpoints := map[string]string{
+
+	// Built-in endpoints have a known base URL even without a named config.
+	builtins := map[string]string{
 		"openai":     "OpenAI",
 		"venice":     "Venice.ai",
 		"grok":       "xAI Grok",
 		"elevenlabs": "ElevenLabs",
 		"google":     "Google Vertex AI",
 	}
+	displayName, ok := builtins[endpoint]
+	if !ok && endpoint != "" {
+		// A named config profile (config.<name>.json) is a valid endpoint too:
+		// SwitchEndpoint loads it via LoadNamed. This is how sakana, vertex,
+		// openrouter, etc. become switchable without a hardcoded list.
+		if _, err := config.LoadNamed(endpoint); err == nil {
+			displayName, ok = endpoint, true
+		}
+	}
 
-	if displayName, ok := validEndpoints[endpoint]; ok {
+	if ok {
 		return &CommandResult{
 			Success:      true,
 			Message:      fmt.Sprintf("🔄 Switched to %s\n\nAll requests will use this endpoint until changed.", displayName),
@@ -232,17 +243,40 @@ func handleEndpoint(cmd *Command) *CommandResult {
 
 	return &CommandResult{
 		Success:      false,
-		Message:      fmt.Sprintf("Unknown endpoint: %s\n\nAvailable: openai, venice, grok, elevenlabs, google", endpoint),
+		Message:      fmt.Sprintf("Unknown endpoint: %s\n\n%s", endpoint, availableEndpoints()),
 		ShouldRender: true,
 	}
 }
 
-// handleModel handles the /model command.
-func handleModel(cmd *Command) *CommandResult {
+// availableEndpoints lists the config profiles the user can switch to, plus the
+// built-in venice endpoint (which loads from skills.json, not a named config).
+// Driven by the actual config dir so it never goes stale.
+func availableEndpoints() string {
+	var b strings.Builder
+	b.WriteString("Available endpoints (config profiles):\n")
+	if cfgs, err := config.ListConfigs(); err == nil {
+		for _, name := range cfgs {
+			if name == "default" {
+				continue // that's config.json; switch by provider name instead
+			}
+			fmt.Fprintf(&b, "  • %s\n", name)
+		}
+	}
+	b.WriteString("  • venice (NSFW, from skills.json)\n")
+	return b.String()
+}
+
+// handleModel handles the /model command (quick switch, no API validation).
+func handleModel(cmd *Command, ctx *CommandContext) *CommandResult {
 	if len(cmd.Args) == 0 {
+		// Show the current provider's real models instead of a stale hardcoded
+		// list. Reuses the same provider-aware lister as /list-models.
+		if caps, ok := providers.GetProvider(ctx.Provider); ok {
+			return listAvailableModels(ctx, caps)
+		}
 		return &CommandResult{
 			Success:      false,
-			Message:      "Usage: /model <name>\n\nCommon models:\n  • gpt-4o-mini\n  • gpt-4o\n  • claude-3-5-sonnet\n  • llama-3.3-70b\n\nExample: /model gpt-4o",
+			Message:      "Usage: /model <name>\n\nRun /list-models to see this provider's models.\nExample: /model fugu",
 			ShouldRender: true,
 		}
 	}
@@ -450,7 +484,9 @@ func listAvailableModels(ctx *CommandContext, caps providers.ProviderCapabilitie
 func getCommonModelsHelp(provider string) string {
 	switch provider {
 	case "grok":
-		return "  • grok-build-0.1 (recommended for skills)\n  • grok-4-1\n  • grok-beta"
+		return "  • grok-4.20-0309-non-reasoning (default)\n  • grok-build-0.1\n  • grok-4-latest"
+	case "sakana":
+		return "  • fugu (default)\n  • fugu-ultra\n  • fugu-ultra-20260615"
 	case "openai":
 		return "  • gpt-4o-mini (recommended)\n  • gpt-4o\n  • gpt-4-turbo"
 	case "venice":
