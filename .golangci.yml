@@ -1,68 +1,76 @@
+version: "2"
 run:
-  timeout: 5m
-  go: '1.26'
-
-linters:
-  enable:
-    - errcheck
-    - gofmt
-    - goimports
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-  disable:
-    - gosec  # Security checks handled by govulncheck
-
-linters-settings:
-  errcheck:
-    check-type-assertions: false
-    check-blank: false
-    exclude-functions:
-      # Allow ignoring errors for these common patterns
-      - (os.File).Close
-      - (encoding/json.Encoder).Encode
-      - fmt.Fprintf
-      - fmt.Fprintln
-      - (bufio.Writer).Flush
-      - (config.SessionManager).Save
-      - rand.Read
-      - os.MkdirAll
-      - os.WriteFile
-      - json.Unmarshal
-      - (os.File).Sync
-      - flag.FlagSet.Parse
-      - (tools.Registry).LoadCustomTools
-      - fmt.Sscanf
-      - fmt.Scanln
-
-  staticcheck:
-    checks: ["all"]
-
-
-issues:
-  exclude-rules:
-    # Exclude some linters from running on tests
-    - path: _test\.go
-      linters:
-        - errcheck
-        - unused
-
-    # Allow unused code in animation.go (legacy features)
-    - path: cmd/Celeste/tui/animation.go
-      linters:
-        - unused
-
-    # Allow unused scaffolding code
-    - path: cmd/Celeste/commands/scaffolding.go
-      linters:
-        - unused
-
-  max-issues-per-linter: 0
-  max-same-issues: 0
-
+  go: "1.26"
 output:
   formats:
-    - format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+linters:
+  disable:
+    - gosec
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+      exclude-functions:
+        - (os.File).Close
+        - (encoding/json.Encoder).Encode
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (bufio.Writer).Flush
+        - (config.SessionManager).Save
+        - rand.Read
+        - os.MkdirAll
+        - os.WriteFile
+        - json.Unmarshal
+        - (os.File).Sync
+        - flag.FlagSet.Parse
+        - (tools.Registry).LoadCustomTools
+        - fmt.Sscanf
+        - fmt.Scanln
+    staticcheck:
+      # v2 folded stylecheck/gosimple/quickfix into staticcheck. The v1 config
+      # only ran the SA* (correctness) family, so keep parity and skip the
+      # ST*/QF*/S1* style+refactor suggestions rather than churn the codebase.
+      checks:
+        - all
+        - -ST*
+        - -QF*
+        - -S1*
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - unused
+        path: _test\.go
+      - linters:
+          - unused
+        path: cmd/Celeste/tui/animation.go
+      - linters:
+          - unused
+        path: cmd/Celeste/commands/scaffolding.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
