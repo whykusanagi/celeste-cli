@@ -5,6 +5,20 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0](https://github.com/whykusanagi/celeste-cli/compare/v1.11.2...v1.12.0) (2026-06-28)
+
+
+### Features
+
+* **config:** resolve default profile from a file flag, not hardcoded provider ([#92](https://github.com/whykusanagi/celeste-cli/issues/92)) ([4c9ca8f](https://github.com/whykusanagi/celeste-cli/commit/4c9ca8fd1a7ee9571cef3ee278cb86bd6c841eb6))
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/anthropics/anthropic-sdk-go ([#88](https://github.com/whykusanagi/celeste-cli/issues/88)) ([a38dc35](https://github.com/whykusanagi/celeste-cli/commit/a38dc356205552c397102d6b32e0b0f36392d102))
+* **deps:** bump github.com/tree-sitter/tree-sitter-php ([#89](https://github.com/whykusanagi/celeste-cli/issues/89)) ([c65921d](https://github.com/whykusanagi/celeste-cli/commit/c65921d59d20998b7d1ceaadf06ea2cae53710d7))
+* **deps:** bump google.golang.org/genai from 1.39.0 to 1.62.0 ([#90](https://github.com/whykusanagi/celeste-cli/issues/90)) ([0302c87](https://github.com/whykusanagi/celeste-cli/commit/0302c87b1cee26bdd8e412d230c6d411e5e4f1ea))
+
 ## [1.11.2](https://github.com/whykusanagi/celeste-cli/compare/v1.11.1...v1.11.2) (2026-06-23)
 
 
