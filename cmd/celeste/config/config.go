@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
 // TarotConfig holds tarot function configuration.
@@ -102,6 +104,10 @@ type Config struct {
 
 	// Runtime-detected provider (not persisted to config file)
 	Provider string `json:"-"` // Detected from BaseURL at runtime
+
+	// Default marks this named config as the one loaded when no -config flag
+	// is given. Exactly one file should set it; the first match wins.
+	Default bool `json:"default,omitempty"`
 
 	// Persona settings
 	SkipPersonaPrompt bool `json:"skip_persona_prompt"`
@@ -216,20 +222,42 @@ type OrchestratorConfig struct {
 	DebateRounds int                   `json:"debate_rounds,omitempty"`
 }
 
-// DefaultConfig returns a config with default values.
+// DefaultProvider seeds a brand-new install that has no config file yet. It only
+// names a provider in the registry — the BaseURL and model come from there, so
+// retiring/renaming a model is a one-line registry edit, never a hunt across
+// config.go, main.go templates, and the registry that diverge over time.
+const DefaultProvider = "sakana"
+
+// DefaultConfig returns a config with default values. Provider-specific bits
+// (BaseURL, model) resolve from the provider registry rather than being pinned
+// here; only behavioural defaults live in this struct.
 func DefaultConfig() *Config {
+	seed, _ := providers.GetProvider(DefaultProvider)
+	venice, _ := providers.GetProvider("venice")
 	return &Config{
-		BaseURL:               "https://api.x.ai/v1",
-		Model:                 "grok-4.20-0309-non-reasoning", // non-reasoning: no reasoning-token burn, no routing to grok-4.3, reliable tool use (#51)
+		BaseURL:               seed.BaseURL,
+		Model:                 seed.DefaultModel,
 		Timeout:               60,
 		SkipPersonaPrompt:     false,
 		SimulateTyping:        true,
 		TypingSpeed:           40,
 		RuntimeMode:           RuntimeModeClassic,
 		ClawMaxToolIterations: DefaultClawMaxToolIterations,
-		VeniceBaseURL:         "https://api.venice.ai/api/v1",
-		VeniceModel:           "venice-uncensored",
+		VeniceBaseURL:         venice.BaseURL,
+		VeniceModel:           venice.DefaultModel,
 	}
+}
+
+// DefaultModelForBaseURL resolves the default model for a config from its own
+// provider (detected via the registry), falling back to the seed provider's
+// model when the URL is unknown. This is the dynamic resolution that replaces a
+// hard-coded model string.
+func DefaultModelForBaseURL(baseURL string) string {
+	if caps, ok := providers.GetProvider(providers.DetectProvider(baseURL)); ok && caps.DefaultModel != "" {
+		return caps.DefaultModel
+	}
+	seed, _ := providers.GetProvider(DefaultProvider)
+	return seed.DefaultModel
 }
 
 func IsValidRuntimeMode(mode string) bool {
@@ -335,7 +363,13 @@ func SaveSkillsConfig(skillsConfig *Config) error {
 // If name is empty, loads the default config.
 func LoadNamed(name string) (*Config, error) {
 	if name == "" {
-		return Load()
+		// No explicit profile: honor a config.<name>.json flagged "default": true.
+		// Falls back to the legacy config.json when none is flagged.
+		if d := ResolveDefaultName(); d != "" {
+			name = d
+		} else {
+			return Load()
+		}
 	}
 
 	config := DefaultConfig()
@@ -444,6 +478,72 @@ func LoadNamed(name string) (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// ResolveDefaultName returns the name of the config.<name>.json file flagged
+// "default": true, or "" if none is flagged (or the dir is unreadable). Files
+// are scanned in directory order; the first match wins.
+func ResolveDefaultName() string {
+	configDir, _, _, _ := Paths()
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if len(name) <= 12 || name[:7] != "config." || name[len(name)-5:] != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(configDir, name))
+		if err != nil {
+			continue
+		}
+		var probe struct {
+			Default bool `json:"default"`
+		}
+		if json.Unmarshal(data, &probe) == nil && probe.Default {
+			return name[7 : len(name)-5]
+		}
+	}
+	return ""
+}
+
+// SetDefaultProfile marks config.<name>.json as the default profile and clears
+// the flag on every other named profile, so exactly one stays flagged.
+func SetDefaultProfile(name string) error {
+	if name == "" {
+		return fmt.Errorf("default profile must be a named config, not the bare default")
+	}
+	target := NamedConfigPath(name)
+	if _, err := os.Stat(target); err != nil {
+		return fmt.Errorf("config '%s' not found at %s: %w", name, target, err)
+	}
+
+	configDir, _, _, _ := Paths()
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		fname := entry.Name()
+		if len(fname) <= 12 || fname[:7] != "config." || fname[len(fname)-5:] != ".json" {
+			continue
+		}
+		profile := fname[7 : len(fname)-5]
+		cfg, err := LoadNamed(profile)
+		if err != nil {
+			return fmt.Errorf("failed to load profile '%s': %w", profile, err)
+		}
+		want := profile == name
+		if cfg.Default == want {
+			continue // already correct, skip the write
+		}
+		cfg.Default = want
+		if err := SaveNamed(profile, cfg); err != nil {
+			return fmt.Errorf("failed to update profile '%s': %w", profile, err)
+		}
+	}
+	return nil
 }
 
 // ListConfigs returns all available config names.
@@ -648,7 +748,9 @@ func reconcileModel(config *Config) (changed bool, from, to string) {
 		}
 	}
 	if config.Model == "" {
-		config.Model = DefaultConfig().Model
+		// Resolve from the config's OWN provider, not a global default — a Venice
+		// config with no model should get Venice's default, not the seed's.
+		config.Model = DefaultModelForBaseURL(config.BaseURL)
 		return true, "", config.Model
 	}
 	if repl, ok := deprecatedModels[config.Model]; ok && repl != config.Model {
