@@ -1113,6 +1113,7 @@ func runConfigCommand(args []string) {
 	fs := flag.NewFlagSet("config", flag.ExitOnError)
 	showConfig := fs.Bool("show", false, "Show current configuration")
 	listConfigs := fs.Bool("list", false, "List all config profiles")
+	setDefault := fs.Bool("set-default", false, "Make this profile the default loaded when no -config is given")
 	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice, celeste-classic, celeste-claw)")
 	setKey := fs.String("set-key", "", "Set API key")
 	setURL := fs.String("set-url", "", "Set API URL")
@@ -1148,15 +1149,38 @@ func runConfigCommand(args []string) {
 			fmt.Fprintf(os.Stderr, "Error listing configs: %v\n", err)
 			os.Exit(1)
 		}
+		defaultName := config.ResolveDefaultName() // "" when no profile is flagged
 		fmt.Println("Available config profiles:")
 		for _, c := range configs {
 			path := config.NamedConfigPath(c)
 			if c == "default" {
 				path = config.NamedConfigPath("")
 			}
-			fmt.Printf("  • %s (%s)\n", c, path)
+			marker := ""
+			if c == defaultName {
+				marker = "  ← default (no -config needed)"
+			}
+			fmt.Printf("  • %s (%s)%s\n", c, path, marker)
+		}
+		if defaultName == "" {
+			fmt.Println("\nNo profile flagged as default — bare 'config.json' is used when no -config is given.")
+			fmt.Println("Set one with: celeste -config <name> config --set-default")
 		}
 		fmt.Println("\nUsage: celeste -config <name> chat")
+		return
+	}
+
+	// Handle --set-default
+	if *setDefault {
+		if configName == "" {
+			fmt.Fprintln(os.Stderr, "Error: --set-default needs a named profile, e.g. celeste -config sakana config --set-default")
+			os.Exit(1)
+		}
+		if err := config.SetDefaultProfile(configName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting default: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Default profile set to '%s'\n", configName)
 		return
 	}
 
@@ -1167,6 +1191,16 @@ func runConfigCommand(args []string) {
 			os.Exit(1)
 		}
 		return
+	}
+
+	// No -config given: act on the flagged default profile so `config` shows and
+	// edits exactly what a no-flag `celeste chat` bills against. Falls back to the
+	// bare config.json when nothing is flagged.
+	if configName == "" {
+		if d := config.ResolveDefaultName(); d != "" {
+			configName = d
+			fmt.Printf("(no -config given; using default profile '%s')\n", d)
+		}
 	}
 
 	// Respect the -config <name> profile flag. The default profile splits the API
@@ -1396,94 +1430,55 @@ func runConfigCommand(args []string) {
 	}
 }
 
-// createConfigTemplate creates a config file from a template.
+// createConfigTemplate creates a config file from a template. BaseURL and model
+// come from the provider registry (single source of truth) unless a template
+// overrides them; only behavioural knobs that vary per provider live here.
 func createConfigTemplate(name string) error {
-	templates := map[string]*config.Config{
-		"openai": {
-			BaseURL:               "https://api.openai.com/v1",
-			Model:                 "gpt-4.1-nano",
-			Timeout:               60,
-			SkipPersonaPrompt:     false, // OpenAI needs persona injection
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"grok": {
-			BaseURL:               "https://api.x.ai/v1",
-			Model:                 "grok-4.20-0309-non-reasoning", // non-reasoning Grok: no reasoning burn, no grok-4.3 routing (#51)
-			Timeout:               60,
-			SkipPersonaPrompt:     false, // Grok needs persona injection
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"elevenlabs": {
-			BaseURL:               "https://api.elevenlabs.io/v1",
-			Model:                 "eleven_multilingual_v2",
-			Timeout:               60,
-			SkipPersonaPrompt:     false,
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"venice": {
-			BaseURL:               "https://api.venice.ai/api/v1",
-			Model:                 "venice-uncensored",
-			Timeout:               60,
-			SkipPersonaPrompt:     false, // Venice needs persona injection
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"sakana": {
-			BaseURL:               "https://api.sakana.ai/v1",
-			Model:                 "fugu",
-			Timeout:               90, // Fugu Ultra orchestrates 1-3 agents; allow headroom
-			SkipPersonaPrompt:     false,
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"digitalocean": {
-			BaseURL:               "https://your-agent.ondigitalocean.app/api/v1",
-			Model:                 "gpt-4.1-nano",
-			Timeout:               60,
-			SkipPersonaPrompt:     true, // DO agents have built-in persona
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"celeste-classic": {
-			BaseURL:               "https://api.openai.com/v1",
-			Model:                 "gpt-4.1-nano",
-			Timeout:               60,
-			SkipPersonaPrompt:     false,
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClassic,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
-		"celeste-claw": {
-			BaseURL:               "https://api.openai.com/v1",
-			Model:                 "gpt-4.1-nano",
-			Timeout:               60,
-			SkipPersonaPrompt:     false,
-			SimulateTyping:        true,
-			TypingSpeed:           25,
-			RuntimeMode:           config.RuntimeModeClaw,
-			ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
-		},
+	// override carries the per-template behavioural knobs plus any deviation from
+	// the registry. provider names the registry entry to inherit BaseURL+model from;
+	// baseURL/model, when set, win over the registry (for non-registry templates or
+	// intentional divergence like DigitalOcean's per-agent URL).
+	type override struct {
+		provider    string
+		baseURL     string
+		model       string
+		timeout     int
+		skipPersona bool
+		runtimeMode string
+	}
+	templates := map[string]override{
+		"openai":          {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
+		"grok":            {provider: "grok", timeout: 60, runtimeMode: config.RuntimeModeClassic},
+		"venice":          {provider: "venice", timeout: 60, runtimeMode: config.RuntimeModeClassic},
+		"sakana":          {provider: "sakana", timeout: 90, runtimeMode: config.RuntimeModeClassic}, // Fugu Ultra orchestrates 1-3 agents; allow headroom
+		"elevenlabs":      {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60, runtimeMode: config.RuntimeModeClassic},
+		"digitalocean":    {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true, runtimeMode: config.RuntimeModeClassic}, // DO agents have built-in persona
+		"celeste-classic": {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
+		"celeste-claw":    {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClaw},
 	}
 
-	tmpl, ok := templates[strings.ToLower(name)]
+	o, ok := templates[strings.ToLower(name)]
 	if !ok {
 		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean, celeste-classic, celeste-claw", name)
+	}
+
+	caps, _ := providers.GetProvider(o.provider)
+	baseURL, model := caps.BaseURL, caps.DefaultModel
+	if o.baseURL != "" {
+		baseURL = o.baseURL
+	}
+	if o.model != "" {
+		model = o.model
+	}
+	tmpl := &config.Config{
+		BaseURL:               baseURL,
+		Model:                 model,
+		Timeout:               o.timeout,
+		SkipPersonaPrompt:     o.skipPersona,
+		SimulateTyping:        true,
+		TypingSpeed:           25,
+		RuntimeMode:           o.runtimeMode,
+		ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
 	}
 
 	configPath := config.NamedConfigPath(name)
@@ -2095,8 +2090,8 @@ func runWalletMonitorCommand(args []string) {
 		os.Exit(1)
 	}
 
-	// Load config
-	cfg, err := config.Load()
+	// Load config (honors -config and the flagged default profile)
+	cfg, err := config.LoadNamed(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)

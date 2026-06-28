@@ -9,15 +9,20 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
 // TestDefaultConfig tests that default config has sensible values
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
+	// BaseURL/model resolve from the registry's seed provider, not hard-coded here.
+	seed, _ := providers.GetProvider(DefaultProvider)
 	assert.NotNil(t, config)
-	assert.Equal(t, "https://api.x.ai/v1", config.BaseURL)
-	assert.Equal(t, "grok-4.20-0309-non-reasoning", config.Model)
+	assert.NotEmpty(t, seed.BaseURL)
+	assert.Equal(t, seed.BaseURL, config.BaseURL)
+	assert.Equal(t, seed.DefaultModel, config.Model)
 	assert.Equal(t, 60, config.Timeout)
 	assert.False(t, config.SkipPersonaPrompt)
 	assert.True(t, config.SimulateTyping)
@@ -333,6 +338,45 @@ func TestLoadNamed(t *testing.T) {
 	_, err = LoadNamed("nonexistent")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestDefaultProfileFlag(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	os.Unsetenv("CELESTE_API_KEY")
+	os.Unsetenv("CELESTE_API_ENDPOINT")
+
+	configDir := filepath.Join(homeDir, ".celeste")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+
+	write := func(name string, cfg *Config) {
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "config."+name+".json"), data, 0644))
+	}
+	write("grok", &Config{Model: "grok", BaseURL: "https://x"})
+	write("sakana", &Config{Model: "fugu", BaseURL: "https://sakana"})
+
+	// No flag yet → empty name falls back to legacy Load (config.json defaults).
+	require.Equal(t, "", ResolveDefaultName())
+
+	// Flag sakana → it resolves, and empty-name LoadNamed loads it.
+	require.NoError(t, SetDefaultProfile("sakana"))
+	require.Equal(t, "sakana", ResolveDefaultName())
+	loaded, err := LoadNamed("")
+	require.NoError(t, err)
+	assert.Equal(t, "fugu", loaded.Model)
+
+	// Re-flagging grok clears sakana's flag — exactly one default survives.
+	require.NoError(t, SetDefaultProfile("grok"))
+	require.Equal(t, "grok", ResolveDefaultName())
+	sakana, err := LoadNamed("sakana")
+	require.NoError(t, err)
+	assert.False(t, sakana.Default)
+
+	// Missing profile errors out.
+	assert.Error(t, SetDefaultProfile("nope"))
 }
 
 // TestLoadNamedWithSkillsMerge tests that skills.json merges with named configs
