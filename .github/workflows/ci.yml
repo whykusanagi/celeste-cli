@@ -18,7 +18,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # PRs (incl. Dependabot) run ubuntu-only to save CI minutes; the full
+        # cross-platform matrix runs post-merge on main and on manual dispatch.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
         go: ['1.26.4']
 
     steps:
