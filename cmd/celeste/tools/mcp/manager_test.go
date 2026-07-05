@@ -17,7 +17,7 @@ import (
 // makeInitResponse creates a mock initialize response.
 func makeInitResponse() *Response {
 	result, _ := json.Marshal(initializeResult{
-		ProtocolVersion: protocolVersion,
+		ProtocolVersion: preferredProtocolVersion,
 		Capabilities:    map[string]any{},
 		ServerInfo:      serverInfo{Name: "test-server", Version: "1.0"},
 	})
@@ -67,6 +67,26 @@ func TestManager_StartEmptyConfig(t *testing.T) {
 
 	status := manager.ServerStatus()
 	assert.Empty(t, status)
+}
+
+func TestManager_SkipsDisabledServers(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mcp.json")
+	// One server with enabled omitted (defaults to false), one explicitly
+	// false. Neither should be spawned — note the bogus command that would
+	// error if createTransport were ever reached for an enabled server.
+	cfg := `{"mcpServers": {
+		"absent":   {"command": "this-command-does-not-exist"},
+		"disabled": {"enabled": false, "command": "this-command-does-not-exist"}
+	}}`
+	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0644))
+
+	registry := tools.NewRegistry()
+	manager := NewManager(configPath, registry)
+
+	require.NoError(t, manager.Start(context.Background()))
+	assert.Empty(t, manager.ServerStatus(), "disabled servers must not connect")
+	assert.Equal(t, 0, registry.Count(), "no tools registered from skipped servers")
 }
 
 func TestManager_Stop(t *testing.T) {

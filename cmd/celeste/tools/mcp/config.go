@@ -17,6 +17,12 @@ type MCPConfig struct {
 
 // ServerConfig defines how to connect to a single MCP server.
 type ServerConfig struct {
+	// Enabled opts the server into auto-connection at startup. It is false by
+	// default: a server is only connected if it explicitly sets
+	// "enabled": true. This keeps configured-but-unused servers (e.g. an X
+	// bridge awaiting its first OAuth login) from delaying startup.
+	Enabled bool `json:"enabled,omitempty"`
+
 	// Transport is "stdio" or "sse". Defaults to "stdio" if not set.
 	Transport string `json:"transport"`
 

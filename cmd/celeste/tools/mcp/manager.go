@@ -64,6 +64,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	connectedServers := 0
 
 	for name, serverCfg := range cfg.Servers {
+		// Opt-in: skip servers not explicitly enabled before spawning any
+		// process or opening any connection, so they cost nothing at startup.
+		if !serverCfg.Enabled {
+			continue
+		}
+
 		transport, err := m.createTransport(serverCfg)
 		if err != nil {
 			log.Printf("[mcp] warning: failed to create transport for server %q: %v", name, err)
