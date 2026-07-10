@@ -31,7 +31,7 @@ require (
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	golang.org/x/text v0.40.0
 	golang.org/x/time v0.15.0
-	google.golang.org/genai v1.62.0
+	google.golang.org/genai v1.63.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.53.0
 )
