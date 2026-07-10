@@ -142,3 +142,20 @@ func TestRegistryExecuteNoChecker(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ran", result.Content)
 }
+
+func TestRegistry_Ask_NoCallbackReturnsError(t *testing.T) {
+	r := NewRegistry()
+	_, err := r.Ask(context.Background(), AskRequest{Question: "pick"})
+	assert.Error(t, err)
+}
+
+func TestRegistry_Ask_UsesCallback(t *testing.T) {
+	r := NewRegistry()
+	r.SetAskFunc(func(ctx context.Context, req AskRequest) (AskResponse, error) {
+		assert.Equal(t, "pick a color", req.Question)
+		return AskResponse{Selected: []string{"red"}}, nil
+	})
+	resp, err := r.Ask(context.Background(), AskRequest{Question: "pick a color"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"red"}, resp.Selected)
+}

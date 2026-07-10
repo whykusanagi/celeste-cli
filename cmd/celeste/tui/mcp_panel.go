@@ -3,20 +3,29 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 )
 
-// MCPPanelModel displays MCP server connection status and tool counts.
+// MCPPanelModel displays MCP server connection status and tool counts, and
+// dispatches runtime connect/disconnect/toggle actions.
 type MCPPanelModel struct {
 	active  bool
 	servers []MCPServerInfo
 	cursor  int
 	width   int
 	height  int
+
+	manager *mcp.Manager
+	configs map[string]mcp.ServerConfig // discovered server configs, keyed by name
 }
 
 // NewMCPPanelModel creates a new MCP panel model.
@@ -40,10 +49,102 @@ func (m MCPPanelModel) Active() bool {
 	return m.active
 }
 
-// Show activates the MCP panel.
+// SetManager injects the MCP manager and discovered configs so the panel can
+// connect/disconnect servers and toggle their enabled flag at runtime.
+func (m *MCPPanelModel) SetManager(manager *mcp.Manager, configs map[string]mcp.ServerConfig) {
+	m.manager = manager
+	m.configs = configs
+}
+
+// Show activates the MCP panel and refreshes its rows from live state.
 func (m *MCPPanelModel) Show() {
 	m.active = true
 	m.cursor = 0
+	m.servers = m.rowsFromStatus()
+}
+
+// rowsFromStatus merges live server status with the discovered configs so both
+// connected and configured-but-disconnected servers appear, sorted by name.
+func (m MCPPanelModel) rowsFromStatus() []MCPServerInfo {
+	connected := map[string]mcp.ServerInfo{}
+	if m.manager != nil {
+		for _, s := range m.manager.ServerStatus() {
+			connected[s.Name] = s
+		}
+	}
+
+	rows := make([]MCPServerInfo, 0, len(m.configs))
+	for name, cfg := range m.configs {
+		row := MCPServerInfo{
+			Name:      name,
+			Transport: cfg.Transport,
+			Enabled:   cfg.Enabled,
+			Origin:    cfg.Origin,
+		}
+		if s, ok := connected[name]; ok {
+			row.Connected = true
+			row.ToolCount = s.ToolCount
+			row.Transport = s.Transport
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows
+}
+
+// RefreshServers rebuilds the panel rows from current manager state.
+func (m MCPPanelModel) RefreshServers() MCPPanelModel {
+	m.servers = m.rowsFromStatus()
+	if m.cursor >= len(m.servers) {
+		m.cursor = 0
+	}
+	return m
+}
+
+// current returns the selected server row, or nil when there is none.
+func (m MCPPanelModel) current() *MCPServerInfo {
+	if m.cursor < 0 || m.cursor >= len(m.servers) {
+		return nil
+	}
+	return &m.servers[m.cursor]
+}
+
+// connectCmd dispatches an async connect (runs off the Update loop, so an OAuth
+// handshake can block safely). 60s is the ceiling for a first-login handshake.
+func (m MCPPanelModel) connectCmd(name string) tea.Cmd {
+	mgr := m.manager
+	cfg := m.configs[name]
+	return func() tea.Msg {
+		if mgr == nil {
+			return MCPConnectResultMsg{Name: name, Err: fmt.Errorf("no MCP manager")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		return MCPConnectResultMsg{Name: name, Err: mgr.Connect(ctx, name, cfg)}
+	}
+}
+
+// disconnectCmd dispatches an async disconnect.
+func (m MCPPanelModel) disconnectCmd(name string) tea.Cmd {
+	mgr := m.manager
+	return func() tea.Msg {
+		if mgr == nil {
+			return MCPConnectResultMsg{Name: name, Err: fmt.Errorf("no MCP manager")}
+		}
+		return MCPConnectResultMsg{Name: name, Err: mgr.Disconnect(name)}
+	}
+}
+
+// toggleEnabledCmd persists the enabled flag to the server's owning config file.
+// Only files celeste can write (its Origin) are affected.
+func (m MCPPanelModel) toggleEnabledCmd(name string, enabled bool) tea.Cmd {
+	path := m.configs[name].Origin
+	return func() tea.Msg {
+		if path == "" {
+			return MCPConnectResultMsg{Name: name, Err: fmt.Errorf("no config file to write for %q", name)}
+		}
+		return MCPConnectResultMsg{Name: name, Err: mcp.SetServerEnabled(path, name, enabled)}
+	}
 }
 
 // Update handles messages for the MCP panel.
@@ -66,6 +167,22 @@ func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 		case "down", "j":
 			if m.cursor < len(m.servers)-1 {
 				m.cursor++
+			}
+		case "c":
+			if row := m.current(); row != nil && !row.Connected {
+				return m, m.connectCmd(row.Name)
+			}
+		case "d":
+			if row := m.current(); row != nil && row.Connected {
+				return m, m.disconnectCmd(row.Name)
+			}
+		case "r":
+			if row := m.current(); row != nil {
+				return m, tea.Sequence(m.disconnectCmd(row.Name), m.connectCmd(row.Name))
+			}
+		case " ":
+			if row := m.current(); row != nil {
+				return m, m.toggleEnabledCmd(row.Name, !row.Enabled)
 			}
 		}
 	}
@@ -120,7 +237,11 @@ func (m MCPPanelModel) View() string {
 			totalTools += srv.ToolCount
 		} else {
 			dot = disconnectedStyle.Render("○")
-			detail = "disconnected"
+			if srv.Enabled {
+				detail = "enabled · disconnected"
+			} else {
+				detail = "disabled"
+			}
 		}
 
 		prefix := "  "
@@ -154,7 +275,7 @@ func (m MCPPanelModel) View() string {
 	lines = append(lines, bot)
 
 	// Footer with keybindings
-	lines = append(lines, footerStyle.Render("[↑/↓] Navigate  [Esc] Close"))
+	lines = append(lines, footerStyle.Render("[↑/↓] Nav  [c] Connect  [d] Disconnect  [r] Reconnect  [Space] Toggle  [Esc] Close"))
 
 	return strings.Join(lines, "\n")
 }

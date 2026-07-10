@@ -96,6 +96,27 @@ func TestClient_Initialize_VersionMismatch(t *testing.T) {
 	assert.Contains(t, err.Error(), "protocol version")
 }
 
+// Server negotiates a supported version different from the one we proposed
+// (e.g. api.x.com/mcp speaks 2025-06-18). The client must accept it and
+// record the negotiated version, not reject on inequality.
+func TestClient_Initialize_NegotiatesSupportedVersion(t *testing.T) {
+	for _, version := range supportedProtocolVersions {
+		t.Run(version, func(t *testing.T) {
+			result := fmt.Sprintf(`{"protocolVersion":%q,"capabilities":{},"serverInfo":{"name":"xmcp"}}`, version)
+			transport := &mockTransport{
+				responses: []*Response{
+					{JSONRPC: "2.0", ID: json.Number("1"), Result: json.RawMessage(result)},
+				},
+			}
+
+			client := NewClient(transport, "celeste", "1.7.0")
+			require.NoError(t, client.Initialize(context.Background()))
+			assert.Equal(t, version, client.ProtocolVersion())
+			require.Len(t, transport.notifs, 1)
+		})
+	}
+}
+
 func TestClient_ListTools(t *testing.T) {
 	transport := &mockTransport{
 		responses: []*Response{

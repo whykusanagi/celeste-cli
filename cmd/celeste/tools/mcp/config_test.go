@@ -160,3 +160,20 @@ func TestDefaultConfigPath(t *testing.T) {
 	assert.Contains(t, path, ".celeste")
 	assert.Contains(t, path, "mcp.json")
 }
+
+func TestSetServerEnabled(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mcp.json")
+	require.NoError(t, os.WriteFile(p, []byte(
+		`{"mcpServers":{"x":{"command":"npx","enabled":false}}}`), 0644))
+
+	require.NoError(t, SetServerEnabled(p, "x", true))
+
+	cfg, err := LoadConfig(p)
+	require.NoError(t, err)
+	assert.True(t, cfg.Servers["x"].Enabled)
+	assert.Equal(t, "npx", cfg.Servers["x"].Command) // preserved
+
+	// Unknown server is an error, not a silent write.
+	assert.Error(t, SetServerEnabled(p, "nope", true))
+}

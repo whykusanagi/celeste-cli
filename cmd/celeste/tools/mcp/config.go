@@ -17,6 +17,12 @@ type MCPConfig struct {
 
 // ServerConfig defines how to connect to a single MCP server.
 type ServerConfig struct {
+	// Enabled opts the server into auto-connection at startup. It is false by
+	// default: a server is only connected if it explicitly sets
+	// "enabled": true. This keeps configured-but-unused servers (e.g. an X
+	// bridge awaiting its first OAuth login) from delaying startup.
+	Enabled bool `json:"enabled,omitempty"`
+
 	// Transport is "stdio" or "sse". Defaults to "stdio" if not set.
 	Transport string `json:"transport"`
 
@@ -32,6 +38,11 @@ type ServerConfig struct {
 	// Env is a map of environment variables passed to the child process.
 	// Values support ${VAR} expansion from the host environment.
 	Env map[string]string `json:"env,omitempty"`
+
+	// Origin is the absolute path of the config file this server was loaded
+	// from. Set by the discovery/merge layer, never parsed from JSON. Used by
+	// the /mcp panel to show provenance.
+	Origin string `json:"-"`
 }
 
 // DefaultConfigPath returns the default path for the MCP configuration file.
@@ -73,4 +84,27 @@ func LoadConfig(path string) (*MCPConfig, error) {
 	}
 
 	return &config, nil
+}
+
+// SetServerEnabled flips the `enabled` flag of one server in the config file at
+// path and writes it back, preserving all other fields. Errors if the file or
+// the named server does not exist.
+func SetServerEnabled(path, name string, enabled bool) error {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	sc, ok := cfg.Servers[name]
+	if !ok {
+		return fmt.Errorf("server %q not found in %s", name, path)
+	}
+	sc.Enabled = enabled
+	sc.Origin = "" // never serialize
+	cfg.Servers[name] = sc
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal MCP config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
 }

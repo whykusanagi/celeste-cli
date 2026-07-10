@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +21,9 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
 )
 
@@ -39,6 +42,7 @@ type AppModel struct {
 	toolProgress     ToolProgressModel
 	contextBar       ContextBarModel
 	permissionPrompt PermissionPromptModel
+	askPrompt        AskPromptModel
 	mcpPanel         MCPPanelModel
 
 	// Application state
@@ -102,6 +106,12 @@ type AppModel struct {
 
 	// Configuration (for context limits, etc.)
 	config *config.Config
+
+	// Segmented bottom status line and its inputs
+	statusLine  StatusLineModel      // git / project / model / effort / perms / session
+	workDir     string               // process working directory (for git + project)
+	permChecker *permissions.Checker // permission checker, for status-line mode display
+	effort      string               // mirrored reasoning-effort level for the status line
 
 	// Context tracking (NEW)
 	contextTracker *config.ContextTracker
@@ -266,6 +276,8 @@ func NewApp(llmClient LLMClient) AppModel {
 		toolProgress:      NewToolProgressModel(),
 		contextBar:        NewContextBarModel(),
 		permissionPrompt:  NewPermissionPromptModel(),
+		askPrompt:         NewAskPromptModel(),
+		statusLine:        NewStatusLineModel(),
 		mcpPanel:          NewMCPPanelModel(),
 		llmClient:         llmClient,
 		viewMode:          "chat",
@@ -279,7 +291,43 @@ func (m AppModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.input.Init(),
 		tea.EnterAltScreen,
+		gitFetchCmd(m.workDir),
 	)
+}
+
+// SetWorkDir sets the working directory used for git polling and the project segment.
+func (m AppModel) SetWorkDir(dir string) AppModel { m.workDir = dir; return m }
+
+// SetPermissionChecker injects the permission checker so the status line can
+// display the current mode.
+func (m AppModel) SetPermissionChecker(c *permissions.Checker) AppModel {
+	m.permChecker = c
+	return m
+}
+
+// SetMCPManager wires the MCP manager and discovered configs into the /mcp
+// panel so it can connect/disconnect/toggle servers at runtime.
+func (m AppModel) SetMCPManager(manager *mcp.Manager, configs map[string]mcp.ServerConfig) AppModel {
+	m.mcpPanel.SetManager(manager, configs)
+	return m
+}
+
+// syncStatusLine copies non-git AppModel state (project, model, effort,
+// permission mode, session) into the status line. Git fields are set separately
+// by the GitStatusMsg handler.
+func (m AppModel) syncStatusLine() AppModel {
+	sl := m.statusLine.
+		SetProject(filepath.Base(m.workDir)).
+		SetModel(m.model).
+		SetEffort(m.effort)
+	if m.permChecker != nil {
+		sl = sl.SetPermMode(m.permChecker.Mode().String())
+	}
+	if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+		sl = sl.SetSession(s.Name)
+	}
+	m.statusLine = sl
+	return m
 }
 
 // Update implements tea.Model.
@@ -471,6 +519,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// If ask prompt is active, route keys to it before normal handling
+		if m.askPrompt.Active() {
+			var cmd tea.Cmd
+			m.askPrompt, cmd = m.askPrompt.Update(msg)
+			return m, cmd
+		}
+
 		// If MCP panel is active, route keys to it
 		if m.mcpPanel.Active() {
 			var cmd tea.Cmd
@@ -555,12 +610,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		inputHeight := 3   // 1 border + 1 text + 1 typeahead hint line
 		skillsHeight := 12 // Increased for RPG-style menu with contextual help
 		statusHeight := 1
-		chatHeight := m.height - headerHeight - inputHeight - skillsHeight - statusHeight
+		statusLineHeight := 1 // segmented status line
+		hintsHeight := 1      // contextual key hints
+		chatHeight := m.height - headerHeight - inputHeight - skillsHeight - statusHeight - statusLineHeight - hintsHeight
 
 		// Ensure minimum chat height
 		if chatHeight < 5 {
 			chatHeight = 5
-			skillsHeight = m.height - headerHeight - inputHeight - statusHeight - chatHeight
+			skillsHeight = m.height - headerHeight - inputHeight - statusHeight - statusLineHeight - hintsHeight - chatHeight
 			if skillsHeight < 6 {
 				skillsHeight = 6 // Minimum for RPG menu
 			}
@@ -572,6 +629,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input = m.input.SetWidth(m.width)
 		m.skills = m.skills.SetSize(m.width, skillsHeight)
 		m.status = m.status.SetWidth(m.width)
+		m.statusLine = m.statusLine.SetWidth(m.width)
 
 		// Resize new components
 		if m.sessionPanel != nil {
@@ -580,6 +638,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toolProgress.SetSize(m.width, 0)
 		m.contextBar.SetSize(m.width, 0)
 		m.permissionPrompt.SetSize(m.width, 0)
+		m.askPrompt.SetSize(m.width, 0)
 		m.mcpPanel.SetSize(m.width, m.height-10)
 
 		// Resize split panel if active: available height = total minus header/status/input
@@ -1276,6 +1335,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				setter.SetThinkingLevel(level)
+				m.effort = level
+				m = m.syncStatusLine()
 				if level == "off" {
 					m.chat = m.chat.AddSystemMessage("Extended thinking disabled.")
 				} else {
@@ -1892,6 +1953,27 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
 		cmds = append(cmds, cmd)
+
+	case AskRequestMsg:
+		var cmd tea.Cmd
+		m.askPrompt, cmd = m.askPrompt.Update(msg)
+		cmds = append(cmds, cmd)
+
+	case GitStatusMsg:
+		if msg.Repo {
+			m.statusLine = m.statusLine.SetGit(msg.Branch, msg.Dirty, msg.Ahead, msg.Behind)
+		} else {
+			m.statusLine = m.statusLine.SetGit("", 0, 0, 0)
+		}
+		m = m.syncStatusLine()
+		return m, gitPollCmd(m.workDir) // re-arm the poll
+
+	case MCPConnectResultMsg:
+		if msg.Err != nil {
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("MCP %s: %v", msg.Name, msg.Err))
+		}
+		m.mcpPanel = m.mcpPanel.RefreshServers()
+		return m, nil
 
 	case MCPStatusMsg:
 		var cmd tea.Cmd
@@ -2576,6 +2658,11 @@ func (m AppModel) View() string {
 		sections = append(sections, m.permissionPrompt.View())
 	}
 
+	// Ask prompt overlay (if waiting for the user to answer a question)
+	if m.askPrompt.Active() {
+		sections = append(sections, m.askPrompt.View())
+	}
+
 	// MCP server status panel (if active via /mcp)
 	if m.mcpPanel.Active() {
 		sections = append(sections, m.mcpPanel.View())
@@ -2601,6 +2688,12 @@ func (m AppModel) View() string {
 		m.skills.confirmMode = cfg.ConfirmActions
 	}
 	sections = append(sections, m.skills.View())
+
+	// Segmented status line (git / project / model / effort / perms / session)
+	sections = append(sections, m.statusLine.View())
+
+	// Contextual key hints
+	sections = append(sections, HeaderInfoStyle.Render(" "+hintsFor(m.viewMode, m.mcpPanel.Active())))
 
 	// Status bar (fixed, 1 line)
 	sections = append(sections, m.status.View())

@@ -138,7 +138,10 @@ func (m ToolProgressModel) View() string {
 		return ""
 	}
 
-	var lines []string
+	legend := lipgloss.NewStyle().Foreground(ColorTextMuted).
+		Render(" ◐ running   ✓ done   ✗ failed")
+
+	lines := []string{legend}
 	for _, e := range m.entries {
 		lines = append(lines, m.renderEntry(e))
 	}
@@ -214,24 +217,41 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 		nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(elemColor)).Bold(true)
 	}
 
-	line := fmt.Sprintf(" %s %s %s %s",
+	line := fmt.Sprintf("%s %s %s %s",
 		stateStyle.Render(icon),
 		nameStyle.Render(displayName),
 		stateStyle.Render(e.state),
 		lipgloss.NewStyle().Foreground(ColorTextMuted).Render(elapsedStr),
 	)
 
-	// Nested subagent activity with element-colored prefix
+	// Detail message (previously captured but never shown).
+	if e.message != "" {
+		detailWidth := m.width - 6
+		if detailWidth < 8 {
+			detailWidth = 8
+		}
+		detail := truncateStr(e.message, detailWidth)
+		line += "\n" + lipgloss.NewStyle().Foreground(ColorTextMuted).Render(detail)
+	}
+
+	// Nested subagent activity with element-colored prefix.
 	if e.subMessage != "" && (e.state == "executing" || e.state == "waiting") {
 		subColor := lipgloss.Color("#6d28d9")
 		if elemColor != "" {
 			subColor = lipgloss.Color(elemColor)
 		}
 		subStyle := lipgloss.NewStyle().Foreground(subColor)
-		line += "\n   " + subStyle.Render("└─ "+e.subMessage)
+		line += "\n" + subStyle.Render("└─ "+e.subMessage)
 	}
 
-	return line
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorBorder).
+		Padding(0, 1)
+	if m.width > 4 {
+		box = box.Width(m.width - 2)
+	}
+	return box.Render(line)
 }
 
 // elementSpinnerIcon returns the animated icon for element-named subagents.

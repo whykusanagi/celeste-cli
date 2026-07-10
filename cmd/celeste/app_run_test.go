@@ -110,6 +110,10 @@ func (f *fakeRunner) RunRevert(args []string) {
 	f.lastCall = "revert"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunMCP(args []string) {
+	f.lastCall = "mcp"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_LaunchesChatDirectly(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}
