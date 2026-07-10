@@ -191,3 +191,16 @@ func TestManager_InvalidConfig(t *testing.T) {
 	err = manager.Start(context.Background())
 	assert.Error(t, err, "Start should fail with invalid config JSON")
 }
+
+func TestManager_CreateTransport_HTTP(t *testing.T) {
+	manager := &Manager{}
+	tr, err := manager.createTransport(ServerConfig{Transport: "http", URL: "http://example.test/mcp"})
+	require.NoError(t, err)
+	assert.IsType(t, &HTTPTransport{}, tr)
+}
+
+func TestManager_CreateTransport_HTTPMissingURL(t *testing.T) {
+	manager := &Manager{}
+	_, err := manager.createTransport(ServerConfig{Transport: "http"})
+	assert.Error(t, err)
+}
