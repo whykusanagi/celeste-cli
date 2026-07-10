@@ -137,13 +137,20 @@ type Registry struct {
 	hooks    HookRunner               // optional, nil = no hooks
 	promptFn PromptFunc               // optional; nil = deny on Ask
 	askFn    AskFunc                  // optional; nil = Ask returns an error (headless)
+
+	// Dynamic tool discovery (opt-in via SetDiscoveryMode).
+	hidden        map[string]bool // tools hidden from the prompt until activated
+	activated     map[string]bool // tools re-activated this session by find_tools
+	discoveryMode bool            // when false, hidden/activated are ignored
 }
 
 // NewRegistry creates a new empty tool registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		tools: make(map[string]Tool),
-		modes: make(map[string][]RuntimeMode),
+		tools:     make(map[string]Tool),
+		modes:     make(map[string][]RuntimeMode),
+		hidden:    make(map[string]bool),
+		activated: make(map[string]bool),
 	}
 }
 
@@ -187,6 +194,36 @@ func (r *Registry) UnregisterByPrefix(prefix string) int {
 	return n
 }
 
+// SetDiscoveryMode toggles dynamic tool discovery. When off (default), the
+// hidden/activated maps are ignored and every registered tool is offered.
+func (r *Registry) SetDiscoveryMode(on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.discoveryMode = on
+}
+
+// SetHidden marks a tool as hidden-until-activated. Only takes effect while
+// discovery mode is on. find_tools itself must never be hidden.
+func (r *Registry) SetHidden(name string, hidden bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if hidden {
+		r.hidden[name] = true
+	} else {
+		delete(r.hidden, name)
+	}
+}
+
+// Activate re-exposes hidden tools for the rest of the session (called by
+// find_tools after a BM25 match).
+func (r *Registry) Activate(names ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, n := range names {
+		r.activated[n] = true
+	}
+}
+
 // Get returns a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	r.mu.RLock()
@@ -215,6 +252,9 @@ func (r *Registry) GetTools(mode RuntimeMode) []Tool {
 	defer r.mu.RUnlock()
 	var result []Tool
 	for name, t := range r.tools {
+		if r.discoveryMode && r.hidden[name] && !r.activated[name] {
+			continue // hidden until find_tools activates it
+		}
 		modes := r.modes[name]
 		if modes == nil {
 			// nil means available in all modes

@@ -276,6 +276,14 @@ func runChatTUI() {
 	mcpCancel()
 	defer func() { _ = mcpManager.Stop() }()
 
+	// ponytail: discovery mode is dead weight until the tool list is actually
+	// big. Flip it on past a threshold so small setups keep every tool visible.
+	// Upgrade path: make the threshold (and an explicit on/off) a config field.
+	const toolDiscoveryThreshold = 40
+	if registry.Count() > toolDiscoveryThreshold {
+		registry.SetDiscoveryMode(true)
+	}
+
 	// Initialize LLM client
 	llmConfig := &llm.Config{
 		APIKey:            cfg.APIKey,

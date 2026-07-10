@@ -101,3 +101,31 @@ func TestDiscoverAndRegister_ListError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(t, 0, registry.Count())
 }
+
+func TestDiscoverAndRegister_MarksHidden(t *testing.T) {
+	transport := &mockTransport{
+		responses: []*Response{
+			makeInitResponse(),
+			makeToolsListResponse("remote_tool"),
+		},
+	}
+	client := NewClient(transport, "celeste", "1.0")
+	require.NoError(t, client.Initialize(context.Background()))
+
+	registry := tools.NewRegistry()
+	registry.SetDiscoveryMode(true)
+	_, err := DiscoverAndRegister(context.Background(), client, registry, "srv")
+	require.NoError(t, err)
+
+	// Registered but hidden under discovery mode.
+	assert.Contains(t, allNames(registry.GetAll()), "remote_tool")
+	assert.NotContains(t, allNames(registry.GetTools(tools.ModeChat)), "remote_tool")
+}
+
+func allNames(ts []tools.Tool) []string {
+	out := make([]string, len(ts))
+	for i, t := range ts {
+		out[i] = t.Name()
+	}
+	return out
+}

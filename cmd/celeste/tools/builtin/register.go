@@ -52,6 +52,9 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	// degrades to an error result elsewhere.
 	registry.RegisterWithModes(NewAskTool(registry), tools.ModeChat, tools.ModeClaw, tools.ModeAgent)
 
+	// Dynamic tool discovery — MUST stay visible so the model can pull hidden tools back in.
+	registry.RegisterWithModes(NewFindToolsTool(registry), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+
 	// Web tools — available in Agent, Claw, Chat
 	registry.RegisterWithModes(NewWebSearchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewWebFetchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
