@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.26.5']
+        go: ['1.26.4']
 
     steps:
     - name: Check out code
@@ -51,7 +51,7 @@ jobs:
       run: go test -v -race -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
 
     - name: Check coverage threshold
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.5'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.4'
       run: |
         coverage=$(go tool cover -func=coverage.txt | grep total | awk '{print $3}' | sed 's/%//')
         echo "Total coverage: ${coverage}%"
@@ -62,7 +62,7 @@ jobs:
         echo "✅ Coverage ${coverage}% meets 5% threshold"
 
     - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.5'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.4'
       uses: codecov/codecov-action@v7
       with:
         files: ./coverage.txt
