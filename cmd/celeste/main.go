@@ -266,6 +266,9 @@ func runChatTUI() {
 	// the per-server `enabled` gate still decides what actually connects.
 	mcpPaths := mcp.DiscoverConfigPaths(cwd, homeDir)
 	mcpManager := mcp.NewManagerMulti(mcpPaths, registry)
+	// Merged config drives the /mcp panel (shows configured-but-disconnected
+	// servers too); ignore a load error here — Start below already reports it.
+	mcpMerged, _ := mcp.LoadMerged(mcpPaths)
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := mcpManager.Start(mcpCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: MCP initialization failed: %v\n", err)
@@ -578,6 +581,14 @@ func runChatTUI() {
 
 	// Inject working dir + permission checker for the segmented status line.
 	app = app.SetWorkDir(cwd).SetPermissionChecker(checker)
+
+	// Wire the MCP manager + discovered configs into the /mcp panel for runtime
+	// connect/disconnect/toggle.
+	var mcpConfigs map[string]mcp.ServerConfig
+	if mcpMerged != nil {
+		mcpConfigs = mcpMerged.Servers
+	}
+	app = app.SetMCPManager(mcpManager, mcpConfigs)
 
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.

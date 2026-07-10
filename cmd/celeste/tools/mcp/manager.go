@@ -28,6 +28,7 @@ type Manager struct {
 	clients     map[string]*Client
 	toolCounts  map[string]int
 	transports  map[string]string
+	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
 	mu          sync.Mutex
 }
 
@@ -41,6 +42,7 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		clients:    make(map[string]*Client),
 		toolCounts: make(map[string]int),
 		transports: make(map[string]string),
+		toolNames:  make(map[string][]string),
 	}
 }
 
@@ -58,9 +60,6 @@ func NewManagerMulti(paths []string, registry *tools.Registry) *Manager {
 // If the config file does not exist, it returns nil (no MCP configured).
 // If a server fails to connect, it logs a warning and continues with others.
 func (m *Manager) Start(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	var cfg *MCPConfig
 	var err error
 	if len(m.configPaths) > 0 {
@@ -85,36 +84,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		if !serverCfg.Enabled {
 			continue
 		}
-
-		transport, err := m.createTransport(serverCfg)
-		if err != nil {
-			log.Printf("[mcp] warning: failed to create transport for server %q: %v", name, err)
+		if err := m.Connect(ctx, name, serverCfg); err != nil {
+			log.Printf("[mcp] warning: %v", err)
 			continue
 		}
-
-		client := NewClient(transport, "celeste", "1.0")
-
-		if err := client.Initialize(ctx); err != nil {
-			log.Printf("[mcp] warning: failed to initialize server %q: %v", name, err)
-			transport.Close()
-			continue
-		}
-
-		toolsBefore := m.registry.Count()
-
-		if err := DiscoverAndRegister(ctx, client, m.registry, name); err != nil {
-			log.Printf("[mcp] warning: failed to discover tools from server %q: %v", name, err)
-			client.Close()
-			continue
-		}
-
-		toolsAfter := m.registry.Count()
-		toolCount := toolsAfter - toolsBefore
-
-		m.clients[name] = client
-		m.toolCounts[name] = toolCount
-		m.transports[name] = serverCfg.Transport
-		totalTools += toolCount
+		m.mu.Lock()
+		totalTools += m.toolCounts[name]
+		m.mu.Unlock()
 		connectedServers++
 	}
 
@@ -123,6 +99,76 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// connectClient initializes an already-built client, discovers + registers its
+// tools, and records bookkeeping. The caller holds no lock; connectClient locks
+// only while mutating manager maps.
+func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string) error {
+	if err := client.Initialize(ctx); err != nil {
+		client.Close()
+		return fmt.Errorf("initialize %q: %w", name, err)
+	}
+	names, err := DiscoverAndRegister(ctx, client, m.registry, name)
+	if err != nil {
+		client.Close()
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clients[name] = client
+	m.toolCounts[name] = len(names)
+	m.transports[name] = transport
+	m.toolNames[name] = names
+	return nil
+}
+
+// Connect builds a transport from cfg, connects, and registers the server's
+// tools at runtime. Safe to call after Start (lazy connect). A server that is
+// already connected is a no-op.
+func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) error {
+	m.mu.Lock()
+	_, already := m.clients[name]
+	m.mu.Unlock()
+	if already {
+		return nil
+	}
+	transport, err := m.createTransport(cfg)
+	if err != nil {
+		return fmt.Errorf("create transport for %q: %w", name, err)
+	}
+	return m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport)
+}
+
+// IsConnected reports whether a server currently has a live client.
+func (m *Manager) IsConnected(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.clients[name]
+	return ok
+}
+
+// Disconnect closes a server's client and removes exactly the tools it added.
+// No-op if the server is not connected.
+func (m *Manager) Disconnect(name string) error {
+	m.mu.Lock()
+	client, ok := m.clients[name]
+	names := m.toolNames[name]
+	if !ok {
+		m.mu.Unlock()
+		return nil
+	}
+	delete(m.clients, name)
+	delete(m.toolCounts, name)
+	delete(m.transports, name)
+	delete(m.toolNames, name)
+	m.mu.Unlock()
+
+	for _, tn := range names {
+		m.registry.Unregister(tn)
+	}
+	return client.Close()
 }
 
 // createTransport creates the appropriate Transport based on server configuration.

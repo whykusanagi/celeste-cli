@@ -323,4 +323,12 @@ type MCPServerInfo struct {
 	Transport string
 	Connected bool
 	ToolCount int
+	Enabled   bool   // configured enabled flag (may differ from Connected)
+	Origin    string // config file the server was declared in (for enable toggle)
+}
+
+// MCPConnectResultMsg reports the outcome of an async connect/disconnect/toggle.
+type MCPConnectResultMsg struct {
+	Name string
+	Err  error
 }

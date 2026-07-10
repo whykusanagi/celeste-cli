@@ -163,6 +163,30 @@ func (r *Registry) RegisterWithModes(tool Tool, modes ...RuntimeMode) {
 	r.modes[tool.Name()] = modes
 }
 
+// Unregister removes a tool by name. No-op if the tool is not present.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+	delete(r.modes, name)
+}
+
+// UnregisterByPrefix removes every tool whose name starts with prefix and
+// returns the count removed. Used to drop all tools an MCP server contributed.
+func (r *Registry) UnregisterByPrefix(prefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			delete(r.modes, name)
+			n++
+		}
+	}
+	return n
+}
+
 // Get returns a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	r.mu.RLock()

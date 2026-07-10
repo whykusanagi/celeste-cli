@@ -36,8 +36,9 @@ func TestDiscoverAndRegister(t *testing.T) {
 	require.NoError(t, client.Initialize(context.Background()))
 
 	registry := tools.NewRegistry()
-	err := DiscoverAndRegister(context.Background(), client, registry, "test-server")
+	names, err := DiscoverAndRegister(context.Background(), client, registry, "test-server")
 	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"tool_a", "tool_b"}, names)
 
 	// Both tools should be registered
 	assert.Equal(t, 2, registry.Count())
@@ -71,7 +72,7 @@ func TestDiscoverAndRegister_NoTools(t *testing.T) {
 	require.NoError(t, client.Initialize(context.Background()))
 
 	registry := tools.NewRegistry()
-	err := DiscoverAndRegister(context.Background(), client, registry, "empty-server")
+	_, err := DiscoverAndRegister(context.Background(), client, registry, "empty-server")
 	require.NoError(t, err)
 	assert.Equal(t, 0, registry.Count())
 }
@@ -96,7 +97,7 @@ func TestDiscoverAndRegister_ListError(t *testing.T) {
 	require.NoError(t, client.Initialize(context.Background()))
 
 	registry := tools.NewRegistry()
-	err := DiscoverAndRegister(context.Background(), client, registry, "bad-server")
+	_, err := DiscoverAndRegister(context.Background(), client, registry, "bad-server")
 	assert.Error(t, err)
 	assert.Equal(t, 0, registry.Count())
 }

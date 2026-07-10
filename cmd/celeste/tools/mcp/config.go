@@ -85,3 +85,26 @@ func LoadConfig(path string) (*MCPConfig, error) {
 
 	return &config, nil
 }
+
+// SetServerEnabled flips the `enabled` flag of one server in the config file at
+// path and writes it back, preserving all other fields. Errors if the file or
+// the named server does not exist.
+func SetServerEnabled(path, name string, enabled bool) error {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	sc, ok := cfg.Servers[name]
+	if !ok {
+		return fmt.Errorf("server %q not found in %s", name, path)
+	}
+	sc.Enabled = enabled
+	sc.Origin = "" // never serialize
+	cfg.Servers[name] = sc
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal MCP config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}

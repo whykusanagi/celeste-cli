@@ -23,6 +23,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
 )
 
@@ -301,6 +302,13 @@ func (m AppModel) SetWorkDir(dir string) AppModel { m.workDir = dir; return m }
 // display the current mode.
 func (m AppModel) SetPermissionChecker(c *permissions.Checker) AppModel {
 	m.permChecker = c
+	return m
+}
+
+// SetMCPManager wires the MCP manager and discovered configs into the /mcp
+// panel so it can connect/disconnect/toggle servers at runtime.
+func (m AppModel) SetMCPManager(manager *mcp.Manager, configs map[string]mcp.ServerConfig) AppModel {
+	m.mcpPanel.SetManager(manager, configs)
 	return m
 }
 
@@ -1959,6 +1967,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m = m.syncStatusLine()
 		return m, gitPollCmd(m.workDir) // re-arm the poll
+
+	case MCPConnectResultMsg:
+		if msg.Err != nil {
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("MCP %s: %v", msg.Name, msg.Err))
+		}
+		m.mcpPanel = m.mcpPanel.RefreshServers()
+		return m, nil
 
 	case MCPStatusMsg:
 		var cmd tea.Cmd
