@@ -32,7 +32,7 @@ func TestAskPrompt_EscCancels(t *testing.T) {
 	ch := make(chan AskResponseMsg, 1)
 	m := NewAskPromptModel()
 	m, _ = m.Update(AskRequestMsg{Question: "q", Options: []AskOption{{Label: "x"}}, Response: ch})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // side effect: sends on ch
 	resp := <-ch
 	assert.True(t, resp.Cancelled)
 }
@@ -48,7 +48,7 @@ func TestAskPrompt_MultiSelectSpaceThenEnter(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace}) // toggle cheese
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})  // -> ham
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace}) // toggle ham
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // confirm
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // confirm; side effect: sends on ch
 	resp := <-ch
 	assert.ElementsMatch(t, []string{"cheese", "ham"}, resp.Selected)
 }
