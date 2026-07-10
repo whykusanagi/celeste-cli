@@ -574,6 +574,9 @@ func runChatTUI() {
 	// Set session manager and current session
 	app = app.SetSessionManager(smAdapter, currentSession)
 
+	// Inject working dir + permission checker for the segmented status line.
+	app = app.SetWorkDir(cwd).SetPermissionChecker(checker)
+
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
