@@ -5,11 +5,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 )
 
-const protocolVersion = "2024-11-05"
+// preferredProtocolVersion is the MCP revision celeste proposes in the
+// initialize handshake. Per the MCP spec the server may respond with a
+// different version it supports; the client then either adopts that version
+// (if known) or disconnects.
+const preferredProtocolVersion = "2025-06-18"
+
+// supportedProtocolVersions lists every MCP revision this client can speak.
+// celeste only relies on initialize, tools/list, and tools/call, whose
+// payloads are unchanged across these revisions, so each negotiates cleanly.
+// Ordered newest-first for a readable mismatch error.
+var supportedProtocolVersions = []string{
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
+}
+
+func isSupportedProtocolVersion(v string) bool {
+	return slices.Contains(supportedProtocolVersions, v)
+}
 
 // MCPToolDef is a tool definition returned by the MCP server.
 type MCPToolDef struct {
@@ -54,6 +73,7 @@ type Client struct {
 	clientName  string
 	clientVer   string
 	serverName  string
+	serverProto string
 	initialized bool
 	mu          sync.Mutex
 }
@@ -74,6 +94,14 @@ func (c *Client) ServerName() string {
 	return c.serverName
 }
 
+// ProtocolVersion returns the MCP protocol version negotiated with the server
+// during Initialize. Empty until Initialize succeeds.
+func (c *Client) ProtocolVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.serverProto
+}
+
 // Initialize performs the MCP initialize handshake.
 // Sends initialize request, validates the server's protocol version,
 // then sends notifications/initialized.
@@ -82,7 +110,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	params := map[string]any{
-		"protocolVersion": protocolVersion,
+		"protocolVersion": preferredProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo": map[string]any{
 			"name":    c.clientName,
@@ -113,11 +141,13 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("unmarshal initialize result: %w", err)
 	}
 
-	if result.ProtocolVersion != protocolVersion {
-		return fmt.Errorf("protocol version mismatch: server=%s, expected=%s", result.ProtocolVersion, protocolVersion)
+	if !isSupportedProtocolVersion(result.ProtocolVersion) {
+		return fmt.Errorf("unsupported protocol version: server=%s, client supports %s",
+			result.ProtocolVersion, strings.Join(supportedProtocolVersions, ", "))
 	}
 
 	c.serverName = result.ServerInfo.Name
+	c.serverProto = result.ProtocolVersion
 	c.initialized = true
 
 	// Send notifications/initialized

@@ -36,6 +36,30 @@ type PermissionResponse struct {
 // Returning a zero-value PermissionResponse (empty Decision) is treated as deny.
 type PromptFunc func(req PermissionRequest) PermissionResponse
 
+// AskOption is one selectable choice presented by the ask tool.
+type AskOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// AskRequest is a structured question the model asks the user mid-turn.
+type AskRequest struct {
+	Question    string      `json:"question"`
+	Options     []AskOption `json:"options"`
+	MultiSelect bool        `json:"multi_select"`
+}
+
+// AskResponse carries the user's selection.
+type AskResponse struct {
+	Selected  []string // chosen option labels
+	Cancelled bool
+}
+
+// AskFunc is a blocking callback that presents an AskRequest and returns the
+// user's answer. Installed only in interactive (TUI) mode; nil means headless,
+// in which case Ask returns an error rather than deadlocking.
+type AskFunc func(ctx context.Context, req AskRequest) (AskResponse, error)
+
 // classifyRiskLevel returns "read", "write", or "destructive" for a tool.
 // Called after the checker returns Ask (so the tool is not read-only and not
 // in an always-allow list). We apply simple heuristics on the tool name.
@@ -112,13 +136,21 @@ type Registry struct {
 	checker  *permissions.Checker     // optional, nil = allow all
 	hooks    HookRunner               // optional, nil = no hooks
 	promptFn PromptFunc               // optional; nil = deny on Ask
+	askFn    AskFunc                  // optional; nil = Ask returns an error (headless)
+
+	// Dynamic tool discovery (opt-in via SetDiscoveryMode).
+	hidden        map[string]bool // tools hidden from the prompt until activated
+	activated     map[string]bool // tools re-activated this session by find_tools
+	discoveryMode bool            // when false, hidden/activated are ignored
 }
 
 // NewRegistry creates a new empty tool registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		tools: make(map[string]Tool),
-		modes: make(map[string][]RuntimeMode),
+		tools:     make(map[string]Tool),
+		modes:     make(map[string][]RuntimeMode),
+		hidden:    make(map[string]bool),
+		activated: make(map[string]bool),
 	}
 }
 
@@ -136,6 +168,60 @@ func (r *Registry) RegisterWithModes(tool Tool, modes ...RuntimeMode) {
 	defer r.mu.Unlock()
 	r.tools[tool.Name()] = tool
 	r.modes[tool.Name()] = modes
+}
+
+// Unregister removes a tool by name. No-op if the tool is not present.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+	delete(r.modes, name)
+}
+
+// UnregisterByPrefix removes every tool whose name starts with prefix and
+// returns the count removed. Used to drop all tools an MCP server contributed.
+func (r *Registry) UnregisterByPrefix(prefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			delete(r.modes, name)
+			n++
+		}
+	}
+	return n
+}
+
+// SetDiscoveryMode toggles dynamic tool discovery. When off (default), the
+// hidden/activated maps are ignored and every registered tool is offered.
+func (r *Registry) SetDiscoveryMode(on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.discoveryMode = on
+}
+
+// SetHidden marks a tool as hidden-until-activated. Only takes effect while
+// discovery mode is on. find_tools itself must never be hidden.
+func (r *Registry) SetHidden(name string, hidden bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if hidden {
+		r.hidden[name] = true
+	} else {
+		delete(r.hidden, name)
+	}
+}
+
+// Activate re-exposes hidden tools for the rest of the session (called by
+// find_tools after a BM25 match).
+func (r *Registry) Activate(names ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, n := range names {
+		r.activated[n] = true
+	}
 }
 
 // Get returns a tool by name.
@@ -166,6 +252,9 @@ func (r *Registry) GetTools(mode RuntimeMode) []Tool {
 	defer r.mu.RUnlock()
 	var result []Tool
 	for name, t := range r.tools {
+		if r.discoveryMode && r.hidden[name] && !r.activated[name] {
+			continue // hidden until find_tools activates it
+		}
 		modes := r.modes[name]
 		if modes == nil {
 			// nil means available in all modes
@@ -357,6 +446,26 @@ func (r *Registry) SetPromptFunc(fn PromptFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.promptFn = fn
+}
+
+// SetAskFunc installs the interactive ask callback (TUI-only).
+func (r *Registry) SetAskFunc(fn AskFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.askFn = fn
+}
+
+// Ask presents a structured question to the user and blocks for the answer.
+// Returns an error when no callback is installed (headless / one-shot / serve),
+// so the caller can degrade gracefully instead of deadlocking.
+func (r *Registry) Ask(ctx context.Context, req AskRequest) (AskResponse, error) {
+	r.mu.RLock()
+	fn := r.askFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return AskResponse{}, fmt.Errorf("interactive input unavailable in this context")
+	}
+	return fn(ctx, req)
 }
 
 // Count returns the number of registered tools.

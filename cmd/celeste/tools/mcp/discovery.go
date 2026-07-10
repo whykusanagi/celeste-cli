@@ -13,19 +13,24 @@ import (
 // DiscoverAndRegister queries the MCP server for available tools via tools/list,
 // creates an MCPTool adapter for each, and registers them in the registry.
 // The serverName is recorded in each tool's metadata for debugging and display.
-func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Registry, serverName string) error {
+func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Registry, serverName string) ([]string, error) {
 	defs, err := client.ListTools(ctx)
 	if err != nil {
-		return fmt.Errorf("discover tools from %s: %w", serverName, err)
+		return nil, fmt.Errorf("discover tools from %s: %w", serverName, err)
 	}
 
 	// Per-tool registration is noisy (dozens of lines at startup, and in TUI
 	// mode it interleaves with the rendered UI). Gate it behind CELESTE_MCP_DEBUG;
 	// the summary line below is enough for normal use.
 	verbose := os.Getenv("CELESTE_MCP_DEBUG") != ""
+	names := make([]string, 0, len(defs))
 	for _, def := range defs {
 		tool := NewMCPTool(def, client, serverName)
 		registry.Register(tool)
+		names = append(names, def.Name)
+		// External MCP tools default hidden; find_tools re-activates on demand
+		// (only takes effect when discovery mode is on).
+		registry.SetHidden(def.Name, true)
 		if verbose {
 			log.Printf("[mcp] registered tool %q from server %q", def.Name, serverName)
 		}
@@ -35,5 +40,5 @@ func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Re
 		log.Printf("[mcp] discovered %d tools from server %q", len(defs), serverName)
 	}
 
-	return nil
+	return names, nil
 }

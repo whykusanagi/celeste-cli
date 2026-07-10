@@ -261,15 +261,28 @@ func runChatTUI() {
 	checker.SetConfigPath(permConfigPath)
 	registry.SetPermissionChecker(checker)
 
-	// Initialize MCP servers (external tool providers) with 5-second timeout
-	mcpConfigPath := filepath.Join(homeDir, ".celeste", "mcp.json")
-	mcpManager := mcp.NewManager(mcpConfigPath, registry)
+	// Initialize MCP servers (external tool providers) with 5-second timeout.
+	// Merge celeste-native, foreign (claude/cursor), and project-level configs;
+	// the per-server `enabled` gate still decides what actually connects.
+	mcpPaths := mcp.DiscoverConfigPaths(cwd, homeDir)
+	mcpManager := mcp.NewManagerMulti(mcpPaths, registry)
+	// Merged config drives the /mcp panel (shows configured-but-disconnected
+	// servers too); ignore a load error here — Start below already reports it.
+	mcpMerged, _ := mcp.LoadMerged(mcpPaths)
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := mcpManager.Start(mcpCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: MCP initialization failed: %v\n", err)
 	}
 	mcpCancel()
 	defer func() { _ = mcpManager.Stop() }()
+
+	// ponytail: discovery mode is dead weight until the tool list is actually
+	// big. Flip it on past a threshold so small setups keep every tool visible.
+	// Upgrade path: make the threshold (and an explicit on/off) a config field.
+	const toolDiscoveryThreshold = 40
+	if registry.Count() > toolDiscoveryThreshold {
+		registry.SetDiscoveryMode(true)
+	}
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{
@@ -574,6 +587,17 @@ func runChatTUI() {
 	// Set session manager and current session
 	app = app.SetSessionManager(smAdapter, currentSession)
 
+	// Inject working dir + permission checker for the segmented status line.
+	app = app.SetWorkDir(cwd).SetPermissionChecker(checker)
+
+	// Wire the MCP manager + discovered configs into the /mcp panel for runtime
+	// connect/disconnect/toggle.
+	var mcpConfigs map[string]mcp.ServerConfig
+	if mcpMerged != nil {
+		mcpConfigs = mcpMerged.Servers
+	}
+	app = app.SetMCPManager(mcpManager, mcpConfigs)
+
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
@@ -607,6 +631,41 @@ func runChatTUI() {
 			}(),
 		})
 		return <-respCh
+	})
+
+	// Wire the interactive ask tool. Same bridge shape as the permission
+	// prompt: a tools-typed reply channel, a p.Send of a tui.AskRequestMsg
+	// carrying a tui-typed channel, and a relay goroutine between them.
+	registry.SetAskFunc(func(ctx context.Context, req tools.AskRequest) (tools.AskResponse, error) {
+		respCh := make(chan tools.AskResponse, 1)
+
+		tuiCh := make(chan tui.AskResponseMsg, 1)
+		go func() {
+			tuiResp, ok := <-tuiCh
+			if !ok {
+				respCh <- tools.AskResponse{Cancelled: true}
+				return
+			}
+			respCh <- tools.AskResponse{Selected: tuiResp.Selected, Cancelled: tuiResp.Cancelled}
+		}()
+
+		opts := make([]tui.AskOption, 0, len(req.Options))
+		for _, o := range req.Options {
+			opts = append(opts, tui.AskOption{Label: o.Label, Description: o.Description})
+		}
+		p.Send(tui.AskRequestMsg{
+			Question:    req.Question,
+			Options:     opts,
+			MultiSelect: req.MultiSelect,
+			Response:    tuiCh,
+		})
+
+		select {
+		case resp := <-respCh:
+			return resp, nil
+		case <-ctx.Done():
+			return tools.AskResponse{Cancelled: true}, ctx.Err()
+		}
 	})
 
 	if _, err := p.Run(); err != nil {
