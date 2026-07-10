@@ -1,4 +1,4 @@
-.PHONY: build install clean help test dev verify import-key sync-persona sync-theme
+.PHONY: build install clean help test dev verify import-key sync-persona sync-theme tui-snapshots smoke-cli smoke
 
 # Install destination (override with: make install BIN=/custom/path/celeste)
 BIN ?= $(HOME)/.local/bin/celeste
@@ -12,6 +12,9 @@ help:
 	@echo "  make dev          - Build, install, and test in PATH"
 	@echo "  make clean        - Remove local binary"
 	@echo "  make test         - Run installed binary test"
+	@echo "  make tui-snapshots - Render every TUI component to PNGs (test-output/tui/)"
+	@echo "  make smoke-cli    - Drive the binary through new-feature paths (live model)"
+	@echo "  make smoke        - Build + TUI snapshots + CLI smoke (release gate)"
 	@echo "  make help         - Show this help message"
 	@echo ""
 	@echo "Security Commands"
@@ -58,6 +61,20 @@ test:
 	@echo "🧪 Testing celeste binary..."
 	@which celeste > /dev/null && echo "✅ celeste found in PATH" || echo "❌ celeste not found in PATH"
 	@celeste --version 2>/dev/null && echo "✅ Version check passed" || echo "⚠️  Version check failed"
+
+# Render every sprint TUI component to a PNG for visual release verification.
+# Output (test-output/tui/*.png) is gitignored. Requires charmbracelet/freeze.
+tui-snapshots:
+	@bash scripts/tui-snapshots.sh
+
+# Drive the real binary through new-feature code paths, incl. one live model
+# call (sakana/fugu by default). SMOKE_NO_MODEL=1 skips the model call.
+smoke-cli:
+	@bash scripts/smoke-cli.sh
+
+# Release gate: build, render TUI snapshots, and run the CLI smoke test.
+smoke: build tui-snapshots smoke-cli
+	@echo "✅ smoke: TUI snapshots rendered + CLI paths verified"
 
 # Verify a downloaded release
 verify:
