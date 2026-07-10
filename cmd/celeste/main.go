@@ -609,6 +609,41 @@ func runChatTUI() {
 		return <-respCh
 	})
 
+	// Wire the interactive ask tool. Same bridge shape as the permission
+	// prompt: a tools-typed reply channel, a p.Send of a tui.AskRequestMsg
+	// carrying a tui-typed channel, and a relay goroutine between them.
+	registry.SetAskFunc(func(ctx context.Context, req tools.AskRequest) (tools.AskResponse, error) {
+		respCh := make(chan tools.AskResponse, 1)
+
+		tuiCh := make(chan tui.AskResponseMsg, 1)
+		go func() {
+			tuiResp, ok := <-tuiCh
+			if !ok {
+				respCh <- tools.AskResponse{Cancelled: true}
+				return
+			}
+			respCh <- tools.AskResponse{Selected: tuiResp.Selected, Cancelled: tuiResp.Cancelled}
+		}()
+
+		opts := make([]tui.AskOption, 0, len(req.Options))
+		for _, o := range req.Options {
+			opts = append(opts, tui.AskOption{Label: o.Label, Description: o.Description})
+		}
+		p.Send(tui.AskRequestMsg{
+			Question:    req.Question,
+			Options:     opts,
+			MultiSelect: req.MultiSelect,
+			Response:    tuiCh,
+		})
+
+		select {
+		case resp := <-respCh:
+			return resp, nil
+		case <-ctx.Done():
+			return tools.AskResponse{Cancelled: true}, ctx.Err()
+		}
+	})
+
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)

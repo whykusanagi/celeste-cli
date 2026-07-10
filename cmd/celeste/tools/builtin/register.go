@@ -48,6 +48,10 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 		RegisterCryptoTools(registry, configLoader)
 	}
 
+	// Interactive question tool — only meaningful when a TUI ask bridge exists;
+	// degrades to an error result elsewhere.
+	registry.RegisterWithModes(NewAskTool(registry), tools.ModeChat, tools.ModeClaw, tools.ModeAgent)
+
 	// Web tools — available in Agent, Claw, Chat
 	registry.RegisterWithModes(NewWebSearchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	registry.RegisterWithModes(NewWebFetchTool(), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)

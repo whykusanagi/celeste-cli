@@ -39,6 +39,7 @@ type AppModel struct {
 	toolProgress     ToolProgressModel
 	contextBar       ContextBarModel
 	permissionPrompt PermissionPromptModel
+	askPrompt        AskPromptModel
 	mcpPanel         MCPPanelModel
 
 	// Application state
@@ -266,6 +267,7 @@ func NewApp(llmClient LLMClient) AppModel {
 		toolProgress:      NewToolProgressModel(),
 		contextBar:        NewContextBarModel(),
 		permissionPrompt:  NewPermissionPromptModel(),
+		askPrompt:         NewAskPromptModel(),
 		mcpPanel:          NewMCPPanelModel(),
 		llmClient:         llmClient,
 		viewMode:          "chat",
@@ -471,6 +473,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// If ask prompt is active, route keys to it before normal handling
+		if m.askPrompt.Active() {
+			var cmd tea.Cmd
+			m.askPrompt, cmd = m.askPrompt.Update(msg)
+			return m, cmd
+		}
+
 		// If MCP panel is active, route keys to it
 		if m.mcpPanel.Active() {
 			var cmd tea.Cmd
@@ -580,6 +589,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toolProgress.SetSize(m.width, 0)
 		m.contextBar.SetSize(m.width, 0)
 		m.permissionPrompt.SetSize(m.width, 0)
+		m.askPrompt.SetSize(m.width, 0)
 		m.mcpPanel.SetSize(m.width, m.height-10)
 
 		// Resize split panel if active: available height = total minus header/status/input
@@ -1893,6 +1903,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
 		cmds = append(cmds, cmd)
 
+	case AskRequestMsg:
+		var cmd tea.Cmd
+		m.askPrompt, cmd = m.askPrompt.Update(msg)
+		cmds = append(cmds, cmd)
+
 	case MCPStatusMsg:
 		var cmd tea.Cmd
 		m.mcpPanel, cmd = m.mcpPanel.Update(msg)
@@ -2574,6 +2589,11 @@ func (m AppModel) View() string {
 	// Permission prompt overlay (if waiting for user approval)
 	if m.permissionPrompt.Active() {
 		sections = append(sections, m.permissionPrompt.View())
+	}
+
+	// Ask prompt overlay (if waiting for the user to answer a question)
+	if m.askPrompt.Active() {
+		sections = append(sections, m.askPrompt.View())
 	}
 
 	// MCP server status panel (if active via /mcp)

@@ -36,6 +36,30 @@ type PermissionResponse struct {
 // Returning a zero-value PermissionResponse (empty Decision) is treated as deny.
 type PromptFunc func(req PermissionRequest) PermissionResponse
 
+// AskOption is one selectable choice presented by the ask tool.
+type AskOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// AskRequest is a structured question the model asks the user mid-turn.
+type AskRequest struct {
+	Question    string      `json:"question"`
+	Options     []AskOption `json:"options"`
+	MultiSelect bool        `json:"multi_select"`
+}
+
+// AskResponse carries the user's selection.
+type AskResponse struct {
+	Selected  []string // chosen option labels
+	Cancelled bool
+}
+
+// AskFunc is a blocking callback that presents an AskRequest and returns the
+// user's answer. Installed only in interactive (TUI) mode; nil means headless,
+// in which case Ask returns an error rather than deadlocking.
+type AskFunc func(ctx context.Context, req AskRequest) (AskResponse, error)
+
 // classifyRiskLevel returns "read", "write", or "destructive" for a tool.
 // Called after the checker returns Ask (so the tool is not read-only and not
 // in an always-allow list). We apply simple heuristics on the tool name.
@@ -112,6 +136,7 @@ type Registry struct {
 	checker  *permissions.Checker     // optional, nil = allow all
 	hooks    HookRunner               // optional, nil = no hooks
 	promptFn PromptFunc               // optional; nil = deny on Ask
+	askFn    AskFunc                  // optional; nil = Ask returns an error (headless)
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -357,6 +382,26 @@ func (r *Registry) SetPromptFunc(fn PromptFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.promptFn = fn
+}
+
+// SetAskFunc installs the interactive ask callback (TUI-only).
+func (r *Registry) SetAskFunc(fn AskFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.askFn = fn
+}
+
+// Ask presents a structured question to the user and blocks for the answer.
+// Returns an error when no callback is installed (headless / one-shot / serve),
+// so the caller can degrade gracefully instead of deadlocking.
+func (r *Registry) Ask(ctx context.Context, req AskRequest) (AskResponse, error) {
+	r.mu.RLock()
+	fn := r.askFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return AskResponse{}, fmt.Errorf("interactive input unavailable in this context")
+	}
+	return fn(ctx, req)
 }
 
 // Count returns the number of registered tools.

@@ -282,6 +282,27 @@ type PermissionResponse struct {
 	Pattern  string // rule pattern for "always" decisions
 }
 
+// AskOption is one choice in an AskRequestMsg.
+type AskOption struct {
+	Label       string
+	Description string
+}
+
+// AskRequestMsg asks the user a structured question. Response carries the
+// reply channel the ask bridge blocks on (mirrors PermissionRequestMsg).
+type AskRequestMsg struct {
+	Question    string
+	Options     []AskOption
+	MultiSelect bool
+	Response    chan AskResponseMsg
+}
+
+// AskResponseMsg is the user's answer to an AskRequestMsg.
+type AskResponseMsg struct {
+	Selected  []string
+	Cancelled bool
+}
+
 // ContextBudgetMsg updates the context budget display.
 type ContextBudgetMsg struct {
 	UsedTokens   int
