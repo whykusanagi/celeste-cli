@@ -261,9 +261,11 @@ func runChatTUI() {
 	checker.SetConfigPath(permConfigPath)
 	registry.SetPermissionChecker(checker)
 
-	// Initialize MCP servers (external tool providers) with 5-second timeout
-	mcpConfigPath := filepath.Join(homeDir, ".celeste", "mcp.json")
-	mcpManager := mcp.NewManager(mcpConfigPath, registry)
+	// Initialize MCP servers (external tool providers) with 5-second timeout.
+	// Merge celeste-native, foreign (claude/cursor), and project-level configs;
+	// the per-server `enabled` gate still decides what actually connects.
+	mcpPaths := mcp.DiscoverConfigPaths(cwd, homeDir)
+	mcpManager := mcp.NewManagerMulti(mcpPaths, registry)
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := mcpManager.Start(mcpCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: MCP initialization failed: %v\n", err)

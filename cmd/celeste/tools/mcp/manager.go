@@ -22,12 +22,13 @@ type ServerInfo struct {
 // It loads configuration, connects to servers, discovers tools,
 // and registers them in the tool registry.
 type Manager struct {
-	configPath string
-	registry   *tools.Registry
-	clients    map[string]*Client
-	toolCounts map[string]int
-	transports map[string]string
-	mu         sync.Mutex
+	configPath  string
+	configPaths []string // multi-source discovery paths; if set, Start uses LoadMerged
+	registry    *tools.Registry
+	clients     map[string]*Client
+	toolCounts  map[string]int
+	transports  map[string]string
+	mu          sync.Mutex
 }
 
 // NewManager creates a new MCP Manager.
@@ -43,6 +44,15 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 	}
 }
 
+// NewManagerMulti creates a Manager that merges MCP config from multiple
+// discovered paths (see DiscoverConfigPaths / LoadMerged) instead of a single
+// file. Lower-index paths are overridden by higher-index paths on name clash.
+func NewManagerMulti(paths []string, registry *tools.Registry) *Manager {
+	m := NewManager("", registry)
+	m.configPaths = paths
+	return m
+}
+
 // Start loads the MCP configuration, connects to all configured servers,
 // discovers their tools, and registers them in the tool registry.
 // If the config file does not exist, it returns nil (no MCP configured).
@@ -51,7 +61,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cfg, err := LoadConfig(m.configPath)
+	var cfg *MCPConfig
+	var err error
+	if len(m.configPaths) > 0 {
+		cfg, err = LoadMerged(m.configPaths)
+	} else {
+		cfg, err = LoadConfig(m.configPath)
+	}
 	if err != nil {
 		return fmt.Errorf("load MCP config: %w", err)
 	}

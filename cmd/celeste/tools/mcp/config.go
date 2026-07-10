@@ -38,6 +38,11 @@ type ServerConfig struct {
 	// Env is a map of environment variables passed to the child process.
 	// Values support ${VAR} expansion from the host environment.
 	Env map[string]string `json:"env,omitempty"`
+
+	// Origin is the absolute path of the config file this server was loaded
+	// from. Set by the discovery/merge layer, never parsed from JSON. Used by
+	// the /mcp panel to show provenance.
+	Origin string `json:"-"`
 }
 
 // DefaultConfigPath returns the default path for the MCP configuration file.
