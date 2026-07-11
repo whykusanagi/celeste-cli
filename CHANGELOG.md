@@ -5,6 +5,21 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0](https://github.com/whykusanagi/celeste-cli/compare/v1.12.0...v1.13.0) (2026-07-11)
+
+
+### Features
+
+* MCP connectivity + TUI polish (mcp install, ask tool, /mcp panel, HTTP transport) ([#101](https://github.com/whykusanagi/celeste-cli/issues/101)) ([b37b7cd](https://github.com/whykusanagi/celeste-cli/commit/b37b7cd44fb2076f5954bab92692bbc1ac16e7f3))
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/anthropics/anthropic-sdk-go ([#94](https://github.com/whykusanagi/celeste-cli/issues/94)) ([412302f](https://github.com/whykusanagi/celeste-cli/commit/412302f5e35a0980419d23e0540bff164ae57696))
+* **deps:** bump github.com/ipfs/go-cid from 0.6.1 to 0.6.2 ([#97](https://github.com/whykusanagi/celeste-cli/issues/97)) ([a80e4f7](https://github.com/whykusanagi/celeste-cli/commit/a80e4f7a8b577087f9f8b7a984ef97725d53f206))
+* **deps:** bump golang.org/x/text ([#95](https://github.com/whykusanagi/celeste-cli/issues/95)) ([0ed76a7](https://github.com/whykusanagi/celeste-cli/commit/0ed76a7882fc9f3de235fe94123b2720ac416f25))
+* **deps:** bump google.golang.org/genai from 1.62.0 to 1.63.0 ([#96](https://github.com/whykusanagi/celeste-cli/issues/96)) ([5d45139](https://github.com/whykusanagi/celeste-cli/commit/5d4513970cb9f145b829cdd0e0f489f72d49c4e9))
+
 ## [1.12.0](https://github.com/whykusanagi/celeste-cli/compare/v1.11.2...v1.12.0) (2026-06-28)
 
 
