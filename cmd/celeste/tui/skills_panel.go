@@ -26,6 +26,7 @@ type SkillsModel struct {
 	lastErrorSkill string
 	lastError      string
 	confirmMode    bool // show confirm/auto indicator
+	expanded       bool // false (default) = collapsed: only active signal renders in chat
 }
 
 func NewSkillsModel() SkillsModel {
@@ -82,7 +83,38 @@ func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, 
 	return s
 }
 
+// SetExpanded toggles the full panel. Collapsed (default) renders only active
+// signal in chat — the skill count + model/mode moved to the status line and
+// the nav keys to the single hints row.
+func (s SkillsModel) SetExpanded(e bool) SkillsModel { s.expanded = e; return s }
+
+// Count reports the loaded-skill count (surfaced in the status line).
+func (s SkillsModel) Count() int { return s.skillsCount }
+
+// Enabled reports whether skills are enabled (surfaced in the status line).
+func (s SkillsModel) Enabled() bool { return s.skillsEnabled }
+
+// collapsedView renders only meaningful transient signal — a running/failed/
+// completed skill — and nothing when idle, so the chat area reclaims the space.
+func (s SkillsModel) collapsedView() string {
+	switch {
+	case s.executingSkill != "":
+		return SkillExecutingStyle.Render(" ⚙ " + s.executingSkill + "…")
+	case s.lastError != "":
+		return SkillErrorStyle.Render(" ⚙ " + safeLabel(s.lastErrorSkill) + ": " + truncateLine(s.lastError, 80))
+	case s.lastCompleted != "":
+		return SkillCompletedStyle.Render(" ⚙ " + s.lastCompleted + " ✓")
+	case !s.skillsEnabled && s.disabledReason != "":
+		return SkillErrorStyle.Render(" ⚙ skills off: " + truncateLine(s.disabledReason, 90))
+	default:
+		return ""
+	}
+}
+
 func (s SkillsModel) View() string {
+	if !s.expanded {
+		return s.collapsedView()
+	}
 	modeLabel := "auto"
 	if s.confirmMode {
 		modeLabel = "confirm"

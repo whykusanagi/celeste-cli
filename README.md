@@ -55,7 +55,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 
 ### Quick Install (Recommended)
 
-If you have Go 1.23+ installed:
+If you have Go 1.26+ installed:
 
 ```bash
 go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
@@ -66,6 +66,10 @@ The `celeste` binary will be installed to `$GOPATH/bin` (or `~/go/bin` by defaul
 **Requirements:**
 - Go 1.26.0 or higher
 - `$GOPATH/bin` (or `~/go/bin`) in your PATH
+
+No Go toolchain? Download a pre-built, signed binary for your platform from the
+[Releases](https://github.com/whykusanagi/celeste-cli/releases) page and verify
+it (see [Security & Verification](#-security--verification) below).
 
 To add to PATH:
 ```bash
@@ -527,9 +531,35 @@ Indexing is **explicit**: query tools never auto-reindex. After code changes, th
 caller invokes `celeste_index { operation: "update" }` to refresh the graph.
 
 ```bash
-# Add Celeste as an MCP server (once per workspace you want indexed)
-claude mcp add celeste celeste serve
+# Recommended: Celeste writes itself into your MCP client configs. It resolves
+# its own absolute path (so GUI clients like Claude Desktop and Cursor, which
+# don't inherit your shell PATH, can launch it), merges into each config without
+# touching your other servers, and backs up to <file>.bak. The config it writes
+# launches `celeste serve` for you; you don't start the server by hand.
+celeste mcp install                          # every client that's installed
+celeste mcp install --dry-run                # preview, write nothing
+celeste mcp install --client claude-desktop  # one client
 ```
+
+> `celeste mcp install` needs **v1.12.1+** — run `celeste version` to check. On
+> older builds, use the manual `claude mcp add` form below, or the installer in
+> [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude).
+
+`--client` takes `claude-desktop`, `claude-code`, `cursor`, `celeste-cli`, or
+`all` (the default; it wires only the clients you have installed). Codex stores
+MCP servers in TOML, so `--client codex` prints the block to paste into
+`~/.codex/config.toml`.
+
+After installing for **Claude Desktop**, quit it (Cmd-Q on macOS) and reopen it
+so it loads the new config; the `celeste_*` tools then appear in its tool list.
+**Claude Code** picks up changes on its next launch, or wire it by hand since it
+inherits your PATH: `claude mcp add celeste celeste serve`.
+
+Inside the TUI, `/mcp` lists configured servers and lets you connect, disconnect,
+reconnect, or toggle a server at runtime (`c` / `d` / `r` / `space`). Celeste also
+merges MCP servers you've already defined for Claude Code or Cursor
+(`~/.claude/mcp.json`, `~/.cursor/mcp.json`, project `.mcp.json`), gated behind an
+opt-in `"enabled": true` so nothing connects until you ask.
 
 Optionally, install the [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)
 companion for the persona-routed skill command wrappers (`/celeste-review`,

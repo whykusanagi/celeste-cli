@@ -64,9 +64,11 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
 - [ ] README updated: feature lists, counts, examples
 - [ ] CHANGELOG: release-please auto-generates from conventional commits; **verify it reads correctly**
 - [ ] Version references consistent: no stale `vX.Y.Z` in docs; any "N <things>" count matches reality
-- [ ] New feature documented: usage, config, setup steps
+- [ ] **Every new command / flag / feature has a doc home** — new subcommand or flag → README usage + the relevant `docs/*.md`; new capability → a runnable example. (Grep the diff for user-facing surface: `git diff main...HEAD -- cmd/ | grep -E 'case "|flag\.(String|Bool|Int)'`.)
 - [ ] Breaking changes + migration notes called out
 - [ ] **Setup/onboarding commands actually run**: execute them, don't assume (we have shipped broken setup hints before)
+- [ ] **Zero-context doc validation** (superpowers:zero-context-validation): spawn a blind sub-agent given ONLY the install/setup docs and have it attempt the flow (e.g. "install celeste + register it as a Claude Desktop MCP server"). Any gap it reports is a real blindspot — fix the docs, re-test until it succeeds without assumptions.
+- [ ] **De-slop new prose** (stop-slop): run new user-facing prose (README/docs sections, release notes) through stop-slop — active voice, specific, no adverbs / em-dashes / filler.
 
 ## 5. Versioning & release mechanics (release-please)
 - [ ] Commit type sets the bump: `feat:` → minor, `fix:` → patch, `feat!:` / `BREAKING CHANGE:` → major

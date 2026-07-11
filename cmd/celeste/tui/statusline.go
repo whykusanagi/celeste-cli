@@ -28,6 +28,7 @@ type StatusLineModel struct {
 	effort     string
 	permMode   string
 	session    string
+	skills     string // pre-formatted skills segment ("" hides it)
 	width      int
 }
 
@@ -57,6 +58,17 @@ func (m StatusLineModel) SetPermMode(mode string) StatusLineModel { m.permMode =
 
 // SetSession sets the session-name segment.
 func (m StatusLineModel) SetSession(name string) StatusLineModel { m.session = name; return m }
+
+// SetSkills sets the skills segment ("⚙ N" enabled, "⚙ off" disabled). This
+// replaces the old always-on skills panel's count line.
+func (m StatusLineModel) SetSkills(enabled bool, count int) StatusLineModel {
+	if enabled {
+		m.skills = fmt.Sprintf("⚙ %d", count)
+	} else {
+		m.skills = "⚙ off"
+	}
+	return m
+}
 
 // permStyle colors the permission mode by risk.
 func permStyle(mode string) lipgloss.Style {
@@ -117,6 +129,9 @@ func (m StatusLineModel) View() string {
 	}
 	if m.model != "" {
 		segs = append(segs, ModelStyle.Render(m.model))
+	}
+	if m.skills != "" {
+		segs = append(segs, muted.Render(m.skills))
 	}
 	if m.effort != "" && m.effort != "off" {
 		segs = append(segs, muted.Render("effort:"+m.effort))
@@ -211,6 +226,6 @@ func hintsFor(mode string, mcpActive bool) string {
 	case "skills", "sessions", "graph", "memories", "collections", "menu", "persona":
 		return "↑↓ move · ↵ select · esc close"
 	default:
-		return "↵ send · ⇧↵ newline · / commands · PgUp/PgDn scroll · Ctrl+C exit"
+		return "↵ send · ⇧↵ newline · / commands · ⇧↑↓ scroll · Ctrl+K calls · Ctrl+C×2 quit"
 	}
 }

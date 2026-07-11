@@ -81,7 +81,27 @@ func renderComponents() []tuiSnap {
 		{"a3-ask-single", "A3 ask prompt (single select)", askSingle.View()},
 		{"a3-ask-multi", "A3 ask prompt (multi select)", askMulti.View()},
 		{"a2-mcp-panel", "A2 /mcp panel", panel.View()},
+		{"full-chat-frame", "Full TUI (chat view)", fullChatFrame(100, 30)},
 	}
+}
+
+// fullChatFrame builds a realistic AppModel — sized, with a short conversation —
+// and returns its composed View(): the whole assembled TUI (header, chat,
+// input, skills panel, status line, hints, status bar) as one frame.
+func fullChatFrame(w, h int) string {
+	app := NewApp(nil).SetVersion("1.12.1", "test").WithEndpoint("sakana").SetWorkDir(".")
+	app.model = "fugu"
+	app.effort = "high"
+	app.skills = app.skills.SetConfig("sakana", "fugu", true, false, 47, "")
+
+	sized, _ := app.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	app = sized.(AppModel)
+
+	app.chat = app.chat.AddUserMessage("Review shapes.py for stub findings")
+	app.chat = app.chat.AddAssistantMessage("Looked at `shapes.py` — the abstract methods are **fine**, darling. `Drawable.draw`, `Shape.area`, and the dunders are Protocol/ABC surface, not stubs. Nothing to flag. ♡")
+	app = app.syncStatusLine()
+
+	return app.View()
 }
 
 // TestRenderSmoke renders every sprint TUI component. It is silent in CI and

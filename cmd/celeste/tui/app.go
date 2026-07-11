@@ -319,7 +319,8 @@ func (m AppModel) syncStatusLine() AppModel {
 	sl := m.statusLine.
 		SetProject(filepath.Base(m.workDir)).
 		SetModel(m.model).
-		SetEffort(m.effort)
+		SetEffort(m.effort).
+		SetSkills(m.skills.Enabled(), m.skills.Count())
 	if m.permChecker != nil {
 		sl = sl.SetPermMode(m.permChecker.Mode().String())
 	}
@@ -607,20 +608,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Calculate component heights - RPG menu layout
 		headerHeight := 1
-		inputHeight := 3   // 1 border + 1 text + 1 typeahead hint line
-		skillsHeight := 12 // Increased for RPG-style menu with contextual help
+		inputHeight := 3  // 1 border + 1 text + 1 typeahead hint line
+		skillsHeight := 1 // collapsed skills panel: active-skill signal only (usually empty)
 		statusHeight := 1
 		statusLineHeight := 1 // segmented status line
 		hintsHeight := 1      // contextual key hints
 		chatHeight := m.height - headerHeight - inputHeight - skillsHeight - statusHeight - statusLineHeight - hintsHeight
 
-		// Ensure minimum chat height
+		// Ensure minimum chat height on very short terminals.
 		if chatHeight < 5 {
 			chatHeight = 5
-			skillsHeight = m.height - headerHeight - inputHeight - statusHeight - statusLineHeight - hintsHeight - chatHeight
-			if skillsHeight < 6 {
-				skillsHeight = 6 // Minimum for RPG menu
-			}
 		}
 
 		// Update component sizes
@@ -2687,9 +2684,13 @@ func (m AppModel) View() string {
 	if cfg, err := config.Load(); err == nil {
 		m.skills.confirmMode = cfg.ConfirmActions
 	}
-	sections = append(sections, m.skills.View())
+	// Collapsed skills panel renders only active-skill signal; skip when empty
+	// so the chat area reclaims the row.
+	if sv := m.skills.View(); sv != "" {
+		sections = append(sections, sv)
+	}
 
-	// Segmented status line (git / project / model / effort / perms / session)
+	// Segmented status line (git / project / model / effort / perms / session / skills)
 	sections = append(sections, m.statusLine.View())
 
 	// Contextual key hints
