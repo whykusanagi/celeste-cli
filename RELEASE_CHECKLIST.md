@@ -57,6 +57,8 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
   celeste -config sakana agent --goal-file /tmp/rev_prompt.txt --planner=false --max-turns 1
   ```
 - [ ] **Smoke-test the real binary** (`make build`), not just unit tests: run the top user flows for every changed feature (e.g. a model/provider: chat + tool call + the feature it touches)
+- [ ] **`make smoke`** passes — automates the above: builds the binary, renders every TUI component to `test-output/tui/*.png` (gitignored), and drives new-feature CLI paths incl. **one live model call** (sakana/fugu) so model wiring is proven end-to-end. Requires `freeze` (`go install github.com/charmbracelet/freeze@latest`).
+  - [ ] **Eyeball the TUI PNGs** in `test-output/tui/` — every visual component (status line, key hints, tool-call cards, ask prompt, `/mcp` panel) renders correctly. Regenerate anytime with `make tui-snapshots`.
 
 ## 4. Documentation
 - [ ] README updated: feature lists, counts, examples
