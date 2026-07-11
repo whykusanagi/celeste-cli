@@ -7,41 +7,50 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSkillsModelViewEnabled(t *testing.T) {
-	model := NewSkillsModel().
+func TestSkillsModel_CollapsedIsQuietWhenIdle(t *testing.T) {
+	// Default (collapsed) chat rendering shows nothing when idle — the skill
+	// count + model moved to the status line; nav keys to the hints row.
+	view := NewSkillsModel().
 		SetSize(120, 10).
 		SetConfig("openai", "gpt-4o-mini", true, false, 5, "").
-		SetCurrentInput("")
+		SetCurrentInput("").
+		View()
+	assert.Empty(t, view)
+}
 
-	view := model.View()
+func TestSkillsModel_ExpandedShowsFullPanel(t *testing.T) {
+	view := NewSkillsModel().
+		SetSize(120, 10).
+		SetConfig("openai", "gpt-4o-mini", true, false, 5, "").
+		SetExpanded(true).
+		View()
 	assert.Contains(t, view, "Skills: enabled (5 loaded)")
 	assert.Contains(t, view, "Backend: openai")
 	assert.Contains(t, view, "Model: gpt-4o-mini")
 	assert.Contains(t, view, "type `skills` to browse")
 }
 
-func TestSkillsModelExecutionStateTransitions(t *testing.T) {
+func TestSkillsModel_CollapsedShowsActiveSignal(t *testing.T) {
 	model := NewSkillsModel().
 		SetSize(100, 10).
 		SetConfig("openai", "gpt-4o-mini", true, false, 3, "")
 
-	executing := model.SetExecuting("get_weather").View()
-	assert.Contains(t, executing, "Executing: get_weather")
-
-	completed := model.SetExecuting("get_weather").SetCompleted("get_weather").View()
-	assert.Contains(t, completed, "Last completed: get_weather")
-
-	errored := model.SetExecuting("get_weather").SetError("get_weather", errors.New("boom")).View()
-	assert.Contains(t, errored, "Last error (get_weather): boom")
+	assert.Contains(t, model.SetExecuting("get_weather").View(), "get_weather")
+	assert.Contains(t, model.SetExecuting("get_weather").SetCompleted("get_weather").View(), "get_weather")
+	assert.Contains(t, model.SetExecuting("get_weather").SetError("get_weather", errors.New("boom")).View(), "boom")
 }
 
-func TestSkillsModelViewDisabledReason(t *testing.T) {
-	model := NewSkillsModel().
+func TestSkillsModel_CollapsedShowsDisabledReason(t *testing.T) {
+	// Why skills are off is important signal — keep it even when collapsed.
+	view := NewSkillsModel().
 		SetSize(100, 10).
-		SetConfig("venice", "venice-uncensored", false, true, 0, "NSFW Mode - Venice doesn't support tools")
+		SetConfig("venice", "venice-uncensored", false, true, 0, "NSFW Mode - Venice doesn't support tools").
+		View()
+	assert.Contains(t, view, "NSFW Mode - Venice doesn't support tools")
+}
 
-	view := model.View()
-	assert.Contains(t, view, "Skills: disabled")
-	assert.Contains(t, view, "Reason: NSFW Mode - Venice doesn't support tools")
-	assert.Contains(t, view, "NSFW mode routes through Venice and disables tool calls")
+func TestSkillsModel_Getters(t *testing.T) {
+	m := NewSkillsModel().SetConfig("openai", "gpt-4o-mini", true, false, 7, "")
+	assert.True(t, m.Enabled())
+	assert.Equal(t, 7, m.Count())
 }
