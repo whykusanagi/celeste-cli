@@ -7,18 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.13.0](https://github.com/whykusanagi/celeste-cli/compare/v1.12.0...v1.13.0) (2026-07-11)
 
+The MCP-connectivity release. Celeste installs itself into other MCP clients,
+consumes the servers they already have, speaks the modern Streamable-HTTP
+transport, and gains a set of TUI features around all of it.
 
 ### Features
 
-* MCP connectivity + TUI polish (mcp install, ask tool, /mcp panel, HTTP transport) ([#101](https://github.com/whykusanagi/celeste-cli/issues/101)) ([b37b7cd](https://github.com/whykusanagi/celeste-cli/commit/b37b7cd44fb2076f5954bab92692bbc1ac16e7f3))
+#### MCP connectivity
 
+* **`celeste mcp install`** — a self-locating installer. It resolves celeste's
+  own absolute path and writes it into Claude Desktop, Claude Code, and Cursor
+  MCP configs, so GUI clients that don't inherit your shell PATH can still launch
+  it. Merges without touching your other servers, backs up to `<file>.bak`,
+  refuses to write through a symlink, and supports `--dry-run` and `--client`
+  (`claude-desktop` / `claude-code` / `cursor` / `celeste-cli` / `all`; `codex`
+  prints a TOML block to paste). ([#98](https://github.com/whykusanagi/celeste-cli/pull/98))
+* **Foreign / project config discovery** — celeste merges MCP servers you've
+  already defined for Claude Code or Cursor (`~/.claude/mcp.json`,
+  `~/.cursor/mcp.json`, project `.mcp.json`), gated behind an opt-in
+  `"enabled": true` so nothing connects until you ask.
+* **Runtime `/mcp` panel** — connect, disconnect, reconnect, or toggle a server
+  without restarting (`c` / `d` / `r` / `space`). Actions run async, so an OAuth
+  handshake never freezes the UI.
+* **Streamable-HTTP transport** — set `"transport": "http"` to reach modern MCP
+  servers over POST + SSE with the negotiated `MCP-Protocol-Version` header, no
+  stdio bridge.
+* **Protocol-version negotiation** — celeste accepts any supported MCP revision
+  it's offered (2024-11-05 through 2025-06-18) instead of demanding an exact
+  match.
+* **`find_tools` dynamic discovery** — a BM25-ranked tool that surfaces hidden or
+  external tools on demand. It turns on once the registered tool list crosses 40,
+  keeping the prompt lean as MCP servers pile up.
+
+#### TUI
+
+* **`ask` tool** — the model can ask you a multiple-choice question mid-turn. An
+  interactive picker (single- or multi-select) blocks the turn until you answer,
+  and degrades to a clear error in headless / one-shot contexts.
+* **Segmented status line** — git branch, dirty count, ahead/behind, project,
+  model, effort, permission mode, session, and skill count in one bar; it narrows
+  its segments below 80 columns.
+* **Contextual key hints** per view and **boxed tool-call cards** (running / done
+  / failed with elapsed time and a detail line), plus a consolidated bottom
+  layout that hands the reclaimed rows back to the chat.
 
 ### Bug Fixes
 
-* **deps:** bump github.com/anthropics/anthropic-sdk-go ([#94](https://github.com/whykusanagi/celeste-cli/issues/94)) ([412302f](https://github.com/whykusanagi/celeste-cli/commit/412302f5e35a0980419d23e0540bff164ae57696))
-* **deps:** bump github.com/ipfs/go-cid from 0.6.1 to 0.6.2 ([#97](https://github.com/whykusanagi/celeste-cli/issues/97)) ([a80e4f7](https://github.com/whykusanagi/celeste-cli/commit/a80e4f7a8b577087f9f8b7a984ef97725d53f206))
-* **deps:** bump golang.org/x/text ([#95](https://github.com/whykusanagi/celeste-cli/issues/95)) ([0ed76a7](https://github.com/whykusanagi/celeste-cli/commit/0ed76a7882fc9f3de235fe94123b2720ac416f25))
-* **deps:** bump google.golang.org/genai from 1.62.0 to 1.63.0 ([#96](https://github.com/whykusanagi/celeste-cli/issues/96)) ([5d45139](https://github.com/whykusanagi/celeste-cli/commit/5d4513970cb9f145b829cdd0e0f489f72d49c4e9))
+* **deps:** bump github.com/anthropics/anthropic-sdk-go ([#94](https://github.com/whykusanagi/celeste-cli/pull/94))
+* **deps:** bump golang.org/x/text ([#95](https://github.com/whykusanagi/celeste-cli/pull/95))
+* **deps:** bump google.golang.org/genai from 1.62.0 to 1.63.0 ([#96](https://github.com/whykusanagi/celeste-cli/pull/96))
+* **deps:** bump github.com/ipfs/go-cid from 0.6.1 to 0.6.2 ([#97](https://github.com/whykusanagi/celeste-cli/pull/97))
+* **deps:** bump goldmark to v1.7.17 (GO-2026-5320) and CI Go to 1.26.5 (GO-2026-5856)
+
+### CI / internal
+
+* Run the cross-platform test matrix post-merge instead of on every PR ([#93](https://github.com/whykusanagi/celeste-cli/pull/93))
+* Visual TUI + live-model CLI smoke tests wired into the release gate (`make smoke`) ([#100](https://github.com/whykusanagi/celeste-cli/pull/100))
 
 ## [1.12.0](https://github.com/whykusanagi/celeste-cli/compare/v1.11.2...v1.12.0) (2026-06-28)
 
