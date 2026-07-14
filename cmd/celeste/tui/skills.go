@@ -85,13 +85,29 @@ func (m *SkillsBrowserModel) applyFilter() {
 }
 
 // pageSize is how many skill rows fit under the header/search and above the
-// footer. Falls back to a small window before the first WindowSizeMsg.
+// detail + position + footer. Falls back to a small window before the first
+// WindowSizeMsg.
 func (m SkillsBrowserModel) pageSize() int {
-	ps := m.height - 7 // title + search + blank + position + footer chrome
+	ps := m.height - 9 // title, search, blank, 2-line detail, position, footer
 	if ps < 3 {
 		ps = 3
 	}
 	return ps
+}
+
+// descLines wraps a skill description to width, capped at maxLines. When text
+// is dropped the last kept line ends with an ellipsis.
+func descLines(desc string, width, maxLines int) []string {
+	if width < 8 {
+		width = 8
+	}
+	lines := strings.Split(wrapText(desc, width), "\n")
+	if len(lines) > maxLines {
+		last := lines[maxLines-1]
+		lines = lines[:maxLines]
+		lines[maxLines-1] = truncateLine(last+" …", width)
+	}
+	return lines
 }
 
 // clampScroll keeps the cursor in range and inside the visible page.
@@ -191,6 +207,13 @@ func (m SkillsBrowserModel) View() string {
 		b.WriteString(muted.Render("  no skills match \""+m.query+"\" — Esc to clear") + "\n")
 	}
 
+	// Description column fills the terminal width past the fixed name column
+	// (2 cursor + 25 name + 2 gutter = 29), so wide terminals show more of it.
+	descWidth := m.width - 29
+	if descWidth < 24 {
+		descWidth = 24
+	}
+
 	ps := m.pageSize()
 	end := m.offset + ps
 	if end > len(m.filtered) {
@@ -202,10 +225,7 @@ func (m SkillsBrowserModel) View() string {
 		if i == m.cursor {
 			cursor = "› "
 		}
-		desc := skill.Description
-		if len(desc) > 60 {
-			desc = desc[:57] + "..."
-		}
+		desc := truncateLine(skill.Description, descWidth)
 		if i == m.cursor {
 			b.WriteString(lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true).
 				Render(fmt.Sprintf("%s%-25s  %s", cursor, skill.Name, desc)))
@@ -214,6 +234,24 @@ func (m SkillsBrowserModel) View() string {
 			b.WriteString(name + lipgloss.NewStyle().Foreground(ColorPurpleDeep).Render("  "+desc))
 		}
 		b.WriteString("\n")
+	}
+
+	// Full description of the highlighted skill (list rows are truncated).
+	// Always two lines so the layout height is stable across selections.
+	detail := []string{"", ""}
+	if len(m.filtered) > 0 {
+		w := m.width - 2
+		if w < 20 {
+			w = 20
+		}
+		for i, ln := range descLines(m.skillsList[m.filtered[m.cursor]].Description, w, 2) {
+			detail[i] = ln
+		}
+	}
+	detailStyle := lipgloss.NewStyle().Foreground(ColorTextSecondary)
+	b.WriteString("\n")
+	for _, ln := range detail {
+		b.WriteString(detailStyle.Render(" "+ln) + "\n")
 	}
 
 	// Position + scroll indicators.
