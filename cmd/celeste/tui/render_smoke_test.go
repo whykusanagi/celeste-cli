@@ -82,7 +82,36 @@ func renderComponents() []tuiSnap {
 		{"a3-ask-multi", "A3 ask prompt (multi select)", askMulti.View()},
 		{"a2-mcp-panel", "A2 /mcp panel", panel.View()},
 		{"full-chat-frame", "Full TUI (chat view)", fullChatFrame(100, 30)},
+		{"skills-browser", "Skills browser (paginated)", skillsBrowserFrame("", 24)},
+		{"skills-browser-search", "Skills browser (type-ahead search)", skillsBrowserFrame("task", 24)},
 	}
+}
+
+// skillsBrowserFrame renders the skills browser over a representative tool list,
+// optionally with an active filter query, at the given height.
+func skillsBrowserFrame(query string, height int) string {
+	names := []string{
+		"asset_add", "asset_list", "backup_run", "calendar_get_month", "document_create",
+		"document_get", "document_update", "milestone_create", "pipeline_create", "pipeline_move",
+		"scheduled_post_create", "search", "settings_get", "spawn_agent", "stream_event_create",
+		"tags_list", "tarot_reading", "task_create", "task_delete", "task_update",
+		"tasks_create_batch", "tasks_list", "tasks_search", "tasks_unblocked", "web_fetch",
+		"web_search", "write_file",
+	}
+	skills := make([]SkillDefinition, len(names))
+	for i, n := range names {
+		skills[i] = SkillDefinition{Name: n, Description: "Description for " + n + " — what it does and when to use it"}
+	}
+	sb := NewSkillsBrowserModel(skills)
+	sb.width, sb.height = 90, height
+	sb.query = query
+	sb.applyFilter()
+	// nudge the cursor down a few rows so the position indicator is visible
+	for range 5 {
+		updated, _ := sb.Update(tea.KeyMsg{Type: tea.KeyDown})
+		sb = updated.(SkillsBrowserModel)
+	}
+	return sb.View()
 }
 
 // fullChatFrame builds a realistic AppModel — sized, with a short conversation —

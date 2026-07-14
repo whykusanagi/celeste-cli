@@ -30,3 +30,20 @@ func TestToolIndex_NoMatchReturnsEmpty(t *testing.T) {
 func TestTokenize(t *testing.T) {
 	assert.Equal(t, []string{"convert", "currency", "usd"}, tokenize("Convert_Currency (USD)"))
 }
+
+func TestRankDocs_EmptyQueryReturnsAllInOrder(t *testing.T) {
+	got := RankDocs([]string{"alpha", "beta", "gamma"}, "")
+	assert.Equal(t, []int{0, 1, 2}, got)
+}
+
+func TestRankDocs_RanksRelevantAndFiltersOut(t *testing.T) {
+	docs := []string{
+		"convert_currency convert money between fiat currencies at live rates",
+		"generate_uuid generate a random unique identifier",
+		"get_weather look up the current weather for a city",
+	}
+	got := RankDocs(docs, "exchange money currency")
+	require.NotEmpty(t, got)
+	assert.Equal(t, 0, got[0], "currency doc ranks first")
+	assert.NotContains(t, got, 1, "uuid doc has no term overlap and is excluded")
+}
