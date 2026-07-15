@@ -40,7 +40,7 @@ echo "---"
 check "version"            "$CELESTE version"                     "Celeste CLI"
 check "mcp install dry-run" "$CELESTE mcp install --dry-run"      "would write"
 check "mcp install codex"   "$CELESTE mcp install --client codex" "mcp_servers.celeste"
-check "index status"        "$CELESTE index status"               "index"
+check "index status"        "$CELESTE index status"               "Symbols:"
 
 if [ "${SMOKE_NO_MODEL:-}" = "1" ]; then
 	printf '· %-22s (skipped: SMOKE_NO_MODEL=1)\n' "model responds"
