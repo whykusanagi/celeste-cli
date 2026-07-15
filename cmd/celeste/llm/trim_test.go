@@ -60,6 +60,18 @@ func TestTrimToolResults_LeavesSmallAndNonToolUntouched(t *testing.T) {
 	}
 }
 
+// A read_file-sized tool message (~49.6 KiB: 48 KiB content + JSON wrapper) must
+// pass the default budget UNtrimmed. If maxToolMsgBytes is ever lowered back to
+// read_file's content budget, the pre-flight trim would re-truncate read_file's
+// own result and corrupt its metadata JSON (the #1/#2 collision).
+func TestTrimToolResults_ReadFileSizedMessagePassesUntrimmed(t *testing.T) {
+	msg := tui.ChatMessage{Role: "tool", Name: "read_file", Content: strings.Repeat("x", 49_600)}
+	_, trimmed := trimToolResults([]tui.ChatMessage{msg}, maxToolMsgBytes)
+	if trimmed {
+		t.Fatalf("a ~49.6 KiB read_file message must not be trimmed at the default budget (%d)", maxToolMsgBytes)
+	}
+}
+
 func TestTrimToolResults_SkipsImageToolResults(t *testing.T) {
 	orig := []tui.ChatMessage{
 		{Role: "tool", Content: bigLines(500, 100), Metadata: map[string]any{"type": "image"}},

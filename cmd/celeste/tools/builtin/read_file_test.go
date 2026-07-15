@@ -123,6 +123,27 @@ func TestReadFile_SmallFileNotTruncated(t *testing.T) {
 	assert.Equal(t, "a\nb\nc", d["content"])
 }
 
+// The full read_file result MESSAGE (content + JSON wrapper) must stay under the
+// llm per-message trim budget (llm.maxToolMsgBytes = 64 KiB), or the pre-flight
+// trim re-truncates read_file's own JSON and mangles its metadata. This guards
+// the #1/#2 budget relationship; keep the 64*1024 in sync with llm/trim.go.
+func TestReadFile_ResultMessageStaysUnderTrimBudget(t *testing.T) {
+	dir := t.TempDir()
+	// A 420 KB single-line minified file: worst case (no newlines, full content budget).
+	payload := "body{" + strings.Repeat("--vx:0;", 60000) + "}"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.min.css"), []byte(payload), 0644))
+	res, err := NewReadFileTool(dir).Execute(context.Background(), map[string]any{"path": "big.min.css"}, nil)
+	require.NoError(t, err)
+	const llmTrimBudget = 64 * 1024 // must match llm.maxToolMsgBytes
+	if len(res.Content) >= llmTrimBudget {
+		t.Fatalf("read_file message = %d bytes; must stay under the llm trim budget %d to avoid double-truncation", len(res.Content), llmTrimBudget)
+	}
+	// And the metadata must be intact (total_bytes reflects the real file size).
+	var d map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Content), &d))
+	assert.Equal(t, float64(len(payload)), d["total_bytes"])
+}
+
 func TestReadFile_MinifiedSingleLineIsByteBounded(t *testing.T) {
 	// The incident's case: whole payload on one line. A range read must stay
 	// byte-bounded and never emit the 131072-byte poison blob.

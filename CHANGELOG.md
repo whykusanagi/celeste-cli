@@ -7,15 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.14.0](https://github.com/whykusanagi/celeste-cli/compare/v1.13.0...v1.14.0) (2026-07-15)
 
+The large-file reliability release. Reading one big or minified file could poison
+a whole session. This release closes that across the read path, the retry path,
+and the write path, and makes the skills browser usable at scale.
 
-### Features
+### Skills browser
 
-* **tools:** large-file byte-path fold-in — read cap, retry trim, splice_file ([#103](https://github.com/whykusanagi/celeste-cli/issues/103)) ([41f74d9](https://github.com/whykusanagi/celeste-cli/commit/41f74d930abdf51b2f807d8431f6e265a54e44d7))
+* Type-ahead search, pagination, and a full-description line for the selected
+  skill. The filter ranks with the same BM25 index that powers tool discovery,
+  and falls back to substring matching so partial words still hit. ([#102](https://github.com/whykusanagi/celeste-cli/issues/102))
 
+### Large-file byte path
 
-### Bug Fixes
+Three bugs compounded so a single oversized tool payload corrupted the session:
 
-* **tui:** searchable + paginated skills browser ([#102](https://github.com/whykusanagi/celeste-cli/issues/102)) ([0b3dafa](https://github.com/whykusanagi/celeste-cli/commit/0b3dafaa5c01f974bb7fded5f93fa6c4980d7e69))
+* **read_file** bounds the returned bytes on a line boundary (48 KiB default) and
+  reports `total_bytes`, `returned_bytes`, and `next_offset_line` with a paging
+  hint. A minified single line no longer returns the whole file for the 128 KiB
+  history cap to mid-byte-truncate into garbage. ([#103](https://github.com/whykusanagi/celeste-cli/issues/103))
+* **Retry trim.** Each LLM retry gets its own deadline instead of reusing the
+  first attempt's expired one, so a timeout retry runs instead of failing
+  instantly. Before each retry the trim shrinks the largest tool result
+  copy-on-write, so an oversized payload never replays unchanged. ([#103](https://github.com/whykusanagi/celeste-cli/issues/103))
+* **splice_file** moves a region between files by anchors or line ranges. The
+  bytes copy on disk and the model never regenerates them, so relocating a large
+  block cannot corrupt it in transit. `patch_file` refuses a literal over 16 KiB
+  and points to `splice_file`. ([#103](https://github.com/whykusanagi/celeste-cli/issues/103))
+* A capped read_file result plus its JSON wrapper tripped the retry trim and
+  mangled its own metadata; the two byte budgets no longer overlap. ([#105](https://github.com/whykusanagi/celeste-cli/issues/105))
+
+### CI
+
+* Release binaries build with Go 1.26.5, which carries the crypto/tls fix for
+  GO-2026-5856. ([#105](https://github.com/whykusanagi/celeste-cli/issues/105))
 
 ## [1.13.0](https://github.com/whykusanagi/celeste-cli/compare/v1.12.0...v1.13.0) (2026-07-11)
 
