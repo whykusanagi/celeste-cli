@@ -711,8 +711,10 @@ type TUIClientAdapter struct {
 
 // SendMessage implements tui.LLMClient.
 func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
-	// Create context with cancel so Ctrl+C can abort in-flight requests.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Cancel-only context so Ctrl+C can abort in-flight requests. The per-attempt
+	// request deadline is owned by the LLM client (see perAttemptTimeout), so a
+	// timeout on one attempt doesn't leave an expired ctx that dooms the retry.
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// Return a batch: first deliver the cancel func to the TUI model, then
 	// start the actual LLM call.
@@ -1885,8 +1887,9 @@ func runSingleMessage(message string) {
 		client.SetSystemPrompt(prompts.GetSystemPrompt(false))
 	}
 
-	// Send message
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.GetTimeout())
+	// Send message. Cancel-only ctx; the client owns the per-attempt deadline
+	// (cfg.GetTimeout()) so timeout retries get a fresh, non-expired context.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	messages := []tui.ChatMessage{{

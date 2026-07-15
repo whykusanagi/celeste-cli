@@ -1,0 +1,71 @@
+package llm
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+)
+
+func bigLines(n, perLine int) string {
+	line := strings.Repeat("x", perLine)
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = line
+	}
+	return strings.Join(parts, "\n")
+}
+
+func TestTrimToolResults_TrimsOversizedToolMessageOnLineBoundary(t *testing.T) {
+	big := bigLines(500, 100) // ~50 KB across many lines
+	orig := []tui.ChatMessage{
+		{Role: "user", Content: "hi"},
+		{Role: "tool", Content: big, Name: "read_file"},
+	}
+	out, trimmed := trimToolResults(orig, 4096)
+	if !trimmed {
+		t.Fatal("expected trimming for an oversized tool message")
+	}
+	if len(out[1].Content) > 4096 {
+		t.Fatalf("trimmed content=%d bytes, want <= 4096", len(out[1].Content))
+	}
+	if !strings.Contains(out[1].Content, "truncated") {
+		t.Fatal("trimmed content must carry a recovery notice")
+	}
+	// Copy-on-write: the caller's slice is untouched.
+	if len(orig[1].Content) != len(big) {
+		t.Fatal("original message was mutated; must be copy-on-write")
+	}
+	// Cut lands on a line boundary (before the notice): no partial line.
+	head := out[1].Content[:strings.Index(out[1].Content, "\n\n[celeste:")]
+	for _, ln := range strings.Split(head, "\n") {
+		if ln != "" && len(ln) != 100 {
+			t.Fatalf("line-aligned cut expected, got a %d-byte partial line", len(ln))
+		}
+	}
+}
+
+func TestTrimToolResults_LeavesSmallAndNonToolUntouched(t *testing.T) {
+	orig := []tui.ChatMessage{
+		{Role: "user", Content: bigLines(500, 100)}, // huge but NOT a tool msg
+		{Role: "tool", Content: "small result", Name: "search"},
+	}
+	out, trimmed := trimToolResults(orig, 4096)
+	if trimmed {
+		t.Fatal("no tool message exceeds budget; should not trim")
+	}
+	// Same backing slice returned when nothing changes.
+	if &out[0] != &orig[0] {
+		t.Fatal("expected the original slice to be returned unchanged")
+	}
+}
+
+func TestTrimToolResults_SkipsImageToolResults(t *testing.T) {
+	orig := []tui.ChatMessage{
+		{Role: "tool", Content: bigLines(500, 100), Metadata: map[string]any{"type": "image"}},
+	}
+	_, trimmed := trimToolResults(orig, 4096)
+	if trimmed {
+		t.Fatal("image tool results must not be text-truncated")
+	}
+}
