@@ -5,6 +5,18 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0](https://github.com/whykusanagi/celeste-cli/compare/v1.13.0...v1.14.0) (2026-07-15)
+
+
+### Features
+
+* **tools:** large-file byte-path fold-in — read cap, retry trim, splice_file ([#103](https://github.com/whykusanagi/celeste-cli/issues/103)) ([41f74d9](https://github.com/whykusanagi/celeste-cli/commit/41f74d930abdf51b2f807d8431f6e265a54e44d7))
+
+
+### Bug Fixes
+
+* **tui:** searchable + paginated skills browser ([#102](https://github.com/whykusanagi/celeste-cli/issues/102)) ([0b3dafa](https://github.com/whykusanagi/celeste-cli/commit/0b3dafaa5c01f974bb7fded5f93fa6c4980d7e69))
+
 ## [1.13.0](https://github.com/whykusanagi/celeste-cli/compare/v1.12.0...v1.13.0) (2026-07-11)
 
 The MCP-connectivity release. Celeste installs itself into other MCP clients,
