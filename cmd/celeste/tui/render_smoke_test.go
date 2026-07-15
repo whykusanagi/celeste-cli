@@ -82,7 +82,59 @@ func renderComponents() []tuiSnap {
 		{"a3-ask-multi", "A3 ask prompt (multi select)", askMulti.View()},
 		{"a2-mcp-panel", "A2 /mcp panel", panel.View()},
 		{"full-chat-frame", "Full TUI (chat view)", fullChatFrame(100, 30)},
+		{"skills-browser", "Skills browser (paginated)", skillsBrowserFrame("", 24)},
+		{"skills-browser-search", "Skills browser (type-ahead search)", skillsBrowserFrame("task", 24)},
 	}
+}
+
+// skillsBrowserFrame renders the skills browser over a representative tool list,
+// optionally with an active filter query, at the given height.
+func skillsBrowserFrame(query string, height int) string {
+	// Realistic descriptions (mirrors real MCP tool copy) so the snapshot is
+	// representative rather than repeating one placeholder string.
+	catalog := [][2]string{
+		{"asset_add", "Register an asset (image/video) in the library and return its id"},
+		{"asset_list", "List assets, newest first; filter by tag or kind"},
+		{"backup_run", "Trigger a manual encrypted backup of the local database now"},
+		{"calendar_get_month", "Return the stream calendar for a month with events per day"},
+		{"document_create", "Create a foldered document (spec, plan, note) and return its id"},
+		{"document_get", "Look up a single document by id with its comments and decisions"},
+		{"document_update", "Patch a document's title, body, tags, folder, pin, or archive state"},
+		{"milestone_create", "Add a milestone with a target date to track a goal"},
+		{"pipeline_create", "Create a content piece in the idea→post pipeline"},
+		{"pipeline_move", "Advance a content item to the next production stage"},
+		{"scheduled_post_create", "Draft/queue a social post; approve by setting status to ready"},
+		{"search", "Search for text in workspace files and return matching lines"},
+		{"settings_get", "Read current app settings (auto_backup, auto_backup_hour, …)"},
+		{"spawn_agent", "Spawn a subagent to handle a subtask and return its result"},
+		{"stream_event_create", "Create a stream day entry (subathon|stream|special)"},
+		{"tags_list", "Return every unique tag across documents and tasks with counts"},
+		{"tarot_reading", "Generate a tarot reading with a three-card or single-card spread"},
+		{"task_create", "Create a task. RULE: max 3 P1s in todo|doing per due_date"},
+		{"task_delete", "Permanently delete a task by id. Irreversible — no soft delete"},
+		{"task_update", "Patch any field on a task; complete with {status:'done'}"},
+		{"tasks_create_batch", "Create 1–100 tasks in one call, each with the task fields"},
+		{"tasks_list", "List tasks {count, tasks[]}; filter by area, status, priority, repo"},
+		{"tasks_search", "Full-text search across task titles, descriptions, tags, and repo"},
+		{"tasks_unblocked", "Return todo tasks whose every blocked_by id resolves to done"},
+		{"web_fetch", "Fetch a URL and convert its HTML content to markdown"},
+		{"web_search", "Search the web via DuckDuckGo and return up to 10 results"},
+		{"write_file", "Write text to a workspace file, creating parent directories"},
+	}
+	skills := make([]SkillDefinition, len(catalog))
+	for i, c := range catalog {
+		skills[i] = SkillDefinition{Name: c[0], Description: c[1]}
+	}
+	sb := NewSkillsBrowserModel(skills)
+	sb.width, sb.height = 90, height
+	sb.query = query
+	sb.applyFilter()
+	// nudge the cursor down a few rows so the position indicator is visible
+	for range 5 {
+		updated, _ := sb.Update(tea.KeyMsg{Type: tea.KeyDown})
+		sb = updated.(SkillsBrowserModel)
+	}
+	return sb.View()
 }
 
 // fullChatFrame builds a realistic AppModel — sized, with a short conversation —

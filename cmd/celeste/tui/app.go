@@ -395,14 +395,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If in skills view, handle all inputs there
+	// In skills view the browser owns filtering + navigation (letters feed the
+	// type-ahead filter); the app only reacts to the messages it emits back.
 	if m.viewMode == "skills" {
 		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			if msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc" {
-				m.viewMode = "chat"
-				return m, nil
-			}
+		case skillsBrowserBackMsg:
+			m.viewMode = "chat"
+			return m, nil
 		case skillSelectedMsg:
 			m.viewMode = "chat"
 			m.input = m.input.SetValue(msg.skillName + " ")
@@ -781,6 +780,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					skillsList = m.llmClient.GetSkills()
 				}
 				model := NewSkillsBrowserModel(skillsList)
+				model.width, model.height = m.width, m.height
 				m.skillsBrowser = &model
 				return m, m.skillsBrowser.Init()
 
@@ -1561,6 +1561,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				skillsList = m.llmClient.GetSkills()
 			}
 			model := NewSkillsBrowserModel(skillsList)
+			model.width, model.height = m.width, m.height
 			m.skillsBrowser = &model
 
 			return m, m.skillsBrowser.Init()
