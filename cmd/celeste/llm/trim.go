@@ -7,10 +7,15 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-// maxToolMsgBytes bounds a single tool-result message inside an outbound request.
-// It matches read_file's returned-content budget so a request never carries a tool
-// blob big enough to blow the history cap or time out the stream.
-const maxToolMsgBytes = 48 * 1024
+// maxToolMsgBytes bounds a single tool-result MESSAGE (the whole formatted JSON,
+// not just a content field) inside an outbound request. It sits deliberately
+// ABOVE read_file's 48 KiB returned-content budget: that content plus read_file's
+// own JSON wrapper (path, byte totals, hint, …) is ~49.6 KiB, and if this budget
+// equalled 48 KiB the pre-flight trim would re-truncate read_file's own result and
+// mangle its metadata JSON. Ordering: 48 KiB read_file content < 64 KiB per-message
+// trim < 128 KiB history cap (context.DefaultMaxToolResultBytes). Genuinely
+// oversized tool messages (> 64 KiB) still get trimmed here as a backstop.
+const maxToolMsgBytes = 64 * 1024
 
 // trimToolResults returns a copy of msgs in which every *text* tool-result larger
 // than budget is truncated on a line boundary with a notice appended. It is
