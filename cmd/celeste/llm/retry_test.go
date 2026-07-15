@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestMaxAttemptsAndBackoff(t *testing.T) {
 
 func TestWithRetry_RetriesThenSucceeds(t *testing.T) {
 	calls := 0
-	err := withRetry(func() error {
+	err := withRetry(context.Background(), retryOpts{}, func(context.Context) error {
 		calls++
 		if calls < 3 {
 			return errors.New("status code 429")
@@ -65,7 +66,7 @@ func TestWithRetry_RetriesThenSucceeds(t *testing.T) {
 
 func TestWithRetry_FatalFailsFast(t *testing.T) {
 	calls := 0
-	_ = withRetry(func() error { calls++; return errors.New("status code 400") }, func(time.Duration) {})
+	_ = withRetry(context.Background(), retryOpts{}, func(context.Context) error { calls++; return errors.New("status code 400") }, func(time.Duration) {})
 	if calls != 1 {
 		t.Fatalf("400 should fail fast, calls=%d want 1", calls)
 	}
@@ -73,9 +74,64 @@ func TestWithRetry_FatalFailsFast(t *testing.T) {
 
 func TestWithRetry_ServerGivesUpAfterMax(t *testing.T) {
 	calls := 0
-	_ = withRetry(func() error { calls++; return errors.New("status code 503") }, func(time.Duration) {})
+	_ = withRetry(context.Background(), retryOpts{}, func(context.Context) error { calls++; return errors.New("status code 503") }, func(time.Duration) {})
 	if calls != 3 { // initial + 2 retries
 		t.Fatalf("server calls=%d want 3", calls)
+	}
+}
+
+// TestWithRetry_FreshDeadlinePerAttempt proves the doomed-retry bug is fixed: a
+// timeout on attempt 0 must NOT leave the retry with an already-expired context.
+// Each attempt gets its own fresh per-attempt deadline.
+func TestWithRetry_FreshDeadlinePerAttempt(t *testing.T) {
+	calls := 0
+	var retryCtxErr error
+	err := withRetry(context.Background(), retryOpts{timeout: time.Hour}, func(ctx context.Context) error {
+		calls++
+		if calls == 1 {
+			return errors.New("context deadline exceeded")
+		}
+		retryCtxErr = ctx.Err() // must be nil: a fresh, live context
+		return nil
+	}, func(time.Duration) {})
+	if err != nil || calls != 2 {
+		t.Fatalf("err=%v calls=%d want nil,2", err, calls)
+	}
+	if retryCtxErr != nil {
+		t.Fatalf("retry attempt got an already-expired ctx (%v); each attempt must get a fresh deadline", retryCtxErr)
+	}
+}
+
+// TestWithRetry_StopsOnParentCancel: a cancelled base context (Ctrl+C) must stop
+// the loop rather than replaying against a dead parent.
+func TestWithRetry_StopsOnParentCancel(t *testing.T) {
+	base, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	_ = withRetry(base, retryOpts{}, func(context.Context) error {
+		calls++
+		return errors.New("status code 503") // retryable, but parent is cancelled
+	}, func(time.Duration) {})
+	if calls != 1 {
+		t.Fatalf("cancelled parent should stop after 1 attempt, calls=%d", calls)
+	}
+}
+
+// TestWithRetry_BeforeTryPerAttempt: beforeTry fires before each attempt with an
+// incrementing 0-based counter (used to progressively trim the payload).
+func TestWithRetry_BeforeTryPerAttempt(t *testing.T) {
+	var attempts []int
+	_ = withRetry(context.Background(), retryOpts{
+		beforeTry: func(a int) { attempts = append(attempts, a) },
+	}, func(context.Context) error { return errors.New("status code 503") }, func(time.Duration) {})
+	want := []int{0, 1, 2} // initial + 2 retries
+	if len(attempts) != len(want) {
+		t.Fatalf("beforeTry attempts=%v want %v", attempts, want)
+	}
+	for i := range want {
+		if attempts[i] != want[i] {
+			t.Fatalf("beforeTry attempts=%v want %v", attempts, want)
+		}
 	}
 }
 

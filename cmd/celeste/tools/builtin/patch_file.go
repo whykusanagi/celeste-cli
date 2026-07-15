@@ -12,6 +12,11 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
+// maxPatchLiteralBytes is the ceiling on a single new_string literal. Beyond it,
+// a patch is almost certainly a byte-move that belongs in splice_file (deterministic,
+// no model-routed payload) rather than a regenerated literal.
+const maxPatchLiteralBytes = 16 * 1024
+
 // PatchFileTool performs surgical string replacements in workspace files.
 type PatchFileTool struct {
 	BaseTool
@@ -93,6 +98,19 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	oldString = strings.ReplaceAll(oldString, `\t`, "\t")
 	newString = strings.ReplaceAll(newString, `\n`, "\n")
 	newString = strings.ReplaceAll(newString, `\t`, "\t")
+
+	// Route oversized literals to the deterministic path. A patch this large is
+	// almost always a byte-move (relocating existing content); regenerating it as
+	// a tool argument is slow and a silent-corruption vector. splice_file moves the
+	// bytes on disk without routing them through the model.
+	if len(newString) > maxPatchLiteralBytes {
+		return tools.ToolResult{
+			Error: true,
+			Content: fmt.Sprintf(
+				"new_string is %d bytes (> %d KiB). Literals this large route through the model and risk silent corruption. If you are relocating existing content, use splice_file (it moves bytes on disk by anchors/line-ranges). If this is genuinely new content, split it into smaller anchored patch_file edits.",
+				len(newString), maxPatchLiteralBytes/1024),
+		}, nil
+	}
 
 	targetPath, err := resolvePath(t.workspace, path)
 	if err != nil {

@@ -15,21 +15,25 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 		var readOpts []ReadFileOption
 		var writeOpts []WriteFileOption
 		var patchOpts []PatchFileOption
+		var spliceOpts []SpliceFileOption
 
 		if tracker != nil {
 			readOpts = append(readOpts, WithReadFileTracker(tracker))
 			writeOpts = append(writeOpts, WithWriteFileTracker(tracker))
 			patchOpts = append(patchOpts, WithPatchFileTracker(tracker))
+			spliceOpts = append(spliceOpts, WithSpliceFileTracker(tracker))
 		}
 		if snapshots != nil {
 			writeOpts = append(writeOpts, WithWriteFileSnapshots(snapshots))
 			patchOpts = append(patchOpts, WithPatchFileSnapshots(snapshots))
+			spliceOpts = append(spliceOpts, WithSpliceFileSnapshots(snapshots))
 		}
 
 		registry.RegisterWithModes(NewBashTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewReadFileTool(workspace, readOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewWriteFileTool(workspace, writeOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewPatchFileTool(workspace, patchOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+		registry.RegisterWithModes(NewSpliceFileTool(workspace, spliceOpts...), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewListFilesTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewSearchTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 
