@@ -20,7 +20,7 @@ jobs:
         fetch-depth: 0
 
     - name: Set up Go
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
         # 1.26.5 carries the crypto/tls fix for GO-2026-5856 (reachable in our
         # LLM/tools TLS paths). Keep this >= the CI Security Scan toolchain so the
