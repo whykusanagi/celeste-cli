@@ -18,7 +18,7 @@ require (
 	github.com/ipfs/kubo v0.21.0-rc1
 	github.com/muesli/termenv v0.16.0
 	github.com/multiformats/go-multiaddr v0.9.0
-	github.com/sashabaranov/go-openai v1.41.2
+	github.com/sashabaranov/go-openai v1.42.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/stretchr/testify v1.11.1
 	github.com/tree-sitter/go-tree-sitter v0.25.0
