@@ -74,6 +74,34 @@ func TestNewRunnerUsesAgentModelOverride(t *testing.T) {
 	}
 }
 
+func TestNewRunnerUsesClientModelForPlannerDecision(t *testing.T) {
+	// cfg.Model is the model the LLM client actually talks to (NewRunner's own
+	// resolution a few lines below the derivation). cfg.AgentModel is a plain
+	// model that cfg.ResolveAgentModel() would prefer if it were consulted
+	// here. The planner decision must follow the model the run actually
+	// calls — cfg.Model, since options.Model is unset — or a fugu run with an
+	// AgentModel override left EnablePlanning on, leaving two planners active.
+	cfg := &config.Config{
+		BaseURL:    "https://api.sakana.ai/v1",
+		Model:      "fugu-ultra",
+		AgentModel: "gpt-4.1-nano",
+		APIKey:     "test-key",
+	}
+	opts := DefaultOptions()
+	opts.Workspace = t.TempDir()
+	opts.DisableCheckpoints = true
+
+	r, err := NewRunner(cfg, opts, nil, nil)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	defer r.Close()
+
+	if r.options.EnablePlanning {
+		t.Error("EnablePlanning = true, want false — the run talks to fugu-ultra (cfg.Model), not cfg.AgentModel")
+	}
+}
+
 func TestNewRunnerHonoursExplicitPlannerFlag(t *testing.T) {
 	cfg := newTestConfig("https://api.sakana.ai/v1", "fugu-ultra")
 	opts := DefaultOptions()

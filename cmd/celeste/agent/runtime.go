@@ -79,16 +79,23 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	options.Workspace = filepath.Clean(absWorkspace)
 
+	// Model-router seam: agent/orchestrate/subagent callers may override the model
+	// (cfg.ResolveAgentModel()) so agent work uses a tool-capable/reasoning model
+	// while chat keeps a cheaper one (task e8775b91). Resolved once, here: the
+	// planner-ownership check right below and the tool-support guardrail further
+	// down must agree on the model this run actually talks to, or we could decide
+	// planner ownership for a model the run never calls.
+	model := cfg.Model
+	if options.Model != "" {
+		model = options.Model
+	}
+
 	// Planner ownership. Fugu is a conductor: it decomposes, delegates and
 	// verifies server-side. Running our planning and verification phases on
 	// top of that means two planners that cannot see each other, so we stand
 	// ours down and act as a tool host. Every agent path reaches this
 	// constructor, so deriving here covers the CLI, subagents and the server.
-	effectiveModel := options.Model
-	if effectiveModel == "" {
-		effectiveModel = cfg.ResolveAgentModel()
-	}
-	if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), effectiveModel) {
+	if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), model) {
 		if !options.PlanningExplicit {
 			options.EnablePlanning = false
 		}
@@ -137,15 +144,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
 
-	// Model-router seam: agent/orchestrate/subagent callers may override the model
-	// (cfg.ResolveAgentModel()) so agent work uses a tool-capable/reasoning model
-	// while chat keeps a cheaper one (task e8775b91). Guardrail: warn loudly if the
-	// chosen model doesn't support tool calling — that model will flail/hallucinate
-	// in agent mode (observed with non-reasoning grok failing to drive spawn_agent).
-	model := cfg.Model
-	if options.Model != "" {
-		model = options.Model
-	}
+	// Guardrail: warn loudly if the chosen model doesn't support tool calling —
+	// that model will flail/hallucinate in agent mode (observed with
+	// non-reasoning grok failing to drive spawn_agent). model was resolved once,
+	// above, so this reads the same value the planner-ownership check used.
 	if provider := providers.DetectProvider(cfg.BaseURL); provider != "" {
 		if !providers.NewModelDetection(provider).SupportsTools(model) {
 			fmt.Fprintf(errOut, "⚠️  agent model %q (%s) may not support tool calling — agent/subagent work can fail or hallucinate; consider setting a tool-capable agent_model\n", model, provider)
