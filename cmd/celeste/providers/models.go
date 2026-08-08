@@ -110,7 +110,7 @@ func (s *ModelService) ValidateModel(ctx context.Context, modelID string) (Model
 func (s *ModelService) getStaticModels() []ModelInfo {
 	switch s.provider {
 	case "grok":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "grok-4.20-0309-non-reasoning",
 				Name:          "Grok 4.20 (non-reasoning)",
@@ -144,9 +144,13 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Latest general model (limited tool support)",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "openai":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "gpt-4.1-nano",
 				Name:          "GPT-4o Mini",
@@ -180,9 +184,13 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Fast and affordable legacy model",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "venice":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "venice-uncensored",
 				Name:          "Venice Uncensored",
@@ -205,9 +213,13 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Large open model with function calling",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "anthropic":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "claude-sonnet-4-5-20250929",
 				Name:          "Claude Sonnet 4.5",
@@ -225,9 +237,13 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Most capable Claude model",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "vertex":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "gemini-1.5-pro",
 				Name:          "Gemini 1.5 Pro",
@@ -245,9 +261,13 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Fast and efficient with tools",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "openrouter":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "openai/gpt-4.1-nano",
 				Name:          "GPT-4o Mini (via OpenRouter)",
@@ -263,9 +283,13 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Claude via OpenRouter",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "sakana":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "fugu",
 				Name:          "Fugu",
@@ -290,10 +314,30 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				ContextWindow: 1000000,
 				Description:   "Dated alias pin of fugu-ultra",
 			},
+			{
+				ID:            "fugu-ultra-v1.0",
+				Name:          "Fugu Ultra v1.0",
+				Provider:      "sakana",
+				SupportsTools: true,
+				ContextWindow: 1000000,
+				Description:   "Versioned Ultra release — high/xhigh reasoning effort",
+			},
+			{
+				ID:            "fugu-ultra-v1.1",
+				Name:          "Fugu Ultra v1.1",
+				Provider:      "sakana",
+				SupportsTools: true,
+				ContextWindow: 1000000,
+				Description:   "Latest Ultra — adds 'max' reasoning effort above xhigh",
+			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	case "digitalocean":
-		return []ModelInfo{
+		models := []ModelInfo{
 			{
 				ID:            "gpt-4.1-nano",
 				Name:          "GPT-4o Mini",
@@ -302,6 +346,10 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 				Description:   "Agent endpoint (no local skills)",
 			},
 		}
+		for i := range models {
+			models[i].OrchestratesServerSide = OrchestratesServerSide(models[i].Provider, models[i].ID)
+		}
+		return models
 
 	default:
 		return []ModelInfo{}

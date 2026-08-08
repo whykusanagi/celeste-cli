@@ -106,6 +106,18 @@ func runAgentCommand(args []string) {
 	opts.EnablePlanning = *enablePlanning
 	opts.PlanMaxSteps = *planMaxSteps
 	opts.RequireVerification = *requireVerification
+
+	// NewRunner stands the local planner down for conductor models. An
+	// explicitly passed -planner/-require-verify overrides that, which is what
+	// makes a local-vs-server-side planner comparison possible at all.
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "planner":
+			opts.PlanningExplicit = true
+		case "require-verify":
+			opts.VerificationExplicit = true
+		}
+	})
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)
 	opts.ArtifactDir = strings.TrimSpace(*artifactDir)
 	opts.EmitArtifacts = !*noArtifacts
