@@ -78,6 +78,32 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		return nil, fmt.Errorf("resolve workspace path: %w", err)
 	}
 	options.Workspace = filepath.Clean(absWorkspace)
+
+	// Model-router seam: agent/orchestrate/subagent callers may override the model
+	// (cfg.ResolveAgentModel()) so agent work uses a tool-capable/reasoning model
+	// while chat keeps a cheaper one (task e8775b91). Resolved once, here: the
+	// planner-ownership check right below and the tool-support guardrail further
+	// down must agree on the model this run actually talks to, or we could decide
+	// planner ownership for a model the run never calls.
+	model := cfg.Model
+	if options.Model != "" {
+		model = options.Model
+	}
+
+	// Planner ownership. Fugu is a conductor: it decomposes, delegates and
+	// verifies server-side. Running our planning and verification phases on
+	// top of that means two planners that cannot see each other, so we stand
+	// ours down and act as a tool host. Every agent path reaches this
+	// constructor, so deriving here covers the CLI, subagents and the server.
+	if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), model) {
+		if !options.PlanningExplicit {
+			options.EnablePlanning = false
+		}
+		if !options.VerificationExplicit {
+			options.RequireVerification = false
+		}
+	}
+
 	normalizeOptions(&options)
 
 	// Set up file checkpointing for stale detection and undo support.
@@ -118,15 +144,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
 
-	// Model-router seam: agent/orchestrate/subagent callers may override the model
-	// (cfg.ResolveAgentModel()) so agent work uses a tool-capable/reasoning model
-	// while chat keeps a cheaper one (task e8775b91). Guardrail: warn loudly if the
-	// chosen model doesn't support tool calling — that model will flail/hallucinate
-	// in agent mode (observed with non-reasoning grok failing to drive spawn_agent).
-	model := cfg.Model
-	if options.Model != "" {
-		model = options.Model
-	}
+	// Guardrail: warn loudly if the chosen model doesn't support tool calling —
+	// that model will flail/hallucinate in agent mode (observed with
+	// non-reasoning grok failing to drive spawn_agent). model was resolved once,
+	// above, so this reads the same value the planner-ownership check used.
 	if provider := providers.DetectProvider(cfg.BaseURL); provider != "" {
 		if !providers.NewModelDetection(provider).SupportsTools(model) {
 			fmt.Fprintf(errOut, "⚠️  agent model %q (%s) may not support tool calling — agent/subagent work can fail or hallucinate; consider setting a tool-capable agent_model\n", model, provider)
@@ -775,12 +796,11 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	if len(state.Options.VerificationCommands) == 0 && len(fallback.VerificationCommands) > 0 {
 		state.Options.VerificationCommands = fallback.VerificationCommands
 	}
-	if !state.Options.EnablePlanning && fallback.EnablePlanning {
-		state.Options.EnablePlanning = fallback.EnablePlanning
-	}
-	if !state.Options.RequireVerification && fallback.RequireVerification {
-		state.Options.RequireVerification = fallback.RequireVerification
-	}
+	// EnablePlanning and RequireVerification are deliberately NOT restored from
+	// the fallback. RunState.Options is persisted in full at run start, so a
+	// false here is a decision, not a gap — restoring it would put the local
+	// planner back on top of a server-side conductor mid-run, which is the one
+	// state this design exists to prevent.
 	if !state.Options.EmitArtifacts && fallback.EmitArtifacts {
 		state.Options.EmitArtifacts = fallback.EmitArtifacts
 	}
