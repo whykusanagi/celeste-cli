@@ -120,3 +120,52 @@ func TestNewRunnerHonoursExplicitPlannerFlag(t *testing.T) {
 		t.Error("EnablePlanning = false, want true — an explicit -planner must win")
 	}
 }
+
+func TestNormalizeStateOptionsPreservesDisabledPlanning(t *testing.T) {
+	// A run checkpointed in orchestrated mode: both flags deliberately false.
+	state := &RunState{
+		Options: Options{
+			Workspace:           "/workspace",
+			EnablePlanning:      false,
+			RequireVerification: false,
+		},
+	}
+	// Caller defaults, where both are true.
+	fallback := DefaultOptions()
+	fallback.RequireVerification = true
+
+	normalizeStateOptions(state, fallback)
+
+	if state.Options.EnablePlanning {
+		t.Error("EnablePlanning = true after resume, want false — the checkpoint decided this")
+	}
+	if state.Options.RequireVerification {
+		t.Error("RequireVerification = true after resume, want false — the checkpoint decided this")
+	}
+}
+
+func TestNormalizeStateOptionsStillFillsAbsentFields(t *testing.T) {
+	// The fix must be scoped to the two decision flags; everything else in
+	// normalizeStateOptions keeps filling from the fallback.
+	state := &RunState{Options: Options{}}
+	fallback := DefaultOptions()
+	fallback.Workspace = "/fallback-workspace"
+	fallback.ArtifactDir = "/artifacts"
+	fallback.VerificationCommands = []string{"go test ./..."}
+	fallback.EmitArtifacts = true
+
+	normalizeStateOptions(state, fallback)
+
+	if state.Options.Workspace != "/fallback-workspace" {
+		t.Errorf("Workspace = %q, want the fallback", state.Options.Workspace)
+	}
+	if state.Options.ArtifactDir != "/artifacts" {
+		t.Errorf("ArtifactDir = %q, want the fallback", state.Options.ArtifactDir)
+	}
+	if len(state.Options.VerificationCommands) != 1 {
+		t.Errorf("VerificationCommands = %v, want the fallback", state.Options.VerificationCommands)
+	}
+	if !state.Options.EmitArtifacts {
+		t.Error("EmitArtifacts = false, want the fallback")
+	}
+}

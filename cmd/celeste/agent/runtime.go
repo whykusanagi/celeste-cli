@@ -796,12 +796,11 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	if len(state.Options.VerificationCommands) == 0 && len(fallback.VerificationCommands) > 0 {
 		state.Options.VerificationCommands = fallback.VerificationCommands
 	}
-	if !state.Options.EnablePlanning && fallback.EnablePlanning {
-		state.Options.EnablePlanning = fallback.EnablePlanning
-	}
-	if !state.Options.RequireVerification && fallback.RequireVerification {
-		state.Options.RequireVerification = fallback.RequireVerification
-	}
+	// EnablePlanning and RequireVerification are deliberately NOT restored from
+	// the fallback. RunState.Options is persisted in full at run start, so a
+	// false here is a decision, not a gap — restoring it would put the local
+	// planner back on top of a server-side conductor mid-run, which is the one
+	// state this design exists to prevent.
 	if !state.Options.EmitArtifacts && fallback.EmitArtifacts {
 		state.Options.EmitArtifacts = fallback.EmitArtifacts
 	}
