@@ -70,8 +70,15 @@ func TestStaticModelsDerivationAllProviders(t *testing.T) {
 			s := NewModelService("", "", provider)
 			models := s.getStaticModels()
 			for _, m := range models {
-				// Verify the field matches the function (derivation succeeded)
-				want := OrchestratesServerSide(m.Provider, m.ID)
+				// Every entry must actually be tagged with the provider it was
+				// requested under; an unset or mismatched Provider is exactly
+				// the drift this test exists to catch.
+				if m.Provider != s.provider {
+					t.Errorf("model %q: Provider = %q, want %q", m.ID, m.Provider, s.provider)
+				}
+				// Verify the field matches the function, pinned against the
+				// switch discriminant rather than the entry's own field.
+				want := OrchestratesServerSide(s.provider, m.ID)
 				if m.OrchestratesServerSide != want {
 					t.Errorf("model %q: OrchestratesServerSide = %v, want %v",
 						m.ID, m.OrchestratesServerSide, want)
