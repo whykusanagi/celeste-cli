@@ -1459,8 +1459,8 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  Simulate Typing:   %v\n", cfg.SimulateTyping)
 		fmt.Printf("  Typing Speed:      %d chars/sec\n", cfg.TypingSpeed)
 		fmt.Printf("  Runtime Mode:      %s\n", cfg.RuntimeMode)
-		if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), cfg.ResolveAgentModel()) {
-			fmt.Printf("  Planning:          %s (server-side)\n", cfg.ResolveAgentModel())
+		if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), cfg.Model) {
+			fmt.Printf("  Planning:          %s (server-side)\n", cfg.Model)
 		} else {
 			fmt.Printf("  Planning:          local\n")
 		}
