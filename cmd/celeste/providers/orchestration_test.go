@@ -48,8 +48,11 @@ func TestStaticSakanaModelsAreFlagged(t *testing.T) {
 	seen := map[string]bool{}
 	for _, m := range models {
 		seen[m.ID] = true
-		if !m.OrchestratesServerSide {
-			t.Errorf("model %q: OrchestratesServerSide = false, want true", m.ID)
+		// Verify the field matches the function (derivation succeeded)
+		want := OrchestratesServerSide(m.Provider, m.ID)
+		if m.OrchestratesServerSide != want {
+			t.Errorf("model %q: OrchestratesServerSide = %v, want %v (function returned %v)",
+				m.ID, m.OrchestratesServerSide, want, want)
 		}
 	}
 	// Live /v1/models on 2026-08-07 returned these five.
@@ -57,5 +60,23 @@ func TestStaticSakanaModelsAreFlagged(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("static model list is missing %q", id)
 		}
+	}
+}
+
+func TestStaticModelsDerivationAllProviders(t *testing.T) {
+	providers := []string{"grok", "openai", "venice", "anthropic", "vertex", "openrouter", "sakana", "digitalocean"}
+	for _, provider := range providers {
+		t.Run(provider, func(t *testing.T) {
+			s := NewModelService("", "", provider)
+			models := s.getStaticModels()
+			for _, m := range models {
+				// Verify the field matches the function (derivation succeeded)
+				want := OrchestratesServerSide(m.Provider, m.ID)
+				if m.OrchestratesServerSide != want {
+					t.Errorf("model %q: OrchestratesServerSide = %v, want %v",
+						m.ID, m.OrchestratesServerSide, want)
+				}
+			}
+		})
 	}
 }
