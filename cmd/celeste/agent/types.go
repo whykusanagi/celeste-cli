@@ -59,8 +59,14 @@ type Options struct {
 	EnablePlanning                bool          `json:"enable_planning"`
 	PlanMaxSteps                  int           `json:"plan_max_steps"`
 	RequireVerification           bool          `json:"require_verification"`
-	VerificationCommands          []string      `json:"verification_commands,omitempty"`
-	VerifyTimeout                 time.Duration `json:"verify_timeout"`
+	// PlanningExplicit records that EnablePlanning was set deliberately by the
+	// caller, so NewRunner must not override it for conductor models. Not
+	// serialised: it describes how this run was launched, not its state.
+	PlanningExplicit bool `json:"-"`
+	// VerificationExplicit is the same guarantee for RequireVerification.
+	VerificationExplicit bool          `json:"-"`
+	VerificationCommands []string      `json:"verification_commands,omitempty"`
+	VerifyTimeout        time.Duration `json:"verify_timeout"`
 	// Model overrides the LLM model for this run (the model-router seam). Empty
 	// uses cfg.Model. Agent/orchestrate/subagent callers set this to
 	// cfg.ResolveAgentModel() so agent work can use a tool-capable/reasoning model.
