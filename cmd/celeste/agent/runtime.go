@@ -78,6 +78,25 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		return nil, fmt.Errorf("resolve workspace path: %w", err)
 	}
 	options.Workspace = filepath.Clean(absWorkspace)
+
+	// Planner ownership. Fugu is a conductor: it decomposes, delegates and
+	// verifies server-side. Running our planning and verification phases on
+	// top of that means two planners that cannot see each other, so we stand
+	// ours down and act as a tool host. Every agent path reaches this
+	// constructor, so deriving here covers the CLI, subagents and the server.
+	effectiveModel := options.Model
+	if effectiveModel == "" {
+		effectiveModel = cfg.ResolveAgentModel()
+	}
+	if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), effectiveModel) {
+		if !options.PlanningExplicit {
+			options.EnablePlanning = false
+		}
+		if !options.VerificationExplicit {
+			options.RequireVerification = false
+		}
+	}
+
 	normalizeOptions(&options)
 
 	// Set up file checkpointing for stale detection and undo support.
