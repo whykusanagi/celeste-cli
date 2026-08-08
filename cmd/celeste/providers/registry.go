@@ -25,6 +25,10 @@ type ModelInfo struct {
 	ContextWindow int
 	Description   string
 	Provider      string
+	// OrchestratesServerSide mirrors OrchestratesServerSide(Provider, ID) so
+	// display surfaces (/config, the model picker) can show it without
+	// recomputing. The function stays the single source of truth.
+	OrchestratesServerSide bool
 }
 
 // Registry holds all supported provider configurations.
