@@ -1459,6 +1459,11 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  Simulate Typing:   %v\n", cfg.SimulateTyping)
 		fmt.Printf("  Typing Speed:      %d chars/sec\n", cfg.TypingSpeed)
 		fmt.Printf("  Runtime Mode:      %s\n", cfg.RuntimeMode)
+		if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), cfg.ResolveAgentModel()) {
+			fmt.Printf("  Planning:          %s (server-side)\n", cfg.ResolveAgentModel())
+		} else {
+			fmt.Printf("  Planning:          local\n")
+		}
 		fmt.Printf("  Claw Max Iter:     %d\n", cfg.ClawMaxToolIterations)
 		fmt.Printf("  Venice API Key:    %s\n", maskKey(cfg.VeniceAPIKey))
 		fmt.Printf("  Tarot Configured:  %v\n", cfg.TarotAuthToken != "")
