@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -138,5 +139,75 @@ func TestWithRetry_BeforeTryPerAttempt(t *testing.T) {
 func TestNonRetryableWrapper(t *testing.T) {
 	if classifyError(fatalErr(errors.New("status code 503"))).Retryable {
 		t.Fatal("wrapped fatalErr must be non-retryable even if message looks transient")
+	}
+}
+
+// A per-attempt deadline that WE set expiring means the model needed more time
+// than we allowed. Retrying against the same allowance cannot succeed, and the
+// input trim does not shorten generation time — so all attempts hit the same
+// wall. Issue #113: this burned 3x90s + backoff = 273s before failing with a
+// bare "context deadline exceeded".
+func TestWithRetryDoesNotRetrySelfInflictedDeadline(t *testing.T) {
+	attempts := 0
+	slept := 0
+	err := withRetry(
+		context.Background(),
+		retryOpts{timeout: 20 * time.Millisecond},
+		func(ctx context.Context) error {
+			attempts++
+			<-ctx.Done() // burn our own per-attempt deadline
+			return ctx.Err()
+		},
+		func(time.Duration) { slept++ },
+	)
+
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 — a self-inflicted deadline must not be retried", attempts)
+	}
+	if slept != 0 {
+		t.Errorf("slept %d times, want 0 — no backoff for a doomed retry", slept)
+	}
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	// The bare "context deadline exceeded" told the user nothing actionable.
+	if !strings.Contains(err.Error(), "20ms") {
+		t.Errorf("error should name the exceeded timeout so the user can raise it, got: %v", err)
+	}
+}
+
+// Guard: a transport-reported timeout (our context is healthy) is a genuine
+// transient fault and must still retry. This is the case classifyError's
+// "deadline exceeded" string match exists for.
+func TestWithRetryStillRetriesTransportTimeout(t *testing.T) {
+	attempts := 0
+	_ = withRetry(
+		context.Background(),
+		retryOpts{timeout: time.Minute}, // generous: our deadline never fires
+		func(ctx context.Context) error {
+			attempts++
+			return errors.New("net/http: TLS handshake timeout")
+		},
+		func(time.Duration) {},
+	)
+	if attempts != 3 {
+		t.Errorf("attempts = %d, want 3 — transport timeouts stay retryable", attempts)
+	}
+}
+
+// Guard: caller cancellation (Ctrl+C) still stops immediately, unchanged.
+func TestWithRetryStopsOnCallerCancel(t *testing.T) {
+	base, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	_ = withRetry(base, retryOpts{timeout: time.Minute},
+		func(ctx context.Context) error {
+			attempts++
+			cancel()
+			return errors.New("connection reset by peer")
+		},
+		func(time.Duration) {},
+	)
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 — caller cancellation must not be retried", attempts)
 	}
 }

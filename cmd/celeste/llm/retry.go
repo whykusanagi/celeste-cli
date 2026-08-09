@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -107,6 +109,9 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 			ctx, cancel = context.WithTimeout(base, opts.timeout)
 		}
 		err := fn(ctx)
+		// Capture before cancel(): once cancelled, ctx.Err() no longer tells us
+		// whether the attempt ran out of time or was torn down.
+		attemptTimedOut := opts.timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 
 		if err == nil {
@@ -118,6 +123,20 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 		// stop rather than replaying the request against a dead parent.
 		if base.Err() != nil {
 			return lastErr
+		}
+
+		// Our OWN per-attempt deadline expired. That means the model needed more
+		// time than we allowed — not a transient transport fault, even though the
+		// error text ("context deadline exceeded") matches the network pattern in
+		// classifyError. Retrying cannot help: each attempt gets the same
+		// allowance, and beforeTry trims the request, which shortens the input,
+		// not the generation. So every attempt dies at the same wall.
+		//
+		// Issue #113: this burned 3x90s + backoff = 273s on sakana/fugu before
+		// failing with a bare, uninformative error. Fail on the first attempt and
+		// say which knob to turn.
+		if attemptTimedOut {
+			return fmt.Errorf("request exceeded the %s per-request timeout; raise it with `config --set-timeout <seconds>` or shorten the request: %w", opts.timeout, err)
 		}
 		cls := classifyError(err)
 		if !cls.Retryable || attempt >= maxAttempts(cls) {
