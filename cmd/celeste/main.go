@@ -2231,6 +2231,11 @@ func runServeCommand(args []string) {
 		serverCfg.KeyFile = *keyFile
 	}
 
+	// Stamp the build commit so celeste_status can report which binary is
+	// actually serving — a stale MCP process is otherwise indistinguishable
+	// from a fresh one (both report the release-please version constant).
+	server.SetBuildCommit(CommitSHA)
+
 	srv := server.New(serverCfg)
 	server.RegisterHandlers(srv)
 	// Close releases the per-workspace codegraph indexers the server

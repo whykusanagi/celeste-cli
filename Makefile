@@ -3,6 +3,16 @@
 # Install destination (override with: make install BIN=/custom/path/celeste)
 BIN ?= $(HOME)/.local/bin/celeste
 
+# Stamp the build commit into the binary, the same way release.yml does.
+# Without this a locally built binary reports CommitSHA="dev" and the bare
+# release-please version, so `celeste version` and `celeste_status` read
+# identically whether you are running a shipped release or a local build
+# several merges ahead — which is exactly how a stale MCP server hides.
+# -dirty marks an uncommitted tree so a hand-patched build is never mistaken
+# for the commit it was based on.
+COMMIT ?= $(shell git describe --always --dirty --abbrev=7 2>/dev/null || echo dev)
+LDFLAGS ?= -X main.CommitSHA=$(COMMIT)
+
 # Default target
 help:
 	@echo "Celeste CLI Build Commands"
@@ -25,7 +35,7 @@ help:
 # Build the binary
 build:
 	@echo "🔨 Building Celeste..."
-	@cd cmd/celeste && go build -o ../../celeste .
+	@go build -ldflags "$(LDFLAGS)" -o ./celeste ./cmd/celeste
 	@echo "✅ Build complete: ./celeste"
 
 # Build and install to PATH.
@@ -37,7 +47,7 @@ build:
 install:
 	@echo "📦 Installing to $(BIN)..."
 	@mkdir -p "$(dir $(BIN))"
-	@go build -o "$(BIN)" ./cmd/celeste
+	@go build -ldflags "$(LDFLAGS)" -o "$(BIN)" ./cmd/celeste
 	@chmod +x "$(BIN)"
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		codesign --force --sign - "$(BIN)" && echo "🔏 ad-hoc signed (macOS AMFI)"; \

@@ -146,7 +146,7 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.PrintUsage()
 	case "version", "-v", "--version":
 		if CommitSHA != "dev" {
-			fmt.Fprintf(stdout, "Celeste CLI %s (%s) [%s]\n", Version, Build, CommitSHA[:8])
+			fmt.Fprintf(stdout, "Celeste CLI %s (%s) [%s]\n", Version, Build, shortCommit(CommitSHA))
 		} else {
 			fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
 		}
@@ -205,4 +205,17 @@ func extractGlobalFlags(args []string) []string {
 		filtered = append(filtered, args[i])
 	}
 	return filtered
+}
+
+// shortCommit renders a build stamp for display. CI stamps a full 40-char git
+// SHA, which is abbreviated; `make install` stamps an already-short value like
+// "4078dec" or "4078dec-dirty", which is kept whole so the dirty marker stays
+// visible. Previously this was CommitSHA[:8], which panicked on any stamp
+// shorter than 8 characters and truncated "4078dec-dirty" to "4078dec-".
+func shortCommit(sha string) string {
+	const fullSHALen = 40
+	if len(sha) == fullSHALen {
+		return sha[:8]
+	}
+	return sha
 }
