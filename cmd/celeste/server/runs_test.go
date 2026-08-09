@@ -257,3 +257,89 @@ func TestBackgroundThreshold(t *testing.T) {
 		t.Fatal("failed run never reached a terminal state")
 	})
 }
+
+// The no-argument payload must not change: existing callers (the
+// celeste-for-claude skills, any client) depend on these keys.
+func TestCelesteStatusNoArgsUnchanged(t *testing.T) {
+	s := New(Config{})
+	registerCelesteStatusTool(s)
+
+	blocks, err := s.handlers["celeste_status"](context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("celeste_status: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(blocks[0].Text), &payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	for _, k := range []string{"server", "version", "commit", "uptime", "health"} {
+		if _, ok := payload[k]; !ok {
+			t.Errorf("no-arg payload lost key %q", k)
+		}
+	}
+	if _, ok := payload["run_id"]; ok {
+		t.Error("no-arg payload must not carry run_id")
+	}
+}
+
+func TestCelesteStatusReportsRun(t *testing.T) {
+	s := New(Config{})
+	registerCelesteStatusTool(s)
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.registerRun("bg-status", cancel)
+
+	blocks, err := s.handlers["celeste_status"](context.Background(), map[string]any{"run_id": "bg-status"})
+	if err != nil {
+		t.Fatalf("celeste_status: %v", err)
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(blocks[0].Text), &payload)
+	if payload["run_id"] != "bg-status" {
+		t.Errorf("run_id = %v, want bg-status", payload["run_id"])
+	}
+	if payload["status"] != "running" {
+		t.Errorf("status = %v, want running", payload["status"])
+	}
+	if _, ok := payload["elapsed"]; !ok {
+		t.Error("a running run should report elapsed so a caller can see it is alive")
+	}
+}
+
+// A client restart kills the server and every run with it. An unknown id must
+// say so, or someone hunts for a bug that is not there.
+func TestCelesteStatusUnknownRunNamesRestart(t *testing.T) {
+	s := New(Config{})
+	registerCelesteStatusTool(s)
+
+	blocks, err := s.handlers["celeste_status"](context.Background(), map[string]any{"run_id": "bg-gone"})
+	if err != nil {
+		t.Fatalf("celeste_status: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(blocks[0].Text), "restart") {
+		t.Errorf("unknown-run message should explain the restart case, got: %s", blocks[0].Text)
+	}
+}
+
+func TestCelesteStatusCancels(t *testing.T) {
+	s := New(Config{})
+	registerCelesteStatusTool(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.registerRun("bg-cancel", cancel)
+
+	blocks, err := s.handlers["celeste_status"](context.Background(),
+		map[string]any{"run_id": "bg-cancel", "cancel": true})
+	if err != nil {
+		t.Fatalf("celeste_status: %v", err)
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(blocks[0].Text), &payload)
+	if payload["status"] != "cancelled" {
+		t.Errorf("status = %v, want cancelled", payload["status"])
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Error("cancel did not cancel the run context")
+	}
+}

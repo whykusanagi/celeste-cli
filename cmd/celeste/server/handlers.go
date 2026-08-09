@@ -646,11 +646,20 @@ func registerCelesteContentTool(s *Server) {
 func celesteStatusToolDef() mcp.MCPToolDef {
 	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": {}
+		"properties": {
+			"run_id": {
+				"type": "string",
+				"description": "Report on a background agent run instead of the server. Use the run_id returned when an agent run exceeded the inline threshold."
+			},
+			"cancel": {
+				"type": "boolean",
+				"description": "With run_id, cancel that run instead of reporting on it."
+			}
+		}
 	}`)
 	return mcp.MCPToolDef{
 		Name:        "celeste_status",
-		Description: "Get Celeste's current status: connected providers, loaded grimoire, indexed project, session cost.",
+		Description: "Get Celeste's current status: connected providers, loaded grimoire, indexed project, session cost. With run_id, report on (or cancel) a background agent run instead.",
 		InputSchema: schema,
 	}
 }
@@ -659,6 +668,41 @@ func registerCelesteStatusTool(s *Server) {
 	startTime := time.Now()
 
 	s.RegisterTool(celesteStatusToolDef(), func(ctx context.Context, args map[string]any) ([]ContentBlock, error) {
+		if rawID, ok := args["run_id"].(string); ok && rawID != "" {
+			if doCancel, _ := args["cancel"].(bool); doCancel {
+				s.cancelRun(rawID)
+			}
+			run, found := s.lookupRun(rawID)
+			if !found {
+				return []ContentBlock{{Type: "text", Text: fmt.Sprintf(
+					"unknown run %q. Background runs are held in memory by this MCP server, so a client restart ends them — the run is gone rather than lost. Checkpoints remain on disk; `celeste agent -list-runs` shows them.",
+					rawID)}}, nil
+			}
+
+			out := map[string]any{
+				"run_id":     run.ID,
+				"status":     run.Status,
+				"turns":      run.Turns,
+				"tool_calls": run.ToolCalls,
+			}
+			if run.Status == "running" {
+				out["elapsed"] = time.Since(run.StartedAt).Round(time.Second).String()
+			} else {
+				out["elapsed"] = run.EndedAt.Sub(run.StartedAt).Round(time.Second).String()
+			}
+			if run.Result != "" {
+				out["result"] = run.Result
+			}
+			if run.Error != "" {
+				out["error"] = run.Error
+			}
+			if run.AgentRunID != "" {
+				out["agent_run_id"] = run.AgentRunID
+			}
+			b, _ := json.MarshalIndent(out, "", "  ")
+			return []ContentBlock{{Type: "text", Text: string(b)}}, nil
+		}
+
 		cfg := s.config.CelesteConfig
 
 		status := map[string]any{
