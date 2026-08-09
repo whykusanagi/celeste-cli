@@ -59,6 +59,10 @@ type Options struct {
 	EnablePlanning                bool          `json:"enable_planning"`
 	PlanMaxSteps                  int           `json:"plan_max_steps"`
 	RequireVerification           bool          `json:"require_verification"`
+	// RequestTimeoutExplicit records that RequestTimeout was set deliberately by
+	// the caller, so NewRunner must not raise it for conductor models. Same
+	// contract as PlanningExplicit below.
+	RequestTimeoutExplicit bool `json:"-"`
 	// PlanningExplicit records that EnablePlanning was set deliberately by the
 	// caller, so NewRunner must not override it for conductor models. Not
 	// serialised: it describes how this run was launched, not its state.

@@ -116,6 +116,8 @@ func runAgentCommand(args []string) {
 			opts.PlanningExplicit = true
 		case "require-verify":
 			opts.VerificationExplicit = true
+		case "request-timeout":
+			opts.RequestTimeoutExplicit = true
 		}
 	})
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)

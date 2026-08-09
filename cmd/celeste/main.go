@@ -1516,7 +1516,7 @@ func createConfigTemplate(name string) error {
 		"openai":          {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
 		"grok":            {provider: "grok", timeout: 60, runtimeMode: config.RuntimeModeClassic},
 		"venice":          {provider: "venice", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"sakana":          {provider: "sakana", timeout: 90, runtimeMode: config.RuntimeModeClassic}, // Fugu Ultra orchestrates 1-3 agents; allow headroom
+		"sakana":          {provider: "sakana", timeout: 300, runtimeMode: config.RuntimeModeClassic}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
 		"elevenlabs":      {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60, runtimeMode: config.RuntimeModeClassic},
 		"digitalocean":    {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true, runtimeMode: config.RuntimeModeClassic}, // DO agents have built-in persona
 		"celeste-classic": {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
