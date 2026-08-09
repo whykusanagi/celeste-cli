@@ -212,10 +212,28 @@ func extractGlobalFlags(args []string) []string {
 // "4078dec" or "4078dec-dirty", which is kept whole so the dirty marker stays
 // visible. Previously this was CommitSHA[:8], which panicked on any stamp
 // shorter than 8 characters and truncated "4078dec-dirty" to "4078dec-".
+// Length alone is too weak a test: a 40-character value that is not a SHA (a
+// long describe stamp, or a tag like "release-2026-08-08-build-metadata-abcdef")
+// would be cut to 8 misleading characters — the same defect this helper fixes.
+// Require hex as well, which only a real SHA satisfies.
 func shortCommit(sha string) string {
 	const fullSHALen = 40
-	if len(sha) == fullSHALen {
+	if len(sha) == fullSHALen && isHex(sha) {
 		return sha[:8]
 	}
 	return sha
+}
+
+// isHex reports whether s is entirely hexadecimal digits.
+func isHex(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9',
+			r >= 'a' && r <= 'f',
+			r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
