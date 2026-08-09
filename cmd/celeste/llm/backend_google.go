@@ -23,6 +23,24 @@ type GoogleBackend struct {
 	thinkingConfig ThinkingConfig
 }
 
+// googleAPIVersion picks the Google API version for a base URL.
+//
+// AI Studio (generativelanguage.googleapis.com) must use v1beta. Google retired
+// v1 for current models: verified 2026-08-08 that gemini-3.6-flash and
+// gemini-2.5-flash both return 404 on v1 while succeeding on v1beta, and
+// gemini-2.0-flash answers "This model is no longer available". Note /v1/models
+// still LISTS those models with generateContent in supportedGenerationMethods,
+// so the listing endpoint cannot be trusted to tell you what is callable.
+//
+// Vertex (aiplatform.googleapis.com) keeps v1, which is its own convention and
+// a separate service — do not fold the two together.
+func googleAPIVersion(baseURL string) string {
+	if baseURL == "" || strings.Contains(baseURL, "generativelanguage.googleapis.com") {
+		return "v1beta"
+	}
+	return "v1"
+}
+
 // NewGoogleBackend creates a new Google GenAI backend with automatic authentication.
 // Authentication methods (in order of priority):
 // 1. Simple API key (for Gemini AI Studio)
@@ -35,7 +53,7 @@ func NewGoogleBackend(config *Config) (*GoogleBackend, error) {
 	// Create client configuration with API version
 	clientConfig := &genai.ClientConfig{
 		HTTPOptions: genai.HTTPOptions{
-			APIVersion: "v1",
+			APIVersion: googleAPIVersion(config.BaseURL),
 		},
 	}
 
