@@ -3,6 +3,27 @@
 # Install destination (override with: make install BIN=/custom/path/celeste)
 BIN ?= $(HOME)/.local/bin/celeste
 
+# Stamp the build commit into the binary, the same way release.yml does.
+# Without this a locally built binary reports CommitSHA="dev" and the bare
+# release-please version, so `celeste version` and `celeste_status` read
+# identically whether you are running a shipped release or a local build
+# several merges ahead — which is exactly how a stale MCP server hides.
+# -dirty marks an uncommitted tree so a hand-patched build is never mistaken
+# for the commit it was based on.
+#
+# The value is sanitised to [A-Za-z0-9._-] because it is interpolated into a
+# shell recipe: git accepts tag names containing shell metacharacters, so an
+# untrusted tag like `v1.0$(...)-tag` would otherwise execute during `make build`
+# in a clone of someone else's history.
+COMMIT ?= $(shell (git describe --always --dirty --abbrev=7 2>/dev/null || echo dev) | sed 's/[^A-Za-z0-9._-]/_/g')
+
+# GO_LDFLAGS is private and APPENDS to any caller-supplied LDFLAGS rather than
+# yielding to it. It was `LDFLAGS ?=`, which meant a pre-set LDFLAGS — an env var
+# nix shells, distro packaging and CI images routinely export — silently dropped
+# the stamp and put the binary back to CommitSHA="dev", precisely in the
+# environments where nobody would notice. Callers can still pass their own flags.
+GO_LDFLAGS := -X main.CommitSHA=$(COMMIT) $(LDFLAGS)
+
 # Default target
 help:
 	@echo "Celeste CLI Build Commands"
@@ -25,7 +46,7 @@ help:
 # Build the binary
 build:
 	@echo "🔨 Building Celeste..."
-	@cd cmd/celeste && go build -o ../../celeste .
+	@go build -ldflags "$(GO_LDFLAGS)" -o ./celeste ./cmd/celeste
 	@echo "✅ Build complete: ./celeste"
 
 # Build and install to PATH.
@@ -37,7 +58,7 @@ build:
 install:
 	@echo "📦 Installing to $(BIN)..."
 	@mkdir -p "$(dir $(BIN))"
-	@go build -o "$(BIN)" ./cmd/celeste
+	@go build -ldflags "$(GO_LDFLAGS)" -o "$(BIN)" ./cmd/celeste
 	@chmod +x "$(BIN)"
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		codesign --force --sign - "$(BIN)" && echo "🔏 ad-hoc signed (macOS AMFI)"; \

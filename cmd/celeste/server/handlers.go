@@ -572,8 +572,14 @@ func registerCelesteStatusTool(s *Server) {
 		status := map[string]any{
 			"server":  serverName,
 			"version": serverVersion,
-			"uptime":  time.Since(startTime).Round(time.Second).String(),
-			"health":  "ok",
+			// The commit is what makes a stale server visible: version alone is a
+			// release-please constant and reads the same for a shipped release and
+			// a local build several merges ahead. An MCP process left running
+			// across a reinstall keeps serving the old binary until the client
+			// restarts, and this is the field that says so.
+			"commit": BuildCommit(),
+			"uptime": time.Since(startTime).Round(time.Second).String(),
+			"health": "ok",
 		}
 
 		if cfg != nil {

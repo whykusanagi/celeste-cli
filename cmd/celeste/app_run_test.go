@@ -283,3 +283,59 @@ func TestRun_ConfigNameResetsPerInvocation(t *testing.T) {
 	assert.Empty(t, runtimeModeOverride)
 	assert.Equal(t, 0, clawMaxToolIterationsOverride)
 }
+
+// CommitSHA[:8] panicked on any stamp shorter than 8 characters and silently
+// mangled readable local stamps: `make install` stamps something like
+// "4078dec-dirty", which sliced to "4078dec-" — losing the dirty marker and
+// leaving a trailing hyphen that looks like corruption. Release builds stamp a
+// full 40-char SHA and DO want abbreviating.
+func TestShortCommit(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0", "a1b2c3d4"}, // release: full SHA abbreviates
+		{"4078dec-dirty", "4078dec-dirty"},                       // local: kept whole, dirty visible
+		{"4078dec", "4078dec"},                                   // short sha kept whole
+		{"abc", "abc"},                                           // would have PANICKED
+		{"", ""},                                                 // would have PANICKED
+		{"dev", "dev"},
+	}
+	for _, c := range cases {
+		if got := shortCommit(c.in); got != c.want {
+			t.Errorf("shortCommit(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// len(sha)==40 alone was a weak discriminator: a 40-character value that is not
+// a SHA got truncated to 8 misleading characters — the same class of bug this
+// helper exists to fix, just on a rarer input. Require hex as well.
+func TestShortCommit_FortyCharNonSHA(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{
+			"40-char describe stamp is not a SHA",
+			"v1.14.0-10-g4078dec-dirty-extra123456789",
+			"v1.14.0-10-g4078dec-dirty-extra123456789",
+		},
+		{
+			"40-char tag is not a SHA",
+			"release-2026-08-08-build-metadata-abcdef",
+			"release-2026-08-08-build-metadata-abcdef",
+		},
+		{
+			"40-char hex IS a SHA and still abbreviates",
+			"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+			"a1b2c3d4",
+		},
+		{
+			"40-char uppercase hex is still a SHA",
+			"A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9B0",
+			"A1B2C3D4",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shortCommit(c.in); got != c.want {
+				t.Errorf("shortCommit(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
