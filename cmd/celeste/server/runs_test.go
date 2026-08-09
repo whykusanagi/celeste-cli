@@ -259,7 +259,10 @@ func TestBackgroundThreshold(t *testing.T) {
 }
 
 // The no-argument payload must not change: existing callers (the
-// celeste-for-claude skills, any client) depend on these keys.
+// celeste-for-claude skills, any client) depend on these keys — the same
+// set, not a superset or subset. New(Config{}) leaves CelesteConfig nil, so
+// "provider" and "model" (which are conditional on it) are correctly absent
+// here; "workspace" and "transport" are unconditional and must be present.
 func TestCelesteStatusNoArgsUnchanged(t *testing.T) {
 	s := New(Config{})
 	registerCelesteStatusTool(s)
@@ -272,11 +275,22 @@ func TestCelesteStatusNoArgsUnchanged(t *testing.T) {
 	if err := json.Unmarshal([]byte(blocks[0].Text), &payload); err != nil {
 		t.Fatalf("payload is not JSON: %v", err)
 	}
-	for _, k := range []string{"server", "version", "commit", "uptime", "health"} {
-		if _, ok := payload[k]; !ok {
-			t.Errorf("no-arg payload lost key %q", k)
-		}
+
+	want := map[string]bool{
+		"server": true, "version": true, "commit": true,
+		"uptime": true, "health": true, "workspace": true, "transport": true,
 	}
+	for k := range payload {
+		if !want[k] {
+			t.Errorf("no-arg payload has unexpected key %q", k)
+			continue
+		}
+		delete(want, k)
+	}
+	for k := range want {
+		t.Errorf("no-arg payload is missing key %q", k)
+	}
+
 	if _, ok := payload["run_id"]; ok {
 		t.Error("no-arg payload must not carry run_id")
 	}
