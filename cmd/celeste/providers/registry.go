@@ -96,11 +96,16 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    false,
 		SupportsTokenTracking:   true,
-		DefaultModel:            "gemini-2.0-flash",
-		PreferredToolModel:      "gemini-2.0-flash",
-		RequiresAPIKey:          true,  // Simple API key from https://aistudio.google.com/apikey
-		IsOpenAICompatible:      false, // Uses native Google GenAI SDK
-		Notes:                   "RECOMMENDED: Native Google GenAI SDK with automatic authentication. Simple API keys (AIza...), free tier available. Full function calling support with streaming. Get key: https://aistudio.google.com/apikey",
+		// gemini-flash-latest is a Google-maintained alias that currently
+		// resolves to gemini-3.6-flash. Pinning an alias rather than a version
+		// is deliberate: the previous default (gemini-2.0-flash) was retired
+		// upstream and shipped broken. An alias moves that maintenance to
+		// Google. Requires v1beta — the alias does not exist on v1.
+		DefaultModel:       "gemini-flash-latest",
+		PreferredToolModel: "gemini-flash-latest",
+		RequiresAPIKey:     true,  // Simple API key from https://aistudio.google.com/apikey
+		IsOpenAICompatible: false, // Uses native Google GenAI SDK
+		Notes:              "RECOMMENDED: Native Google GenAI SDK with automatic authentication. Simple API keys (AIza...), free tier available. Full function calling support with streaming. Get key: https://aistudio.google.com/apikey",
 	},
 
 	"vertex": {
@@ -109,11 +114,17 @@ var Registry = map[string]ProviderCapabilities{
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    false,
 		SupportsTokenTracking:   true,
-		DefaultModel:            "gemini-2.0-flash",
-		PreferredToolModel:      "gemini-2.0-flash",
-		RequiresAPIKey:          false, // Uses ADC or service account - NO manual token needed!
-		IsOpenAICompatible:      false, // Uses native Google GenAI SDK
-		Notes:                   "ENTERPRISE: Native Google GenAI SDK with automatic authentication. No manual token refresh! Use: (1) gcloud auth application-default login OR (2) Service account JSON. Tokens auto-refresh indefinitely. Requires GCP project + billing.",
+		// UNVERIFIED (2026-08-08): gemini-2.0-flash was retired on AI Studio and
+		// its default moved to the gemini-flash-latest alias. Vertex is a
+		// separate service on aiplatform.googleapis.com with its own model
+		// lifecycle and does not carry the -latest aliases, so this was left
+		// alone rather than changed blind — verifying needs a GCP project with
+		// billing. If Vertex runs also fail with NOT_FOUND, this is the line.
+		DefaultModel:       "gemini-2.0-flash",
+		PreferredToolModel: "gemini-2.0-flash",
+		RequiresAPIKey:     false, // Uses ADC or service account - NO manual token needed!
+		IsOpenAICompatible: false, // Uses native Google GenAI SDK
+		Notes:              "ENTERPRISE: Native Google GenAI SDK with automatic authentication. No manual token refresh! Use: (1) gcloud auth application-default login OR (2) Service account JSON. Tokens auto-refresh indefinitely. Requires GCP project + billing.",
 	},
 
 	"openrouter": {

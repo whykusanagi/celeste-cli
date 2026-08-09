@@ -95,8 +95,11 @@ func TestGetBestToolModel(t *testing.T) {
 		{"grok", "grok-4.20-0309-non-reasoning"},
 		{"venice", ""}, // Venice uncensored has no tool model
 		{"anthropic", "claude-sonnet-4-5-20250929"},
-		{"gemini", "gemini-2.0-flash"},
-		{"vertex", "gemini-2.0-flash"},
+		// gemini uses Google's -latest alias so the pointer is maintained
+		// upstream; the previously asserted gemini-2.0-flash was retired and
+		// this test was locking the broken value in.
+		{"gemini", "gemini-flash-latest"},
+		{"vertex", "gemini-2.0-flash"}, // separate service, see registry.go
 		{"openrouter", "openai/gpt-4.1-nano"},
 		{"digitalocean", ""}, // No preferred tool model
 		{"unknown", ""},      // Unknown provider
