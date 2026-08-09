@@ -2,10 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
 func TestRegisterAndLookupRun(t *testing.T) {
@@ -145,4 +150,110 @@ func TestNewRunIDIsUniqueAndPrefixed(t *testing.T) {
 	if len(a) < 4 || a[:3] != "bg-" {
 		t.Errorf("run ID %q should start with bg-", a)
 	}
+}
+
+// Under the threshold the response must be exactly what it is today — the
+// result inline, no handle, nothing registered. Over it, a handle whose status
+// is running, which later reports completed. Driven by a fake slow run rather
+// than a live model so the threshold logic is deterministic.
+func TestBackgroundThreshold(t *testing.T) {
+	origAfter := backgroundAfter
+	origExec := agentExecFn
+	t.Cleanup(func() { backgroundAfter = origAfter; agentExecFn = origExec })
+
+	backgroundAfter = 50 * time.Millisecond
+
+	t.Run("under threshold returns inline", func(t *testing.T) {
+		s := New(Config{})
+		agentExecFn = func(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
+			return agentOutcome{Text: "fast answer", Turns: 1}, nil
+		}
+		blocks, err := s.runAgentMode(context.Background(), &config.Config{}, "go", t.TempDir())
+		if err != nil {
+			t.Fatalf("runAgentMode: %v", err)
+		}
+		if len(blocks) == 0 || !strings.Contains(blocks[0].Text, "fast answer") {
+			t.Errorf("expected the result inline, got %+v", blocks)
+		}
+		if n := s.runCount(); n != 0 {
+			t.Errorf("registry holds %d runs, want 0 — a fast run must not register", n)
+		}
+	})
+
+	t.Run("over threshold returns a handle then completes", func(t *testing.T) {
+		s := New(Config{})
+		release := make(chan struct{})
+		agentExecFn = func(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
+			<-release
+			return agentOutcome{Text: "slow answer", Turns: 4, ToolCalls: 6, AgentRunID: "20260809-1"}, nil
+		}
+
+		blocks, err := s.runAgentMode(context.Background(), &config.Config{}, "go", t.TempDir())
+		if err != nil {
+			t.Fatalf("runAgentMode: %v", err)
+		}
+		var handle struct {
+			RunID  string `json:"run_id"`
+			Status string `json:"status"`
+			Poll   string `json:"poll"`
+		}
+		if err := json.Unmarshal([]byte(blocks[0].Text), &handle); err != nil {
+			t.Fatalf("handle is not JSON: %v (%s)", err, blocks[0].Text)
+		}
+		if handle.Status != "running" {
+			t.Errorf("status = %q, want running", handle.Status)
+		}
+		if handle.RunID == "" {
+			t.Fatal("handle carries no run_id")
+		}
+		if !strings.Contains(handle.Poll, handle.RunID) {
+			t.Errorf("poll hint %q should name the run_id so a model need not infer it", handle.Poll)
+		}
+
+		close(release)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if got, ok := s.lookupRun(handle.RunID); ok && got.Status == "completed" {
+				if got.Result != "slow answer" {
+					t.Errorf("Result = %q, want %q", got.Result, "slow answer")
+				}
+				if got.AgentRunID != "20260809-1" {
+					t.Errorf("AgentRunID = %q, want it recorded", got.AgentRunID)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("run never reached completed")
+	})
+
+	t.Run("over threshold failure is recorded", func(t *testing.T) {
+		s := New(Config{})
+		release := make(chan struct{})
+		agentExecFn = func(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
+			<-release
+			return agentOutcome{}, errors.New("boom")
+		}
+		blocks, err := s.runAgentMode(context.Background(), &config.Config{}, "go", t.TempDir())
+		if err != nil {
+			t.Fatalf("runAgentMode: %v", err)
+		}
+		var handle struct {
+			RunID string `json:"run_id"`
+		}
+		_ = json.Unmarshal([]byte(blocks[0].Text), &handle)
+		close(release)
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if got, ok := s.lookupRun(handle.RunID); ok && got.Status == "failed" {
+				if !strings.Contains(got.Error, "boom") {
+					t.Errorf("Error = %q, want it to carry the failure", got.Error)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("failed run never reached a terminal state")
+	})
 }
