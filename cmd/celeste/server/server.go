@@ -70,6 +70,12 @@ type Server struct {
 	// populated on first use via indexerFor. Released on Close.
 	indexerMu sync.Mutex
 	indexers  map[string]*codegraph.Indexer
+
+	// runs tracks MCP agent runs that outlived the inline threshold, so a client
+	// can poll for a result instead of holding an HTTP call open for minutes.
+	// In-memory: a run dies with the server when the client restarts.
+	runMu sync.Mutex
+	runs  map[string]*BackgroundRun
 }
 
 // New creates a new MCP server with the given configuration.
@@ -79,6 +85,7 @@ func New(cfg Config) *Server {
 		handlers: make(map[string]ToolHandler),
 		done:     make(chan struct{}),
 		indexers: make(map[string]*codegraph.Indexer),
+		runs:     make(map[string]*BackgroundRun),
 	}
 	return s
 }
