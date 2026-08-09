@@ -55,6 +55,42 @@ func (r *Runner) Close() {
 	}
 }
 
+// conductorRequestTimeout is the per-turn deadline for a model that plans
+// server-side. Deliberately generous: fan-out width is chosen per request, so a
+// conductor's latency is nondeterministic by design and a tight deadline fights
+// it rather than protecting anything. The architecture spec's guidance is
+// "generous timeouts, idempotent tool execution, backoff only on genuine
+// transport errors" — this is the first half.
+//
+// ponytail: one constant, not a per-model table. Raise it if a real workload
+// exceeds it; a table is only worth it once the variants actually differ.
+const conductorRequestTimeout = 300 * time.Second
+
+// annotateTurnTimeout wraps err with actionable guidance when the agent's OWN
+// per-turn deadline expired. Issue #113's second complaint was that a timeout
+// "ends in the bare, uninformative error context deadline exceeded" — the retry
+// fix in #122 could not address that on this path, because the agent sets its
+// own deadline, so withRetry sees a cancelled parent and returns the raw error.
+//
+// ours must be true only when OUR deadline fired and the caller's context is
+// still healthy, so a Ctrl+C or a genuine transport failure is never mislabelled
+// as a timeout the user could fix by raising a flag.
+func annotateTurnTimeout(err error, ours bool, timeout time.Duration) error {
+	if err == nil || !ours {
+		return err
+	}
+	return fmt.Errorf("agent turn exceeded the %s per-request timeout; raise it with -request-timeout <seconds> or reduce the work in a single turn: %w", timeout, err)
+}
+
+// maxDuration returns the larger of a and b. Used to lift a configured timeout
+// to a floor without ever lowering one the user chose deliberately.
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Writer) (*Runner, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
@@ -90,12 +126,33 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		model = options.Model
 	}
 
+	// clientTimeoutFloor raises the LLM client's per-attempt deadline for models
+	// that plan server-side. Zero means "leave the configured value alone".
+	var clientTimeoutFloor time.Duration
+
 	// Planner ownership. Fugu is a conductor: it decomposes, delegates and
 	// verifies server-side. Running our planning and verification phases on
 	// top of that means two planners that cannot see each other, so we stand
 	// ours down and act as a tool host. Every agent path reaches this
 	// constructor, so deriving here covers the CLI, subagents and the server.
 	if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), model) {
+		// A conductor picks its fan-out width per request, so its latency is
+		// variable BY DESIGN — the architecture spec calls this out as a price of
+		// the offload. The 90s default is measurably too low: a substantial review
+		// prompt through MCP agent mode hit that ceiling twice and died with a
+		// bare deadline error. Give conductors headroom unless the caller named a
+		// timeout themselves.
+		//
+		// BOTH deadlines have to move or neither matters. The agent's per-turn
+		// context and the LLM client's per-attempt deadline (cfg.Timeout) are
+		// independent, and the tighter one wins — raising only the agent's was
+		// moot in practice: a real workload still died at the client's 90s and
+		// reported the chat-path message. clientTimeoutFloor carries the same
+		// floor into llm.Config below.
+		if !options.RequestTimeoutExplicit && options.RequestTimeout < conductorRequestTimeout {
+			options.RequestTimeout = conductorRequestTimeout
+		}
+		clientTimeoutFloor = conductorRequestTimeout
 		if !options.PlanningExplicit {
 			options.EnablePlanning = false
 		}
@@ -158,7 +215,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		APIKey:                cfg.APIKey,
 		BaseURL:               cfg.BaseURL,
 		Model:                 model,
-		Timeout:               cfg.GetTimeout(),
+		Timeout:               maxDuration(cfg.GetTimeout(), clientTimeoutFloor),
 		SkipPersonaPrompt:     cfg.SkipPersonaPrompt,
 		SimulateTyping:        cfg.SimulateTyping,
 		TypingSpeed:           cfg.TypingSpeed,
@@ -329,9 +386,13 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 				result.Usage = event.Usage
 			}
 		})
+		// Capture before cancel(): afterwards ctx.Err() reports Canceled and we
+		// can no longer tell a timeout from an ordinary teardown.
+		turnTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		cancel()
 
 		if streamErr != nil {
+			streamErr = annotateTurnTimeout(streamErr, turnTimedOut, state.Options.RequestTimeout)
 			state.Status = StatusFailed
 			state.Error = streamErr.Error()
 			state.UpdatedAt = time.Now()
@@ -527,9 +588,10 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 			result.Usage = event.Usage
 		}
 	})
+	planTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 	cancel()
 	if streamErr != nil {
-		return streamErr
+		return annotateTurnTimeout(streamErr, planTimedOut, state.Options.RequestTimeout)
 	}
 
 	if r.options.OnTurnStats != nil {
