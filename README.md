@@ -231,8 +231,9 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Real Streaming + Corruption Animation** - Token-by-token streaming with corrupted glitch phrases at the typing cursor
 - **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
-### Tool System (v1.10)
-**45 built-in tools** powered by AI function calling:
+### Tool System
+**47 built-in tools** powered by AI function calling — 40 always on, plus 6 code-graph
+tools once a project is indexed and collections search when collections are configured:
 - Dev Tools (bash, read/write/patch files, search, list files)
 - Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter TypeScript parsing)
 - Direct Codegraph MCP Tools (`celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim, no chat-LLM round-trip)
@@ -271,8 +272,8 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - **DEFAULT** - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
-- ✅ **Google Gemini AI** (gemini-2.5-flash) - Simple API keys, free tier, full streaming • Token tracking ✓
-- ⚠️ **Google Vertex AI** (gemini-2.5-flash) - Enterprise, requires GCP project + billing • Token tracking ✓
+- ✅ **Google Gemini AI** (gemini-flash-latest) - Simple API keys, free tier, full streaming • Token tracking ✓
+- ⚠️ **Google Vertex AI** (gemini-flash-latest) - Enterprise, requires GCP project + billing • Token tracking ✓
 - ✅ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
 - ✅ **Sakana AI** (fugu, fugu-ultra) - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
@@ -292,7 +293,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 
 ---
 
-## 🔮 Tool System (45 Tools)
+## 🔮 Tool System (47 Tools)
 
 Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You don't invoke tools directly — you chat naturally, and the AI decides when to call them.
 
@@ -926,7 +927,7 @@ celeste -config grok chat
 - OpenAI (gpt-4o, gpt-4o-mini, etc.)
 - xAI/Grok (grok-4.20-0309-non-reasoning [default], grok-build-0.1, etc.)
 - Venice.ai (venice-uncensored, etc.)
-- Google Gemini AI Studio (gemini-2.0-flash, etc.)
+- Google Gemini AI Studio (gemini-flash-latest — a Google-maintained alias; the 2.x line is retired)
 - Google Vertex AI (gemini models via OpenAI endpoint)
 - OpenRouter (all models)
 - **DigitalOcean Gradient** (Agent API with RAG - supports stream_options.include_usage)
@@ -954,6 +955,47 @@ celeste -config grok chat
 ```
 
 **Note:** When using providers without token tracking (Anthropic native API, ElevenLabs), Celeste CLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
+
+### Autonomous Agent Mode
+
+```bash
+celeste agent --goal "refactor the parser and keep the tests green"
+```
+
+Useful flags beyond `--goal`:
+
+| Flag | Default | What it does |
+|---|---|---|
+| `-planner` | `true` | Run an explicit planning phase before executing. |
+| `-require-verify` | `false` | Refuse to finish until the verification commands pass. |
+| `-request-timeout` | `0` (provider default) | Per-LLM-request timeout, in seconds. |
+| `-max-turns` | unset | Cap the number of agent turns. |
+| `-no-checkpoint` | `false` | Disable checkpointing for this run. |
+
+**Passing one of the first three explicitly means something.** When the model
+orchestrates server-side (see *Planning* below), Celeste stands its own local
+planner down to avoid planning the work twice. Typing `-planner` or
+`-require-verify` or `-request-timeout` on the command line overrides that
+stand-down and pins your value — which is what makes a local-vs-server-side
+planner comparison possible at all. Leaving a flag off is *not* the same as
+passing its default.
+
+### Checking what's actually configured
+
+```bash
+celeste config
+```
+
+Among the usual fields, the **`Planning:`** line tells you which planner is in
+charge for your current model:
+
+```
+Planning:          fugu (server-side)     # the model's own conductor plans; local planner stands down
+Planning:          local                  # Celeste plans locally
+```
+
+This matters because a server-side conductor produces no local trace — see
+`docs/LLM_PROVIDERS.md` for what that costs you in observability.
 
 ### Single Message Mode (Non-Interactive)
 

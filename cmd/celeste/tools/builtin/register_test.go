@@ -82,3 +82,49 @@ func TestToolCount(t *testing.T) {
 	// (config-dependent and code graph tools not registered when configLoader/indexer is nil)
 	assert.Equal(t, 31, registry.Count(), "expected 31 tools without configLoader")
 }
+
+// countingConfigLoader satisfies ConfigLoader so the config-gated tools
+// register. The values are irrelevant — only registration is under test.
+type countingConfigLoader struct{}
+
+func (countingConfigLoader) GetTarotConfig() (TarotConfig, error)     { return TarotConfig{}, nil }
+func (countingConfigLoader) GetVeniceConfig() (VeniceConfig, error)   { return VeniceConfig{}, nil }
+func (countingConfigLoader) GetWeatherConfig() (WeatherConfig, error) { return WeatherConfig{}, nil }
+func (countingConfigLoader) GetTwitchConfig() (TwitchConfig, error)   { return TwitchConfig{}, nil }
+func (countingConfigLoader) GetYouTubeConfig() (YouTubeConfig, error) { return YouTubeConfig{}, nil }
+func (countingConfigLoader) GetIPFSConfig() (IPFSConfig, error)       { return IPFSConfig{}, nil }
+func (countingConfigLoader) GetAlchemyConfig() (AlchemyConfig, error) { return AlchemyConfig{}, nil }
+func (countingConfigLoader) GetBlockmonConfig() (BlockmonConfig, error) {
+	return BlockmonConfig{}, nil
+}
+func (countingConfigLoader) GetWalletSecurityConfig() (WalletSecuritySettingsConfig, error) {
+	return WalletSecuritySettingsConfig{}, nil
+}
+
+// The counts the README and docs/ advertise. RegisterAll is the always-on set;
+// codegraph registers only once a project is indexed (main.go:398) and
+// collections only when active collections exist. 40 + 6 + 1 = the 47 the docs
+// quote as the full surface. RegisterReadOnlyDevTools is deliberately excluded:
+// it is a separate entry point that re-registers three tools RegisterAll
+// already provides, so it contributes no distinct tools.
+//
+// These had drifted to a documented 45 against a real 40/47 because nothing
+// asserted them.
+const (
+	docsCoreToolCount      = 40
+	docsCodegraphToolCount = 6
+)
+
+func TestToolCountWithConfigLoader(t *testing.T) {
+	registry := tools.NewRegistry()
+	RegisterAll(registry, t.TempDir(), countingConfigLoader{}, nil, nil)
+	assert.Equal(t, docsCoreToolCount, registry.Count(),
+		"README and docs/ advertise %d always-on built-in tools — update both together", docsCoreToolCount)
+}
+
+func TestCodeGraphToolCount(t *testing.T) {
+	registry := tools.NewRegistry()
+	RegisterCodeGraphTools(registry, nil)
+	assert.Equal(t, docsCodegraphToolCount, registry.Count(),
+		"docs advertise %d codegraph tools — update them together", docsCodegraphToolCount)
+}

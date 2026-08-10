@@ -1,4 +1,4 @@
-# Celeste CLI Docs v1.9.2
+# Celeste CLI Docs v1.15.0
 
 Core docs for Go CLI agent.
 
