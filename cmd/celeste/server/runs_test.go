@@ -102,6 +102,41 @@ func TestRegistryEvictsOldestCompletedNeverRunning(t *testing.T) {
 	}
 }
 
+// completeRun's own eviction pass (added to enforce the cap without waiting
+// on the next registration) must not be able to evict the very run it just
+// completed. If every other tracked run is still "running", the run that
+// just completed is the ONLY eviction-eligible entry — an unprotected pass
+// deletes it immediately, before a client could ever poll for the result.
+func TestCompleteRunDoesNotEvictItself(t *testing.T) {
+	s := New(Config{})
+
+	// Fill past capacity with still-running runs, so once the first of them
+	// completes, evictLocked's "oldest completed" search has exactly one
+	// candidate: the run that just completed.
+	cancels := make([]context.CancelFunc, 0, maxTrackedRuns+1)
+	for i := 0; i < maxTrackedRuns+1; i++ {
+		id := fmt.Sprintf("bg-run-%03d", i)
+		_, c := context.WithCancel(context.Background())
+		cancels = append(cancels, c)
+		s.registerRun(id, c)
+	}
+	defer func() {
+		for _, c := range cancels {
+			c()
+		}
+	}()
+
+	s.completeRun("bg-run-000", &BackgroundRun{Status: "completed", Result: "keep me"})
+
+	got, ok := s.lookupRun("bg-run-000")
+	if !ok {
+		t.Fatal("the run that just completed was evicted in the same call that completed it — a client could never have polled it")
+	}
+	if got.Status != "completed" || got.Result != "keep me" {
+		t.Errorf("run = %+v, want the completed state intact", got)
+	}
+}
+
 func TestCancelRun(t *testing.T) {
 	s := New(Config{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,6 +153,74 @@ func TestCancelRun(t *testing.T) {
 	if s.cancelRun("bg-missing") {
 		t.Error("cancelRun returned true for an unknown run")
 	}
+}
+
+// Finding 4: nothing asserted that a terminal run is no longer cancellable.
+// completeRun sets run.cancel = nil; this is the test that fails if that line
+// is deleted.
+func TestCancelRunReturnsFalseForCompletedRun(t *testing.T) {
+	s := New(Config{})
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.registerRun("bg-done", cancel)
+	s.completeRun("bg-done", &BackgroundRun{Status: "completed", Result: "ok"})
+
+	if s.cancelRun("bg-done") {
+		t.Error("cancelRun returned true for an already-completed run")
+	}
+	got, ok := s.lookupRun("bg-done")
+	if !ok {
+		t.Fatal("run vanished")
+	}
+	if got.Status != "completed" {
+		t.Errorf("Status = %q, want it to remain completed after a no-op cancel attempt", got.Status)
+	}
+}
+
+// Finding 4: nothing asserted that the run's context is actually cancelled
+// once the run reaches a terminal state — only that cancelRun itself cancels
+// it (TestCancelRun above). This exercises the watcher goroutine's own
+// cancel() call after a normal (non-cancelled) completion in handlers.go.
+func TestBackgroundRunCancelsContextOnCompletion(t *testing.T) {
+	origAfter := backgroundAfter
+	origExec := agentExecFn
+	t.Cleanup(func() { backgroundAfter = origAfter; agentExecFn = origExec })
+	backgroundAfter = 50 * time.Millisecond
+
+	s := New(Config{})
+	release := make(chan struct{})
+	var capturedCtx context.Context
+	agentExecFn = func(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
+		capturedCtx = ctx
+		<-release
+		return agentOutcome{Text: "done"}, nil
+	}
+
+	blocks, err := s.runAgentMode(context.Background(), &config.Config{}, "go", t.TempDir())
+	if err != nil {
+		t.Fatalf("runAgentMode: %v", err)
+	}
+	var handle struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(blocks[0].Text), &handle); err != nil {
+		t.Fatalf("handle is not JSON: %v (%s)", err, blocks[0].Text)
+	}
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, ok := s.lookupRun(handle.RunID); ok && got.Status == "completed" {
+			select {
+			case <-capturedCtx.Done():
+			case <-time.After(time.Second):
+				t.Error("run context was not cancelled after completion")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("run never reached completed")
 }
 
 // The registry is reached from request handlers and watcher goroutines at once.
@@ -258,6 +361,109 @@ func TestBackgroundThreshold(t *testing.T) {
 	})
 }
 
+// Finding 1 regression: cancelling a background run must leave its status
+// "cancelled" forever after — the watcher goroutine's completeRun call must
+// not overwrite it with "failed" once the exec goroutine unwinds with
+// ctx.Err(). This is not a race: cancelRun always sets Status=cancelled and
+// cancels the context BEFORE agentExecFn can observe cancellation and
+// return, so completeRun is guaranteed to run after cancelRun's write on
+// every successful cancel, not just sometimes.
+func TestCancelledRunStaysCancelled(t *testing.T) {
+	origAfter := backgroundAfter
+	origExec := agentExecFn
+	t.Cleanup(func() { backgroundAfter = origAfter; agentExecFn = origExec })
+	backgroundAfter = 50 * time.Millisecond
+
+	s := New(Config{})
+	agentExecFn = func(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
+		<-ctx.Done()
+		return agentOutcome{}, fmt.Errorf("run cancelled: %w", ctx.Err())
+	}
+
+	blocks, err := s.runAgentMode(context.Background(), &config.Config{}, "go", t.TempDir())
+	if err != nil {
+		t.Fatalf("runAgentMode: %v", err)
+	}
+	var handle struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(blocks[0].Text), &handle); err != nil {
+		t.Fatalf("handle is not JSON: %v (%s)", err, blocks[0].Text)
+	}
+
+	if !s.cancelRun(handle.RunID) {
+		t.Fatal("cancelRun returned false for a live run")
+	}
+	if got, ok := s.lookupRun(handle.RunID); !ok || got.Status != "cancelled" {
+		t.Fatalf("immediately after cancelRun: run = %+v, ok = %v, want status cancelled", got, ok)
+	}
+
+	// Give the exec goroutine time to observe ctx.Done(), return its
+	// cancellation error, and let the watcher goroutine call completeRun with
+	// it. Every poll in this window must still say cancelled.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got, ok := s.lookupRun(handle.RunID)
+		if !ok {
+			t.Fatal("run vanished after cancellation")
+		}
+		if got.Status != "cancelled" {
+			t.Fatalf("status became %q after cancellation; want it to stay cancelled forever, not be overwritten by the watcher's completeRun", got.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Finding 2 regression: a panic inside agentExecFn, on a background run's
+// exec goroutine, must not take the whole process down with it — it should
+// surface as that run's own "failed" status instead. The panic fires only
+// after the run has already been registered as background (release is
+// closed after runAgentMode returns the handle), so this exercises the
+// watcher-goroutine recovery path specifically, not the fast inline path.
+// Reaching the end of this test at all is itself part of the proof: an
+// unrecovered panic on this goroutine would crash the whole test binary,
+// not just fail an assertion.
+func TestBackgroundRunPanicRecovered(t *testing.T) {
+	origAfter := backgroundAfter
+	origExec := agentExecFn
+	t.Cleanup(func() { backgroundAfter = origAfter; agentExecFn = origExec })
+	backgroundAfter = 50 * time.Millisecond
+
+	s := New(Config{})
+	release := make(chan struct{})
+	agentExecFn = func(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
+		<-release
+		panic("boom: simulated agent panic")
+	}
+
+	blocks, err := s.runAgentMode(context.Background(), &config.Config{}, "go", t.TempDir())
+	if err != nil {
+		t.Fatalf("runAgentMode: %v", err)
+	}
+	var handle struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(blocks[0].Text), &handle); err != nil {
+		t.Fatalf("handle is not JSON: %v (%s)", err, blocks[0].Text)
+	}
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, ok := s.lookupRun(handle.RunID); ok && got.Status == "failed" {
+			if !strings.Contains(got.Error, "panic") {
+				t.Errorf("Error = %q, want it to name the panic", got.Error)
+			}
+			if !strings.Contains(got.Error, "boom") {
+				t.Errorf("Error = %q, want it to carry the recovered value", got.Error)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("panicked run never reached a terminal state — recover may not be sending on resultCh, which would hang the watcher forever")
+}
+
 // The no-argument payload must not change: existing callers (the
 // celeste-for-claude skills, any client) depend on these keys — the same
 // set, not a superset or subset. New(Config{}) leaves CelesteConfig nil, so
@@ -355,5 +561,71 @@ func TestCelesteStatusCancels(t *testing.T) {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
 		t.Error("cancel did not cancel the run context")
+	}
+}
+
+// Finding 4: only a *running* run's celeste_status payload was exercised
+// before this. A terminal run's payload must carry its result, agent_run_id,
+// and a sane completed-elapsed value (EndedAt - StartedAt, not time-since-now).
+func TestCelesteStatusReportsCompletedRun(t *testing.T) {
+	s := New(Config{})
+	registerCelesteStatusTool(s)
+	_, cancel := context.WithCancel(context.Background())
+	s.registerRun("bg-done-status", cancel)
+	s.completeRun("bg-done-status", &BackgroundRun{
+		Status:     "completed",
+		Result:     "the answer",
+		AgentRunID: "20260809-999",
+		Turns:      3,
+		ToolCalls:  5,
+	})
+
+	blocks, err := s.handlers["celeste_status"](context.Background(), map[string]any{"run_id": "bg-done-status"})
+	if err != nil {
+		t.Fatalf("celeste_status: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(blocks[0].Text), &payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if payload["status"] != "completed" {
+		t.Errorf("status = %v, want completed", payload["status"])
+	}
+	if payload["result"] != "the answer" {
+		t.Errorf("result = %v, want %q", payload["result"], "the answer")
+	}
+	if payload["agent_run_id"] != "20260809-999" {
+		t.Errorf("agent_run_id = %v, want it recorded so `celeste agent -resume` stays usable", payload["agent_run_id"])
+	}
+	elapsed, _ := payload["elapsed"].(string)
+	if elapsed == "" {
+		t.Fatal("a completed run must report elapsed")
+	}
+	if d, err := time.ParseDuration(elapsed); err != nil || d < 0 {
+		t.Errorf("elapsed = %q, want a sane non-negative duration (EndedAt - StartedAt), got parse error %v", elapsed, err)
+	}
+}
+
+// Finding 4 / Finding 1: cancel:true against an already-terminal run is
+// exactly the path Finding 1 lived on. It must be a no-op — the status must
+// stay whatever terminal state it already reached, not flip to cancelled.
+func TestCelesteStatusCancelAlreadyTerminalIsNoop(t *testing.T) {
+	s := New(Config{})
+	registerCelesteStatusTool(s)
+	_, cancel := context.WithCancel(context.Background())
+	s.registerRun("bg-term", cancel)
+	s.completeRun("bg-term", &BackgroundRun{Status: "completed", Result: "already done"})
+
+	blocks, err := s.handlers["celeste_status"](context.Background(),
+		map[string]any{"run_id": "bg-term", "cancel": true})
+	if err != nil {
+		t.Fatalf("celeste_status: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(blocks[0].Text), &payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if payload["status"] != "completed" {
+		t.Errorf("status = %v, want completed — cancelling an already-terminal run must be a no-op, not flip it to cancelled", payload["status"])
 	}
 }

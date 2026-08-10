@@ -51,7 +51,7 @@ func (s *Server) registerRun(id string, cancel context.CancelFunc) *BackgroundRu
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	s.runs[id] = run
-	s.evictLocked()
+	s.evictLocked("")
 	return run
 }
 
@@ -67,12 +67,25 @@ func (s *Server) lookupRun(id string) (BackgroundRun, bool) {
 	return *run, true
 }
 
-// completeRun records terminal state from a finished run.
+// completeRun records terminal state from a finished run. Returns early if the
+// run is already terminal: this is not a race guard so much as the documented
+// steady state of a cancel. cancelRun sets Status="cancelled" and cancels the
+// run's context; the exec goroutine then observes that cancellation and
+// returns a non-nil error, which the watcher goroutine turns into a
+// completeRun(..., &BackgroundRun{Status: "failed", ...}) call every single
+// time. Without this guard that call deterministically overwrites "cancelled"
+// with "failed" on every successful cancel — not sometimes, always. Keeping
+// the guard here (rather than having the watcher special-case
+// context.Canceled) also covers the eviction/ID-reuse variant: whatever
+// terminal status landed first wins.
 func (s *Server) completeRun(id string, final *BackgroundRun) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	run, ok := s.runs[id]
 	if !ok {
+		return
+	}
+	if run.Status != "running" {
 		return
 	}
 	run.Status = final.Status
@@ -83,6 +96,19 @@ func (s *Server) completeRun(id string, final *BackgroundRun) {
 	run.AgentRunID = final.AgentRunID
 	run.EndedAt = time.Now()
 	run.cancel = nil
+	// The 50-entry cap is otherwise only enforced from registerRun, so a
+	// registry sitting at capacity with many long-running background runs
+	// stays over the bound until the next registration happens to walk it.
+	// Enforcing it here too closes that gap without waiting on a new run.
+	//
+	// id is protected from this pass: if every other tracked run is still
+	// "running", the run that just completed is the ONLY eviction-eligible
+	// entry, and an unprotected pass would delete it in the very call that
+	// completed it — before any caller could ever poll for the result. The
+	// protection is scoped to this one call; a later completeRun or
+	// registerRun call is free to evict it once something else is a
+	// candidate too.
+	s.evictLocked(id)
 }
 
 // cancelRun cancels a live run. Returns false if the run is unknown or already
@@ -110,13 +136,15 @@ func (s *Server) runCount() int {
 
 // evictLocked drops the oldest COMPLETED run when over capacity. A running run
 // is never evicted — losing a live run's handle would strand work in flight.
-// Caller must hold runMu.
-func (s *Server) evictLocked() {
+// protectID, if non-empty, is also never evicted in this pass regardless of
+// its status — see the comment at completeRun's call site for why that
+// matters. Caller must hold runMu.
+func (s *Server) evictLocked(protectID string) {
 	for len(s.runs) > maxTrackedRuns {
 		var oldestID string
 		var oldest time.Time
 		for id, r := range s.runs {
-			if r.Status == "running" {
+			if r.Status == "running" || id == protectID {
 				continue
 			}
 			if oldestID == "" || r.StartedAt.Before(oldest) {
@@ -124,7 +152,7 @@ func (s *Server) evictLocked() {
 			}
 		}
 		if oldestID == "" {
-			return // everything tracked is still running; nothing may be evicted
+			return // everything tracked is still running (or protected); nothing may be evicted
 		}
 		delete(s.runs, oldestID)
 	}

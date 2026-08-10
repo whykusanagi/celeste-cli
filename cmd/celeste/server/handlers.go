@@ -519,6 +519,19 @@ func (s *Server) runAgentMode(ctx context.Context, cfg *config.Config, goal, wor
 	}
 	resultCh := make(chan outcome, 1)
 	go func() {
+		// A panic here (in a background run, agentExecFn's own goroutine) would
+		// otherwise be an unrecovered panic on a goroutine the runtime has no
+		// other handler for, which kills the whole process — every other
+		// in-flight run and the client's entire MCP session, not just this one
+		// call. Recover and report it as this run's failure instead. The defer
+		// must send on resultCh exactly once: either this recover fires (the
+		// happy-path send below never ran, because the panic unwound past it),
+		// or the happy path sent already and there was nothing to recover.
+		defer func() {
+			if r := recover(); r != nil {
+				resultCh <- outcome{agentOutcome{}, fmt.Errorf("agent run panicked: %v", r)}
+			}
+		}()
 		res, err := agentExecFn(runCtx, cfg, goal, workspace)
 		resultCh <- outcome{res, err}
 	}()
