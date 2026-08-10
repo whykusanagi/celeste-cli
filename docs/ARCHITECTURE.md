@@ -451,6 +451,20 @@ The legacy persona tools (`celeste`, `celeste_content`, `celeste_status`) are
 still registered for "ask Celeste a question" use cases, but tool-driven
 workflows should prefer the direct codegraph tools.
 
+#### `celeste_status` and the `commit` field
+
+`celeste_status` reports a **`commit`** field carrying the git commit the running
+binary was built from. It exists because an MCP server is long-lived: a client
+can keep talking to a server started days and several merges ago, while
+`celeste version` reports a version string identical to the current one. That is
+not hypothetical — a server once ran for twelve hours on a binary five merges
+behind while reporting the same version as the new build. If a fix seems not to
+have landed, compare `commit` against `git rev-parse --short HEAD` before
+debugging anything else.
+
+Note the neighbouring `health` field means *the process is up*, not *generation
+works* — it does not exercise the model.
+
 ### Tool Definition Pattern
 
 ```go
@@ -888,5 +902,5 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 
 ---
 
-**Last Updated**: 2026-04-03
-**Version**: v1.9.2\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
+**Last Updated**: 2026-08-10
+**Version**: v1.15.0\n\nBuilt with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
