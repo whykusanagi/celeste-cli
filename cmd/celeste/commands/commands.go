@@ -90,8 +90,23 @@ func Parse(input string) *Command {
 		return nil
 	}
 
+	name := strings.TrimPrefix(parts[0], "/")
+
+	// An absolute path also starts with "/", so without this a pasted path was
+	// parsed as a command: "/Users/me/a.mp3" became the command "Users/me/a.mp3"
+	// and hit the unknown-command branch, and several paths at once turned the
+	// first into a command and the rest into its arguments. No real command name
+	// contains a path separator, so that is the disambiguator.
+	//
+	// Deliberately narrower than "fall through whenever the name is unknown":
+	// a typo like /halp should still say "Unknown command", not silently become
+	// a prompt to the model.
+	if strings.ContainsAny(name, `/\`) {
+		return nil
+	}
+
 	cmd := &Command{
-		Name: strings.TrimPrefix(parts[0], "/"),
+		Name: name,
 		Raw:  input,
 	}
 

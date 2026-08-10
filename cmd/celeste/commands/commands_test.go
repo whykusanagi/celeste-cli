@@ -528,3 +528,55 @@ func TestBoolToStatus(t *testing.T) {
 		})
 	}
 }
+
+// A pasted absolute path begins with "/" and was therefore parsed as a slash
+// command: "/Users/me/a.mp3" became command name "Users/me/a.mp3" and fell to
+// the unknown-command branch, so Celeste errored instead of reading the message.
+// Two paths were worse — the first became the command, the rest its arguments,
+// which is exactly what you type to hand her several files at once.
+//
+// A real command name never contains a path separator, so that is the
+// disambiguator. Typos like /halp still reach the unknown-command branch, which
+// is deliberate: silently turning a mistyped command into a prompt hides it.
+func TestParseDoesNotTreatPathsAsCommands(t *testing.T) {
+	paths := []string{
+		"/Users/kusanagi/Downloads/agentic_code",
+		"/tmp/foo.mp3",
+		"/Users/kusanagi/a.mp3 /Users/kusanagi/b.mp3",
+		"/Users/kusanagi/Music/track one.mp3",
+		"~/Downloads/x.mp3",
+		"./relative/path.mp3",
+	}
+	for _, p := range paths {
+		if cmd := Parse(p); cmd != nil {
+			t.Errorf("Parse(%q) = command %q, want nil so it is sent as a message", p, cmd.Name)
+		}
+	}
+}
+
+func TestParseStillRecognisesRealCommands(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantName string
+		wantArgs []string
+	}{
+		{"/help", "help", nil},
+		{"/model", "model", nil},
+		{"/set-model fugu-ultra", "set-model", []string{"fugu-ultra"}},
+		{"/config", "config", nil},
+		{"/halp", "halp", nil}, // typo still reaches the unknown-command branch
+	}
+	for _, c := range cases {
+		cmd := Parse(c.in)
+		if cmd == nil {
+			t.Errorf("Parse(%q) = nil, want a command", c.in)
+			continue
+		}
+		if cmd.Name != c.wantName {
+			t.Errorf("Parse(%q).Name = %q, want %q", c.in, cmd.Name, c.wantName)
+		}
+		if len(c.wantArgs) != len(cmd.Args) {
+			t.Errorf("Parse(%q).Args = %v, want %v", c.in, cmd.Args, c.wantArgs)
+		}
+	}
+}
