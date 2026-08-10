@@ -91,7 +91,7 @@ tui-snapshots:
 # Drive the real binary through new-feature code paths, incl. one live model
 # call (sakana/fugu by default). SMOKE_NO_MODEL=1 skips the model call.
 smoke-cli:
-	@bash scripts/smoke-cli.sh
+	@CELESTE="$${CELESTE:-./celeste}" bash scripts/smoke-cli.sh
 
 # Release gate: build, render TUI snapshots, and run the CLI smoke test.
 smoke: build tui-snapshots smoke-cli

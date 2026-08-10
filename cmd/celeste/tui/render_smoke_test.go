@@ -63,7 +63,7 @@ func renderComponents() []tuiSnap {
 			{name: "read_file", state: "executing", message: "read cmd/celeste/tui/app.go", startedAt: base},
 			{name: "search", state: "done", message: "12 matches for \"StatusLineModel\"", startedAt: base.Add(-1200 * time.Millisecond), doneAt: base},
 			{name: "bash", state: "failed", message: "exit 1: go vet ./...", startedAt: base.Add(-800 * time.Millisecond), doneAt: base},
-			{name: "agent", displayName: "mizu", element: "water", state: "executing", subMessage: "spawning sub-task 2/3", startedAt: base},
+			{name: "agent", displayName: "〔水 mizu〕", element: "water", state: "executing", subMessage: "spawning sub-task 2/3", startedAt: base},
 		},
 	}
 
