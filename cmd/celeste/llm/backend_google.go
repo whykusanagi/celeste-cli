@@ -154,7 +154,7 @@ func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 		if candidate.Content != nil {
 			for _, part := range candidate.Content.Parts {
 				if part.FunctionCall != nil {
-					toolCall := b.convertFunctionCallToResult(part.FunctionCall)
+					toolCall := b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature)
 					result.ToolCalls = append(result.ToolCalls, toolCall)
 				}
 			}
@@ -229,7 +229,7 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 				// Extract function calls (tool calls)
 				for _, part := range candidate.Content.Parts {
 					if part.FunctionCall != nil {
-						toolCall := b.convertFunctionCallToResult(part.FunctionCall)
+						toolCall := b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature)
 						toolCalls = append(toolCalls, toolCall)
 					}
 				}
@@ -312,7 +312,7 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 				// Extract function calls — Google sends them complete
 				for _, part := range candidate.Content.Parts {
 					if part.FunctionCall != nil {
-						toolCall := b.convertFunctionCallToResult(part.FunctionCall)
+						toolCall := b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature)
 						// Emit start then immediately done
 						callback(StreamEvent{
 							Type:      EventToolUseStart,
@@ -443,7 +443,12 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 					args = make(map[string]any)
 				}
 
-				parts = append(parts, genai.NewPartFromFunctionCall(tc.Name, args))
+				part := genai.NewPartFromFunctionCall(tc.Name, args)
+				// Gemini 3.x rejects the follow-up turn with "Function call is
+				// missing a thought_signature" unless the signature that came
+				// back with the functionCall is echoed here verbatim.
+				part.ThoughtSignature = tc.ThoughtSignature
+				parts = append(parts, part)
 			}
 
 			contents = append(contents, genai.NewContentFromParts(parts, genai.RoleModel))
@@ -565,8 +570,10 @@ func convertTypeToGenAI(typeStr string) genai.Type {
 	}
 }
 
-// convertFunctionCallToResult converts Google FunctionCall to our ToolCallResult format.
-func (b *GoogleBackend) convertFunctionCallToResult(fc *genai.FunctionCall) ToolCallResult {
+// convertFunctionCallToResult converts a Google function-call part to our
+// ToolCallResult format. The signature comes from the enclosing Part, not the
+// FunctionCall, so callers pass part.ThoughtSignature alongside it.
+func (b *GoogleBackend) convertFunctionCallToResult(fc *genai.FunctionCall, thoughtSignature []byte) ToolCallResult {
 	// Generate a tool call ID (Google doesn't provide one)
 	toolCallID := fmt.Sprintf("call_%s", fc.Name)
 
@@ -580,9 +587,10 @@ func (b *GoogleBackend) convertFunctionCallToResult(fc *genai.FunctionCall) Tool
 	}
 
 	return ToolCallResult{
-		ID:        toolCallID,
-		Name:      fc.Name,
-		Arguments: argsJSON,
+		ID:               toolCallID,
+		Name:             fc.Name,
+		Arguments:        argsJSON,
+		ThoughtSignature: thoughtSignature,
 	}
 }
 

@@ -25,6 +25,12 @@ type ToolCallInfo struct {
 	ID        string
 	Name      string
 	Arguments string
+	// ThoughtSignature is Gemini 3.x's opaque per-call token. The API rejects
+	// the follow-up turn with "Function call is missing a thought_signature"
+	// unless the signature that arrived with the functionCall is echoed back.
+	// It lives on the message rather than in a backend-local cache so it
+	// survives checkpointing and history replay; empty for every other provider.
+	ThoughtSignature []byte
 }
 
 // FunctionCall represents a tool/function call from the LLM.

@@ -202,6 +202,9 @@ type ToolCallResult struct {
 	// into valid JSON (e.g. a dropped stream delta). Empty means no detected
 	// corruption — consumers still validate required fields themselves.
 	ArgsError string
+	// ThoughtSignature carries Gemini 3.x's opaque per-call token through to the
+	// assistant message so the next turn can echo it back. Empty elsewhere.
+	ThoughtSignature []byte
 }
 
 // SendMessageSync sends a message synchronously and returns the result.

@@ -825,9 +825,10 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 				}
 
 				toolCallInfos[i] = tui.ToolCallInfo{
-					ID:        t.ID,
-					Name:      t.Name,
-					Arguments: t.Arguments,
+					ID:               t.ID,
+					Name:             t.Name,
+					Arguments:        t.Arguments,
+					ThoughtSignature: t.ThoughtSignature,
 				}
 				callRequests[i] = tui.SkillCallRequest{
 					Call: tui.FunctionCall{
