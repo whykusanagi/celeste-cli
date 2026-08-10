@@ -297,9 +297,10 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 				var calls []tui.ToolCallInfo
 				for _, tc := range result.ToolCalls {
 					calls = append(calls, tui.ToolCallInfo{
-						ID:        tc.ID,
-						Name:      tc.Name,
-						Arguments: tc.Arguments,
+						ID:               tc.ID,
+						Name:             tc.Name,
+						Arguments:        tc.Arguments,
+						ThoughtSignature: tc.ThoughtSignature,
 					})
 				}
 				return calls

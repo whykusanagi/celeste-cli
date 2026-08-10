@@ -1220,9 +1220,10 @@ func convertToolCalls(calls []llm.ToolCallResult) []tui.ToolCallInfo {
 	result := make([]tui.ToolCallInfo, 0, len(calls))
 	for _, c := range calls {
 		result = append(result, tui.ToolCallInfo{
-			ID:        c.ID,
-			Name:      c.Name,
-			Arguments: c.Arguments,
+			ID:               c.ID,
+			Name:             c.Name,
+			Arguments:        c.Arguments,
+			ThoughtSignature: c.ThoughtSignature,
 		})
 	}
 	return result
