@@ -1,8 +1,8 @@
 # Celeste CLI Roadmap
 
-*Last updated: April 2026 (v1.9.2)*
+*Last updated: August 2026 (v1.15.0)*
 
-## Current Release: v1.9.2
+## Current Release: v1.15.0
 
 ### Shipped in v1.9.0 / v1.9.2
 

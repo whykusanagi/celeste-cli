@@ -8,7 +8,7 @@ Vertex AI has been successfully configured for your Celeste CLI on **2025-12-15*
 
 - **Project ID**: `your-project-id`
 - **Location**: `us-central1`
-- **Model**: `gemini-2.0-flash`
+- **Model**: `gemini-flash-latest`
 - **Config File**: `~/.celeste/config.vertex.json`
 - **Authenticated As**: `you@example.com`
 

@@ -138,7 +138,7 @@ func registerCelesteTool(s *Server) {
 
 		switch mode {
 		case "agent":
-			return runAgentMode(ctx, cfg, prompt, workspace)
+			return s.runAgentMode(ctx, cfg, prompt, workspace)
 		default:
 			return runChatMode(ctx, cfg, prompt, workspace)
 		}
@@ -382,8 +382,27 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 	return []ContentBlock{{Type: "text", Text: "Tool loop limit reached"}}, nil
 }
 
-// runAgentMode runs a multi-turn agent loop for complex tasks.
-func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace string) ([]ContentBlock, error) {
+// backgroundAfter is how long an MCP agent run may hold the call open before it
+// is handed back as a handle. 60s from measurement, not taste: plain fugu
+// finishes a substantial prompt in ~45s and so returns inline, while fugu-ultra
+// takes 211-300s and always crosses it. Package var so tests can shorten it.
+var backgroundAfter = 60 * time.Second
+
+// agentOutcome is the result of one agent run, flattened so the execution can be
+// swapped for a fake in tests without constructing a real Runner.
+type agentOutcome struct {
+	Text       string
+	Turns      int
+	ToolCalls  int
+	AgentRunID string
+}
+
+// agentExecFn runs the agent to completion. Indirected so tests can substitute a
+// fake slow run and make the threshold deterministic.
+var agentExecFn = execAgent
+
+// execAgent runs a multi-turn agent loop for complex tasks.
+func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
 	// Auto-init grimoire if not present
 	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
 		_, _ = grimoire.Init(workspace)
@@ -406,13 +425,18 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 
 	runner, err := agent.NewRunner(cfg, opts, &outBuf, &errBuf)
 	if err != nil {
-		return nil, fmt.Errorf("create agent runner: %w", err)
+		return agentOutcome{}, fmt.Errorf("create agent runner: %w", err)
 	}
+	// execAgent owns the whole run, so the runner is closed only when the run
+	// truly ends — including in the background case, where this function is
+	// executing inside the watcher goroutine. Closing it in runAgentMode instead
+	// would release the codegraph SQLite handle while a background run was still
+	// using it.
 	defer runner.Close()
 
 	state, err := runner.RunGoal(ctx, goal)
 	if err != nil {
-		return nil, fmt.Errorf("agent error: %w", err)
+		return agentOutcome{}, fmt.Errorf("agent error: %w", err)
 	}
 
 	// Build response with tool call history for transparency
@@ -468,7 +492,88 @@ func runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace strin
 		result = fmt.Sprintf("Agent completed (%s) after %d turns", state.Status, state.Turn)
 	}
 
-	return []ContentBlock{{Type: "text", Text: result}}, nil
+	toolCalls := 0
+	for _, step := range state.Steps {
+		if step.Name != "" {
+			toolCalls++
+		}
+	}
+	return agentOutcome{
+		Text:       result,
+		Turns:      state.Turn,
+		ToolCalls:  toolCalls,
+		AgentRunID: state.RunID,
+	}, nil
+}
+
+// runAgentMode runs a multi-turn agent loop, handing the caller a handle if the
+// run outlives backgroundAfter. Mirrors subagents.Manager's BackgroundAfter
+// mechanism: race the execution against a timer, return inline if it wins.
+func (s *Server) runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace string) ([]ContentBlock, error) {
+	// The background goroutine must outlive this request, so it cannot inherit
+	// the request context — that is cancelled the moment we return the handle.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	type outcome struct {
+		res agentOutcome
+		err error
+	}
+	resultCh := make(chan outcome, 1)
+	go func() {
+		// A panic here (in a background run, agentExecFn's own goroutine) would
+		// otherwise be an unrecovered panic on a goroutine the runtime has no
+		// other handler for, which kills the whole process — every other
+		// in-flight run and the client's entire MCP session, not just this one
+		// call. Recover and report it as this run's failure instead. The defer
+		// must send on resultCh exactly once: either this recover fires (the
+		// happy-path send below never ran, because the panic unwound past it),
+		// or the happy path sent already and there was nothing to recover.
+		defer func() {
+			if r := recover(); r != nil {
+				resultCh <- outcome{agentOutcome{}, fmt.Errorf("agent run panicked: %v", r)}
+			}
+		}()
+		res, err := agentExecFn(runCtx, cfg, goal, workspace)
+		resultCh <- outcome{res, err}
+	}()
+
+	select {
+	case out := <-resultCh:
+		// Finished inline. Nothing registered, response shape unchanged.
+		cancel()
+		if out.err != nil {
+			return nil, out.err
+		}
+		return []ContentBlock{{Type: "text", Text: out.res.Text}}, nil
+
+	case <-time.After(backgroundAfter):
+		id := newRunID(time.Now())
+		s.registerRun(id, cancel)
+
+		go func() {
+			out := <-resultCh
+			final := &BackgroundRun{
+				Status:     "completed",
+				Result:     out.res.Text,
+				Turns:      out.res.Turns,
+				ToolCalls:  out.res.ToolCalls,
+				AgentRunID: out.res.AgentRunID,
+			}
+			if out.err != nil {
+				final.Status = "failed"
+				final.Error = out.err.Error()
+			}
+			s.completeRun(id, final)
+			cancel()
+		}()
+
+		handle, _ := json.Marshal(map[string]any{
+			"run_id": id,
+			"status": "running",
+			"poll":   fmt.Sprintf("celeste_status with run_id=%s", id),
+		})
+		return []ContentBlock{{Type: "text", Text: string(handle)}}, nil
+	}
 }
 
 // --- celeste_content tool ---
@@ -555,11 +660,20 @@ func registerCelesteContentTool(s *Server) {
 func celesteStatusToolDef() mcp.MCPToolDef {
 	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": {}
+		"properties": {
+			"run_id": {
+				"type": "string",
+				"description": "Report on a background agent run instead of the server. Use the run_id returned when an agent run exceeded the inline threshold."
+			},
+			"cancel": {
+				"type": "boolean",
+				"description": "With run_id, cancel that run instead of reporting on it."
+			}
+		}
 	}`)
 	return mcp.MCPToolDef{
 		Name:        "celeste_status",
-		Description: "Get Celeste's current status: connected providers, loaded grimoire, indexed project, session cost.",
+		Description: "Get Celeste's current status: connected providers, loaded grimoire, indexed project, session cost. With run_id, report on (or cancel) a background agent run instead.",
 		InputSchema: schema,
 	}
 }
@@ -568,6 +682,41 @@ func registerCelesteStatusTool(s *Server) {
 	startTime := time.Now()
 
 	s.RegisterTool(celesteStatusToolDef(), func(ctx context.Context, args map[string]any) ([]ContentBlock, error) {
+		if rawID, ok := args["run_id"].(string); ok && rawID != "" {
+			if doCancel, _ := args["cancel"].(bool); doCancel {
+				s.cancelRun(rawID)
+			}
+			run, found := s.lookupRun(rawID)
+			if !found {
+				return []ContentBlock{{Type: "text", Text: fmt.Sprintf(
+					"unknown run %q. Background runs are held in memory by this MCP server, so a client restart ends them — the run is gone rather than lost. Checkpoints remain on disk; `celeste agent -list-runs` shows them.",
+					rawID)}}, nil
+			}
+
+			out := map[string]any{
+				"run_id":     run.ID,
+				"status":     run.Status,
+				"turns":      run.Turns,
+				"tool_calls": run.ToolCalls,
+			}
+			if run.Status == "running" {
+				out["elapsed"] = time.Since(run.StartedAt).Round(time.Second).String()
+			} else {
+				out["elapsed"] = run.EndedAt.Sub(run.StartedAt).Round(time.Second).String()
+			}
+			if run.Result != "" {
+				out["result"] = run.Result
+			}
+			if run.Error != "" {
+				out["error"] = run.Error
+			}
+			if run.AgentRunID != "" {
+				out["agent_run_id"] = run.AgentRunID
+			}
+			b, _ := json.MarshalIndent(out, "", "  ")
+			return []ContentBlock{{Type: "text", Text: string(b)}}, nil
+		}
+
 		cfg := s.config.CelesteConfig
 
 		status := map[string]any{
