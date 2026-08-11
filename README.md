@@ -22,7 +22,7 @@
 
 Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
-- 🔮 **45 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
+- 🔮 **47 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
 - 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
@@ -102,8 +102,17 @@ make install
 
 ### First Run
 
-**xAI/Grok (default — recommended):**
+**Sakana/Fugu (the shipped default):** a fresh install already points at
+`https://api.sakana.ai/v1` with model `fugu`, so you only need a key.
 ```bash
+celeste config --set-key YOUR_SAKANA_KEY
+celeste chat
+```
+
+**xAI/Grok:** not the default any more, so set the URL too or your key goes to
+Sakana and you get a confusing `401`.
+```bash
+celeste config --set-url https://api.x.ai/v1
 celeste config --set-key YOUR_XAI_KEY
 celeste chat
 ```
@@ -133,7 +142,7 @@ celeste -config sakana chat
 Get a key from the Fugu install (`curl -fsSL https://sakana.ai/fugu/install | bash`)
 or your Sakana account. Use `--set-model fugu-ultra` for the heavier multi-agent variant.
 
-**Other providers:** `celeste config --init <name>` where name is: `grok`, `openai`, `venice`, `elevenlabs`, `sakana`
+**Other providers:** `celeste config --init <name>` where name is: `openai`, `grok`, `elevenlabs`, `venice`, `sakana`, `digitalocean`, `celeste-classic`, `celeste-claw`
 
 ### Project Setup
 
@@ -207,7 +216,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - [Installation](#-quick-start)
 - [Security & Verification](#-security--verification)
 - [Features](#-features)
-- [Tool System (45 Tools)](#-tool-system-45-tools)
+- [Tool System (47 Tools)](#-tool-system-47-tools)
 - [Claude Code Integration](#-claude-code-integration)
 - [Comparison](#-how-celeste-compares)
 - [LLM Provider Compatibility](#-llm-provider-compatibility)
@@ -232,8 +241,9 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
 ### Tool System
-**47 built-in tools** powered by AI function calling — 40 always on, plus 6 code-graph
-tools once a project is indexed and collections search when collections are configured:
+**47 built-in tools** powered by AI function calling. 40 are always on. A further 6
+code-graph tools appear once you index a project, plus collections search when you
+configure collections:
 - Dev Tools (bash, read/write/patch files, search, list files)
 - Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter TypeScript parsing)
 - Direct Codegraph MCP Tools (`celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim, no chat-LLM round-trip)
@@ -245,7 +255,7 @@ tools once a project is indexed and collections search when collections are conf
 - Blockchain (IPFS, Alchemy, wallet security)
 - Subagent Orchestration (`spawn_agent`, `post_message`)
 
-[See complete tool list below](#-tool-system-44-tools)
+[See complete tool list below](#-tool-system-47-tools)
 
 ### Collections Support (xAI RAG)
 - **Upload Custom Documents** - Create knowledge bases with your own documentation
@@ -834,16 +844,17 @@ celeste config --set-tarot-token <token>
 Create separate configs for different providers:
 
 ```bash
-# Create OpenAI config
+# Create OpenAI config. Every --set-* MUST carry -config <name>, or it writes
+# to the DEFAULT config.json instead and silently builds a broken mix.
 celeste config --init openai
-celeste config --set-key sk-openai-key
-celeste config --set-model gpt-4o-mini
+celeste -config openai config --set-key sk-openai-key
+celeste -config openai config --set-model gpt-4o-mini
 
 # Create Grok config
 celeste config --init grok
-celeste config --set-key xai-grok-key
-celeste config --set-url https://api.x.ai/v1
-celeste config --set-model grok-beta
+celeste -config grok config --set-key xai-grok-key
+celeste -config grok config --set-url https://api.x.ai/v1
+celeste -config grok config --set-model grok-beta
 
 # Use specific config
 celeste -config grok chat
@@ -972,13 +983,12 @@ Useful flags beyond `--goal`:
 | `-max-turns` | unset | Cap the number of agent turns. |
 | `-no-checkpoint` | `false` | Disable checkpointing for this run. |
 
-**Passing one of the first three explicitly means something.** When the model
-orchestrates server-side (see *Planning* below), Celeste stands its own local
-planner down to avoid planning the work twice. Typing `-planner` or
-`-require-verify` or `-request-timeout` on the command line overrides that
-stand-down and pins your value — which is what makes a local-vs-server-side
-planner comparison possible at all. Leaving a flag off is *not* the same as
-passing its default.
+**Passing one of the first three explicitly changes behaviour.** When the model
+orchestrates server-side (see *Planning* below), celeste skips its own local
+planner so the work is not planned twice. Type `-planner`, `-require-verify` or
+`-request-timeout` on the command line and you override that skip and pin your
+own value. That override is what lets you compare a local planner against a
+server-side one. Leaving a flag off is *not* the same as passing its default.
 
 ### Checking what's actually configured
 
@@ -994,8 +1004,8 @@ Planning:          fugu (server-side)     # the model's own conductor plans; loc
 Planning:          local                  # Celeste plans locally
 ```
 
-This matters because a server-side conductor produces no local trace — see
-`docs/LLM_PROVIDERS.md` for what that costs you in observability.
+A server-side conductor leaves no local trace. See `docs/LLM_PROVIDERS.md` for
+what you give up in observability.
 
 ### Single Message Mode (Non-Interactive)
 
@@ -1312,7 +1322,7 @@ Colors pulse between magenta (`#d94f90`) and red (`#dc2626`) to show "corruption
 
 ### Prerequisites
 
-- **Go 1.21+** (uses go 1.24.0 for latest features)
+- **Go 1.26+** (matches the toolchain in `go.mod`)
 - **Terminal** with 256-color support (iTerm2, Alacritty, Windows Terminal, etc.)
 - **API Keys** (for testing skills):
   - OpenAI API key (required for chat)
