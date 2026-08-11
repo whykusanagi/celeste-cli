@@ -5,6 +5,32 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0](https://github.com/whykusanagi/celeste-cli/compare/v1.14.0...v1.15.0) (2026-08-11)
+
+
+### Features
+
+* **agent:** offload planning to fugu when the model orchestrates server-side ([#119](https://github.com/whykusanagi/celeste-cli/issues/119)) ([64d354a](https://github.com/whykusanagi/celeste-cli/commit/64d354af34d6508a14ee5e047ed64aafe81239d9))
+* **build:** stamp local builds with the git commit, report it in celeste_status ([#124](https://github.com/whykusanagi/celeste-cli/issues/124)) ([438d169](https://github.com/whykusanagi/celeste-cli/commit/438d16914a18768cc34c132ee50c25e594e7f977))
+* **server:** hand back a run handle when an MCP agent run exceeds 60s ([#129](https://github.com/whykusanagi/celeste-cli/issues/129)) ([108f5ff](https://github.com/whykusanagi/celeste-cli/commit/108f5ff5044482e41306017a3aced9d0868a8e72))
+
+
+### Bug Fixes
+
+* **agent:** actionable timeout message + conductor-aware deadlines ([#113](https://github.com/whykusanagi/celeste-cli/issues/113)) ([#125](https://github.com/whykusanagi/celeste-cli/issues/125)) ([09a3fa2](https://github.com/whykusanagi/celeste-cli/commit/09a3fa203eb7ecbaf591822858b5461b5ead7f65))
+* **build:** make the smoke release gate test the binary it just built ([#127](https://github.com/whykusanagi/celeste-cli/issues/127)) ([bd324b4](https://github.com/whykusanagi/celeste-cli/commit/bd324b4849a522963c3945255aaf8720d22fa702))
+* **commands:** stop parsing pasted file paths as slash commands ([#126](https://github.com/whykusanagi/celeste-cli/issues/126)) ([f87d49c](https://github.com/whykusanagi/celeste-cli/commit/f87d49cf5dc2a1aabfa0c0251934694ac2d6c042))
+* **deps:** bump github.com/anthropics/anthropic-sdk-go ([#112](https://github.com/whykusanagi/celeste-cli/issues/112)) ([90b2ec9](https://github.com/whykusanagi/celeste-cli/commit/90b2ec97df9260409f9ac881f5c1fcc881ba9677))
+* **deps:** bump github.com/ethereum/go-ethereum from 1.17.4 to 1.17.5 ([#115](https://github.com/whykusanagi/celeste-cli/issues/115)) ([71afb21](https://github.com/whykusanagi/celeste-cli/commit/71afb21f2385abc4445499ffb0187ee2bb76d4fe))
+* **deps:** bump github.com/sashabaranov/go-openai from 1.41.2 to 1.42.0 ([#116](https://github.com/whykusanagi/celeste-cli/issues/116)) ([6569c32](https://github.com/whykusanagi/celeste-cli/commit/6569c321261f0ef7c7be46681290b35aaabc9710))
+* **deps:** bump google.golang.org/genai from 1.63.0 to 1.66.0 ([#118](https://github.com/whykusanagi/celeste-cli/issues/118)) ([c099f04](https://github.com/whykusanagi/celeste-cli/commit/c099f04bdce0d2ac92963d6f6273cf5812416082))
+* **deps:** bump google.golang.org/grpc to v1.82.1 (GO-2026-6061) ([#120](https://github.com/whykusanagi/celeste-cli/issues/120)) ([aa23710](https://github.com/whykusanagi/celeste-cli/commit/aa23710ec5539f428de4d3aab81628bc7d837448))
+* **deps:** bump modernc.org/sqlite from 1.53.0 to 1.56.0 ([#117](https://github.com/whykusanagi/celeste-cli/issues/117)) ([c27c5af](https://github.com/whykusanagi/celeste-cli/commit/c27c5afba2d315d7a8e12820dd75feb4619efd17))
+* **google:** carry thought_signature across the stream-event boundary ([#131](https://github.com/whykusanagi/celeste-cli/issues/131)) ([f4ab737](https://github.com/whykusanagi/celeste-cli/commit/f4ab737455a8cb96fdc48a97b87fe05935eb4c25))
+* **google:** echo Gemini 3.x thought_signature so agent mode survives turn 2 ([#128](https://github.com/whykusanagi/celeste-cli/issues/128)) ([1f97bae](https://github.com/whykusanagi/celeste-cli/commit/1f97bae8838688bb09103ce369d90b058014655d))
+* **llm:** stop retrying a self-inflicted request deadline ([#113](https://github.com/whykusanagi/celeste-cli/issues/113)) ([#122](https://github.com/whykusanagi/celeste-cli/issues/122)) ([1e21914](https://github.com/whykusanagi/celeste-cli/commit/1e219142de4f73e2eca58935e636594e96c7be90))
+* **providers:** unpin Google API version from v1 and default to the -latest alias ([#123](https://github.com/whykusanagi/celeste-cli/issues/123)) ([4078dec](https://github.com/whykusanagi/celeste-cli/commit/4078dec00c38a95860dc12ed1f5ddb15cf34ba9b))
+
 ## [1.14.0](https://github.com/whykusanagi/celeste-cli/compare/v1.13.0...v1.14.0) (2026-07-15)
 
 The large-file reliability release. Reading one big or minified file could poison
