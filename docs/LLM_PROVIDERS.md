@@ -25,23 +25,46 @@ Pick wisely, or I'll tease your slow responses~ 😉
 
 ---
 Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
-## Google (Gemini AI Studio + Vertex) — read this before you configure it
+## Google (Gemini AI Studio + Vertex)
 
-Three things about Google differ from every other provider here, all found the hard way.
+Google behaves differently from the other providers here in three ways. Each one
+cost a debugging session.
 
-**Use the `-latest` alias, not a pinned version.** The default is `gemini-flash-latest`,
-which Google maintains. The entire Gemini 2.x line is retired — `gemini-2.0-flash`,
-`gemini-2.0-flash-001`, `gemini-2.5-flash` and `gemini-2.5-flash-lite` all answer
-*"This model is no longer available."* Pinning a version means adopting the
-retirement schedule as your maintenance burden.
+### Configuring it
 
-**The model listing endpoint lies.** `/v1/models` still returns `gemini-2.0-flash`
-with `generateContent` in its `supportedGenerationMethods`, and calling it fails.
-So "just resolve the default from the live listing" does **not** protect you here —
-a live listing is exactly as wrong as a hardcoded string. Worth knowing before
-building anything on top of `ListModels`.
+There is no `--init gemini` template, so build the profile by hand. Get a key
+from https://aistudio.google.com/apikey (free tier is enough):
 
-**AI Studio needs `v1beta`.** Google no longer serves current models on `v1`:
+```bash
+celeste config -config gemini --set-url https://generativelanguage.googleapis.com/v1beta
+celeste config -config gemini --set-key AIza...
+celeste config -config gemini --set-model gemini-flash-latest
+celeste -config gemini chat
+```
+
+Vertex is a different service: it authenticates with ADC or a service account
+rather than a key, and needs a GCP project with billing.
+
+```bash
+gcloud auth application-default login
+celeste config -config vertex --set-url https://aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION
+```
+
+`celeste providers info gemini` prints the base URL and default model for any
+provider if you need to check what is shipped.
+
+**Use the `-latest` alias, not a pinned version.** The default is
+`gemini-flash-latest`, which Google maintains. Google retired the whole Gemini
+2.x line: `gemini-2.0-flash`, `gemini-2.0-flash-001`, `gemini-2.5-flash` and
+`gemini-2.5-flash-lite` all answer *"This model is no longer available."* Pin a
+version and you inherit Google's retirement schedule.
+
+**The model listing is wrong.** `/v1/models` still returns `gemini-2.0-flash`
+with `generateContent` in its `supportedGenerationMethods`. Call that model and
+it fails. Resolving your default from the live listing buys you no more safety
+than hardcoding it, so check that before you build on `ListModels`.
+
+**AI Studio needs `v1beta`.** Google stopped serving current models on `v1`:
 
 | API version | Model | Result |
 |---|---|---|
@@ -49,18 +72,19 @@ building anything on top of `ListModels`.
 | `v1beta` | `gemini-3.6-flash` | HTTP 200 |
 | `v1beta` | `gemini-flash-latest` | HTTP 200 |
 
-Celeste picks the version from the base URL — `v1beta` for AI Studio, `v1` for
-Vertex, which is a separate service with its own convention.
+Celeste reads the version off the base URL: `v1beta` for AI Studio, `v1` for
+Vertex. Vertex is a separate service and keeps its own convention.
 
 ### Agent mode and `thought_signature`
 
 Gemini 3.x attaches an opaque `thoughtSignature` to the part carrying a function
-call, and rejects the *following* turn unless it is echoed back verbatim:
+call. Echo it back verbatim on the next turn or the request fails:
 
 ```
 Error 400: Function call is missing a thought_signature
 ```
 
-Celeste carries the signature on the message itself (so it survives checkpointing
-and history replay) as of **v1.15.0**. On earlier versions Google chat mode works
-but agent mode fails on the second turn, as soon as the model calls a tool.
+Celeste stores the signature on the message, so it survives checkpointing and
+history replay. This landed in **v1.15.0**. On earlier versions your chat
+sessions work and your agent runs die on the second turn, the moment the model
+calls a tool.
