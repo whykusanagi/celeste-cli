@@ -454,16 +454,15 @@ workflows should prefer the direct codegraph tools.
 #### `celeste_status` and the `commit` field
 
 `celeste_status` reports a **`commit`** field carrying the git commit the running
-binary was built from. It exists because an MCP server is long-lived: a client
-can keep talking to a server started days and several merges ago, while
-`celeste version` reports a version string identical to the current one. That is
-not hypothetical — a server once ran for twelve hours on a binary five merges
-behind while reporting the same version as the new build. If a fix seems not to
-have landed, compare `commit` against `git rev-parse --short HEAD` before
-debugging anything else.
+binary was built from. An MCP server is long-lived, so a client can keep talking
+to a server you started days and several merges ago while `celeste version`
+prints a string identical to the current one. One server here ran twelve hours on
+a binary five merges behind and reported the same version as the new build. When
+a fix seems not to have landed, compare `commit` against
+`git rev-parse --short HEAD` before you debug anything else.
 
-Note the neighbouring `health` field means *the process is up*, not *generation
-works* — it does not exercise the model.
+The neighbouring `health` field means the process is up. It does not exercise the
+model, so it tells you nothing about whether generation works.
 
 ### Tool Definition Pattern
 

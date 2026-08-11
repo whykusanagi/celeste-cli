@@ -17,6 +17,6 @@ Core docs for Go CLI agent.
 - [ALCHEMY_SETUP.md](ALCHEMY_SETUP.md) | [IPFS_SETUP.md](IPFS_SETUP.md) | [VERTEX_AI_SETUP.md](VERTEX_AI_SETUP.md)
 
 ## More
-ROADMAP.md | CONTRIBUTING.md | superpowers/plans/
+ROADMAP.md | CONTRIBUTING.md
 
 **Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)**
