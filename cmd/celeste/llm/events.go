@@ -76,6 +76,15 @@ type StreamEvent struct {
 	// (only for EventToolUseDone).
 	CompleteInput string
 
+	// ThoughtSignature carries Gemini 3.x's opaque per-call token
+	// (set for EventToolUseStart and EventToolUseDone, empty for every other
+	// provider). It has to travel on the event because the streaming path
+	// rebuilds ToolCallResult from events alone — anything left on the
+	// backend's own struct is discarded at this boundary, and Gemini then
+	// rejects the next turn with "Function call is missing a
+	// thought_signature".
+	ThoughtSignature []byte
+
 	// Usage contains token usage statistics (only for EventMessageDone).
 	Usage *TokenUsage
 
@@ -108,9 +117,10 @@ type ToolUseAccumulator struct {
 
 // pendingToolUse tracks a tool use that is still receiving input deltas.
 type pendingToolUse struct {
-	id    string
-	name  string
-	input string // accumulated argument JSON
+	id        string
+	name      string
+	input     string // accumulated argument JSON
+	signature []byte // Gemini thought signature, if the start event carried one
 }
 
 // NewToolUseAccumulator creates a new accumulator for tracking tool uses.
@@ -132,8 +142,9 @@ func (a *ToolUseAccumulator) HandleEvent(event StreamEvent) {
 	switch event.Type {
 	case EventToolUseStart:
 		a.pending[event.ToolUseID] = &pendingToolUse{
-			id:   event.ToolUseID,
-			name: event.ToolName,
+			id:        event.ToolUseID,
+			name:      event.ToolName,
+			signature: event.ThoughtSignature,
 		}
 		a.order = append(a.order, event.ToolUseID)
 
@@ -159,10 +170,22 @@ func (a *ToolUseAccumulator) HandleEvent(event StreamEvent) {
 			}
 		}
 
+		// Prefer the done event's signature, falling back to whatever the
+		// start event carried. Gemini attaches it to only the FIRST
+		// functionCall part of a parallel batch, so an empty value here is
+		// normal and must stay empty rather than being backfilled.
+		signature := event.ThoughtSignature
+		if len(signature) == 0 {
+			if p, ok := a.pending[event.ToolUseID]; ok {
+				signature = p.signature
+			}
+		}
+
 		a.completed = append(a.completed, ToolCallResult{
-			ID:        event.ToolUseID,
-			Name:      name,
-			Arguments: input,
+			ID:               event.ToolUseID,
+			Name:             name,
+			Arguments:        input,
+			ThoughtSignature: signature,
 		})
 		delete(a.pending, event.ToolUseID)
 	}

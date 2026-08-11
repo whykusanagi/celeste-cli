@@ -248,3 +248,53 @@ func TestToolUseAccumulator_PendingCount(t *testing.T) {
 		t.Errorf("expected 0 pending after done, got %d", acc.PendingCount())
 	}
 }
+
+// The streaming path rebuilds ToolCallResult from events alone, so a signature
+// left on the backend's own struct is silently dropped here and Gemini rejects
+// the following turn. Shipping the field on ToolCallResult was not enough —
+// this boundary is where it was actually lost.
+func TestAccumulatorCarriesThoughtSignature(t *testing.T) {
+	sig := []byte("opaque-signature-bytes")
+	acc := NewToolUseAccumulator()
+
+	acc.HandleEvent(StreamEvent{
+		Type: EventToolUseStart, ToolUseID: "call_read_file", ToolName: "read_file",
+		ThoughtSignature: sig,
+	})
+	acc.HandleEvent(StreamEvent{
+		Type: EventToolUseDone, ToolUseID: "call_read_file", ToolName: "read_file",
+		CompleteInput: `{"path":"notes.txt"}`, ThoughtSignature: sig,
+	})
+
+	calls := acc.CompletedCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 completed call, got %d", len(calls))
+	}
+	if string(calls[0].ThoughtSignature) != string(sig) {
+		t.Errorf("signature lost crossing the event boundary: got %q want %q",
+			calls[0].ThoughtSignature, sig)
+	}
+}
+
+// Only the first functionCall of a parallel batch carries a signature. The
+// empty one must stay empty rather than being backfilled from a sibling.
+func TestAccumulatorKeepsParallelSignatureShape(t *testing.T) {
+	sig := []byte("first-only")
+	acc := NewToolUseAccumulator()
+
+	acc.HandleEvent(StreamEvent{Type: EventToolUseStart, ToolUseID: "a", ToolName: "read_file", ThoughtSignature: sig})
+	acc.HandleEvent(StreamEvent{Type: EventToolUseStart, ToolUseID: "b", ToolName: "bash"})
+	acc.HandleEvent(StreamEvent{Type: EventToolUseDone, ToolUseID: "a", ToolName: "read_file", CompleteInput: `{}`, ThoughtSignature: sig})
+	acc.HandleEvent(StreamEvent{Type: EventToolUseDone, ToolUseID: "b", ToolName: "bash", CompleteInput: `{}`})
+
+	calls := acc.CompletedCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 completed calls, got %d", len(calls))
+	}
+	if string(calls[0].ThoughtSignature) != string(sig) {
+		t.Errorf("first call lost its signature: got %q", calls[0].ThoughtSignature)
+	}
+	if len(calls[1].ThoughtSignature) != 0 {
+		t.Errorf("second parallel call must have no signature, got %q", calls[1].ThoughtSignature)
+	}
+}
