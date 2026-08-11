@@ -313,17 +313,22 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 				for _, part := range candidate.Content.Parts {
 					if part.FunctionCall != nil {
 						toolCall := b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature)
-						// Emit start then immediately done
+						// Emit start then immediately done. The signature must
+						// ride on the events: the accumulator rebuilds
+						// ToolCallResult from these alone, so anything left on
+						// toolCall here is dropped and the next turn 400s.
 						callback(StreamEvent{
-							Type:      EventToolUseStart,
-							ToolUseID: toolCall.ID,
-							ToolName:  toolCall.Name,
+							Type:             EventToolUseStart,
+							ToolUseID:        toolCall.ID,
+							ToolName:         toolCall.Name,
+							ThoughtSignature: toolCall.ThoughtSignature,
 						})
 						callback(StreamEvent{
-							Type:          EventToolUseDone,
-							ToolUseID:     toolCall.ID,
-							ToolName:      toolCall.Name,
-							CompleteInput: toolCall.Arguments,
+							Type:             EventToolUseDone,
+							ToolUseID:        toolCall.ID,
+							ToolName:         toolCall.Name,
+							CompleteInput:    toolCall.Arguments,
+							ThoughtSignature: toolCall.ThoughtSignature,
 						})
 					}
 				}
