@@ -79,7 +79,13 @@ type Options struct {
 	// Set for subagents, which are headless and would otherwise deny every
 	// write/exec tool ("Ask" with no prompt). Spawning the subagent is the
 	// approval. Never set for the interactive main agent.
-	AutoApproveTools   bool   `json:"auto_approve_tools"`
+	AutoApproveTools bool `json:"auto_approve_tools"`
+	// FailOnBlockedTools makes NewRunner refuse to start when the policy would
+	// send a mutating tool to an approval prompt that does not exist. Set by the
+	// `celeste agent` CLI, which can offer -auto-approve as the remedy. Other
+	// callers (TUI /agent, orchestrator) leave it false so this does not change
+	// their behaviour; they share the same underlying gap, tracked separately.
+	FailOnBlockedTools bool   `json:"fail_on_blocked_tools"`
 	EmitArtifacts      bool   `json:"emit_artifacts"`
 	ArtifactDir        string `json:"artifact_dir,omitempty"`
 	DisableCheckpoints bool   `json:"disable_checkpoints"`

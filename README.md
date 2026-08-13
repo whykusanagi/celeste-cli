@@ -982,6 +982,16 @@ Useful flags beyond `--goal`:
 | `-request-timeout` | `0` (provider default) | Per-LLM-request timeout, in seconds. |
 | `-max-turns` | unset | Cap the number of agent turns. |
 | `-no-checkpoint` | `false` | Disable checkpointing for this run. |
+| `-auto-approve` | `false` | Approve every tool without prompting. **Required for unattended runs.** |
+
+**Unattended runs need `-auto-approve`.** `celeste agent` has no interactive
+approval prompt, in a terminal or otherwise. Under the default policy only
+`read_file`, `list_files` and `search_files` are granted, so every other tool is
+denied and the agent can read but never write. Rather than burning the whole turn
+budget discovering that, the runner refuses to start and names the tools it cannot
+execute. Pass `-auto-approve` (invoking the agent is the approval, the same
+contract subagents already use), or grant specific tools in
+`~/.celeste/permissions.json`.
 
 **Passing one of the first three explicitly changes behaviour.** When the model
 orchestrates server-side (see *Planning* below), celeste skips its own local

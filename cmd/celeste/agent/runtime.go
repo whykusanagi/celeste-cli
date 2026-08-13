@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -199,7 +200,23 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	if options.AutoApproveTools {
 		permConfig.Mode = permissions.ModeTrust
 	}
-	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
+	checker := permissions.NewChecker(*permConfig)
+	registry.SetPermissionChecker(checker)
+
+	// Fail fast rather than no-opping. `celeste agent` never wires an
+	// interactive prompt, so every tool that resolves to Ask is denied — and the
+	// run still reports success with exit 0 after burning the whole turn budget.
+	// Under the DEFAULT policy that is every mutating tool, so an unattended
+	// agent can only read. Check before turn 1 and say which flag fixes it.
+	if options.FailOnBlockedTools && !options.AutoApproveTools {
+		if blocked := blockedMutatingTools(registry, checker); len(blocked) > 0 {
+			return nil, fmt.Errorf(
+				"agent mode cannot execute %s: these need interactive approval, and the agent runtime has no prompt.\n"+
+					"Pass -auto-approve to run unattended (invoking the agent is the approval), "+
+					"or grant them in ~/.celeste/permissions.json",
+				strings.Join(blocked, ", "))
+		}
+	}
 
 	// Guardrail: warn loudly if the chosen model doesn't support tool calling —
 	// that model will flail/hallucinate in agent mode (observed with
@@ -1288,3 +1305,32 @@ func nextConsecutiveInvalid(prev int, anyInvalid bool) int {
 	}
 	return 0
 }
+
+// blockedMutatingTools returns the names of non-read-only tools the current
+// policy would send to an interactive prompt. Read-only tools are excluded:
+// an agent that can only read is degraded, but one that silently cannot write
+// is broken, and that is the case worth refusing to start.
+func blockedMutatingTools(registry *tools.Registry, checker *permissions.Checker) []string {
+	var blocked []string
+	for _, t := range registry.GetTools(tools.ModeAgent) {
+		if t.IsReadOnly() {
+			continue
+		}
+		if checker.Check(permToolInfo{name: t.Name(), readOnly: t.IsReadOnly()}, nil).Decision == permissions.Ask {
+			blocked = append(blocked, t.Name())
+		}
+	}
+	sort.Strings(blocked)
+	return blocked
+}
+
+// permToolInfo adapts a tool's identity to permissions.ToolInfo. The tools
+// package has its own adapter but does not export it, and permissions
+// deliberately avoids importing tools to stay acyclic.
+type permToolInfo struct {
+	name     string
+	readOnly bool
+}
+
+func (p permToolInfo) ToolName() string { return p.name }
+func (p permToolInfo) IsReadOnly() bool { return p.readOnly }

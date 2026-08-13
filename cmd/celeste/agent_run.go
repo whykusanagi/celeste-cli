@@ -57,6 +57,7 @@ func runAgentCommand(args []string) {
 	noArtifacts := fs.Bool("no-artifacts", false, "Disable per-run artifact bundle output")
 	verbose := fs.Bool("verbose", true, "Print turn-by-turn output")
 	noCheckpoint := fs.Bool("no-checkpoint", false, "Disable checkpoint persistence for this run")
+	autoApprove := fs.Bool("auto-approve", false, "Approve every tool without prompting. Required for unattended runs: `celeste agent` has no interactive prompt, so tools needing approval are otherwise denied")
 
 	_ = fs.Parse(args)
 
@@ -106,6 +107,13 @@ func runAgentCommand(args []string) {
 	opts.EnablePlanning = *enablePlanning
 	opts.PlanMaxSteps = *planMaxSteps
 	opts.RequireVerification = *requireVerification
+	// Same contract the subagent and MCP server paths already use: there is no
+	// prompt outside the TUI, so invoking the agent with this flag IS the
+	// approval. Without it the runtime refuses to start rather than denying
+	// every mutating tool and still exiting 0.
+	opts.AutoApproveTools = *autoApprove
+	// Only the CLI can offer -auto-approve, so only the CLI refuses to start.
+	opts.FailOnBlockedTools = true
 
 	// NewRunner stands the local planner down for conductor models. An
 	// explicitly passed -planner/-require-verify overrides that, which is what
