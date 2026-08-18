@@ -5,6 +5,17 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1](https://github.com/whykusanagi/celeste-cli/compare/v1.15.0...v1.15.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **agent:** stop headless agent runs silently no-opping on every mutating tool ([#134](https://github.com/whykusanagi/celeste-cli/issues/134)) ([65b5281](https://github.com/whykusanagi/celeste-cli/commit/65b5281f124a616a6128881df84b87d5ba9660d9))
+* **ci:** build on Go 1.26.6 — 1.26.5 has 7 called stdlib vulnerabilities ([#138](https://github.com/whykusanagi/celeste-cli/issues/138)) ([712e83a](https://github.com/whykusanagi/celeste-cli/commit/712e83af62c202b64bf5a7a84c7c12ba7cbbf288))
+* **deps:** bump github.com/anthropics/anthropic-sdk-go ([#136](https://github.com/whykusanagi/celeste-cli/issues/136)) ([7a780a7](https://github.com/whykusanagi/celeste-cli/commit/7a780a7533acc8cfc14a7c1cdfa0bfd3c533e15d))
+* **deps:** bump golang.org/x/text in the golang-x group ([#135](https://github.com/whykusanagi/celeste-cli/issues/135)) ([0b3c517](https://github.com/whykusanagi/celeste-cli/commit/0b3c5173d8547812c1cb251e37d649bdb43db61b))
+* **deps:** bump google.golang.org/genai from 1.66.0 to 1.68.0 ([#137](https://github.com/whykusanagi/celeste-cli/issues/137)) ([6a49910](https://github.com/whykusanagi/celeste-cli/commit/6a49910de4811155f315a3138ec3032495544b34))
+
 ## [1.15.0](https://github.com/whykusanagi/celeste-cli/compare/v1.14.0...v1.15.0) (2026-08-11)
 
 
