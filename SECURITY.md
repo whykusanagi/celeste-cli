@@ -4,10 +4,30 @@
 
 We release patches for security vulnerabilities. Currently supported versions:
 
-| Version  | Supported          |
-| -------- | ------------------ |
-| 1.10.x   | :white_check_mark: |
-| < 1.10   | :x:                |
+| Version  | Supported          | Notes |
+| -------- | ------------------ | ----- |
+| 1.15.1+  | :white_check_mark: | First release built with Go 1.26.6 |
+| 1.15.0   | :x:                | Vulnerable stdlib, see below |
+| < 1.15   | :x:                | Vulnerable stdlib, see below |
+
+### Known vulnerable released binaries
+
+Every release **before v1.15.1** was built with Go 1.26.5 or older. `govulncheck`
+reports seven standard-library vulnerabilities as *called* by this code on 1.26.5:
+
+| ID | Package | | ID | Package |
+|---|---|---|---|---|
+| [GO-2026-6090](https://pkg.go.dev/vuln/GO-2026-6090) | `crypto/tls` | | [GO-2026-6089](https://pkg.go.dev/vuln/GO-2026-6089) | `net/http` |
+| [GO-2026-5026](https://pkg.go.dev/vuln/GO-2026-5026) | `net/http` | | [GO-2026-6218](https://pkg.go.dev/vuln/GO-2026-6218) | `net/url` |
+| [GO-2026-6091](https://pkg.go.dev/vuln/GO-2026-6091) | `html/template` | | [GO-2026-6088](https://pkg.go.dev/vuln/GO-2026-6088) | `encoding/xml` |
+| [GO-2026-5972](https://pkg.go.dev/vuln/GO-2026-5972) | `encoding/asn1` | | | |
+
+The vulnerable code is compiled in, so upgrading is the only remedy. Check any
+binary with `go version ./celeste` — v1.15.1 and later report `go1.26.6`.
+
+The release and CI workflows now pin the same toolchain deliberately. Bumping
+only CI would turn the checks green while the shipped artifacts stayed
+vulnerable, which is how this went unnoticed through two releases.
 
 ## Release Signing & Verification
 
@@ -145,11 +165,15 @@ Please include the following information in your report:
    chmod 600 ~/.celeste/secrets.json
    ```
 
-3. **Update Regularly**: Keep Celeste CLI up to date
+3. **Update Regularly**: Keep Celeste CLI up to date. Prefer a signed release
+   over a source build, so you get an artifact you can verify:
    ```bash
-   git pull origin main
-   make install
+   # download the latest release, then verify before installing
+   gpg --verify checksums.txt.asc checksums.txt
+   shasum -a 256 -c checksums.txt --ignore-missing
    ```
+   Building from source with `make install` is fine for development, but it
+   produces an unsigned binary that none of the verification above covers.
 
 4. **Named Configs**: Use separate configs for different API providers
    ```bash
@@ -213,7 +237,7 @@ Celeste CLI relies on several third-party libraries.
 **Mitigation**:
 - Dependencies are pinned in `go.mod`
 - Regular security audits with `govulncheck`
-- Minimal dependency surface (6 direct dependencies)
+- 30 direct dependencies, pinned in `go.mod`; `govulncheck` runs in CI on every PR
 
 ## Security Update Process
 
