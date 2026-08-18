@@ -2,11 +2,11 @@ module github.com/whykusanagi/celeste-cli
 
 go 1.26.0
 
-toolchain go1.26.4
+toolchain go1.26.6
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
-	github.com/anthropics/anthropic-sdk-go v1.61.0
+	github.com/anthropics/anthropic-sdk-go v1.63.1
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
@@ -30,9 +30,9 @@ require (
 	github.com/tree-sitter/tree-sitter-ruby v0.23.1
 	github.com/tree-sitter/tree-sitter-rust v0.24.2
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.41.0
 	golang.org/x/time v0.15.0
-	google.golang.org/genai v1.66.0
+	google.golang.org/genai v1.68.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.56.0
 )
