@@ -25,6 +25,47 @@ Pick wisely, or I'll tease your slow responses~ 😉
 
 ---
 Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
+## Local models (mlx-vlm, Ollama, LM Studio, llama.cpp)
+
+Any OpenAI-compatible server on `127.0.0.1`, `localhost`, `0.0.0.0` or `[::1]`
+detects as the **local** provider and is treated as tool-capable, on any port.
+
+```bash
+celeste config -config local --set-url http://127.0.0.1:8080/v1
+celeste config -config local --set-key not-needed
+celeste config -config local --set-model <whatever your server expects>
+```
+
+Two things differ from a hosted provider.
+
+**The model name is whatever your server wants.** celeste does not guess one and
+will not overwrite yours. mlx-vlm in particular wants the full filesystem path to
+the weights; give it a short name and it tries to fetch a HuggingFace repo by
+that name and returns 404.
+
+**`GET /v1/models` is not a reliable catalogue.** The mlx-vlm server advertises
+only its embedding model, not the chat model it has loaded, so `local` is
+registered with model listing disabled. Configure the model by hand.
+
+### Which commands can use tools
+
+| | tools |
+|---|---|
+| `celeste chat` (TUI, incl. claw mode) | yes |
+| `celeste agent` | yes |
+| `celeste message` | no |
+
+`celeste message` sends no tools for **any** provider, local or hosted. It is a
+one-shot chat command with no tool-execution loop. For non-interactive tool use,
+`celeste agent` is that loop:
+
+```bash
+celeste -config local agent -auto-approve --goal "read README.md and summarise it"
+```
+
+Expect local inference to be slow enough that a turn feels stalled. A 27B model
+at ~6 tok/s takes roughly half a minute per turn.
+
 ## Google (Gemini AI Studio + Vertex)
 
 Google behaves differently from the other providers here in three ways. Each one

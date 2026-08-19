@@ -19,7 +19,7 @@ func TestProviderCount(t *testing.T) {
 		"openai", "grok", "venice",
 		"anthropic", "gemini", "vertex",
 		"openrouter", "digitalocean", "elevenlabs",
-		"sakana",
+		"sakana", "local",
 	}
 
 	assert.Equal(t, len(expectedProviders), len(Registry),
@@ -65,13 +65,14 @@ func TestListProviders(t *testing.T) {
 	providers := ListProviders()
 
 	assert.NotEmpty(t, providers, "ListProviders should return providers")
-	assert.Equal(t, 10, len(providers), "Should return all 10 providers")
+	assert.Equal(t, 11, len(providers), "Should return all 11 providers")
 	assert.Equal(t, []string{
 		"anthropic",
 		"digitalocean",
 		"elevenlabs",
 		"gemini",
 		"grok",
+		"local",
 		"openai",
 		"openrouter",
 		"sakana",
@@ -101,6 +102,7 @@ func TestGetToolCallingProviders(t *testing.T) {
 		"anthropic",
 		"gemini",
 		"grok",
+		"local",
 		"openai",
 		"openrouter",
 		"sakana",
@@ -196,19 +198,27 @@ func TestProviderCapabilities(t *testing.T) {
 			// Every provider should have a name
 			assert.NotEmpty(t, caps.Name, "Provider should have a display name")
 
-			// Most providers should have a base URL (except special cases like DigitalOcean)
-			if name != "digitalocean" {
+			// Most providers should have a base URL (except special cases like
+			// DigitalOcean, and "local", whose URL is whatever host and port the
+			// user's server listens on — an empty value here is what keeps
+			// detection port-independent).
+			if name != "digitalocean" && name != "local" {
 				assert.NotEmpty(t, caps.BaseURL, "Provider should have a base URL")
 			}
 
-			// If provider supports function calling, it should have a preferred tool model
-			if caps.SupportsFunctionCalling {
+			// If provider supports function calling, it should have a preferred tool
+			// model. "local" is exempt: the model name is whatever the user's
+			// server expects, and mlx-vlm wants a full filesystem path.
+			if caps.SupportsFunctionCalling && name != "local" {
 				assert.NotEmpty(t, caps.PreferredToolModel,
 					"Tool-capable provider should have a preferred tool model")
 			}
 
-			// Most providers should have a default model (except voice APIs like ElevenLabs)
-			if name != "elevenlabs" {
+			// Most providers should have a default model (except voice APIs like
+			// ElevenLabs, and "local"). Inventing a default for a local server
+			// would be actively harmful: mlx-vlm treats an unrecognised model
+			// name as a HuggingFace repo id and 404s.
+			if name != "elevenlabs" && name != "local" {
 				assert.NotEmpty(t, caps.DefaultModel, "Provider should have a default model")
 			}
 
@@ -307,4 +317,88 @@ func TestProviderNotes(t *testing.T) {
 				"Provider notes should contain important information")
 		})
 	}
+}
+
+// A local OpenAI-compatible server (mlx-vlm, Ollama, LM Studio, llama.cpp) used
+// to detect as "unknown", which meant GetProvider returned ok=false, skills
+// never enabled, and celeste sent no `tools` array at all. The model then
+// improvised an unparseable text <tool_call> block. These pin the detection.
+func TestDetectProvider_LocalEndpoints(t *testing.T) {
+	for _, tc := range []struct{ name, baseURL string }{
+		{"mlx-vlm loopback IP", "http://127.0.0.1:8080/v1"},
+		{"Ollama localhost", "http://localhost:11434/v1"},
+		{"LM Studio localhost", "http://localhost:1234/v1"},
+		{"bind-all address", "http://0.0.0.0:8080/v1"},
+		{"IPv6 loopback", "http://[::1]:8080/v1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, "local", DetectProvider(tc.baseURL))
+		})
+	}
+}
+
+// The local branch sits last in the switch, so it must not have stolen routing
+// from any hosted provider, and must not swallow the two "unknown" cases the
+// existing suite depends on. The empty string is the one to watch: it contains
+// no host substring, so it has to keep falling through.
+func TestDetectProvider_LocalBranchStealsNothing(t *testing.T) {
+	for _, tc := range []struct{ baseURL, want string }{
+		{"https://api.openai.com/v1", "openai"},
+		{"https://openai.com/some/path", "openai"},
+		{"https://api.x.ai/v1", "grok"},
+		{"https://api.sakana.ai/v1", "sakana"},
+		{"https://generativelanguage.googleapis.com/v1beta", "gemini"},
+		{"https://example.com/api", "unknown"},
+		{"", "unknown"},
+	} {
+		assert.Equal(t, tc.want, DetectProvider(tc.baseURL),
+			"routing changed for %q", tc.baseURL)
+	}
+}
+
+// SupportsTools defaults to false, so the registry entry and the detection
+// branch are not enough on their own — this is the third of the three changes
+// and the easiest to leave out.
+func TestSupportsTools_Local(t *testing.T) {
+	d := NewModelDetection("local")
+	// A local model name is arbitrary; no heuristic applies, so every name is
+	// tool-capable.
+	assert.True(t, d.SupportsTools("/Users/me/models/qwen3.8-27b/4-bit"))
+	assert.True(t, d.SupportsTools("llama3.2"))
+	assert.True(t, d.SupportsTools(""))
+
+	// And the hosted heuristics are untouched.
+	assert.True(t, NewModelDetection("openai").SupportsTools("gpt-4.1-nano"))
+	assert.False(t, NewModelDetection("openai").SupportsTools("text-embedding-3-small"))
+}
+
+// A local server's /v1/models advertises only its embedding model, so a picker
+// built on that listing would show the wrong thing.
+func TestLocalProvider_Capabilities(t *testing.T) {
+	caps, ok := GetProvider("local")
+	require.True(t, ok, "local provider must be registered")
+	assert.True(t, caps.SupportsFunctionCalling)
+	assert.False(t, caps.SupportsModelListing, "local /v1/models does not list the loaded chat model")
+	assert.False(t, caps.RequiresAPIKey)
+	assert.True(t, caps.IsOpenAICompatible)
+	assert.Empty(t, caps.BaseURL, "must stay empty so detection is port-independent")
+}
+
+// The TUI enables skills via `if caps, ok := GetProvider(provider); ok { ... }`
+// (tui/app.go:3155 and :1377). Before "local" existed, ok was false for any
+// localhost URL, so skillsEnabled kept its zero value and the whole tool
+// surface stayed dark. This pins the three properties that path depends on.
+func TestLocalProvider_DrivesTUISkillGate(t *testing.T) {
+	provider := DetectProvider("http://127.0.0.1:8080/v1")
+	caps, ok := GetProvider(provider)
+
+	require.True(t, ok, "GetProvider must succeed or the TUI leaves skills disabled")
+	assert.True(t, caps.SupportsFunctionCalling, "drives skillsEnabled")
+
+	// The same block auto-selects caps.PreferredToolModel when the model is
+	// unset. It must stay empty for local: overwriting a user's model would
+	// break mlx-vlm, which needs the full filesystem path and 404s on anything
+	// it cannot resolve as a HuggingFace repo id.
+	assert.Empty(t, caps.PreferredToolModel,
+		"must not auto-select a model for a local server")
 }

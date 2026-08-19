@@ -127,6 +127,26 @@ var Registry = map[string]ProviderCapabilities{
 		Notes:              "ENTERPRISE: Native Google GenAI SDK with automatic authentication. No manual token refresh! Use: (1) gcloud auth application-default login OR (2) Service account JSON. Tokens auto-refresh indefinitely. Requires GCP project + billing.",
 	},
 
+	// Local OpenAI-compatible servers: mlx-vlm, Ollama, LM Studio, llama.cpp.
+	// BaseURL is deliberately EMPTY. DetectProvider's exact-match loop skips
+	// entries with no BaseURL, so detection happens purely by the host substring
+	// below and works on any port. Hardcoding one would bind this to a port.
+	"local": {
+		Name:                    "Local (OpenAI-compatible)",
+		BaseURL:                 "",
+		SupportsFunctionCalling: true,
+		// The mlx-vlm server's /v1/models advertises only its embedding model,
+		// not the loaded chat model, so a picker built on that listing shows the
+		// wrong thing. Anything local is configured by hand anyway.
+		SupportsModelListing:  false,
+		SupportsTokenTracking: true,
+		DefaultModel:          "",
+		PreferredToolModel:    "",
+		RequiresAPIKey:        false,
+		IsOpenAICompatible:    true,
+		Notes:                 "Any OpenAI-compatible server on localhost (mlx-vlm, Ollama, LM Studio, llama.cpp). Set the model to whatever the server expects — mlx-vlm wants the full filesystem path. No API key required.",
+	},
+
 	"openrouter": {
 		Name:                    "OpenRouter",
 		BaseURL:                 "https://openrouter.ai/api/v1",
@@ -251,6 +271,11 @@ func DetectProvider(baseURL string) string {
 		return "digitalocean"
 	case contains(baseURL, "elevenlabs.io"):
 		return "elevenlabs"
+	// Local servers, checked LAST so a hosted provider can never be shadowed.
+	// Matching on host substrings only: an empty baseURL contains none of them
+	// and still falls through to "unknown".
+	case contains(baseURL, "127.0.0.1"), contains(baseURL, "localhost"), contains(baseURL, "0.0.0.0"), contains(baseURL, "[::1]"):
+		return "local"
 	default:
 		return "unknown"
 	}
@@ -314,6 +339,14 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 	case "sakana":
 		// Fugu models support parallel tool calls (supports_parallel_tool_calls).
 		return contains(modelID, "fugu")
+
+	case "local":
+		// A local server's model name is an arbitrary string (mlx-vlm wants a
+		// filesystem path), so no name heuristic can work here. Assume tools are
+		// supported: the user chose to point celeste at this endpoint, and the
+		// failure mode of assuming false is worse — celeste silently sends no
+		// tools array at all and the model improvises an unparseable text block.
+		return true
 
 	case "openrouter":
 		// Prefer OpenRouter's live catalog (authoritative per-model capability:
