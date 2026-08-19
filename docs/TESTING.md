@@ -261,7 +261,7 @@ go test -v ./cmd/celeste/providers/ -cover
 ```
 
 **What's tested**:
-- Provider registration (all 9 providers)
+- Provider registration (all 11 registry entries: 9 LLM providers plus elevenlabs and digitalocean)
 - URL pattern detection
 - Model lists and recommendations
 - Tool-calling capability filtering

@@ -278,15 +278,16 @@ configure collections:
 - **Session Listing** - Browse and load previous sessions by ID
 - **Session Clearing** - Bulk delete sessions when needed
 
-### Multi-Provider Support (8 Providers)
-- ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - **DEFAULT** - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
+### Multi-Provider Support (9 Providers)
+- ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-flash-latest) - Simple API keys, free tier, full streaming • Token tracking ✓
 - ⚠️ **Google Vertex AI** (gemini-flash-latest) - Enterprise, requires GCP project + billing • Token tracking ✓
 - ✅ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
-- ✅ **Sakana AI** (fugu, fugu-ultra) - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
+- ✅ **Sakana AI** (fugu, fugu-ultra) - **DEFAULT** - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
+- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported, no API key • Cost tracked as $0
 
 **Dynamic Model Selection** - Auto-selects best tool-calling model per provider
 **Capability Indicators** - Visual feedback (✓ skills / ⚠️ no skills) in header
