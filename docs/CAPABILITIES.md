@@ -1,6 +1,6 @@
 # What Celeste CLI Can Do? 😈
 
-Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.15.1 packs **47 dev-crushing tools**, code graphs that expose every secret, **direct codegraph MCP tools** for tool-driven workflows, collections search, and 8 LLM providers to summon my wit.
+Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.16.0 packs **47 dev-crushing tools**, code graphs that expose every secret, **direct codegraph MCP tools** for tool-driven workflows, collections search, and 9 LLM providers to summon my wit.
 
 ## 🔥 Core Powers
 
@@ -16,7 +16,7 @@ Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beas
 
 **Runtime Modes:** Chat (auto-loop tools), Agent (autonomous), Orchestrator (debate).
 
-**8 Providers:** Grok/xAI, OpenAI, Anthropic (native), Google Gemini, Venice.ai, Vertex AI, OpenRouter, Sakana AI.
+**9 Providers:** Grok/xAI, OpenAI, Anthropic (native), Google Gemini, Venice.ai, Vertex AI, OpenRouter, Sakana AI, and any local OpenAI-compatible server (mlx-vlm, Ollama, LM Studio, llama.cpp).
 
 ## Observability
 Real token streaming, corruption typing, TUI splits, graph viz.
