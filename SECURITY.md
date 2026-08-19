@@ -23,7 +23,7 @@ reports seven standard-library vulnerabilities as *called* by this code on 1.26.
 | [GO-2026-5972](https://pkg.go.dev/vuln/GO-2026-5972) | `encoding/asn1` | | | |
 
 The vulnerable code is compiled in, so upgrading is the only remedy. Check any
-binary with `go version ./celeste` — v1.15.1 and later report `go1.26.6`.
+binary with `go version ./celeste`. v1.15.1 and later report `go1.26.6`.
 
 The release and CI workflows now pin the same toolchain deliberately. Bumping
 only CI would turn the checks green while the shipped artifacts stayed
