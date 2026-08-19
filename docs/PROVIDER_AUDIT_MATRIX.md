@@ -20,7 +20,7 @@
 
 All support streaming/tool calls/tokens in v1.16.0.
 Local: any OpenAI-compatible server on 127.0.0.1/localhost/0.0.0.0/[::1], any port.
-Its model list is manual — a local server's /v1/models may not advertise the
+Its model list is manual. A local server's /v1/models may not advertise the
 loaded chat model, so celeste does not auto-select one.
 Grok: 2M ctx. Venice: NSFW. Sakana: 1M ctx (fugu/fugu-ultra).
 

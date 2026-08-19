@@ -59,9 +59,8 @@ celeste config -config local --set-context-limit 32768
 celeste config -config local            # Context Limit: 32768 tokens (configured)
 ```
 
-`config` reports where the number came from — `configured`, `model default`, or
-`fallback — model unknown`. That last one means celeste is guessing and you
-should set it.
+`config` reports where the number came from: `configured`, `model default`, or
+`fallback, model unknown`. That last one means celeste is guessing, so set it.
 
 `--set-context-limit 0` clears the setting and returns to the model default.
 
