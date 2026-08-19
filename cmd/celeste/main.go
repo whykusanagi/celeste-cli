@@ -135,8 +135,9 @@ Configuration:
   celeste config --set-model <model>     Set model
   celeste config --set-mode <mode>       Set runtime mode (classic/claw)
   celeste config --set-claw-max-iterations <n>
-  celeste config --set-context-limit <tokens>
                                           Set claw tool-loop safety cap
+  celeste config --set-context-limit <tokens>
+                                          Set the context window (0 = model default)
   celeste config --skip-persona <bool>   Skip persona prompt injection
 
 Skills:

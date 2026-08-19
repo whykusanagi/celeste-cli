@@ -51,12 +51,14 @@ func EstimateSessionTokensByRole(session *Session) (int, int, int) {
 	return promptTokens, completionTokens, promptTokens + completionTokens
 }
 
-// GetModelLimit returns token limit for a model (delegates to ctxmgr).
-// LookupModelLimit reports the limit and whether the model is known.
+// LookupModelLimit reports the limit and whether the model is known
+// (delegates to ctxmgr). Callers validating a user-configured window need the
+// second value: for an unknown model the limit is a fallback, not knowledge.
 func LookupModelLimit(model string) (int, bool) {
 	return ctxmgr.LookupModelLimit(model)
 }
 
+// GetModelLimit returns token limit for a model (delegates to ctxmgr).
 func GetModelLimit(model string) int {
 	return ctxmgr.GetModelLimit(model)
 }
