@@ -5,6 +5,19 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
+
+
+### Features
+
+* **providers:** recognise local OpenAI-compatible endpoints as tool-capable ([#142](https://github.com/whykusanagi/celeste-cli/issues/142)) ([045b524](https://github.com/whykusanagi/celeste-cli/commit/045b5241b2eea8f99737974351a03ed0fe151e98))
+
+
+### Bug Fixes
+
+* **config:** don't trust a coincidental model-name match on a local endpoint ([#150](https://github.com/whykusanagi/celeste-cli/issues/150)) ([2a6be1f](https://github.com/whykusanagi/celeste-cli/commit/2a6be1f5d7f8ead1a224af0dda91dd04da3eb2b0))
+* **config:** stop deleting context_limit for models we cannot size ([#146](https://github.com/whykusanagi/celeste-cli/issues/146)) ([0162e2b](https://github.com/whykusanagi/celeste-cli/commit/0162e2bf3cc89aaa1a9d5c803eda3c72642136f0))
+
 ## [1.15.1](https://github.com/whykusanagi/celeste-cli/compare/v1.15.0...v1.15.1) (2026-08-18)
 
 
