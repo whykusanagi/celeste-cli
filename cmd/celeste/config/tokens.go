@@ -6,6 +6,7 @@ package config
 
 import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
 // ModelLimits is kept as an alias for backward compatibility.
@@ -96,4 +97,26 @@ func TruncateToLimit(messages []SessionMessage, model string, systemPromptTokens
 	}
 
 	return kept
+}
+
+// ResolveContextLimit returns the effective context window and whether that
+// number is actually knowledge.
+//
+// An explicit override always wins. Otherwise the model is looked up, EXCEPT
+// for local endpoints: a local server names its model whatever it likes, so a
+// hit in the limits table is coincidence. That mattered in practice — a fresh
+// profile inherits the seed default's model (fugu), so pointing it at a local
+// server produced a confident 1,000,000-token budget for a server that might
+// have 8k. celeste would never compact and the request would overflow.
+func ResolveContextLimit(baseURL, model string, override int) (limit int, known bool) {
+	if override > 0 {
+		return override, true
+	}
+	limit, known = LookupModelLimit(model)
+	if known && providers.DetectProvider(baseURL) == "local" {
+		// Fall back to the conservative default rather than a name collision.
+		fallback, _ := LookupModelLimit("")
+		return fallback, false
+	}
+	return limit, known
 }

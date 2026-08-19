@@ -33,8 +33,19 @@ detects as the **local** provider and is treated as tool-capable, on any port.
 ```bash
 celeste config -config local --set-url http://127.0.0.1:8080/v1
 celeste config -config local --set-key not-needed
-celeste config -config local --set-model <whatever your server expects>
+celeste config -config local --set-model <whatever your server expects>   # REQUIRED
 ```
+
+`--set-model` is not optional. A new profile inherits the default profile's
+model, so skipping that line leaves your local server receiving a hosted
+model's name and returning 404. Confirm before you start:
+
+```bash
+celeste config -config local     # Model: must be YOUR model, not fugu
+```
+
+`local` above is just a profile name; pick anything. There is no
+`--init local` template, the profile is created by the first `--set-*`.
 
 Two things differ from a hosted provider.
 
@@ -60,7 +71,8 @@ celeste config -config local            # Context Limit: 32768 tokens (configure
 ```
 
 `config` reports where the number came from: `configured`, `model default`, or
-`fallback, model unknown`. That last one means celeste is guessing, so set it.
+`fallback, model unknown, set --set-context-limit`. That last one means celeste
+is guessing and has fallen back to a conservative 8192, so set it.
 
 `--set-context-limit 0` clears the setting and returns to the model default.
 
