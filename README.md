@@ -651,7 +651,7 @@ Celeste prints a **loud warning at agent start** if the resolved agent model doe
 | **Venice.ai** | ⚠️ Model-dependent (catalog-checked) | per-model via live catalog; pick a tool-capable model for `agent_model` | Medium |
 | **OpenRouter** | ⚠️ Model-dependent (catalog-checked) | per-model via live catalog; check before using as `agent_model` | Medium |
 | **ElevenLabs** | ❓ Unknown | Needs Testing | Unknown |
-| **Local (Ollama)** | ⚠️ Depends on Model | Varies | Medium (model-dependent) |
+| **Local (OpenAI-compat)** | ✅ Yes | Varies | Medium (model-dependent) |
 
 ### ✅ Fully Supported: Grok/xAI (Default)
 

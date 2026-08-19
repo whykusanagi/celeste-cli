@@ -1486,10 +1486,13 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  Claw Max Iter:     %d\n", cfg.ClawMaxToolIterations)
 		if cfg.ContextLimit > 0 {
 			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
-		} else if limit, known := config.LookupModelLimit(cfg.Model); known {
-			fmt.Printf("  Context Limit:     %d tokens (model default)\n", limit)
 		} else {
-			fmt.Printf("  Context Limit:     %d tokens (fallback — model unknown, set --set-context-limit)\n", limit)
+			limit, known := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, 0)
+			if known {
+				fmt.Printf("  Context Limit:     %d tokens (model default)\n", limit)
+			} else {
+				fmt.Printf("  Context Limit:     %d tokens (fallback, model unknown, set --set-context-limit)\n", limit)
+			}
 		}
 		fmt.Printf("  Venice API Key:    %s\n", maskKey(cfg.VeniceAPIKey))
 		fmt.Printf("  Tarot Configured:  %v\n", cfg.TarotAuthToken != "")
@@ -2063,7 +2066,8 @@ func runContextCommand(args []string) {
 	if contextLimit == 0 {
 		contextLimit = config.GetModelLimit(cfg.Model)
 	}
-	contextTracker := config.NewContextTracker(session, cfg.Model, contextLimit)
+	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, contextLimit)
+	contextTracker := config.NewContextTracker(session, cfg.Model, resolved)
 
 	// Handle subcommand
 	result := commands.HandleContextCommand(args, contextTracker)
@@ -2100,7 +2104,8 @@ func runStatsCommand(args []string) {
 	if contextLimit == 0 {
 		contextLimit = config.GetModelLimit(cfg.Model)
 	}
-	contextTracker := config.NewContextTracker(session, cfg.Model, contextLimit)
+	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, contextLimit)
+	contextTracker := config.NewContextTracker(session, cfg.Model, resolved)
 
 	// Generate stats output
 	result := commands.HandleStatsCommand(args, contextTracker)

@@ -3059,8 +3059,10 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			// Convert Session interface to *config.Session for ContextTracker
 			if configSession, ok := session.(*config.Session); ok {
 				// Pass config's ContextLimit as override if available
-				if m.config != nil && m.config.ContextLimit > 0 {
-					m.contextTracker = config.NewContextTracker(configSession, model, m.config.ContextLimit)
+				if m.config != nil {
+					override := m.config.ContextLimit
+					resolved, _ := config.ResolveContextLimit(m.config.BaseURL, model, override)
+					m.contextTracker = config.NewContextTracker(configSession, model, resolved)
 				} else {
 					m.contextTracker = config.NewContextTracker(configSession, model)
 				}
