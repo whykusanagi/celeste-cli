@@ -135,6 +135,7 @@ Configuration:
   celeste config --set-model <model>     Set model
   celeste config --set-mode <mode>       Set runtime mode (classic/claw)
   celeste config --set-claw-max-iterations <n>
+  celeste config --set-context-limit <tokens>
                                           Set claw tool-loop safety cap
   celeste config --skip-persona <bool>   Skip persona prompt injection
 
@@ -1182,6 +1183,7 @@ func runConfigCommand(args []string) {
 	setModel := fs.String("set-model", "", "Set model")
 	setMode := fs.String("set-mode", "", "Set runtime mode (classic|claw)")
 	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Set claw max tool-loop iterations")
+	setContextLimit := fs.Int("set-context-limit", -1, "Set the context window in tokens (0 clears it and uses the model default). Required for local models, whose window celeste cannot know")
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
 	simulateTyping := fs.String("simulate-typing", "", "Simulate typing (true/false)")
@@ -1328,6 +1330,21 @@ func runConfigCommand(args []string) {
 		changed = true
 		fmt.Printf("Claw max iterations set to: %d\n", cfg.ClawMaxToolIterations)
 	}
+	if *setContextLimit == 0 {
+		cfg.ContextLimit = 0
+		changed = true
+		fmt.Println("Context limit cleared — using the model default")
+	}
+	if *setContextLimit > 0 {
+		cfg.ContextLimit = *setContextLimit
+		changed = true
+		if maxLimit, known := config.LookupModelLimit(cfg.Model); known && *setContextLimit > maxLimit {
+			fmt.Printf("Context limit set to: %d\n", cfg.ContextLimit)
+			fmt.Printf("  warning: %s advertises a %d-token window; requests may be rejected\n", cfg.Model, maxLimit)
+		} else {
+			fmt.Printf("Context limit set to: %d\n", cfg.ContextLimit)
+		}
+	}
 	if *setManagementKey != "" {
 		cfg.XAIManagementAPIKey = *setManagementKey
 		changed = true
@@ -1466,6 +1483,13 @@ func runConfigCommand(args []string) {
 			fmt.Printf("  Planning:          local\n")
 		}
 		fmt.Printf("  Claw Max Iter:     %d\n", cfg.ClawMaxToolIterations)
+		if cfg.ContextLimit > 0 {
+			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
+		} else if limit, known := config.LookupModelLimit(cfg.Model); known {
+			fmt.Printf("  Context Limit:     %d tokens (model default)\n", limit)
+		} else {
+			fmt.Printf("  Context Limit:     %d tokens (fallback — model unknown, set --set-context-limit)\n", limit)
+		}
 		fmt.Printf("  Venice API Key:    %s\n", maskKey(cfg.VeniceAPIKey))
 		fmt.Printf("  Tarot Configured:  %v\n", cfg.TarotAuthToken != "")
 		fmt.Printf("  Twitter Configured:%v\n", cfg.TwitterBearerToken != "")

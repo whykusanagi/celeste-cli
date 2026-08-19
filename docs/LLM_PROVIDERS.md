@@ -47,6 +47,24 @@ that name and returns 404.
 only its embedding model, not the chat model it has loaded, so `local` is
 registered with model listing disabled. Configure the model by hand.
 
+### Set the context window
+
+celeste cannot know a local server's context window. The model name is an
+arbitrary string, so nothing in the model table matches it and the fallback is a
+conservative 8192 tokens. Left alone that truncates a model with a 128k window
+long before it needs to be, so set it to whatever you started the server with:
+
+```bash
+celeste config -config local --set-context-limit 32768
+celeste config -config local            # Context Limit: 32768 tokens (configured)
+```
+
+`config` reports where the number came from — `configured`, `model default`, or
+`fallback — model unknown`. That last one means celeste is guessing and you
+should set it.
+
+`--set-context-limit 0` clears the setting and returns to the model default.
+
 ### Which commands can use tools
 
 | | tools |

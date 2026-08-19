@@ -227,10 +227,21 @@ func (tb *TokenBudget) Summary() string {
 // GetModelLimit returns the token limit for a model name.
 // Falls back to the "default" entry if the model is not found.
 func GetModelLimit(model string) int {
+	limit, _ := LookupModelLimit(model)
+	return limit
+}
+
+// LookupModelLimit returns the token limit and whether the model was actually
+// found. Callers that validate a user's configured window need the second
+// value: for an unrecognised model the returned limit is a conservative
+// fallback, not knowledge, and treating it as an upper bound would reject a
+// correct setting. Local models are never in the table — their window is
+// whatever the server was started with.
+func LookupModelLimit(model string) (int, bool) {
 	if limit, ok := ModelLimits[model]; ok {
-		return limit
+		return limit, true
 	}
-	return ModelLimits["default"]
+	return ModelLimits["default"], false
 }
 
 // GetModelLimitWithOverride returns the token limit for a model, using the

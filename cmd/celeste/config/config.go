@@ -707,7 +707,11 @@ func Load() (*Config, error) {
 	// limit larger than the model supports is always invalid, so reset to the
 	// model default (#51).
 	if config.ContextLimit > 0 {
-		if maxLimit := GetModelLimit(config.Model); config.ContextLimit > maxLimit {
+		// Only reject a limit we can actually contradict. For a model absent
+		// from the table the "limit" is a conservative fallback, so clamping
+		// against it silently deleted correct settings — a local server's
+		// window is whatever it was started with, and 8192 is a guess.
+		if maxLimit, known := LookupModelLimit(config.Model); known && config.ContextLimit > maxLimit {
 			log.Printf("[config] context_limit %d exceeds %q's %d-token window — using model default (saved)", config.ContextLimit, config.Model, maxLimit)
 			config.ContextLimit = 0
 			dirty = true
