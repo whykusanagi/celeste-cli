@@ -684,3 +684,84 @@ func TestReconcileMigratesAgentModel(t *testing.T) {
 		t.Fatalf("deprecated AgentModel should be migrated, still %q", c.AgentModel)
 	}
 }
+
+// setTestHome points the config directory at a temp HOME.
+func setTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste"), 0755))
+	return home
+}
+
+// TestLoadNamedReconcilesLikeLoad covers #147: LoadNamed skipped the model
+// migration, defaulting and context_limit clamp that Load applies, so two
+// byte-identical configs behaved differently depending on the file name.
+func TestLoadNamedReconcilesLikeLoad(t *testing.T) {
+	cases := map[string]string{
+		"deprecated model":       `{"base_url":"https://api.x.ai/v1","api_key":"k","model":"grok-4-1-fast","timeout":60}`,
+		"deprecated agent model": `{"base_url":"https://api.x.ai/v1","api_key":"k","model":"grok-4.20-0309-non-reasoning","agent_model":"grok-4-1-fast-reasoning"}`,
+		"oversized context":      `{"base_url":"https://api.x.ai/v1","api_key":"k","model":"grok-4.20-0309-non-reasoning","context_limit":99000000}`,
+		"valid":                  `{"base_url":"https://api.x.ai/v1","api_key":"k","model":"grok-4.20-0309-non-reasoning","context_limit":500000}`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := setTestHome(t)
+			dir := filepath.Join(home, ".celeste")
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.mygrok.json"), []byte(content), 0600))
+
+			viaLoad, err := Load()
+			require.NoError(t, err)
+			viaNamed, err := LoadNamed("mygrok")
+			require.NoError(t, err)
+
+			assert.Equal(t, viaLoad.Model, viaNamed.Model, "model")
+			assert.Equal(t, viaLoad.AgentModel, viaNamed.AgentModel, "agent_model")
+			assert.Equal(t, viaLoad.ContextLimit, viaNamed.ContextLimit, "context_limit")
+			assert.NotContains(t, viaNamed.Model, "grok-4-1")
+			assert.NotContains(t, viaNamed.AgentModel, "grok-4-1")
+		})
+	}
+}
+
+// TestLoadNamedPersistsOnlyReconciledFields: the save-back rewrites the
+// reconciled keys and nothing else — no defaults, no skills.json secrets.
+func TestLoadNamedPersistsOnlyReconciledFields(t *testing.T) {
+	home := setTestHome(t)
+	dir := filepath.Join(home, ".celeste")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "skills.json"),
+		[]byte(`{"venice_api_key":"skills-secret"}`), 0600))
+	path := filepath.Join(dir, "config.mygrok.json")
+	require.NoError(t, os.WriteFile(path,
+		[]byte(`{"base_url":"https://api.x.ai/v1","api_key":"k","model":"grok-4-1-fast","context_limit":99000000,"custom":"kept"}`), 0600))
+
+	cfg, err := LoadNamed("mygrok")
+	require.NoError(t, err)
+	assert.Equal(t, "skills-secret", cfg.VeniceAPIKey, "skills merge still applies in memory")
+
+	var onDisk map[string]any
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+	assert.Equal(t, cfg.Model, onDisk["model"])
+	assert.NotContains(t, onDisk, "context_limit", "clamped limit removed")
+	assert.Equal(t, "kept", onDisk["custom"], "unknown keys preserved")
+	assert.Equal(t, "k", onDisk["api_key"])
+	assert.NotContains(t, onDisk, "venice_api_key", "skills secrets not copied into the profile")
+	assert.NotContains(t, onDisk, "timeout", "defaults not written into the profile")
+}
+
+func TestLoadNamedLeavesValidProfileUntouched(t *testing.T) {
+	home := setTestHome(t)
+	path := filepath.Join(home, ".celeste", "config.mygrok.json")
+	content := []byte(`{"base_url":"https://api.x.ai/v1","api_key":"k","model":"grok-4.20-0309-non-reasoning"}`)
+	require.NoError(t, os.WriteFile(path, content, 0600))
+
+	_, err := LoadNamed("mygrok")
+	require.NoError(t, err)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(content), string(after))
+}
