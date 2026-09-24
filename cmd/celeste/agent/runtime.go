@@ -17,6 +17,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
@@ -40,6 +41,38 @@ type Runner struct {
 	errOut   io.Writer
 	budget   *ctxmgr.TokenBudget
 	indexer  *codegraph.Indexer // code graph indexer, may be nil
+	// pruned holds tool results that compaction removed from the history,
+	// for recall_tool_result (#174). Nil disables pruning.
+	pruned *compact.Store
+}
+
+// compactHistory prunes old tool results when the history is over the
+// compaction threshold, or unconditionally when force is set (after a
+// context-overflow error). It reports whether anything was pruned.
+func (r *Runner) compactHistory(state *RunState, force bool) bool {
+	if r.budget == nil || r.pruned == nil {
+		return false
+	}
+	used := compact.Estimate(state.Messages) + r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
+	if last := r.budget.LastPromptTokens; last > used {
+		used = last // the API's count includes tool schemas the estimate misses
+	}
+	msgs, res := compact.Prune(state.Messages, compact.Options{
+		Window: r.budget.ModelLimit,
+		Used:   used,
+		Force:  force,
+	}, r.pruned)
+	if !res.Pruned() {
+		return false
+	}
+	state.Messages = msgs
+	r.budget.RecordCompaction(compact.Estimate(msgs))
+	msg := "context compacted: " + res.Summary()
+	if state.Options.Verbose {
+		fmt.Fprintf(r.out, "[agent] %s\n", msg)
+	}
+	r.emitProgress(ProgressStepDone, msg, state.Turn, state.Options.MaxTurns)
+	return true
 }
 
 // emitProgress calls r.options.OnProgress if it is set.
@@ -272,6 +305,12 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		return nil, err
 	}
 
+	// Pruned tool results are spilled here; recall_tool_result reads them.
+	prunedStore, err := compact.DefaultStore()
+	if err != nil {
+		prunedStore = nil
+	}
+
 	// Create a token budget for context tracking.
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
 	// Honour the configured context_limit, as the TUI does: for local models it
@@ -287,6 +326,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		errOut:   errOut,
 		budget:   budget,
 		indexer:  cgIndexer,
+		pruned:   prunedStore,
 	}, nil
 }
 
@@ -361,6 +401,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 	}
 
+	overflowRetried := false
 	for state.Turn < state.Options.MaxTurns {
 		// Honor cancellation/deadline between turns. The per-request and per-tool
 		// contexts cover work *within* a turn; this stops the loop from starting a
@@ -388,6 +429,9 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
 
+		// Keep the history inside the window before sending (#174).
+		r.compactHistory(state, false)
+
 		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 		turnStart := time.Now()
 
@@ -412,6 +456,20 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		turnTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		cancel()
 
+		// The history overflowed the window anyway (an estimate was off, or
+		// the window is smaller than configured): prune harder and retry the
+		// turn once before failing (#174).
+		if streamErr != nil && errors.Is(streamErr, llm.ErrContextOverflow) && !overflowRetried {
+			overflowRetried = true
+			if r.compactHistory(state, true) {
+				state.Turn--
+				continue
+			}
+		}
+		if streamErr == nil {
+			overflowRetried = false
+		}
+
 		if streamErr != nil {
 			streamErr = annotateTurnTimeout(streamErr, turnTimedOut, state.Options.RequestTimeout)
 			state.Status = StatusFailed
@@ -433,10 +491,6 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		// Update token budget with usage from this turn.
 		if r.budget != nil && result.Usage != nil {
 			r.budget.AddTurn(result.Usage.PromptTokens, result.Usage.CompletionTokens)
-			if r.budget.ShouldCompactReactive() {
-				fmt.Fprintf(r.errOut, "[agent] warning: context usage at %.0f%% — compaction recommended\n",
-					r.budget.GetUsagePercent()*100)
-			}
 		}
 
 		if r.options.OnTurnStats != nil {

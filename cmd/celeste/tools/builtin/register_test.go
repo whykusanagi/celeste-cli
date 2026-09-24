@@ -78,9 +78,9 @@ func TestRegisterReadOnlyDevTools(t *testing.T) {
 func TestToolCount(t *testing.T) {
 	registry := tools.NewRegistry()
 	RegisterAll(registry, t.TempDir(), nil, nil, nil)
-	// 7 dev tools (incl. splice_file) + 2 git tools + 2 web tools + 1 save_memory + 14 config-free skills + 1 todo + 1 tts + 1 audio_render + 1 ask + 1 find_tools = 31
+	// 7 dev tools (incl. splice_file) + 2 git tools + 2 web tools + 1 save_memory + 14 config-free skills + 1 todo + 1 tts + 1 audio_render + 1 ask + 1 find_tools + 1 recall_tool_result = 32
 	// (config-dependent and code graph tools not registered when configLoader/indexer is nil)
-	assert.Equal(t, 31, registry.Count(), "expected 31 tools without configLoader")
+	assert.Equal(t, 32, registry.Count(), "expected 32 tools without configLoader")
 }
 
 // countingConfigLoader satisfies ConfigLoader so the config-gated tools
@@ -103,7 +103,7 @@ func (countingConfigLoader) GetWalletSecurityConfig() (WalletSecuritySettingsCon
 
 // The counts the README and docs/ advertise. RegisterAll is the always-on set;
 // codegraph registers only once a project is indexed (main.go:398) and
-// collections only when active collections exist. 40 + 6 + 1 = the 47 the docs
+// collections only when active collections exist. 41 + 6 + 1 = the 48 the docs
 // quote as the full surface. RegisterReadOnlyDevTools is deliberately excluded:
 // it is a separate entry point that re-registers three tools RegisterAll
 // already provides, so it contributes no distinct tools.
@@ -111,7 +111,7 @@ func (countingConfigLoader) GetWalletSecurityConfig() (WalletSecuritySettingsCon
 // These had drifted to a documented 45 against a real 40/47 because nothing
 // asserted them.
 const (
-	docsCoreToolCount      = 40
+	docsCoreToolCount      = 41
 	docsCodegraphToolCount = 6
 )
 

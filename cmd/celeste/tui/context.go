@@ -209,9 +209,9 @@ func (ci ContextIndicator) GetWarningMessage() string {
 
 	switch ci.warningLevel {
 	case "critical":
-		return fmt.Sprintf("🚨 Context at %d%% - start a new session soon (/session new or /clear)", percentage)
+		return fmt.Sprintf("🚨 Context at %d%% - old tool results are pruned automatically; /context compact frees space now", percentage)
 	case "caution":
-		return fmt.Sprintf("⚠️  Context at %d%% - consider starting a new session", percentage)
+		return fmt.Sprintf("⚠️  Context at %d%% - old tool results will be pruned as needed", percentage)
 	case "warn":
 		return fmt.Sprintf("⚠️  Context at %d%% - approaching the context limit", percentage)
 	default:

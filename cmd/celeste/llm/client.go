@@ -45,6 +45,12 @@ type Config struct {
 	XAIFeatures *config.XAIFeaturesConfig
 }
 
+// NewClientWithBackend builds a Client around an existing backend, skipping
+// backend detection. Tests use it to drive the agent loop with a fake.
+func NewClientWithBackend(config *Config, registry *tools.Registry, backend LLMBackend) *Client {
+	return &Client{backend: backend, config: config, registry: registry}
+}
+
 // NewClient creates a new LLM client with automatic backend selection.
 // It detects whether to use OpenAI SDK, Google GenAI SDK, or xAI SDK based on the base URL.
 func NewClient(config *Config, registry *tools.Registry) *Client {

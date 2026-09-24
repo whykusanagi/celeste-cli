@@ -92,8 +92,6 @@ func (m ContextBarModel) View() string {
 	}
 
 	// Full display
-	// No compaction counter: compaction isn't implemented yet (#169, #174),
-	// so it could only ever read 0.
 	return fmt.Sprintf(" %s %s %s / %s %s %s  %s  %s",
 		diamondStyle.Render("◆"),
 		labelStyle.Render("tokens:"),

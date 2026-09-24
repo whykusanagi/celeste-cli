@@ -233,3 +233,15 @@ func TestSummary(t *testing.T) {
 		t.Error("Summary should not be empty")
 	}
 }
+
+func TestRecordCompaction(t *testing.T) {
+	tb := NewTokenBudget(100_000, 1_000, 0)
+	tb.AddTurn(90_000, 500)
+	tb.RecordCompaction(20_000)
+	if tb.HistoryTokens != 20_000 || tb.LastPromptTokens != 0 || tb.CompactCount != 1 {
+		t.Fatalf("after compaction: history=%d lastPrompt=%d count=%d", tb.HistoryTokens, tb.LastPromptTokens, tb.CompactCount)
+	}
+	if tb.TotalUsed() != 21_000 {
+		t.Errorf("TotalUsed = %d, want 21000", tb.TotalUsed())
+	}
+}

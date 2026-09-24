@@ -4,7 +4,7 @@
 
 ## Summary
 
-Celeste CLI occupies a unique position: a compiled Go binary with zero runtime dependencies, 40 developer-focused tools, MinHash-based code graph with structural code review, MCP server capability, and multi-provider LLM support. No other project combines all of these.
+Celeste CLI occupies a unique position: a compiled Go binary with zero runtime dependencies, 41 developer-focused tools, MinHash-based code graph with structural code review, MCP server capability, and multi-provider LLM support. No other project combines all of these.
 
 ## Comparison Matrix
 
@@ -16,7 +16,7 @@ Celeste CLI occupies a unique position: a compiled Go binary with zero runtime d
 | **Runtime deps** | None | Node.js 24+ | None | Bun + Rust N-API | Python 3.10+ |
 | **RAM (idle)** | Low (compiled Go) | High (Node.js) | ~10MB | Medium (Bun) | Medium (Python) |
 | **LLM Providers** | 7 (Anthropic native, OpenAI, Grok/xAI, Google, Venice, OpenRouter, Ollama) | OpenAI primary | OpenAI-compatible only | 6+ | 7+ |
-| **Tool Count** | 40 | Many (unquantified) | 16 | Many (unquantified) | ~10 |
+| **Tool Count** | 41 | Many (unquantified) | 16 | Many (unquantified) | ~10 |
 | **Code Graph** | Yes (MinHash semantic search) | No | No | No | No |
 | **Structural Code Review** | Yes (6 categories) | No | No | No | No |
 | **MCP Support** | Server + client | Partial | Client only | Full (stdio + HTTP) | Yes |

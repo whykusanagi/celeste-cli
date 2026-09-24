@@ -253,6 +253,27 @@ func (m ChatModel) GetMessages() []ChatMessage {
 	return m.messages
 }
 
+// ReplaceToolResults swaps the content of tool results by tool call ID; used
+// by context compaction to replace pruned results with placeholders.
+func (m ChatModel) ReplaceToolResults(edits map[string]string) ChatModel {
+	if len(edits) == 0 {
+		return m
+	}
+	msgs := make([]ChatMessage, len(m.messages))
+	copy(msgs, m.messages)
+	for i := range msgs {
+		if msgs[i].Role != "tool" {
+			continue
+		}
+		if c, ok := edits[msgs[i].ToolCallID]; ok {
+			msgs[i].Content = c
+			msgs[i].Metadata = nil
+		}
+	}
+	m.messages = msgs
+	return m
+}
+
 // GetLLMMessages returns only messages that should be sent to the LLM,
 // filtering out UI-only system messages (notifications, command results, etc.).
 func (m ChatModel) GetLLMMessages() []ChatMessage {

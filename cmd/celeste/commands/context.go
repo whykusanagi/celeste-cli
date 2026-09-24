@@ -12,7 +12,7 @@ import (
 //
 //	/context          - Show current context usage
 //	/context status   - Detailed context breakdown
-//	/context compact  - Not available yet (compaction is tracked in #174)
+//	/context compact  - Prune old tool results now (handled by the TUI, #174)
 func HandleContextCommand(args []string, contextTracker *config.ContextTracker) CommandResult {
 	if contextTracker == nil {
 		return CommandResult{
@@ -34,9 +34,11 @@ func HandleContextCommand(args []string, contextTracker *config.ContextTracker) 
 	case "status", "":
 		return showContextStatus(contextTracker)
 	case "compact":
+		// The TUI intercepts /context compact; reaching here means no
+		// compactor is available (no session history to prune).
 		return CommandResult{
 			Success:      false,
-			Message:      "⚠️  Compaction isn't available yet, manual or automatic. When context runs high, start a new session with /session new or /clear.",
+			Message:      "⚠️  Nothing to compact here. Compaction prunes old tool results from a chat or agent session.",
 			ShouldRender: true,
 		}
 	case "reset":
@@ -127,10 +129,10 @@ func showContextStatus(ct *config.ContextTracker) CommandResult {
 	// Recommendations
 	output.WriteString("RECOMMENDATIONS:\n")
 	if level == "critical" {
-		output.WriteString("  • Context is critically high - the next long reply may not fit\n")
-		output.WriteString("  • Start a new session with /session new or /clear\n")
+		output.WriteString("  • Context is critically high - old tool results are pruned before the next request\n")
+		output.WriteString("  • /context compact prunes now; /session new starts fresh\n")
 	} else if level == "caution" {
-		output.WriteString("  • Context usage is high - consider starting a new session\n")
+		output.WriteString("  • Context usage is high - old tool results will be pruned as needed\n")
 		avgTokens := 500 // Default estimate
 		if ct.Session != nil && ct.Session.UsageMetrics != nil && ct.Session.UsageMetrics.MessageCount > 0 {
 			avgTokens = int(ct.Session.UsageMetrics.GetAverageTokensPerMessage())

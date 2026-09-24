@@ -22,7 +22,7 @@
 
 Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
-- 🔮 **47 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
+- 🔮 **48 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
 - 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
@@ -216,7 +216,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - [Installation](#-quick-start)
 - [Security & Verification](#-security--verification)
 - [Features](#-features)
-- [Tool System (47 Tools)](#-tool-system-47-tools)
+- [Tool System (48 Tools)](#-tool-system-48-tools)
 - [Claude Code Integration](#-claude-code-integration)
 - [Comparison](#-how-celeste-compares)
 - [LLM Provider Compatibility](#-llm-provider-compatibility)
@@ -241,7 +241,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 - **Markdown Rendering** - glamour-powered markdown with corrupted theme (code blocks, tables, headers, bold)
 
 ### Tool System
-**47 built-in tools** powered by AI function calling. 40 are always on. A further 6
+**48 built-in tools** powered by AI function calling. 41 are always on. A further 6
 code-graph tools appear once you index a project, plus collections search when you
 configure collections:
 - Dev Tools (bash, read/write/patch files, search, list files)
@@ -255,7 +255,7 @@ configure collections:
 - Blockchain (IPFS, Alchemy, wallet security)
 - Subagent Orchestration (`spawn_agent`, `post_message`)
 
-[See complete tool list below](#-tool-system-47-tools)
+[See complete tool list below](#-tool-system-48-tools)
 
 ### Collections Support (xAI RAG)
 - **Upload Custom Documents** - Create knowledge bases with your own documentation
@@ -304,11 +304,11 @@ configure collections:
 
 ---
 
-## 🔮 Tool System (47 Tools)
+## 🔮 Tool System (48 Tools)
 
 Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You don't invoke tools directly — you chat naturally, and the AI decides when to call them.
 
-### Dev Tools (9 Tools)
+### Dev Tools (10 Tools)
 
 | Tool | Description |
 |------|-------------|
@@ -321,6 +321,7 @@ Celeste CLI uses **OpenAI-compatible function calling** to power its tools. You 
 | **search** | Search file contents with regex |
 | **git_status** | Show working tree status |
 | **git_log** | Show commit history |
+| **recall_tool_result** | Restore a tool result that context compaction pruned from the conversation |
 
 ### Code Graph Tools (6 Tools)
 

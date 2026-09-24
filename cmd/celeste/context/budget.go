@@ -195,6 +195,17 @@ func (tb *TokenBudget) ShouldCompactProactive(interval int) bool {
 	return float64(used)/float64(tb.ModelLimit) >= 0.50
 }
 
+// RecordCompaction records that compaction replaced the history, which now
+// costs about historyTokens. The last API-reported prompt count described the
+// old history, so it is cleared until the next response.
+func (tb *TokenBudget) RecordCompaction(historyTokens int) {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	tb.HistoryTokens = historyTokens
+	tb.LastPromptTokens = 0
+	tb.CompactCount++
+}
+
 // IncrementCompactCount records that a compaction occurred.
 func (tb *TokenBudget) IncrementCompactCount() {
 	tb.mu.Lock()
