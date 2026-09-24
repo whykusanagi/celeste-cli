@@ -244,25 +244,23 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	client := llm.NewClient(llmConfig, registry)
 	client.SetToolMode(tools.ModeAgent)
 
-	// Build system prompt. The agent operational rules always come last so they
-	// take precedence over character voice. The persona (if enabled) sets tone
-	// only — tool-use rules in the agent prompt override any conflicting phrasing.
+	// Build the system prompt: persona (if enabled) with the voice boundary,
+	// then the agent contract, then project context. Agent mode never carries
+	// the chat task rules or confirm mode (#170).
 	envContext := detectEnvContext()
-	systemPrompt := buildAgentSystemPrompt(options, envContext)
-	if !cfg.SkipPersonaPrompt {
-		persona := prompts.GetSystemPrompt(false)
-		if persona != "" {
-			systemPrompt = persona + "\n\n" + systemPrompt
-		}
+	composeOpts := prompts.ComposeOptions{
+		Mode:        prompts.ModeAgent,
+		SkipPersona: cfg.SkipPersonaPrompt,
+		Contract:    buildAgentSystemPrompt(options, envContext),
+		Sliders:     options.Sliders,
 	}
-
-	// Inject grimoire and git context into agent system prompt
 	if projectGrimoire, err := grimoire.LoadAll(options.Workspace); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
-		systemPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+		composeOpts.ProjectContext = projectGrimoire.Render()
 	}
 	if gitSnap := grimoire.CaptureGitSnapshot(options.Workspace); gitSnap != nil {
-		systemPrompt += "\n\n" + gitSnap.FormatForPrompt()
+		composeOpts.GitSnapshot = gitSnap.FormatForPrompt()
 	}
+	systemPrompt := prompts.Compose(composeOpts)
 
 	client.SetSystemPrompt(systemPrompt)
 

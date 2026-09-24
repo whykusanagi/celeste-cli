@@ -254,27 +254,70 @@ func writeSliders(t *testing.T, cfg *config.SliderConfig) {
 // The model can turn R18 off for a subagent but never on, whether directly or
 // through a preset; enabling it is the user's decision (#171).
 func TestSliderOverrideCannotEnableR18(t *testing.T) {
-	const eligibility = "Content Eligibility"
-
 	user := config.DefaultSliderConfig()
 	user.R18Enabled = false
 	user.Presets["spicy"] = config.SliderPreset{Lewdness: 10, R18Enabled: true}
 	writeSliders(t, user)
 
-	if got := buildSliderOverride(map[string]any{"r18": true, "lewdness": 10.0}); strings.Contains(got, eligibility) {
+	if got := buildSliderOverride(map[string]any{"r18": true, "lewdness": 10.0}); got.R18Enabled {
 		t.Error("persona r18=true enabled R18 when the user has it off")
 	}
-	if got := buildSliderOverride(map[string]any{"preset": "spicy"}); strings.Contains(got, eligibility) {
+	if got := buildSliderOverride(map[string]any{"preset": "spicy"}); got.R18Enabled {
 		t.Error("an R18 preset enabled R18 when the user has it off")
 	}
 
 	user.R18Enabled = true
 	user.Lewdness = 10
 	writeSliders(t, user)
-	if got := buildSliderOverride(map[string]any{"r18": false}); strings.Contains(got, eligibility) {
+	if got := buildSliderOverride(map[string]any{"r18": false}); got.R18Enabled {
 		t.Error("persona r18=false did not disable R18")
 	}
-	if got := buildSliderOverride(map[string]any{"lewdness": 10.0}); !strings.Contains(got, eligibility) {
+	if got := buildSliderOverride(map[string]any{"lewdness": 10.0}); !got.R18Enabled {
 		t.Error("user-enabled R18 should still apply when the model doesn't override it")
+	}
+}
+
+// An empty persona map is no override: the subagent uses slider.json.
+func TestSliderOverrideEmptyIsNil(t *testing.T) {
+	writeSliders(t, config.DefaultSliderConfig())
+	if got := buildSliderOverride(map[string]any{}); got != nil {
+		t.Errorf("empty persona map produced an override: %+v", got)
+	}
+}
+
+// The persona override travels with the run into the subagent's agent options
+// (where it replaces the slider block of the system prompt), not in the goal
+// text as a second Voice Modulation block (#170).
+func TestSpawnAgentPersonaOverrideReachesRunNotGoal(t *testing.T) {
+	writeSliders(t, config.DefaultSliderConfig())
+	m := NewManager(&config.Config{}, "/tmp", false)
+	var gotGoal string
+	var gotRun *SubagentRun
+	m.execFn = func(_ context.Context, run *SubagentRun, goal, _ string, _ TurnCallback, _ int, _ bool) (*SubagentRun, error) {
+		m.mu.Lock()
+		gotGoal, gotRun = goal, run
+		run.Status = "completed"
+		m.mu.Unlock()
+		return run, nil
+	}
+
+	tool := NewSpawnAgentTool(m)
+	if _, err := tool.Execute(context.Background(), map[string]any{
+		"goal":    "write the changelog",
+		"persona": map[string]any{"flirt": 0.0, "register": 0.0},
+	}, nil); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(gotGoal, "PERSONA OVERRIDE") || strings.Contains(gotGoal, "Voice Modulation") {
+		t.Errorf("persona override leaked into the goal: %q", gotGoal)
+	}
+	if gotRun == nil || gotRun.sliders == nil {
+		t.Fatal("persona override did not reach the run")
+	}
+	if gotRun.sliders.Flirt != 0 || gotRun.sliders.Register != 0 {
+		t.Errorf("override values lost: flirt=%d register=%d", gotRun.sliders.Flirt, gotRun.sliders.Register)
+	}
+	if opts := m.buildAgentOptions("/tmp", 0, nil, gotRun.sliders); opts.Sliders != gotRun.sliders {
+		t.Error("buildAgentOptions dropped the slider override")
 	}
 }

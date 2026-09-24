@@ -414,12 +414,9 @@ func runChatTUI() {
 		}
 		projectContext += "# Code Graph\n\n" + codeGraphSummary
 	}
-	if !cfg.SkipPersonaPrompt {
-		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(false, projectContext, gitSnapshotContent))
-	} else if projectContext != "" || gitSnapshotContent != "" {
-		// Even with persona skipped, inject project context
-		client.SetSystemPrompt(prompts.GetSystemPromptWithContext(true, projectContext, gitSnapshotContent))
-	}
+	// With the persona skipped, the prompt is just the project context (empty
+	// when there is none).
+	client.SetSystemPrompt(prompts.GetSystemPromptWithContext(cfg.SkipPersonaPrompt, projectContext, gitSnapshotContent))
 
 	// Auto-scan collections if management key is set.
 	// Also prunes stale collection IDs that no longer exist in the API.
@@ -474,11 +471,13 @@ func runChatTUI() {
 
 	// Create TUI client adapter
 	tuiClient := &TUIClientAdapter{
-		client:      client,
-		registry:    registry,
-		baseConfig:  cfg,
-		costTracker: costs.NewSessionTracker(),
-		subMgr:      subMgr,
+		client:         client,
+		registry:       registry,
+		baseConfig:     cfg,
+		costTracker:    costs.NewSessionTracker(),
+		subMgr:         subMgr,
+		projectContext: projectContext,
+		gitSnapshot:    gitSnapshotContent,
 	}
 
 	// Initialize logging for skill calls
@@ -709,6 +708,18 @@ type TUIClientAdapter struct {
 	baseConfig  *config.Config // Store base config for loading named configs
 	costTracker *costs.SessionTracker
 	subMgr      *subagents.Manager // exposed for /agents TUI command
+
+	// Session-start project context (grimoire, memories, code graph) and git
+	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
+	projectContext string
+	gitSnapshot    string
+}
+
+// systemPrompt composes the chat system prompt for the current config,
+// including the session's project context.
+func (a *TUIClientAdapter) systemPrompt() string {
+	skip := a.baseConfig != nil && a.baseConfig.SkipPersonaPrompt
+	return prompts.GetSystemPromptWithContext(skip, a.projectContext, a.gitSnapshot)
 }
 
 // SendMessage implements tui.LLMClient.
@@ -1045,13 +1056,11 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	// pick up provider-specific settings like Orchestrator lanes.
 	a.baseConfig = cfg
 
-	// Re-inject Celeste persona prompt after endpoint switch (unless explicitly skipped)
+	// Recompose the prompt for the new config, keeping the project context.
+	a.client.SetSystemPrompt(a.systemPrompt())
 	if !cfg.SkipPersonaPrompt {
-		a.client.SetSystemPrompt(prompts.GetSystemPrompt(false))
 		tui.LogInfo("✓ Celeste persona prompt re-injected after endpoint switch")
 	} else {
-		// Clear system prompt if persona is disabled in new config
-		a.client.SetSystemPrompt("")
 		tui.LogInfo("  Persona prompt skipped (SkipPersonaPrompt = true)")
 	}
 
@@ -1153,7 +1162,7 @@ func (a *TUIClientAdapter) RefreshSystemPrompt() {
 	if a.baseConfig != nil && a.baseConfig.SkipPersonaPrompt {
 		return
 	}
-	a.client.SetSystemPrompt(prompts.GetSystemPrompt(false))
+	a.client.SetSystemPrompt(a.systemPrompt())
 	tui.LogInfo("✓ System prompt refreshed (confirm/user/persona change)")
 }
 
