@@ -4,10 +4,13 @@ package prompts
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
@@ -73,6 +76,11 @@ type CelesteEssence struct {
 	SystemPrompt  string `json:"system_prompt"`  // canonical prompt blob (v3.0.0+)
 	CanonicalName string `json:"canonical_name"` // "Celeste" (v3.0.0+)
 	CharacterID   string `json:"character_id"`   // "celeste" (v3.0.0+)
+
+	// SystemPromptPreamble only appears in the unbuilt celeste-core-persona
+	// template. Its presence without SystemPrompt means the file was copied
+	// from source instead of from the persona-container build output.
+	SystemPromptPreamble string `json:"system_prompt_preamble"`
 }
 
 // BehaviorTier defines behavior based on score.
@@ -89,30 +97,64 @@ type SafetyConfig struct {
 	SafeAlternatives string   `json:"safe_alternatives"`
 }
 
-// LoadEssence loads the Celeste essence from file or embedded.
+// LoadEssence loads the Celeste essence from ~/.celeste/celeste_essence.json,
+// falling back to the embedded essence when that override is missing,
+// unparseable, or has no usable persona content. A broken override never
+// degrades to an empty or different persona.
 func LoadEssence() (*CelesteEssence, error) {
-	var data []byte
-
-	// Try to load from config directory first
-	homeDir, err := os.UserHomeDir()
-	if err == nil {
+	if homeDir, err := os.UserHomeDir(); err == nil {
 		configPath := filepath.Join(homeDir, ".celeste", "celeste_essence.json")
-		if fileData, err := os.ReadFile(configPath); err == nil {
-			data = fileData
+		if data, err := os.ReadFile(configPath); err == nil {
+			essence, err := parseEssence(data)
+			if err == nil {
+				return essence, nil
+			}
+			warnOverrideOnce(configPath, err)
 		}
 	}
 
-	// Fallback to embedded
-	if data == nil {
-		data = embeddedEssence
-	}
+	return parseEssence(embeddedEssence)
+}
 
+// parseEssence unmarshals and validates an essence file.
+func parseEssence(data []byte) (*CelesteEssence, error) {
 	var essence CelesteEssence
 	if err := json.Unmarshal(data, &essence); err != nil {
 		return nil, fmt.Errorf("failed to parse celeste essence: %w", err)
 	}
-
+	if err := validateEssence(&essence); err != nil {
+		return nil, err
+	}
 	return &essence, nil
+}
+
+// validateEssence rejects essences that would render an empty persona.
+// buildPromptFromEssence keys v3 on a non-empty SystemPrompt and otherwise
+// assembles from v1.x fields, so a file with neither produces "You are . "
+// with no error.
+func validateEssence(e *CelesteEssence) error {
+	if strings.TrimSpace(e.SystemPrompt) != "" {
+		return nil
+	}
+	if strings.TrimSpace(e.SystemPromptPreamble) != "" {
+		return errors.New("unbuilt persona template (has system_prompt_preamble but no system_prompt): " +
+			"build it with celeste-persona-container and use dist/celeste_core_prompt.json")
+	}
+	if strings.TrimSpace(e.Character) != "" {
+		return nil // v1.x schema
+	}
+	return errors.New("no persona content: expected system_prompt (v3) or character (v1.x)")
+}
+
+// overrideWarnings holds the override warnings already logged, so the
+// per-message GetSystemPrompt path doesn't repeat them.
+var overrideWarnings sync.Map
+
+func warnOverrideOnce(path string, err error) {
+	msg := fmt.Sprintf("[persona] ignoring %s: %v — using the embedded persona", path, err)
+	if _, seen := overrideWarnings.LoadOrStore(msg, struct{}{}); !seen {
+		log.Print(msg)
+	}
 }
 
 // GetSystemPrompt generates the system prompt from the essence,
@@ -125,7 +167,9 @@ func GetSystemPrompt(skipPrompt bool) string {
 
 	essence, err := LoadEssence()
 	if err != nil {
-		// Fallback to basic prompt
+		// Only reachable if the embedded essence itself is broken, which
+		// TestEmbeddedEssenceIsValid guards against. User overrides that
+		// fail to load fall back to the embedded essence inside LoadEssence.
 		return getBasicPrompt()
 	}
 

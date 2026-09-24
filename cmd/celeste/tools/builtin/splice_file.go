@@ -192,17 +192,17 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 // from either a line range or a start/end anchor pair. Anchor regions are
 // expanded to whole lines so a move leaves clean boundaries.
 func resolveSourceRegion(source string, input map[string]any) (int, int, error) {
-	startAnchor := unescape(getStringArg(input, "start_anchor", ""))
-	endAnchor := unescape(getStringArg(input, "end_anchor", ""))
+	startAnchor := getStringArg(input, "start_anchor", "")
+	endAnchor := getStringArg(input, "end_anchor", "")
 	if startAnchor != "" || endAnchor != "" {
 		if startAnchor == "" || endAnchor == "" {
 			return 0, 0, fmt.Errorf("both start_anchor and end_anchor are required for anchor mode")
 		}
-		lo, err := uniqueIndex(source, startAnchor, "start_anchor")
+		lo, _, err := uniqueIndex(source, startAnchor, "start_anchor")
 		if err != nil {
 			return 0, 0, err
 		}
-		endIdx, err := uniqueIndex(source, endAnchor, "end_anchor")
+		endIdx, endAnchor, err := uniqueIndex(source, endAnchor, "end_anchor")
 		if err != nil {
 			return 0, 0, err
 		}
@@ -230,17 +230,17 @@ func resolveSourceRegion(source string, input map[string]any) (int, int, error) 
 // placeRegion inserts region into dest per the dest_* args: replace between a
 // dest anchor pair, insert relative to a single dest anchor, or append.
 func placeRegion(dest, region string, input map[string]any) (string, error) {
-	repStart := unescape(getStringArg(input, "dest_replace_start", ""))
-	repEnd := unescape(getStringArg(input, "dest_replace_end", ""))
+	repStart := getStringArg(input, "dest_replace_start", "")
+	repEnd := getStringArg(input, "dest_replace_end", "")
 	if repStart != "" || repEnd != "" {
 		if repStart == "" || repEnd == "" {
 			return "", fmt.Errorf("both dest_replace_start and dest_replace_end are required to replace a dest region")
 		}
-		lo, err := uniqueIndex(dest, repStart, "dest_replace_start")
+		lo, _, err := uniqueIndex(dest, repStart, "dest_replace_start")
 		if err != nil {
 			return "", err
 		}
-		endIdx, err := uniqueIndex(dest, repEnd, "dest_replace_end")
+		endIdx, repEnd, err := uniqueIndex(dest, repEnd, "dest_replace_end")
 		if err != nil {
 			return "", err
 		}
@@ -252,7 +252,7 @@ func placeRegion(dest, region string, input map[string]any) (string, error) {
 		return dest[:lo] + ensureTrailingNewline(region) + dest[hi:], nil
 	}
 
-	anchor := unescape(getStringArg(input, "dest_anchor", ""))
+	anchor := getStringArg(input, "dest_anchor", "")
 	if anchor == "" {
 		// Append, guaranteeing a newline separator.
 		if dest == "" {
@@ -260,7 +260,7 @@ func placeRegion(dest, region string, input map[string]any) (string, error) {
 		}
 		return ensureTrailingNewline(dest) + region, nil
 	}
-	idx, err := uniqueIndex(dest, anchor, "dest_anchor")
+	idx, anchor, err := uniqueIndex(dest, anchor, "dest_anchor")
 	if err != nil {
 		return "", err
 	}
@@ -276,17 +276,20 @@ func placeRegion(dest, region string, input map[string]any) (string, error) {
 	}
 }
 
-// uniqueIndex returns the byte offset of needle in haystack, erroring if it is
-// missing or ambiguous (appears more than once) — so anchors are unambiguous.
-func uniqueIndex(haystack, needle, label string) (int, error) {
+// uniqueIndex returns the byte offset and matched form of needle in haystack,
+// erroring if it is missing or ambiguous (appears more than once) — so anchors
+// are unambiguous. The verbatim anchor is tried first; its unescaped form only
+// when the verbatim one is absent, so `\n` in source text still matches (#165).
+func uniqueIndex(haystack, needle, label string) (int, string, error) {
+	needle, _ = matchNeedle(haystack, needle)
 	n := strings.Count(haystack, needle)
 	if n == 0 {
-		return 0, fmt.Errorf("%s not found: %q", label, truncateAnchor(needle))
+		return 0, needle, fmt.Errorf("%s not found: %q", label, truncateAnchor(needle))
 	}
 	if n > 1 {
-		return 0, fmt.Errorf("%s appears %d times (must be unique): %q", label, n, truncateAnchor(needle))
+		return 0, needle, fmt.Errorf("%s appears %d times (must be unique): %q", label, n, truncateAnchor(needle))
 	}
-	return strings.Index(haystack, needle), nil
+	return strings.Index(haystack, needle), needle, nil
 }
 
 // lineRangeOffsets returns byte offsets [lo, hi) spanning 1-based inclusive lines
@@ -341,12 +344,6 @@ func ensureTrailingNewline(s string) string {
 		return s
 	}
 	return s + "\n"
-}
-
-func unescape(s string) string {
-	s = strings.ReplaceAll(s, `\n`, "\n")
-	s = strings.ReplaceAll(s, `\t`, "\t")
-	return s
 }
 
 func truncateAnchor(s string) string {
