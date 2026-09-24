@@ -15,7 +15,6 @@ type ContextBarModel struct {
 	usedTokens   int
 	maxTokens    int
 	usagePercent float64
-	compactCount int
 	turnCount    int
 	width        int
 }
@@ -42,7 +41,6 @@ func (m ContextBarModel) Update(msg tea.Msg) (ContextBarModel, tea.Cmd) {
 		m.usedTokens = msg.UsedTokens
 		m.maxTokens = msg.MaxTokens
 		m.usagePercent = msg.UsagePercent
-		m.compactCount = msg.CompactCount
 		m.turnCount = msg.TurnCount
 	}
 	return m, nil
@@ -94,15 +92,15 @@ func (m ContextBarModel) View() string {
 	}
 
 	// Full display
-	return fmt.Sprintf(" %s %s %s / %s %s %s  %s  %s  %s  %s",
+	// No compaction counter: compaction isn't implemented yet (#169, #174),
+	// so it could only ever read 0.
+	return fmt.Sprintf(" %s %s %s / %s %s %s  %s  %s",
 		diamondStyle.Render("◆"),
 		labelStyle.Render("tokens:"),
 		labelStyle.Render(usedStr),
 		labelStyle.Render(maxStr),
 		bar,
 		labelStyle.Render(pctStr),
-		labelStyle.Render("│"),
-		labelStyle.Render(fmt.Sprintf("compact: %d", m.compactCount)),
 		labelStyle.Render("│"),
 		labelStyle.Render(fmt.Sprintf("turn: %d", m.turnCount)),
 	)

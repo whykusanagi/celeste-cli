@@ -12,7 +12,7 @@ import (
 //
 //	/context          - Show current context usage
 //	/context status   - Detailed context breakdown
-//	/context compact  - Manual context compaction (future)
+//	/context compact  - Not available yet (compaction is tracked in #174)
 func HandleContextCommand(args []string, contextTracker *config.ContextTracker) CommandResult {
 	if contextTracker == nil {
 		return CommandResult{
@@ -36,7 +36,7 @@ func HandleContextCommand(args []string, contextTracker *config.ContextTracker) 
 	case "compact":
 		return CommandResult{
 			Success:      false,
-			Message:      "⚠️  Manual compaction not yet implemented - auto-compaction triggers at 80%",
+			Message:      "⚠️  Compaction isn't available yet, manual or automatic. When context runs high, start a new session with /session new or /clear.",
 			ShouldRender: true,
 		}
 	case "reset":
@@ -107,11 +107,11 @@ func showContextStatus(ct *config.ContextTracker) CommandResult {
 	case "critical":
 		statusEmoji = "🔴"
 		statusText = "Critical"
-		statusColor = "(>95% - auto-compaction imminent)"
+		statusColor = "(>95% - near the limit)"
 	case "caution":
 		statusEmoji = "🟠"
 		statusText = "Caution"
-		statusColor = "(>85% - compaction recommended)"
+		statusColor = "(>85% - high)"
 	case "warn":
 		statusEmoji = "🟡"
 		statusText = "Warning"
@@ -127,10 +127,10 @@ func showContextStatus(ct *config.ContextTracker) CommandResult {
 	// Recommendations
 	output.WriteString("RECOMMENDATIONS:\n")
 	if level == "critical" {
-		output.WriteString("  • Context is critically high - auto-compaction will trigger soon\n")
-		output.WriteString("  • Consider starting a new session or using /context compact\n")
+		output.WriteString("  • Context is critically high - the next long reply may not fit\n")
+		output.WriteString("  • Start a new session with /session new or /clear\n")
 	} else if level == "caution" {
-		output.WriteString("  • Context usage is high - consider compaction\n")
+		output.WriteString("  • Context usage is high - consider starting a new session\n")
 		avgTokens := 500 // Default estimate
 		if ct.Session != nil && ct.Session.UsageMetrics != nil && ct.Session.UsageMetrics.MessageCount > 0 {
 			avgTokens = int(ct.Session.UsageMetrics.GetAverageTokensPerMessage())
@@ -143,7 +143,7 @@ func showContextStatus(ct *config.ContextTracker) CommandResult {
 			avgTokens = int(ct.Session.UsageMetrics.GetAverageTokensPerMessage())
 		}
 		msgsUntilWarn := ct.EstimateMessagesUntilLimit(avgTokens)
-		output.WriteString(fmt.Sprintf("  • You can send ~%d more messages before compaction needed\n", msgsUntilWarn))
+		output.WriteString(fmt.Sprintf("  • You can send ~%d more messages before the warning threshold\n", msgsUntilWarn))
 		output.WriteString("  • Context is healthy but approaching warning threshold\n")
 	} else {
 		avgTokens := 500

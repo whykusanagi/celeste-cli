@@ -211,3 +211,40 @@ func TestWithRetryStopsOnCallerCancel(t *testing.T) {
 		t.Errorf("attempts = %d, want 1 — caller cancellation must not be retried", attempts)
 	}
 }
+
+// TestContextOverflowIsActionable covers #169: an overflow used to surface as
+// a bare provider error with no hint that the session was simply full.
+func TestContextOverflowIsActionable(t *testing.T) {
+	overflows := []string{
+		"error, status code: 400, message: This model's maximum context length is 128000 tokens (context_length_exceeded)",
+		"400 Bad Request: This model's maximum prompt length is 131072 but the request contains 140000 tokens.",
+		"invalid_request_error: prompt is too long: 1050000 tokens > 1000000 maximum",
+		"Error 400: The input token count (1100000) exceeds the maximum number of tokens allowed (1048576).",
+	}
+	for _, text := range overflows {
+		t.Run(text[:24], func(t *testing.T) {
+			calls := 0
+			err := withRetry(context.Background(), retryOpts{}, func(context.Context) error {
+				calls++
+				return errors.New(text)
+			}, func(time.Duration) {})
+			if calls != 1 {
+				t.Fatalf("overflow was retried: %d calls", calls)
+			}
+			if err == nil || !strings.Contains(err.Error(), "no longer fits the model's context window") {
+				t.Fatalf("error not actionable: %v", err)
+			}
+			if !strings.Contains(err.Error(), text) {
+				t.Fatalf("original provider error lost: %v", err)
+			}
+		})
+	}
+}
+
+// Rate limits mention tokens too; they must stay retryable, not overflow.
+func TestTokenRateLimitIsNotOverflow(t *testing.T) {
+	c := classifyError(errors.New("429 Too Many Requests: Rate limit reached for tokens per min (TPM)"))
+	if c.Kind != kindRateLimit || !c.Retryable {
+		t.Fatalf("token rate limit classified as %+v", c)
+	}
+}

@@ -15,8 +15,21 @@ const (
 	kindRateLimit
 	kindServer
 	kindNetwork
+	kindContextLength
 	kindFatal
 )
+
+// contextOverflowMarkers are provider messages for a request that no longer
+// fits the model's context window. Deliberately specific: rate-limit errors
+// talk about tokens too ("tokens per minute"), and those must stay retryable.
+var contextOverflowMarkers = []string{
+	"context_length_exceeded",              // OpenAI-compatible error code
+	"maximum context length",               // OpenAI-compatible message
+	"maximum prompt length",                // xAI
+	"prompt is too long",                   // Anthropic
+	"exceeds the context window",           // generic
+	"exceeds the maximum number of tokens", // Gemini
+}
 
 type errorClass struct {
 	Retryable bool
@@ -44,6 +57,8 @@ func classifyError(err error) errorClass {
 	switch {
 	case strings.Contains(msg, "429") || strings.Contains(msg, "rate limit"):
 		return errorClass{Retryable: true, Kind: kindRateLimit}
+	case containsAny(msg, contextOverflowMarkers):
+		return errorClass{Retryable: false, Kind: kindContextLength}
 	case strings.Contains(msg, "500") || strings.Contains(msg, "502") ||
 		strings.Contains(msg, "503") || strings.Contains(msg, "504"):
 		return errorClass{Retryable: true, Kind: kindServer}
@@ -53,6 +68,15 @@ func classifyError(err error) errorClass {
 	default:
 		return errorClass{Retryable: false, Kind: kindFatal}
 	}
+}
+
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func maxAttempts(c errorClass) int {
@@ -139,6 +163,14 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 			return fmt.Errorf("request exceeded the %s per-request timeout; raise it with `config --set-timeout <seconds>` or shorten the request: %w", opts.timeout, err)
 		}
 		cls := classifyError(err)
+		// The history no longer fits the model's window. Compaction isn't
+		// implemented yet (#174), so say what the user can do instead of
+		// surfacing a bare provider error (#169).
+		if cls.Kind == kindContextLength {
+			return fmt.Errorf("the conversation no longer fits the model's context window. "+
+				"Start a new session (/session new or /clear in the TUI). For a local model, "+
+				"check that context_limit matches the server's window: %w", err)
+		}
 		if !cls.Retryable || attempt >= maxAttempts(cls) {
 			return lastErr
 		}
