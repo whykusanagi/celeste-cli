@@ -37,6 +37,9 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 		registry.RegisterWithModes(NewListFilesTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewSearchTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 
+		// Restores tool results that context compaction pruned (#174).
+		registry.RegisterWithModes(NewRecallToolResultTool(nil), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+
 		// Git tools — available in all modes (read-only, always useful)
 		registry.RegisterWithModes(NewGitStatusTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 		registry.RegisterWithModes(NewGitLogTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)

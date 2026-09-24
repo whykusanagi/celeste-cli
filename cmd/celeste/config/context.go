@@ -182,9 +182,9 @@ func (ct *ContextTracker) GetWarningMessage() string {
 
 	switch level {
 	case "critical":
-		return fmt.Sprintf("\xf0\x9f\x9a\xa8 Context at %d%% - start a new session soon (/session new or /clear)", percentage)
+		return fmt.Sprintf("\xf0\x9f\x9a\xa8 Context at %d%% - old tool results are pruned automatically; /context compact frees space now", percentage)
 	case "caution":
-		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - consider starting a new session", percentage)
+		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - old tool results will be pruned as needed", percentage)
 	case "warn":
 		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - approaching the context limit", percentage)
 	default:

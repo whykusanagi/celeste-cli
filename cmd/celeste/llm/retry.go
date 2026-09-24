@@ -19,6 +19,10 @@ const (
 	kindFatal
 )
 
+// ErrContextOverflow marks a request rejected because the conversation no
+// longer fits the model's context window. Match it with errors.Is.
+var ErrContextOverflow = errors.New("the conversation no longer fits the model's context window")
+
 // contextOverflowMarkers are provider messages for a request that no longer
 // fits the model's context window. Deliberately specific: rate-limit errors
 // talk about tokens too ("tokens per minute"), and those must stay retryable.
@@ -163,13 +167,12 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 			return fmt.Errorf("request exceeded the %s per-request timeout; raise it with `config --set-timeout <seconds>` or shorten the request: %w", opts.timeout, err)
 		}
 		cls := classifyError(err)
-		// The history no longer fits the model's window. Compaction isn't
-		// implemented yet (#174), so say what the user can do instead of
-		// surfacing a bare provider error (#169).
+		// The history no longer fits the model's window. Callers that can
+		// compact match ErrContextOverflow and retry once (#174); the message
+		// says what the user can do if that isn't enough (#169).
 		if cls.Kind == kindContextLength {
-			return fmt.Errorf("the conversation no longer fits the model's context window. "+
-				"Start a new session (/session new or /clear in the TUI). For a local model, "+
-				"check that context_limit matches the server's window: %w", err)
+			return fmt.Errorf("%w. Run /context compact, or start a new session (/session new or /clear in the TUI). "+
+				"For a local model, check that context_limit matches the server's window: %w", ErrContextOverflow, err)
 		}
 		if !cls.Retryable || attempt >= maxAttempts(cls) {
 			return lastErr

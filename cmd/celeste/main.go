@@ -23,6 +23,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
@@ -725,6 +726,10 @@ type TUIClientAdapter struct {
 	// tools (#172). Set once the Bubble Tea program exists.
 	promptFn tools.PromptFunc
 
+	// pruned holds tool results that context compaction removed (#174);
+	// created on first use.
+	pruned *compact.Store
+
 	// Session-start project context (grimoire, memories, code graph) and git
 	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
 	projectContext string
@@ -1171,6 +1176,36 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 		return "", err
 	}
 	return run.Result, nil
+}
+
+// CompactContext implements tui.ContextCompactor: it prunes old tool results
+// when the history is over the compaction threshold (or always, with force)
+// and returns the replacement for each pruned result (#174).
+func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) (map[string]string, string, int) {
+	if a.pruned == nil {
+		store, err := compact.DefaultStore()
+		if err != nil {
+			return nil, "", 0
+		}
+		a.pruned = store
+	}
+	if est := compact.Estimate(msgs); est > used {
+		used = est
+	}
+	_, res := compact.Prune(msgs, compact.Options{Window: window, Used: used, Force: force}, a.pruned)
+	if !res.Pruned() {
+		return nil, "", 0
+	}
+	edits := make(map[string]string, len(res.Edits))
+	for _, e := range res.Edits {
+		edits[e.ToolCallID] = e.Content
+	}
+	return edits, res.Summary(), res.SavedTokens
+}
+
+// IsContextOverflow implements tui.ContextCompactor.
+func (a *TUIClientAdapter) IsContextOverflow(err error) bool {
+	return errors.Is(err, llm.ErrContextOverflow)
 }
 
 // RefreshSystemPrompt recomposes and re-injects the system prompt.

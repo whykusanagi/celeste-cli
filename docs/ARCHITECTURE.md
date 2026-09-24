@@ -23,7 +23,7 @@ Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provid
 
 - **Multi-Provider Support**: OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
 - **Four Runtime Modes**: Classic chat, Claw (agentic chat), Agent (autonomous runs), Orchestrator (multi-model debate)
-- **40 Built-in Tools**: Function calling for weather, currency, QR codes, tarot, and more
+- **41 Built-in Tools**: Function calling for weather, currency, QR codes, tarot, and more
 - **Interactive TUI**: Split-panel Bubble Tea interface with real-time event streaming
 - **Session Persistence**: Auto-save conversations, command history, and model selection across restarts
 - **Per-Turn Observability**: Timing and token stats (`3.2s · ↑1.2k ↓483`) visible in all modes
@@ -68,7 +68,7 @@ flowchart TD
     LLM --> Tools
 
     subgraph Tools["Core Packages"]
-        ToolReg["Tools (tools/builtin/) · 40 built-in"]
+        ToolReg["Tools (tools/builtin/) · 41 built-in"]
         CodeGraph["Code Graph (codegraph/) · MinHash"]
         Config["Config · Sessions · Memories"]
         Prompts["Prompts · Persona · Grimoire"]
@@ -163,7 +163,7 @@ Agent runs are checkpointed to disk (`~/.celeste/agent-runs/`). A crashed or int
 | Planning step | No | Yes (dedicated planning turn) |
 | Checkpoints / resume | No | Yes |
 | Workspace awareness | No | Yes (reads/writes files in cwd) |
-| Tools available | TUI skills (40 built-ins) | Agent tools (bash, file I/O, …) |
+| Tools available | TUI skills (41 built-ins) | Agent tools (bash, file I/O, …) |
 | Memory | Conversation history only | Full run state persisted to disk |
 | Observability | Status bar per tool call | Turn separators + per-turn stats in chat |
 

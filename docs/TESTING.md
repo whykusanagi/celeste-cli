@@ -302,7 +302,7 @@ go test -v ./cmd/celeste/tools/builtin/ -cover
 - Handler registration
 - Tool retrieval and execution
 - Tool definition generation
-- Built-in tool registration (40 tools)
+- Built-in tool registration (41 tools)
 
 **What's NOT tested** (requires mocking):
 - Tool handlers (weather, currency, QR codes, etc.)

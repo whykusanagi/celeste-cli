@@ -237,6 +237,9 @@ func TestContextOverflowIsActionable(t *testing.T) {
 			if !strings.Contains(err.Error(), text) {
 				t.Fatalf("original provider error lost: %v", err)
 			}
+			if !errors.Is(err, ErrContextOverflow) {
+				t.Fatalf("callers can't detect the overflow to compact: %v", err)
+			}
 		})
 	}
 }

@@ -109,6 +109,9 @@ type AppModel struct {
 	// interrupted is set by Esc: tools already running finish, queued ones
 	// are skipped, and no follow-up request is sent for the turn.
 	interrupted bool
+	// overflowRetried limits the compact-and-resend after a context
+	// overflow to once per user turn (#174).
+	overflowRetried bool
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -182,6 +185,14 @@ type LLMClient interface {
 	SendMessage(messages []ChatMessage, tools []SkillDefinition) tea.Cmd
 	GetSkills() []SkillDefinition
 	ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd
+}
+
+// ContextCompactor is an optional extension that prunes old tool results
+// from the history to keep it inside the context window (#174). It returns
+// the replacement content for each pruned result, keyed by tool call ID.
+type ContextCompactor interface {
+	CompactContext(msgs []ChatMessage, window, used int, force bool) (edits map[string]string, summary string, savedTokens int)
+	IsContextOverflow(err error) bool
 }
 
 // AgentCommandRunner is an optional extension for handling /agent from TUI.
@@ -776,6 +787,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "context":
+				if len(cmd.Args) > 0 && cmd.Args[0] == "compact" {
+					var pruned bool
+					if m, pruned = m.compactContext(true); !pruned {
+						m.chat = m.chat.AddSystemMessage("Nothing to compact: there are no old tool results outside the recent history.")
+					}
+					return m, nil
+				}
 				result := commands.HandleContextCommand(cmd.Args, m.contextTracker)
 				if result.ShouldRender {
 					m.chat = m.chat.AddSystemMessage(result.Message)
@@ -1723,6 +1741,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Send to LLM and start animation
 		if m.llmClient != nil {
+			m.overflowRetried = false
+			m, _ = m.compactContext(false)
 			toolsToSend := m.getToolsForDispatch()
 			cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
 			// Start animation tick for waiting state
@@ -1989,6 +2009,19 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StreamErrorMsg:
 		m.cancelFunc = nil
 		m.interruptPending = false
+		// The history overflowed the window: prune harder and resend once
+		// before reporting the error (#174).
+		if c, ok := m.llmClient.(ContextCompactor); ok && c.IsContextOverflow(msg.Err) && !m.overflowRetried && !m.interrupted {
+			m.overflowRetried = true
+			var pruned bool
+			if m, pruned = m.compactContext(true); pruned {
+				m.streamStart = time.Now()
+				return m, tea.Batch(
+					m.llmClient.SendMessage(m.chat.GetLLMMessages(), m.getToolsForDispatch()),
+					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg { return TickMsg{Time: t} }),
+				)
+			}
+		}
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
@@ -3059,6 +3092,9 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	// Tool boundary: messages typed during the turn join the conversation
 	// here, after the tool results and before the model continues (#172).
 	m = m.injectSteers()
+	// Checked after every tool batch, so a long turn compacts mid-turn at a
+	// safe boundary (#174).
+	m, _ = m.compactContext(false)
 
 	m.streaming = true
 	m.status = m.status.SetStreaming(true)
