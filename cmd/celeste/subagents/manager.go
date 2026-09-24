@@ -66,6 +66,12 @@ type DAGEntry struct {
 	MaxTurns        int
 	IsolateWorktree bool
 	ResultCh        chan *SubagentRun // result sent here when complete
+
+	// ctx/cancel give a queued run its own lifetime from the moment it is
+	// queued, so /agents kill can stop it while waiting or running, and a
+	// caller that stops waiting can cancel it instead of orphaning it (#171).
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // StaggerDelay is the configurable pause between concurrent subagent
@@ -194,7 +200,7 @@ func (m *Manager) SpawnAsync(ctx context.Context, goal, workspace string, opts S
 
 	resultCh := make(chan *SubagentRun, 1)
 	go func() {
-		final, _ := m.execFn(ctx, run, goal, ws, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		final, _ := m.runExec(ctx, run, goal, ws, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
 		resultCh <- final
 	}()
 	return resultCh, run
@@ -286,10 +292,18 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 
 	// Check if dependencies are met
 	if len(opts.DependsOn) > 0 {
+		if dep := m.failedDependency(opts.DependsOn); dep != "" {
+			run.Status = "failed"
+			run.Error = fmt.Sprintf("dependency %q failed", dep)
+			run.EndedAt = time.Now()
+			m.mu.Unlock()
+			return run, fmt.Errorf("%s", run.Error)
+		}
 		unmet := m.unmetDependencies(opts.DependsOn)
 		if len(unmet) > 0 {
 			run.Status = "waiting"
 			resultCh := make(chan *SubagentRun, 1)
+			entryCtx, entryCancel := context.WithCancel(context.Background())
 			m.dagQueue = append(m.dagQueue, &DAGEntry{
 				Run:             run,
 				Goal:            goal,
@@ -298,7 +312,13 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 				MaxTurns:        opts.MaxTurns,
 				IsolateWorktree: opts.IsolateWorktree,
 				ResultCh:        resultCh,
+				ctx:             entryCtx,
+				cancel:          entryCancel,
 			})
+			m.cancels[run.ID] = entryCancel
+			if run.TaskID != "" {
+				m.cancels[run.TaskID] = entryCancel
+			}
 			m.mu.Unlock()
 
 			// Block until dependencies clear and the entry is executed
@@ -308,12 +328,18 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 				// DAG unblocked
 				return completed, nil
 			case <-ctx.Done():
-				// DAG cancelled — tool context expired
+				// The caller stopped waiting. Mark the run failed and cancel its
+				// entry so it is dropped from the queue, rather than starting
+				// later with nobody to return to (#171).
 				m.mu.Lock()
-				run.Status = "failed"
-				run.Error = "cancelled while waiting for dependencies"
-				run.EndedAt = time.Now()
+				if run.Status == "waiting" {
+					run.Status = "failed"
+					run.Error = "cancelled while waiting for dependencies"
+					run.EndedAt = time.Now()
+				}
 				m.mu.Unlock()
+				entryCancel()
+				m.drainDAGQueue()
 				return run, ctx.Err()
 			}
 		}
@@ -347,14 +373,14 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 			m.clearCancel(run)
 			cancel()
 		}()
-		return m.execFn(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		return m.runExec(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
 	}
 
 	// Background-threshold path: start the execution in a goroutine and race
 	// against the threshold timer.
 	resultCh := make(chan *SubagentRun, 1)
 	go func() {
-		final, _ := m.execFn(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
+		final, _ := m.runExec(runCtx, run, goal, workspace, opts.TurnCb, opts.MaxTurns, opts.IsolateWorktree)
 		resultCh <- final
 	}()
 
@@ -575,10 +601,22 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 				state.Turn, err.Error(), state.LastAssistantResponse)
 		}
 		m.mu.Unlock()
-		// Still drain — other tasks may be unblocked by earlier completions
-		drainCtx2 := context.Background()
-		m.drainDAGQueue(drainCtx2)
 		return run, fmt.Errorf("subagent execution: %w", err)
+	}
+
+	// RunGoal returns a nil error when it stops at max turns or for lack of
+	// progress. Those runs are unfinished: reporting them "completed" made
+	// dependents start on partial work and auto-merged the partial worktree
+	// (#171).
+	if failure := incompleteRunError(state); failure != "" {
+		run.Status = "failed"
+		run.Error = failure
+		run.Turns = state.Turn
+		if state.LastAssistantResponse != "" {
+			run.Result = fmt.Sprintf("[Partial result — %s]\n\n%s", failure, state.LastAssistantResponse)
+		}
+		m.mu.Unlock()
+		return run, fmt.Errorf("subagent execution: %s", failure)
 	}
 
 	run.Status = "completed"
@@ -599,13 +637,36 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	}
 	m.mu.Unlock()
 
-	// Drain the DAG queue — this task's completion may unblock waiting entries.
-	// Use a fresh context. DO NOT defer cancel — the drain goroutines need
-	// the context to stay alive after this function returns.
-	drainCtx := context.Background()
-	m.drainDAGQueue(drainCtx)
-
 	return run, nil
+}
+
+// incompleteRunError returns why a run that RunGoal ended without an error
+// still didn't finish, or "" when it completed.
+func incompleteRunError(state *agent.RunState) string {
+	if state == nil || state.Status == agent.StatusCompleted {
+		return ""
+	}
+	return fmt.Sprintf("stopped before completing (%s after %d turns)", state.Status, state.Turn)
+}
+
+// runExec runs execFn and then drains the DAG queue, since this run finishing
+// (or failing) may unblock or fail waiting entries. Every execution path goes
+// through here, so the DAG advances whichever backend execFn is.
+func (m *Manager) runExec(ctx context.Context, run *SubagentRun, goal, workspace string, turnCb TurnCallback, maxTurns int, isolate bool) (*SubagentRun, error) {
+	result, err := m.execFn(ctx, run, goal, workspace, turnCb, maxTurns, isolate)
+	m.drainDAGQueue()
+	return result, err
+}
+
+// failedDependency returns the first dependency that has failed, or "".
+// Must be called with m.mu held.
+func (m *Manager) failedDependency(deps []string) string {
+	for _, depID := range deps {
+		if run, ok := m.runs[depID]; ok && run.Status == "failed" {
+			return depID
+		}
+	}
+	return ""
 }
 
 // unmetDependencies returns the task IDs from deps that haven't completed.
@@ -621,49 +682,74 @@ func (m *Manager) unmetDependencies(deps []string) []string {
 	return unmet
 }
 
-// drainDAGQueue checks all waiting entries and starts any whose
-// dependencies are now fully met. Called after every task completion.
-func (m *Manager) drainDAGQueue(ctx context.Context) {
-	m.mu.Lock()
-	var stillWaiting []*DAGEntry
-	var ready []*DAGEntry
-	for _, entry := range m.dagQueue {
-		unmet := m.unmetDependencies(entry.Run.DependsOn)
-		if len(unmet) == 0 {
-			ready = append(ready, entry)
-		} else {
-			stillWaiting = append(stillWaiting, entry)
+// drainDAGQueue settles the waiting entries: entries whose run was killed or
+// abandoned are released, entries with a failed dependency are failed, and
+// entries whose dependencies have all completed are started. Failing an entry
+// can fail its own dependents, so it repeats until nothing changes (#171).
+// Before, a failed dependency left its dependents waiting until the caller's
+// context expired.
+func (m *Manager) drainDAGQueue() {
+	for {
+		m.mu.Lock()
+		var stillWaiting, ready, finished []*DAGEntry
+		for _, entry := range m.dagQueue {
+			switch {
+			case entry.Run.Status == "failed":
+				// Killed or abandoned while waiting.
+				finished = append(finished, entry)
+			case m.failedDependency(entry.Run.DependsOn) != "":
+				dep := m.failedDependency(entry.Run.DependsOn)
+				entry.Run.Status = "failed"
+				entry.Run.Error = fmt.Sprintf("dependency %q failed", dep)
+				entry.Run.EndedAt = time.Now()
+				finished = append(finished, entry)
+			case len(m.unmetDependencies(entry.Run.DependsOn)) == 0:
+				entry.Run.Status = "running"
+				entry.Run.StartedAt = time.Now()
+				ready = append(ready, entry)
+			default:
+				stillWaiting = append(stillWaiting, entry)
+			}
+		}
+		m.dagQueue = stillWaiting
+		m.mu.Unlock()
+
+		for _, e := range finished {
+			m.clearCancel(e.Run)
+			e.cancel()
+			e.ResultCh <- e.Run // buffered; the waiter may already have gone
+		}
+		for _, e := range ready {
+			go m.runReadyEntry(e)
+		}
+		if len(finished) == 0 {
+			return
 		}
 	}
-	m.dagQueue = stillWaiting
+}
+
+// runReadyEntry executes a DAG entry whose dependencies have completed,
+// prefixing the goal with their results.
+func (m *Manager) runReadyEntry(e *DAGEntry) {
+	m.mu.Lock()
+	var depContext strings.Builder
+	for _, depID := range e.Run.DependsOn {
+		if depRun, ok := m.runs[depID]; ok && depRun.Status == "completed" {
+			depContext.WriteString(fmt.Sprintf("[DEPENDENCY RESULT: %s (%s)]\n%s\n[END DEPENDENCY]\n\n",
+				depRun.Name, depID, depRun.Result))
+		}
+	}
 	m.mu.Unlock()
 
-	// Execute ready entries in goroutines
-	for _, entry := range ready {
-		go func(e *DAGEntry) {
-			// Inject dependency results into the goal context
-			m.mu.Lock()
-			var depContext strings.Builder
-			for _, depID := range e.Run.DependsOn {
-				if depRun, ok := m.runs[depID]; ok && depRun.Status == "completed" {
-					depContext.WriteString(fmt.Sprintf("[DEPENDENCY RESULT: %s (%s)]\n%s\n[END DEPENDENCY]\n\n",
-						depRun.Name, depID, depRun.Result))
-				}
-			}
-			e.Run.Status = "running"
-			e.Run.StartedAt = time.Now()
-			m.mu.Unlock()
-
-			enrichedGoal := e.Goal
-			if depContext.Len() > 0 {
-				enrichedGoal = depContext.String() + enrichedGoal
-			}
-
-			// Run the actual subagent (reuse the execution path)
-			result, _ := m.execFn(ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns, e.IsolateWorktree)
-			e.ResultCh <- result
-		}(entry)
+	enrichedGoal := e.Goal
+	if depContext.Len() > 0 {
+		enrichedGoal = depContext.String() + enrichedGoal
 	}
+
+	result, _ := m.runExec(e.ctx, e.Run, enrichedGoal, e.Workspace, e.TurnCb, e.MaxTurns, e.IsolateWorktree)
+	m.clearCancel(e.Run)
+	e.cancel()
+	e.ResultCh <- result
 }
 
 // GetRun returns a subagent run by ID.
@@ -731,6 +817,9 @@ func (m *Manager) Kill(selector string) bool {
 	m.mu.Unlock()
 
 	cancel()
+	// A killed waiting run is released from the DAG queue now, and its
+	// dependents fail, instead of waiting on their callers' contexts (#171).
+	m.drainDAGQueue()
 	return true
 }
 
