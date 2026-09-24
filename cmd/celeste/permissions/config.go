@@ -45,14 +45,14 @@ type ruleJSON struct {
 // DefaultConfig returns a PermissionConfig with sensible defaults:
 //   - Mode: default (auto-allow reads, ask for writes)
 //   - AlwaysDeny: sudo and su commands
-//   - AlwaysAllow: read_file, list_files, search_files
+//   - AlwaysAllow: read_file, list_files, search
 func DefaultConfig() PermissionConfig {
 	return PermissionConfig{
 		Mode: ModeDefault,
 		AlwaysAllow: []Rule{
 			{ToolPattern: "read_file", Decision: Allow},
 			{ToolPattern: "list_files", Decision: Allow},
-			{ToolPattern: "search_files", Decision: Allow},
+			{ToolPattern: "search", Decision: Allow},
 		},
 		AlwaysDeny: []Rule{
 			{ToolPattern: "bash(sudo *)", Decision: Deny},
