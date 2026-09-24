@@ -242,6 +242,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		XAIFeatures:           cfg.XAIFeatures,
 	}
 	client := llm.NewClient(llmConfig, registry)
+	client.SetToolMode(tools.ModeAgent)
 
 	// Build system prompt. The agent operational rules always come last so they
 	// take precedence over character voice. The persona (if enabled) sets tone
