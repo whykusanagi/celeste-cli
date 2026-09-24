@@ -55,7 +55,9 @@ type Runner struct {
 // that isn't enough it summarizes everything but the newest ~20k tokens. It
 // reports whether the history changed.
 func (r *Runner) compactHistory(ctx context.Context, state *RunState, force bool) bool {
-	if r.budget == nil || r.pruned == nil {
+	// A nil prune store only disables pruning (Prune is a no-op without
+	// one); the summary rung below must still run.
+	if r.budget == nil || (r.pruned == nil && r.summarize == nil) {
 		return false
 	}
 	used := compact.Estimate(state.Messages) + r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
