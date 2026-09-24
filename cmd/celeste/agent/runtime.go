@@ -44,12 +44,17 @@ type Runner struct {
 	// pruned holds tool results that compaction removed from the history,
 	// for recall_tool_result (#174). Nil disables pruning.
 	pruned *compact.Store
+	// summarize writes a compaction summary with the small-model role, the
+	// rung after pruning (#174). Nil disables summaries.
+	summarize compact.SummarizeFunc
 }
 
-// compactHistory prunes old tool results when the history is over the
-// compaction threshold, or unconditionally when force is set (after a
-// context-overflow error). It reports whether anything was pruned.
-func (r *Runner) compactHistory(state *RunState, force bool) bool {
+// compactHistory keeps the history inside the window (#174). It prunes old
+// tool results when the history is over the compaction threshold, or
+// unconditionally when force is set (after a context-overflow error); if
+// that isn't enough it summarizes everything but the newest ~20k tokens. It
+// reports whether the history changed.
+func (r *Runner) compactHistory(ctx context.Context, state *RunState, force bool) bool {
 	if r.budget == nil || r.pruned == nil {
 		return false
 	}
@@ -57,22 +62,65 @@ func (r *Runner) compactHistory(state *RunState, force bool) bool {
 	if last := r.budget.LastPromptTokens; last > used {
 		used = last // the API's count includes tool schemas the estimate misses
 	}
+	overhead := r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
 	msgs, res := compact.Prune(state.Messages, compact.Options{
 		Window: r.budget.ModelLimit,
 		Used:   used,
 		Force:  force,
 	}, r.pruned)
-	if !res.Pruned() {
-		return false
+	changed := res.Pruned()
+	if changed {
+		state.Messages = msgs
+		r.budget.RecordCompaction(compact.Estimate(msgs))
+		r.reportCompaction(state, "context compacted: "+res.Summary())
 	}
-	state.Messages = msgs
-	r.budget.RecordCompaction(compact.Estimate(msgs))
-	msg := "context compacted: " + res.Summary()
+
+	// Next rung: summarize when pruning wasn't enough, or when a forced
+	// compaction (after an overflow) found nothing to prune.
+	stillOver := compact.Estimate(state.Messages)+overhead > compact.Threshold(r.budget.ModelLimit)
+	if r.summarize != nil && (stillOver || (force && !changed)) {
+		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
+		out, sres, err := compact.Summarize(sctx, state.Messages, compact.SummaryOptions{}, r.summarize)
+		cancel()
+		if err != nil {
+			if !errors.Is(err, compact.ErrNothingToSummarize) {
+				r.reportCompaction(state, "context summary failed: "+err.Error())
+			}
+			return changed
+		}
+		state.Messages = out
+		r.budget.RecordCompaction(sres.TokensAfter)
+		r.reportCompaction(state, "context compacted: "+sres.Line())
+		changed = true
+	}
+	return changed
+}
+
+// SmallModelSummarizer returns a SummarizeFunc on its own client for the
+// small-model role, so summaries don't disturb the agent client's system
+// prompt or tools.
+func SmallModelSummarizer(base *llm.Config, model string) compact.SummarizeFunc {
+	cfg := *base
+	cfg.Model = model
+	client := llm.NewClient(&cfg, nil)
+	return func(ctx context.Context, system, user string) (string, error) {
+		client.SetSystemPrompt(system)
+		res, err := client.SendMessageSync(ctx, []tui.ChatMessage{{Role: "user", Content: user, Timestamp: time.Now()}}, nil)
+		if err != nil {
+			return "", err
+		}
+		return res.Content, nil
+	}
+}
+
+// summaryTimeout bounds a compaction summary request.
+const summaryTimeout = 3 * time.Minute
+
+func (r *Runner) reportCompaction(state *RunState, msg string) {
 	if state.Options.Verbose {
 		fmt.Fprintf(r.out, "[agent] %s\n", msg)
 	}
 	r.emitProgress(ProgressStepDone, msg, state.Turn, state.Options.MaxTurns)
-	return true
 }
 
 // emitProgress calls r.options.OnProgress if it is set.
@@ -318,15 +366,16 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	budget := ctxmgr.NewTokenBudget(ctxmgr.GetModelLimitWithOverride(model, cfg.ContextLimit), systemPromptTokens, 0)
 
 	return &Runner{
-		client:   client,
-		registry: registry,
-		store:    store,
-		options:  options,
-		out:      out,
-		errOut:   errOut,
-		budget:   budget,
-		indexer:  cgIndexer,
-		pruned:   prunedStore,
+		client:    client,
+		registry:  registry,
+		store:     store,
+		options:   options,
+		out:       out,
+		errOut:    errOut,
+		budget:    budget,
+		indexer:   cgIndexer,
+		pruned:    prunedStore,
+		summarize: SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
 	}, nil
 }
 
@@ -430,7 +479,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
 
 		// Keep the history inside the window before sending (#174).
-		r.compactHistory(state, false)
+		r.compactHistory(ctx, state, false)
 
 		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
 		turnStart := time.Now()
@@ -461,7 +510,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		// turn once before failing (#174).
 		if streamErr != nil && errors.Is(streamErr, llm.ErrContextOverflow) && !overflowRetried {
 			overflowRetried = true
-			if r.compactHistory(state, true) {
+			if r.compactHistory(ctx, state, true) {
 				state.Turn--
 				continue
 			}

@@ -1,32 +1,130 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+// summaryTimeout bounds a compaction summary request.
+const summaryTimeout = 3 * time.Minute
+
+// ContextSummarizedMsg delivers a compaction summary written in the
+// background (#174).
+type ContextSummarizedMsg struct {
+	Outcome SummaryOutcome
+	Err     error
+	// snapshotLen and firstContent identify the history the summary was
+	// written from, so a stale summary (after /clear or a session switch)
+	// is dropped rather than applied to a different conversation.
+	snapshotLen  int
+	firstContent string
+	manual       bool
+}
 
 // compactContext prunes old tool results when the history is over the
 // compaction threshold, or unconditionally when force is set (/context
-// compact, or after a context-overflow error). It reports whether anything
-// was pruned.
-func (m AppModel) compactContext(force bool) (AppModel, bool) {
+// compact, or after a context-overflow error).
+func (m AppModel) compactContext(force bool) (AppModel, CompactOutcome) {
 	c, ok := m.llmClient.(ContextCompactor)
 	if !ok || m.contextTracker == nil || m.contextTracker.MaxTokens <= 0 {
-		return m, false
+		return m, CompactOutcome{}
 	}
 	msgs := m.chat.GetLLMMessages()
 	// The tracker's count comes from the API and includes the system prompt
 	// and tool schemas; the compactor adds its own estimate of the history.
-	edits, summary, saved := c.CompactContext(msgs, m.contextTracker.MaxTokens, m.contextTracker.CurrentTokens, force)
-	if len(edits) == 0 {
-		return m, false
+	out := c.CompactContext(msgs, m.contextTracker.MaxTokens, m.contextTracker.CurrentTokens, force)
+	if len(out.Edits) == 0 {
+		return m, out
 	}
-	m.chat = m.chat.ReplaceToolResults(edits)
+	m.chat = m.chat.ReplaceToolResults(out.Edits)
 	m.contextTracker.CompactionCount++
-	if m.contextTracker.CurrentTokens > saved {
-		m.contextTracker.CurrentTokens -= saved
+	if m.contextTracker.CurrentTokens > out.SavedTokens {
+		m.contextTracker.CurrentTokens -= out.SavedTokens
 	}
 	m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-	m.chat = m.chat.AddSystemMessage(fmt.Sprintf("🗜 Context compacted: %s", summary))
-	LogInfo("context compacted: " + summary)
-	return m, true
+	m.chat = m.chat.AddSystemMessage(fmt.Sprintf("🗜 Context compacted: %s", out.Summary))
+	LogInfo("context compacted: " + out.Summary)
+	return m, out
 }
+
+// startSummary writes a compaction summary in the background with the
+// small-model role. manual is /compact or /context compact, which report
+// when there is nothing to do.
+func (m AppModel) startSummary(focus string, manual bool) (AppModel, tea.Cmd) {
+	c, ok := m.llmClient.(ContextCompactor)
+	if !ok {
+		if manual {
+			m.chat = m.chat.AddSystemMessage("Compaction isn't available for this client.")
+		}
+		return m, nil
+	}
+	if m.summarizing {
+		if manual {
+			m.chat = m.chat.AddSystemMessage("A context summary is already being written.")
+		}
+		return m, nil
+	}
+	msgs := m.chat.GetLLMMessages()
+	if len(msgs) == 0 {
+		if manual {
+			m.chat = m.chat.AddSystemMessage("Nothing to compact yet.")
+		}
+		return m, nil
+	}
+	m.summarizing = true
+	m.chat = m.chat.AddSystemMessage("🗜 Summarizing older context…")
+	snapshot := append([]ChatMessage(nil), msgs...)
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), summaryTimeout)
+		defer cancel()
+		out, err := c.SummarizeContext(ctx, snapshot, focus)
+		return ContextSummarizedMsg{
+			Outcome:      out,
+			Err:          err,
+			snapshotLen:  len(snapshot),
+			firstContent: snapshot[0].Content,
+			manual:       manual,
+		}
+	}
+}
+
+// applySummary replaces the summarized history. Messages sent while the
+// summary was being written were only appended, and pruning only swaps
+// tool-result content in place, so the first Cut LLM messages are still the
+// ones that were summarized.
+func (m AppModel) applySummary(msg ContextSummarizedMsg) AppModel {
+	m.summarizing = false
+	if msg.Err != nil {
+		if msg.manual || !isNothingToSummarize(msg.Err) {
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Context summary not applied: %v", msg.Err))
+		}
+		return m
+	}
+	current := m.chat.GetLLMMessages()
+	if len(current) < msg.snapshotLen || len(current) == 0 || current[0].Content != msg.firstContent {
+		m.chat = m.chat.AddSystemMessage("Context summary discarded: the conversation changed while it was being written.")
+		return m
+	}
+	m.chat = m.chat.ApplySummary(msg.Outcome.Cut, msg.Outcome.Messages)
+	if m.contextTracker != nil {
+		m.contextTracker.CompactionCount++
+		if msg.Outcome.TokensAfter > 0 {
+			m.contextTracker.CurrentTokens = msg.Outcome.TokensAfter
+			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+		}
+	}
+	m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Outcome.Line)
+	LogInfo("context summarized: " + msg.Outcome.Line)
+	m.persistSession()
+	return m
+}
+
+// ErrNothingToSummarize is what SummarizeContext returns when the whole
+// history is recent; automatic summaries stay quiet about it.
+var ErrNothingToSummarize = errors.New("nothing to summarize: the whole history is recent")
+
+func isNothingToSummarize(err error) bool { return errors.Is(err, ErrNothingToSummarize) }

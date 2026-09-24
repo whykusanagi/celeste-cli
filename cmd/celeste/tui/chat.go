@@ -275,15 +275,64 @@ func (m ChatModel) ReplaceToolResults(edits map[string]string) ChatModel {
 }
 
 // GetLLMMessages returns only messages that should be sent to the LLM,
-// filtering out UI-only system messages (notifications, command results, etc.).
+// filtering out UI-only system messages (notifications, command results, etc.)
+// and history a compaction summary replaced.
 func (m ChatModel) GetLLMMessages() []ChatMessage {
 	filtered := make([]ChatMessage, 0, len(m.messages))
 	for _, msg := range m.messages {
-		if msg.Role != "system" {
+		if msg.Role != "system" && !isCompacted(msg) {
 			filtered = append(filtered, msg)
 		}
 	}
 	return filtered
+}
+
+func isCompacted(msg ChatMessage) bool {
+	c, _ := msg.Metadata["compacted"].(bool)
+	return c
+}
+
+// ApplySummary replaces the first cut LLM messages with summary (#174). The
+// replaced messages stay in the scrollback, marked compacted so they are no
+// longer sent; the summary messages are hidden from view and sent in their
+// place.
+func (m ChatModel) ApplySummary(cut int, summary []ChatMessage) ChatModel {
+	msgs := make([]ChatMessage, 0, len(m.messages)+len(summary))
+	marked, inserted := 0, false
+	for _, msg := range m.messages {
+		llmVisible := msg.Role != "system" && !isCompacted(msg)
+		if llmVisible && marked < cut {
+			meta := make(map[string]any, len(msg.Metadata)+1)
+			for k, v := range msg.Metadata {
+				meta[k] = v
+			}
+			meta["compacted"] = true
+			msg.Metadata = meta
+			marked++
+		} else if llmVisible && !inserted {
+			msgs = append(msgs, hideAll(summary)...)
+			inserted = true
+		}
+		msgs = append(msgs, msg)
+	}
+	if !inserted {
+		msgs = append(msgs, hideAll(summary)...)
+	}
+	m.messages = msgs
+	return m
+}
+
+func hideAll(in []ChatMessage) []ChatMessage {
+	out := make([]ChatMessage, len(in))
+	for i, msg := range in {
+		meta := map[string]any{"hidden": true}
+		for k, v := range msg.Metadata {
+			meta[k] = v
+		}
+		msg.Metadata = meta
+		out[i] = msg
+	}
+	return out
 }
 
 // Clear clears all messages and function calls.
