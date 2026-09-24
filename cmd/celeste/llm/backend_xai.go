@@ -675,28 +675,9 @@ func (b *XAIBackend) ChangeModel(model string) error {
 	return nil
 }
 
-// GetSkills returns the list of available skills from the registry
+// GetSkills returns the chat-mode tools from the registry.
 func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
-	if b.registry == nil {
-		return []tui.SkillDefinition{}
-	}
-
-	allTools := b.registry.GetAll()
-	result := make([]tui.SkillDefinition, 0, len(allTools))
-
-	for _, t := range allTools {
-		var params map[string]interface{}
-		if t.Parameters() != nil {
-			_ = json.Unmarshal(t.Parameters(), &params)
-		}
-		result = append(result, tui.SkillDefinition{
-			Name:        t.Name(),
-			Description: t.Description(),
-			Parameters:  params,
-		})
-	}
-
-	return result
+	return skillDefinitions(b.registry, tools.ModeChat)
 }
 
 // applyThinkingConfig sets reasoning_effort on the request when thinking is enabled.
