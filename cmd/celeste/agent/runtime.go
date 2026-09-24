@@ -242,6 +242,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		XAIFeatures:           cfg.XAIFeatures,
 	}
 	client := llm.NewClient(llmConfig, registry)
+	client.SetToolMode(tools.ModeAgent)
 
 	// Build system prompt. The agent operational rules always come last so they
 	// take precedence over character voice. The persona (if enabled) sets tone
@@ -982,7 +983,7 @@ func buildAgentSystemPrompt(options Options, envContext string) string {
 
 	verificationInstruction := ""
 	if options.RequireVerification && len(options.VerificationCommands) > 0 {
-		verificationInstruction = "Before final completion, run all verification commands using dev_run_command and confirm they pass."
+		verificationInstruction = "Before final completion, run all verification commands using bash and confirm they pass."
 	}
 
 	return fmt.Sprintf(`You are Celeste Agent, an autonomous execution loop for software and content tasks.
@@ -991,18 +992,18 @@ func buildAgentSystemPrompt(options Options, envContext string) string {
 
 You have file and shell tools. You MUST use them. There are no exceptions.
 
-- To read a file: call dev_read_file. Never ask the user to paste contents.
-- To write a new file: call dev_write_file. NEVER output file content as raw text in your response.
-- To edit an existing file: call dev_patch_file with old_string/new_string. Never rewrite the whole file unless it is new.
-- To run a command (git status, go test, ls, grep, etc.): call dev_run_command.
-- To find files: call dev_list_files or dev_run_command with ls/find.
-- To search code: call dev_run_command with grep, or dev_search_files.
+- To read a file: call read_file. Never ask the user to paste contents.
+- To write a new file: call write_file. NEVER output file content as raw text in your response.
+- To edit an existing file: call patch_file with old_string/new_string. Never rewrite the whole file unless it is new.
+- To run a command (git status, go test, ls, grep, etc.): call bash.
+- To find files: call list_files, or call bash with ls/find.
+- To search code: call search, or call bash with grep.
 
 ## Tool Invocation Format
 
 Invoke tools via the function calling API when available. If the API does not forward function calls, use this exact text format instead — one block per tool:
 
-<tool_call>{"name": "dev_write_file", "arguments": {"path": "hello.py", "content": "print('hello')"}}</tool_call>
+<tool_call>{"name": "write_file", "arguments": {"path": "hello.py", "content": "print('hello')"}}</tool_call>
 
 Rules for text-format tool calls:
 - Output ONLY the <tool_call> block(s) — do NOT narrate the action or simulate the output.
@@ -1071,7 +1072,7 @@ func parsePlanSteps(content string, maxSteps int) []PlanStep {
 // issue native API tool_calls — they emit the invocation as structured text.
 // The expected block format is:
 //
-//	<tool_call>{"name":"dev_write_file","arguments":{"path":"x","content":"y"}}</tool_call>
+//	<tool_call>{"name":"write_file","arguments":{"path":"x","content":"y"}}</tool_call>
 func parseTextToolCalls(content string) []llm.ToolCallResult {
 	var results []llm.ToolCallResult
 	remaining := content

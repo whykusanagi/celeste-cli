@@ -21,6 +21,9 @@ type Client struct {
 	registry     *tools.Registry
 	backendType  BackendType
 	systemPrompt string
+	// toolMode selects which registered tools GetSkills offers the model.
+	// The zero value is tools.ModeChat.
+	toolMode tools.RuntimeMode
 }
 
 // Config holds LLM client configuration.
@@ -302,16 +305,29 @@ func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.Cha
 	}, func(d time.Duration) { time.Sleep(d) })
 }
 
-// GetSkills returns skill definitions for the TUI.
+// SetToolMode sets which runtime mode's tools GetSkills offers the model.
+// Agent runs call this with tools.ModeAgent; everything else stays on the
+// default, tools.ModeChat.
+func (c *Client) SetToolMode(mode tools.RuntimeMode) {
+	c.toolMode = mode
+}
+
+// GetSkills returns the tools the model may call in this client's mode.
 func (c *Client) GetSkills() []tui.SkillDefinition {
-	if c.registry == nil {
+	return skillDefinitions(c.registry, c.toolMode)
+}
+
+// skillDefinitions converts the registry's tools for mode into skill
+// definitions. It goes through GetTools rather than GetAll so mode tags and
+// discovery-mode hiding apply to what the model is actually sent (#167).
+func skillDefinitions(registry *tools.Registry, mode tools.RuntimeMode) []tui.SkillDefinition {
+	if registry == nil {
 		return nil
 	}
 
-	allTools := c.registry.GetAll()
-	var result []tui.SkillDefinition
-
-	for _, t := range allTools {
+	available := registry.GetTools(mode)
+	result := make([]tui.SkillDefinition, 0, len(available))
+	for _, t := range available {
 		var params map[string]interface{}
 		if t.Parameters() != nil {
 			_ = json.Unmarshal(t.Parameters(), &params)
