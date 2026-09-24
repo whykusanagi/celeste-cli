@@ -82,11 +82,16 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 	// receive end (<-chan) to AgentProgressMsg.Ch without a compile error.
 	ch := make(chan tui.AgentProgressMsg, 256)
 
+	// The run is cancellable: the TUI stores cancel via StreamStartMsg, so
+	// Esc and Ctrl+C stop it (#172).
+	ctx, cancel := context.WithCancel(context.Background())
+
 	go func() {
 		defer close(ch)
+		defer cancel()
 		cfg := a.currentAgentConfig()
 		if cfg.APIKey == "" && !cfg.GoogleUseADC && strings.TrimSpace(cfg.GoogleCredentialsFile) == "" {
-			ch <- tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: "no API key or credentials configured"}
+			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: "no API key or credentials configured"})
 			return
 		}
 
@@ -95,6 +100,9 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 			opts.Workspace = cwd
 		}
 		opts.Verbose = false
+		// Tools the permission policy resolves to Ask go through the TUI's
+		// permission modal; without this every mutating tool was denied (#172).
+		opts.PromptFunc = a.promptFn
 
 		// Capture per-turn timing and token counts.
 		// OnTurnStats fires immediately after SendMessageSync returns (before any
@@ -146,17 +154,17 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 				}
 			}
 			logAgentProgress(tuiKind, msg)
-			ch <- msg
+			sendAgentProgress(ch, msg)
 		}
 
 		runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
 		if err != nil {
-			ch <- tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: err.Error()}
+			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: err.Error()})
 			return
 		}
 
 		goal := strings.TrimSpace(strings.Join(args, " "))
-		state, runErr := runner.RunGoal(context.Background(), goal)
+		state, runErr := runner.RunGoal(ctx, goal)
 		if runErr != nil {
 			// OnProgress already sent ProgressError via the callback; nothing else needed.
 			_ = state
@@ -169,15 +177,40 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 		if state != nil {
 			lastResponse = state.LastAssistantResponse
 		}
-		ch <- tui.AgentProgressMsg{Kind: tui.AgentProgressComplete, Text: lastResponse}
+		sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressComplete, Text: lastResponse})
 	}()
 
-	return func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return nil
+	return tea.Batch(
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		func() tea.Msg {
+			msg, ok := <-ch
+			if !ok {
+				return nil
+			}
+			return msg
+		},
+	)
+}
+
+// agentTerminalSendTimeout bounds how long the run waits to deliver its final
+// message if the TUI has stopped reading.
+const agentTerminalSendTimeout = 5 * time.Second
+
+// sendAgentProgress delivers a progress message without letting a stalled UI
+// block the agent (#172). Intermediate messages are dropped when the buffer
+// is full; the terminal message, which ends the TUI's read chain, waits a
+// bounded time for room.
+func sendAgentProgress(ch chan<- tui.AgentProgressMsg, msg tui.AgentProgressMsg) {
+	if msg.Kind != tui.AgentProgressComplete && msg.Kind != tui.AgentProgressError {
+		select {
+		case ch <- msg:
+		default:
 		}
-		return msg
+		return
+	}
+	select {
+	case ch <- msg:
+	case <-time.After(agentTerminalSendTimeout):
 	}
 }
 

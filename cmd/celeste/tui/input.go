@@ -136,6 +136,11 @@ func (m InputModel) SetValue(s string) InputModel {
 	return m
 }
 
+// HasSuggestions reports whether the command suggestion list is showing.
+func (m InputModel) HasSuggestions() bool {
+	return len(m.suggestions) > 0
+}
+
 // Focus gives focus to the input.
 func (m InputModel) Focus() InputModel {
 	m.textArea.Focus()
@@ -160,8 +165,19 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 				m.textArea.SetValue("/" + m.suggestions[m.suggestionIdx] + " ")
 				m.suggestions = nil
 				m.suggestionIdx = 0
+				return m, nil
 			}
-			return m, nil
+			// Otherwise Tab submits the input as a follow-up: during a turn it
+			// waits for the reply instead of steering (#172).
+			value := m.textArea.Value()
+			if strings.TrimSpace(value) == "" {
+				return m, nil
+			}
+			m.history = append(m.history, value)
+			m.historyIndex = len(m.history)
+			m.tempInput = ""
+			m.textArea.Reset()
+			return m, QueueFollowUp(value)
 
 		case "enter":
 			value := m.textArea.Value()
