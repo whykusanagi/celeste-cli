@@ -318,3 +318,93 @@ func TestContentPromptIncludesBase(t *testing.T) {
 	assert.Greater(t, len(contentPrompt), len(basePrompt),
 		"Content prompt should be longer than base prompt")
 }
+
+// writeEssenceOverride points HOME at a temp dir holding the given
+// ~/.celeste/celeste_essence.json content.
+func writeEssenceOverride(t *testing.T, content string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping HOME environment variable test on Windows")
+	}
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".celeste")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "celeste_essence.json"), []byte(content), 0644))
+	t.Setenv("HOME", tmpDir)
+}
+
+// TestEmbeddedEssenceIsValid guards the only path to getBasicPrompt: if the
+// embedded essence fails validation, every override fallback breaks too.
+func TestEmbeddedEssenceIsValid(t *testing.T) {
+	essence, err := parseEssence(embeddedEssence)
+	require.NoError(t, err)
+	assert.NotEmpty(t, essence.SystemPrompt)
+}
+
+func TestValidateEssence(t *testing.T) {
+	tests := []struct {
+		name    string
+		essence CelesteEssence
+		wantErr string
+	}{
+		{"v3 system_prompt", CelesteEssence{SystemPrompt: "You are Celeste."}, ""},
+		{"built artifact keeps preamble", CelesteEssence{SystemPrompt: "You are Celeste.", SystemPromptPreamble: "p"}, ""},
+		{"v1 character", CelesteEssence{Character: "Celeste"}, ""},
+		{"unbuilt template", CelesteEssence{Version: "3.1.0", SystemPromptPreamble: "You are Celeste."}, "unbuilt persona template"},
+		{"whitespace system_prompt", CelesteEssence{SystemPrompt: "  \n"}, "no persona content"},
+		{"empty", CelesteEssence{}, "no persona content"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateEssence(&tt.essence)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadEssenceOverrideFallsBackToEmbedded covers #164: an override that
+// would render an empty persona (or fails to parse) must yield the embedded
+// essence, not "You are . " and not the pre-v3 basic prompt.
+func TestLoadEssenceOverrideFallsBackToEmbedded(t *testing.T) {
+	embedded, err := parseEssence(embeddedEssence)
+	require.NoError(t, err)
+
+	overrides := map[string]string{
+		// Shape of celeste-core-persona's celeste_core_prompt.json after PR #22.
+		"unbuilt template": `{"version":"3.1.0","character_id":"celeste","canonical_name":"Celeste",` +
+			`"system_prompt_preamble":"You are Celeste.","operational_laws":{"law_0":"x"}}`,
+		"malformed json": `{"version": "3.1.0", "system_prompt": `,
+		"empty object":   `{}`,
+	}
+	for name, content := range overrides {
+		t.Run(name, func(t *testing.T) {
+			writeEssenceOverride(t, content)
+
+			essence, err := LoadEssence()
+			require.NoError(t, err)
+			assert.Equal(t, embedded.SystemPrompt, essence.SystemPrompt)
+
+			prompt := GetSystemPrompt(false)
+			assert.True(t, strings.HasPrefix(prompt, embedded.SystemPrompt),
+				"prompt should start with the embedded persona")
+			assert.NotContains(t, prompt, "You are . ")
+			assert.NotContains(t, prompt, getBasicPrompt())
+		})
+	}
+}
+
+// TestLoadEssenceBuiltArtifactOverride: a persona-container build output
+// (system_prompt baked from the tier-0 corpus) is used as-is.
+func TestLoadEssenceBuiltArtifactOverride(t *testing.T) {
+	writeEssenceOverride(t, `{"version":"3.1.0","canonical_name":"Celeste","system_prompt":"You are Celeste. BUILT-FROM-CONTAINER"}`)
+
+	essence, err := LoadEssence()
+	require.NoError(t, err)
+	assert.Equal(t, "3.1.0", essence.Version)
+	assert.True(t, strings.HasPrefix(GetSystemPrompt(false), "You are Celeste. BUILT-FROM-CONTAINER"))
+}
