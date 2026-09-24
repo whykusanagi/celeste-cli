@@ -258,6 +258,10 @@ type TokenUsage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	// CacheReadTokens and CacheWriteTokens are the parts of PromptTokens
+	// served from or written to the prompt cache (Anthropic only).
+	CacheReadTokens  int
+	CacheWriteTokens int
 }
 
 type StreamChunk struct {
