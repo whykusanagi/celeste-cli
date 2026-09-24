@@ -3,10 +3,49 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
+
+// maxToolNameLen is the longest tool name providers accept
+// (OpenAI-compatible APIs: ^[a-zA-Z0-9_-]{1,64}$).
+const maxToolNameLen = 64
+
+// ToolName returns the registry name for an MCP server's tool,
+// mcp__<server>__<tool>. MCP tools used to register under the server's bare
+// name, which let a server replace a built-in tool (and inherit its allow
+// rules) or clobber another server's tool (#187).
+func ToolName(server, tool string) string {
+	name := "mcp__" + sanitizeNamePart(server) + "__" + sanitizeNamePart(tool)
+	if len(name) <= maxToolNameLen {
+		return name
+	}
+	// Too long: keep a readable prefix and make it unique with a hash.
+	sum := sha256.Sum256([]byte(server + "\x00" + tool))
+	suffix := "_" + hex.EncodeToString(sum[:])[:8]
+	return name[:maxToolNameLen-len(suffix)] + suffix
+}
+
+// sanitizeNamePart maps anything outside [A-Za-z0-9_-] to '_'.
+func sanitizeNamePart(s string) string {
+	if s == "" {
+		return "_"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
 
 // MCPTool wraps an MCP tool definition and implements the tools.Tool interface.
 // It delegates execution to the MCP Client, bridging external MCP servers
@@ -15,6 +54,7 @@ type MCPTool struct {
 	def        MCPToolDef
 	client     *Client
 	serverName string
+	name       string // namespaced registry name; def.Name is what the server knows
 }
 
 // NewMCPTool creates a new MCPTool adapter for the given MCP tool definition.
@@ -23,11 +63,12 @@ func NewMCPTool(def MCPToolDef, client *Client, serverName string) *MCPTool {
 		def:        def,
 		client:     client,
 		serverName: serverName,
+		name:       ToolName(serverName, def.Name),
 	}
 }
 
 func (m *MCPTool) Name() string {
-	return m.def.Name
+	return m.name
 }
 
 func (m *MCPTool) Description() string {
@@ -45,6 +86,8 @@ func (m *MCPTool) IsConcurrencySafe(input map[string]any) bool {
 }
 
 // IsReadOnly returns false because we cannot know if an MCP tool mutates state.
+// The server's readOnlyHint is deliberately not trusted here: it is the
+// server's own unverified claim, and IsReadOnly auto-approves in default mode.
 func (m *MCPTool) IsReadOnly() bool {
 	return false
 }
@@ -64,7 +107,7 @@ func (m *MCPTool) InterruptBehavior() tools.InterruptBehavior {
 func (m *MCPTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
 	if progress != nil {
 		progress <- tools.ProgressEvent{
-			ToolName: m.def.Name,
+			ToolName: m.name,
 			Message:  "calling MCP server " + m.serverName,
 			Percent:  -1,
 		}
