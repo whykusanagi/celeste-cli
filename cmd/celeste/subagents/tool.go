@@ -337,7 +337,10 @@ func buildSliderOverride(persona map[string]any) string {
 	// Check for a named preset first
 	if preset, ok := persona["preset"].(string); ok && preset != "" {
 		sliders := config.LoadSliders()
+		userR18 := sliders.R18Enabled
 		if sliders.LoadPreset(preset) {
+			// A preset can't turn R18 on either unless the user already has.
+			sliders.R18Enabled = sliders.R18Enabled && userR18
 			return prompts.ComposeSliderPrompt(sliders)
 		}
 	}
@@ -356,8 +359,10 @@ func buildSliderOverride(persona map[string]any) string {
 	if v, ok := persona["lewdness"].(float64); ok {
 		sliders.Lewdness = int(v)
 	}
-	if v, ok := persona["r18"].(bool); ok {
-		sliders.R18Enabled = v
+	// The model may turn R18 off for a subagent, never on: enabling it is the
+	// user's decision (slider.json), not something a tool argument can grant (#171).
+	if v, ok := persona["r18"].(bool); ok && !v {
+		sliders.R18Enabled = false
 	}
 
 	return prompts.ComposeSliderPrompt(sliders)
