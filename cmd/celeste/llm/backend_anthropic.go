@@ -72,7 +72,17 @@ func (b *AnthropicBackend) Close() error {
 // with no downside for normal chat turns (short responses don't consume
 // the budget, only the used tokens are billed).
 func (b *AnthropicBackend) maxTokens() int64 {
-	if b.thinkingConfig.Enabled && b.thinkingConfig.Level != "off" {
+	// Models that think by default spend output tokens on thinking even when
+	// celeste's thinking setting is off, so give them the thinking ceiling.
+	switch anthropicThinkingFamily(b.config.Model) {
+	case familyAlwaysOn:
+		return 65536
+	case familyAdaptiveDefaultOn:
+		if b.thinkingEnabled() {
+			return 65536
+		}
+	}
+	if b.thinkingEnabled() {
 		budget := b.thinkingConfig.LevelToBudget()
 		if budget > 0 {
 			// max_tokens must be > budget_tokens; add generous room for output
@@ -106,7 +116,7 @@ func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.S
 	}
 
 	// Apply thinking config.
-	b.applyThinkingConfig(&params)
+	b.applyThinkingConfig(&params, continuesToolLoop(messages))
 
 	return params
 }
@@ -145,18 +155,163 @@ func (b *AnthropicBackend) buildSystemBlocks(prompt string) []anthropic.TextBloc
 	}
 }
 
-// applyThinkingConfig adds extended thinking parameters when enabled.
-func (b *AnthropicBackend) applyThinkingConfig(params *anthropic.MessageNewParams) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
-		return
-	}
+// thinkingFamily groups Claude models by how they take the thinking
+// parameter. Current models reject budget_tokens with a 400, and some can't
+// have thinking configured at all (#189).
+type thinkingFamily int
 
-	budget := b.thinkingConfig.LevelToBudget()
-	if budget <= 0 {
-		budget = 8192 // default budget
-	}
+const (
+	// familyBudget: older models (Haiku 4.5, the 4.5 and earlier Sonnet/Opus,
+	// 3.x) take {type: "enabled", budget_tokens: N}.
+	familyBudget thinkingFamily = iota
+	// familyAdaptive: Opus 4.8/4.7/4.6 and Sonnet 4.6 take {type: "adaptive"};
+	// omitting the parameter runs without thinking.
+	familyAdaptive
+	// familyAdaptiveDefaultOn: Opus 5 and Sonnet 5 run adaptive thinking
+	// when the parameter is omitted; {type: "disabled"} turns it off.
+	familyAdaptiveDefaultOn
+	// familyAlwaysOn: Fable, Mythos and Opus 5.5 always think; any explicit
+	// thinking configuration other than adaptive is a 400, so it's omitted.
+	familyAlwaysOn
+)
 
-	params.Thinking = anthropic.ThinkingConfigParamOfEnabled(int64(budget))
+// anthropicThinkingFamily classifies a model ID. It matches on substrings so
+// provider-prefixed IDs (anthropic.claude-opus-5, claude-opus-4-6@...) work.
+func anthropicThinkingFamily(model string) thinkingFamily {
+	m := strings.ToLower(model)
+	has := func(subs ...string) bool {
+		for _, sub := range subs {
+			if strings.Contains(m, sub) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("fable", "mythos", "opus-5-5"):
+		return familyAlwaysOn
+	case has("opus-5", "sonnet-5"):
+		return familyAdaptiveDefaultOn
+	case has("opus-4-8", "opus-4-7", "opus-4-6", "sonnet-4-6"):
+		return familyAdaptive
+	default:
+		return familyBudget
+	}
+}
+
+// thinkingEffort maps celeste's thinking level to the effort parameter used
+// with adaptive thinking. Unknown levels leave the model's default.
+func thinkingEffort(level string) anthropic.OutputConfigEffort {
+	switch level {
+	case "low":
+		return anthropic.OutputConfigEffortLow
+	case "medium":
+		return anthropic.OutputConfigEffortMedium
+	case "high":
+		return anthropic.OutputConfigEffortHigh
+	case "max":
+		return anthropic.OutputConfigEffortMax
+	}
+	return ""
+}
+
+func (b *AnthropicBackend) thinkingEnabled() bool {
+	return b.thinkingConfig.Enabled && b.thinkingConfig.Level != "off"
+}
+
+// applyThinkingConfig sets the thinking parameters the model accepts.
+//
+// continuingToolLoop is true when the request carries tool results back.
+// Thinking blocks aren't replayed yet (the shared message type has nowhere
+// to keep them, and celeste still edits history between requests), and
+// budget-thinking models reject a tool-loop continuation whose assistant
+// turn lacks its thinking block, so those turns run without thinking.
+// Adaptive models accept the continuation; they reason again from the
+// visible history.
+func (b *AnthropicBackend) applyThinkingConfig(params *anthropic.MessageNewParams, continuingToolLoop bool) {
+	enabled := b.thinkingEnabled()
+	switch anthropicThinkingFamily(b.config.Model) {
+	case familyAlwaysOn:
+		// Never send a thinking parameter; depth is set through effort.
+		if enabled {
+			params.OutputConfig.Effort = thinkingEffort(b.thinkingConfig.Level)
+		}
+	case familyAdaptiveDefaultOn:
+		if !enabled {
+			params.Thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+			return
+		}
+		params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+		params.OutputConfig.Effort = thinkingEffort(b.thinkingConfig.Level)
+	case familyAdaptive:
+		if !enabled {
+			return
+		}
+		params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+		params.OutputConfig.Effort = thinkingEffort(b.thinkingConfig.Level)
+	default:
+		if !enabled || continuingToolLoop {
+			return
+		}
+		budget := b.thinkingConfig.LevelToBudget()
+		if budget <= 0 {
+			budget = 8192 // default budget
+		}
+		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(int64(budget))
+	}
+}
+
+// continuesToolLoop reports whether messages end with tool results, i.e. the
+// request continues an assistant turn that called tools.
+func continuesToolLoop(messages []tui.ChatMessage) bool {
+	return len(messages) > 0 && messages[len(messages)-1].Role == "tool"
+}
+
+// usageTracker accumulates usage across a stream. message_start carries the
+// input side (including cache reads and writes, which input_tokens excludes);
+// message_delta carries cumulative output tokens and usually zero input
+// tokens. Replacing the whole struct on message_delta zeroed the prompt
+// count, and ignoring the cache fields under-reported it (#189).
+type usageTracker struct {
+	input, cacheRead, cacheWrite, output int64
+	seen                                 bool
+}
+
+func (u *usageTracker) start(x anthropic.Usage) {
+	u.input, u.cacheRead, u.cacheWrite = x.InputTokens, x.CacheReadInputTokens, x.CacheCreationInputTokens
+	u.output = x.OutputTokens
+	u.seen = true
+}
+
+func (u *usageTracker) delta(x anthropic.MessageDeltaUsage) {
+	if x.InputTokens > 0 {
+		u.input = x.InputTokens
+	}
+	if x.CacheReadInputTokens > 0 {
+		u.cacheRead = x.CacheReadInputTokens
+	}
+	if x.CacheCreationInputTokens > 0 {
+		u.cacheWrite = x.CacheCreationInputTokens
+	}
+	if x.OutputTokens > 0 {
+		u.output = x.OutputTokens
+	}
+	u.seen = true
+}
+
+// result returns the usage so far, or nil before any usage arrived.
+func (u *usageTracker) result() *TokenUsage {
+	if !u.seen {
+		return nil
+	}
+	prompt := int(u.input + u.cacheRead + u.cacheWrite)
+	return &TokenUsage{
+		PromptTokens:     prompt,
+		CompletionTokens: int(u.output),
+		TotalTokens:      prompt + int(u.output),
+		CacheReadTokens:  int(u.cacheRead),
+		CacheWriteTokens: int(u.cacheWrite),
+	}
 }
 
 // SendMessageSync sends a message and returns the complete result.
@@ -178,6 +333,7 @@ func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.C
 		inputJSON string
 	}
 	blocks := make(map[int64]*blockState)
+	var tracker usageTracker
 
 	for stream.Next() {
 		event := stream.Current()
@@ -222,22 +378,12 @@ func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.C
 			if event.Delta.StopReason != "" {
 				result.FinishReason = mapStopReason(string(event.Delta.StopReason))
 			}
-			if event.Usage.OutputTokens > 0 || event.Usage.InputTokens > 0 {
-				result.Usage = &TokenUsage{
-					PromptTokens:     int(event.Usage.InputTokens),
-					CompletionTokens: int(event.Usage.OutputTokens),
-					TotalTokens:      int(event.Usage.InputTokens + event.Usage.OutputTokens),
-				}
-			}
+			tracker.delta(event.Usage)
+			result.Usage = tracker.result()
 
 		case "message_start":
-			if event.Message.Usage.InputTokens > 0 {
-				result.Usage = &TokenUsage{
-					PromptTokens:     int(event.Message.Usage.InputTokens),
-					CompletionTokens: int(event.Message.Usage.OutputTokens),
-					TotalTokens:      int(event.Message.Usage.InputTokens + event.Message.Usage.OutputTokens),
-				}
-			}
+			tracker.start(event.Message.Usage)
+			result.Usage = tracker.result()
 		}
 	}
 
@@ -266,6 +412,7 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 		inputJSON string
 	}
 	blocks := make(map[int64]*blockState)
+	var tracker usageTracker
 
 	for stream.Next() {
 		event := stream.Current()
@@ -311,13 +458,8 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 		case "message_delta":
 			// Update usage BEFORE sending final callback to avoid stale/nil usage.
-			if event.Usage.OutputTokens > 0 || event.Usage.InputTokens > 0 {
-				usage = &TokenUsage{
-					PromptTokens:     int(event.Usage.InputTokens),
-					CompletionTokens: int(event.Usage.OutputTokens),
-					TotalTokens:      int(event.Usage.InputTokens + event.Usage.OutputTokens),
-				}
-			}
+			tracker.delta(event.Usage)
+			usage = tracker.result()
 			if event.Delta.StopReason != "" {
 				finishReason := mapStopReason(string(event.Delta.StopReason))
 				callback(StreamChunk{
@@ -329,13 +471,8 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 			}
 
 		case "message_start":
-			if event.Message.Usage.InputTokens > 0 {
-				usage = &TokenUsage{
-					PromptTokens:     int(event.Message.Usage.InputTokens),
-					CompletionTokens: int(event.Message.Usage.OutputTokens),
-					TotalTokens:      int(event.Message.Usage.InputTokens + event.Message.Usage.OutputTokens),
-				}
-			}
+			tracker.start(event.Message.Usage)
+			usage = tracker.result()
 		}
 	}
 
@@ -372,6 +509,7 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 		inputJSON string
 	}
 	blocks := make(map[int64]*blockState)
+	var tracker usageTracker
 
 	for stream.Next() {
 		event := stream.Current()
@@ -434,22 +572,12 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 			if event.Delta.StopReason != "" {
 				finishReason = mapStopReason(string(event.Delta.StopReason))
 			}
-			if event.Usage.OutputTokens > 0 || event.Usage.InputTokens > 0 {
-				usage = &TokenUsage{
-					PromptTokens:     int(event.Usage.InputTokens),
-					CompletionTokens: int(event.Usage.OutputTokens),
-					TotalTokens:      int(event.Usage.InputTokens + event.Usage.OutputTokens),
-				}
-			}
+			tracker.delta(event.Usage)
+			usage = tracker.result()
 
 		case "message_start":
-			if event.Message.Usage.InputTokens > 0 {
-				usage = &TokenUsage{
-					PromptTokens:     int(event.Message.Usage.InputTokens),
-					CompletionTokens: int(event.Message.Usage.OutputTokens),
-					TotalTokens:      int(event.Message.Usage.InputTokens + event.Message.Usage.OutputTokens),
-				}
-			}
+			tracker.start(event.Message.Usage)
+			usage = tracker.result()
 		}
 	}
 
