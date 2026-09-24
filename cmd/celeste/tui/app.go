@@ -903,8 +903,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "costs":
-				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Session Costs:\n  Tokens: %d used / %d limit\n  Turns: %d\n  Compactions: %d\n\nFor detailed cost breakdown: `celeste costs`",
-					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount, m.contextBar.compactCount))
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Session Costs:\n  Tokens: %d used / %d limit\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
+					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount))
 				return m, nil
 
 			case "grimoire":

@@ -273,7 +273,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	// Create a token budget for context tracking.
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
-	budget := ctxmgr.NewTokenBudgetForModel(model, systemPromptTokens, 0)
+	// Honour the configured context_limit, as the TUI does: for local models it
+	// is the only way to know the window (#169).
+	budget := ctxmgr.NewTokenBudget(ctxmgr.GetModelLimitWithOverride(model, cfg.ContextLimit), systemPromptTokens, 0)
 
 	return &Runner{
 		client:   client,

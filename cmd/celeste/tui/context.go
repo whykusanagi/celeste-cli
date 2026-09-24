@@ -209,11 +209,11 @@ func (ci ContextIndicator) GetWarningMessage() string {
 
 	switch ci.warningLevel {
 	case "critical":
-		return fmt.Sprintf("🚨 Context at %d%% - will auto-compact on next message", percentage)
+		return fmt.Sprintf("🚨 Context at %d%% - start a new session soon (/session new or /clear)", percentage)
 	case "caution":
-		return fmt.Sprintf("⚠️  Context at %d%% - compaction recommended", percentage)
+		return fmt.Sprintf("⚠️  Context at %d%% - consider starting a new session", percentage)
 	case "warn":
-		return fmt.Sprintf("⚠️  Context at %d%% - consider compaction soon", percentage)
+		return fmt.Sprintf("⚠️  Context at %d%% - approaching the context limit", percentage)
 	default:
 		return ""
 	}
