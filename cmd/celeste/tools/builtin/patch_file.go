@@ -93,12 +93,6 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	newString := getStringArg(input, "new_string", "")
 	replaceAll := getBoolArg(input, "replace_all", false)
 
-	// Unescape literal \n and \t that LLMs sometimes double-escape in JSON
-	oldString = strings.ReplaceAll(oldString, `\n`, "\n")
-	oldString = strings.ReplaceAll(oldString, `\t`, "\t")
-	newString = strings.ReplaceAll(newString, `\n`, "\n")
-	newString = strings.ReplaceAll(newString, `\t`, "\t")
-
 	// Route oversized literals to the deterministic path. A patch this large is
 	// almost always a byte-move (relocating existing content); regenerating it as
 	// a tool argument is slow and a silent-corruption vector. splice_file moves the
@@ -137,6 +131,15 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 	original := string(data)
 
+	// old_string must match the file verbatim. Only when it doesn't, and its
+	// unescaped form does, was the whole call double-escaped, so new_string
+	// is decoded the same way. Otherwise both are used byte-for-byte: `\n`
+	// in source code is text, not a line break (#165).
+	oldString, decoded := matchNeedle(original, oldString)
+	if decoded {
+		newString = unescapeSequences(newString)
+	}
+
 	count := strings.Count(original, oldString)
 	if count == 0 {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("old_string not found in %s", path)}, nil
@@ -174,6 +177,11 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		"workspace":    t.workspace,
 		"replacements": count,
 		"replace_all":  replaceAll,
+	}
+	if decoded {
+		result["decoded_escapes"] = true
+	} else if _, looksEscaped := decodeDoubleEscaped(newString); looksEscaped {
+		result["note"] = `backslash sequences in new_string (e.g. \n) were kept as literal text`
 	}
 
 	return tools.ToolResult{

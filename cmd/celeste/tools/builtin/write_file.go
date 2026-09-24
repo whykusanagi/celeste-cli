@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -83,9 +82,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	content := getStringArg(input, "content", "")
 	appendMode := getBoolArg(input, "append", false)
 
-	// Unescape literal \n and \t that LLMs sometimes double-escape in JSON
-	content = strings.ReplaceAll(content, `\n`, "\n")
-	content = strings.ReplaceAll(content, `\t`, "\t")
+	// Decode only a payload with no real line breaks, which is how a
+	// double-escaped JSON argument arrives. Content with line breaks keeps
+	// its backslash sequences: they are string literals and regexes (#165).
+	content, decoded := decodeDoubleEscaped(content)
 
 	targetPath, err := resolvePath(t.workspace, path)
 	if err != nil {
@@ -144,6 +144,9 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		"workspace":     t.workspace,
 		"bytes_written": bytesWritten,
 		"append":        appendMode,
+	}
+	if decoded {
+		result["decoded_escapes"] = true
 	}
 
 	return tools.ToolResult{
