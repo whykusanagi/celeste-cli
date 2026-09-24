@@ -26,13 +26,14 @@ func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Re
 	names := make([]string, 0, len(defs))
 	for _, def := range defs {
 		tool := NewMCPTool(def, client, serverName)
+		name := tool.Name()
 		registry.Register(tool)
-		names = append(names, def.Name)
+		names = append(names, name)
 		// External MCP tools default hidden; find_tools re-activates on demand
 		// (only takes effect when discovery mode is on).
-		registry.SetHidden(def.Name, true)
+		registry.SetHidden(name, true)
 		if verbose {
-			log.Printf("[mcp] registered tool %q from server %q", def.Name, serverName)
+			log.Printf("[mcp] registered tool %q from server %q as %q", def.Name, serverName, name)
 		}
 	}
 

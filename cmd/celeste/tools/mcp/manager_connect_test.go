@@ -27,7 +27,7 @@ func TestManager_connectClient_TracksNames(t *testing.T) {
 
 	assert.True(t, mgr.IsConnected("srv"))
 	assert.Equal(t, 2, registry.Count())
-	assert.ElementsMatch(t, []string{"srv__t1", "srv__t2"}, mgr.toolNames["srv"])
+	assert.ElementsMatch(t, []string{"mcp__srv__srv__t1", "mcp__srv__srv__t2"}, mgr.toolNames["srv"])
 }
 
 func TestManager_Disconnect_RemovesTools(t *testing.T) {

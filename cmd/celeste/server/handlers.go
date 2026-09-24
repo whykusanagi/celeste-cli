@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
@@ -197,6 +198,24 @@ func (g *progressGuard) observe(sig string) bool {
 	return g.streak >= maxNoProgressStreak
 }
 
+// newChatRegistry builds the tool registry for MCP-server chat mode. Like MCP
+// agent mode it runs headless in Trust mode (calling the tool is the
+// approval), but through the user's permission checker, so always-deny rules
+// such as bash(sudo *) still apply. It used to have no checker at all (#187).
+func newChatRegistry(workspace string) *tools.Registry {
+	registry := tools.NewRegistry()
+	builtin.RegisterAll(registry, workspace, nil, nil, nil)
+
+	permConfig, err := permissions.LoadConfig(permissions.DefaultConfigPath())
+	if err != nil {
+		defaultCfg := permissions.DefaultConfig()
+		permConfig = &defaultCfg
+	}
+	permConfig.Mode = permissions.ModeTrust
+	registry.SetPermissionChecker(permissions.NewChecker(*permConfig))
+	return registry
+}
+
 // runChatMode executes a single-turn chat with Celeste's persona.
 func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace string) ([]ContentBlock, error) {
 	// Auto-init grimoire if not present
@@ -204,8 +223,7 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 		_, _ = grimoire.Init(workspace)
 	}
 
-	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, workspace, nil, nil, nil)
+	registry := newChatRegistry(workspace)
 
 	llmConfig := &llm.Config{
 		APIKey:  cfg.APIKey,
