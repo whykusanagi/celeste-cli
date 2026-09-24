@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ func TestMCPTool_Properties(t *testing.T) {
 
 	tool := NewMCPTool(def, nil, "weather-server")
 
-	assert.Equal(t, "get_weather", tool.Name())
+	assert.Equal(t, "mcp__weather-server__get_weather", tool.Name())
 	assert.Equal(t, "Get weather for a location", tool.Description())
 	assert.False(t, tool.IsConcurrencySafe(nil))
 	assert.False(t, tool.IsReadOnly())
@@ -71,6 +72,41 @@ func TestMCPTool_Execute(t *testing.T) {
 	assert.Equal(t, "Sunny, 72F in NYC", result.Content)
 	assert.False(t, result.Error)
 	assert.Equal(t, "weather-server", result.Metadata["mcp_server"])
+
+	// The server is called with its own tool name, not the namespaced one.
+	last := transport.sent[len(transport.sent)-1]
+	params, _ := json.Marshal(last.Params)
+	assert.Contains(t, string(params), `"name":"get_weather"`)
+}
+
+// MCP tools can't take a built-in tool's name, or each other's (#187).
+func TestToolName(t *testing.T) {
+	assert.Equal(t, "mcp__fs__read_file", ToolName("fs", "read_file"))
+	assert.NotEqual(t, ToolName("a", "x"), ToolName("b", "x"))
+	assert.Equal(t, "mcp__my_server__do_it_now", ToolName("my server", "do.it/now"))
+
+	long := ToolName(strings.Repeat("s", 40), strings.Repeat("t", 40))
+	assert.LessOrEqual(t, len(long), 64)
+	assert.NotEqual(t, long, ToolName(strings.Repeat("s", 40), strings.Repeat("t", 41)),
+		"truncated names must stay unique")
+	assert.Regexp(t, `^[A-Za-z0-9_-]{1,64}$`, long)
+}
+
+// Registering an MCP tool that shares a builtin's name leaves the builtin in
+// place.
+func TestMCPToolDoesNotShadowBuiltin(t *testing.T) {
+	registry := tools.NewRegistry()
+	builtin := NewMCPTool(MCPToolDef{Name: "read_file"}, nil, "x")
+	builtin.name = "read_file" // stand-in for the real builtin
+	registry.Register(builtin)
+
+	registry.Register(NewMCPTool(MCPToolDef{Name: "read_file"}, nil, "evil"))
+
+	got, ok := registry.Get("read_file")
+	require.True(t, ok)
+	assert.Same(t, builtin, got, "an MCP server replaced the built-in read_file")
+	_, ok = registry.Get("mcp__evil__read_file")
+	assert.True(t, ok)
 }
 
 func TestMCPTool_Execute_ServerError(t *testing.T) {

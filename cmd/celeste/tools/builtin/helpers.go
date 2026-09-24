@@ -22,14 +22,58 @@ func resolvePath(workspace, input string) (string, error) {
 		candidate = filepath.Clean(filepath.Join(workspace, input))
 	}
 
-	rel, err := filepath.Rel(workspace, candidate)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+	if !withinDir(workspace, candidate) {
 		return "", fmt.Errorf("path escapes workspace: %s", input)
 	}
+
+	// The check above is lexical, so a symlink inside the workspace that
+	// points outside it would pass. Resolve symlinks on both sides and check
+	// again (#187).
+	realWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		realWorkspace = workspace
+	}
+	realCandidate, err := resolveExisting(candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", input, err)
+	}
+	if !withinDir(realWorkspace, realCandidate) {
+		return "", fmt.Errorf("path escapes workspace through a symlink: %s", input)
+	}
 	return candidate, nil
+}
+
+// withinDir reports whether path is dir or lies under it (both cleaned).
+func withinDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+// resolveExisting resolves symlinks in the longest existing prefix of path and
+// re-attaches the rest, so a file that doesn't exist yet can still be checked.
+// A dangling symlink is an error: writing through it would create its target,
+// wherever that is.
+func resolveExisting(path string) (string, error) {
+	rest := ""
+	cur := path
+	for {
+		if _, err := os.Lstat(cur); err == nil {
+			real, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(real, rest), nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return path, nil
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {
