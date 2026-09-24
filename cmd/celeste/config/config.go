@@ -385,6 +385,16 @@ func LoadNamed(name string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config '%s': %w", name, err)
 	}
 
+	// Same validation Load applies; before #147 named profiles skipped it and
+	// kept retired models, empty models and oversized context limits.
+	// Reconciled before the skills merge so only the profile's own fields are
+	// persisted.
+	if reconcileLoaded(config) {
+		if err := persistReconciled(configPath, config); err != nil {
+			log.Printf("[config] could not save reconciled profile %q: %v", name, err)
+		}
+	}
+
 	// Load shared json (for all skill configurations)
 	if skillsConfig, err := LoadSkillsConfig(); err == nil {
 		// Merge skill configs (json takes precedence if set)
@@ -689,11 +699,23 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Reconcile the model so the saved config reflects what's actually used (#51):
-	// an empty model falls back to the default, and models xAI no longer supports
-	// are migrated to their replacement. Persisted so the header, config file, and
-	// the model sent to the API all agree instead of silently diverging.
-	dirty := false
+	if reconcileLoaded(config) {
+		_ = Save(config)
+	}
+
+	return config, nil
+}
+
+// reconcileLoaded applies the post-read validation every loaded config gets,
+// whichever loader read it (#147). Returns true when the config changed and
+// should be persisted.
+//
+// It reconciles the model so the saved config reflects what's actually used
+// (#51): an empty model falls back to the provider's default, and models xAI
+// no longer supports are migrated to their replacement. It then clamps a stale
+// context_limit that exceeds the (possibly migrated) model's real window, such
+// as a 2M limit carried over onto a 256K model.
+func reconcileLoaded(config *Config) (dirty bool) {
 	if changed, from, to := reconcileModel(config); changed {
 		if from == "" {
 			log.Printf("[config] no model set — using default %q (saved)", to)
@@ -702,10 +724,6 @@ func Load() (*Config, error) {
 		}
 		dirty = true
 	}
-	// Clamp a stale context_limit override that exceeds the (possibly migrated)
-	// model's real window — e.g. a 2M limit carried over onto a 256K model. A
-	// limit larger than the model supports is always invalid, so reset to the
-	// model default (#51).
 	if config.ContextLimit > 0 {
 		// Only reject a limit we can actually contradict. For a model absent
 		// from the table the "limit" is a conservative fallback, so clamping
@@ -717,11 +735,36 @@ func Load() (*Config, error) {
 			dirty = true
 		}
 	}
-	if dirty {
-		_ = Save(config)
-	}
+	return dirty
+}
 
-	return config, nil
+// persistReconciled writes the fields reconcileLoaded may change back into a
+// named profile file, leaving every other key exactly as the user wrote it.
+// Rewriting the whole *Config would copy in the defaults and the skills.json
+// secrets that LoadNamed merges after reading the file.
+func persistReconciled(path string, config *Config) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	raw["model"] = config.Model
+	if config.AgentModel != "" {
+		raw["agent_model"] = config.AgentModel
+	}
+	if config.ContextLimit > 0 {
+		raw["context_limit"] = config.ContextLimit
+	} else {
+		delete(raw, "context_limit")
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0600)
 }
 
 // deprecatedModels maps Grok models xAI no longer serves to their supported
