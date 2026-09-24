@@ -9,9 +9,9 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/sessions"
 )
 
 func runCostsCommand(args []string) {
@@ -78,32 +78,68 @@ func runForgetCommand(args []string) {
 	fmt.Printf("Forgot: %s\n", args[0])
 }
 
+// resumeSessionID, when set, makes runChatTUI open that saved session
+// instead of starting a new one.
+var resumeSessionID string
+
+// runResumeCommand lists saved chat sessions, or opens the TUI on one.
+// It used to read the sessions/ JSONL store, which nothing writes any more,
+// and pointed at a --session flag that doesn't exist (#188).
 func runResumeCommand(args []string) {
-	cwd, _ := os.Getwd()
-	mgr, err := sessions.NewManager(cwd)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	mgr := config.NewSessionManager()
 	if len(args) > 0 {
-		// Try to load the requested session to verify it exists
-		_, err := mgr.ResumeSession(args[0])
+		session, err := findSession(mgr, args[0])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Session '%s' not found: %v\n", args[0], err)
+			fmt.Fprintf(os.Stderr, "Session '%s' not found. Run `celeste resume` to list sessions.\n", args[0])
 			os.Exit(1)
 		}
-		fmt.Printf("Session '%s' exists. Launch with: celeste --session %s\n", args[0], args[0])
+		resumeSessionID = session.ID
+		runChatTUI()
 		return
 	}
-	list, err := mgr.ListSessions()
+
+	list, err := mgr.List()
 	if err != nil || len(list) == 0 {
-		fmt.Println("No sessions found.")
+		fmt.Println("No saved sessions.")
 		return
 	}
-	fmt.Printf("Recent sessions (%d):\n\n", len(list))
-	for _, s := range list {
-		fmt.Printf("  %s  %s  (%d entries)\n", s.ID, s.Title, s.EntryCount)
+	fmt.Printf("Saved sessions (%d):\n\n", len(list))
+	for i := range list {
+		sum := list[i].Summarize()
+		label := sum.Name
+		if label == "" {
+			label = sum.FirstMessage
+		}
+		fmt.Printf("  %s  %-40s  %3d messages  %s\n",
+			sum.ID, truncateLabel(label, 40), sum.MessageCount, sum.UpdatedAt.Format("2006-01-02 15:04"))
 	}
+	fmt.Println("\nResume with: celeste resume <id or name>")
+}
+
+// findSession loads a saved session by ID, falling back to a case-insensitive
+// name match (the same lookup as /session resume in the TUI).
+func findSession(mgr *config.SessionManager, idOrName string) (*config.Session, error) {
+	if s, err := mgr.Load(idOrName); err == nil {
+		return s, nil
+	}
+	list, err := mgr.List()
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].Name != "" && strings.EqualFold(list[i].Name, idOrName) {
+			return &list[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no session with ID or name %q", idOrName)
+}
+
+func truncateLabel(s string, n int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
 }
 
 func runPlanCommand(args []string) {
