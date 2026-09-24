@@ -11,12 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
-// taskExecutionPrompt is always injected. It ensures multi-step plans
+// taskExecutionPrompt is the chat-mode contract. It ensures multi-step plans
 // are completed sequentially without stopping for intermediate reports.
+// Agent runs carry their own contract instead (see Compose).
 const taskExecutionPrompt = `Task Execution Rules:
 When you have a multi-step plan (e.g., generate 3 audio clips then mix them):
 1. Present the plan ONCE at the start with numbered steps and timeline
@@ -39,7 +38,8 @@ IMPORTANT — choosing direct tools vs subagent orchestration:
 IMPORTANT filename rule: When generating audio that will be mixed later, ALWAYS pass an explicit 'filename' parameter so you know the exact path for the mix step.
 Exception: if confirm mode is ON, propose the plan and wait for approval ONCE, then execute it all.`
 
-// confirmModePrompt is injected when confirm_actions is enabled in config.
+// confirmModePrompt is injected in chat mode when confirm_actions is enabled.
+// Never in agent mode: a headless run has nobody to confirm with.
 // It instructs Celeste to propose plans before executing write/generate operations.
 const confirmModePrompt = `Action Confirmation Mode:
 Before executing any action that creates, modifies, or generates content (writing files, spawning subagents for content generation, running destructive commands), you MUST:
@@ -157,50 +157,10 @@ func warnOverrideOnce(path string, err error) {
 	}
 }
 
-// GetSystemPrompt generates the system prompt from the essence,
-// with slider-composed voice modulation inserted at position 6
-// in the assembly order.
+// GetSystemPrompt returns the chat-mode system prompt without project
+// context. See Compose.
 func GetSystemPrompt(skipPrompt bool) string {
-	if skipPrompt {
-		return ""
-	}
-
-	essence, err := LoadEssence()
-	if err != nil {
-		// Only reachable if the embedded essence itself is broken, which
-		// TestEmbeddedEssenceIsValid guards against. User overrides that
-		// fail to load fall back to the embedded essence inside LoadEssence.
-		return getBasicPrompt()
-	}
-
-	base := buildPromptFromEssence(essence)
-
-	// Inject user identity block (position 5.5 — after persona, before sliders).
-	// Tells Celeste who she's talking to so she doesn't call everyone "twin."
-	user := config.LoadUser()
-	userBlock := ComposeUserPrompt(user)
-	if userBlock != "" {
-		base += "\n" + userBlock
-	}
-
-	// Compose slider modulation (position 6 in assembly order).
-	// Loads from ~/.celeste/slider.json; uses defaults if absent.
-	sliders := config.LoadSliders()
-	sliderBlock := ComposeSliderPrompt(sliders)
-	if sliderBlock != "" {
-		base += "\n" + sliderBlock
-	}
-
-	// Task execution rules (always active — ensures multi-step plans complete)
-	base += "\n" + taskExecutionPrompt
-
-	// Confirm mode (position 8): when enabled, require user approval
-	// before executing write/generate operations.
-	if cfg, err := config.Load(); err == nil && cfg.ConfirmActions {
-		base += "\n" + confirmModePrompt
-	}
-
-	return base
+	return Compose(ComposeOptions{Mode: ModeChat, SkipPersona: skipPrompt})
 }
 
 // buildPromptFromEssence constructs a system prompt from the essence data.
@@ -282,17 +242,15 @@ Safety:
 Respond in character as Celeste. Be mischievous, engaging, entertaining, and true to your corrupted aesthetic.`
 }
 
-// GetSystemPromptWithContext generates the system prompt and appends optional
-// grimoire and git snapshot context.
+// GetSystemPromptWithContext returns the chat-mode system prompt with
+// project context and git snapshot appended. See Compose.
 func GetSystemPromptWithContext(skipPersona bool, grimoireContent string, gitSnapshot string) string {
-	prompt := GetSystemPrompt(skipPersona)
-	if grimoireContent != "" {
-		prompt += "\n\n# Project Context (.grimoire)\n\n" + grimoireContent
-	}
-	if gitSnapshot != "" {
-		prompt += "\n\n" + gitSnapshot
-	}
-	return prompt
+	return Compose(ComposeOptions{
+		Mode:           ModeChat,
+		SkipPersona:    skipPersona,
+		ProjectContext: grimoireContent,
+		GitSnapshot:    gitSnapshot,
+	})
 }
 
 // GetNSFWPrompt returns an enhanced prompt for NSFW mode.

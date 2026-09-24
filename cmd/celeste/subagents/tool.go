@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -124,17 +123,12 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	goal := input["goal"].(string)
 	workspace, _ := input["workspace"].(string)
 
-	// Parse persona override if provided
+	// A persona override replaces the slider block in the subagent's system
+	// prompt. It used to be prepended to the goal, which left the subagent
+	// with two conflicting Voice Modulation blocks (#170).
+	var sliderOverride *config.SliderConfig
 	if persona, ok := input["persona"].(map[string]any); ok {
-		sliderOverride := buildSliderOverride(persona)
-		if sliderOverride != "" {
-			// Prepend persona instructions to the goal so the subagent's
-			// system prompt reflects the override. The subagent reads
-			// slider.json from disk by default; we override by injecting
-			// explicit voice modulation into the goal itself, which the
-			// agent runtime prepends to the system context.
-			goal = "[PERSONA OVERRIDE]\n" + sliderOverride + "\n[END PERSONA OVERRIDE]\n\n" + goal
-		}
+		sliderOverride = buildSliderOverride(persona)
 	}
 
 	// Pre-peek the element name for the initial progress event.
@@ -178,7 +172,8 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 
 	// Build spawn options with DAG dependencies
 	spawnOpts := SpawnOptions{
-		TurnCb: turnCallback,
+		TurnCb:  turnCallback,
+		Sliders: sliderOverride,
 	}
 
 	// 1. Accept explicit params from the model
@@ -331,22 +326,23 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	}, nil
 }
 
-// buildSliderOverride constructs a voice modulation prompt from the
-// persona parameter map. Returns empty string if no overrides specified.
-func buildSliderOverride(persona map[string]any) string {
-	// Check for a named preset first
-	if preset, ok := persona["preset"].(string); ok && preset != "" {
-		sliders := config.LoadSliders()
-		userR18 := sliders.R18Enabled
-		if sliders.LoadPreset(preset) {
-			// A preset can't turn R18 on either unless the user already has.
-			sliders.R18Enabled = sliders.R18Enabled && userR18
-			return prompts.ComposeSliderPrompt(sliders)
-		}
+// buildSliderOverride builds the subagent's slider settings from the persona
+// parameter map, starting from the user's slider.json. Returns nil when the
+// map sets nothing, so the subagent uses slider.json as is.
+func buildSliderOverride(persona map[string]any) *config.SliderConfig {
+	if len(persona) == 0 {
+		return nil
+	}
+	sliders := config.LoadSliders()
+	userR18 := sliders.R18Enabled
+
+	// A named preset takes precedence over individual values.
+	if preset, ok := persona["preset"].(string); ok && preset != "" && sliders.LoadPreset(preset) {
+		// A preset can't turn R18 on unless the user already has.
+		sliders.R18Enabled = sliders.R18Enabled && userR18
+		return sliders
 	}
 
-	// Build from individual slider values
-	sliders := config.LoadSliders() // start from current defaults
 	if v, ok := persona["flirt"].(float64); ok {
 		sliders.Flirt = int(v)
 	}
@@ -364,8 +360,7 @@ func buildSliderOverride(persona map[string]any) string {
 	if v, ok := persona["r18"].(bool); ok && !v {
 		sliders.R18Enabled = false
 	}
-
-	return prompts.ComposeSliderPrompt(sliders)
+	return sliders
 }
 
 // truncate shortens s to maxLen characters, appending "..." if truncated.

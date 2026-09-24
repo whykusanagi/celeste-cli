@@ -55,6 +55,11 @@ type SubagentRun struct {
 	EndedAt      time.Time `json:"ended_at,omitempty"`
 	Turns        int       `json:"turns"`
 	CheckpointID string    `json:"checkpoint_id,omitempty"` // run id to resume from on failure
+
+	// sliders is the persona override for this run's voice modulation, or
+	// nil for slider.json. It replaces the slider block in the subagent's
+	// system prompt (#170).
+	sliders *config.SliderConfig
 }
 
 // DAGEntry is a queued subagent waiting for dependencies to clear.
@@ -129,12 +134,13 @@ type TurnCallback func(turn int, maxTurns int, toolName string)
 
 // SpawnOptions holds optional parameters for Spawn.
 type SpawnOptions struct {
-	TaskID          string        // user-assigned task ID for DAG references
-	DependsOn       []string      // task IDs that must complete before this starts
-	TurnCb          TurnCallback  // nested progress callback
-	MaxTurns        int           // 0 = default (20)
-	IsolateWorktree bool          // run this subagent in its own git worktree (#32)
-	BackgroundAfter time.Duration // >0: auto-transition to background if the subagent runs longer than this (#30). 0 = always foreground (unchanged).
+	TaskID          string               // user-assigned task ID for DAG references
+	DependsOn       []string             // task IDs that must complete before this starts
+	TurnCb          TurnCallback         // nested progress callback
+	MaxTurns        int                  // 0 = default (20)
+	IsolateWorktree bool                 // run this subagent in its own git worktree (#32)
+	BackgroundAfter time.Duration        // >0: auto-transition to background if the subagent runs longer than this (#30). 0 = always foreground (unchanged).
+	Sliders         *config.SliderConfig // persona override for the subagent's voice modulation; nil = slider.json
 }
 
 // Spawn creates and runs a subagent with the given goal. It blocks until the
@@ -177,6 +183,7 @@ func (m *Manager) buildRun(goal, workspace string, opts SpawnOptions) (*Subagent
 		Status:    "running",
 		DependsOn: opts.DependsOn,
 		StartedAt: time.Now(),
+		sliders:   opts.Sliders,
 	}
 
 	if opts.TaskID != "" {
@@ -257,6 +264,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 		Status:    "running",
 		DependsOn: opts.DependsOn,
 		StartedAt: time.Now(),
+		sliders:   opts.Sliders,
 	}
 
 	if opts.TaskID != "" {
@@ -434,7 +442,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 // resume so the two paths can't drift. maxTurns <= 0 falls back to the
 // default of 20. The options set are Workspace, MaxTurns, Verbose, and the
 // OnTurnStats callback wired from turnCb (nil turnCb → no callback).
-func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback) agent.Options {
+func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback, sliders *config.SliderConfig) agent.Options {
 	if maxTurns <= 0 {
 		maxTurns = 20
 	}
@@ -450,6 +458,7 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 		// resolves to "Ask" with no prompt and is denied, so the subagent can't
 		// write/commit/bash (broke worktree work + made background agents inert).
 		AutoApproveTools: true,
+		Sliders:          sliders,
 	}
 	if turnCb != nil {
 		cb := turnCb
@@ -565,7 +574,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	var outBuf, errBuf bytes.Buffer
 	// Use execWorkspace (worktree path when isolated, otherwise workspace) for
 	// the actual agent run. run.Workspace retains the durable repo path.
-	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb)
+	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -834,16 +843,18 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	// isolated worktree), falling back to the manager default if the original
 	// run isn't in memory (e.g. after a process restart).
 	workspace := m.workspace
+	var sliders *config.SliderConfig
 	m.mu.Lock()
 	for _, r := range m.runs {
 		if r.CheckpointID == checkpointID && r.Workspace != "" {
 			workspace = r.Workspace
+			sliders = r.sliders
 			break
 		}
 	}
 	m.mu.Unlock()
 
-	agentOpts := m.buildAgentOptions(workspace, 0, turnCb)
+	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {

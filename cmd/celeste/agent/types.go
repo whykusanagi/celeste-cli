@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -80,6 +81,9 @@ type Options struct {
 	// write/exec tool ("Ask" with no prompt). Spawning the subagent is the
 	// approval. Never set for the interactive main agent.
 	AutoApproveTools bool `json:"auto_approve_tools"`
+	// Sliders overrides slider.json for this run's voice modulation (a
+	// subagent's persona override). Nil uses slider.json.
+	Sliders *config.SliderConfig `json:"-"`
 	// FailOnBlockedTools makes NewRunner refuse to start when the policy would
 	// send a mutating tool to an approval prompt that does not exist. Set by the
 	// `celeste agent` CLI, which can offer -auto-approve as the remedy. Other

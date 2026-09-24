@@ -215,12 +215,12 @@ func runChatMode(ctx context.Context, cfg *config.Config, prompt, workspace stri
 	}
 	client := llm.NewClient(llmConfig, registry)
 
-	systemPrompt := prompts.GetSystemPrompt(cfg.SkipPersonaPrompt)
-
 	// Load grimoire into system prompt for project context
+	var projectContext string
 	if projectGrimoire, err := grimoire.LoadAll(workspace); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
-		systemPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+		projectContext = projectGrimoire.Render()
 	}
+	systemPrompt := prompts.GetSystemPromptWithContext(cfg.SkipPersonaPrompt, projectContext, "")
 
 	client.SetSystemPrompt(systemPrompt)
 
