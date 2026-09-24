@@ -38,16 +38,16 @@ func TestDiscoverAndRegister(t *testing.T) {
 	registry := tools.NewRegistry()
 	names, err := DiscoverAndRegister(context.Background(), client, registry, "test-server")
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"tool_a", "tool_b"}, names)
+	assert.ElementsMatch(t, []string{"mcp__test-server__tool_a", "mcp__test-server__tool_b"}, names)
 
 	// Both tools should be registered
 	assert.Equal(t, 2, registry.Count())
 
-	toolA, ok := registry.Get("tool_a")
+	toolA, ok := registry.Get("mcp__test-server__tool_a")
 	require.True(t, ok)
 	assert.Equal(t, "Tool A", toolA.Description())
 
-	toolB, ok := registry.Get("tool_b")
+	toolB, ok := registry.Get("mcp__test-server__tool_b")
 	require.True(t, ok)
 	assert.Equal(t, "Tool B", toolB.Description())
 }
@@ -118,8 +118,8 @@ func TestDiscoverAndRegister_MarksHidden(t *testing.T) {
 	require.NoError(t, err)
 
 	// Registered but hidden under discovery mode.
-	assert.Contains(t, allNames(registry.GetAll()), "remote_tool")
-	assert.NotContains(t, allNames(registry.GetTools(tools.ModeChat)), "remote_tool")
+	assert.Contains(t, allNames(registry.GetAll()), "mcp__srv__remote_tool")
+	assert.NotContains(t, allNames(registry.GetTools(tools.ModeChat)), "mcp__srv__remote_tool")
 }
 
 func allNames(ts []tools.Tool) []string {
