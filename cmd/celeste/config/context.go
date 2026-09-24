@@ -182,11 +182,11 @@ func (ct *ContextTracker) GetWarningMessage() string {
 
 	switch level {
 	case "critical":
-		return fmt.Sprintf("\xf0\x9f\x9a\xa8 Context at %d%% - will auto-compact on next message", percentage)
+		return fmt.Sprintf("\xf0\x9f\x9a\xa8 Context at %d%% - start a new session soon (/session new or /clear)", percentage)
 	case "caution":
-		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - compaction recommended", percentage)
+		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - consider starting a new session", percentage)
 	case "warn":
-		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - consider compaction soon", percentage)
+		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - approaching the context limit", percentage)
 	default:
 		return ""
 	}

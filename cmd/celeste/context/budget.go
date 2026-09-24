@@ -22,8 +22,16 @@ var ModelLimits = map[string]int{
 	"gpt-5.4-pro":   1050000,
 	"o3":            1050000,
 	"o4-mini":       400000,
-	// Anthropic (current models, 2026-04)
+	// Anthropic (current models, 2026-09). Missing IDs fell back to "default"
+	// (8192), so current Claude models showed permanent false 80% warnings (#169).
+	"claude-fable-5-1":  1000000,
+	"claude-fable-5":    1000000,
+	"claude-opus-5-5":   1000000,
+	"claude-opus-5":     1000000,
+	"claude-opus-4-8":   1000000,
+	"claude-opus-4-7":   1000000,
 	"claude-opus-4-6":   1000000,
+	"claude-sonnet-5":   1000000,
 	"claude-sonnet-4-6": 1000000,
 	"claude-haiku-4-5":  200000,
 	// xAI Grok — current generation (from /v1/models API, 2026-04)
