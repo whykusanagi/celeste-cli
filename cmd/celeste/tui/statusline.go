@@ -218,6 +218,9 @@ func gitPollCmd(workDir string) tea.Cmd {
 }
 
 // hintsFor returns the contextual key-hint row for the current view.
+// turnHints replaces the chat hints while a turn is running (#172).
+const turnHints = "↵ steer · ⇥ follow-up · esc interrupt · ⇧↑↓ scroll · Ctrl+C×2 quit"
+
 func hintsFor(mode string, mcpActive bool) string {
 	if mcpActive {
 		return "↑↓ move · ↵ select · c connect · d disconnect · r reconnect · esc close"

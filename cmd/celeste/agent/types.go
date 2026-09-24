@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -84,6 +85,10 @@ type Options struct {
 	// Sliders overrides slider.json for this run's voice modulation (a
 	// subagent's persona override). Nil uses slider.json.
 	Sliders *config.SliderConfig `json:"-"`
+	// PromptFunc asks the user to approve a tool the permission policy
+	// resolves to Ask. The TUI's /agent sets it to its permission modal (#172);
+	// without it, Ask means deny.
+	PromptFunc tools.PromptFunc `json:"-"`
 	// FailOnBlockedTools makes NewRunner refuse to start when the policy would
 	// send a mutating tool to an approval prompt that does not exist. Set by the
 	// `celeste agent` CLI, which can offer -auto-approve as the remedy. Other

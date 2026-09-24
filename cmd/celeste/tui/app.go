@@ -97,6 +97,19 @@ type AppModel struct {
 	lastToolSig        string // signature of the previous tool-call batch (repetition guard)
 	sameToolStreak     int    // consecutive identical single-tool batches (repetition guard)
 
+	// Input submitted while a turn is running (#172). Steers are injected as
+	// user messages at the next tool boundary; follow-ups are sent, one at a
+	// time, once the turn finishes. Steers still queued when the turn ends
+	// are sent first, as one message.
+	steerQueue    []string
+	followUpQueue []string
+	// dispatchPending is set while a queued message is on its way back in as
+	// a SendMessageMsg, so the dispatcher doesn't send a second one first.
+	dispatchPending bool
+	// interrupted is set by Esc: tools already running finish, queued ones
+	// are skipped, and no follow-up request is sent for the turn.
+	interrupted bool
+
 	// LLM client (injected)
 	llmClient LLMClient
 
@@ -332,7 +345,22 @@ func (m AppModel) syncStatusLine() AppModel {
 }
 
 // Update implements tea.Model.
+// Update implements tea.Model. After handling msg it sends the next queued
+// message if the turn has finished (#172).
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	am, ok := model.(AppModel)
+	if !ok {
+		return model, cmd
+	}
+	am, next := am.dispatchQueued()
+	if next == nil {
+		return am, cmd
+	}
+	return am, tea.Batch(cmd, next)
+}
+
+func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	// Always propagate WindowSizeMsg to parent layout regardless of viewMode.
@@ -540,6 +568,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Esc on an empty input interrupts a running turn (#172). With text in
+		// the input, Esc keeps its old meaning (clear the draft).
+		if msg.String() == "esc" && m.turnActive() && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions() {
+			return m.interrupt(), nil
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			if m.cancelFunc != nil {
@@ -648,6 +682,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SendMessageMsg:
 		content := strings.TrimSpace(msg.Content)
+		m.dispatchPending = false
+
+		// A turn is still running: queue instead of starting a concurrent
+		// request (#172). Enter steers, Tab queues a follow-up; commands wait
+		// for the turn to finish, except /agents so a subagent can be killed.
+		if content != "" && m.turnActive() && !runsDuringTurn(content) {
+			return m.enqueue(content, msg.FollowUp || strings.HasPrefix(content, "/")), nil
+		}
+		// Idle again, so an earlier interrupt no longer applies.
+		m.interrupted = false
 
 		// Clear completed tool progress from previous turn
 		m.toolProgress.ClearCompleted()
@@ -1814,6 +1858,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 
 	case StreamChunkMsg:
+		if m.interrupted {
+			// Late output from a request Esc cancelled: keep draining the
+			// stream so its goroutine can exit, but don't show it.
+			if msg.Next != nil {
+				cmds = append(cmds, msg.Next)
+			}
+			break
+		}
 		if msg.Chunk.IsFirst {
 			// First chunk: start the assistant message and typing animation.
 			// Reset streamDone here — the tick handler uses it to decide
@@ -1849,6 +1901,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamDoneMsg:
+		if m.interrupted {
+			// The request Esc cancelled finished anyway; its reply is dropped.
+			m.cancelFunc = nil
+			break
+		}
 		// Clear cancel function — operation completed.
 		// Flip streamDone so the TickMsg tick-complete branch can commit
 		// the final content once the typing animation catches up.
@@ -2058,6 +2115,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case AgentProgressComplete:
+			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
 			// Show run-level summary in status bar — total time + total tokens.
@@ -2071,6 +2129,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.persistSession()
 
 		case AgentProgressError:
+			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
 			m.status = m.status.SetText(fmt.Sprintf("Agent error: %s", msg.Text))
@@ -2340,6 +2399,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			if m.interrupted && len(m.pendingToolCalls) > 0 && !parallelStillRunning {
+				m = m.skipPendingToolCalls()
+			}
 			if len(m.pendingToolCalls) > 0 && !parallelStillRunning {
 				// Serial queue has items and all parallel tools are done —
 				// start the next serial tool.
@@ -2695,7 +2757,11 @@ func (m AppModel) View() string {
 	sections = append(sections, m.statusLine.View())
 
 	// Contextual key hints
-	sections = append(sections, HeaderInfoStyle.Render(" "+hintsFor(m.viewMode, m.mcpPanel.Active())))
+	hints := hintsFor(m.viewMode, m.mcpPanel.Active())
+	if m.viewMode == "chat" && !m.mcpPanel.Active() && m.turnActive() {
+		hints = turnHints
+	}
+	sections = append(sections, HeaderInfoStyle.Render(" "+hints))
 
 	// Status bar (fixed, 1 line)
 	sections = append(sections, m.status.View())
@@ -2743,6 +2809,12 @@ func toolBatchSignature(calls []SkillCallRequest) string {
 
 func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
 	if len(msg.Calls) == 0 {
+		return m, nil
+	}
+	if m.interrupted {
+		// The turn was interrupted while this response was in flight. Drop
+		// the calls before the assistant tool_calls message is recorded, so
+		// the history has no calls without results.
 		return m, nil
 	}
 
@@ -2973,6 +3045,20 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	// that weren't accounted for in the chat panel height calculation,
 	// pushing the typed content past the bottom of the terminal.
 	m.toolProgress.ClearCompleted()
+
+	if m.interrupted {
+		// Esc: the tools have finished; don't ask the model to continue.
+		m.interrupted = false
+		m.streaming = false
+		m.status = m.status.SetStreaming(false)
+		m.status = m.status.SetText("Interrupted")
+		m.persistSession()
+		return m, nil
+	}
+
+	// Tool boundary: messages typed during the turn join the conversation
+	// here, after the tool results and before the model continues (#172).
+	m = m.injectSteers()
 
 	m.streaming = true
 	m.status = m.status.SetStreaming(true)

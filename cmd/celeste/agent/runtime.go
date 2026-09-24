@@ -202,13 +202,16 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	checker := permissions.NewChecker(*permConfig)
 	registry.SetPermissionChecker(checker)
+	if options.PromptFunc != nil {
+		registry.SetPromptFunc(options.PromptFunc)
+	}
 
 	// Fail fast rather than no-opping. `celeste agent` never wires an
 	// interactive prompt, so every tool that resolves to Ask is denied — and the
 	// run still reports success with exit 0 after burning the whole turn budget.
 	// Under the DEFAULT policy that is every mutating tool, so an unattended
 	// agent can only read. Check before turn 1 and say which flag fixes it.
-	if options.FailOnBlockedTools && !options.AutoApproveTools {
+	if options.FailOnBlockedTools && !options.AutoApproveTools && options.PromptFunc == nil {
 		if blocked := blockedMutatingTools(registry, checker); len(blocked) > 0 {
 			return nil, fmt.Errorf(
 				"agent mode cannot execute %s: these need interactive approval, and the agent runtime has no prompt.\n"+
@@ -720,7 +723,16 @@ func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.To
 		fmt.Fprintf(r.out, "[tool] %s\n", toolName)
 	}
 
-	toolCtx, cancel := context.WithTimeout(ctx, state.Options.ToolTimeout)
+	// With an approval prompt, the timeout starts once the user approves (the
+	// registry applies it), so waiting on the prompt doesn't eat into it. The
+	// run context still bounds the wait: Esc or Ctrl+C cancels it (#172).
+	var toolCtx context.Context
+	var cancel context.CancelFunc
+	if r.options.PromptFunc != nil {
+		toolCtx, cancel = context.WithCancel(tools.WithExecTimeout(ctx, state.Options.ToolTimeout))
+	} else {
+		toolCtx, cancel = context.WithTimeout(ctx, state.Options.ToolTimeout)
+	}
 	defer cancel()
 
 	argsJSON := tc.Arguments

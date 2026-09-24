@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 )
@@ -306,6 +307,16 @@ func (r *Registry) toolsToDefinitions(tools []Tool) []map[string]any {
 	return defs
 }
 
+type execTimeoutKey struct{}
+
+// WithExecTimeout asks the registry to bound the tool's execution with
+// timeout, starting only once the tool is cleared to run. A deadline set on
+// ctx directly also covers the time spent waiting on the user's approval, so
+// a slow answer hands the tool an already-expired context (#172).
+func WithExecTimeout(ctx context.Context, timeout time.Duration) context.Context {
+	return context.WithValue(ctx, execTimeoutKey{}, timeout)
+}
+
 // Execute runs a tool by name with input validation.
 func (r *Registry) Execute(ctx context.Context, name string, input map[string]any) (ToolResult, error) {
 	return r.ExecuteWithProgress(ctx, name, input, nil)
@@ -390,6 +401,13 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 				}, nil
 			}
 		}
+	}
+
+	// Approved: start the execution timeout now.
+	if timeout, ok := ctx.Value(execTimeoutKey{}).(time.Duration); ok && timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 
 	// Pre-tool hook check

@@ -124,6 +124,9 @@ type AgentCommandResultMsg struct {
 // SendMessageMsg is sent when the user submits a message.
 type SendMessageMsg struct {
 	Content string
+	// FollowUp marks input submitted with Tab: while a turn is running it
+	// waits for the turn to finish instead of steering it (#172).
+	FollowUp bool
 }
 
 // TickMsg is sent for timer-based updates (animations, etc).
@@ -183,6 +186,13 @@ func Tick(d time.Duration) tea.Cmd {
 func SendMessage(content string) tea.Cmd {
 	return func() tea.Msg {
 		return SendMessageMsg{Content: content}
+	}
+}
+
+// QueueFollowUp submits input as a follow-up (Tab).
+func QueueFollowUp(content string) tea.Cmd {
+	return func() tea.Msg {
+		return SendMessageMsg{Content: content, FollowUp: true}
 	}
 }
 

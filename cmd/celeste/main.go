@@ -607,7 +607,7 @@ func runChatTUI() {
 	// The prompt function runs inside a tea.Cmd goroutine (off the Update loop),
 	// so the blocking channel receive is safe. It sends a PermissionRequestMsg to
 	// the TUI via p.Send, which delivers it to the Update loop asynchronously.
-	registry.SetPromptFunc(func(req tools.PermissionRequest) tools.PermissionResponse {
+	promptFn := func(req tools.PermissionRequest) tools.PermissionResponse {
 		respCh := make(chan tools.PermissionResponse, 1)
 		p.Send(tui.PermissionRequestMsg{
 			ToolName:     req.ToolName,
@@ -632,7 +632,9 @@ func runChatTUI() {
 			}(),
 		})
 		return <-respCh
-	})
+	}
+	registry.SetPromptFunc(promptFn)
+	tuiClient.promptFn = promptFn
 
 	// Wire the interactive ask tool. Same bridge shape as the permission
 	// prompt: a tools-typed reply channel, a p.Send of a tui.AskRequestMsg
@@ -708,6 +710,10 @@ type TUIClientAdapter struct {
 	baseConfig  *config.Config // Store base config for loading named configs
 	costTracker *costs.SessionTracker
 	subMgr      *subagents.Manager // exposed for /agents TUI command
+
+	// promptFn shows the TUI permission modal; /agent runs use it to approve
+	// tools (#172). Set once the Bubble Tea program exists.
+	promptFn tools.PromptFunc
 
 	// Session-start project context (grimoire, memories, code graph) and git
 	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
@@ -912,8 +918,9 @@ func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCa
 		case "audio_render":
 			timeout = 2 * time.Minute // ffmpeg rendering
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
+		// The registry starts the timeout once the tool is approved, so time
+		// spent on the permission prompt doesn't count against it (#172).
+		ctx := tools.WithExecTimeout(context.Background(), timeout)
 
 		startTime := time.Now()
 		tui.LogInfo(fmt.Sprintf("Executing skill '%s' with timeout: %s", name, timeout))

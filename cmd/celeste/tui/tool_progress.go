@@ -127,6 +127,17 @@ func (m *ToolProgressModel) handleProgress(msg ToolProgressMsg) {
 	m.entries = append(m.entries, entry)
 }
 
+// Executing reports whether any tool is still running (or waiting on its
+// dependencies).
+func (m ToolProgressModel) Executing() bool {
+	for _, e := range m.entries {
+		if e.state == "executing" || e.state == "waiting" {
+			return true
+		}
+	}
+	return false
+}
+
 // HasActive returns true if there are any entries to display.
 func (m ToolProgressModel) HasActive() bool {
 	return len(m.entries) > 0
