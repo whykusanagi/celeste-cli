@@ -15,7 +15,7 @@ BIN ?= $(HOME)/.local/bin/celeste
 # shell recipe: git accepts tag names containing shell metacharacters, so an
 # untrusted tag like `v1.0$(...)-tag` would otherwise execute during `make build`
 # in a clone of someone else's history.
-COMMIT ?= $(shell (git describe --always --dirty --abbrev=7 2>/dev/null || echo dev) | sed 's/[^A-Za-z0-9._-]/_/g')
+COMMIT ?= $(shell (git describe --tags --always --dirty --abbrev=7 2>/dev/null || echo dev) | sed 's/[^A-Za-z0-9._-]/_/g')
 
 # GO_LDFLAGS is private and APPENDS to any caller-supplied LDFLAGS rather than
 # yielding to it. It was `LDFLAGS ?=`, which meant a pre-set LDFLAGS — an env var
