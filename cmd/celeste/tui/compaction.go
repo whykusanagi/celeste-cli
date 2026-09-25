@@ -123,9 +123,9 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) AppModel {
 	return m
 }
 
-// ErrNothingToSummarize is what SummarizeContext returns when the whole
-// history is recent; automatic summaries stay quiet about it.
-var ErrNothingToSummarize = errors.New("nothing to summarize: the whole history is recent")
+// ErrNothingToSummarize is what SummarizeContext returns when there is no
+// older history worth summarizing; automatic summaries stay quiet about it.
+var ErrNothingToSummarize = errors.New("nothing to summarize: the older history is too small to shrink")
 
 func isNothingToSummarize(err error) bool { return errors.Is(err, ErrNothingToSummarize) }
 
