@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -735,4 +736,24 @@ func TestSessionSaveWithUsageMetrics(t *testing.T) {
 	// Verify other fields
 	assert.Equal(t, "openai", loaded.Provider)
 	assert.Equal(t, 128000, loaded.MaxContext)
+}
+
+// Tool traffic survives a save and load (#174).
+func TestSessionMessageToolFieldsRoundTrip(t *testing.T) {
+	msg := SessionMessage{
+		Role:      "assistant",
+		ToolCalls: []SessionToolCall{{ID: "c1", Name: "read_file", Arguments: `{}`, ThoughtSignature: []byte{1, 2}}},
+		Hidden:    true,
+	}
+	data, err := json.Marshal(msg)
+	require.NoError(t, err)
+	var got SessionMessage
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, msg, got)
+
+	plain, err := json.Marshal(SessionMessage{Role: "user", Content: "hi"})
+	require.NoError(t, err)
+	for _, key := range []string{"tool_calls", "tool_call_id", "hidden", "compacted"} {
+		assert.NotContains(t, string(plain), key)
+	}
 }

@@ -877,6 +877,7 @@ Project:
   /plan [show]       Show current plan
   /context           Show context/token usage
   /compact [focus]   Summarize older history to free context
+  /handoff [focus]   Summarize this session into a new one
   /costs             Show session costs
 
 Agent & Orchestrator:

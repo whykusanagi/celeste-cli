@@ -531,16 +531,7 @@ func runChatTUI() {
 
 	// Restore messages from session if available
 	if len(currentSession.Messages) > 0 {
-		// Convert config.SessionMessage to tui.ChatMessage
-		tuiMessages := make([]tui.ChatMessage, len(currentSession.Messages))
-		for i, msg := range currentSession.Messages {
-			tuiMessages[i] = tui.ChatMessage{
-				Role:      msg.Role,
-				Content:   msg.Content,
-				Timestamp: msg.Timestamp,
-			}
-		}
-		app = app.WithMessages(tuiMessages)
+		app = app.WithMessages(tui.ChatMessagesFromSession(currentSession.Messages))
 	}
 
 	// Restore endpoint/provider from session, or detect from config
@@ -1211,13 +1202,12 @@ func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used i
 	return out
 }
 
-// SummarizeContext implements tui.ContextCompactor: it summarizes all but
-// the newest ~20k tokens with the small-model role (#174).
-func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.ChatMessage, focus string) (tui.SummaryOutcome, error) {
+// summarizer returns the small-model summarizer, built on first use.
+func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 	if a.summarize == nil {
 		cfg := a.baseConfig
 		if cfg == nil {
-			return tui.SummaryOutcome{}, errors.New("no configuration loaded")
+			return nil, errors.New("no configuration loaded")
 		}
 		a.summarize = agent.SmallModelSummarizer(&llm.Config{
 			APIKey:                cfg.APIKey,
@@ -1227,7 +1217,17 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 			GoogleUseADC:          cfg.GoogleUseADC,
 		}, cfg.ResolveSmallModel())
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus}, a.summarize)
+	return a.summarize, nil
+}
+
+// SummarizeContext implements tui.ContextCompactor: it summarizes all but
+// the newest ~20k tokens with the small-model role (#174).
+func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.ChatMessage, focus string) (tui.SummaryOutcome, error) {
+	summarize, err := a.summarizer()
+	if err != nil {
+		return tui.SummaryOutcome{}, err
+	}
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus}, summarize)
 	if errors.Is(err, compact.ErrNothingToSummarize) {
 		return tui.SummaryOutcome{}, tui.ErrNothingToSummarize
 	}
@@ -1242,6 +1242,20 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 		Line:        res.Line(),
 		TokensAfter: res.TokensAfter,
 	}, nil
+}
+
+// HandoffContext implements tui.ContextHandoff: the whole history summarized
+// as the opening message of a new session.
+func (a *TUIClientAdapter) HandoffContext(ctx context.Context, msgs []tui.ChatMessage, focus string) (string, error) {
+	summarize, err := a.summarizer()
+	if err != nil {
+		return "", err
+	}
+	_, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, All: true}, summarize)
+	if err != nil {
+		return "", err
+	}
+	return compact.HandoffText(res.Summary), nil
 }
 
 // IsContextOverflow implements tui.ContextCompactor.

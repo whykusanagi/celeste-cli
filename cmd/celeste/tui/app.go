@@ -815,6 +815,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Summarize older history now, optionally steered (#174).
 				return m.startSummary(strings.Join(cmd.Args, " "), true)
 
+			case "handoff":
+				// Summarize everything into a fresh session (#174).
+				return m.startHandoff(strings.Join(cmd.Args, " "))
+
 			case "context":
 				if len(cmd.Args) > 0 && cmd.Args[0] == "compact" {
 					var out CompactOutcome
@@ -2072,6 +2076,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ContextSummarizedMsg:
 		m = m.applySummary(msg)
 
+	case HandoffReadyMsg:
+		m = m.applyHandoff(msg)
+
 	case ContextBudgetMsg:
 		var cmd tea.Cmd
 		m.contextBar, cmd = m.contextBar.Update(msg)
@@ -3183,18 +3190,11 @@ type Session interface {
 	GetNSFWMode() bool
 	SetName(name string)
 	ClearMessages()
-	GetMessagesRaw() interface{}     // Returns []SessionMessage
-	SetMessagesRaw(msgs interface{}) // Accepts []SessionMessage
+	GetMessagesRaw() interface{}     // Returns []config.SessionMessage
+	SetMessagesRaw(msgs interface{}) // Accepts only []config.SessionMessage
 	SummarizeRaw() interface{}       // Returns SessionSummary
 	SetCommandHistory(history []string)
 	GetCommandHistory() []string
-}
-
-// SessionMessage represents a message stored in session (matches config.SessionMessage).
-type SessionMessage struct {
-	Role      string
-	Content   string
-	Timestamp time.Time
 }
 
 // SessionSummary represents session metadata (matches config.SessionSummary).
@@ -3293,17 +3293,7 @@ func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 
 // WithMessages restores chat history from session messages.
 func (m AppModel) WithMessages(messages []ChatMessage) AppModel {
-	// Restore all messages first
-	for _, msg := range messages {
-		switch msg.Role {
-		case "user":
-			m.chat = m.chat.AddUserMessage(msg.Content)
-		case "assistant":
-			m.chat = m.chat.AddAssistantMessage(msg.Content)
-		case "tool":
-			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, msg.Content)
-		}
-	}
+	m.chat = m.chat.RestoreMessages(messages)
 
 	// Add a system message at the end indicating session was resumed
 	if len(messages) > 0 {
@@ -3422,21 +3412,9 @@ func (m *AppModel) persistSession() {
 		m.currentSession.SetCommandHistory(hist)
 	}
 
-	// Convert TUI ChatMessages to config SessionMessages
-	chatMsgs := m.chat.GetMessages()
-	sessionMsgs := make([]SessionMessage, 0, len(chatMsgs))
-	for _, msg := range chatMsgs {
-		// Skip system messages (UI-only, not part of LLM conversation)
-		if msg.Role == "system" {
-			continue
-		}
-		sessionMsgs = append(sessionMsgs, SessionMessage{
-			Role:      msg.Role,
-			Content:   msg.Content,
-			Timestamp: msg.Timestamp,
-		})
-	}
-	m.currentSession.SetMessagesRaw(sessionMsgs)
+	// Must be []config.SessionMessage: SetMessagesRaw ignores any other type,
+	// which is how sessions used to silently stop saving history.
+	m.currentSession.SetMessagesRaw(SessionMessagesFromChat(m.chat.GetMessages()))
 
 	// Save asynchronously (ignore errors for now)
 	go func() {
@@ -3509,14 +3487,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				// Restore messages
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
 					if sessionMsgs, ok := messagesRaw.([]config.SessionMessage); ok {
-						for _, msg := range sessionMsgs {
-							switch msg.Role {
-							case "user":
-								m.chat = m.chat.AddUserMessage(msg.Content)
-							case "assistant":
-								m.chat = m.chat.AddAssistantMessage(msg.Content)
-							}
-						}
+						m.chat = m.chat.RestoreMessages(ChatMessagesFromSession(sessionMsgs))
 					}
 				}
 
@@ -3668,14 +3639,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				m.chat = m.chat.Clear()
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
 					if sessionMsgs, ok := messagesRaw.([]config.SessionMessage); ok {
-						for _, msg := range sessionMsgs {
-							switch msg.Role {
-							case "user":
-								m.chat = m.chat.AddUserMessage(msg.Content)
-							case "assistant":
-								m.chat = m.chat.AddAssistantMessage(msg.Content)
-							}
-						}
+						m.chat = m.chat.RestoreMessages(ChatMessagesFromSession(sessionMsgs))
 
 						m.chat = m.chat.AddSystemMessage(
 							fmt.Sprintf("🔀 Merged sessions (%d total messages)", len(sessionMsgs)))
