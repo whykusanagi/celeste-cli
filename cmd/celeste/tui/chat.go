@@ -391,6 +391,10 @@ func (m *ChatModel) updateContent() {
 		if msg.Role == "tool" {
 			continue
 		}
+		// A tool-call-only turn has nothing to show; the tool cards cover it.
+		if msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) > 0 {
+			continue
+		}
 		// Skip hidden messages (LLM directives like identity changes)
 		if msg.Metadata != nil {
 			if hidden, ok := msg.Metadata["hidden"].(bool); ok && hidden {
