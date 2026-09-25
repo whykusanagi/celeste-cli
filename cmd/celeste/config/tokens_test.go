@@ -34,7 +34,7 @@ func TestGetModelLimit(t *testing.T) {
 		{"gpt-4.1-nano", 400000},
 		{"claude-opus-4-6", 1000000},
 		{"venice-uncensored", 32000},
-		{"unknown-model", 8192}, // Should default
+		{"unknown-model", 128000}, // Should default (#201)
 	}
 
 	for _, tt := range tests {
@@ -46,23 +46,23 @@ func TestGetModelLimit(t *testing.T) {
 }
 
 func TestTruncateToLimit(t *testing.T) {
-	// Create messages that exceed 8K token limit
-	// Each message is ~5000 chars = ~1250 tokens + 4 overhead = ~1254 tokens each
+	// Create messages that exceed venice-uncensored's 32K limit
+	// Each message is ~20000 chars = ~5000 tokens + 4 overhead = ~5004 tokens each
 	messages := []SessionMessage{
-		{Role: "user", Content: strings.Repeat("a", 5000), Timestamp: time.Now()},
-		{Role: "assistant", Content: strings.Repeat("b", 5000), Timestamp: time.Now()},
-		{Role: "user", Content: strings.Repeat("c", 5000), Timestamp: time.Now()},
-		{Role: "assistant", Content: strings.Repeat("d", 5000), Timestamp: time.Now()},
-		{Role: "user", Content: strings.Repeat("e", 5000), Timestamp: time.Now()},
-		{Role: "assistant", Content: strings.Repeat("f", 5000), Timestamp: time.Now()},
-		{Role: "user", Content: strings.Repeat("g", 5000), Timestamp: time.Now()},
-		{Role: "assistant", Content: strings.Repeat("h", 5000), Timestamp: time.Now()},
+		{Role: "user", Content: strings.Repeat("a", 20000), Timestamp: time.Now()},
+		{Role: "assistant", Content: strings.Repeat("b", 20000), Timestamp: time.Now()},
+		{Role: "user", Content: strings.Repeat("c", 20000), Timestamp: time.Now()},
+		{Role: "assistant", Content: strings.Repeat("d", 20000), Timestamp: time.Now()},
+		{Role: "user", Content: strings.Repeat("e", 20000), Timestamp: time.Now()},
+		{Role: "assistant", Content: strings.Repeat("f", 20000), Timestamp: time.Now()},
+		{Role: "user", Content: strings.Repeat("g", 20000), Timestamp: time.Now()},
+		{Role: "assistant", Content: strings.Repeat("h", 20000), Timestamp: time.Now()},
 	}
-	// Total: 8 messages * ~1254 tokens = ~10,032 tokens (exceeds 8K limit)
+	// Total: 8 messages * ~5004 tokens = ~40,032 tokens (exceeds 32K limit)
 
-	// With 8K limit (85% = 6963 available) and 100 token system prompt (6863 available)
-	// Should keep ~5 messages (5 * 1254 = 6270 tokens)
-	truncated := TruncateToLimit(messages, "gpt-4", 100)
+	// With 32K limit (85% = 27200 available) and 100 token system prompt (27100 available)
+	// Should keep ~5 messages (5 * 5004 = 25020 tokens)
+	truncated := TruncateToLimit(messages, "venice-uncensored", 100)
 
 	if len(truncated) >= len(messages) {
 		t.Errorf("Expected truncation, got %d messages (original %d)", len(truncated), len(messages))

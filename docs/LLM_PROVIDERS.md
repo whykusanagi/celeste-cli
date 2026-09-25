@@ -72,7 +72,8 @@ celeste config -config local            # Context Limit: 32768 tokens (configure
 
 `config` reports where the number came from: `configured`, `model default`, or
 `fallback, model unknown, set --set-context-limit`. That last one means celeste
-is guessing and has fallen back to a conservative 8192, so set it.
+is guessing, so set it. The guess is 8192 on a local endpoint and 128k for a
+hosted model missing from the table.
 
 `--set-context-limit 0` clears the setting and returns to the model default.
 

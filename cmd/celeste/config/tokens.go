@@ -5,6 +5,10 @@
 package config
 
 import (
+	"fmt"
+	"log"
+	"sync"
+
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
@@ -102,21 +106,31 @@ func TruncateToLimit(messages []SessionMessage, model string, systemPromptTokens
 // ResolveContextLimit returns the effective context window and whether that
 // number is actually knowledge.
 //
-// An explicit override always wins. Otherwise the model is looked up, EXCEPT
-// for local endpoints: a local server names its model whatever it likes, so a
-// hit in the limits table is coincidence. That mattered in practice — a fresh
-// profile inherits the seed default's model (fugu), so pointing it at a local
-// server produced a confident 1,000,000-token budget for a server that might
-// have 8k. celeste would never compact and the request would overflow.
+// An explicit override always wins. Local endpoints get ctxmgr.LocalDefaultLimit
+// even when the model name is in the table: a local server names its model
+// whatever it likes, so a hit is coincidence. That mattered in practice — a
+// fresh profile inherits the seed default's model (fugu), so pointing it at a
+// local server produced a confident 1,000,000-token budget for a server that
+// might have 8k. Unknown hosted models get the table's 128k default (#201).
 func ResolveContextLimit(baseURL, model string, override int) (limit int, known bool) {
 	if override > 0 {
 		return override, true
 	}
-	limit, known = LookupModelLimit(model)
-	if known && providers.DetectProvider(baseURL) == "local" {
-		// Fall back to the conservative default rather than a name collision.
-		fallback, _ := LookupModelLimit("")
-		return fallback, false
+	if providers.DetectProvider(baseURL) == "local" {
+		return ctxmgr.LocalDefaultLimit, false
 	}
-	return limit, known
+	return LookupModelLimit(model)
+}
+
+var unknownContextWarned sync.Map
+
+// UnknownContextNotice returns the one-time warning for a model whose window
+// was guessed, and "" on every later call for the same model (#201).
+func UnknownContextNotice(model string, limit int) string {
+	if _, seen := unknownContextWarned.LoadOrStore(model, true); seen {
+		return ""
+	}
+	msg := fmt.Sprintf("Unknown model %q: assuming a %s context window. Set \"context_limit\" in your config if that's wrong.", model, FormatTokenCount(limit))
+	log.Printf("[config] %s", msg)
+	return msg
 }

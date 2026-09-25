@@ -365,7 +365,13 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
 	// Honour the configured context_limit, as the TUI does: for local models it
 	// is the only way to know the window (#169).
-	budget := ctxmgr.NewTokenBudget(ctxmgr.GetModelLimitWithOverride(model, cfg.ContextLimit), systemPromptTokens, 0)
+	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit)
+	if !known {
+		if notice := config.UnknownContextNotice(model, contextLimit); notice != "" {
+			fmt.Fprintln(errOut, notice)
+		}
+	}
+	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, 0)
 
 	return &Runner{
 		client:    client,
