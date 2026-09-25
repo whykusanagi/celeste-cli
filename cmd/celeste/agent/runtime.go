@@ -21,6 +21,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -47,6 +48,9 @@ type Runner struct {
 	// summarize writes a compaction summary with the small-model role, the
 	// rung after pruning (#174). Nil disables summaries.
 	summarize compact.SummarizeFunc
+	// jev is set when jev_prune is "shadow": pruning then logs Jev's verdict
+	// next to the rules' (#175).
+	jev *jev.Client
 }
 
 // compactHistory keeps the history inside the window (#174). It prunes old
@@ -65,11 +69,15 @@ func (r *Runner) compactHistory(ctx context.Context, state *RunState, force bool
 		used = last // the API's count includes tool schemas the estimate misses
 	}
 	overhead := r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
-	msgs, res := compact.Prune(state.Messages, compact.Options{
-		Window: r.budget.ModelLimit,
-		Used:   used,
-		Force:  force,
-	}, r.pruned)
+	opts := compact.Options{Window: r.budget.ModelLimit, Used: used, Force: force}
+	report := func(compact.Result) {}
+	if r.jev != nil {
+		opts, report = compact.Shadow(r.jev, state.Messages, opts, func(line string) {
+			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+		}, false) // inline: errOut may be a caller's bytes.Buffer, and the run must not outlive its output
+	}
+	msgs, res := compact.Prune(state.Messages, opts, r.pruned)
+	report(res)
 	changed := res.Pruned()
 	if changed {
 		state.Messages = msgs
@@ -378,7 +386,23 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		indexer:   cgIndexer,
 		pruned:    prunedStore,
 		summarize: SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
+		jev:       jevShadowClient(cfg.JevPrune, errOut),
 	}, nil
+}
+
+// jevShadowClient returns a Jev client when shadow mode is configured, and
+// says once that excerpts will leave the machine.
+func jevShadowClient(mode string, errOut io.Writer) *jev.Client {
+	if mode != "shadow" {
+		return nil
+	}
+	c, err := jev.NewFromEnv()
+	if err != nil {
+		fmt.Fprintf(errOut, "[agent] jev shadow disabled: %v\n", err)
+		return nil
+	}
+	fmt.Fprintln(errOut, "[agent] jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
+	return c
 }
 
 func (r *Runner) ListRuns(limit int) ([]RunSummary, error) {

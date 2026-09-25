@@ -97,7 +97,12 @@ type Config struct {
 	AgentModel string `json:"agent_model,omitempty"`
 	// SmallModel is a cheaper model for housekeeping calls such as context
 	// compaction summaries (#174). Empty falls back to Model.
-	SmallModel   string `json:"small_model,omitempty"`
+	SmallModel string `json:"small_model,omitempty"`
+	// JevPrune turns on TypeSafe Jev as a judge for context pruning (#175).
+	// "shadow" asks Jev in the background and only logs what it would have
+	// pruned; anything else is off. Redacted excerpts of old tool results go
+	// to TypeSafe. The key comes from TYPESAFE_API_KEY or ~/.celeste/typesafe.key.
+	JevPrune     string `json:"jev_prune,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 

@@ -185,3 +185,67 @@ func TestStoreRejectsBadIDs(t *testing.T) {
 		}
 	}
 }
+
+// A scorer reorders elision: least-needed first, so a result the scorer
+// rates as needed survives even when it is the oldest (#175). A scorer that
+// returns nothing (error, timeout, shadow mode) leaves today's oldest-first order.
+func TestPlanScorerOrdersElision(t *testing.T) {
+	var steps []step
+	for i := 0; i < 30; i++ {
+		steps = append(steps, step{"read_file", fmt.Sprintf(`{"path":"f%d.go"}`, i), 40_000})
+	}
+	msgs := history(steps...)
+	window := 200_000
+	used := Estimate(msgs)
+
+	var seen []Candidate
+	keepOldest := func(c []Candidate) map[string]float64 {
+		seen = c
+		scores := map[string]float64{}
+		for _, x := range c {
+			scores[x.ToolCallID] = 0.1
+		}
+		scores["call_0"] = 0.9
+		return scores
+	}
+	res := Plan(msgs, Options{Window: window, Used: used, Score: keepOldest})
+	out := Apply(msgs, res.Edits)
+	if strings.Contains(toolResults(out)["call_0"], "recall_tool_result") {
+		t.Error("the scorer rated call_0 as needed, but it was elided")
+	}
+	if after := Estimate(out); after > Threshold(window) {
+		t.Errorf("still over threshold after a scored prune: %d > %d", after, Threshold(window))
+	}
+	if len(seen) == 0 || seen[0].Name != "read_file" || seen[0].Args["path"] != "f0.go" || seen[0].Content == "" {
+		t.Errorf("scorer got incomplete candidates: %+v", seen)
+	}
+
+	res = Plan(msgs, Options{Window: window, Used: used, Score: func([]Candidate) map[string]float64 { return nil }})
+	if !strings.Contains(toolResults(Apply(msgs, res.Edits))["call_0"], "recall_tool_result") {
+		t.Error("a scorer returning nil must fall back to oldest-first")
+	}
+}
+
+// When supersession alone meets the target, there is nothing to order, so
+// the scorer (a third-party call) must not run.
+func TestPlanSkipsScorerWhenSupersessionSuffices(t *testing.T) {
+	var steps []step
+	for i := 0; i < 10; i++ {
+		steps = append(steps, step{"read_file", fmt.Sprintf(`{"path":"u%d.go"}`, i), 40_000}) // unique: elision candidates
+	}
+	for i := 0; i < 20; i++ {
+		steps = append(steps, step{"read_file", `{"path":"same.go"}`, 40_000}) // superseded but the last
+	}
+	msgs := history(steps...)
+	called := false
+	res := Plan(msgs, Options{Window: 200_000, Used: Estimate(msgs), Score: func([]Candidate) map[string]float64 {
+		called = true
+		return nil
+	}})
+	if res.Superseded == 0 || res.Elided != 0 {
+		t.Fatalf("setup: want a supersession-only prune, got %+v", res)
+	}
+	if called {
+		t.Error("scorer was called although supersession already met the target")
+	}
+}
