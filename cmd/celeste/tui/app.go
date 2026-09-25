@@ -2955,11 +2955,10 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 		m.lastToolSig = ""
 	}
 
-	// Only add the assistant message if it has text content. Tool-call-only
-	// responses (empty AssistantContent) would render as an empty chat bubble.
-	if msg.AssistantContent != "" {
-		m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
-	}
+	// Always record the tool_calls message, even with no text: the results
+	// that follow must pair with it or the provider rejects the next request.
+	// The renderer hides the empty bubble.
+	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
 	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
 	m.toolBatchActive = true
 
