@@ -2590,8 +2590,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		m.animFrame++
 
-		// Handle simulated typing
-		if m.typingContent != "" && m.typingPos < len(m.typingContent) {
+		// Handle simulated typing. Once the stream is done, enter even when
+		// typing has caught up, so a reply typed out before the stream
+		// closed still reaches the commit branch below.
+		if m.typingContent != "" && (m.typingPos < len(m.typingContent) || m.streamDone) {
 			// Advance typing position
 			m.typingPos += charsPerTick
 			if m.typingPos > len(m.typingContent) {
