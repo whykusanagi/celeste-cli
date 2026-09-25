@@ -23,6 +23,7 @@ type fakeCompactClient struct {
 	always    bool   // prune even when not forced
 	stillOver bool   // report the history still over the threshold
 	summaries []string
+	handoffs  []string
 	sumErr    error
 }
 
@@ -57,6 +58,14 @@ func (f *fakeCompactClient) SummarizeContext(_ context.Context, msgs []ChatMessa
 		Messages: []ChatMessage{{Role: "user", Content: "<compacted-context>summary</compacted-context>"}},
 		Line:     "summarized for test",
 	}, nil
+}
+
+func (f *fakeCompactClient) HandoffContext(_ context.Context, msgs []ChatMessage, focus string) (string, error) {
+	f.handoffs = append(f.handoffs, focus)
+	if f.sumErr != nil {
+		return "", f.sumErr
+	}
+	return "handoff notes for " + msgs[0].Content, nil
 }
 
 func (f *fakeCompactClient) IsContextOverflow(err error) bool { return errors.Is(err, errFakeOverflow) }
@@ -135,7 +144,8 @@ func runCmd(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
 		if msg == nil {
 			continue
 		}
-		if _, ok := msg.(ContextSummarizedMsg); ok {
+		switch msg.(type) {
+		case ContextSummarizedMsg, HandoffReadyMsg:
 			m, _ = step(t, m, msg)
 		}
 	}
@@ -189,6 +199,39 @@ func TestAutoSummaryWhenPruningIsNotEnough(t *testing.T) {
 	m = runToolTurn(t, m)
 	assert.True(t, m.summarizing, "an automatic summary should be in flight")
 	assert.Empty(t, client.summaries, "it runs in the background, not inline")
+}
+
+// /handoff summarizes the whole conversation, starts a fresh chat and leaves
+// the notes in the input for the user to edit and send (#174).
+func TestHandoffStartsFreshChatWithNotes(t *testing.T) {
+	m, client := newCompactTestApp(t)
+	m = runToolTurn(t, m)
+	m, _ = step(t, m, StreamDoneMsg{})
+
+	m, cmd := step(t, m, SendMessageMsg{Content: "/handoff the parser"})
+	require.True(t, m.summarizing)
+	m = runCmd(t, m, cmd)
+
+	require.Equal(t, []string{"the parser"}, client.handoffs)
+	assert.False(t, m.summarizing)
+	assert.Empty(t, m.chat.GetLLMMessages(), "the new chat starts empty")
+	assert.Equal(t, "handoff notes for go", m.input.Value())
+	assert.Equal(t, 0, m.contextTracker.CurrentTokens)
+}
+
+// A failed handoff leaves the conversation alone.
+func TestHandoffFailureKeepsConversation(t *testing.T) {
+	m, client := newCompactTestApp(t)
+	client.sumErr = errors.New("boom")
+	m = runToolTurn(t, m)
+	m, _ = step(t, m, StreamDoneMsg{})
+	before := len(m.chat.GetLLMMessages())
+
+	m, cmd := step(t, m, SendMessageMsg{Content: "/handoff"})
+	m = runCmd(t, m, cmd)
+
+	assert.Len(t, m.chat.GetLLMMessages(), before)
+	assert.Empty(t, m.input.Value())
 }
 
 var _ tea.Model = AppModel{}

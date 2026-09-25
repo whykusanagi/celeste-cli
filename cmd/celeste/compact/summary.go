@@ -57,6 +57,8 @@ type SummaryOptions struct {
 	KeepTokens int
 	// Focus is an optional instruction from /compact [focus].
 	Focus string
+	// All summarizes the whole history, keeping no tail (/handoff).
+	All bool
 }
 
 // SummaryResult describes a summary.
@@ -103,7 +105,10 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 	if summarize == nil {
 		return msgs, SummaryResult{}, errors.New("no summarizer configured")
 	}
-	cut := CutIndex(msgs, opts.KeepTokens)
+	cut := len(msgs)
+	if !opts.All {
+		cut = CutIndex(msgs, opts.KeepTokens)
+	}
 	if cut <= 0 {
 		return msgs, SummaryResult{}, ErrNothingToSummarize
 	}
@@ -148,6 +153,13 @@ func SummaryMessages(summary string, tailStartsWithUser bool) []tui.ChatMessage 
 		out = append(out, tui.ChatMessage{Role: "assistant", Content: "Understood. Continuing from the summary.", Timestamp: now})
 	}
 	return out
+}
+
+// HandoffText is the opening message of a session started with /handoff:
+// the summary of the previous one, for the user to edit and send.
+func HandoffText(summary string) string {
+	return "Continuing work from a previous session. Handoff notes:\n\n" + strings.TrimSpace(summary) +
+		"\n\nPick up from the next steps above."
 }
 
 // IsSummary reports whether a message carries a compaction summary.

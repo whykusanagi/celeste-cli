@@ -35,6 +35,26 @@ type SessionMessage struct {
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"timestamp"`
+
+	// Tool traffic (#174): without it a resumed session replays only the
+	// prose, so the model loses what it read and did.
+	ToolCalls  []SessionToolCall `json:"tool_calls,omitempty"`   // assistant: calls made
+	ToolCallID string            `json:"tool_call_id,omitempty"` // tool: call answered
+	Name       string            `json:"name,omitempty"`         // tool: function name
+
+	// Hidden messages are sent to the model but not rendered (directives,
+	// compaction summaries). Compacted messages were replaced by a summary:
+	// rendered in the scrollback but no longer sent.
+	Hidden    bool `json:"hidden,omitempty"`
+	Compacted bool `json:"compacted,omitempty"`
+}
+
+// SessionToolCall is a tool call recorded on an assistant message.
+type SessionToolCall struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Arguments        string `json:"arguments"`
+	ThoughtSignature []byte `json:"thought_signature,omitempty"`
 }
 
 // GenerateNameFromMessage creates a session name from first user message.
@@ -503,7 +523,7 @@ func (m *SessionManager) MergeSessions(session1, session2 *Session) *Session {
 	allMessages = append(allMessages, session2.Messages...)
 
 	// Sort by timestamp
-	sort.Slice(allMessages, func(i, j int) bool {
+	sort.SliceStable(allMessages, func(i, j int) bool {
 		return allMessages[i].Timestamp.Before(allMessages[j].Timestamp)
 	})
 

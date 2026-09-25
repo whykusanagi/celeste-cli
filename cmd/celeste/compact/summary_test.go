@@ -124,3 +124,25 @@ func TestSummaryMessagesAlternate(t *testing.T) {
 		t.Errorf("want summary only, got %+v", got)
 	}
 }
+
+// All summarizes the whole history, keeping no tail (/handoff).
+func TestSummarizeAllKeepsNoTail(t *testing.T) {
+	msgs := []tui.ChatMessage{
+		{Role: "user", Content: "fix the parser"},
+		{Role: "assistant", Content: "fixed"},
+	}
+	f := &fakeSummarizer{reply: "## Goal\nparser"}
+	out, res, err := Summarize(context.Background(), msgs, SummaryOptions{All: true}, f.fn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Cut != len(msgs) || len(out) != 1 {
+		t.Fatalf("want the whole history replaced by the summary; cut=%d out=%d", res.Cut, len(out))
+	}
+	if !strings.Contains(f.user, "fixed") {
+		t.Errorf("the newest message should be summarized too: %q", f.user)
+	}
+	if !strings.Contains(HandoffText(res.Summary), "## Goal\nparser") {
+		t.Errorf("handoff text lost the summary")
+	}
+}

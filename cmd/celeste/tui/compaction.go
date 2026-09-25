@@ -128,3 +128,80 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) AppModel {
 var ErrNothingToSummarize = errors.New("nothing to summarize: the whole history is recent")
 
 func isNothingToSummarize(err error) bool { return errors.Is(err, ErrNothingToSummarize) }
+
+// ContextHandoff is implemented by clients that can write a handoff
+// summary of the whole conversation (/handoff, #174).
+type ContextHandoff interface {
+	HandoffContext(ctx context.Context, msgs []ChatMessage, focus string) (string, error)
+}
+
+// HandoffReadyMsg delivers the text a /handoff session opens with.
+type HandoffReadyMsg struct {
+	Text string
+	Err  error
+	// snapshotLen and firstContent identify the conversation summarized.
+	snapshotLen  int
+	firstContent string
+}
+
+// startHandoff summarizes the whole conversation in the background. When it
+// is ready the current session is saved, a new one starts, and the summary
+// waits in the input for the user to edit and send.
+func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
+	c, ok := m.llmClient.(ContextHandoff)
+	if !ok {
+		m.chat = m.chat.AddSystemMessage("Handoff isn't available for this client.")
+		return m, nil
+	}
+	if m.summarizing {
+		m.chat = m.chat.AddSystemMessage("A context summary is already being written.")
+		return m, nil
+	}
+	msgs := m.chat.GetLLMMessages()
+	if len(msgs) == 0 {
+		m.chat = m.chat.AddSystemMessage("Nothing to hand off yet.")
+		return m, nil
+	}
+	m.summarizing = true
+	m.chat = m.chat.AddSystemMessage("🤝 Writing handoff notes…")
+	snapshot := append([]ChatMessage(nil), msgs...)
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), summaryTimeout)
+		defer cancel()
+		text, err := c.HandoffContext(ctx, snapshot, focus)
+		return HandoffReadyMsg{
+			Text:         text,
+			Err:          err,
+			snapshotLen:  len(snapshot),
+			firstContent: snapshot[0].Content,
+		}
+	}
+}
+
+// applyHandoff starts the new session with the handoff notes in the input.
+func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
+	m.summarizing = false
+	if msg.Err != nil {
+		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Handoff failed: %v", msg.Err))
+		return m
+	}
+	current := m.chat.GetLLMMessages()
+	if len(current) != msg.snapshotLen || current[0].Content != msg.firstContent {
+		m.chat = m.chat.AddSystemMessage("Handoff discarded: the conversation changed while the notes were being written. Run /handoff again.")
+		return m
+	}
+	m.persistSession()
+	if m.sessionManager != nil {
+		if s, ok := m.sessionManager.NewSession().(Session); ok {
+			m.currentSession = s
+		}
+	}
+	m.chat = m.chat.Clear()
+	if m.contextTracker != nil {
+		m.contextTracker.CurrentTokens = 0
+		m.header = m.header.SetContextUsage(0, m.contextTracker.MaxTokens)
+	}
+	m.input = m.input.SetValue(msg.Text)
+	m.chat = m.chat.AddSystemMessage("🤝 New session started. The handoff notes are in the input: edit them and press Enter to send.")
+	return m
+}

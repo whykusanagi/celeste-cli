@@ -335,6 +335,15 @@ func hideAll(in []ChatMessage) []ChatMessage {
 	return out
 }
 
+// RestoreMessages appends saved history as is, keeping tool calls, tool
+// results and metadata that the Add* helpers would drop.
+func (m ChatModel) RestoreMessages(msgs []ChatMessage) ChatModel {
+	m.messages = append(m.messages, msgs...)
+	m.updateContent()
+	m.viewport.GotoBottom()
+	return m
+}
+
 // Clear clears all messages and function calls.
 func (m ChatModel) Clear() ChatModel {
 	m.messages = []ChatMessage{}
