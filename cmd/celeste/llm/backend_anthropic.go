@@ -118,7 +118,41 @@ func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.S
 	// Apply thinking config.
 	b.applyThinkingConfig(&params, continuesToolLoop(messages))
 
+	applyCacheBreakpoints(&params)
+
 	return params
+}
+
+// messageCacheBreakpoints is how many of the newest messages get a
+// cache_control breakpoint. With the system prompt's and the tools' that is
+// four, the most a request may carry.
+const messageCacheBreakpoints = 2
+
+// applyCacheBreakpoints marks the tool list and the newest messages for
+// prompt caching (#174). A breakpoint on the last message writes the whole
+// conversation to the cache, so the next request (the same messages plus a
+// reply and a new turn) reads it back instead of paying for it again; the
+// one on the message before covers a turn that added more blocks than the
+// cache lookback reaches. The tools get their own so a system prompt change
+// (/persona, /user) keeps them cached.
+func applyCacheBreakpoints(params *anthropic.MessageNewParams) {
+	if n := len(params.Tools); n > 0 {
+		if cc := params.Tools[n-1].GetCacheControl(); cc != nil {
+			*cc = anthropic.NewCacheControlEphemeralParam()
+		}
+	}
+	marked := 0
+	for i := len(params.Messages) - 1; i >= 0 && marked < messageCacheBreakpoints; i-- {
+		blocks := params.Messages[i].Content
+		for j := len(blocks) - 1; j >= 0; j-- {
+			// Skip blocks that cannot carry cache_control (thinking).
+			if cc := blocks[j].GetCacheControl(); cc != nil {
+				*cc = anthropic.NewCacheControlEphemeralParam()
+				marked++
+				break
+			}
+		}
+	}
 }
 
 // buildSystemBlocks creates system prompt text blocks with prompt caching.
