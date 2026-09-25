@@ -26,6 +26,7 @@ type windowBackend struct {
 	requests  int
 	overflows int
 	maxSeen   int
+	issued    int // tool calls made so far; a summary can't reset it
 }
 
 func (b *windowBackend) SendMessageStreamEvents(_ context.Context, msgs []tui.ChatMessage, _ []tui.SkillDefinition, cb llm.StreamEventCallback) error {
@@ -40,9 +41,9 @@ func (b *windowBackend) SendMessageStreamEvents(_ context.Context, msgs []tui.Ch
 		b.mu.Unlock()
 		return fmt.Errorf("prompt is too long: %d tokens > %d maximum", size, b.window)
 	}
-	calls := 0
-	for _, m := range msgs {
-		calls += len(m.ToolCalls)
+	calls := b.issued
+	if calls < b.turns {
+		b.issued++
 	}
 	b.mu.Unlock()
 
@@ -162,5 +163,44 @@ func TestAgentRunRecoversFromOverflow(t *testing.T) {
 	}
 	if backend.overflows == 0 {
 		t.Fatal("test setup: expected at least one overflow to recover from")
+	}
+}
+
+// With pruning unavailable, the summary rung keeps the run inside the window:
+// everything but the newest ~20k tokens is replaced by a structured summary
+// from the small-model role.
+func TestAgentRunSummarizesWhenPruningIsNotEnough(t *testing.T) {
+	backend := &windowBackend{window: 64_000, turns: 20}
+	runner, _ := newCompactionRunner(t, backend, 64_000)
+	runner.pruned = nil // force the summary rung
+
+	var summaries int
+	var sawGoal bool
+	runner.summarize = func(_ context.Context, system, user string) (string, error) {
+		summaries++
+		if strings.Contains(user, "read every file") {
+			sawGoal = true
+		}
+		return "## Goal\nread every file\n## Progress\n### Done\nread some files", nil
+	}
+
+	state, err := runner.RunGoal(context.Background(), "read every file")
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if state.Status != StatusCompleted {
+		t.Fatalf("status %q, want completed (error: %s)", state.Status, state.Error)
+	}
+	if summaries == 0 {
+		t.Fatal("the summary rung never ran")
+	}
+	if !sawGoal {
+		t.Error("the original goal should reach the summarizer")
+	}
+	if backend.overflows != 0 || backend.maxSeen > backend.window {
+		t.Errorf("summaries should keep requests inside the window: overflows=%d max=%d", backend.overflows, backend.maxSeen)
+	}
+	if !compact.IsSummary(state.Messages[0]) {
+		t.Error("the history should now start with the summary")
 	}
 }

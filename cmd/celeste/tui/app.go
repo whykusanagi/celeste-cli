@@ -112,6 +112,9 @@ type AppModel struct {
 	// overflowRetried limits the compact-and-resend after a context
 	// overflow to once per user turn (#174).
 	overflowRetried bool
+	// summarizing is set while a compaction summary is being written, so
+	// only one runs at a time.
+	summarizing bool
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -187,12 +190,34 @@ type LLMClient interface {
 	ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd
 }
 
-// ContextCompactor is an optional extension that prunes old tool results
-// from the history to keep it inside the context window (#174). It returns
-// the replacement content for each pruned result, keyed by tool call ID.
+// ContextCompactor is an optional extension that keeps the history inside
+// the context window (#174). CompactContext prunes old tool results;
+// SummarizeContext replaces older history with a structured summary written
+// by the small-model role (it blocks, so the app calls it from a command).
 type ContextCompactor interface {
-	CompactContext(msgs []ChatMessage, window, used int, force bool) (edits map[string]string, summary string, savedTokens int)
+	CompactContext(msgs []ChatMessage, window, used int, force bool) CompactOutcome
+	SummarizeContext(ctx context.Context, msgs []ChatMessage, focus string) (SummaryOutcome, error)
 	IsContextOverflow(err error) bool
+}
+
+// CompactOutcome is the result of a prune.
+type CompactOutcome struct {
+	// Edits maps tool call IDs to the placeholder that replaces the result.
+	Edits       map[string]string
+	Summary     string
+	SavedTokens int
+	// StillOver reports that the history is still over the compaction
+	// threshold after pruning, so the summary rung should run.
+	StillOver bool
+}
+
+// SummaryOutcome is the result of a summary: the first Cut LLM messages are
+// replaced by Messages.
+type SummaryOutcome struct {
+	Cut         int
+	Messages    []ChatMessage
+	Line        string
+	TokensAfter int
 }
 
 // AgentCommandRunner is an optional extension for handling /agent from TUI.
@@ -786,11 +811,17 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			case "compact":
+				// Summarize older history now, optionally steered (#174).
+				return m.startSummary(strings.Join(cmd.Args, " "), true)
+
 			case "context":
 				if len(cmd.Args) > 0 && cmd.Args[0] == "compact" {
-					var pruned bool
-					if m, pruned = m.compactContext(true); !pruned {
-						m.chat = m.chat.AddSystemMessage("Nothing to compact: there are no old tool results outside the recent history.")
+					var out CompactOutcome
+					m, out = m.compactContext(true)
+					if len(out.Edits) == 0 || out.StillOver {
+						// Pruning found too little: go to the summary rung.
+						return m.startSummary("", len(out.Edits) == 0)
 					}
 					return m, nil
 				}
@@ -1742,7 +1773,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Send to LLM and start animation
 		if m.llmClient != nil {
 			m.overflowRetried = false
-			m, _ = m.compactContext(false)
+			var out CompactOutcome
+			m, out = m.compactContext(false)
+			if out.StillOver {
+				var summaryCmd tea.Cmd
+				m, summaryCmd = m.startSummary("", false)
+				cmds = append(cmds, summaryCmd)
+			}
 			toolsToSend := m.getToolsForDispatch()
 			cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
 			// Start animation tick for waiting state
@@ -2013,8 +2050,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// before reporting the error (#174).
 		if c, ok := m.llmClient.(ContextCompactor); ok && c.IsContextOverflow(msg.Err) && !m.overflowRetried && !m.interrupted {
 			m.overflowRetried = true
-			var pruned bool
-			if m, pruned = m.compactContext(true); pruned {
+			var out CompactOutcome
+			if m, out = m.compactContext(true); len(out.Edits) > 0 {
 				m.streamStart = time.Now()
 				return m, tea.Batch(
 					m.llmClient.SendMessage(m.chat.GetLLMMessages(), m.getToolsForDispatch()),
@@ -2031,6 +2068,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.toolProgress, cmd = m.toolProgress.Update(msg)
 		cmds = append(cmds, cmd)
+
+	case ContextSummarizedMsg:
+		m = m.applySummary(msg)
 
 	case ContextBudgetMsg:
 		var cmd tea.Cmd
@@ -3094,7 +3134,14 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	m = m.injectSteers()
 	// Checked after every tool batch, so a long turn compacts mid-turn at a
 	// safe boundary (#174).
-	m, _ = m.compactContext(false)
+	var extra []tea.Cmd
+	var compacted CompactOutcome
+	m, compacted = m.compactContext(false)
+	if compacted.StillOver {
+		var summaryCmd tea.Cmd
+		m, summaryCmd = m.startSummary("", false)
+		extra = append(extra, summaryCmd)
+	}
 
 	m.streaming = true
 	m.status = m.status.SetStreaming(true)
@@ -3106,12 +3153,12 @@ func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
 	m.lastMsgOutTok = 0
 
 	toolsToSend := m.getToolsForDispatch()
-	return m, []tea.Cmd{
+	return m, append(extra,
 		m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend),
 		tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 			return TickMsg{Time: t}
 		}),
-	}
+	)
 }
 
 // SessionManager interface for session persistence (avoid circular import).

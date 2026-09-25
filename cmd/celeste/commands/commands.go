@@ -876,6 +876,7 @@ Project:
   /index impact      Blast radius analysis (changed symbols + callers)
   /plan [show]       Show current plan
   /context           Show context/token usage
+  /compact [focus]   Summarize older history to free context
   /costs             Show session costs
 
 Agent & Orchestrator:

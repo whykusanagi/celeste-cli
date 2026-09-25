@@ -19,6 +19,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
@@ -729,6 +730,9 @@ type TUIClientAdapter struct {
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.
 	pruned *compact.Store
+	// summarize writes compaction summaries with the small-model role;
+	// created on first use.
+	summarize compact.SummarizeFunc
 
 	// Session-start project context (grimoire, memories, code graph) and git
 	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
@@ -1181,26 +1185,63 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 // CompactContext implements tui.ContextCompactor: it prunes old tool results
 // when the history is over the compaction threshold (or always, with force)
 // and returns the replacement for each pruned result (#174).
-func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) (map[string]string, string, int) {
-	if a.pruned == nil {
-		store, err := compact.DefaultStore()
-		if err != nil {
-			return nil, "", 0
-		}
-		a.pruned = store
-	}
+func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
 	if est := compact.Estimate(msgs); est > used {
 		used = est
 	}
-	_, res := compact.Prune(msgs, compact.Options{Window: window, Used: used, Force: force}, a.pruned)
+	overhead := used - compact.Estimate(msgs) // system prompt and tool schemas
+	if a.pruned == nil {
+		if store, err := compact.DefaultStore(); err == nil {
+			a.pruned = store
+		}
+	}
+	after, res := compact.Prune(msgs, compact.Options{Window: window, Used: used, Force: force}, a.pruned)
+	out := tui.CompactOutcome{
+		StillOver: compact.Estimate(after)+overhead > compact.Threshold(window),
+	}
 	if !res.Pruned() {
-		return nil, "", 0
+		return out
 	}
-	edits := make(map[string]string, len(res.Edits))
+	out.Edits = make(map[string]string, len(res.Edits))
 	for _, e := range res.Edits {
-		edits[e.ToolCallID] = e.Content
+		out.Edits[e.ToolCallID] = e.Content
 	}
-	return edits, res.Summary(), res.SavedTokens
+	out.Summary = res.Summary()
+	out.SavedTokens = res.SavedTokens
+	return out
+}
+
+// SummarizeContext implements tui.ContextCompactor: it summarizes all but
+// the newest ~20k tokens with the small-model role (#174).
+func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.ChatMessage, focus string) (tui.SummaryOutcome, error) {
+	if a.summarize == nil {
+		cfg := a.baseConfig
+		if cfg == nil {
+			return tui.SummaryOutcome{}, errors.New("no configuration loaded")
+		}
+		a.summarize = agent.SmallModelSummarizer(&llm.Config{
+			APIKey:                cfg.APIKey,
+			BaseURL:               cfg.BaseURL,
+			Timeout:               cfg.GetTimeout(),
+			GoogleCredentialsFile: cfg.GoogleCredentialsFile,
+			GoogleUseADC:          cfg.GoogleUseADC,
+		}, cfg.ResolveSmallModel())
+	}
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus}, a.summarize)
+	if errors.Is(err, compact.ErrNothingToSummarize) {
+		return tui.SummaryOutcome{}, tui.ErrNothingToSummarize
+	}
+	if err != nil {
+		return tui.SummaryOutcome{}, err
+	}
+	// out is the summary messages followed by the untouched tail.
+	summaryLen := len(out) - (len(msgs) - res.Cut)
+	return tui.SummaryOutcome{
+		Cut:         res.Cut,
+		Messages:    out[:summaryLen],
+		Line:        res.Line(),
+		TokensAfter: res.TokensAfter,
+	}, nil
 }
 
 // IsContextOverflow implements tui.ContextCompactor.

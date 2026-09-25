@@ -94,7 +94,10 @@ type Config struct {
 	// (free tool-selection). Chat/TTS use Model. Empty falls back to Model.
 	// Lets you pin a reasoning/tool-capable model for agent work while keeping a
 	// cheap non-reasoning model for chat (model-router guardrail, task e8775b91).
-	AgentModel   string `json:"agent_model,omitempty"`
+	AgentModel string `json:"agent_model,omitempty"`
+	// SmallModel is a cheaper model for housekeeping calls such as context
+	// compaction summaries (#174). Empty falls back to Model.
+	SmallModel   string `json:"small_model,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 
@@ -814,6 +817,15 @@ func reconcileModel(config *Config) (changed bool, from, to string) {
 func (c *Config) ResolveAgentModel() string {
 	if c.AgentModel != "" {
 		return c.AgentModel
+	}
+	return c.Model
+}
+
+// ResolveSmallModel returns the model for housekeeping calls (compaction
+// summaries): SmallModel if set, otherwise the chat Model.
+func (c *Config) ResolveSmallModel() string {
+	if c.SmallModel != "" {
+		return c.SmallModel
 	}
 	return c.Model
 }
