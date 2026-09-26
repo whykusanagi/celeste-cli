@@ -3230,8 +3230,13 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 				// Pass config's ContextLimit as override if available
 				if m.config != nil {
 					override := m.config.ContextLimit
-					resolved, _ := config.ResolveContextLimit(m.config.BaseURL, model, override)
+					resolved, known := config.ResolveContextLimit(m.config.BaseURL, model, override)
 					m.contextTracker = config.NewContextTracker(configSession, model, resolved)
+					if !known {
+						if notice := config.UnknownContextNotice(model, resolved); notice != "" {
+							m.chat = m.chat.AddSystemMessage("⚠️ " + notice)
+						}
+					}
 				} else {
 					m.contextTracker = config.NewContextTracker(configSession, model)
 				}

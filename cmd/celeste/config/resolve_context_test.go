@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+)
 
 // A fresh profile inherits the seed default's model, so pointing one at a local
 // server left it carrying "fugu". The limits table has fugu at 1,000,000, which
@@ -12,9 +16,8 @@ func TestResolveContextLimit_LocalIgnoresCoincidentalModelMatch(t *testing.T) {
 	if known {
 		t.Error("a local endpoint must never report a model-table hit as known")
 	}
-	fallback, _ := LookupModelLimit("")
-	if limit != fallback {
-		t.Errorf("limit = %d, want the conservative fallback %d", limit, fallback)
+	if limit != ctxmgr.LocalDefaultLimit {
+		t.Errorf("limit = %d, want the local fallback %d", limit, ctxmgr.LocalDefaultLimit)
 	}
 }
 
@@ -39,13 +42,31 @@ func TestResolveContextLimit_OverrideWins(t *testing.T) {
 	}
 }
 
-// An unknown model on a hosted provider still gets the fallback.
+// An unknown model on a hosted provider gets 128k, not the local 8k (#201).
 func TestResolveContextLimit_UnknownModelHosted(t *testing.T) {
 	limit, known := ResolveContextLimit("https://api.openai.com/v1", "some-new-model", 0)
 	if known {
 		t.Error("an unlisted model must not report as known")
 	}
-	if fallback, _ := LookupModelLimit(""); limit != fallback {
-		t.Errorf("limit = %d, want fallback %d", limit, fallback)
+	if limit != 128000 {
+		t.Errorf("limit = %d, want 128000", limit)
+	}
+}
+
+// An unknown model on a local endpoint keeps the small local default (#201).
+func TestResolveContextLimit_UnknownModelLocal(t *testing.T) {
+	limit, known := ResolveContextLimit("http://localhost:11434/v1", "llama3", 0)
+	if known || limit != ctxmgr.LocalDefaultLimit {
+		t.Errorf("got (%d, %v), want (%d, false)", limit, known, ctxmgr.LocalDefaultLimit)
+	}
+}
+
+// The guessed-window warning fires once per model, not on every resolve.
+func TestUnknownContextNotice_Once(t *testing.T) {
+	if UnknownContextNotice("notice-once-model", 128000) == "" {
+		t.Fatal("first call must return the warning")
+	}
+	if got := UnknownContextNotice("notice-once-model", 128000); got != "" {
+		t.Errorf("second call returned %q, want empty", got)
 	}
 }
