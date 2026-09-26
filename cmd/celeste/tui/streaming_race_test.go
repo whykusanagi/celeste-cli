@@ -136,3 +136,31 @@ func TestAgentResponse_SimulatedTyping_SetsStreamDone(t *testing.T) {
 
 // Silence unused-import if any assertion above is removed later.
 var _ = tea.Msg(nil)
+
+// A short reply ("READ") is fully typed before the stream closes; the
+// StreamDoneMsg then carries the same text. Pre-fix, the next tick saw
+// typingPos == len and fell through to the spinner branch forever: the
+// turn never ended, and queued input was never sent.
+func TestShortReplyTypedBeforeStreamDone_Finishes(t *testing.T) {
+	model := NewApp(nil)
+	model.currentSession = nil
+
+	m, _ := model.Update(StreamChunkMsg{Chunk: StreamChunk{Content: "READ", IsFirst: true}})
+	mm := m.(AppModel)
+	for i := 0; i < 5; i++ { // type it all out while the stream is still open
+		m, _ = mm.Update(TickMsg{})
+		mm = m.(AppModel)
+	}
+	require.Equal(t, len("READ"), mm.typingPos, "setup: reply fully typed")
+	require.True(t, mm.streaming, "setup: stream still open")
+
+	m, _ = mm.Update(StreamDoneMsg{FullContent: "READ", FinishReason: "stop"})
+	mm = m.(AppModel)
+	for i := 0; i < 5 && mm.streaming; i++ {
+		m, _ = mm.Update(TickMsg{})
+		mm = m.(AppModel)
+	}
+	assert.False(t, mm.streaming, "turn must finish after the stream closes")
+	assert.Equal(t, "", mm.typingContent)
+	assert.False(t, mm.turnActive(), "queued input can only be sent once the turn is inactive")
+}
