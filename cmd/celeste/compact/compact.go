@@ -74,6 +74,19 @@ type Options struct {
 	// Force prunes even below the threshold and below the minimum saving:
 	// the reactive path after a context-overflow error, and /context compact.
 	Force bool
+	// Score, when set, rates how likely each elision candidate is still
+	// needed (0..1); the least-needed are elided first. A nil or empty
+	// result keeps the default oldest-first order (#175).
+	Score func([]Candidate) map[string]float64
+}
+
+// Candidate is an old tool result that pass 2 may elide, oldest first.
+type Candidate struct {
+	ToolCallID string
+	Name       string
+	Args       map[string]any
+	Content    string
+	Tokens     int
 }
 
 // Edit replaces one tool result's content.
@@ -112,7 +125,8 @@ type callInfo struct {
 //
 // Superseded results go first and need no model call: a file read again or
 // edited later, or a read-only command run again with the same arguments.
-// Then, if still over target, the oldest large results are elided. The
+// Then, if still over target, large results are elided: oldest first, or
+// least-needed first when Options.Score rates them. The
 // newest ~40k tokens are never touched, and a result is never removed, only
 // replaced, so every tool call keeps its result.
 func Plan(msgs []tui.ChatMessage, opts Options) Result {
@@ -180,6 +194,24 @@ func Plan(msgs []tui.ChatMessage, opts Options) Result {
 		}
 	}
 	sort.SliceStable(cands, func(a, b int) bool { return cands[a].idx < cands[b].idx })
+	// Skip the scorer (a third-party call) when supersession already met the target.
+	if opts.Score != nil && len(cands) > 0 && (opts.Force || res.SavedTokens < needed) {
+		in := make([]Candidate, len(cands))
+		for k, c := range cands {
+			m := msgs[c.idx]
+			in[k] = Candidate{ToolCallID: m.ToolCallID, Name: m.Name, Args: calls[m.ToolCallID].args, Content: m.Content, Tokens: c.tokens}
+		}
+		if scores := opts.Score(in); len(scores) > 0 {
+			need := func(c cand) float64 {
+				if p, ok := scores[msgs[c.idx].ToolCallID]; ok {
+					return p
+				}
+				return 0.5 // ponytail: unrated sits mid-pack; revisit if scorers skip results often
+			}
+			// Stable: equal scores stay oldest-first.
+			sort.SliceStable(cands, func(a, b int) bool { return need(cands[a]) < need(cands[b]) })
+		}
+	}
 	for _, c := range cands {
 		if res.SavedTokens >= needed && !opts.Force {
 			break

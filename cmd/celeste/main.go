@@ -30,6 +30,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
@@ -724,6 +725,10 @@ type TUIClientAdapter struct {
 	// summarize writes compaction summaries with the small-model role;
 	// created on first use.
 	summarize compact.SummarizeFunc
+	// jev judges pruning in shadow mode when jev_prune is "shadow" (#175);
+	// resolved on first use.
+	jev    *jev.Client
+	jevFor *config.Config // the config jev was resolved for
 
 	// Session-start project context (grimoire, memories, code graph) and git
 	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
@@ -1186,7 +1191,13 @@ func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used i
 			a.pruned = store
 		}
 	}
-	after, res := compact.Prune(msgs, compact.Options{Window: window, Used: used, Force: force}, a.pruned)
+	opts := compact.Options{Window: window, Used: used, Force: force}
+	report := func(compact.Result) {}
+	if c := a.jevShadow(); c != nil {
+		opts, report = compact.Shadow(c, msgs, opts, tui.LogInfo, true)
+	}
+	after, res := compact.Prune(msgs, opts, a.pruned)
+	report(res)
 	out := tui.CompactOutcome{
 		StillOver: compact.Estimate(after)+overhead > compact.Threshold(window),
 	}
@@ -1200,6 +1211,28 @@ func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used i
 	out.Summary = res.Summary()
 	out.SavedTokens = res.SavedTokens
 	return out
+}
+
+// jevShadow returns the Jev client when jev_prune is "shadow", resolved once
+// per config. Reports go to the log file: the TUI owns the terminal.
+func (a *TUIClientAdapter) jevShadow() *jev.Client {
+	// Re-resolve after a profile switch replaces baseConfig, so turning
+	// jev_prune off (or on) takes effect.
+	if a.jevFor == a.baseConfig {
+		return a.jev
+	}
+	a.jevFor, a.jev = a.baseConfig, nil
+	if a.baseConfig == nil || a.baseConfig.JevPrune != "shadow" {
+		return nil
+	}
+	c, err := jev.NewFromEnv()
+	if err != nil {
+		tui.LogInfo("jev shadow disabled: " + err.Error())
+		return nil
+	}
+	tui.LogInfo("jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
+	a.jev = c
+	return c
 }
 
 // summarizer returns the small-model summarizer, built on first use.
