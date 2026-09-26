@@ -62,9 +62,15 @@ var ModelLimits = map[string]int{
 	"mistral-small-3-2-24b-instruct":       256000,
 	"llama-3.3-70b":                        128000,
 	"minimax-m25":                          198000,
-	// Default
-	"default": 8192,
+	// Default for hosted models missing from this table (#201). Almost every
+	// current hosted model has at least 128k; guessing low compacted every turn.
+	"default": 128000,
 }
+
+// LocalDefaultLimit is the fallback window for local endpoints (Ollama,
+// llama.cpp, MLX) with no context_limit set: their window is whatever the
+// server was started with, and small defaults are common (#201).
+const LocalDefaultLimit = 8192
 
 // TokenBudget tracks token usage across all components of a conversation.
 // It provides fine-grained tracking beyond a simple current/max counter,
