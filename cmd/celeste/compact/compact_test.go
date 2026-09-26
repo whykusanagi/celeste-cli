@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -157,7 +158,9 @@ func TestPruneSpillsAndRecalls(t *testing.T) {
 		t.Fatalf("spilled body not recoverable: err=%v, len=%d", err, len(got))
 	}
 	info, err := os.Stat(filepath.Join(store.Dir, "call_0.txt"))
-	if err != nil || info.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits: Stat reports 0666 whatever was
+	// requested, so only check the mode where it means something.
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Errorf("spill file should be private (0600): %v %v", err, info.Mode())
 	}
 
