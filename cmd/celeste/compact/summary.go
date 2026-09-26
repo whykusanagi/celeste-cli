@@ -77,8 +77,9 @@ func (r SummaryResult) Line() string {
 	return fmt.Sprintf("summarized %d messages (~%d → ~%d tokens)", r.Cut, r.TokensBefore, r.TokensAfter)
 }
 
-// ErrNothingToSummarize means the history is all inside the kept tail.
-var ErrNothingToSummarize = errors.New("nothing to summarize: the whole history is recent")
+// ErrNothingToSummarize means the history is all inside the kept tail, or
+// the part before it is too small for a summary to shrink.
+var ErrNothingToSummarize = errors.New("nothing to summarize: the older history is too small to shrink")
 
 // CutIndex returns where the kept tail starts: the newest keep tokens,
 // extended back so the tail never starts with a tool result (a tool result
@@ -133,6 +134,10 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 		TokensAfter:   Estimate(out),
 		HadPrevious:   hadPrevious,
 		MessagesAfter: len(out),
+	}
+	if !opts.All && res.TokensAfter >= res.TokensBefore {
+		// Only a small head was old enough to cut; replacing it would grow the context.
+		return msgs, SummaryResult{}, ErrNothingToSummarize
 	}
 	return out, res, nil
 }

@@ -146,3 +146,22 @@ func TestSummarizeAllKeepsNoTail(t *testing.T) {
 		t.Errorf("handoff text lost the summary")
 	}
 }
+
+// When only a tiny head is old enough to cut (here, the opening request before
+// one large tool batch), the summary is bigger than what it replaces. Applying
+// it would grow the context, so it must be refused (smoke test on #198:
+// "summarized 1 messages (~26194 → ~26400 tokens)").
+func TestSummarizeRefusesSummaryThatDoesNotShrink(t *testing.T) {
+	msgs := history(step{"read_file", `{"path":"a.go"}`, 100_000})
+	if cut := CutIndex(msgs, 0); cut != 1 {
+		t.Fatalf("setup: cut = %d, want 1 (only the opening request is old)", cut)
+	}
+	f := &fakeSummarizer{reply: strings.Repeat("summary ", 300)}
+	out, _, err := Summarize(context.Background(), msgs, SummaryOptions{}, f.fn)
+	if !errors.Is(err, ErrNothingToSummarize) {
+		t.Fatalf("err = %v, want ErrNothingToSummarize", err)
+	}
+	if len(out) != len(msgs) {
+		t.Errorf("history changed: %d messages, want %d", len(out), len(msgs))
+	}
+}
