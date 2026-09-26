@@ -226,3 +226,30 @@ func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		len(s) > 0 && (s[:len(substr)] == substr || contains(s[1:], substr)))
 }
+
+// A response that is only tool calls (no text) must still be recorded: the
+// tool results that follow need the assistant message carrying their
+// tool_calls, or OpenAI-compatible providers reject the follow-up with a 400.
+func TestSkillCallBatchWithoutTextStillRecordsToolCalls(t *testing.T) {
+	client := &fakeToolLLMClient{skills: []SkillDefinition{{Name: "tool_a", Description: "A"}}}
+	m := NewApp(client)
+	m.skillsEnabled = true
+
+	model, _ := m.Update(SkillCallBatchMsg{
+		Calls: []SkillCallRequest{{
+			Call:       FunctionCall{Name: "tool_a", Arguments: map[string]any{}, Status: "executing"},
+			ToolCallID: "call_a",
+		}},
+		ToolCalls: []ToolCallInfo{{ID: "call_a", Name: "tool_a", Arguments: `{}`}},
+	})
+	m = model.(AppModel)
+	model, _ = m.Update(SkillResultMsg{Name: "tool_a", Result: `{"ok":true}`, ToolCallID: "call_a"})
+	m = model.(AppModel)
+
+	msgs := m.chat.GetLLMMessages()
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "assistant", msgs[0].Role)
+	require.Len(t, msgs[0].ToolCalls, 1)
+	assert.Equal(t, "call_a", msgs[0].ToolCalls[0].ID)
+	assert.Equal(t, "tool", msgs[1].Role)
+}

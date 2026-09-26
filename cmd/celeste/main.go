@@ -2211,11 +2211,7 @@ func runContextCommand(args []string) {
 	session := &sessions[0]
 
 	// Create context tracker from session
-	contextLimit := cfg.ContextLimit
-	if contextLimit == 0 {
-		contextLimit = config.GetModelLimit(cfg.Model)
-	}
-	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, contextLimit)
+	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
 	contextTracker := config.NewContextTracker(session, cfg.Model, resolved)
 
 	// Handle subcommand
@@ -2249,11 +2245,7 @@ func runStatsCommand(args []string) {
 	session := &sessions[0]
 
 	// Create context tracker from session
-	contextLimit := cfg.ContextLimit
-	if contextLimit == 0 {
-		contextLimit = config.GetModelLimit(cfg.Model)
-	}
-	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, contextLimit)
+	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
 	contextTracker := config.NewContextTracker(session, cfg.Model, resolved)
 
 	// Generate stats output

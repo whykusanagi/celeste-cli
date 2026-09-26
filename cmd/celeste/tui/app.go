@@ -2590,8 +2590,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		m.animFrame++
 
-		// Handle simulated typing
-		if m.typingContent != "" && m.typingPos < len(m.typingContent) {
+		// Handle simulated typing. Once the stream is done, enter even when
+		// typing has caught up, so a reply typed out before the stream
+		// closed still reaches the commit branch below.
+		if m.typingContent != "" && (m.typingPos < len(m.typingContent) || m.streamDone) {
 			// Advance typing position
 			m.typingPos += charsPerTick
 			if m.typingPos > len(m.typingContent) {
@@ -2955,11 +2957,10 @@ func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.C
 		m.lastToolSig = ""
 	}
 
-	// Only add the assistant message if it has text content. Tool-call-only
-	// responses (empty AssistantContent) would render as an empty chat bubble.
-	if msg.AssistantContent != "" {
-		m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
-	}
+	// Always record the tool_calls message, even with no text: the results
+	// that follow must pair with it or the provider rejects the next request.
+	// The renderer hides the empty bubble.
+	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
 	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
 	m.toolBatchActive = true
 
@@ -3230,8 +3231,13 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 				// Pass config's ContextLimit as override if available
 				if m.config != nil {
 					override := m.config.ContextLimit
-					resolved, _ := config.ResolveContextLimit(m.config.BaseURL, model, override)
+					resolved, known := config.ResolveContextLimit(m.config.BaseURL, model, override)
 					m.contextTracker = config.NewContextTracker(configSession, model, resolved)
+					if !known {
+						if notice := config.UnknownContextNotice(model, resolved); notice != "" {
+							m.chat = m.chat.AddSystemMessage("⚠️ " + notice)
+						}
+					}
 				} else {
 					m.contextTracker = config.NewContextTracker(configSession, model)
 				}
