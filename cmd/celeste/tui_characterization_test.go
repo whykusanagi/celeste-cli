@@ -186,6 +186,7 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	// "tui-<pid>" (main.go's ExecuteSkill) and toolCallID "big" (this test's
 	// fakeprovider.ToolCall.ID) — rather than by parsing it out of content
 	// that no longer contains it.
+	// known bug: spec F3 deletes trimHook — flip these assertions then.
 	if !strings.Contains(content, "tool result truncated to ~65536 bytes for transport") {
 		t.Fatalf("tool result missing the wire-trim notice: %q", content)
 	}
@@ -265,6 +266,9 @@ func TestTUIInterruptWithQueuedSteer(t *testing.T) {
 		return len(srv.Requests()) == 1 && assistantHasToolCalls(m)
 	}, 10*time.Second)
 	d.Send(tui.SendMessageMsg{Content: "steer text"}, tea.KeyMsg{Type: tea.KeyEsc})
+	m = d.RunUntil(func(m tea.Model) bool {
+		return m.(tui.AppModel).DebugInterrupted()
+	}, 5*time.Second)
 
 	// Today's actual behavior (verified empirically, not assumed — see the
 	// comment below): (AppModel).interrupt (tui/turn_queue.go) cancels the

@@ -88,7 +88,7 @@ var volatile = regexp.MustCompile(`"(` + volatileKeys + `)"\s*:\s*("[^"]*"|[0-9.
 // status and index_rebuild/index_status goldens unmasked. This regex is
 // applied to the still-escaped raw string, so its replacement must also be
 // escaped JSON-string content.
-var volatileEscaped = regexp.MustCompile(`\\"(` + volatileKeys + `)\\"\s*:\s*(\\"[^"\\]*\\"|[0-9.]+)`)
+var volatileEscaped = regexp.MustCompile(`\\"(` + volatileKeys + `)\\"\s*:\s*(\\"(?:\\\\|[^"\\])*?\\"|[0-9.]+)`)
 
 // matchPercent masks celeste_code_search's "NN% match" score in its
 // human-readable text output. ADAPTED (2026-09-27): the score comes from
@@ -180,6 +180,29 @@ func TestNormalizeMasksDoubleEscapedWindowsPath(t *testing.T) {
 	}
 }
 
+func TestNormalizeMasksDoubleEscapedWindowsDBPath(t *testing.T) {
+	inner, err := json.Marshal(map[string]any{"db_path": `C:\Users\vssadmin\.celeste\index-abc123.db`, "commit": "abc123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": string(inner)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(normalize(raw, ""))
+	for _, bad := range []string{"Users", "vssadmin", "index-abc123", "abc123"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("normalize kept double-escaped db_path substring %q in nested content[].text:\n%s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "MASKED") {
+		t.Errorf("normalize dropped the db_path mask entirely:\n%s", got)
+	}
+}
+
 func golden(t *testing.T, name string, got []byte) {
 	t.Helper()
 	path := filepath.Join("testdata", "contract", name+".golden")
@@ -267,8 +290,23 @@ func TestServerChatStripsUnbackedAudioClaim(t *testing.T) {
 	llm := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "Audio saved: /tmp/x.mp3"})
 	cfg, ws := contractCfg(t, llm)
 	res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "say it", "mode": "chat", "workspace": ws}}})
+	var parsed struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(res[1], &parsed); err != nil || len(parsed.Content) == 0 {
+		t.Fatalf("chat returned error or invalid content result: %s", res[1])
+	}
+	if strings.TrimSpace(parsed.Content[0].Text) == "" {
+		t.Fatalf("chat returned empty content text: %s", res[1])
+	}
 	if strings.Contains(string(res[1]), "Audio saved:") {
 		t.Fatalf("unbacked audio claim was not stripped: %s", res[1])
+	}
+	const replacement = "I attempted to describe saved audio, but no audio file was actually generated this session (the TTS tool did not run). Please retry — no file was written."
+	if !strings.Contains(string(res[1]), replacement) {
+		t.Fatalf("unbacked audio claim replacement missing: %s", res[1])
 	}
 }
 
@@ -281,9 +319,13 @@ func TestServerChatIdenticalCallGuard(t *testing.T) {
 	turns = append(turns, fakeprovider.Turn{Text: "done"})
 	llm := fakeprovider.NewOpenAI(t, turns...)
 	cfg, ws := contractCfg(t, llm)
-	call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "loop", "mode": "chat", "workspace": ws}}})
-	if n := len(llm.Requests()); n > 5 {
-		t.Fatalf("server made %d requests; identical-call guard (3) should stop the loop well before 10", n)
+	res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "loop", "mode": "chat", "workspace": ws}}})
+	if n := len(llm.Requests()); n != 3 {
+		t.Fatalf("server made %d requests; identical-call guard should stop at exactly 3", n)
+	}
+	const stopText = "Stopped: the model made the identical tool call 3 times in a row (stuck loop)."
+	if !strings.Contains(string(res[1]), stopText) {
+		t.Fatalf("identical-call guard did not report tripping: %s", res[1])
 	}
 }
 
