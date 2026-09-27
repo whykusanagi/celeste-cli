@@ -4,7 +4,20 @@ import (
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
+
+// cleanupChatDeps releases what newChatApp opened, in runChatTUI's defer order.
+func cleanupChatDeps(t *testing.T, deps *chatDeps) {
+	t.Helper()
+	t.Cleanup(func() {
+		tui.CloseLogging()
+		if deps.indexer != nil {
+			deps.indexer.Close()
+		}
+		_ = deps.mcpManager.Stop()
+	})
+}
 
 func TestNewChatAppBuildsWithoutProgram(t *testing.T) {
 	home := t.TempDir()
@@ -15,6 +28,7 @@ func TestNewChatAppBuildsWithoutProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupChatDeps(t, deps)
 	if deps.registry == nil || deps.adapter == nil {
 		t.Fatal("newChatApp returned incomplete deps")
 	}
