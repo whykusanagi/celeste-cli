@@ -50,3 +50,27 @@ func TestOpenAIStatusAndExhaustion(t *testing.T) {
 		t.Fatal("want an error once the script is exhausted")
 	}
 }
+
+func TestAnthropicTextToolAndThinking(t *testing.T) {
+	srv := NewAnthropic(t,
+		Turn{Thinking: &Thinking{Text: "plan", Signature: "sig-1"}, ToolCalls: []ToolCall{{ID: "toolu_1", Name: "read_file", Args: `{"path":"a.go"}`}}},
+		Turn{Text: "done"},
+	)
+	c := client(srv.BaseURL(), llm.BackendTypeAnthropic)
+	msgs := []tui.ChatMessage{{Role: "user", Content: "read"}}
+
+	res, err := c.SendMessageSync(context.Background(), msgs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "toolu_1" {
+		t.Fatalf("turn 1 = %+v, want one tool call (thinking is dropped today, #192)", res)
+	}
+	res, err = c.SendMessageSync(context.Background(), msgs, nil)
+	if err != nil || res.Content != "done" {
+		t.Fatalf("turn 2 = %+v, %v", res, err)
+	}
+	if srv.Requests()[0].Path != "/v1/messages" {
+		t.Fatalf("path = %q", srv.Requests()[0].Path)
+	}
+}
