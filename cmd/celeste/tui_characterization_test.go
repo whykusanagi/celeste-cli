@@ -410,13 +410,11 @@ func TestTUIResumeCarriesToolHistory(t *testing.T) {
 	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read a.txt"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "it says alpha" && turnIdle(m) }, 30*time.Second)
 
-	// AppModel.persistSession (cmd/celeste/tui/app.go) saves "asynchronously
-	// (ignore errors for now)" in a bare `go func(){ ... Save(...) }()` with
-	// no tea.Msg/Cmd signaling completion, so the write can still be in
-	// flight when drive() returns on the assistant reply. Polling here
-	// (rather than a single List() call right after drive returns) is a
-	// characterization fix, not a production change: an unguarded single
-	// check flaked in ~1/10 runs of this test (session file not yet on disk).
+	// AppModel.persistSession (cmd/celeste/tui/app.go) saves synchronously
+	// today, but the save is still not signaled to this test driver through a
+	// tea.Msg/Cmd. It is also called from many Update branches, not necessarily
+	// the exact branch that makes drive()'s turnIdle()/lastAssistant() condition
+	// true, so polling a few times remains a defensive characterization habit.
 	var sessions []config.Session
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -426,7 +424,7 @@ func TestTUIResumeCarriesToolHistory(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no complete saved session after waiting for the async persistSession save: %v", err)
+			t.Fatalf("no complete saved session after waiting for the persistSession save: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

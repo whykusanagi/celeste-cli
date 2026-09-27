@@ -69,9 +69,8 @@ func call(t *testing.T, cfg Config, reqs ...rpc) map[int64]json.RawMessage {
 }
 
 // volatileKeys lists field names whose values change per run, per machine, or
-// per release and must be masked so goldens stay stable. db_path was added
-// after -update surfaced a real temp-dir path (ADAPTED, 2026-09-27): the
-// celeste_index tools cache the SQLite index under a per-HOME,
+// per release and must be masked so goldens stay stable. db_path is included
+// because the celeste_index tools cache the SQLite index under a per-HOME,
 // per-workspace-hash path, which is neither a stable value nor caught by the
 // workspace-path masking below (it embeds a hash of the workspace, not the
 // workspace string itself).
@@ -79,12 +78,12 @@ const volatileKeys = `uptime[a-z_]*|commit|version|started_at|elapsed[a-z_]*|tim
 
 var volatile = regexp.MustCompile(`"(` + volatileKeys + `)"\s*:\s*("[^"]*"|[0-9.]+)`)
 
-// volatileEscaped matches the same fields one level deep inside a JSON
-// string. ADAPTED (2026-09-27): several MCP tool results (celeste_status,
-// celeste_index) wrap their JSON payload as a content[].text string, so in
-// the raw response bytes its quotes are backslash-escaped at the point this
-// function runs (before the outer json.Unmarshal below unescapes them). The
-// plain `volatile` regex above never matches that escaped form, so
+// volatileEscaped matches the same fields one level deep inside a JSON string.
+// Several MCP tool results (celeste_status, celeste_index) wrap their JSON
+// payload as a content[].text string, so in the raw response bytes its quotes
+// are backslash-escaped at the point this function runs (before the outer
+// json.Unmarshal below unescapes them). The plain `volatile` regex above
+// never matches that escaped form, so
 // "commit"/"uptime"/"version"/"elapsed"/"db_path" were slipping into the
 // status and index_rebuild/index_status goldens unmasked. This regex is
 // applied to the still-escaped raw string, so its replacement must also be
@@ -92,12 +91,12 @@ var volatile = regexp.MustCompile(`"(` + volatileKeys + `)"\s*:\s*("[^"]*"|[0-9.
 var volatileEscaped = regexp.MustCompile(`\\"(` + volatileKeys + `)\\"\s*:\s*(\\"(?:\\\\|[^"\\])*?\\"|[0-9.]+)`)
 
 // matchPercent masks celeste_code_search's "NN% match" score in its
-// human-readable text output. ADAPTED (2026-09-27): the score comes from
-// MinHash similarity (codegraph/minhash.go NewMinHasher), which draws fresh
-// crypto/rand seeds on every index build -- confirmed genuinely flaky by
-// running TestContractCodeGraphTools 5x head-to-head: 43%, 49%, 44%, 47%,
-// 51% for the identical "helper" query against identical source. Not a JSON
-// key, so it isn't caught by the volatile/volatileEscaped regexes above.
+// human-readable text output. The score comes from MinHash similarity
+// (codegraph/minhash.go NewMinHasher), which draws fresh crypto/rand seeds on
+// every index build -- confirmed genuinely flaky by running
+// TestContractCodeGraphTools 5x head-to-head: 43%, 49%, 44%, 47%, 51% for the
+// identical "helper" query against identical source. Not a JSON key, so it
+// isn't caught by the volatile/volatileEscaped regexes above.
 var matchPercent = regexp.MustCompile(`\d+% match`)
 
 // normalize masks fields that change per run/machine so goldens are stable
@@ -110,9 +109,9 @@ func normalize(b []byte, ws string) []byte {
 		esc, _ := json.Marshal(ws)
 		escStr := strings.Trim(string(esc), `"`)
 		s = strings.ReplaceAll(s, escStr, "<WORKSPACE>")
-		// FIX (2026-09-27, review round 1): status/index_rebuild/index_status
-		// put "workspace" inside content[].text, so their payload is a JSON
-		// object encoded AGAIN as a JSON string (MCP's text-content wrapping).
+		// status/index_rebuild/index_status put "workspace" inside
+		// content[].text, so their payload is a JSON object encoded AGAIN as a
+		// JSON string (MCP's text-content wrapping).
 		// On Windows, ws contains backslashes, which get escaped once when the
 		// inner JSON is built (\ -> \\) and then escaped AGAIN when that text
 		// is embedded as the outer "text" string value (\\ -> \\\\), so the
@@ -147,13 +146,13 @@ func TestNormalizeMasksVolatileFields(t *testing.T) {
 	}
 }
 
-// TestNormalizeMasksDoubleEscapedWindowsPath is a regression test for review
-// round 1: MCP content blocks wrap a tool's JSON payload as a content[].text
-// STRING, so on Windows the workspace path (and any volatile field) inside it
-// is escaped twice over in the raw response bytes (once building the inner
-// JSON, once embedding that JSON as the outer "text" string). Built with
-// encoding/json rather than hand-typed backslash literals so the escaping is
-// exactly what the real server produces, not an approximation of it.
+// TestNormalizeMasksDoubleEscapedWindowsPath verifies that MCP content blocks
+// wrapping a tool's JSON payload as a content[].text STRING still get masked.
+// On Windows the workspace path (and any volatile field) inside it is escaped
+// twice over in the raw response bytes (once building the inner JSON, once
+// embedding that JSON as the outer "text" string). Built with encoding/json
+// rather than hand-typed backslash literals so the escaping is exactly what
+// the real server produces, not an approximation of it.
 func TestNormalizeMasksDoubleEscapedWindowsPath(t *testing.T) {
 	ws := `C:\Users\vssadmin\AppData\Local\Temp\TestContractStatusTakesNoArguments\001`
 	inner, err := json.Marshal(map[string]any{"workspace": ws, "commit": "abc123"})
@@ -225,9 +224,9 @@ func golden(t *testing.T, name string, got []byte) {
 
 func contractCfg(t *testing.T, srv *fakeprovider.Server) (Config, string) {
 	t.Helper()
-	// ADAPTED (2026-09-27, ruling: hermetic HOME): one temp dir for both HOME
-	// and USERPROFILE, so the test stays hermetic on Windows too, where
-	// os.UserHomeDir() reads USERPROFILE rather than HOME.
+	// Use one temp dir for both HOME and USERPROFILE, so the test stays
+	// hermetic on Windows too, where os.UserHomeDir() reads USERPROFILE rather
+	// than HOME.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -364,19 +363,17 @@ func TestContractContentTool(t *testing.T) {
 // ARGUMENTS differ each time -- catching a stuck loop the args-based
 // identical-call guard (which trips on 3 byte-identical *calls*) would miss.
 //
-// FIX (2026-09-27, review round 1): the original version of this test
-// alternated "main.go"/"./main.go", but read_file's result JSON echoes the
-// literal "path" argument back verbatim (tools/builtin/read_file.go,
+// This test uses {"path":"main.go"} vs {"path":"main.go","start_line":1}
+// because the arguments differ but the result does not. read_file's result
+// JSON echoes the literal "path" argument back verbatim (tools/builtin/read_file.go,
 // Execute(): result["path"] = path, before resolvePath normalizes it), so
-// those two args produced two DISTINCT results and never drove the guard at
-// all (see TestServerChatProgressGuardDistinctResultsNeverTrip below, kept as
-// that baseline). To exercise the guard end to end we need args that differ
-// but a result that doesn't: {"path":"main.go"} vs
-// {"path":"main.go","start_line":1} -- different argument strings (so the
-// identical-call guard's args-based signature never repeats), but
-// start_line's default is already 1, so read_file's result (including the
-// echoed "path" and "start_line" fields) is byte-identical either way.
-// Measured: exactly 6 requests, stopped by the progress guard's own message.
+// "main.go"/"./main.go" would produce two DISTINCT results and never drive the
+// guard at all (see TestServerChatProgressGuardDistinctResultsNeverTrip below,
+// kept as that baseline). These argument strings differ, so the identical-call
+// guard's args-based signature never repeats, but start_line's default is
+// already 1, so read_file's result (including the echoed "path" and
+// "start_line" fields) is byte-identical either way. Measured: exactly 6
+// requests, stopped by the progress guard's own message.
 func TestServerChatProgressGuard(t *testing.T) {
 	var turns []fakeprovider.Turn
 	for i := 0; i < 12; i++ {

@@ -37,8 +37,10 @@ type chatDeps struct {
 }
 
 // newChatApp builds the chat TUI model exactly as runChatTUI did, up to (not
-// including) tea.NewProgram. Errors that runChatTUI reported with os.Exit
-// are returned instead.
+// including) tea.NewProgram. It does not return a non-nil error today; the
+// error return is kept for caller-side/future setup failures. The caller owns
+// closing the returned deps' indexer (if any), MCP manager, and logging; see
+// cleanupChatDeps in chat_app_test.go for the test pattern.
 func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDeps, error) {
 	// Initialize file checkpointing for stale detection and undo support
 	fileTracker := checkpoints.NewFileTracker()

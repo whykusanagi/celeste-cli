@@ -106,7 +106,8 @@ func TestAgentProviderErrorMidLoop(t *testing.T) {
 	// Today's deterministic behaviour: one successful tool-call turn, then the
 	// second turn hits the 503 and the run fails outright (no further retries
 	// inside RunGoal beyond whatever the llm.Client itself already did per
-	// request) — 1 success + 3 scripted 503s = 4 requests total, turn 2, status failed.
+	// request) — 1 success + 3 attempts (1 initial + 2 retries, 1s+2s backoff)
+	// = 4 requests total, turn 2, status failed.
 	if err == nil {
 		t.Fatal("want a non-nil error from the provider outage")
 	}
@@ -120,6 +121,6 @@ func TestAgentProviderErrorMidLoop(t *testing.T) {
 		t.Fatalf("turn = %d, want 2", st.Turn)
 	}
 	if got := len(srv.Requests()); got != 4 {
-		t.Fatalf("requests = %d, want 4 (1 success + 3 retries before giving up)", got)
+		t.Fatalf("requests = %d, want 4 (1 success + 3 attempts: 1 initial + 2 retries before giving up)", got)
 	}
 }
