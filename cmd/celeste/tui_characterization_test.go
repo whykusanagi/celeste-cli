@@ -128,6 +128,27 @@ func TestTUIPermissionAskDeny(t *testing.T) {
 	}
 }
 
+func TestTUIPermissionAskAllow(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "w", Name: "write_file", Args: `{"path":"x.txt","content":"yes"}`}}},
+		fakeprovider.Turn{Text: "The write succeeded."},
+	)
+	m, deps, ws := chatApp(t, srv)
+	var asked atomic.Int32
+	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		asked.Add(1)
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write x.txt"}},
+		func(m tea.Model) bool { return strings.Contains(lastAssistant(m), "succeeded") && turnIdle(m) }, 30*time.Second)
+	if asked.Load() != 1 {
+		t.Fatalf("write_file asked for permission %d times, want 1", asked.Load())
+	}
+	if b, err := os.ReadFile(filepath.Join(ws, "x.txt")); err != nil || string(b) != "yes" {
+		t.Fatalf("allowed write_file did not write expected content: %v %q", err, b)
+	}
+}
+
 func TestTUISpillsHugeToolResult(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t,
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "big", Name: "big_output", Args: `{}`}}},
@@ -323,6 +344,35 @@ func TestTUICompactOnShortHistoryDeclines(t *testing.T) {
 		}
 		return false
 	}, 30*time.Second)
+}
+
+// Spec §4 F1: use a large context-limit override so manual /compact's fixed
+// 20k-token keep boundary is isolated from the separate window-relative
+// auto-compaction path in the normal send flow.
+func TestTUICompactSummarizesLongHistory(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "ack1"},
+		fakeprovider.Turn{Text: "ack2"},
+		fakeprovider.Turn{Text: "## Goal\nfiller\n## Next step\nnone"},
+	)
+	m, _, _ := chatAppWithContextLimit(t, srv, 1_000_000)
+
+	big := strings.Repeat("filler ", 15000)
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: big}},
+		func(m tea.Model) bool { return lastAssistant(m) == "ack1" && turnIdle(m) }, 30*time.Second)
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "continue"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "ack2" && turnIdle(m) }, 30*time.Second)
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/compact"}}, func(m tea.Model) bool {
+		for _, x := range chatMessages(m) {
+			if x.Role == "system" && strings.Contains(x.Content, "🗜 Context compacted:") {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second)
+	if n := len(srv.Requests()); n != 3 {
+		t.Fatalf("requests after /compact = %d, want 3 (the two chat turns plus one small-model summarize call)", n)
+	}
 }
 
 // /handoff asks the (small) model for notes and starts a new session.

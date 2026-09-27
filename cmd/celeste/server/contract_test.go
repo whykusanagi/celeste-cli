@@ -15,6 +15,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 )
 
 var update = flag.Bool("update", false, "rewrite contract goldens")
@@ -282,6 +283,27 @@ func TestContractChatModeEditsWorkspace(t *testing.T) {
 		t.Fatalf("chat mode did not edit the workspace: %v %q\nresult: %s", err, b, res[1])
 	}
 	golden(t, "celeste_chat", normalize(res[1], ws))
+}
+
+func TestContractChatModeRunsPatchFileAndSaveMemory(t *testing.T) {
+	llm := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "w", Name: "write_file", Args: `{"path":"NOTES.md","content":"hello"}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "patch_file", Args: `{"path":"NOTES.md","old_string":"hello","new_string":"hello world","replace_all":false}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "s", Name: "save_memory", Args: `{"name":"f1-coverage","type":"project","content":"celeste-docs and celeste-context depend on patch_file and save_memory running inside MCP chat mode"}`}}},
+		fakeprovider.Turn{Text: "Done"},
+	)
+	cfg, ws := contractCfg(t, llm)
+	res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "write, patch, and remember NOTES.md", "mode": "chat", "workspace": ws}}})
+	if b, err := os.ReadFile(filepath.Join(ws, "NOTES.md")); err != nil || string(b) != "hello world" {
+		t.Fatalf("chat mode did not patch write_file output: %v %q\nresult: %s", err, b, res[1])
+	}
+	mem, err := memories.NewStore(ws).Load("f1-coverage")
+	if err != nil {
+		t.Fatalf("saved memory was not loadable: %v\nresult: %s", err, res[1])
+	}
+	if !strings.Contains(mem.Content, "patch_file and save_memory") {
+		t.Fatalf("saved memory content = %q, want substring %q", mem.Content, "patch_file and save_memory")
+	}
 }
 
 // Baseline: MCP chat strips an unbacked "Audio saved:" claim (only here today;
