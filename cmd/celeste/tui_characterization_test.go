@@ -141,7 +141,7 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 		ReadOnly:        true,
 		ConcurrencySafe: true,
 	}})
-	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read big.txt"}},
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read big.txt"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "ok" && turnIdle(m) }, 30*time.Second)
 	var toolContents []string
 	for _, x := range srv.Requests()[1].Body["messages"].([]any) {
@@ -188,6 +188,47 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	// that no longer contains it.
 	if !strings.Contains(content, "tool result truncated to ~65536 bytes for transport") {
 		t.Fatalf("tool result missing the wire-trim notice: %q", content)
+	}
+
+	// The check above alone doesn't prove CapToolResult did any capping: if
+	// CapToolResult returned the raw 204800-byte result unchanged (bug: it
+	// still spills the file but skips building the preview), trimToolResults
+	// would trim THAT down to 65536 bytes just the same, and the assertion
+	// above would still pass — it only pins the outer (transport) trim, not
+	// the inner (history) cap this test is meant to characterize. Pin what
+	// trimToolResults says it received: trimToolResults' notice always
+	// includes "original was %d bytes" for len(s) where s is whatever it was
+	// handed (cmd/celeste/llm/trim.go, truncateWithNotice). If CapToolResult
+	// is doing its job, that's its own 131072-byte capped preview, not the
+	// raw 204800-byte tool output.
+	if !strings.Contains(content, "original was 131072 bytes") {
+		t.Fatalf("transport trim's reported input size != CapToolResult's 131072-byte cap; got: %q", content)
+	}
+
+	// Independently (and more directly) verify CapToolResult's own cap by
+	// reading the chat history's tool message via DebugMessages — that's
+	// what (AppModel) stored from ExecuteSkill's resultStr/capped value
+	// (cmd/celeste/main.go), upstream of and unaffected by trimToolResults'
+	// wire-only, copy-on-write pass (cmd/celeste/llm/trim.go doc comment:
+	// "the caller's slice is never mutated"). It must be the capped preview
+	// itself: exactly CapToolResult's maxBytes (131072) and containing its
+	// spill notice, not the raw 204800-byte result.
+	var historyContent string
+	haveHistoryToolMsg := false
+	for _, x := range chatMessages(m) {
+		if x.Role == "tool" && x.ToolCallID == "big" {
+			historyContent = x.Content
+			haveHistoryToolMsg = true
+		}
+	}
+	if !haveHistoryToolMsg {
+		t.Fatal(`no tool-role message with ToolCallID "big" in chat history`)
+	}
+	if !strings.Contains(historyContent, "full output saved to:") {
+		t.Fatalf("chat history tool result missing CapToolResult's own spill notice (len=%d): not capped", len(historyContent))
+	}
+	if len(historyContent) != 131072 {
+		t.Fatalf("chat history tool result len = %d, want CapToolResult's capped preview (131072 bytes)", len(historyContent))
 	}
 
 	spillPath := filepath.Join(os.Getenv("HOME"), ".celeste", "tool-results",
