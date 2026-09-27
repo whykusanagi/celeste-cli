@@ -3422,10 +3422,9 @@ func (m *AppModel) persistSession() {
 	// which is how sessions used to silently stop saving history.
 	m.currentSession.SetMessagesRaw(SessionMessagesFromChat(m.chat.GetMessages()))
 
-	// Save asynchronously (ignore errors for now)
-	go func() {
-		_ = m.sessionManager.Save(m.currentSession)
-	}()
+	// Save synchronously: Save mutates and marshals the session, and Update
+	// keeps mutating it, so a goroutine here races.
+	_ = m.sessionManager.Save(m.currentSession)
 }
 
 // handleSessionAction handles session management actions.
