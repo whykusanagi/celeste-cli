@@ -103,7 +103,23 @@ func TestAgentProviderErrorMidLoop(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatal("run hung instead of ending on a provider error")
 	}
-	if err == nil && (st == nil || st.Status == "completed") {
-		t.Fatalf("want a failed run, got status %v err %v", st, err)
+	// Today's deterministic behaviour: one successful tool-call turn, then the
+	// second turn hits the 503 and the run fails outright (no further retries
+	// inside RunGoal beyond whatever the llm.Client itself already did per
+	// request) — 1 success + 3 scripted 503s = 4 requests total, turn 2, status failed.
+	if err == nil {
+		t.Fatal("want a non-nil error from the provider outage")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Fatalf("err = %v, want it to mention the 503 status", err)
+	}
+	if st == nil || st.Status != "failed" {
+		t.Fatalf("status = %+v, want failed", st)
+	}
+	if st.Turn != 2 {
+		t.Fatalf("turn = %d, want 2", st.Turn)
+	}
+	if got := len(srv.Requests()); got != 4 {
+		t.Fatalf("requests = %d, want 4 (1 success + 3 retries before giving up)", got)
 	}
 }
