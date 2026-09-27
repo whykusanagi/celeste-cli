@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"flag"
 	"os"
@@ -19,6 +20,9 @@ import (
 )
 
 var update = flag.Bool("update", false, "rewrite contract goldens")
+
+//go:embed testdata/contract/*.golden
+var goldenFS embed.FS
 
 type rpc struct {
 	id     int64
@@ -213,7 +217,7 @@ func golden(t *testing.T, name string, got []byte) {
 		}
 		return
 	}
-	want, err := os.ReadFile(path)
+	want, err := goldenFS.ReadFile(filepath.ToSlash(path))
 	if err != nil {
 		t.Fatalf("missing golden %s (run with -update once, review, commit): %v", path, err)
 	}

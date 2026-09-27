@@ -85,7 +85,7 @@ func TestTUITextFreeParallelCalls(t *testing.T) {
 	m, _, ws := chatApp(t, srv)
 	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("alpha"), 0o644)
 	os.WriteFile(filepath.Join(ws, "b.txt"), []byte("beta"), 0o644)
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read a.txt and b.txt"}},
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read a.txt and b.txt"}},
 		func(m tea.Model) bool { return strings.Contains(lastAssistant(m), "alpha and beta") && turnIdle(m) }, 30*time.Second)
 	body := srv.Requests()[1].Body["messages"].([]any)
 	var roles []string
@@ -103,7 +103,7 @@ func TestTUIShortReplyEndsTurn(t *testing.T) {
 	m, _, _ := chatApp(t, srv)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "reply READ"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "READ" && turnIdle(m) }, 30*time.Second)
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "again"}},
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "again"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "second" && turnIdle(m) }, 30*time.Second)
 }
 
@@ -118,7 +118,7 @@ func TestTUIPermissionAskDeny(t *testing.T) {
 		asked.Add(1)
 		return tools.PermissionResponse{Decision: "deny"}
 	})
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write x.txt"}},
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write x.txt"}},
 		func(m tea.Model) bool { return strings.Contains(lastAssistant(m), "denied") && turnIdle(m) }, 30*time.Second)
 	if asked.Load() == 0 {
 		t.Fatal("write_file did not ask for permission")
@@ -139,7 +139,7 @@ func TestTUIPermissionAskAllow(t *testing.T) {
 		asked.Add(1)
 		return tools.PermissionResponse{Decision: "allow_once"}
 	})
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write x.txt"}},
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write x.txt"}},
 		func(m tea.Model) bool { return strings.Contains(lastAssistant(m), "succeeded") && turnIdle(m) }, 30*time.Second)
 	if asked.Load() != 1 {
 		t.Fatalf("write_file asked for permission %d times, want 1", asked.Load())
@@ -283,11 +283,11 @@ func TestTUIInterruptWithQueuedSteer(t *testing.T) {
 	})
 	d := newTUIDriver(t, m)
 	d.Send(tui.SendMessageMsg{Content: "run sleep"})
-	m = d.RunUntil(func(m tea.Model) bool {
+	d.RunUntil(func(m tea.Model) bool {
 		return len(srv.Requests()) == 1 && assistantHasToolCalls(m)
 	}, 10*time.Second)
 	d.Send(tui.SendMessageMsg{Content: "steer text"}, tea.KeyMsg{Type: tea.KeyEsc})
-	m = d.RunUntil(func(m tea.Model) bool {
+	d.RunUntil(func(m tea.Model) bool {
 		return m.(tui.AppModel).DebugInterrupted()
 	}, 5*time.Second)
 
@@ -316,7 +316,7 @@ func TestTUIInterruptWithQueuedSteer(t *testing.T) {
 	// before the dispatched cmd had run, abandoning it — the same class of
 	// bug this driver rewrite exists to fix. Waiting for the new turn's
 	// reply instead rides through that transient correctly.
-	m = d.RunUntil(func(m tea.Model) bool {
+	d.RunUntil(func(m tea.Model) bool {
 		am := m.(tui.AppModel)
 		return lastAssistant(am) == "after" && !am.DebugTurnActive() && am.DebugQueued() == 0
 	}, 30*time.Second)
@@ -336,7 +336,7 @@ func TestTUICompactOnShortHistoryDeclines(t *testing.T) {
 	m, _, _ := chatApp(t, srv)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "hello"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "hello back" && turnIdle(m) }, 30*time.Second)
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/compact"}}, func(m tea.Model) bool {
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/compact"}}, func(m tea.Model) bool {
 		for _, x := range chatMessages(m) {
 			if x.Role == "system" && strings.Contains(x.Content, "Context summary not applied") {
 				return true
@@ -362,7 +362,7 @@ func TestTUICompactSummarizesLongHistory(t *testing.T) {
 		func(m tea.Model) bool { return lastAssistant(m) == "ack1" && turnIdle(m) }, 30*time.Second)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "continue"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "ack2" && turnIdle(m) }, 30*time.Second)
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/compact"}}, func(m tea.Model) bool {
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/compact"}}, func(m tea.Model) bool {
 		for _, x := range chatMessages(m) {
 			if x.Role == "system" && strings.Contains(x.Content, "🗜 Context compacted:") {
 				return true
@@ -384,7 +384,7 @@ func TestTUIHandoffStartsNewSession(t *testing.T) {
 	m, _, _ := chatApp(t, srv)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "hello"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "hello back" && turnIdle(m) }, 30*time.Second)
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/handoff"}}, func(m tea.Model) bool {
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/handoff"}}, func(m tea.Model) bool {
 		for _, x := range chatMessages(m) {
 			if strings.Contains(x.Content, "New session started") {
 				return true
