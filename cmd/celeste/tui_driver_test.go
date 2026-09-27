@@ -13,21 +13,46 @@ import (
 // It replaces tea.Program for tests: no terminal, deterministic order.
 func drive(t *testing.T, m tea.Model, msgs []tea.Msg, until func(tea.Model) bool, timeout time.Duration) tea.Model {
 	t.Helper()
-	queue := append([]tea.Msg(nil), msgs...)
+	d := newTUIDriver(t, m)
+	d.Send(msgs...)
+	return d.RunUntil(until, timeout)
+}
+
+type tuiTestDriver struct {
+	t       *testing.T
+	m       tea.Model
+	queue   []tea.Msg
+	results chan tea.Msg
+	pending int
+}
+
+func newTUIDriver(t *testing.T, m tea.Model) *tuiTestDriver {
+	t.Helper()
+	return &tuiTestDriver{
+		t:       t,
+		m:       m,
+		results: make(chan tea.Msg, 256),
+	}
+}
+
+func (d *tuiTestDriver) Send(msgs ...tea.Msg) {
+	d.queue = append(d.queue, msgs...)
+}
+
+func (d *tuiTestDriver) RunUntil(until func(tea.Model) bool, timeout time.Duration) tea.Model {
+	d.t.Helper()
 	deadline := time.Now().Add(timeout)
-	results := make(chan tea.Msg, 256)
-	pending := 0
 	run := func(cmd tea.Cmd) {
 		if cmd == nil {
 			return
 		}
-		pending++
-		go func() { results <- cmd() }()
+		d.pending++
+		go func() { d.results <- cmd() }()
 	}
 	for time.Now().Before(deadline) {
-		for len(queue) > 0 {
-			msg := queue[0]
-			queue = queue[1:]
+		for len(d.queue) > 0 {
+			msg := d.queue[0]
+			d.queue = d.queue[1:]
 			if batch, ok := msg.(tea.BatchMsg); ok {
 				for _, c := range batch {
 					run(c)
@@ -35,29 +60,33 @@ func drive(t *testing.T, m tea.Model, msgs []tea.Msg, until func(tea.Model) bool
 				continue
 			}
 			var cmd tea.Cmd
-			m, cmd = m.Update(msg)
+			d.m, cmd = d.m.Update(msg)
 			run(cmd)
-			if until(m) {
-				return m
+			if until(d.m) {
+				return d.m
 			}
 		}
-		if pending == 0 {
-			if until(m) {
-				return m
+		if d.pending == 0 {
+			if until(d.m) {
+				return d.m
 			}
-			t.Fatalf("drive: no pending work and condition not met")
+			d.t.Fatalf("drive: no pending work and condition not met")
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
 		}
 		select {
-		case msg := <-results:
-			pending--
+		case msg := <-d.results:
+			d.pending--
 			if msg != nil && !isTestDriverTick(msg) {
-				queue = append(queue, msg)
+				d.queue = append(d.queue, msg)
 			}
-		case <-time.After(time.Until(deadline)):
+		case <-time.After(remaining):
 		}
 	}
-	t.Fatalf("drive: condition not met within %v", timeout)
-	return m
+	d.t.Fatalf("drive: condition not met within %v", timeout)
+	return d.m
 }
 
 // isTestDriverTick reports messages the driver must not re-queue.

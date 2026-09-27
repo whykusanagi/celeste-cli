@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,16 +16,35 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 func chatApp(t *testing.T, srv *fakeprovider.Server) (tea.Model, *chatDeps, string) {
 	t.Helper()
+	return chatAppWithContextLimit(t, srv, 0)
+}
+
+// chatAppWithContextLimit is chatApp with an explicit config.ContextLimit
+// override. Needed by TestTUISpillsHugeToolResult: "fake-model" is unknown,
+// so config.ResolveContextLimit (cmd/celeste/config/tokens.go) guesses an
+// 8.2K-token window, and (AppModel).compactContext (cmd/celeste/tui/compaction.go,
+// via cmd/celeste/compact/compact.go) then elides ANY tool result that large
+// relative to that tiny budget — replacing it with a
+// "[... result elided to save context ...]" placeholder before the request
+// this test inspects is even built. That happens whether or not
+// ctxmgr.CapToolResult (cmd/celeste/context/limits.go) already capped the
+// same result to a preview + spill notice; the elision pass runs afterward
+// in (AppModel).buildToolFollowUpCmds and doesn't know the content was
+// already a capped preview. A large override here isolates the CapToolResult
+// spill mechanism this test targets from that separate pruning feature.
+func chatAppWithContextLimit(t *testing.T, srv *fakeprovider.Server, contextLimit int) (tea.Model, *chatDeps, string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	ws := t.TempDir()
-	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
+	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10, ContextLimit: contextLimit}
 	app, deps, err := newChatApp(cfg, ws, home)
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +68,12 @@ func lastAssistant(m tea.Model) string {
 }
 
 func turnIdle(m tea.Model) bool { return !m.(tui.AppModel).DebugTurnActive() }
+
+type bigOutputTool struct{ builtin.BaseTool }
+
+func (bigOutputTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
+	return tools.ToolResult{Content: strings.Repeat("x", 200*1024)}, nil
+}
 
 // #203: a text-free parallel tool-call response must record the assistant
 // tool_calls message so the follow-up request is valid.
@@ -84,14 +113,14 @@ func TestTUIPermissionAskDeny(t *testing.T) {
 		fakeprovider.Turn{Text: "The write was denied."},
 	)
 	m, deps, ws := chatApp(t, srv)
-	asked := 0
+	var asked atomic.Int32
 	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
-		asked++
+		asked.Add(1)
 		return tools.PermissionResponse{Decision: "deny"}
 	})
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write x.txt"}},
 		func(m tea.Model) bool { return strings.Contains(lastAssistant(m), "denied") && turnIdle(m) }, 30*time.Second)
-	if asked == 0 {
+	if asked.Load() == 0 {
 		t.Fatal("write_file did not ask for permission")
 	}
 	if _, err := os.Stat(filepath.Join(ws, "x.txt")); err == nil {
@@ -101,20 +130,77 @@ func TestTUIPermissionAskDeny(t *testing.T) {
 
 func TestTUISpillsHugeToolResult(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t,
-		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "big", Name: "read_file", Args: `{"path":"big.txt"}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "big", Name: "big_output", Args: `{}`}}},
 		fakeprovider.Turn{Text: "ok"},
 	)
-	m, _, ws := chatApp(t, srv)
-	os.WriteFile(filepath.Join(ws, "big.txt"), []byte(strings.Repeat("x", 200*1024)), 0o644)
+	m, deps, _ := chatAppWithContextLimit(t, srv, 1_000_000)
+	deps.registry.Register(&bigOutputTool{BaseTool: builtin.BaseTool{
+		ToolName:        "big_output",
+		ToolDescription: "test: returns an oversized result",
+		ToolParameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+		ReadOnly:        true,
+		ConcurrencySafe: true,
+	}})
 	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read big.txt"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "ok" && turnIdle(m) }, 30*time.Second)
+	var toolContents []string
 	for _, x := range srv.Requests()[1].Body["messages"].([]any) {
 		mm := x.(map[string]any)
 		if mm["role"] == "tool" {
-			if c, _ := mm["content"].(string); len(c) >= 128*1024 {
-				t.Fatalf("tool result sent uncapped (%d bytes)", len(c))
-			}
+			c, _ := mm["content"].(string)
+			toolContents = append(toolContents, c)
 		}
+	}
+	if len(toolContents) != 1 {
+		t.Fatalf("tool messages = %d, want 1", len(toolContents))
+	}
+	content := toolContents[0]
+	if len(content) >= 128*1024 {
+		t.Fatalf("tool result sent uncapped (%d bytes)", len(content))
+	}
+
+	// Today's actual pipeline has TWO independent, stacked truncation layers,
+	// and the wire content only shows the outer one:
+	//
+	//  1. ctxmgr.CapToolResult (cmd/celeste/context/limits.go, invoked from
+	//     ExecuteSkill in cmd/celeste/main.go right after the tool runs)
+	//     spills the full 204800-byte result to disk and returns a
+	//     131072-byte preview: [head]["...full output saved to: <path>..."][tail].
+	//     This is the layer finding 2 originally targeted.
+	//  2. (*llm.Client).trimHook / trimToolResults (cmd/celeste/llm/trim.go)
+	//     runs later, once per outbound send, and re-trims ANY tool message
+	//     over maxToolMsgBytes (64 KiB) down to that budget on a line
+	//     boundary, appending its OWN "truncated ... for transport" notice.
+	//     Layer 1's preview is 131072 bytes, i.e. already over the 64 KiB
+	//     wire budget, so layer 2 fires on it too — and because layer 1's
+	//     "full output saved to:" notice sits near the very end of its
+	//     131072-byte preview (just before the 512-byte tail), layer 2's
+	//     64 KiB head cut lands well before it. The text this test's first
+	//     draft looked for never reaches the model; only layer 2's generic
+	//     notice does. Verified empirically: content here is exactly 65536
+	//     bytes and contains layer 2's notice, not layer 1's.
+	//
+	// So: assert layer 2's notice (what the model actually sees) and verify
+	// layer 1's disk side effect (the full, uncapped result spilled to disk)
+	// directly via its documented, deterministic path — sessionID
+	// "tui-<pid>" (main.go's ExecuteSkill) and toolCallID "big" (this test's
+	// fakeprovider.ToolCall.ID) — rather than by parsing it out of content
+	// that no longer contains it.
+	if !strings.Contains(content, "tool result truncated to ~65536 bytes for transport") {
+		t.Fatalf("tool result missing the wire-trim notice: %q", content)
+	}
+
+	spillPath := filepath.Join(os.Getenv("HOME"), ".celeste", "tool-results",
+		fmt.Sprintf("tui-%d", os.Getpid()), "big.txt")
+	spilled, err := os.ReadFile(spillPath)
+	if err != nil {
+		t.Fatalf("read spill file %q: %v", spillPath, err)
+	}
+	if got, want := len(spilled), 200*1024; got != want {
+		t.Fatalf("spill file size = %d, want %d", got, want)
+	}
+	if string(spilled) != strings.Repeat("x", 200*1024) {
+		t.Fatal("spill file does not contain the full tool output")
 	}
 }
 
@@ -132,12 +218,49 @@ func TestTUIInterruptWithQueuedSteer(t *testing.T) {
 	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
 		return tools.PermissionResponse{Decision: "allow_once"}
 	})
-	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "run sleep"}},
-		func(m tea.Model) bool { return m.(tui.AppModel).DebugTurnActive() }, 10*time.Second)
-	m, _ = m.Update(tui.SendMessageMsg{Content: "steer text"})
-	m = drive(t, m, []tea.Msg{tea.KeyMsg{Type: tea.KeyEsc}}, turnIdle, 30*time.Second)
-	if m.(tui.AppModel).DebugQueued() > 0 {
-		t.Skip("baseline: steer stranded after Esc — fixed by F2 Loop.Steer")
+	d := newTUIDriver(t, m)
+	d.Send(tui.SendMessageMsg{Content: "run sleep"})
+	m = d.RunUntil(func(m tea.Model) bool {
+		return len(srv.Requests()) == 1 && assistantHasToolCalls(m)
+	}, 10*time.Second)
+	d.Send(tui.SendMessageMsg{Content: "steer text"}, tea.KeyMsg{Type: tea.KeyEsc})
+
+	// Today's actual behavior (verified empirically, not assumed — see the
+	// comment below): (AppModel).interrupt (tui/turn_queue.go) cancels the
+	// stream but leaves the executing bash tool and the queued steer alone.
+	// Once the tool finishes, (AppModel).buildToolFollowUpCmds' very first
+	// check is `if m.interrupted { ...; return m, nil }` ("Esc: the tools
+	// have finished; don't ask the model to continue") — it returns WITHOUT
+	// calling injectSteers(), so the steer is never folded into the aborted
+	// turn. But AppModel.Update's wrapper unconditionally calls
+	// dispatchQueued() (tui/turn_queue.go) after every update(), regardless
+	// of message type; by the time buildToolFollowUpCmds returns,
+	// turnActive() has gone false (toolBatchActive and toolProgress.Executing
+	// both cleared, cancelFunc nil, typingContent empty since this turn was
+	// tool-calls-only), so that same Update call's dispatchQueued() sees the
+	// queue non-empty and fires a brand-new top-level SendMessage("steer
+	// text") — not joined via injectSteers, just a fresh user turn.
+	//
+	// This means "idle AND queue drained" is briefly true in the *middle* of
+	// that handoff, one Update() call before the new send actually starts
+	// streaming again (confirmed with temporary t.Logf instrumentation: a
+	// SkillResultMsg update leaves turnActive()==false && DebugQueued()==0
+	// in the very same step that also returns the follow-up SendMessage
+	// cmd). Waiting on that snapshot alone raced the driver into returning
+	// before the dispatched cmd had run, abandoning it — the same class of
+	// bug this driver rewrite exists to fix. Waiting for the new turn's
+	// reply instead rides through that transient correctly.
+	m = d.RunUntil(func(m tea.Model) bool {
+		am := m.(tui.AppModel)
+		return lastAssistant(am) == "after" && !am.DebugTurnActive() && am.DebugQueued() == 0
+	}, 30*time.Second)
+
+	requests := srv.Requests()
+	if got := len(requests); got != 2 {
+		t.Fatalf("requests after interrupt = %d, want 2", got)
+	}
+	if got := lastUserMessage(requests[1].Body["messages"].([]any)); got != "steer text" {
+		t.Fatalf("second request last user message = %q, want steer text", got)
 	}
 }
 
@@ -204,17 +327,18 @@ func TestTUIResumeCarriesToolHistory(t *testing.T) {
 	for {
 		var err error
 		sessions, err = config.NewSessionManager().List()
-		if err == nil && len(sessions) > 0 {
+		if err == nil && len(sessions) > 0 && sessionHasToolAndFinalReply(sessions[0]) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no saved session after waiting for the async persistSession save: %v", err)
+			t.Fatalf("no complete saved session after waiting for the async persistSession save: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	resumeSessionID = sessions[0].ID
 	t.Cleanup(func() { resumeSessionID = "" })
 	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
+	tui.CloseLogging()
 	app, deps, err := newChatApp(cfg, ws, os.Getenv("HOME"))
 	if err != nil {
 		t.Fatal(err)
@@ -231,4 +355,38 @@ func TestTUIResumeCarriesToolHistory(t *testing.T) {
 	if !strings.Contains(strings.Join(roles, ","), "assistant,tool") {
 		t.Fatalf("resumed request lost tool history: roles %v", roles)
 	}
+}
+
+func assistantHasToolCalls(m tea.Model) bool {
+	for _, msg := range chatMessages(m) {
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func lastUserMessage(messages []any) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i].(map[string]any)
+		if msg["role"] == "user" {
+			content, _ := msg["content"].(string)
+			return content
+		}
+	}
+	return ""
+}
+
+func sessionHasToolAndFinalReply(session config.Session) bool {
+	hasTool := false
+	hasFinalReply := false
+	for _, msg := range session.Messages {
+		switch {
+		case msg.Role == "tool":
+			hasTool = true
+		case msg.Role == "assistant" && msg.Content == "it says alpha":
+			hasFinalReply = true
+		}
+	}
+	return hasTool && hasFinalReply
 }
