@@ -1,0 +1,24 @@
+package main
+
+import (
+	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+)
+
+func TestNewChatAppBuildsWithoutProgram(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	app, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.registry == nil || deps.adapter == nil {
+		t.Fatal("newChatApp returned incomplete deps")
+	}
+	if app.View() == "" {
+		t.Log("empty initial view is fine before a WindowSizeMsg")
+	}
+}
