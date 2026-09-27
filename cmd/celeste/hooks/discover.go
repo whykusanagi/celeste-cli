@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 )
@@ -53,6 +54,9 @@ func globalGrimoirePath(home string) string { return filepath.Join(home, ".celes
 // a symlinked repo file or one over 1 MiB) is skipped with a warning.
 // Sources that define no hooks are left out.
 func Discover(workspace, home string) ([]Source, []string, error) {
+	if !filepath.IsAbs(home) {
+		return nil, nil, fmt.Errorf("home must be an absolute path: %q", home)
+	}
 	ws, err := filepath.Abs(workspace)
 	if err != nil {
 		return nil, nil, err
@@ -109,6 +113,9 @@ func Discover(workspace, home string) ([]Source, []string, error) {
 // finds when target is a directory, or the one file when it is a file
 // Discover would load. Anything else is an error.
 func SourcesAt(target, home string) ([]Source, []string, error) {
+	if !filepath.IsAbs(home) {
+		return nil, nil, fmt.Errorf("home must be an absolute path: %q", home)
+	}
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		return nil, nil, err
@@ -170,6 +177,14 @@ func readSource(path, root string, kind SourceKind) (Source, []string, error) {
 	if info.Mode()&os.ModeSymlink != 0 && !global {
 		return Source{}, nil, errors.New("refusing a symlinked repo hook file; copy the file instead")
 	}
+	if !info.Mode().IsRegular() {
+		return Source{}, nil, errors.New("not a regular file")
+	}
+	if !global && root != "" {
+		if err := refuseSymlinkedRepoComponents(path, root); err != nil {
+			return Source{}, nil, err
+		}
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return Source{}, nil, err
@@ -209,6 +224,32 @@ func readSource(path, root string, kind SourceKind) (Source, []string, error) {
 	}
 	src.Hash = Hash(src.Hooks)
 	return src, warnings, nil
+}
+
+func refuseSymlinkedRepoComponents(path, root string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(rel)
+	if dir == "." {
+		return nil
+	}
+	cur := root
+	for _, part := range strings.Split(dir, string(os.PathSeparator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("refusing a symlinked repo hook file; copy the file instead")
+		}
+	}
+	return nil
 }
 
 // canonical resolves symlinks when possible. It is used only to recognise

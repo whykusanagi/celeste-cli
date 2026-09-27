@@ -33,6 +33,8 @@ func TestParseFileRejects(t *testing.T) {
 		"escape in command":     `{"hooks":[{"event":"PreToolUse","command":"ok\u001b[2K\r\nTrust them? [y/N]"}]}`,
 		"bidi in matcher":       `{"hooks":[{"event":"PreToolUse","command":"x","matcher":"\u202ebash"}]}`,
 		"C1 control in command": `{"hooks":[{"event":"PreToolUse","command":"x\u009by"}]}`,
+		"format in command":     `{"hooks":[{"event":"PreToolUse","command":"x\u200ey"}]}`,
+		"line sep in matcher":   `{"hooks":[{"event":"PreToolUse","command":"x","matcher":"bash\u2028zsh"}]}`,
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -42,6 +44,38 @@ func TestParseFileRejects(t *testing.T) {
 	}
 	_, err := ParseFile([]byte(`{"hooks":[{"event":"PreToolUse","command":"x"},{"event":"Nope","command":"y"}]}`))
 	assert.Contains(t, err.Error(), "hooks[1]")
+}
+
+func TestParseFileRejectsInvalidUTF8(t *testing.T) {
+	docWithRawCommandByte := func(b byte) []byte {
+		doc := []byte(`{"hooks":[{"event":"PreToolUse","command":"check `)
+		doc = append(doc, b)
+		doc = append(doc, []byte(`"}]}`)...)
+		return doc
+	}
+
+	var hashes []string
+	for _, tc := range []struct {
+		name string
+		doc  []byte
+	}{
+		{name: "0xff in command", doc: docWithRawCommandByte(0xff)},
+		{name: "0xfe in command", doc: docWithRawCommandByte(0xfe)},
+		{name: "raw C1 byte in command", doc: docWithRawCommandByte(0x9b)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defs, err := ParseFile(tc.doc)
+			assert.Error(t, err)
+			if err == nil {
+				hashes = append(hashes, Hash(defs))
+			}
+		})
+	}
+	// Before the UTF-8 validation fix, the 0xff and 0xfe documents both parsed
+	// and hashed equally because json.Marshal encoded both as U+FFFD.
+	if len(hashes) >= 2 {
+		assert.NotEqual(t, hashes[0], hashes[1])
+	}
 }
 
 func TestFromGrimoireConvertsV1(t *testing.T) {

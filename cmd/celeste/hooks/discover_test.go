@@ -2,10 +2,12 @@ package hooks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,13 @@ func skipSymlinksOnWindows(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("creating symlinks needs Developer Mode or admin rights on Windows runners")
+	}
+}
+
+func skipSpecialFilesOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("creating FIFOs is Unix-specific")
 	}
 }
 
@@ -75,6 +84,22 @@ func TestDiscoverGrimoireFragmentRoot(t *testing.T) {
 	assert.Equal(t, ws, srcs[0].Root)
 }
 
+func TestDiscoverRequiresAbsoluteHome(t *testing.T) {
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, ".celeste", "hooks.json"), oneHookJSON)
+
+	for _, home := range []string{"", "."} {
+		t.Run("Discover home "+home, func(t *testing.T) {
+			_, _, err := Discover(ws, home)
+			assert.Error(t, err)
+		})
+		t.Run("SourcesAt home "+home, func(t *testing.T) {
+			_, _, err := SourcesAt(ws, home)
+			assert.Error(t, err)
+		})
+	}
+}
+
 func TestDiscoverSkipsBadFileWithWarning(t *testing.T) {
 	home := testHome(t)
 	ws := t.TempDir()
@@ -108,6 +133,48 @@ func TestDiscoverRefusesSymlinkedRepoFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, srcs)
 	assert.Contains(t, strings.Join(warnings, "\n"), "symlink")
+}
+
+func TestDiscoverRefusesSymlinkedRepoDirectory(t *testing.T) {
+	skipSymlinksOnWindows(t)
+	home := testHome(t)
+	elsewhere := t.TempDir()
+	writeFile(t, filepath.Join(elsewhere, "hooks.json"), oneHookJSON)
+	ws := t.TempDir()
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(ws, ".celeste")))
+	srcs, warnings, err := Discover(ws, home)
+	require.NoError(t, err)
+	assert.Empty(t, srcs)
+	assert.Contains(t, strings.Join(warnings, "\n"), "symlink")
+}
+
+func TestDiscoverRefusesNonRegularRepoFile(t *testing.T) {
+	skipSpecialFilesOnWindows(t)
+	home := testHome(t)
+	ws := t.TempDir()
+	p := filepath.Join(ws, ".celeste", "hooks.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, exec.Command("mkfifo", p).Run())
+
+	type result struct {
+		srcs     []Source
+		warnings []string
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		srcs, warnings, err := Discover(ws, home)
+		done <- result{srcs: srcs, warnings: warnings, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		assert.Empty(t, got.srcs)
+		assert.Contains(t, strings.Join(got.warnings, "\n"), "not a regular file")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Discover blocked opening a non-regular repo hook file")
+	}
 }
 
 func TestDiscoverHomeWorkspaceCountsGlobalOnce(t *testing.T) {

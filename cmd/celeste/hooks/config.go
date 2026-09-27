@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 )
@@ -90,6 +92,12 @@ func (d Definition) normalize() (Definition, error) {
 	if !d.Event.valid() {
 		return d, fmt.Errorf("unknown event %q", d.Event)
 	}
+	if !utf8.ValidString(d.Command) {
+		return d, errors.New("command contains invalid UTF-8")
+	}
+	if !utf8.ValidString(d.Matcher) {
+		return d, errors.New("matcher contains invalid UTF-8")
+	}
 	d.Command = strings.TrimSpace(d.Command)
 	if d.Command == "" {
 		return d, errors.New("empty command")
@@ -131,7 +139,8 @@ func (d Definition) normalize() (Definition, error) {
 // or -1. The approval prompt must show a person exactly what will run.
 func unsafeRune(s string) rune {
 	for _, r := range s {
-		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) ||
+			unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return r
 		}
 	}
@@ -149,6 +158,9 @@ func (d Definition) matches(ev Event, tool string) bool {
 // ParseFile parses a hooks.json document. An unknown field or any invalid
 // entry rejects the whole file, so a typo never silently drops a guard.
 func ParseFile(data []byte) ([]Definition, error) {
+	if !utf8.Valid(data) {
+		return nil, errors.New("invalid hooks.json: invalid UTF-8")
+	}
 	var f struct {
 		Hooks []Definition `json:"hooks"`
 	}
