@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "## helper (function) — main.go:5\n  func helper()\n\n  Called by:\n    \u003c- main (calls) main.go:3\n\n",
+      "type": "text"
+    }
+  ]
+}

@@ -28,9 +28,13 @@ type Client struct {
 
 // Config holds LLM client configuration.
 type Config struct {
-	APIKey            string
-	BaseURL           string
-	Model             string
+	APIKey  string
+	BaseURL string
+	Model   string
+	// Backend forces a backend instead of detecting it from BaseURL. Tests
+	// use it to reach a fake provider on 127.0.0.1 with a native backend.
+	// Empty keeps detection.
+	Backend           BackendType
 	Timeout           time.Duration
 	SkipPersonaPrompt bool
 	SimulateTyping    bool
@@ -55,7 +59,10 @@ func NewClientWithBackend(config *Config, registry *tools.Registry, backend LLMB
 // It detects whether to use OpenAI SDK, Google GenAI SDK, or xAI SDK based on the base URL.
 func NewClient(config *Config, registry *tools.Registry) *Client {
 	// Detect which backend to use
-	backendType := DetectBackendType(config.BaseURL)
+	backendType := config.Backend
+	if backendType == "" {
+		backendType = DetectBackendType(config.BaseURL)
+	}
 
 	var backend LLMBackend
 	switch backendType {

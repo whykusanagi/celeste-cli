@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "Found 2 symbols matching 'helper':\n\nEach result shows similarity %, edge count, and any confidence warnings.\nWarnings like 'demoted: mock path', 'zero edges', and 'low confidence' tell\nyou WHY to be skeptical — a clean-path result with edges is your strongest match.\n\n1. main (function) — main.go:3 [\u003cMASKED\u003e% match, edges=1]\n   func main()\n2. helper (function) — main.go:5 [\u003cMASKED\u003e% match, edges=1]\n   func helper()\n",
+      "type": "text"
+    }
+  ]
+}

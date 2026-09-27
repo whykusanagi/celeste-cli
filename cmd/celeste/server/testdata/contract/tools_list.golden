@@ -1,0 +1,203 @@
+{
+  "tools": [
+    {
+      "description": "Delegate a task to Celeste, an agentic AI assistant with her own persona and development capabilities.",
+      "inputSchema": {
+        "properties": {
+          "mode": {
+            "default": "chat",
+            "description": "Execution mode: chat for single turn, agent for multi-step autonomous work",
+            "enum": [
+              "chat",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "prompt": {
+            "description": "What you want Celeste to do",
+            "type": "string"
+          },
+          "workspace": {
+            "description": "Working directory (defaults to server cwd)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "name": "celeste"
+    },
+    {
+      "description": "Generate content with Celeste's persona and voice. Blog posts, docs, commit messages, social posts, READMEs.",
+      "inputSchema": {
+        "properties": {
+          "format": {
+            "default": "markdown",
+            "description": "Output format for the generated content",
+            "enum": [
+              "markdown",
+              "plain",
+              "html"
+            ],
+            "type": "string"
+          },
+          "prompt": {
+            "description": "What content to generate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "name": "celeste_content"
+    },
+    {
+      "description": "Get Celeste's current status: connected providers, loaded grimoire, indexed project, session cost. With run_id, report on (or cancel) a background agent run instead.",
+      "inputSchema": {
+        "properties": {
+          "cancel": {
+            "description": "With run_id, cancel that run instead of reporting on it.",
+            "type": "boolean"
+          },
+          "run_id": {
+            "description": "Report on a background agent run instead of the server. Use the run_id returned when an agent run exceeded the inline threshold.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "celeste_status"
+    },
+    {
+      "description": "Inspect or refresh the celeste codegraph for a workspace. Use operation=update after making code changes so subsequent celeste_code_search / celeste_code_review queries reflect the new state. This is the ONLY tool that writes to the index — the query tools never auto-reindex.",
+      "inputSchema": {
+        "properties": {
+          "operation": {
+            "default": "status",
+            "description": "status: report the current index health and stats. update: incrementally re-index only files whose content hash has changed since last run. rebuild: drop the existing index and full-scan the workspace from scratch.",
+            "enum": [
+              "status",
+              "update",
+              "rebuild"
+            ],
+            "type": "string"
+          },
+          "workspace": {
+            "description": "Absolute workspace path (defaults to the server's cwd).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "celeste_index"
+    },
+    {
+      "description": "Semantic code search over the celeste codegraph. Returns symbols matching the query ranked by MinHash Jaccard + BM25 rank fusion, with path flags and confidence warnings. Reads the cached index — call celeste_index update first if the code has changed.",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "description": "Natural-language or keyword description of the code to find.",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 10,
+            "description": "Maximum number of results to return.",
+            "type": "integer"
+          },
+          "workspace": {
+            "description": "Absolute workspace path (defaults to the server's cwd).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "celeste_code_search"
+    },
+    {
+      "description": "Run celeste's structural code review against the codegraph and return findings as JSON grouped by kind. No chat LLM round-trip — output is returned verbatim with no output-token ceiling. Reads the cached index.",
+      "inputSchema": {
+        "properties": {
+          "include_tests": {
+            "description": "Include test files in the findings (default false).",
+            "type": "boolean"
+          },
+          "kinds": {
+            "description": "Comma-separated categories: ALL, LAZY_REDIRECT, STUB, PLACEHOLDER, TODO_FIXME, EMPTY_HANDLER, HARDCODED (default ALL).",
+            "type": "string"
+          },
+          "max_results": {
+            "description": "Maximum results per category (default 30).",
+            "type": "integer"
+          },
+          "workspace": {
+            "description": "Absolute workspace path (defaults to the server's cwd).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "celeste_code_review"
+    },
+    {
+      "description": "Query structural relationships in the celeste codegraph: who calls a function, what it calls, implements, references. Reads the cached index.",
+      "inputSchema": {
+        "properties": {
+          "depth": {
+            "description": "Number of hops to traverse. Default 1, max 3.",
+            "type": "number"
+          },
+          "direction": {
+            "description": "Edge direction: callers (who calls this), callees (what this calls), both. Default: both.",
+            "enum": [
+              "callers",
+              "callees",
+              "both"
+            ],
+            "type": "string"
+          },
+          "symbol": {
+            "description": "Symbol name to query relationships for. Use celeste_code_search first to find it.",
+            "type": "string"
+          },
+          "workspace": {
+            "description": "Absolute workspace path (defaults to the server's cwd).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "type": "object"
+      },
+      "name": "celeste_code_graph"
+    },
+    {
+      "description": "List all symbols in a file or package from the celeste codegraph. Provide either file or package. Reads the cached index. For name-based search, use celeste_code_search instead.",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Relative file path to list symbols for.",
+            "type": "string"
+          },
+          "package": {
+            "description": "Package name to list symbols for.",
+            "type": "string"
+          },
+          "workspace": {
+            "description": "Absolute workspace path (defaults to the server's cwd).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "celeste_code_symbols"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"commit\":\"\u003cMASKED\u003e\",\n  \"health\": \"ok\",\n  \"model\": \"fake-model\",\n  \"provider\": \"\",\n  \"server\": \"celeste\",\n  \"transport\": \"stdio\",\n  \"uptime\":\"\u003cMASKED\u003e\",\n  \"version\":\"\u003cMASKED\u003e\",\n  \"workspace\": \"\u003cWORKSPACE\u003e\"\n}",
+      "type": "text"
+    }
+  ]
+}

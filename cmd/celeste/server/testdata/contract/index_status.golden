@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"bm25\": {\n    \"avg_doc_length\": 2,\n    \"num_docs\": 2\n  },\n  \"db_path\":\"\u003cMASKED\u003e\",\n  \"files_by_lang\": {\n    \"go\": 1\n  },\n  \"symbols_by_kind\": {\n    \"function\": 2\n  },\n  \"total_edges\": 1,\n  \"total_files\": 1,\n  \"total_symbols\": 2,\n  \"workspace\": \"\u003cWORKSPACE\u003e\"\n}",
+      "type": "text"
+    }
+  ]
+}

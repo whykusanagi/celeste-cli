@@ -335,7 +335,12 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		Collections:           cfg.Collections,
 		XAIFeatures:           cfg.XAIFeatures,
 	}
-	client := llm.NewClient(llmConfig, registry)
+	var client *llm.Client
+	if options.Client != nil {
+		client = options.Client
+	} else {
+		client = llm.NewClient(llmConfig, registry)
+	}
 	client.SetToolMode(tools.ModeAgent)
 
 	// Build the system prompt: persona (if enabled) with the voice boundary,
