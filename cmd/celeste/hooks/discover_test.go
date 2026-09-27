@@ -148,6 +148,66 @@ func TestDiscoverRefusesSymlinkedRepoDirectory(t *testing.T) {
 	assert.Contains(t, strings.Join(warnings, "\n"), "symlink")
 }
 
+func TestRefuseSymlinkedRepoComponentsRequiresPlainDirectories(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".celeste"), "not a directory")
+
+	err := refuseSymlinkedRepoComponents(filepath.Join(root, ".celeste", "hooks.json"), root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlinked repo hook file")
+}
+
+func TestDiscoverAllowsSymlinkedGlobalHookFile(t *testing.T) {
+	skipSymlinksOnWindows(t)
+	home := testHome(t)
+	target := filepath.Join(t.TempDir(), "hooks.json")
+	writeFile(t, target, oneHookJSON)
+	global := filepath.Join(home, ".celeste", "hooks.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(global), 0o755))
+	require.NoError(t, os.Symlink(target, global))
+	ws := t.TempDir()
+
+	srcs, warnings, err := Discover(ws, home)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, srcs, 1)
+	assert.Equal(t, KindGlobal, srcs[0].Kind)
+	require.Len(t, srcs[0].Hooks, 1)
+	assert.Equal(t, "check", srcs[0].Hooks[0].Command)
+}
+
+func TestDiscoverRefusesSymlinkedGlobalHookFileToNonRegularTarget(t *testing.T) {
+	skipSpecialFilesOnWindows(t)
+	skipSymlinksOnWindows(t)
+	home := testHome(t)
+	target := filepath.Join(t.TempDir(), "hooks.fifo")
+	require.NoError(t, exec.Command("mkfifo", target).Run())
+	global := filepath.Join(home, ".celeste", "hooks.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(global), 0o755))
+	require.NoError(t, os.Symlink(target, global))
+	ws := t.TempDir()
+
+	type result struct {
+		srcs     []Source
+		warnings []string
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		srcs, warnings, err := Discover(ws, home)
+		done <- result{srcs: srcs, warnings: warnings, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		assert.Empty(t, got.srcs)
+		assert.Contains(t, strings.Join(got.warnings, "\n"), "not a regular file")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Discover blocked opening a non-regular global hook file")
+	}
+}
+
 func TestDiscoverRefusesNonRegularRepoFile(t *testing.T) {
 	skipSpecialFilesOnWindows(t)
 	home := testHome(t)

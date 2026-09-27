@@ -177,7 +177,14 @@ func readSource(path, root string, kind SourceKind) (Source, []string, error) {
 	if info.Mode()&os.ModeSymlink != 0 && !global {
 		return Source{}, nil, errors.New("refusing a symlinked repo hook file; copy the file instead")
 	}
-	if !info.Mode().IsRegular() {
+	regularInfo := info
+	if global {
+		regularInfo, err = os.Stat(path)
+		if err != nil {
+			return Source{}, nil, err
+		}
+	}
+	if !regularInfo.Mode().IsRegular() {
 		return Source{}, nil, errors.New("not a regular file")
 	}
 	if !global && root != "" {
@@ -245,7 +252,8 @@ func refuseSymlinkedRepoComponents(path, root string) error {
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		// Windows junctions report ModeIrregular instead of ModeSymlink on Go 1.23+.
+		if !info.IsDir() || info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
 			return errors.New("refusing a symlinked repo hook file; copy the file instead")
 		}
 	}
