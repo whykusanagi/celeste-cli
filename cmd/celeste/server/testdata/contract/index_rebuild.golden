@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"elapsed\":\"\u003cMASKED\u003e\",\n  \"operation\": \"rebuild\",\n  \"total_edges\": 1,\n  \"total_files\": 1,\n  \"total_symbols\": 2,\n  \"workspace\": \"\u003cWORKSPACE\u003e\"\n}",
+      "type": "text"
+    }
+  ]
+}

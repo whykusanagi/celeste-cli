@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "Symbols in main.go (2 total):\n\n### Functions (2)\n  L3    func main()\n  L5    func helper()\n\n",
+      "type": "text"
+    }
+  ]
+}
