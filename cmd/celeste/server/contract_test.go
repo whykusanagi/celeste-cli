@@ -107,7 +107,20 @@ func normalize(b []byte, ws string) []byte {
 		s = strings.ReplaceAll(s, ws, "<WORKSPACE>")
 		s = strings.ReplaceAll(s, filepath.ToSlash(ws), "<WORKSPACE>")
 		esc, _ := json.Marshal(ws)
-		s = strings.ReplaceAll(s, strings.Trim(string(esc), `"`), "<WORKSPACE>")
+		escStr := strings.Trim(string(esc), `"`)
+		s = strings.ReplaceAll(s, escStr, "<WORKSPACE>")
+		// FIX (2026-09-27, review round 1): status/index_rebuild/index_status
+		// put "workspace" inside content[].text, so their payload is a JSON
+		// object encoded AGAIN as a JSON string (MCP's text-content wrapping).
+		// On Windows, ws contains backslashes, which get escaped once when the
+		// inner JSON is built (\ -> \\) and then escaped AGAIN when that text
+		// is embedded as the outer "text" string value (\\ -> \\\\), so the
+		// raw response bytes contain the workspace path double-escaped
+		// (C:\\\\Users\\\\...). The single-escape replace above never matches
+		// that form. Escape the already-escaped string a second time to get
+		// the double-escaped form and mask it too.
+		esc2, _ := json.Marshal(escStr)
+		s = strings.ReplaceAll(s, strings.Trim(string(esc2), `"`), "<WORKSPACE>")
 	}
 	s = volatile.ReplaceAllString(s, `"$1":"<MASKED>"`)
 	s = volatileEscaped.ReplaceAllString(s, `\"$1\":\"<MASKED>\"`)
@@ -130,6 +143,40 @@ func TestNormalizeMasksVolatileFields(t *testing.T) {
 	}
 	if !strings.Contains(got, `"n": 1`) {
 		t.Errorf("normalize dropped stable data:\n%s", got)
+	}
+}
+
+// TestNormalizeMasksDoubleEscapedWindowsPath is a regression test for review
+// round 1: MCP content blocks wrap a tool's JSON payload as a content[].text
+// STRING, so on Windows the workspace path (and any volatile field) inside it
+// is escaped twice over in the raw response bytes (once building the inner
+// JSON, once embedding that JSON as the outer "text" string). Built with
+// encoding/json rather than hand-typed backslash literals so the escaping is
+// exactly what the real server produces, not an approximation of it.
+func TestNormalizeMasksDoubleEscapedWindowsPath(t *testing.T) {
+	ws := `C:\Users\vssadmin\AppData\Local\Temp\TestContractStatusTakesNoArguments\001`
+	inner, err := json.Marshal(map[string]any{"workspace": ws, "commit": "abc123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": string(inner)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(normalize(raw, ws))
+	for _, bad := range []string{`Users`, `AppData`, `vssadmin`, "abc123"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("normalize kept double-escaped %q in nested content[].text:\n%s", bad, got)
+		}
+	}
+	// json.MarshalIndent HTML-escapes '<'/'>' by default, so the marker
+	// appears as <WORKSPACE> in the final bytes; check for the
+	// unescaped substring rather than the literal angle brackets.
+	if !strings.Contains(got, "WORKSPACE") {
+		t.Errorf("normalize dropped the workspace marker entirely:\n%s", got)
 	}
 }
 
@@ -247,25 +294,54 @@ func TestContractContentTool(t *testing.T) {
 	golden(t, "celeste_content", normalize(res[1], ws))
 }
 
-// Baseline: MCP chat's progress guard stops a run whose tool results repeat
-// (6 identical results) even when the call arguments differ, so the
-// identical-call guard never trips. "main.go" and "./main.go" alternate:
-// different args, same file, same result -- or so the brief assumed.
+// Baseline: MCP chat's progress guard (handlers.go progressGuard, fed by the
+// tool-name|result signature built around line 393) stops a run whose tool
+// RESULTS repeat maxNoProgressStreak (6) times in a row, even when the call
+// ARGUMENTS differ each time -- catching a stuck loop the args-based
+// identical-call guard (which trips on 3 byte-identical *calls*) would miss.
 //
-// ADJUSTED (2026-09-27, characterization): read_file's result JSON echoes the
+// FIX (2026-09-27, review round 1): the original version of this test
+// alternated "main.go"/"./main.go", but read_file's result JSON echoes the
 // literal "path" argument back verbatim (tools/builtin/read_file.go,
-// Execute(): result["path"] = path, the raw input string, before
-// resolvePath normalizes it). So "main.go" and "./main.go" produce two
-// DISTINCT result strings, not one repeated result, and progressGuard's
-// streak (handlers.go, progressGuard.observe) never exceeds 1 -- the guard
-// never trips. Confirmed by running this test unmodified: the server made 13
-// requests (all 12 scripted tool-call turns plus the final "done" turn), not
-// the <=8 the brief predicted. Per the brief's own escape hatch ("If the
-// progress guard compares results in a way that ./main.go defeats ... record
-// the observed request count as the baseline with a comment instead of
-// failing"), this pins that observed behavior instead of asserting a bound
-// the guard doesn't actually enforce here.
+// Execute(): result["path"] = path, before resolvePath normalizes it), so
+// those two args produced two DISTINCT results and never drove the guard at
+// all (see TestServerChatProgressGuardDistinctResultsNeverTrip below, kept as
+// that baseline). To exercise the guard end to end we need args that differ
+// but a result that doesn't: {"path":"main.go"} vs
+// {"path":"main.go","start_line":1} -- different argument strings (so the
+// identical-call guard's args-based signature never repeats), but
+// start_line's default is already 1, so read_file's result (including the
+// echoed "path" and "start_line" fields) is byte-identical either way.
+// Measured: exactly 6 requests, stopped by the progress guard's own message.
 func TestServerChatProgressGuard(t *testing.T) {
+	var turns []fakeprovider.Turn
+	for i := 0; i < 12; i++ {
+		args := `{"path":"main.go"}`
+		if i%2 == 1 {
+			args = `{"path":"main.go","start_line":1}`
+		}
+		turns = append(turns, fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: args}}})
+	}
+	turns = append(turns, fakeprovider.Turn{Text: "done"})
+	llm := fakeprovider.NewOpenAI(t, turns...)
+	cfg, ws := contractCfg(t, llm)
+	res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "loop", "mode": "chat", "workspace": ws}}})
+	if n := len(llm.Requests()); n != 6 {
+		t.Fatalf("server made %d requests; the progress guard (6 identical results) should stop it at exactly 6", n)
+	}
+	if !strings.Contains(string(res[1]), "no new result 6 turns") {
+		t.Fatalf("progress guard did not report tripping: %s", res[1])
+	}
+}
+
+// Baseline: kept from the original (pre-review) version of the test above.
+// "main.go" and "./main.go" alternate: different args, and -- because
+// read_file echoes the literal path argument into its result -- also
+// different results, so the progress guard's identical-result streak never
+// exceeds 1 and never trips. The loop runs to the natural end of the
+// scripted turns instead. See TestServerChatProgressGuard above for the
+// guard actually tripping.
+func TestServerChatProgressGuardDistinctResultsNeverTrip(t *testing.T) {
 	var turns []fakeprovider.Turn
 	for i := 0; i < 12; i++ {
 		p := "main.go"
