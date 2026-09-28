@@ -582,3 +582,57 @@ func TestTUIPromptKeptAfterInterruptIsChecked(t *testing.T) {
 		}
 	}
 }
+
+// Fix round 2: after Esc interrupts a tool loop the history ends with tool
+// results. A blocked next prompt must not send that history, which would
+// resume the interrupted turn.
+func TestTUIBlockedPromptAfterInterruptedToolLoopSendsNothing(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "w", Name: "write_file", Args: `{"path":"x.txt","content":"hi"}`}}},
+		fakeprovider.Turn{Text: "resumed the interrupted turn"},
+	)
+	m, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventUserPromptSubmit, "", "denyif", "BLOCKME", "nope"))
+	})
+	release := make(chan struct{})
+	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		<-release // hold the tool so Esc lands mid tool loop
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	d := newTUIDriver(t, m)
+	d.Send(tui.SendMessageMsg{Content: "write x.txt"})
+	d.RunUntil(func(m tea.Model) bool {
+		return len(srv.Requests()) == 1 && assistantHasToolCalls(m)
+	}, 30*time.Second)
+	d.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	d.RunUntil(func(m tea.Model) bool { return m.(tui.AppModel).DebugInterrupted() }, 5*time.Second)
+	close(release)
+	m = d.RunUntil(func(m tea.Model) bool {
+		msgs := chatMessages(m)
+		return turnIdle(m) && len(msgs) > 0 && func() bool {
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if msgs[i].Role != "system" {
+					return msgs[i].Role == "tool"
+				}
+			}
+			return false
+		}()
+	}, 30*time.Second)
+
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "BLOCKME please"}},
+		func(m tea.Model) bool {
+			return hasSystemLine(m, "Prompt blocked by a UserPromptSubmit hook: nope") && turnIdle(m)
+		}, 30*time.Second)
+	time.Sleep(200 * time.Millisecond) // a wrongly sent request would land by now
+	if n := len(srv.Requests()); n != 1 {
+		t.Fatalf("requests = %d, want 1 (the blocked prompt resumed the interrupted turn)", n)
+	}
+	for _, x := range chatMessages(m) {
+		if x.Role == "user" && strings.Contains(x.Content, "BLOCKME") {
+			t.Fatal("blocked prompt is still in the chat")
+		}
+		if x.Role == "assistant" && strings.Contains(x.Content, "resumed") {
+			t.Fatal("the interrupted turn was resumed")
+		}
+	}
+}

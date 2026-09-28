@@ -90,10 +90,12 @@ func loadChatHooks(cwd, homeDir, sessionID string, resumed bool, registry *tools
 //   - Allowed: it sends tui.PromptHookMsg, so the TUI records the result on
 //     that message; the context rides on it in every request from then on.
 //   - Blocked: the message leaves this request, and tui.PromptBlockedMsg
-//     tells the TUI to remove it from the chat and session. If nothing is
-//     left to answer (the newest message was blocked, or every new one
-//     was) the send stops (stop=true) and the last PromptBlockedMsg has a
-//     nil Next; otherwise the request goes out without the blocked ones.
+//     tells the TUI to remove it from the chat and session. If no new
+//     prompt was allowed this round, the send stops (stop=true) and the
+//     last PromptBlockedMsg has a nil Next, whatever the history ends with
+//     (after Esc interrupts a tool loop it ends with tool results, and
+//     sending would resume that turn). Otherwise the request goes out
+//     without the blocked ones.
 //   - Interrupted (cancelled context): it sends PromptBlockedMsg{Cancelled}
 //     and stops; the unchecked prompts are kept and checked on the next send.
 func (a *TUIClientAdapter) applyPromptHooks(ctx context.Context, messages []tui.ChatMessage, ch chan tea.Msg) ([]tui.ChatMessage, bool) {
@@ -106,7 +108,7 @@ func (a *TUIClientAdapter) applyPromptHooks(ctx context.Context, messages []tui.
 			pending = nil
 		}
 	}
-	blocked := false
+	blocked, allowed := false, 0
 	for _, msg := range messages {
 		if msg.Role != "user" || !a.hooks.Has(hooks.EventUserPromptSubmit) {
 			sent = append(sent, msg)
@@ -146,8 +148,9 @@ func (a *TUIClientAdapter) applyPromptHooks(ctx context.Context, messages []tui.
 		}
 		msg.Metadata = meta
 		sent = append(sent, msg)
+		allowed++
 	}
-	if blocked && (len(sent) == 0 || sent[len(sent)-1].Role == "assistant") {
+	if blocked && allowed == 0 {
 		flush(nil)
 		return nil, true
 	}

@@ -208,9 +208,12 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 		payload["project_dir"] = h.dir
 		res := runHook(ctx, h.def, h.dir, payload)
 		if res.failed != "" {
-			r.warn(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), res.failed))
+			// res.failed can carry the hook's own stderr: quote it if it
+			// holds control or bidi characters.
+			failed := safeText(res.failed)
+			r.warn(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), failed))
 			if ev.gating() {
-				out.Decision, out.Reason = Deny, "hook failed: "+res.failed
+				out.Decision, out.Reason = Deny, "hook failed: "+failed
 				break
 			}
 			continue
