@@ -124,3 +124,91 @@ func TestAudioProjectRenderRejectsAbsoluteEscapingOutputBeforeFFmpeg(t *testing.
 		t.Fatalf("absolute escaped output stat err = %v, want not exist", err)
 	}
 }
+
+func TestAudioProjectValidateRejectsAbsoluteEscapingProjectFileBeforeLoad(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewAudioProjectTool(workspace)
+	outsideProject := filepath.Join(t.TempDir(), "project.json")
+
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"action": "validate",
+		"file":   outsideProject,
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, "escapes workspace")
+	assert.Contains(t, result.Content, outsideProject)
+	assert.NotContains(t, result.Content, "Invalid project")
+	assert.NotContains(t, result.Content, "read:")
+}
+
+func TestAudioProjectValidateRejectsRelativeEscapingProjectFileBeforeLoad(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewAudioProjectTool(workspace)
+	t.Chdir(workspace)
+
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"action": "validate",
+		"file":   "../project.json",
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, "escapes workspace")
+	assert.Contains(t, result.Content, "../project.json")
+	assert.NotContains(t, result.Content, "Invalid project")
+	assert.NotContains(t, result.Content, "read:")
+}
+
+func TestAudioProjectValidateRejectsEscapingTrackFile(t *testing.T) {
+	workspace := t.TempDir()
+	parent := filepath.Dir(workspace)
+	require.NoError(t, os.WriteFile(filepath.Join(parent, "x.mp3"), []byte("outside audio"), 0644))
+
+	tool := NewAudioProjectTool(workspace)
+	projectPath := filepath.Join(workspace, "project.json")
+	project := AudioProject{
+		Output: "final.mp3",
+		Tracks: []AudioTrack{
+			{File: "../x.mp3", Role: "voice", Start: 0, Volume: 1},
+		},
+	}
+	data, err := json.Marshal(project)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(projectPath, data, 0644))
+
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"action": "validate",
+		"file":   "project.json",
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, "track 0: file escapes workspace: ../x.mp3")
+	assert.NotContains(t, result.Content, filepath.Join(parent, "x.mp3"))
+}
+
+func TestAudioProjectValidateAcceptsInWorkspaceProjectAndTrackFiles(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewAudioProjectTool(workspace)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "voice.mp3"), []byte("dummy voice"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "sfx.mp3"), []byte("dummy sfx"), 0644))
+	projectPath := filepath.Join(workspace, "project.json")
+	project := AudioProject{
+		Output: "final.mp3",
+		Tracks: []AudioTrack{
+			{File: "voice.mp3", Role: "voice", Start: 0, Volume: 1},
+			{File: "sfx.mp3", Role: "sfx", Start: 1, Volume: 0.5},
+		},
+	}
+	data, err := json.Marshal(project)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(projectPath, data, 0644))
+
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"action": "validate",
+		"file":   "project.json",
+	}, nil)
+	require.NoError(t, err)
+	assert.False(t, result.Error, result.Content)
+	assert.Contains(t, result.Content, "Project valid: 2 tracks")
+}
