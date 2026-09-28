@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -302,7 +303,7 @@ func TestLoadAncestorGrimoireHooksNeedApproval(t *testing.T) {
 	r, err := Load(Options{Workspace: ws, Home: home, Warn: func(s string) { warnings = append(warnings, s) }})
 	require.NoError(t, err)
 	assert.False(t, r.Has(EventPreToolUse))
-	assert.Contains(t, strings.Join(warnings, "\n"), filepath.Join(parent, ".grimoire"))
+	assert.Contains(t, strings.Join(warnings, "\n"), strconv.Quote(filepath.Join(parent, ".grimoire")))
 }
 
 // An approved ancestor hook with a relative path runs in its own project
