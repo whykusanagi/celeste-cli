@@ -36,6 +36,7 @@ type commandRunner interface {
 	RunPlan(args []string)
 	RunRevert(args []string)
 	RunMCP(args []string)
+	RunHooks(args []string)
 }
 
 type defaultCommandRunner struct{}
@@ -69,6 +70,7 @@ func (defaultCommandRunner) RunResume(args []string)        { runResumeCommand(a
 func (defaultCommandRunner) RunPlan(args []string)          { runPlanCommand(args) }
 func (defaultCommandRunner) RunRevert(args []string)        { runRevertCommand(args) }
 func (defaultCommandRunner) RunMCP(args []string)           { runMCPCommand(args) }
+func (defaultCommandRunner) RunHooks(args []string)         { runHooksCommand(args) }
 
 func main() {
 	os.Exit(run(os.Args[1:], defaultCommandRunner{}, os.Stdout, os.Stderr))
@@ -142,6 +144,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunRevert(cmdArgs)
 	case "mcp":
 		runner.RunMCP(cmdArgs)
+	case "hooks":
+		runner.RunHooks(cmdArgs)
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":

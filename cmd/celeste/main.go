@@ -94,6 +94,7 @@ Commands:
   resume [session-id]     Resume a previous session
   plan [show]             Show current plan from .celeste/plan.md
   revert <file>           Revert a file from checkpoint
+  hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
   help                    Show this help message
   version                 Show version information
 

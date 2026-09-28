@@ -114,6 +114,10 @@ func (f *fakeRunner) RunMCP(args []string) {
 	f.lastCall = "mcp"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunHooks(args []string) {
+	f.lastCall = "hooks"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_LaunchesChatDirectly(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}
@@ -155,6 +159,7 @@ func TestRun_DispatchesKnownCommands(t *testing.T) {
 		{name: "session", args: []string{"session", "--list"}, wantCall: "session", wantArgs: []string{"--list"}},
 		{name: "collections", args: []string{"collections", "list"}, wantCall: "collections", wantArgs: []string{"list"}},
 		{name: "agent", args: []string{"agent", "--goal", "do work"}, wantCall: "agent", wantArgs: []string{"--goal", "do work"}},
+		{name: "hooks", args: []string{"hooks", "list"}, wantCall: "hooks", wantArgs: []string{"list"}},
 	}
 
 	for _, tt := range tests {
