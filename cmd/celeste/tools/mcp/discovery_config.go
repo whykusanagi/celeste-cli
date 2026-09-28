@@ -10,13 +10,10 @@ import (
 // server-name collision (see LoadMerged). Non-existent candidates are skipped,
 // so an empty slice means no MCP config anywhere.
 func DiscoverConfigPaths(cwd, home string) []string {
-	candidates := []string{
-		filepath.Join(home, ".celeste", "mcp.json"),
-		filepath.Join(home, ".claude", "mcp.json"),
-		filepath.Join(home, ".cursor", "mcp.json"),
+	candidates := append(GlobalConfigPaths(home),
 		filepath.Join(cwd, ".mcp.json"),
 		filepath.Join(cwd, ".celeste", "mcp.json"),
-	}
+	)
 
 	var found []string
 	for _, p := range candidates {
@@ -25,6 +22,17 @@ func DiscoverConfigPaths(cwd, home string) []string {
 		}
 	}
 	return found
+}
+
+// GlobalConfigPaths returns the home-level MCP config candidates, in the
+// precedence order DiscoverConfigPaths uses, whether or not they exist. Any
+// other path DiscoverConfigPaths returns came from the workspace.
+func GlobalConfigPaths(home string) []string {
+	return []string{
+		filepath.Join(home, ".celeste", "mcp.json"),
+		filepath.Join(home, ".claude", "mcp.json"),
+		filepath.Join(home, ".cursor", "mcp.json"),
+	}
 }
 
 // LoadMerged folds every config in paths into a single MCPConfig. paths must be

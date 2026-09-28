@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -215,5 +217,71 @@ func TestSetupBadSkillIsAWarning(t *testing.T) {
 	_, w := mustSetup(t, ModeAgent, t.TempDir())
 	if !strings.Contains(w.all(), "custom skills") {
 		t.Fatalf("warnings = %q, want the broken skill reported", w.all())
+	}
+}
+
+// markerMCPConfig is an MCP config whose one enabled server creates marker
+// when it is started.
+func markerMCPConfig(marker string) string {
+	return `{"mcpServers":{"probe":{"enabled":true,"command":"sh","args":["-c",` +
+		strconv.Quote("touch '"+marker+"'") + `]}}}`
+}
+
+func waitForFile(path string, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A repo's MCP config must not run its command in a non-interactive run.
+func TestSetupAgentSkipsWorkspaceMCPConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	setupHome(t)
+	ws := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "started")
+	for _, cfg := range []string{filepath.Join(ws, ".mcp.json"), filepath.Join(ws, ".celeste", "mcp.json")} {
+		write(t, cfg, markerMCPConfig(marker))
+	}
+
+	_, w := mustSetup(t, ModeAgent, ws)
+	if waitForFile(marker, 300*time.Millisecond) {
+		t.Fatal("agent-mode Setup started a workspace MCP server")
+	}
+	got := w.all()
+	for _, want := range []string{strconv.Quote(filepath.Join(ws, ".mcp.json")), strconv.Quote(filepath.Join(ws, ".celeste", "mcp.json")), "non-interactive", "global config"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warnings lack %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "skipping repo MCP") != 1 {
+		t.Errorf("want one repo-MCP warning, got:\n%s", got)
+	}
+}
+
+// The same server in a home-level config still starts.
+func TestSetupAgentStartsGlobalMCPConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	home := setupHome(t)
+	ws := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "started")
+	write(t, filepath.Join(home, ".celeste", "mcp.json"), markerMCPConfig(marker))
+
+	_, w := mustSetup(t, ModeAgent, ws)
+	if !waitForFile(marker, 5*time.Second) {
+		t.Fatal("agent-mode Setup did not start a home-level MCP server")
+	}
+	if strings.Contains(w.all(), "repo MCP") {
+		t.Errorf("unexpected repo-MCP warning:\n%s", w.all())
 	}
 }

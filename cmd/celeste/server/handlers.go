@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
@@ -427,8 +428,17 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 	}
 
 	var outBuf, errBuf bytes.Buffer
+	var warnMu sync.Mutex
+	var warnings []string
 
 	opts := agent.Options{
+		// Setup and hook warnings go back to the MCP caller with the result;
+		// there is no terminal to print them to.
+		Warn: func(s string) {
+			warnMu.Lock()
+			defer warnMu.Unlock()
+			warnings = append(warnings, s)
+		},
 		Workspace: workspace,
 		MaxTurns:  50,
 		// Route MCP agent-mode work to the agent model (task e8775b91).
@@ -502,6 +512,10 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 		sb.WriteString(response)
 	}
 
+	warnMu.Lock()
+	sb.WriteString(formatWarnings(warnings))
+	warnMu.Unlock()
+
 	// Metadata
 	sb.WriteString(fmt.Sprintf("\n\n---\n_Agent: %d turns, status: %s_\n", state.Turn, state.Status))
 
@@ -522,6 +536,20 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 		ToolCalls:  toolCalls,
 		AgentRunID: state.RunID,
 	}, nil
+}
+
+// formatWarnings renders the run's setup and hook warnings as a section for
+// the tool result, or "" when there are none.
+func formatWarnings(warnings []string) string {
+	if len(warnings) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n## Warnings\n\n")
+	for _, w := range warnings {
+		sb.WriteString("- " + w + "\n")
+	}
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 // runAgentMode runs a multi-turn agent loop, handing the caller a handle if the

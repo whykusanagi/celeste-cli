@@ -244,17 +244,27 @@ transport, and gains a set of TUI features around all of it.
   3 turns in a row, the same tool results 6 turns in a row, or invalid tool
   arguments 3 turns in a row. The counters start over whenever the model
   replies without calling a tool, and when a run is resumed.
-- Agent runs accept tool calls the model writes as `<tool_call>` text when
-  a turn has no native calls.
+- Tools with their own timeout keep it in agent runs instead of the 45s
+  default or `--tool-timeout`: `bash` 5m, `spawn_agent` 10m,
+  `generate_speech` 5m, `audio_render` 2m.
 - Concurrency-safe tool calls in one turn (reads, searches) run in parallel;
   results keep the order the model asked for them.
 - Tool results over 128 KiB are saved to a private file; the model gets the
-  start and end of the output and the file's path.
+  start and end of the output and the file's path. Spilled results (in the
+  chat UI too) are now written as 0600 files in 0700 directories.
 - Agent runs now load your custom skills, MCP servers, memories and the
   code-graph summary. Past 40 tools, tool discovery turns on and MCP tools
   are hidden until the model finds them with `find_tools`. There are 38
   built-in tools, so three or more custom skills and MCP tools together
   (for example one MCP server with three tools) switch it on.
+- Repo MCP servers (a workspace's `.mcp.json` or `.celeste/mcp.json`) don't
+  start in non-interactive runs: `celeste agent`, MCP agent mode, `/agent`
+  in the chat, subagents and `/orchestrate` lanes skip them with a warning.
+  Move a server to a global config (`~/.celeste/mcp.json`,
+  `~/.claude/mcp.json` or `~/.cursor/mcp.json`) to use it there. The chat
+  itself still loads them.
+- MCP agent mode now returns setup and hook warnings in the tool result,
+  under a `## Warnings` heading.
 
 ## [1.10.0] - 2026-06-03
 

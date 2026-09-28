@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -195,13 +196,42 @@ func (e *Env) Trust() {
 	e.Registry.SetPermissionChecker(e.Checker)
 }
 
+// setupMCP starts the configured MCP servers. Only the TUI loads workspace
+// configs (<ws>/.mcp.json, <ws>/.celeste/mcp.json): every other mode runs
+// without an interactive user, and a repo's config would otherwise run an
+// arbitrary command unasked.
 func (e *Env) setupMCP(ws, home string) {
-	e.MCP = mcp.NewManagerMulti(mcp.DiscoverConfigPaths(ws, home), e.Registry)
+	paths := mcp.DiscoverConfigPaths(ws, home)
+	if e.Mode != ModeChat {
+		paths = e.globalMCPConfigs(paths, home)
+	}
+	e.MCP = mcp.NewManagerMulti(paths, e.Registry)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := e.MCP.Start(ctx); err != nil {
 		e.warn("MCP initialization failed: %v", err)
 	}
+}
+
+// globalMCPConfigs keeps the home-level configs in paths and warns once about
+// the workspace ones it drops.
+func (e *Env) globalMCPConfigs(paths []string, home string) []string {
+	global := map[string]bool{}
+	for _, p := range mcp.GlobalConfigPaths(home) {
+		global[filepath.Clean(p)] = true
+	}
+	var kept, skipped []string
+	for _, p := range paths {
+		if global[filepath.Clean(p)] {
+			kept = append(kept, p)
+		} else {
+			skipped = append(skipped, strconv.Quote(p))
+		}
+	}
+	if len(skipped) > 0 {
+		e.warn("skipping repo MCP config %s: repo MCP servers don't start in non-interactive runs (move the server to a global config such as ~/.celeste/mcp.json to use it)", strings.Join(skipped, ", "))
+	}
+	return kept
 }
 
 // setupContext builds ProjectContext exactly as the TUI does: grimoire, then
