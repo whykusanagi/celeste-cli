@@ -26,6 +26,9 @@ func NewSpawnAgentTool(manager *Manager) *SpawnAgentTool {
 
 func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 
+// Timeout gives a subagent 10 minutes; it manages its own turn limits.
+func (t *SpawnAgentTool) Timeout() time.Duration { return 10 * time.Minute }
+
 func (t *SpawnAgentTool) Description() string {
 	return "Spawn a subagent to handle a subtask. Returns its result when complete. " +
 		"CRITICAL: For multi-step workflows where later steps depend on earlier steps (e.g., generate clips THEN mix them), " +

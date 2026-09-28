@@ -554,18 +554,12 @@ func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
 // ExecuteSkill implements tui.LLMClient.
 func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd {
 	return func() tea.Msg {
-		// Long-running tools (spawn_agent, bash) get extended timeouts.
-		// Short tools (read_file, list_files, search) use the default 30s.
+		// Long-running tools (spawn_agent, bash, generate_speech,
+		// audio_render) carry their own timeout (tools.Timeouter); the rest
+		// keep the TUI's 30s default until the TUI moves onto loop.Loop (F2d).
 		timeout := 30 * time.Second
-		switch name {
-		case "spawn_agent":
-			timeout = 10 * time.Minute // subagents manage their own turn limits
-		case "bash":
-			timeout = 5 * time.Minute
-		case "generate_speech":
-			timeout = 5 * time.Minute // TTS generation for long scripts + batch
-		case "audio_render":
-			timeout = 2 * time.Minute // ffmpeg rendering
+		if t, ok := a.registry.Get(name); ok {
+			timeout = tools.TimeoutFor(t, timeout)
 		}
 		// The registry starts the timeout once the tool is approved, so time
 		// spent on the permission prompt doesn't count against it (#172).

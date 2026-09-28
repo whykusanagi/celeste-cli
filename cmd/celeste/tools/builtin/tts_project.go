@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
@@ -94,7 +95,8 @@ func NewAudioProjectTool(workspace string) *AudioProjectTool {
 				},
 				"required": ["action"]
 			}`),
-			ReadOnly: false,
+			ReadOnly:    false,
+			ExecTimeout: 2 * time.Minute,
 		},
 	}
 }

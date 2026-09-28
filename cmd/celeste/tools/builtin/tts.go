@@ -110,7 +110,8 @@ func NewTTSTool(workspace string) *TTSTool {
 				},
 				"required": ["action"]
 			}`),
-			ReadOnly: false,
+			ReadOnly:    false,
+			ExecTimeout: 5 * time.Minute,
 		},
 	}
 }
