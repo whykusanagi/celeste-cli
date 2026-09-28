@@ -61,7 +61,8 @@ type Env struct {
 	opts        SetupOptions
 	skipPersona bool
 	permConfig  permissions.PermissionConfig
-	indexing    sync.WaitGroup // a code-graph update that outlived its timeout
+	indexing    sync.WaitGroup     // a code-graph update that outlived its timeout
+	indexCancel context.CancelFunc // stops that update; nil until setupCodeGraph runs
 	closeOnce   sync.Once
 }
 
@@ -119,6 +120,11 @@ func (e *Env) setupPermissions(home string) {
 	path := filepath.Join(home, ".celeste", "permissions.json")
 	pc, err := permissions.LoadConfig(path)
 	if err != nil {
+		// LoadConfig already treats a missing file as defaults with a nil
+		// error, so reaching here means the file exists but is unreadable
+		// or malformed: warn, since MCP-chat Trust mode would otherwise
+		// silently drop the user's deny rules (#187).
+		e.warn("permissions config %s is invalid, using defaults: %v", path, err)
 		d := permissions.DefaultConfig()
 		pc = &d
 	}
@@ -199,11 +205,15 @@ func (e *Env) setupCodeGraph(ws string) string {
 		e.warn("code graph init failed: %v", err)
 		return ""
 	}
+	// Cancellable so a Close that arrives after this update outlives its 10s
+	// wait can stop it instead of blocking indexing.Wait() unbounded.
+	ctx, cancel := context.WithCancel(context.Background())
+	e.indexCancel = cancel
 	done := make(chan error, 1)
 	e.indexing.Add(1)
 	go func() {
 		defer e.indexing.Done()
-		done <- idx.Update()
+		done <- idx.UpdateWithContext(ctx)
 	}()
 	select {
 	case err := <-done:
@@ -235,11 +245,15 @@ func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string
 	})
 }
 
-// Close stops MCP clients and closes the code graph (after any update that
-// outlived its timeout). Safe to call more than once (and concurrently);
+// Close stops MCP clients and closes the code graph, cancelling a code-graph
+// update still running past its 10s Setup wait so this returns promptly
+// instead of blocking on it. Safe to call more than once (and concurrently);
 // only the first call runs.
 func (e *Env) Close() {
 	e.closeOnce.Do(func() {
+		if e.indexCancel != nil {
+			e.indexCancel()
+		}
 		if e.MCP != nil {
 			_ = e.MCP.Stop()
 		}

@@ -1,11 +1,13 @@
 package loop
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
@@ -134,6 +136,22 @@ func TestSetupPermissions(t *testing.T) {
 	}
 }
 
+// A malformed permissions.json must not silently fall back to defaults:
+// under MCP-chat Trust mode that would drop the user's deny rules (#187).
+func TestSetupPermissionsMalformedWarns(t *testing.T) {
+	home := setupHome(t)
+	path := filepath.Join(home, ".celeste", "permissions.json")
+	write(t, path, "{not json")
+
+	env, w := mustSetup(t, ModeAgent, t.TempDir())
+	if !strings.Contains(w.all(), path) || !strings.Contains(w.all(), "default") {
+		t.Fatalf("warnings = %q, want the malformed permissions file named and defaults reported", w.all())
+	}
+	if d := env.Checker.Check(info{"write_file", false}, map[string]any{"path": "x"}).Decision; d != permissions.Ask {
+		t.Fatalf("write_file = %v, want the default policy (Ask) still applied", d)
+	}
+}
+
 func TestSetupChatPromptMatchesChatComposition(t *testing.T) {
 	setupHome(t)
 	env, _ := mustSetup(t, ModeChat, t.TempDir())
@@ -162,6 +180,33 @@ func TestEnvCloseIsIdempotent(t *testing.T) {
 	}
 	env.Close()
 	env.Close() // must not panic or block
+}
+
+// A code-graph update that outlived Setup's 10s wait must not make Close
+// block unboundedly: Close cancels it first, so it stops instead of running
+// to completion in the background. The real indexer finishes too fast on a
+// small test repo to exercise this, so this stands in for it directly with
+// an update that only ever stops once its context is cancelled.
+func TestEnvCloseCancelsAStuckCodeGraphUpdate(t *testing.T) {
+	env := &Env{opts: SetupOptions{Warn: func(string) {}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	env.indexCancel = cancel
+	env.indexing.Add(1)
+	go func() {
+		defer env.indexing.Done()
+		<-ctx.Done() // stands in for codegraph.Indexer.UpdateWithContext
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		env.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return promptly; it must cancel a stuck code-graph update before waiting on it")
+	}
 }
 
 func TestSetupBadSkillIsAWarning(t *testing.T) {
