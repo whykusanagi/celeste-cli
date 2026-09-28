@@ -629,3 +629,20 @@ func TestCelesteStatusCancelAlreadyTerminalIsNoop(t *testing.T) {
 		t.Errorf("status = %v, want completed — cancelling an already-terminal run must be a no-op, not flip it to cancelled", payload["status"])
 	}
 }
+
+// Coarse clocks (Windows) can give back-to-back runs the same StartedAt; the
+// oldest must still be evicted first, so ordering can't depend on the clock.
+func TestRegistryEvictsOldestWhenStartTimesTie(t *testing.T) {
+	s := New(Config{})
+	same := time.Now()
+	s.runMu.Lock()
+	for i := 0; i <= maxTrackedRuns; i++ {
+		id := fmt.Sprintf("bg-%03d", i)
+		s.runs[id] = &BackgroundRun{ID: id, Status: "completed", StartedAt: same, seq: uint64(i + 1)}
+	}
+	s.evictLocked("")
+	s.runMu.Unlock()
+	if _, ok := s.lookupRun("bg-000"); ok {
+		t.Error("with tied start times, the first-registered run must be evicted first")
+	}
+}

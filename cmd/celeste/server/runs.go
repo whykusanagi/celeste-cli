@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,7 +32,12 @@ type BackgroundRun struct {
 	EndedAt    time.Time
 
 	cancel context.CancelFunc
+	// seq orders runs by registration. StartedAt can tie on coarse clocks
+	// (Windows), and eviction must still pick the oldest deterministically.
+	seq uint64
 }
+
+var runSeq atomic.Uint64
 
 // newRunID mints a handle identifier. Server-minted rather than the agent's
 // RunID because RunGoal builds its state internally and only returns it on
@@ -47,6 +53,7 @@ func (s *Server) registerRun(id string, cancel context.CancelFunc) *BackgroundRu
 		Status:    "running",
 		StartedAt: time.Now(),
 		cancel:    cancel,
+		seq:       runSeq.Add(1),
 	}
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
@@ -142,13 +149,13 @@ func (s *Server) runCount() int {
 func (s *Server) evictLocked(protectID string) {
 	for len(s.runs) > maxTrackedRuns {
 		var oldestID string
-		var oldest time.Time
+		var oldest uint64
 		for id, r := range s.runs {
 			if r.Status == "running" || id == protectID {
 				continue
 			}
-			if oldestID == "" || r.StartedAt.Before(oldest) {
-				oldestID, oldest = id, r.StartedAt
+			if oldestID == "" || r.seq < oldest {
+				oldestID, oldest = id, r.seq
 			}
 		}
 		if oldestID == "" {
