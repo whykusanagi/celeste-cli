@@ -139,9 +139,22 @@ func (l *Loop) invoke(ctx context.Context, t tools.Tool, input map[string]any, l
 	if l.Gate != nil {
 		watchdog = 0
 		// This run's Gate answers the registry's Ask, including one forced
-		// by a PreToolUse hook's "ask".
+		// by a PreToolUse hook's "ask". Serialized: parallel-safe calls in
+		// one batch must not reach the Gate at once, whatever Gate the
+		// adopter supplies (PromptGate already serializes itself; this
+		// covers a raw GateFunc too).
 		cctx = tools.WithPrompt(cctx, func(req tools.PermissionRequest) tools.PermissionResponse {
+			l.gateMu.Lock()
+			defer l.gateMu.Unlock()
 			return l.Gate.Ask(ctx, req)
+		})
+	} else {
+		// No Gate: deny an Ask outright. Without this, the registry falls
+		// back to its own promptFn (an adopter's TUI modal, wired at
+		// SetPromptFunc call sites), which would silently defeat "no Gate
+		// means headless deny".
+		cctx = tools.WithPrompt(cctx, func(tools.PermissionRequest) tools.PermissionResponse {
+			return tools.PermissionResponse{Decision: "deny"}
 		})
 	}
 	name := t.Name()

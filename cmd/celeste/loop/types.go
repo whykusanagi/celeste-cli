@@ -143,7 +143,9 @@ type ToolCall struct {
 
 // Gate answers a permission Ask for one run. Its lifetime differs by mode
 // (TUI modal, agent prompt or none, MCP none), so each adopter passes it in.
-// A nil Gate means an Ask is denied.
+// A nil Gate means an Ask is denied. Loop serializes calls to Ask itself
+// (gateMu in exec.go), so a Gate implementation need not handle concurrent
+// calls even when parallel-safe tool calls all Ask in the same batch.
 type Gate interface {
 	Ask(ctx context.Context, req tools.PermissionRequest) tools.PermissionResponse
 }
@@ -213,6 +215,7 @@ type Loop struct {
 	events    chan Event
 	lastUsage *llm.TokenUsage // Run's goroutine only
 	spillSeq  int             // Run's goroutine only
+	gateMu    sync.Mutex      // serializes calls to Gate.Ask across a batch
 }
 
 // Events returns the event stream. Call it before Run. Sends are unbuffered:

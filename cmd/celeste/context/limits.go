@@ -57,14 +57,25 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		}
 	}
 
+	// 0700/0600: a spilled tool result may hold secrets (env dumps, API
+	// responses, file contents), so keep it readable only by the owner.
+	// MkdirAll/WriteFile only apply their mode to a path they create, so an
+	// already-existing dir or file (an old binary's spill, or a reused
+	// sessionID/toolCallID) is chmod'd explicitly too.
 	sessionDir := filepath.Join(baseDir, sessionID)
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0700); err != nil {
 		return result, false, fmt.Errorf("create tool-results dir: %w", err)
+	}
+	if err := os.Chmod(sessionDir, 0700); err != nil {
+		return result, false, fmt.Errorf("secure tool-results dir: %w", err)
 	}
 
 	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
-	if err := os.WriteFile(spillPath, []byte(result), 0644); err != nil {
+	if err := os.WriteFile(spillPath, []byte(result), 0600); err != nil {
 		return result, false, fmt.Errorf("write spill file: %w", err)
+	}
+	if err := os.Chmod(spillPath, 0600); err != nil {
+		return result, false, fmt.Errorf("secure spill file: %w", err)
 	}
 
 	// Build the capped preview:

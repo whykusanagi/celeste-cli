@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,6 +90,69 @@ func TestRunCallsSerializesUnsafeCalls(t *testing.T) {
 	}
 }
 
+// A safe group, an unsafe call, then another safe group: each barrier must
+// fully finish before the next group starts, in both directions.
+func TestRunCallsSafeUnsafeSafeBarrier(t *testing.T) {
+	var mu sync.Mutex
+	var safe1Done, safe2Done, unsafeStarted, unsafeDone, safe3Started, safe4Started bool
+	var group1Err, group2Err atomic.Bool
+
+	finish := func(flag *bool) { mu.Lock(); *flag = true; mu.Unlock() }
+	isSet := func(flag *bool) bool { mu.Lock(); defer mu.Unlock(); return *flag }
+
+	safeFirst := func(done *bool) func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return func(context.Context, map[string]any) (tools.ToolResult, error) {
+			time.Sleep(20 * time.Millisecond)
+			finish(done)
+			return tools.ToolResult{Content: "ok"}, nil
+		}
+	}
+	safe1 := &fakeTool{name: "safe1", safe: true, readOnly: true, run: safeFirst(&safe1Done)}
+	safe2 := &fakeTool{name: "safe2", safe: true, readOnly: true, run: safeFirst(&safe2Done)}
+	unsafe := &fakeTool{name: "unsafe", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		finish(&unsafeStarted)
+		if !isSet(&safe1Done) || !isSet(&safe2Done) {
+			group1Err.Store(true)
+		}
+		time.Sleep(20 * time.Millisecond)
+		finish(&unsafeDone)
+		return tools.ToolResult{Content: "ok"}, nil
+	}}
+	safeSecond := func(started *bool) func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return func(context.Context, map[string]any) (tools.ToolResult, error) {
+			finish(started)
+			if !isSet(&unsafeDone) {
+				group2Err.Store(true)
+			}
+			return tools.ToolResult{Content: "ok"}, nil
+		}
+	}
+	safe3 := &fakeTool{name: "safe3", safe: true, readOnly: true, run: safeSecond(&safe3Started)}
+	safe4 := &fakeTool{name: "safe4", safe: true, readOnly: true, run: safeSecond(&safe4Started)}
+
+	out := run(execLoop(t, safe1, safe2, unsafe, safe3, safe4),
+		llm.ToolCallResult{ID: "1", Name: "safe1", Arguments: `{}`},
+		llm.ToolCallResult{ID: "2", Name: "safe2", Arguments: `{}`},
+		llm.ToolCallResult{ID: "3", Name: "unsafe", Arguments: `{}`},
+		llm.ToolCallResult{ID: "4", Name: "safe3", Arguments: `{}`},
+		llm.ToolCallResult{ID: "5", Name: "safe4", Arguments: `{}`})
+
+	for _, m := range out.messages {
+		if m.Content != "ok" {
+			t.Fatalf("messages = %+v, want every call to succeed", out.messages)
+		}
+	}
+	if group1Err.Load() {
+		t.Fatal("the unsafe call started before both safe1 and safe2 finished")
+	}
+	if group2Err.Load() {
+		t.Fatal("safe3/safe4 started before the unsafe call finished")
+	}
+	if !isSet(&unsafeStarted) || !isSet(&safe3Started) || !isSet(&safe4Started) {
+		t.Fatal("not every tool ran")
+	}
+}
+
 func TestRunCallsBadArguments(t *testing.T) {
 	var ran atomic.Bool
 	x := &fakeTool{name: "x", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
@@ -145,10 +210,19 @@ func TestLoopAbandonsUncooperativeTool(t *testing.T) {
 	l := execLoop(t, stuck)
 	l.Limits.ToolTimeout = 50 * time.Millisecond
 	l.Limits.HookBudget = 10 * time.Millisecond
+
+	// Run on its own goroutine with a short local deadline: if the watchdog
+	// regresses and abandonAfter never returns, this fails in ~2s instead of
+	// hanging the whole test binary to go test's default 10m timeout.
 	start := time.Now()
-	out := run(l, llm.ToolCallResult{ID: "1", Name: "stuck", Arguments: `{}`})
-	if time.Since(start) > 2*time.Second {
-		t.Fatalf("runCalls blocked %v on an uncooperative tool", time.Since(start))
+	done := make(chan callsOutcome, 1)
+	go func() { done <- run(l, llm.ToolCallResult{ID: "1", Name: "stuck", Arguments: `{}`}) }()
+
+	var out callsOutcome
+	select {
+	case out = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("runCalls blocked past %v on an uncooperative tool: the watchdog did not abandon it", time.Since(start))
 	}
 	if !strings.Contains(out.messages[0].Content, "tool execution exceeded timeout") {
 		t.Fatalf("got %s", out.messages[0].Content)
@@ -240,6 +314,14 @@ func TestLoopSpillsLargeResult(t *testing.T) {
 	if b, _ := os.ReadFile(files[0]); len(b) != 200*1024 {
 		t.Fatalf("spilled %d bytes, want the full result", len(b))
 	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(files[0]); err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("spill file mode = %v (err %v), want 0600", info.Mode().Perm(), err)
+		}
+		if info, err := os.Stat(filepath.Join(l.SpillDir, "s")); err != nil || info.Mode().Perm() != 0700 {
+			t.Fatalf("spill dir mode = %v (err %v), want 0700", info.Mode().Perm(), err)
+		}
+	}
 }
 
 func TestLoopSpillFileNameIsSanitized(t *testing.T) {
@@ -266,6 +348,7 @@ func TestLoopSpillFileNameIsSanitized(t *testing.T) {
 }
 
 func gatedLoop(t *testing.T) *Loop {
+	hermetic(t)                            // permissions.NewChecker reads $HOME
 	l := execLoop(t, &fakeTool{name: "w"}) // not read-only: the default policy asks
 	l.Tools.SetPermissionChecker(permissions.NewChecker(permissions.DefaultConfig()))
 	return l
@@ -284,10 +367,67 @@ func TestLoopGateAnswersAsk(t *testing.T) {
 	}
 }
 
+// A raw GateFunc (not wrapped by PromptGate) must still be serialized by the
+// Loop: two concurrency-safe calls that both Ask must not reach the Gate at
+// the same time.
+func TestLoopSerializesGateForParallelSafeCalls(t *testing.T) {
+	hermetic(t) // permissions.NewChecker reads $HOME
+	w1 := &fakeTool{name: "w1", safe: true}
+	w2 := &fakeTool{name: "w2", safe: true}
+	l := execLoop(t, w1, w2)
+	l.Tools.SetPermissionChecker(permissions.NewChecker(permissions.DefaultConfig()))
+
+	var inFlight, maxInFlight atomic.Int32
+	l.Gate = GateFunc(func(_ context.Context, req tools.PermissionRequest) tools.PermissionResponse {
+		n := inFlight.Add(1)
+		for {
+			cur := maxInFlight.Load()
+			if n <= cur || maxInFlight.CompareAndSwap(cur, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		inFlight.Add(-1)
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+
+	out := run(l,
+		llm.ToolCallResult{ID: "1", Name: "w1", Arguments: `{}`},
+		llm.ToolCallResult{ID: "2", Name: "w2", Arguments: `{}`})
+	for _, m := range out.messages {
+		if strings.Contains(m.Content, "denied") {
+			t.Fatalf("messages = %+v, want both allowed", out.messages)
+		}
+	}
+	if maxInFlight.Load() != 1 {
+		t.Fatalf("%d Gate.Ask calls ran at once through a raw GateFunc, want 1 (Loop must serialize)", maxInFlight.Load())
+	}
+}
+
 func TestLoopWithoutGateDeniesAsk(t *testing.T) {
 	out := run(gatedLoop(t), llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`})
-	if !strings.Contains(out.messages[0].Content, "no prompt is configured") {
+	if !strings.Contains(out.messages[0].Content, "Permission denied") {
 		t.Fatalf("got %s", out.messages[0].Content)
+	}
+}
+
+// A nil Gate must deny an Ask outright, never fall back to the registry's
+// own promptFn (an adopter may set one for its own use, e.g. a TUI modal
+// wired independently of the loop's per-run Gate).
+func TestLoopNilGateDeniesRatherThanRegistryPromptFn(t *testing.T) {
+	l := gatedLoop(t)
+	var promptCalls int
+	l.Tools.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		promptCalls++
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	// l.Gate is intentionally left nil.
+	out := run(l, llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`})
+	if !strings.Contains(out.messages[0].Content, "Permission denied") {
+		t.Fatalf("got %s, want denied without a Gate", out.messages[0].Content)
+	}
+	if promptCalls != 0 {
+		t.Fatalf("registry promptFn was called %d times; a nil Gate must deny without it", promptCalls)
 	}
 }
 
