@@ -2074,19 +2074,18 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PromptBlockedMsg:
 		m.cancelFunc = nil
+		if msg.Cancelled || m.interrupted {
+			// Esc/Ctrl+C cut the UserPromptSubmit hook short: that is not a
+			// block, so the prompt stays (interrupt already reset the state).
+			break
+		}
 		m.interruptPending = false
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText("Prompt blocked by a hook")
 		m.chat = m.chat.DropLastUser()
-		if cs, ok := m.currentSession.(*config.Session); ok {
-			for i := len(cs.Messages) - 1; i >= 0; i-- {
-				if cs.Messages[i].Role == "user" {
-					cs.Messages = append(cs.Messages[:i], cs.Messages[i+1:]...)
-					break
-				}
-			}
-		}
+		// persistSession rewrites the session's messages from the chat, so
+		// dropping the prompt from the chat drops it from the session too.
 		m.persistSession()
 		m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
 		return m, nil

@@ -95,6 +95,9 @@ type PromptHookMsg struct {
 // message. It is removed from the chat and the session.
 type PromptBlockedMsg struct {
 	Reason string
+	// Cancelled means the hook was cut short by an interrupt: the prompt
+	// is kept and nothing is reported.
+	Cancelled bool
 }
 
 // HookWarningMsg shows a hook warning in the chat.

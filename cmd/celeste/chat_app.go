@@ -317,7 +317,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 
 	// Hooks (2.0 F0): global hooks run; repo hooks run only once trusted.
-	hookRunner, startContext, hookLoadWarning := loadChatHooks(cwd, homeDir, currentSession.ID,
+	hookRunner, startContext, hookWarnings := loadChatHooks(cwd, homeDir, currentSession.ID,
 		resumeSessionID != "" && len(currentSession.Messages) > 0, registry)
 	tuiClient.hooks = hookRunner
 	if startContext != "" {
@@ -349,8 +349,10 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	if len(currentSession.Messages) > 0 {
 		app = app.WithMessages(tui.ChatMessagesFromSession(currentSession.Messages))
 	}
-	if hookLoadWarning != "" {
-		app = app.WithSystemMessage(hookLoadWarning)
+	// Hook load warnings printed before the alt screen hid stderr; show
+	// them in the chat too.
+	for _, w := range hookWarnings {
+		app = app.WithSystemMessage("⚠ " + w)
 	}
 
 	// Restore endpoint/provider from session, or detect from config

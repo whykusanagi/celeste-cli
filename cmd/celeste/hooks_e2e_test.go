@@ -435,11 +435,71 @@ func TestLoadChatHooksErrorReturnsWarning(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	registry := tools.NewRegistry()
-	runner, start, warning := loadChatHooks(t.TempDir(), "relative-home", "s1", false, registry)
+	runner, start, warnings := loadChatHooks(t.TempDir(), "relative-home", "s1", false, registry)
 	if runner != nil || start != "" {
 		t.Fatalf("runner = %v, start = %q; want nil and empty on a Load error", runner, start)
 	}
-	if !strings.Contains(warning, "hooks disabled") {
-		t.Fatalf("warning = %q", warning)
+	if !strings.Contains(strings.Join(warnings, "\n"), "hooks disabled") {
+		t.Fatalf("warnings = %q", warnings)
+	}
+}
+
+// Fix round 1: warnings raised while hooks load (here: an untrusted repo
+// file skipped without an approver) are shown in the chat, not only on the
+// stderr the alt screen hides.
+func TestTUIHookLoadWarningsShownInChat(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: `{"path":"a.txt"}`}}},
+		fakeprovider.Turn{Text: "read it"},
+	)
+	var rec string
+	m, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		rec = filepath.Join(home, "ran.json")
+		writeHooksFile(t, filepath.Join(ws, ".celeste", "hooks.json"), hookDef(t, hooks.EventPreToolUse, "*", "record", rec))
+		os.WriteFile(filepath.Join(ws, "a.txt"), []byte("alpha"), 0o644)
+	})
+	if !hasSystemLine(m, "skipping") {
+		t.Fatalf("no load warning in the chat: %v", chatMessages(m))
+	}
+	if deps.hooks.Has(hooks.EventPreToolUse) {
+		t.Fatal("untrusted repo hook loaded without approval")
+	}
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read a.txt"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "read it" && turnIdle(m) }, 30*time.Second)
+	if _, err := os.Stat(rec); err == nil {
+		t.Fatal("untrusted repo hook ran")
+	}
+}
+
+// Fix round 1: a UserPromptSubmit hook cut short by an interrupt (a
+// cancelled context) is not a block: the adapter marks it Cancelled and the
+// TUI keeps the prompt without reporting a block.
+func TestPromptHookInterruptKeepsPrompt(t *testing.T) {
+	a := adapterWithHooks(t, hookDef(t, hooks.EventUserPromptSubmit, "", "allow"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ch := make(chan tea.Msg, 4)
+	_, stop := a.applyPromptHooks(ctx, []tui.ChatMessage{{Role: "user", Content: "keep me"}}, ch)
+	if !stop {
+		t.Fatal("a failed gating hook did not stop the send")
+	}
+	blocked, ok := (<-ch).(tui.PromptBlockedMsg)
+	if !ok || !blocked.Cancelled {
+		t.Fatalf("message = %#v, want PromptBlockedMsg{Cancelled: true}", blocked)
+	}
+
+	srv := fakeprovider.NewOpenAI(t)
+	m, _, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {})
+	app := m.(tui.AppModel).WithMessages([]tui.ChatMessage{{Role: "user", Content: "keep me"}})
+	m, _ = app.Update(blocked)
+	if hasSystemLine(m, "Prompt blocked") {
+		t.Fatal("an interrupted hook was reported as a block")
+	}
+	kept := false
+	for _, x := range chatMessages(m) {
+		kept = kept || (x.Role == "user" && x.Content == "keep me")
+	}
+	if !kept {
+		t.Fatal("interrupted prompt was dropped from the chat")
 	}
 }
