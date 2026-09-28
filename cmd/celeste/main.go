@@ -314,25 +314,28 @@ func runChatTUI() {
 	}
 }
 
-// hookRunnerAdapter adapts hooks.Executor to satisfy tools.HookRunner interface.
+// hookRunnerAdapter bridges the 1.x executor to tools.HookRunner until the
+// TUI moves to hooks.Load (2.0 F0 PR 2 deletes it).
 type hookRunnerAdapter struct {
 	executor *hooks.Executor
 }
 
-func (a *hookRunnerAdapter) RunPreToolUse(toolName string, input map[string]any) (*tools.HookResult, error) {
+func (a *hookRunnerAdapter) PreToolUse(_ context.Context, toolName string, input map[string]any) tools.PreToolHookResult {
 	result, err := a.executor.RunPreToolUse(toolName, input)
 	if err != nil {
-		return nil, err
+		return tools.PreToolHookResult{Decision: "deny", Reason: "Hook error: " + err.Error()}
 	}
-	return &tools.HookResult{Decision: result.Decision, Output: result.Output}, nil
+	if result.Decision == "block" {
+		return tools.PreToolHookResult{Decision: "deny", Reason: result.Output}
+	}
+	return tools.PreToolHookResult{Decision: "allow"}
 }
 
-func (a *hookRunnerAdapter) RunPostToolUse(toolName string, input map[string]any) (*tools.HookResult, error) {
-	result, err := a.executor.RunPostToolUse(toolName, input)
-	if err != nil {
-		return nil, err
+func (a *hookRunnerAdapter) PostToolUse(_ context.Context, toolName string, input map[string]any, _ tools.ToolResult) string {
+	if _, err := a.executor.RunPostToolUse(toolName, input); err != nil {
+		tui.LogInfo(fmt.Sprintf("Post-tool hook failed for %q: %v", toolName, err))
 	}
-	return &tools.HookResult{Decision: result.Decision, Output: result.Output}, nil
+	return ""
 }
 
 // TUIClientAdapter adapts the LLM client for the TUI.

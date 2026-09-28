@@ -116,17 +116,19 @@ type toolInfoAdapter struct {
 func (a *toolInfoAdapter) ToolName() string { return a.tool.Name() }
 func (a *toolInfoAdapter) IsReadOnly() bool { return a.tool.IsReadOnly() }
 
-// HookResult is the outcome of a pre/post tool hook.
-type HookResult struct {
-	Decision string // "approve" or "block"
-	Output   string
+// PreToolHookResult is the combined verdict of the PreToolUse hooks.
+type PreToolHookResult struct {
+	Decision          string // "allow", "deny" or "ask"
+	Reason            string
+	AdditionalContext string
+	UpdatedInput      map[string]any // nil = unchanged
 }
 
-// HookRunner is an interface for running pre/post tool hooks.
-// This avoids a circular dependency between tools and hooks packages.
+// HookRunner runs tool hooks (2.0 F0). It is an interface so tools does
+// not import hooks; hooks.Runner.ToolHooks returns one.
 type HookRunner interface {
-	RunPreToolUse(toolName string, input map[string]any) (*HookResult, error)
-	RunPostToolUse(toolName string, input map[string]any) (*HookResult, error)
+	PreToolUse(ctx context.Context, toolName string, input map[string]any) PreToolHookResult
+	PostToolUse(ctx context.Context, toolName string, input map[string]any, result ToolResult) (additionalContext string)
 }
 
 // Registry manages the collection of available tools and their mode associations.
@@ -323,6 +325,11 @@ func (r *Registry) Execute(ctx context.Context, name string, input map[string]an
 }
 
 // ExecuteWithProgress runs a tool by name with input validation and a progress channel.
+//
+// Order: validate → deny-only permission pass on the model's input (a hard
+// denial never reaches a hook process) → PreToolUse hooks → re-validate a
+// rewritten input → full permission gate on the final input (a hook's ask
+// forces the prompt; a hook can never skip one) → execute → PostToolUse.
 func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
 	tool, ok := r.Get(name)
 	if !ok {
@@ -332,75 +339,45 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 		return ToolResult{Content: err.Error(), Error: true}, nil
 	}
 
-	// Permission check
 	r.mu.RLock()
 	checker := r.checker
 	prompt := r.promptFn
+	hooks := r.hooks
 	r.mu.RUnlock()
 
-	if checker != nil {
-		result := checker.Check(&toolInfoAdapter{tool: tool}, input)
-		switch result.Decision {
-		case permissions.Deny:
-			return ToolResult{
-				Content: fmt.Sprintf("Permission denied: %s", result.Reason),
-				Error:   true,
-			}, nil
-		case permissions.Ask:
-			// Hard permission gate: invoke the prompt callback if configured.
-			// If no prompt is configured (headless / non-TUI), deny by default
-			// so the gate cannot be silently bypassed.
-			if prompt == nil {
-				return ToolResult{
-					Content: fmt.Sprintf("Permission denied: interactive approval required for %q but no prompt is configured", name),
-					Error:   true,
-				}, nil
-			}
-			// Build the request and block for the user's response.
-			// This call runs inside a tea.Cmd goroutine (off the Bubble Tea
-			// Update loop), so blocking here is safe.
-			req := PermissionRequest{
-				ToolName:     name,
-				InputSummary: inputSummary(input),
-				RiskLevel:    classifyRiskLevel(name),
-			}
-			resp := prompt(req)
-			switch resp.Decision {
-			case "allow_once":
-				// Proceed; no rule persisted.
-			case "always_allow":
-				// Persist an allow rule for future invocations.
-				pattern := resp.Pattern
-				if pattern == "" {
-					pattern = name
-				}
-				_ = checker.AddPersistentAllow(permissions.Rule{
-					ToolPattern: pattern,
-					Decision:    permissions.Allow,
-				})
-			case "deny", "always_deny":
-				if resp.Decision == "always_deny" {
-					pattern := resp.Pattern
-					if pattern == "" {
-						pattern = name
-					}
-					_ = checker.AddPersistentDeny(permissions.Rule{
-						ToolPattern: pattern,
-						Decision:    permissions.Deny,
-					})
-				}
-				return ToolResult{
-					Content: fmt.Sprintf("Permission denied: user denied execution of %q", name),
-					Error:   true,
-				}, nil
-			default:
-				// Empty or unknown decision → deny (safe default).
-				return ToolResult{
-					Content: fmt.Sprintf("Permission denied: no decision received for %q", name),
-					Error:   true,
-				}, nil
+	hookCtx := ctx // hooks never inherit the tool's execution timeout
+	var hookContext []string
+	forceAsk := false
+	if hooks != nil {
+		if checker != nil {
+			if res := checker.Check(&toolInfoAdapter{tool: tool}, input); res.Decision == permissions.Deny {
+				return ToolResult{Content: fmt.Sprintf("Permission denied: %s", res.Reason), Error: true}, nil
 			}
 		}
+		pre := hooks.PreToolUse(hookCtx, name, input)
+		if pre.AdditionalContext != "" {
+			hookContext = append(hookContext, pre.AdditionalContext)
+		}
+		switch pre.Decision {
+		case "deny":
+			msg := "Blocked by pre-tool hook"
+			if pre.Reason != "" {
+				msg += ": " + pre.Reason
+			}
+			return withHookContext(ToolResult{Content: msg, Error: true}, hookContext), nil
+		case "ask":
+			forceAsk = true
+		}
+		if pre.UpdatedInput != nil {
+			if err := tool.ValidateInput(pre.UpdatedInput); err != nil {
+				return ToolResult{Content: "Hook rewrote the input into an invalid one: " + err.Error(), Error: true}, nil
+			}
+			input = pre.UpdatedInput
+		}
+	}
+
+	if denied, blocked := r.checkPermission(tool, name, input, checker, prompt, forceAsk); blocked {
+		return withHookContext(denied, hookContext), nil
 	}
 
 	// Approved: start the execution timeout now.
@@ -410,32 +387,76 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 		defer cancel()
 	}
 
-	// Pre-tool hook check
-	if r.hooks != nil {
-		hookResult, hookErr := r.hooks.RunPreToolUse(name, input)
-		if hookErr != nil {
-			return ToolResult{Content: fmt.Sprintf("Hook error: %s", hookErr.Error()), Error: true}, nil
-		}
-		if hookResult != nil && hookResult.Decision == "block" {
-			msg := "Blocked by pre-tool hook"
-			if hookResult.Output != "" {
-				msg = fmt.Sprintf("Blocked by pre-tool hook: %s", hookResult.Output)
-			}
-			return ToolResult{Content: msg, Error: true}, nil
-		}
-	}
-
 	result, err := tool.Execute(ctx, input, progress)
-
-	// Post-tool hook (fire-and-forget, does not block result)
-	if r.hooks != nil && err == nil {
-		_, hookErr := r.hooks.RunPostToolUse(name, input)
-		if hookErr != nil {
-			fmt.Fprintf(os.Stderr, "Post-tool hook failed for %q: %v\n", name, hookErr)
+	if err != nil {
+		return result, err
+	}
+	if hooks != nil {
+		if c := hooks.PostToolUse(hookCtx, name, input, result); c != "" {
+			hookContext = append(hookContext, c)
 		}
 	}
+	return withHookContext(result, hookContext), nil
+}
 
-	return result, err
+// checkPermission applies the permission gate. forceAsk (a PreToolUse hook
+// said "ask") turns Allow into Ask; Deny always stays Deny. It returns the
+// denial result and true when the call must not run.
+func (r *Registry) checkPermission(tool Tool, name string, input map[string]any, checker *permissions.Checker, prompt PromptFunc, forceAsk bool) (ToolResult, bool) {
+	decision, reason := permissions.Allow, ""
+	if checker != nil {
+		res := checker.Check(&toolInfoAdapter{tool: tool}, input)
+		decision, reason = res.Decision, res.Reason
+	}
+	if decision == permissions.Deny {
+		return ToolResult{Content: fmt.Sprintf("Permission denied: %s", reason), Error: true}, true
+	}
+	if decision != permissions.Ask && !forceAsk {
+		return ToolResult{}, false
+	}
+	// Hard gate: with no prompt configured (headless), deny so the gate
+	// can't be bypassed silently.
+	if prompt == nil {
+		return ToolResult{
+			Content: fmt.Sprintf("Permission denied: interactive approval required for %q but no prompt is configured", name),
+			Error:   true,
+		}, true
+	}
+	// Runs in the tool-execution goroutine (off the Bubble Tea Update loop),
+	// so blocking on the answer is safe.
+	resp := prompt(PermissionRequest{ToolName: name, InputSummary: inputSummary(input), RiskLevel: classifyRiskLevel(name)})
+	pattern := resp.Pattern
+	if pattern == "" {
+		pattern = name
+	}
+	switch resp.Decision {
+	case "allow_once":
+		return ToolResult{}, false
+	case "always_allow":
+		if checker != nil {
+			_ = checker.AddPersistentAllow(permissions.Rule{ToolPattern: pattern, Decision: permissions.Allow})
+		}
+		return ToolResult{}, false
+	case "deny", "always_deny":
+		if resp.Decision == "always_deny" && checker != nil {
+			_ = checker.AddPersistentDeny(permissions.Rule{ToolPattern: pattern, Decision: permissions.Deny})
+		}
+		return ToolResult{Content: fmt.Sprintf("Permission denied: user denied execution of %q", name), Error: true}, true
+	default:
+		// Empty or unknown decision → deny (safe default).
+		return ToolResult{Content: fmt.Sprintf("Permission denied: no decision received for %q", name), Error: true}, true
+	}
+}
+
+// withHookContext puts hooks' additionalContext in front of what the model
+// sees. Result capping keeps the head of a large result, so prepending means
+// the context survives the cap.
+func withHookContext(res ToolResult, contexts []string) ToolResult {
+	if len(contexts) == 0 {
+		return res
+	}
+	res.Content = "<hook-context>\n" + strings.Join(contexts, "\n") + "\n</hook-context>\n\n" + res.Content
+	return res
 }
 
 // SetPermissionChecker sets the permission checker used to gate tool execution.

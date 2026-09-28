@@ -231,6 +231,3 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 	out.AdditionalContext = truncate(strings.Join(contexts, "\n"), maxContext)
 	return out
 }
-
-// ToolHooks is completed in Task 6.
-func (r *Runner) ToolHooks() any { return nil }

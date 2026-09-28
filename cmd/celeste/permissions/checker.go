@@ -3,6 +3,7 @@ package permissions
 
 import (
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -15,8 +16,9 @@ type ToolInfo interface {
 }
 
 // Checker evaluates whether a tool execution should be allowed, denied, or
-// requires user approval. It implements a 5-step evaluation chain:
+// requires user approval. It implements a 6-step evaluation chain:
 //
+//  0. protected hook/trust files — Deny for non-read-only tools
 //  1. alwaysDeny rules — if any match, return Deny immediately
 //  2. alwaysAllow rules — if any match, return Allow immediately
 //  3. IsReadOnly check — in default mode, read-only tools are auto-allowed
@@ -28,7 +30,9 @@ type Checker struct {
 	alwaysAllow  []Rule
 	patternRules []Rule
 	mode         PermissionMode
-	configPath   string // path to persist rule additions; empty = no persistence
+	configPath   string   // path to persist rule additions; empty = no persistence
+	protected    []string // spellings of hook/trust files tools may not modify (protected.go)
+	home         string
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -37,12 +41,15 @@ func NewChecker(config PermissionConfig) *Checker {
 	if !mode.Valid() {
 		mode = ModeDefault
 	}
+	home, _ := os.UserHomeDir()
 
 	return &Checker{
 		alwaysDeny:   config.AlwaysDeny,
 		alwaysAllow:  config.AlwaysAllow,
 		patternRules: config.PatternRules,
 		mode:         mode,
+		protected:    protectedFragments(home),
+		home:         home,
 	}
 }
 
@@ -115,6 +122,26 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 	if tool != nil {
 		toolName = tool.ToolName()
 		readOnly = tool.IsReadOnly()
+	}
+
+	// Step 0: hook and trust files are edited by the user, never by tools
+	// (2.0 F0). This comes before the user's own rules, so a permissive
+	// config can't lift it.
+	if !readOnly {
+		if frag, hit := touchesProtected(input, c.protected); hit {
+			return CheckResult{
+				Decision: Deny,
+				Reason:   fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", frag),
+			}
+		}
+		if cwd, err := os.Getwd(); err == nil {
+			if path, hit := touchesProtectedRelative(input, c.home, cwd); hit {
+				return CheckResult{
+					Decision: Deny,
+					Reason:   fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", path),
+				}
+			}
+		}
 	}
 
 	// Step 1: alwaysDeny rules (highest priority)
