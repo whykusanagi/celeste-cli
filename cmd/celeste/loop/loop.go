@@ -22,6 +22,9 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 	}()
 
 	turn := 0
+	ident := guard{limit: lim.IdenticalCalls}
+	prog := guard{limit: lim.NoProgressTurns}
+	invalidTurns := 0
 	for {
 		if cerr := ctx.Err(); cerr != nil {
 			res.StopReason = StopInterrupted
@@ -47,6 +50,9 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 
 		calls := capCalls(rep.calls, lim.MaxCallsPerTurn)
 		native := calls
+		if len(calls) == 0 && lim.TextToolCalls {
+			calls = capCalls(parseTextToolCalls(rep.text), lim.MaxCallsPerTurn)
+		}
 		l.emit(Event{Kind: EventAssistant, Turn: turn, Text: rep.text, ToolNames: callNames(calls), Usage: rep.usage, Elapsed: rep.elapsed})
 		res.FinalText = rep.text
 
@@ -59,6 +65,12 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			return msgs, res, nil
 		}
 
+		// Checked before the turn is recorded or run, so the stopped turn
+		// leaves no unpaired tool_calls behind.
+		if ident.observe(batchSig(calls)) {
+			res.StopReason = StopIdentical
+			return msgs, res, nil
+		}
 		msgs = append(msgs, Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: time.Now()})
 		out := l.runCalls(ctx, calls, lim)
 		msgs = append(msgs, out.messages...)
@@ -69,6 +81,19 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		if ctx.Err() != nil {
 			res.StopReason = StopInterrupted
 			return msgs, res, ctx.Err()
+		}
+		if out.anyInvalid {
+			invalidTurns++
+		} else {
+			invalidTurns = 0
+		}
+		if lim.MaxInvalidArgTurns > 0 && invalidTurns >= lim.MaxInvalidArgTurns {
+			res.StopReason = StopInvalidArgs
+			return msgs, res, nil
+		}
+		if prog.observe(out.resultSig) {
+			res.StopReason = StopProgress
+			return msgs, res, nil
 		}
 	}
 }
