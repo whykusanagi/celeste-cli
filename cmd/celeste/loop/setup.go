@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -53,6 +55,7 @@ type Env struct {
 	ToolMode       tools.RuntimeMode
 	MCP            *mcp.Manager
 	Indexer        *codegraph.Indexer
+	Hooks          *hooks.Runner // tool hooks run in Registry; nil when loading failed
 	Files          *checkpoints.FileTracker
 	Snapshots      *checkpoints.SnapshotManager
 	ProjectContext string // grimoire, project memories, code-graph summary
@@ -104,6 +107,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		env.warn("custom skills: %v", err)
 	}
 	env.setupPermissions(home)
+	env.setupHooks(home)
 	env.setupMCP(ws, home)
 	if env.Registry.Count() > toolDiscoveryThreshold {
 		env.Registry.SetDiscoveryMode(true)
@@ -139,6 +143,47 @@ func (e *Env) setupPermissions(home string) {
 		e.Checker.SetConfigPath(path) // "always allow" from the modal persists
 	}
 	e.Registry.SetPermissionChecker(e.Checker)
+}
+
+// setupHooks loads the session's hooks (F0). Only an interactive TUI whose
+// stdin and stderr are terminals can approve repo hooks; every other mode
+// passes a nil Approve, so untrusted hooks are skipped with a warning and
+// never auto-approved.
+func (e *Env) setupHooks(home string) {
+	var approve hooks.ApproveFunc
+	if e.Mode == ModeChat && hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
+		approve = hooks.PromptApprover(os.Stdin, os.Stderr)
+	}
+	runner, err := hooks.Load(hooks.Options{
+		Workspace: e.Workspace,
+		Home:      home,
+		SessionID: e.opts.SessionID,
+		Approve:   approve,
+		Warn:      e.opts.Warn,
+	})
+	if err != nil {
+		e.opts.Warn(hooks.DisabledWarning(err))
+		return
+	}
+	// Tool hooks run in the registry, once, for every call in every mode.
+	if th := runner.ToolHooks(); th != nil {
+		e.Registry.SetHookRunner(th)
+	}
+	e.Hooks = runner
+}
+
+// StartSession fires SessionStart for a top-level run and adds its context
+// to the project context, under the TUI's heading. Call it before
+// SystemPrompt; nested runs (subagents, orchestrator lanes) don't call it.
+func (e *Env) StartSession(ctx context.Context, source string) {
+	if e.Hooks == nil {
+		return
+	}
+	start := e.Hooks.SessionStart(ctx, source)
+	if start.AdditionalContext == "" {
+		return
+	}
+	e.ProjectContext = strings.TrimSpace(e.ProjectContext + "\n\n# Session Start Hook Context\n\n" + start.AdditionalContext)
 }
 
 // Trust switches the checker to trust mode, keeping the deny rules. An

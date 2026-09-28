@@ -23,10 +23,7 @@ var chatHookApprover hooks.ApproveFunc
 var hookNotify atomic.Pointer[func(string)]
 
 func formatHookLoadWarning(err error) string {
-	if err == nil {
-		return ""
-	}
-	return fmt.Sprintf("hooks disabled: %v (no hooks run this session, including global guards)", err)
+	return hooks.DisabledWarning(err)
 }
 
 // loadChatHooks loads the session's hooks, wires the tool hooks into

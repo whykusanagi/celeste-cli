@@ -236,3 +236,11 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 	out.AdditionalContext = truncate(strings.Join(contexts, "\n"), maxContext)
 	return out
 }
+
+// DisabledWarning is the one warning every adopter shows when Load fails.
+func DisabledWarning(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("hooks disabled: %v (no hooks run this session, including global guards)", err)
+}
