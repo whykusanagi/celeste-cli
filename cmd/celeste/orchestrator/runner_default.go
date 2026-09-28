@@ -21,6 +21,15 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 	cfg := *r.cfg
 	cfg.Model = r.model
 	opts := agent.DefaultOptions()
+	opts.Nested = true // an orchestrator lane is part of the caller's run
+	// Setup and hook warnings go to the caller's event stream, never
+	// io.Discard (and never raw stderr under the TUI).
+	if r.onEvent != nil {
+		emit := r.onEvent
+		opts.Warn = func(s string) { emit(OrchestratorEvent{Kind: EventAction, Model: r.model, Text: "⚠ " + s}) }
+	} else {
+		opts.Warn = func(s string) { fmt.Fprintln(os.Stderr, "Warning: "+s) }
+	}
 	if cwd, err := os.Getwd(); err == nil {
 		opts.Workspace = cwd
 	}

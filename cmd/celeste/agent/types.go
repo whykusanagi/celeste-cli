@@ -90,6 +90,12 @@ type Options struct {
 	// resolves to Ask. The TUI's /agent sets it to its permission modal (#172);
 	// without it, Ask means deny.
 	PromptFunc tools.PromptFunc `json:"-"`
+	// Nested marks a runner started by another run (a subagent, an
+	// orchestrator lane). It skips SessionStart and Stop hooks, which belong
+	// to the top-level run (SubagentStop is F2c's).
+	Nested bool `json:"-"`
+	// Warn receives setup and hook warnings. Nil writes them to errOut.
+	Warn func(string) `json:"-"`
 	// Client, when set, is used instead of building an llm.Client from the
 	// config. Tests inject a client around a fake backend (2.0 F1).
 	Client *llm.Client `json:"-"`

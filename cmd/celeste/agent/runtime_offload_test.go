@@ -19,6 +19,7 @@ func newTestConfig(baseURL, model string) *config.Config {
 }
 
 func TestNewRunnerDisablesLocalPlanningForConductor(t *testing.T) {
+	isolateHome(t)
 	cfg := newTestConfig("https://api.sakana.ai/v1", "fugu-ultra")
 	opts := DefaultOptions()
 	opts.Workspace = t.TempDir()
@@ -43,6 +44,7 @@ func TestNewRunnerDisablesLocalPlanningForConductor(t *testing.T) {
 }
 
 func TestNewRunnerKeepsLocalPlanningForPlainModel(t *testing.T) {
+	isolateHome(t)
 	cfg := newTestConfig("https://api.openai.com/v1", "gpt-4.1-nano")
 	opts := DefaultOptions()
 	opts.Workspace = t.TempDir()
@@ -60,6 +62,7 @@ func TestNewRunnerKeepsLocalPlanningForPlainModel(t *testing.T) {
 }
 
 func TestNewRunnerUsesAgentModelOverride(t *testing.T) {
+	isolateHome(t)
 	// Options.Model is the model-router seam and wins over cfg.Model.
 	cfg := newTestConfig("https://api.sakana.ai/v1", "fugu")
 	opts := DefaultOptions()
@@ -79,6 +82,7 @@ func TestNewRunnerUsesAgentModelOverride(t *testing.T) {
 }
 
 func TestNewRunnerUsesClientModelForPlannerDecision(t *testing.T) {
+	isolateHome(t)
 	// cfg.Model is the model the LLM client actually talks to (NewRunner's own
 	// resolution a few lines below the derivation). cfg.AgentModel is a plain
 	// model that cfg.ResolveAgentModel() would prefer if it were consulted
@@ -107,6 +111,7 @@ func TestNewRunnerUsesClientModelForPlannerDecision(t *testing.T) {
 }
 
 func TestNewRunnerHonoursExplicitPlannerFlag(t *testing.T) {
+	isolateHome(t)
 	cfg := newTestConfig("https://api.sakana.ai/v1", "fugu-ultra")
 	opts := DefaultOptions()
 	opts.Workspace = t.TempDir()
@@ -210,6 +215,7 @@ func TestAnnotateTurnTimeout(t *testing.T) {
 // mode died at that ceiling twice. Give conductors headroom by default, while
 // leaving an explicitly-passed -request-timeout authoritative.
 func TestNewRunnerGivesConductorsLongerTimeout(t *testing.T) {
+	isolateHome(t)
 	base := DefaultOptions().RequestTimeout
 
 	cfg := newTestConfig("https://api.sakana.ai/v1", "fugu-ultra")
@@ -263,6 +269,7 @@ func TestNewRunnerGivesConductorsLongerTimeout(t *testing.T) {
 // moot: a real workload still died at the client's 90s, reporting the chat-path
 // message ("request exceeded the 1m30s per-request timeout").
 func TestNewRunnerRaisesClientTimeoutForConductor(t *testing.T) {
+	isolateHome(t)
 	cfg := newTestConfig("https://api.sakana.ai/v1", "fugu-ultra")
 	cfg.Timeout = 90 // the sakana template's value, in seconds
 
@@ -285,6 +292,7 @@ func TestNewRunnerRaisesClientTimeoutForConductor(t *testing.T) {
 }
 
 func TestNewRunnerLeavesPlainModelClientTimeout(t *testing.T) {
+	isolateHome(t)
 	cfg := newTestConfig("https://api.openai.com/v1", "gpt-4.1-nano")
 	cfg.Timeout = 60
 

@@ -28,9 +28,7 @@ func (b *recordingBackend) SetThinkingConfig(llm.ThinkingConfig) {}
 func (b *recordingBackend) Close() error                         { return nil }
 
 func TestNewRunnerUsesInjectedClient(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	t.Setenv("USERPROFILE", homeDir)
+	isolateHome(t)
 	be := &recordingBackend{}
 	client := llm.NewClientWithBackend(&llm.Config{Model: "fake"}, nil, be)
 	opts := DefaultOptions()

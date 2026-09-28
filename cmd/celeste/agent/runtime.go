@@ -13,21 +13,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -51,6 +50,14 @@ type Runner struct {
 	// jev is set when jev_prune is "shadow": pruning then logs Jev's verdict
 	// next to the rules' (#175).
 	jev *jev.Client
+	// env is the loop.Setup environment (registry, MCP, code graph, hooks).
+	// Nil for runners built directly in tests.
+	env *loop.Env
+	// hooks is env.Hooks (nil = no hooks); warn is the warning sink.
+	hooks *hooks.Runner
+	warn  func(string)
+	// firstRunID is the hooks' session_id; the first RunGoal adopts it.
+	firstRunID string
 }
 
 // compactHistory keeps the history inside the window (#174). It prunes old
@@ -142,6 +149,10 @@ func (r *Runner) emitProgress(kind ProgressKind, text string, turn, maxTurns int
 
 // Close releases resources held by the runner (e.g. code graph DB).
 func (r *Runner) Close() {
+	if r.env != nil {
+		r.env.Close()
+		return
+	}
 	if r.indexer != nil {
 		r.indexer.Close()
 	}
@@ -193,6 +204,8 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	if errOut == nil {
 		errOut = os.Stderr
 	}
+	// Hooks warn from tool goroutines while the run writes compaction lines.
+	errOut = &syncWriter{w: errOut}
 
 	if options.Workspace == "" {
 		cwd, err := os.Getwd()
@@ -255,46 +268,38 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	normalizeOptions(&options)
 
-	// Set up file checkpointing for stale detection and undo support.
-	fileTracker := checkpoints.NewFileTracker()
-	sessionID := fmt.Sprintf("agent-%d", os.Getpid())
-	snapshotMgr := checkpoints.NewSnapshotManager(sessionID)
-
-	// Agent registry: register dev tools only (no configLoader = no skill tools).
-	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, options.Workspace, nil, fileTracker, snapshotMgr)
-
-	// Initialize code graph for the workspace
-	var cgIndexer *codegraph.Indexer
-	if idx, cgErr := codegraph.NewIndexer(options.Workspace, codegraph.DefaultIndexPath(options.Workspace)); cgErr != nil {
-		fmt.Fprintf(errOut, "Warning: code graph init failed: %v\n", cgErr)
+	warn := options.Warn
+	if warn == nil {
+		warn = func(s string) { fmt.Fprintf(errOut, "Warning: %s\n", s) }
 	} else {
-		if err := idx.Update(); err != nil {
-			fmt.Fprintf(errOut, "Warning: code graph update failed: %v\n", err)
+		// Setup warns from NewRunner and hooks from tool goroutines; serialize
+		// so the caller's sink never sees concurrent calls.
+		var warnMu sync.Mutex
+		userWarn := warn
+		warn = func(s string) {
+			warnMu.Lock()
+			defer warnMu.Unlock()
+			userWarn(s)
 		}
-		builtin.RegisterCodeGraphTools(registry, idx)
-		cgIndexer = idx
 	}
-
-	// Load permissions and set checker
-	agentHomeDir, _ := os.UserHomeDir()
-	permConfigPath := filepath.Join(agentHomeDir, ".celeste", "permissions.json")
-	permConfig, permErr := permissions.LoadConfig(permConfigPath)
-	if permErr != nil {
-		defaultCfg := permissions.DefaultConfig()
-		permConfig = &defaultCfg
+	firstRunID := generateRunID(time.Now())
+	env, err := loop.Setup(loop.ModeAgent, cfg, options.Workspace, loop.SetupOptions{SessionID: firstRunID, Warn: warn})
+	if err != nil {
+		return nil, err
 	}
-	// Subagents run headless (no interactive approval modal), so any tool that
-	// resolves to "Ask" would be denied — crippling them (can't write/commit/bash,
-	// which broke worktree work). When AutoApproveTools is set, spawning IS the
-	// approval: run in Trust mode so the subagent can do real work unattended.
+	// Subagents and MCP agent mode run headless (no approval modal): spawning
+	// IS the approval, so run in trust mode. Deny rules still apply.
 	if options.AutoApproveTools {
-		permConfig.Mode = permissions.ModeTrust
+		env.Trust()
 	}
-	checker := permissions.NewChecker(*permConfig)
-	registry.SetPermissionChecker(checker)
+	// SessionStart belongs to the top-level run; nested runners skip it.
+	if !options.Nested {
+		env.StartSession(context.Background(), "startup")
+	}
+	registry := env.Registry
+	checker := env.Checker
 	if options.PromptFunc != nil {
-		registry.SetPromptFunc(options.PromptFunc)
+		registry.SetPromptFunc(options.PromptFunc) // replaced by the loop's Gate in Task 10
 	}
 
 	// Fail fast rather than no-opping. `celeste agent` never wires an
@@ -304,6 +309,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// agent can only read. Check before turn 1 and say which flag fixes it.
 	if options.FailOnBlockedTools && !options.AutoApproveTools && options.PromptFunc == nil {
 		if blocked := blockedMutatingTools(registry, checker); len(blocked) > 0 {
+			env.Close()
 			return nil, fmt.Errorf(
 				"agent mode cannot execute %s: these need interactive approval, and the agent runtime has no prompt.\n"+
 					"Pass -auto-approve to run unattended (invoking the agent is the approval), "+
@@ -346,25 +352,13 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Build the system prompt: persona (if enabled) with the voice boundary,
 	// then the agent contract, then project context. Agent mode never carries
 	// the chat task rules or confirm mode (#170).
-	envContext := detectEnvContext()
-	composeOpts := prompts.ComposeOptions{
-		Mode:        prompts.ModeAgent,
-		SkipPersona: cfg.SkipPersonaPrompt,
-		Contract:    buildAgentSystemPrompt(options, envContext),
-		Sliders:     options.Sliders,
-	}
-	if projectGrimoire, err := grimoire.LoadAll(options.Workspace); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
-		composeOpts.ProjectContext = projectGrimoire.Render()
-	}
-	if gitSnap := grimoire.CaptureGitSnapshot(options.Workspace); gitSnap != nil {
-		composeOpts.GitSnapshot = gitSnap.FormatForPrompt()
-	}
-	systemPrompt := prompts.Compose(composeOpts)
+	systemPrompt := env.SystemPrompt(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders)
 
 	client.SetSystemPrompt(systemPrompt)
 
 	store, err := NewCheckpointStore("")
 	if err != nil {
+		env.Close()
 		return nil, err
 	}
 
@@ -387,17 +381,21 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, 0)
 
 	return &Runner{
-		client:    client,
-		registry:  registry,
-		store:     store,
-		options:   options,
-		out:       out,
-		errOut:    errOut,
-		budget:    budget,
-		indexer:   cgIndexer,
-		pruned:    prunedStore,
-		summarize: SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
-		jev:       jevShadowClient(cfg.JevPrune, errOut),
+		client:     client,
+		registry:   registry,
+		store:      store,
+		options:    options,
+		out:        out,
+		errOut:     errOut,
+		budget:     budget,
+		indexer:    env.Indexer,
+		pruned:     prunedStore,
+		summarize:  SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
+		jev:        jevShadowClient(cfg.JevPrune, errOut),
+		env:        env,
+		hooks:      env.Hooks,
+		warn:       warn,
+		firstRunID: firstRunID,
 	}, nil
 }
 
@@ -436,6 +434,11 @@ func (r *Runner) RunGoal(ctx context.Context, goal string) (*RunState, error) {
 	}
 
 	state := NewRunState(goal, r.options)
+	// The first run takes the ID the hooks were loaded with (session_id).
+	if r.firstRunID != "" {
+		state.RunID = r.firstRunID
+		r.firstRunID = ""
+	}
 	normalizeStateOptions(state, r.options)
 	if !state.Options.EnablePlanning {
 		state.Phase = PhaseExecution
@@ -1487,3 +1490,16 @@ type permToolInfo struct {
 
 func (p permToolInfo) ToolName() string { return p.name }
 func (p permToolInfo) IsReadOnly() bool { return p.readOnly }
+
+// syncWriter serializes writes: hooks warn from tool goroutines while the
+// loop goroutine writes compaction lines.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
