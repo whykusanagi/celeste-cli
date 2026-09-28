@@ -7,12 +7,13 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 )
 
-// envValueCap: the whole Windows environment block is limited to 32,767
-// characters, so each CELESTE_* value gets at most 8 KiB.
+// envValueCap keeps each CELESTE_* value well below Windows' per-variable
+// 32,767-character limit on Vista and later.
 const envValueCap = 8 << 10
 
 // shellCommand runs a v2 hook with cmd.exe. /s /c "…" hands the command line
@@ -26,7 +27,7 @@ func shellCommand(ctx context.Context, command string) *exec.Cmd {
 	}
 	cmd := exec.CommandContext(ctx, comspec)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: `"` + comspec + `" /d /s /c "` + command + `"`}
-	cmd.Cancel = func() error { return killTree(cmd) }
+	cmd.Cancel = func() error { return killProcessTree(cmd) }
 	return cmd
 }
 
@@ -34,12 +35,22 @@ func shellCommand(ctx context.Context, command string) *exec.Cmd {
 // POSIX sh on PATH (Git for Windows ships one).
 func v1Command(ctx context.Context, command string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Cancel = func() error { return killTree(cmd) }
+	cmd.Cancel = func() error { return killProcessTree(cmd) }
 	return cmd
 }
 
-func killTree(cmd *exec.Cmd) error {
-	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+func killProcessTree(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	taskkill := "taskkill"
+	if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
+		taskkill = filepath.Join(systemRoot, "System32", "taskkill.exe")
+	}
+	// F0 has no Job Object. If the root has already exited, Windows may no
+	// longer expose every grandchild relationship to taskkill /T; that accepted
+	// limitation means this is best-effort for already-detached descendants.
+	_ = exec.Command(taskkill, "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
 	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}

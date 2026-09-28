@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -57,19 +58,26 @@ func runHook(ctx context.Context, def Definition, dir string, payload map[string
 		proc = shellCommand(ctx, def.Command)
 	}
 	proc.Dir = dir
-	proc.Env = append(os.Environ(), env...)
+	proc.Env = append(filterInheritedHookEnv(os.Environ()), env...)
 	proc.Stdin = bytes.NewReader(stdin)
-	stdout := &capBuffer{max: maxStdout}
+	stdout := &capBuffer{max: maxStdout, onOverflow: cancel}
 	stderr := &capBuffer{max: maxStderr}
 	proc.Stdout, proc.Stderr = stdout, stderr
 	proc.WaitDelay = waitDelay // a child holding stdout can't hang us
 
 	runErr := proc.Run()
+	_ = killProcessTree(proc)
+	if stdout.over {
+		return hookResult{failed: fmt.Sprintf("stdout exceeded %d bytes", maxStdout)}
+	}
 	if ctx.Err() != nil {
 		return hookResult{failed: "did not finish: " + ctx.Err().Error()}
 	}
 	exitCode := 0
 	if runErr != nil {
+		if errors.Is(runErr, exec.ErrWaitDelay) {
+			return hookResult{failed: "a background process kept the hook's output open"}
+		}
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
 			return hookResult{failed: truncate(runErr.Error(), maxReason)}
@@ -117,32 +125,96 @@ func v2Result(exitCode int, stdout, stderr *capBuffer) hookResult {
 	if len(out) == 0 {
 		return hookResult{decision: Allow}
 	}
-	var w struct {
-		Decision          *string         `json:"decision"`
-		Reason            string          `json:"reason"`
-		AdditionalContext string          `json:"additionalContext"`
-		UpdatedInput      json.RawMessage `json:"updatedInput"`
-	}
-	if err := json.Unmarshal(out, &w); err != nil {
+	fields, err := decodeV2OutputObject(out)
+	if err != nil {
 		return hookResult{failed: truncate("stdout is not a JSON object: "+err.Error(), maxReason)}
 	}
-	res := hookResult{decision: Allow, reason: truncate(w.Reason, maxReason), context: w.AdditionalContext}
-	if w.Decision != nil {
-		switch Decision(*w.Decision) {
-		case Allow, Deny, Ask:
-			res.decision = Decision(*w.Decision)
-		default:
-			return hookResult{failed: truncate(fmt.Sprintf("decision must be allow, deny or ask, not %q", *w.Decision), maxReason)}
+	res := hookResult{decision: Allow}
+	if raw, ok := fields["reason"]; ok {
+		var reason string
+		if err := json.Unmarshal(raw, &reason); err != nil {
+			return hookResult{failed: "reason is not a string"}
+		}
+		res.reason = truncate(reason, maxReason)
+	}
+	if raw, ok := fields["additionalContext"]; ok {
+		if err := json.Unmarshal(raw, &res.context); err != nil {
+			return hookResult{failed: "additionalContext is not a string"}
 		}
 	}
-	if len(w.UpdatedInput) > 0 && string(w.UpdatedInput) != "null" {
+	if raw, ok := fields["decision"]; ok {
+		var decision string
+		if err := json.Unmarshal(raw, &decision); err != nil {
+			return hookResult{failed: "decision is not a string"}
+		}
+		switch Decision(decision) {
+		case Allow, Deny, Ask:
+			res.decision = Decision(decision)
+		default:
+			return hookResult{failed: truncate(fmt.Sprintf("decision must be allow, deny or ask, not %q", decision), maxReason)}
+		}
+	}
+	if raw, ok := fields["updatedInput"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		var m map[string]any
-		if err := json.Unmarshal(w.UpdatedInput, &m); err != nil || m == nil {
+		if err := json.Unmarshal(raw, &m); err != nil || m == nil {
 			return hookResult{failed: "updatedInput is not a JSON object"}
 		}
 		res.updated = m
 	}
 	return res
+}
+
+func decodeV2OutputObject(out []byte) (map[string]json.RawMessage, error) {
+	if len(out) == 0 || out[0] != '{' {
+		return nil, errors.New("stdout is not a JSON object")
+	}
+	allowed := map[string]bool{
+		"decision":          true,
+		"reason":            true,
+		"additionalContext": true,
+		"updatedInput":      true,
+	}
+	dec := json.NewDecoder(bytes.NewReader(out))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("stdout is not a JSON object")
+	}
+	fields := map[string]json.RawMessage{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, errors.New("object key is not a string")
+		}
+		if !allowed[key] {
+			return nil, fmt.Errorf("unknown key %q in hook output", key)
+		}
+		if _, ok := fields[key]; ok {
+			return nil, fmt.Errorf("duplicate key %q in hook output", key)
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, err
+		}
+		fields[key] = raw
+	}
+	tok, err = dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '}' {
+		return nil, errors.New("stdout is not a JSON object")
+	}
+	if dec.Decode(&struct{}{}) != io.EOF {
+		return nil, errors.New("stdout contains more than one JSON value")
+	}
+	return fields, nil
 }
 
 // hookEnv is the CELESTE_* environment. A value over envValueCap or
@@ -175,6 +247,17 @@ func hookEnv(payload map[string]any, dir string) (env []string, omitted bool) {
 	return env, omitted
 }
 
+func filterInheritedHookEnv(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CELESTE_") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
+}
+
 // truncate cuts s to at most n bytes without leaving a broken UTF-8 rune.
 // It is used only for text shown to people or the model, never for values
 // a hook decides on.
@@ -188,23 +271,31 @@ func truncate(s string, n int) string {
 // capBuffer keeps the first max bytes and discards the rest. It never
 // errors, so a flooding hook isn't killed by a broken pipe mid-write.
 type capBuffer struct {
-	buf  bytes.Buffer
-	max  int
-	over bool
+	buf        bytes.Buffer
+	max        int
+	over       bool
+	onOverflow func()
 }
 
 func (c *capBuffer) Write(p []byte) (int, error) {
+	overflow := false
 	room := c.max - c.buf.Len()
 	switch {
 	case room <= 0:
 		if len(p) > 0 {
-			c.over = true
+			overflow = true
 		}
 	case len(p) > room:
 		c.buf.Write(p[:room])
-		c.over = true
+		overflow = true
 	default:
 		c.buf.Write(p)
+	}
+	if overflow && !c.over {
+		c.over = true
+		if c.onOverflow != nil {
+			c.onOverflow()
+		}
 	}
 	return len(p), nil
 }

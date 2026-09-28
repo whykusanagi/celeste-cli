@@ -68,7 +68,7 @@ func TestV2UpdatedInput(t *testing.T) {
 
 func TestV2MalformedOutputFails(t *testing.T) {
 	ws := t.TempDir()
-	for _, name := range []string{"garbage", "array", "bad-decision", "alias", "bad-update"} {
+	for _, name := range []string{"garbage", "array", "null", "bad-key", "wrong-case", "bad-decision", "alias", "bad-update"} {
 		t.Run(name, func(t *testing.T) {
 			res := runHook(context.Background(), v2(t, EventPreToolUse, "canned", name), ws, toolPayload(ws, EventPreToolUse, "bash", nil))
 			assert.NotEmpty(t, res.failed)
@@ -88,6 +88,39 @@ func TestV2FloodFails(t *testing.T) {
 	ws := t.TempDir()
 	res := runHook(context.Background(), v2(t, EventPreToolUse, "canned", "flood"), ws, toolPayload(ws, EventPreToolUse, "bash", nil))
 	assert.Contains(t, res.failed, "exceeded")
+}
+
+func TestV2FloodForeverCancelsPromptly(t *testing.T) {
+	ws := t.TempDir()
+	start := time.Now()
+	res := runHook(context.Background(), v2(t, EventPreToolUse, "floodforever"), ws, toolPayload(ws, EventPreToolUse, "bash", nil))
+	elapsed := time.Since(start)
+	assert.Contains(t, res.failed, "exceeded")
+	assert.Less(t, elapsed, 2*time.Second)
+}
+
+func TestV2BackgroundChildHoldingStdoutIsKilled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("background job control through sh -c '... &' is Unix-specific")
+	}
+	ws := t.TempDir()
+	marker := filepath.Join(ws, "marker")
+	command := "(sleep 3; touch " + marker + ") & echo '{}'"
+	def := Definition{Event: EventPreToolUse, Matcher: "*", Command: command, Timeout: DefaultTimeout, Protocol: ProtocolV2}
+
+	start := time.Now()
+	res := runHook(context.Background(), def, ws, toolPayload(ws, EventPreToolUse, "bash", nil))
+	elapsed := time.Since(start)
+	assert.Contains(t, res.failed, "background process kept the hook's output open")
+	assert.Less(t, elapsed, 1500*time.Millisecond)
+
+	_, err := os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "background child created marker before hook returned")
+	if remaining := 3500*time.Millisecond - time.Since(start); remaining > 0 {
+		time.Sleep(remaining)
+	}
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "background child survived after hook returned")
 }
 
 // Review Focus 3: a hanging hook ends at the caller's deadline on every OS,
@@ -128,6 +161,17 @@ func TestPayloadOnStdinAndEnv(t *testing.T) {
 	assert.Equal(t, "s1", env["CELESTE_SESSION_ID"])
 	assert.Equal(t, ws, env["CELESTE_PROJECT_DIR"])
 	assert.Empty(t, env["CELESTE_TOOL_INPUT_TRUNCATED"])
+}
+
+func TestInheritedCelesteEnvDoesNotLeak(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("CELESTE_TOOL_COMMAND", "inherited-marker")
+	envFile := filepath.Join(ws, "env.json")
+	payload := map[string]any{"event": string(EventUserPromptSubmit), "workspace": ws, "project_dir": ws, "session_id": "s1"}
+	res := runHook(context.Background(), v2(t, EventUserPromptSubmit, "env", envFile), ws, payload)
+	require.Empty(t, res.failed)
+	env := readEnv(t, envFile)
+	assert.Empty(t, env["CELESTE_TOOL_COMMAND"])
 }
 
 // Review Focus 1: a padded command never reaches a hook as a harmless-looking prefix.

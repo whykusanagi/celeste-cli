@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const envVar = "CELESTE_HOOKTEST_HELPER"
+const envVar = "HOOKTEST_HELPER"
 
 // RunIfHelper must be the first call in TestMain. When Command started this
 // process, it acts as the hook and exits.
@@ -47,6 +47,9 @@ func Command(t testing.TB, args ...string) string {
 var canned = map[string]string{
 	"garbage":      "not json",
 	"array":        "[1,2]",
+	"null":         "null",
+	"bad-key":      `{"decison":"deny"}`,
+	"wrong-case":   `{"Decision":"deny"}`,
 	"bad-decision": `{"decision":"maybe"}`,
 	"alias":        `{"decision":"approve"}`,
 	"bad-update":   `{"updatedInput":"rm -rf /"}`,
@@ -112,6 +115,10 @@ func helper(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprint(stdout, out)
 		return 0
+	case "floodforever":
+		for {
+			fmt.Fprint(stdout, strings.Repeat("x", 64<<10))
+		}
 	case "exit":
 		code, _ := strconv.Atoi(arg(1))
 		fmt.Fprint(stderr, arg(2))
