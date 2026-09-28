@@ -50,7 +50,7 @@ func TestResolvePathSymlinks(t *testing.T) {
 		{filepath.Join(outside, "secret"), false},
 	}
 	for _, tc := range cases {
-		_, err := resolvePath(workspace, tc.input)
+		_, err := resolvePath(workspace, tc.input, false)
 		if (err == nil) != tc.ok {
 			t.Errorf("resolvePath(%q): err=%v, want ok=%v", tc.input, err, tc.ok)
 		}
@@ -76,7 +76,7 @@ func TestResolvePathSymlinkedWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, in := range []string{"a.txt", "new.txt", "."} {
-		if _, err := resolvePath(link, in); err != nil {
+		if _, err := resolvePath(link, in, false); err != nil {
 			t.Errorf("resolvePath(link, %q): %v", in, err)
 		}
 	}

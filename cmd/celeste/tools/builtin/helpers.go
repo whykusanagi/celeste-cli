@@ -9,7 +9,7 @@ import (
 )
 
 // resolvePath checks that the resolved absolute path stays within the workspace.
-func resolvePath(workspace, input string) (string, error) {
+func resolvePath(workspace, input string, forWrite bool) (string, error) {
 	workspace = filepath.Clean(workspace)
 	if input == "" {
 		input = "."
@@ -39,6 +39,11 @@ func resolvePath(workspace, input string) (string, error) {
 	}
 	if !withinDir(realWorkspace, realCandidate) {
 		return "", fmt.Errorf("path escapes workspace through a symlink: %s", input)
+	}
+	if forWrite {
+		if reason := protectedHookFile(candidate, realCandidate); reason != "" {
+			return "", fmt.Errorf("%s", reason)
+		}
 	}
 	return candidate, nil
 }

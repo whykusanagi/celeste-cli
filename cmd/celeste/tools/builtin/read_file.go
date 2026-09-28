@@ -103,7 +103,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 	}
 	endLine := getIntArg(input, "end_line", 0)
 
-	targetPath, err := resolvePath(t.workspace, path)
+	targetPath, err := resolvePath(t.workspace, path, false)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}

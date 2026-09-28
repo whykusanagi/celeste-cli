@@ -3,6 +3,7 @@ package permissions
 
 import (
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -15,8 +16,9 @@ type ToolInfo interface {
 }
 
 // Checker evaluates whether a tool execution should be allowed, denied, or
-// requires user approval. It implements a 5-step evaluation chain:
+// requires user approval. It implements a 6-step evaluation chain:
 //
+//  0. protected hook/trust files — best-effort Deny for shell commands
 //  1. alwaysDeny rules — if any match, return Deny immediately
 //  2. alwaysAllow rules — if any match, return Allow immediately
 //  3. IsReadOnly check — in default mode, read-only tools are auto-allowed
@@ -28,7 +30,8 @@ type Checker struct {
 	alwaysAllow  []Rule
 	patternRules []Rule
 	mode         PermissionMode
-	configPath   string // path to persist rule additions; empty = no persistence
+	configPath   string   // path to persist rule additions; empty = no persistence
+	protected    []string // spellings of hook/trust files tools may not modify (protected.go)
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -37,12 +40,14 @@ func NewChecker(config PermissionConfig) *Checker {
 	if !mode.Valid() {
 		mode = ModeDefault
 	}
+	home, _ := os.UserHomeDir()
 
 	return &Checker{
 		alwaysDeny:   config.AlwaysDeny,
 		alwaysAllow:  config.AlwaysAllow,
 		patternRules: config.PatternRules,
 		mode:         mode,
+		protected:    protectedFragments(home),
 	}
 }
 
@@ -115,6 +120,26 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 	if tool != nil {
 		toolName = tool.ToolName()
 		readOnly = tool.IsReadOnly()
+	}
+
+	// Step 0: best-effort defence in depth. A model-authored shell command
+	// naming the hook/trust files is refused before it reaches a shell (2.0
+	// F0 fix round 1). This is a literal substring match on unparsed text --
+	// it can't catch every spelling a shell would still expand to the same
+	// file (`..`, quoting, indirection) -- and it applies only to bash's
+	// `command` argument, never to another tool's arguments or file
+	// contents (a doc that merely mentions one of these paths must not be
+	// denied). It is not the trust boundary: the real enforcement for file
+	// tools is tools/builtin's resolvePath.
+	if !readOnly {
+		if cmd, ok := input["command"].(string); ok {
+			if frag, hit := commandNamesProtectedFile(cmd, c.protected); hit {
+				return CheckResult{
+					Decision: Deny,
+					Reason:   fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", frag),
+				}
+			}
+		}
 	}
 
 	// Step 1: alwaysDeny rules (highest priority)

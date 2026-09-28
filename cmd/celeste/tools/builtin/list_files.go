@@ -64,7 +64,7 @@ func (t *ListFilesTool) Execute(ctx context.Context, input map[string]any, progr
 		maxEntries = 1000
 	}
 
-	targetPath, err := resolvePath(t.workspace, path)
+	targetPath, err := resolvePath(t.workspace, path, false)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}

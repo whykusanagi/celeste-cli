@@ -74,7 +74,7 @@ func (t *SearchTool) Execute(ctx context.Context, input map[string]any, progress
 	}
 	caseSensitive := getBoolArg(input, "case_sensitive", false)
 
-	targetPath, err := resolvePath(t.workspace, path)
+	targetPath, err := resolvePath(t.workspace, path, false)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}

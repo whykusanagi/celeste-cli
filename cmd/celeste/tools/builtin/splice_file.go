@@ -83,11 +83,23 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	sourceRel := getStringArg(input, "source", "")
 	destRel := getStringArg(input, "dest", sourceRel)
 
-	sourcePath, err := resolvePath(t.workspace, sourceRel)
+	sourcePath, err := resolvePath(t.workspace, sourceRel, op == "move")
 	if err != nil {
 		return errResult(fmt.Sprintf("source path error: %s", err)), nil
 	}
-	destPath, err := resolvePath(t.workspace, destRel)
+	destPath, err := resolvePath(t.workspace, destRel, true)
+	if err != nil {
+		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
+	}
+	// Kernel-level protected-file checks: the move source already exists
+	// (it is read below), so the pre-write check is authoritative for it;
+	// dest may be created by this call, so it is also verified after writing.
+	if op == "move" {
+		if _, err := guardProtectedWrite(sourcePath); err != nil {
+			return errResult(fmt.Sprintf("source path error: %s", err)), nil
+		}
+	}
+	destGuard, err := guardProtectedWrite(destPath)
 	if err != nil {
 		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
 	}
@@ -153,6 +165,9 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	// Write. For a same-file move, dest already reflects the removal.
 	if err := os.WriteFile(destPath, []byte(newDest), 0644); err != nil {
 		return errResult(fmt.Sprintf("write dest: %s", err)), nil
+	}
+	if err := destGuard.verify(); err != nil {
+		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
 	}
 	if op == "move" && !sameFile {
 		if err := os.WriteFile(sourcePath, []byte(sourceAfter), 0644); err != nil {

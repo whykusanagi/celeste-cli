@@ -41,10 +41,12 @@ type AudioTrack struct {
 // AudioProjectTool handles the project-based render pipeline.
 type AudioProjectTool struct {
 	BaseTool
+	workspace string
 }
 
-func NewAudioProjectTool() *AudioProjectTool {
+func NewAudioProjectTool(workspace string) *AudioProjectTool {
 	return &AudioProjectTool{
+		workspace: workspace,
 		BaseTool: BaseTool{
 			ToolName: "audio_render",
 			ToolDescription: "Render an audio project from a timeline manifest. " +
@@ -192,6 +194,11 @@ func (t *AudioProjectTool) handleCreate(input map[string]any) (tools.ToolResult,
 	}
 	project.Output = output
 	projectPath := strings.TrimSuffix(output, filepath.Ext(output)) + ".project.json"
+	resolvedProjectPath, err := resolvePath(t.workspace, projectPath, true)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
+	projectPath = resolvedProjectPath
 	data, _ := json.MarshalIndent(project, "", "  ")
 	if err := os.WriteFile(projectPath, data, 0644); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Failed to write project: %v", err), Error: true}, nil
@@ -215,7 +222,7 @@ func (t *AudioProjectTool) handleCreate(input map[string]any) (tools.ToolResult,
 	}
 	// Visual timeline
 	sb.WriteString("\n")
-	sb.WriteString(renderGantt(&project, 0))
+	sb.WriteString(renderGantt(&project, 0, t.workspace))
 	sb.WriteString(fmt.Sprintf("\nNext: call audio_render with action='render' file='%s'", projectPath))
 
 	return tools.ToolResult{
@@ -229,12 +236,17 @@ func (t *AudioProjectTool) handleCreate(input map[string]any) (tools.ToolResult,
 }
 
 func (t *AudioProjectTool) handleValidate(filePath string) (tools.ToolResult, error) {
-	project, err := loadProject(filePath)
+	resolvedProjectPath, err := resolvePath(t.workspace, filePath, false)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
+
+	project, err := loadProject(resolvedProjectPath)
 	if err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Invalid project: %v", err), Error: true}, nil
 	}
 
-	errors := validateProject(project)
+	errors := validateProject(project, t.workspace)
 	if len(errors) > 0 {
 		return tools.ToolResult{
 			Content: fmt.Sprintf("Project validation failed:\n- %s", strings.Join(errors, "\n- ")),
@@ -244,21 +256,22 @@ func (t *AudioProjectTool) handleValidate(filePath string) (tools.ToolResult, er
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Project valid: %d tracks, output: %s\n\n", len(project.Tracks), project.Output))
-	sb.WriteString(renderGantt(project, 0))
+	sb.WriteString(renderGantt(project, 0, t.workspace))
 	return tools.ToolResult{Content: sb.String()}, nil
 }
 
 func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return tools.ToolResult{Content: "ffmpeg not found — required for audio rendering", Error: true}, nil
+	resolvedProjectPath, err := resolvePath(t.workspace, filePath, false)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
 	}
 
-	project, err := loadProject(filePath)
+	project, err := loadProject(resolvedProjectPath)
 	if err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Failed to load project: %v", err), Error: true}, nil
 	}
 
-	errors := validateProject(project)
+	errors := validateProject(project, t.workspace)
 	if len(errors) > 0 {
 		return tools.ToolResult{
 			Content: fmt.Sprintf("Project validation failed:\n- %s\n\nFix the project file and re-render.", strings.Join(errors, "\n- ")),
@@ -266,20 +279,33 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 		}, nil
 	}
 
+	resolvedOutput, err := resolvePath(t.workspace, project.Output, true)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return tools.ToolResult{Content: "ffmpeg not found — required for audio rendering", Error: true}, nil
+	}
+
 	if progress != nil {
 		progress <- tools.ProgressEvent{
 			ToolName: "audio_render",
-			Message:  fmt.Sprintf("Rendering %d tracks → %s", len(project.Tracks), project.Output),
+			Message:  fmt.Sprintf("Rendering %d tracks → %s", len(project.Tracks), resolvedOutput),
 		}
 	}
 
 	// Build ffmpeg command from project
 	var args []string
 	for _, tr := range project.Tracks {
+		resolvedTrackFile, err := resolvePath(t.workspace, tr.File, false)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 		if tr.Loop {
 			args = append(args, "-stream_loop", "-1")
 		}
-		args = append(args, "-i", tr.File)
+		args = append(args, "-i", resolvedTrackFile)
 	}
 
 	// Build filter graph
@@ -305,12 +331,12 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 	if len(project.Tracks) == 1 {
 		// Single track — just apply volume filter, no amix needed
 		filterGraph := filterParts[0]
-		args = append(args, "-filter_complex", filterGraph, "-map", "[t0]", "-y", project.Output)
+		args = append(args, "-filter_complex", filterGraph, "-map", "[t0]", "-y", resolvedOutput)
 	} else {
 		filterGraph := strings.Join(filterParts, ";") + ";" +
 			strings.Join(mixInputs, "") +
 			fmt.Sprintf("amix=inputs=%d:duration=first:normalize=0", len(project.Tracks))
-		args = append(args, "-filter_complex", filterGraph, "-y", project.Output)
+		args = append(args, "-filter_complex", filterGraph, "-y", resolvedOutput)
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
@@ -327,7 +353,7 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 	}
 
 	// Verify output
-	absOutput, _ := filepath.Abs(project.Output)
+	absOutput, _ := filepath.Abs(resolvedOutput)
 	info, err := os.Stat(absOutput)
 	if err != nil {
 		return tools.ToolResult{
@@ -342,7 +368,7 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 	sb.WriteString("RENDER COMPLETE\n")
 	sb.WriteString(fmt.Sprintf("Output: %s\n", absOutput))
 	sb.WriteString(fmt.Sprintf("Size: %d bytes | Duration: %.1fs\n\n", info.Size(), duration))
-	sb.WriteString(renderGantt(project, duration))
+	sb.WriteString(renderGantt(project, duration, t.workspace))
 
 	return tools.ToolResult{
 		Content: sb.String(),
@@ -357,12 +383,16 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 
 // renderGantt produces an ASCII timeline visualization of the project.
 // Scales cleanly from 10s clips to 10-minute productions.
-func renderGantt(project *AudioProject, totalDuration float64) string {
+func renderGantt(project *AudioProject, totalDuration float64, workspace string) string {
 	if totalDuration <= 0 {
 		// Estimate from voice track or default to 30s
 		for _, tr := range project.Tracks {
 			if tr.Role == "voice" {
-				d := probeAudioDuration(tr.File)
+				resolvedTrackFile, err := resolvePath(workspace, tr.File, false)
+				if err != nil {
+					continue
+				}
+				d := probeAudioDuration(resolvedTrackFile)
 				if d > 0 {
 					totalDuration = d
 				}
@@ -457,7 +487,11 @@ func renderGantt(project *AudioProject, totalDuration float64) string {
 			endPos = int((tr.End / totalDuration) * float64(width))
 		} else {
 			// Probe or estimate duration
-			sfxDur := probeAudioDuration(tr.File)
+			sfxDur := 0.0
+			resolvedTrackFile, err := resolvePath(workspace, tr.File, false)
+			if err == nil {
+				sfxDur = probeAudioDuration(resolvedTrackFile)
+			}
 			if sfxDur <= 0 {
 				sfxDur = 5.0
 			}
@@ -515,7 +549,7 @@ func loadProject(filePath string) (*AudioProject, error) {
 	return &project, nil
 }
 
-func validateProject(p *AudioProject) []string {
+func validateProject(p *AudioProject, workspace string) []string {
 	var errs []string
 
 	if p.Output == "" {
@@ -531,7 +565,12 @@ func validateProject(p *AudioProject) []string {
 			errs = append(errs, fmt.Sprintf("track %d: missing 'file'", i))
 			continue
 		}
-		if _, err := os.Stat(tr.File); err != nil {
+		resolvedTrackFile, err := resolvePath(workspace, tr.File, false)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("track %d: file escapes workspace: %s", i, tr.File))
+			continue
+		}
+		if _, err := os.Stat(resolvedTrackFile); err != nil {
 			errs = append(errs, fmt.Sprintf("track %d: file not found: %s", i, tr.File))
 		}
 		if tr.Role == "" {
