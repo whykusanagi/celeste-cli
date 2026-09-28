@@ -107,16 +107,19 @@ type Result struct {
 type EventKind int
 
 const (
-	EventTurnStart  EventKind = iota // Turn
-	EventTextDelta                   // Text
-	EventAssistant                   // Turn, Text, ToolNames, Usage, Elapsed: the model's reply
-	EventToolStart                   // Call
-	EventToolResult                  // Call, Text (what the model receives), IsError
-	EventCompacted                   // Text
-	EventSteered                     // Text
-	EventNotice                      // Text: a non-fatal problem (hook error, spill failure)
-	EventTurnEnd                     // Turn, History: a consistent history snapshot
-	EventDone                        // Result, Err: always the last event of a Run
+	// EventTurnStart (Turn) may repeat with the same Turn number after an
+	// overflow retry re-runs the turn: consumers should key on Turn, not
+	// count events.
+	EventTurnStart  EventKind = iota
+	EventTextDelta            // Text
+	EventAssistant            // Turn, Text, ToolNames, Usage, Elapsed: the model's reply
+	EventToolStart            // Call
+	EventToolResult           // Call, Text (what the model receives), IsError
+	EventCompacted            // Text
+	EventSteered              // Text
+	EventNotice               // Text: a non-fatal problem (hook error, spill failure)
+	EventTurnEnd              // Turn, History: a consistent history snapshot
+	EventDone                 // Result, Err: always the last event of a Run
 )
 
 // Event is one step of a Run, for renderers and adopters.

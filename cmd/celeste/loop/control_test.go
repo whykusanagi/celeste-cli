@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -145,5 +146,61 @@ func TestLoopOverflowWithNothingToCompactFails(t *testing.T) {
 	_, res, err := l.Run(context.Background(), userMsg("go"))
 	if err == nil || res.StopReason != StopError || stub.calls != 1 {
 		t.Fatalf("res=%+v err=%v calls=%d", res, err, stub.calls)
+	}
+}
+
+// The retry is one-shot: even when the compactor keeps reporting a change,
+// a second overflow on the same turn must not be retried again (#174). A
+// no-op in place of the overflowRetried=true assignment would retry forever
+// here (turn-- keeps the turn counter from ever reaching MaxTurns).
+func TestLoopOverflowRetriesOnlyOnce(t *testing.T) {
+	stub := &stubLLM{reply: func(int, context.Context, llm.StreamEventCallback) error {
+		return fmt.Errorf("prompt is too long: %w", llm.ErrContextOverflow)
+	}}
+	c := &countingCompactor{change: true}
+	l := &Loop{Client: stub, Tools: newRegistry(), Limits: DefaultLimits(), Compact: c}
+	_, res, err := l.Run(context.Background(), userMsg("go"))
+	if stub.calls != 2 {
+		t.Fatalf("requests = %d, want exactly 2 (the original attempt plus one retry)", stub.calls)
+	}
+	if res.StopReason != StopError {
+		t.Fatalf("StopReason = %v, want StopError", res.StopReason)
+	}
+	if !errors.Is(err, llm.ErrContextOverflow) {
+		t.Fatalf("err = %v, want it to wrap the real llm.ErrContextOverflow sentinel", err)
+	}
+}
+
+// overflowRetried must reset once a turn succeeds, so a later turn's own
+// overflow gets its own one-shot retry rather than being refused outright.
+func TestLoopOverflowRetryResetsAfterSuccessfulTurn(t *testing.T) {
+	stub := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		switch n {
+		case 0:
+			return fmt.Errorf("prompt is too long: %w", llm.ErrContextOverflow) // turn 1, first attempt
+		case 1:
+			callTool(cb, "c1", "x", `{}`) // turn 1's retry succeeds, forcing a turn 2
+			return nil
+		case 2:
+			return fmt.Errorf("prompt is too long: %w", llm.ErrContextOverflow) // turn 2, first attempt: its own retry
+		default:
+			sayText(cb, "done", nil) // turn 2's retry succeeds
+			return nil
+		}
+	}}
+	c := &countingCompactor{change: true}
+	l := &Loop{Client: stub, Tools: newRegistry(&fakeTool{name: "x"}), Limits: DefaultLimits(), Compact: c}
+	_, res, err := l.Run(context.Background(), userMsg("go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.calls != 4 {
+		t.Fatalf("requests = %d, want 4 (turn 1 overflow+retry, turn 2 overflow+retry)", stub.calls)
+	}
+	if res.StopReason != StopDone || res.Turns != 2 || res.FinalText != "done" {
+		t.Fatalf("res = %+v", res)
+	}
+	if c.forced != 2 {
+		t.Fatalf("compactor forced calls = %d, want 2: each turn's overflow must get its own retry", c.forced)
 	}
 }

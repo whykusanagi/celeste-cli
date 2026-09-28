@@ -62,6 +62,7 @@ type Env struct {
 	skipPersona bool
 	permConfig  permissions.PermissionConfig
 	indexing    sync.WaitGroup // a code-graph update that outlived its timeout
+	closeOnce   sync.Once
 }
 
 // SetupOptions carries what only the adopter knows.
@@ -235,13 +236,16 @@ func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string
 }
 
 // Close stops MCP clients and closes the code graph (after any update that
-// outlived its timeout).
+// outlived its timeout). Safe to call more than once (and concurrently);
+// only the first call runs.
 func (e *Env) Close() {
-	if e.MCP != nil {
-		_ = e.MCP.Stop()
-	}
-	e.indexing.Wait()
-	if e.Indexer != nil {
-		_ = e.Indexer.Close()
-	}
+	e.closeOnce.Do(func() {
+		if e.MCP != nil {
+			_ = e.MCP.Stop()
+		}
+		e.indexing.Wait()
+		if e.Indexer != nil {
+			_ = e.Indexer.Close()
+		}
+	})
 }

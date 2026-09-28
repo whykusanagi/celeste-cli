@@ -154,6 +154,16 @@ func TestSetupDoesNotCreateGrimoire(t *testing.T) {
 	}
 }
 
+func TestEnvCloseIsIdempotent(t *testing.T) {
+	setupHome(t)
+	env, err := Setup(ModeAgent, testCfg(), t.TempDir(), SetupOptions{Warn: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.Close()
+	env.Close() // must not panic or block
+}
+
 func TestSetupBadSkillIsAWarning(t *testing.T) {
 	home := setupHome(t)
 	write(t, filepath.Join(home, ".celeste", "skills", "broken.json"), "{not json")
