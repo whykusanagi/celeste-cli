@@ -84,6 +84,24 @@ type StreamErrorMsg struct {
 	Err error
 }
 
+// PromptHookMsg carries the UserPromptSubmit result for the newest user
+// message. Next continues reading the response stream (2.0 F0).
+type PromptHookMsg struct {
+	Context string
+	Next    tea.Cmd
+}
+
+// PromptBlockedMsg says a UserPromptSubmit hook blocked the newest user
+// message. It is removed from the chat and the session.
+type PromptBlockedMsg struct {
+	Reason string
+}
+
+// HookWarningMsg shows a hook warning in the chat.
+type HookWarningMsg struct {
+	Text string
+}
+
 // SkillCallMsg is sent when the LLM wants to call a skill/function.
 type SkillCallMsg struct {
 	Call             FunctionCall

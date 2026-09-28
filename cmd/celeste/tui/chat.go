@@ -138,6 +138,49 @@ func (m ChatModel) AddHiddenUserMessage(content string) ChatModel {
 	return m
 }
 
+// Metadata keys recording a user message's UserPromptSubmit result (2.0 F0).
+const (
+	MetaPromptHookDone = "prompt_hook_done"
+	MetaHookContext    = "hook_context"
+)
+
+// MarkLastUserHooked records that the newest user message passed its
+// UserPromptSubmit hooks, with any context they added.
+func (m ChatModel) MarkLastUserHooked(context string) ChatModel {
+	msgs := append([]ChatMessage(nil), m.messages...)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		meta := make(map[string]any, len(msgs[i].Metadata)+2)
+		for k, v := range msgs[i].Metadata {
+			meta[k] = v
+		}
+		meta[MetaPromptHookDone] = true
+		if context != "" {
+			meta[MetaHookContext] = context
+		}
+		msgs[i].Metadata = meta
+		break
+	}
+	m.messages = msgs
+	return m
+}
+
+// DropLastUser removes the newest user message (a prompt a hook blocked).
+func (m ChatModel) DropLastUser() ChatModel {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == "user" {
+			msgs := make([]ChatMessage, 0, len(m.messages)-1)
+			msgs = append(msgs, m.messages[:i]...)
+			m.messages = append(msgs, m.messages[i+1:]...)
+			m.updateContent()
+			break
+		}
+	}
+	return m
+}
+
 // AddAssistantMessage adds an assistant message to the chat.
 func (m ChatModel) AddAssistantMessage(content string) ChatModel {
 	return m.AddAssistantMessageWithToolCalls(content, nil)

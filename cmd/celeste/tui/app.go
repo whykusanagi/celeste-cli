@@ -825,7 +825,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m, out = m.compactContext(true)
 					if len(out.Edits) == 0 || out.StillOver {
 						// Pruning found too little: go to the summary rung.
-						return m.startSummary("", len(out.Edits) == 0)
+						return m.startSummaryAs("", len(out.Edits) == 0, "manual")
 					}
 					return m, nil
 				}
@@ -2068,6 +2068,33 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
 
+	case PromptHookMsg:
+		m.chat = m.chat.MarkLastUserHooked(msg.Context)
+		return m, msg.Next
+
+	case PromptBlockedMsg:
+		m.cancelFunc = nil
+		m.interruptPending = false
+		m.streaming = false
+		m.status = m.status.SetStreaming(false)
+		m.status = m.status.SetText("Prompt blocked by a hook")
+		m.chat = m.chat.DropLastUser()
+		if cs, ok := m.currentSession.(*config.Session); ok {
+			for i := len(cs.Messages) - 1; i >= 0; i-- {
+				if cs.Messages[i].Role == "user" {
+					cs.Messages = append(cs.Messages[:i], cs.Messages[i+1:]...)
+					break
+				}
+			}
+		}
+		m.persistSession()
+		m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
+		return m, nil
+
+	case HookWarningMsg:
+		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
+		return m, nil
+
 	case ToolProgressMsg:
 		var cmd tea.Cmd
 		m.toolProgress, cmd = m.toolProgress.Update(msg)
@@ -3306,6 +3333,12 @@ func (m AppModel) WithMessages(messages []ChatMessage) AppModel {
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("📂 Resumed session (%d messages)", len(messages)))
 	}
 
+	return m
+}
+
+// WithSystemMessage appends a system notice to the chat.
+func (m AppModel) WithSystemMessage(text string) AppModel {
+	m.chat = m.chat.AddSystemMessage(text)
 	return m
 }
 

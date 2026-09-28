@@ -11,6 +11,9 @@ import (
 func cleanupChatDeps(t *testing.T, deps *chatDeps) {
 	t.Helper()
 	t.Cleanup(func() {
+		if deps.adapter != nil && deps.adapter.lifeCancel != nil {
+			deps.adapter.lifeCancel()
+		}
 		tui.CloseLogging()
 		if deps.indexer != nil {
 			deps.indexer.Close()

@@ -58,6 +58,11 @@ func (e Event) gating() bool {
 	return e == EventPreToolUse || e == EventUserPromptSubmit || e == EventPreCompact
 }
 
+// decides reports whether hook decisions affect control flow for e.
+func (e Event) decides() bool {
+	return e.gating() || e == EventStop || e == EventSubagentStop
+}
+
 // Decision is a hook's verdict.
 type Decision string
 

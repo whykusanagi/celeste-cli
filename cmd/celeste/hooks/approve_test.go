@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -27,6 +28,24 @@ func TestPromptApprover(t *testing.T) {
 
 	assert.False(t, PromptApprover(strings.NewReader("\n"), &out)(src, Untrusted), "Enter means no")
 	assert.False(t, PromptApprover(strings.NewReader(""), &out)(src, Untrusted), "EOF means no")
+}
+
+func TestIsTerminalRejectsDevNullAndPipe(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	assert.False(t, IsTerminal(devNull))
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	assert.False(t, IsTerminal(r))
+	assert.False(t, IsTerminal(w))
 }
 
 // Review Focus 5: control and bidi characters in untrusted text are shown

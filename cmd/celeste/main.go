@@ -219,6 +219,13 @@ func runChatTUI() {
 
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
+	// Repo hooks are approved on the terminal before the TUI takes it over.
+	// Both ends must be a terminal; piped consoles are non-interactive and
+	// never approve (use `celeste hooks trust`).
+	chatHookApprover = nil
+	if hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
+		chatHookApprover = hooks.PromptApprover(os.Stdin, os.Stderr)
+	}
 	app, deps, err := newChatApp(cfg, cwd, homeDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -230,10 +237,14 @@ func runChatTUI() {
 		defer deps.indexer.Close()
 	}
 	defer tui.CloseLogging()
+	defer deps.adapter.lifeCancel()
 
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
+	notify := func(s string) { p.Send(tui.HookWarningMsg{Text: s}) }
+	hookNotify.Store(&notify)
+	defer hookNotify.Store(nil)
 
 	// Wire the interactive permission prompt now that we have the program handle.
 	// The prompt function runs inside a tea.Cmd goroutine (off the Update loop),
@@ -314,30 +325,6 @@ func runChatTUI() {
 	}
 }
 
-// hookRunnerAdapter bridges the 1.x executor to tools.HookRunner until the
-// TUI moves to hooks.Load (2.0 F0 PR 2 deletes it).
-type hookRunnerAdapter struct {
-	executor *hooks.Executor
-}
-
-func (a *hookRunnerAdapter) PreToolUse(_ context.Context, toolName string, input map[string]any) tools.PreToolHookResult {
-	result, err := a.executor.RunPreToolUse(toolName, input)
-	if err != nil {
-		return tools.PreToolHookResult{Decision: "deny", Reason: "Hook error: " + err.Error()}
-	}
-	if result.Decision == "block" {
-		return tools.PreToolHookResult{Decision: "deny", Reason: result.Output}
-	}
-	return tools.PreToolHookResult{Decision: "allow"}
-}
-
-func (a *hookRunnerAdapter) PostToolUse(_ context.Context, toolName string, input map[string]any, _ tools.ToolResult) string {
-	if _, err := a.executor.RunPostToolUse(toolName, input); err != nil {
-		tui.LogInfo(fmt.Sprintf("Post-tool hook failed for %q: %v", toolName, err))
-	}
-	return ""
-}
-
 // TUIClientAdapter adapts the LLM client for the TUI.
 type TUIClientAdapter struct {
 	client      *llm.Client
@@ -365,6 +352,12 @@ type TUIClientAdapter struct {
 	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
 	projectContext string
 	gitSnapshot    string
+	// hooks runs the session's lifecycle hooks (2.0 F0); nil allows all.
+	hooks *hooks.Runner
+	// lifeCtx lives as long as the chat app; Stop hooks use it, so they
+	// are cancelled on exit rather than outliving the program.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
 }
 
 // systemPrompt composes the chat system prompt for the current config,
@@ -410,6 +403,11 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 	go func() {
 		defer cancel()
 		defer close(ch)
+
+		messages, stop := a.applyPromptHooks(ctx, messages, ch)
+		if stop {
+			return
+		}
 
 		currentConfig := a.client.GetConfig()
 		tui.LogInfo(fmt.Sprintf("→ Sending request to: %s (model: %s)", currentConfig.BaseURL, currentConfig.Model))
@@ -537,6 +535,10 @@ func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel contex
 			FinishReason: finishReason,
 			Usage:        tuiUsage,
 		}
+		// The turn ended without tool calls. Stop hooks observe it; acting on
+		// a deny ("keep going") is F2's loop. The TUI stops reading ch after
+		// StreamDoneMsg, so this doesn't delay the reply.
+		a.hooks.Stop(a.lifeContext(), fullContent)
 	}()
 
 	// Return the first read — TUI chains subsequent reads via StreamChunkMsg.Next
@@ -884,20 +886,51 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 	return a.summarize, nil
 }
 
+var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
+
 // SummarizeContext implements tui.ContextCompactor: it summarizes all but
-// the newest ~20k tokens with the small-model role (#174).
+// the newest ~20k tokens with the small-model role (#174). PreCompact runs
+// inside the summarize call, which compact.Summarize only makes when there
+// is something to summarize; it may block the summary or add instructions.
+// PostCompact sees the summary.
 func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.ChatMessage, focus string) (tui.SummaryOutcome, error) {
 	summarize, err := a.summarizer()
 	if err != nil {
 		return tui.SummaryOutcome{}, err
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus}, summarize)
+	trigger := tui.CompactionTrigger(ctx)
+	blocked, fired := "", false
+	hooked := func(ctx context.Context, system, user string) (string, error) {
+		if blocked != "" {
+			return "", errCompactionBlocked
+		}
+		if !fired && a.hooks.Has(hooks.EventPreCompact) {
+			fired = true
+			pre := a.hooks.PreCompact(ctx, trigger, focus)
+			if pre.Decision != hooks.Allow {
+				blocked = pre.Reason
+				if blocked == "" {
+					blocked = "no reason given"
+				}
+				return "", errCompactionBlocked
+			}
+			if pre.AdditionalContext != "" {
+				user += "\n\nAdditional instructions from a PreCompact hook:\n" + pre.AdditionalContext
+			}
+		}
+		return summarize(ctx, system, user)
+	}
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus}, hooked)
+	if blocked != "" {
+		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
+	}
 	if errors.Is(err, compact.ErrNothingToSummarize) {
 		return tui.SummaryOutcome{}, tui.ErrNothingToSummarize
 	}
 	if err != nil {
 		return tui.SummaryOutcome{}, err
 	}
+	a.hooks.PostCompact(ctx, trigger, res.Summary)
 	// out is the summary messages followed by the untouched tail.
 	summaryLen := len(out) - (len(msgs) - res.Cut)
 	return tui.SummaryOutcome{

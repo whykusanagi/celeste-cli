@@ -71,6 +71,36 @@ func TestRunnerContextJoined(t *testing.T) {
 	assert.Equal(t, "one\ntwo", r.PostToolUse(context.Background(), "bash", nil, ToolResponse{Content: "ok"}).AdditionalContext)
 }
 
+func TestRunnerContextCapped(t *testing.T) {
+	r, _ := testRunner(t,
+		v2(t, EventPostToolUse, "context", strings.Repeat("a", 3<<10)),
+		v2(t, EventPostToolUse, "context", strings.Repeat("b", 3<<10)),
+		v2(t, EventPostToolUse, "context", strings.Repeat("c", 3<<10)),
+	)
+	out := r.PostToolUse(context.Background(), "bash", nil, ToolResponse{Content: "ok"})
+	assert.LessOrEqual(t, len(out.AdditionalContext), 8<<10)
+}
+
+func TestRunnerObservationalDeniesDoNotShortCircuit(t *testing.T) {
+	for _, ev := range []Event{EventPostToolUse, EventSessionStart} {
+		t.Run(string(ev), func(t *testing.T) {
+			r, _ := testRunner(t, v2(t, ev, "deny", "ignored"), v2(t, ev, "context", "SECOND"))
+			out := r.run(context.Background(), ev, "bash", map[string]any{})
+			assert.Equal(t, Allow, out.Decision)
+			assert.Contains(t, out.AdditionalContext, "SECOND")
+		})
+	}
+}
+
+func TestRunnerStopDenyStillShortCircuits(t *testing.T) {
+	rec := filepath.Join(t.TempDir(), "record.json")
+	r, _ := testRunner(t, v2(t, EventStop, "deny", "continue"), v2(t, EventStop, "record", rec))
+	out := r.Stop(context.Background(), "done")
+	assert.Equal(t, Deny, out.Decision)
+	assert.Equal(t, "continue", out.Reason)
+	assert.NoFileExists(t, rec)
+}
+
 func TestRunnerMatcher(t *testing.T) {
 	d := v2(t, EventPreToolUse, "deny", "no writes")
 	d.Matcher = "write_file"
@@ -225,6 +255,40 @@ func TestLoadDeclinedApprovalSkips(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, r.Has(EventPreToolUse))
 	assert.NoFileExists(t, TrustPath(home))
+}
+
+func TestLoadApprovalSaveFailureRunsForSessionOnly(t *testing.T) {
+	home := testHome(t)
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, ".celeste", "hooks.json"), hooksJSON(t, v2(t, EventStop, "allow")))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste", "trusted.json"), 0o755))
+	var warnings []string
+	r, err := Load(Options{
+		Workspace: ws,
+		Home:      home,
+		Approve:   func(Source, TrustStatus) bool { return true },
+		Warn:      func(s string) { warnings = append(warnings, s) },
+	})
+	require.NoError(t, err)
+	assert.True(t, r.Has(EventStop))
+	assert.Contains(t, strings.Join(warnings, "\n"), "approved for this session only")
+}
+
+func TestLoadCorruptTrustStoreSkipsRepoHooksWithoutApprover(t *testing.T) {
+	home := testHome(t)
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, ".celeste", "hooks.json"), hooksJSON(t, v2(t, EventStop, "allow")))
+	_, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) bool { return true }, Warn: func(string) {}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(TrustPath(home), []byte("{not json"), 0o600))
+
+	var warnings []string
+	r, err := Load(Options{Workspace: ws, Home: home, Warn: func(s string) { warnings = append(warnings, s) }})
+	require.NoError(t, err)
+	assert.False(t, r.Has(EventStop))
+	joined := strings.Join(warnings, "\n")
+	assert.Contains(t, joined, "corrupt")
+	assert.Contains(t, joined, "repo hooks stay untrusted")
 }
 
 // Spec §3.2: an ancestor directory's grimoire hooks no longer run unasked.

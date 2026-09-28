@@ -51,10 +51,10 @@ func (m AppModel) compactContext(force bool) (AppModel, CompactOutcome) {
 	return m, out
 }
 
-// startSummary writes a compaction summary in the background with the
-// small-model role. manual is /compact or /context compact, which report
-// when there is nothing to do.
-func (m AppModel) startSummary(focus string, manual bool) (AppModel, tea.Cmd) {
+// startSummaryAs writes a compaction summary in the background with the
+// small-model role. trigger ("manual" or "auto") is passed to
+// PreCompact/PostCompact hooks.
+func (m AppModel) startSummaryAs(focus string, manual bool, trigger string) (AppModel, tea.Cmd) {
 	c, ok := m.llmClient.(ContextCompactor)
 	if !ok {
 		if manual {
@@ -79,7 +79,7 @@ func (m AppModel) startSummary(focus string, manual bool) (AppModel, tea.Cmd) {
 	m.chat = m.chat.AddSystemMessage("🗜 Summarizing older context…")
 	snapshot := append([]ChatMessage(nil), msgs...)
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), summaryTimeout)
+		ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), compactTriggerKey{}, trigger), summaryTimeout)
 		defer cancel()
 		out, err := c.SummarizeContext(ctx, snapshot, focus)
 		return ContextSummarizedMsg{
@@ -90,6 +90,26 @@ func (m AppModel) startSummary(focus string, manual bool) (AppModel, tea.Cmd) {
 			manual:       manual,
 		}
 	}
+}
+
+// startSummary is startSummaryAs with the trigger derived from manual.
+func (m AppModel) startSummary(focus string, manual bool) (AppModel, tea.Cmd) {
+	trigger := "auto"
+	if manual {
+		trigger = "manual"
+	}
+	return m.startSummaryAs(focus, manual, trigger)
+}
+
+type compactTriggerKey struct{}
+
+// CompactionTrigger reports what started a summary, "manual" or "auto",
+// for PreCompact/PostCompact hooks.
+func CompactionTrigger(ctx context.Context) string {
+	if t, _ := ctx.Value(compactTriggerKey{}).(string); t != "" {
+		return t
+	}
+	return "auto"
 }
 
 // applySummary replaces the summarized history. Messages sent while the
