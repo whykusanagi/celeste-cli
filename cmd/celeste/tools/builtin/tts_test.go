@@ -2,6 +2,8 @@ package builtin
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,4 +115,36 @@ func TestTTSSpeakTextValidation(t *testing.T) {
 		assert.True(t, result.Error)
 		assert.Contains(t, result.Content, "empty string")
 	})
+}
+
+func TestExecuteBatchRejectsEscapingClipNameBeforeNetwork(t *testing.T) {
+	workspace := t.TempDir()
+	outDir := filepath.Join(workspace, "out")
+	clipsPath := filepath.Join(workspace, "clips.json")
+	clips := clipsFile{
+		Clips: []struct {
+			Name             string   `json:"name"`
+			Script           string   `json:"script"`
+			DurationEstimate string   `json:"duration_estimate"`
+			Tags             []string `json:"tags"`
+		}{
+			{Name: "../../evil", Script: "hello"},
+		},
+	}
+	data, err := json.Marshal(clips)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(clipsPath, data, 0644))
+
+	result, err := executeBatch(context.Background(), "dummy-api-key", "dummy-voice", clipsPath, outDir, nil)
+	require.NoError(t, err)
+	assert.False(t, result.Error)
+	assert.Contains(t, result.Content, "FAIL")
+	assert.Contains(t, result.Content, "../../evil")
+	assert.Contains(t, result.Content, "escapes workspace")
+	assert.Equal(t, 1, result.Metadata["clips_count"])
+
+	escapedOutput := filepath.Clean(filepath.Join(outDir, "../../evil.mp3"))
+	if _, err := os.Stat(escapedOutput); !os.IsNotExist(err) {
+		t.Fatalf("escaped batch output stat err = %v, want not exist", err)
+	}
 }

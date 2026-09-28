@@ -256,11 +256,12 @@ func (t *AudioProjectTool) handleValidate(filePath string) (tools.ToolResult, er
 }
 
 func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return tools.ToolResult{Content: "ffmpeg not found — required for audio rendering", Error: true}, nil
+	resolvedProjectPath, err := resolvePath(t.workspace, filePath, false)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
 	}
 
-	project, err := loadProject(filePath)
+	project, err := loadProject(resolvedProjectPath)
 	if err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Failed to load project: %v", err), Error: true}, nil
 	}
@@ -273,20 +274,33 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 		}, nil
 	}
 
+	resolvedOutput, err := resolvePath(t.workspace, project.Output, true)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return tools.ToolResult{Content: "ffmpeg not found — required for audio rendering", Error: true}, nil
+	}
+
 	if progress != nil {
 		progress <- tools.ProgressEvent{
 			ToolName: "audio_render",
-			Message:  fmt.Sprintf("Rendering %d tracks → %s", len(project.Tracks), project.Output),
+			Message:  fmt.Sprintf("Rendering %d tracks → %s", len(project.Tracks), resolvedOutput),
 		}
 	}
 
 	// Build ffmpeg command from project
 	var args []string
 	for _, tr := range project.Tracks {
+		resolvedTrackFile, err := resolvePath(t.workspace, tr.File, false)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 		if tr.Loop {
 			args = append(args, "-stream_loop", "-1")
 		}
-		args = append(args, "-i", tr.File)
+		args = append(args, "-i", resolvedTrackFile)
 	}
 
 	// Build filter graph
@@ -312,12 +326,12 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 	if len(project.Tracks) == 1 {
 		// Single track — just apply volume filter, no amix needed
 		filterGraph := filterParts[0]
-		args = append(args, "-filter_complex", filterGraph, "-map", "[t0]", "-y", project.Output)
+		args = append(args, "-filter_complex", filterGraph, "-map", "[t0]", "-y", resolvedOutput)
 	} else {
 		filterGraph := strings.Join(filterParts, ";") + ";" +
 			strings.Join(mixInputs, "") +
 			fmt.Sprintf("amix=inputs=%d:duration=first:normalize=0", len(project.Tracks))
-		args = append(args, "-filter_complex", filterGraph, "-y", project.Output)
+		args = append(args, "-filter_complex", filterGraph, "-y", resolvedOutput)
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
@@ -334,7 +348,7 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 	}
 
 	// Verify output
-	absOutput, _ := filepath.Abs(project.Output)
+	absOutput, _ := filepath.Abs(resolvedOutput)
 	info, err := os.Stat(absOutput)
 	if err != nil {
 		return tools.ToolResult{

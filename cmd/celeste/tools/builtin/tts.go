@@ -451,7 +451,12 @@ func executeBatch(ctx context.Context, apiKey, voiceID, filePath, outDir string,
 
 	var generated, skipped, failed int
 	for i, clip := range clips.Clips {
-		outFile := filepath.Join(outDir, clip.Name+".mp3")
+		outFile, err := resolvePath(outDir, clip.Name+".mp3", true)
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("  FAIL  %s: %v\n", clip.Name, err))
+			failed++
+			continue
+		}
 
 		// Skip if already generated (idempotent — don't re-generate on retry)
 		if info, err := os.Stat(outFile); err == nil && info.Size() > 0 {

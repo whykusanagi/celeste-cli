@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,5 +60,67 @@ func TestAudioProjectCreateRejectsEscapingProjectFile(t *testing.T) {
 	assert.Contains(t, result.Content, "escapes workspace")
 	if _, err := os.Stat(escapedProjectFile); !os.IsNotExist(err) {
 		t.Fatalf("escaped project file stat err = %v, want not exist", err)
+	}
+}
+
+func TestAudioProjectRenderRejectsRelativeEscapingOutputBeforeFFmpeg(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewAudioProjectTool(workspace)
+	t.Chdir(workspace)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "voice.mp3"), []byte("dummy audio"), 0644))
+	projectPath := filepath.Join(workspace, "project.json")
+	project := AudioProject{
+		Output: "../evil.mp3",
+		Tracks: []AudioTrack{
+			{File: "voice.mp3", Role: "voice", Start: 0, Volume: 1},
+		},
+	}
+	data, err := json.Marshal(project)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(projectPath, data, 0644))
+
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"action": "render",
+		"file":   "project.json",
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, "escapes workspace")
+
+	escapedOutput := filepath.Clean(filepath.Join(workspace, "..", "evil.mp3"))
+	if _, err := os.Stat(escapedOutput); !os.IsNotExist(err) {
+		t.Fatalf("escaped output stat err = %v, want not exist", err)
+	}
+}
+
+func TestAudioProjectRenderRejectsAbsoluteEscapingOutputBeforeFFmpeg(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewAudioProjectTool(workspace)
+	t.Chdir(workspace)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "voice.mp3"), []byte("dummy audio"), 0644))
+	outsideOutput := filepath.Join(t.TempDir(), "out.mp3")
+	projectPath := filepath.Join(workspace, "project.json")
+	project := AudioProject{
+		Output: outsideOutput,
+		Tracks: []AudioTrack{
+			{File: "voice.mp3", Role: "voice", Start: 0, Volume: 1},
+		},
+	}
+	data, err := json.Marshal(project)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(projectPath, data, 0644))
+
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"action": "render",
+		"file":   "project.json",
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, "escapes workspace")
+
+	if _, err := os.Stat(outsideOutput); !os.IsNotExist(err) {
+		t.Fatalf("absolute escaped output stat err = %v, want not exist", err)
 	}
 }
