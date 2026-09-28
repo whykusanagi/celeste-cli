@@ -41,7 +41,7 @@ func resolvePath(workspace, input string, forWrite bool) (string, error) {
 		return "", fmt.Errorf("path escapes workspace through a symlink: %s", input)
 	}
 	if forWrite {
-		if reason := protectedHookFile(candidate); reason != "" {
+		if reason := protectedHookFile(candidate, realCandidate); reason != "" {
 			return "", fmt.Errorf("%s", reason)
 		}
 	}

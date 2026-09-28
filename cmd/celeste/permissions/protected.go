@@ -48,16 +48,23 @@ func containsProtectedFragment(s, fragment string) bool {
 			return false
 		}
 		end := start + idx + len(fragment)
-		if end == len(s) || isShellPathBoundary(s[end]) {
+		if end == len(s) || !isFilenameContinuationByte(s[end]) {
 			return true
 		}
 		start = end
 	}
 }
 
-func isShellPathBoundary(b byte) bool {
-	switch b {
-	case ' ', '\t', '\n', '\r', '"', '\'', '`', ';', '&', '|', '<', '>', ')', '(', ']':
+// isFilenameContinuationByte reports whether b could continue a filename
+// immediately after a protected fragment, so "hooks.json.bak" isn't treated
+// as a hit but "hooks.json*", "hooks.json$u", "hooks.json{,}" and
+// "hooks.json," are: those aren't valid bare filename characters, so a shell
+// would treat them as glob/expansion/separator syntax, not extension text.
+func isFilenameContinuationByte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z', b >= 'a' && b <= 'z', b >= '0' && b <= '9':
+		return true
+	case b == '.' || b == '_' || b == '-':
 		return true
 	default:
 		return false

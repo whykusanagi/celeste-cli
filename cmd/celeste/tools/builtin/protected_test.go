@@ -130,6 +130,169 @@ func TestWriteFileDeniesSymlinkedHomeCelesteByDirectoryIdentity(t *testing.T) {
 	}
 }
 
+func TestWriteFileDeniesStowStyleHookSymlinkWithExistingTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	dotfiles := t.TempDir()
+	target := filepath.Join(dotfiles, "celeste", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(dotfiles).Execute(context.Background(), map[string]any{
+		"path":    "celeste/hooks.json",
+		"content": "rewritten\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "original\n" {
+		t.Fatalf("target content = %q, err = %v; want unchanged original", string(data), err)
+	}
+}
+
+func TestWriteFileDeniesStowStyleHookSymlinkWithDanglingTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	dotfiles := t.TempDir()
+	target := filepath.Join(dotfiles, "celeste", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(dotfiles).Execute(context.Background(), map[string]any{
+		"path":    "celeste/hooks.json",
+		"content": "created\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target stat err = %v, want not exist", err)
+	}
+}
+
+func TestWriteFileDeniesWorkspaceSymlinkToHomeHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	hookPath := filepath.Join(home, ".celeste", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(hookPath, filepath.Join(home, "link.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(home).Execute(context.Background(), map[string]any{
+		"path":    "link.json",
+		"content": "rewritten\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if data, err := os.ReadFile(hookPath); err != nil || string(data) != "original\n" {
+		t.Fatalf("hook content = %q, err = %v; want unchanged original", string(data), err)
+	}
+}
+
+func TestPatchFileDeniesWorkspaceSymlinkToHomeHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	hookPath := filepath.Join(home, ".celeste", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(hookPath, filepath.Join(home, "link.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewPatchFileTool(home).Execute(context.Background(), map[string]any{
+		"path":       "link.json",
+		"old_string": "original",
+		"new_string": "rewritten",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if data, err := os.ReadFile(hookPath); err != nil || string(data) != "original\n" {
+		t.Fatalf("hook content = %q, err = %v; want unchanged original", string(data), err)
+	}
+}
+
+func TestWriteFileDeniesHomeHookThroughDifferentSymlinkSpellings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	root := t.TempDir()
+	realHome := filepath.Join(root, "real-home")
+	if err := os.MkdirAll(realHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	homeAlias := filepath.Join(root, "home-alias")
+	if err := os.Symlink(realHome, homeAlias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", homeAlias)
+	t.Setenv("USERPROFILE", homeAlias)
+
+	result, err := NewWriteFileTool(realHome).Execute(context.Background(), map[string]any{
+		"path":    ".celeste/grimoire.md",
+		"content": "spell\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if _, err := os.Stat(filepath.Join(realHome, ".celeste", "grimoire.md")); !os.IsNotExist(err) {
+		t.Fatalf("protected file stat err = %v, want not exist", err)
+	}
+}
+
 func TestReadFileAllowsHomeHook(t *testing.T) {
 	home := setProtectedHome(t)
 	path := filepath.Join(home, ".celeste", "hooks.json")

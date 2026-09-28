@@ -43,6 +43,34 @@ func TestCheckerDeniesBashCommandNamingHookFiles(t *testing.T) {
 	}
 }
 
+func TestCheckerDeniesBashCommandWithNonFilenameSuffix(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	c := NewChecker(PermissionConfig{Mode: ModeTrust})
+	bash := protTool{name: "bash"}
+	denied := []string{
+		"cat ~/.celeste/hooks.json*",
+		"cat ~/.celeste/hooks.json$u",
+		"echo ~/.celeste/hooks.json{,}",
+		"echo ~/.celeste/hooks.json,",
+	}
+	for _, cmd := range denied {
+		if got := c.Check(bash, map[string]any{"command": cmd}); got.Decision != Deny {
+			t.Errorf("%q: decision %v, want Deny", cmd, got.Decision)
+		}
+	}
+	allowed := []string{
+		"cat ~/.celeste/hooks.json.bak",
+		"cat ~/.celeste/hooks.json-old",
+	}
+	for _, cmd := range allowed {
+		if got := c.Check(bash, map[string]any{"command": cmd}); got.Decision == Deny {
+			t.Errorf("%q: denied (%s), want not denied", cmd, got.Reason)
+		}
+	}
+}
+
 // A non-bash tool's arguments are no longer substring-matched at all: this
 // closed a false positive where a doc's *content* merely mentioning one of
 // these paths was denied. Real protection for file tools' `path` arguments
