@@ -319,6 +319,15 @@ func WithExecTimeout(ctx context.Context, timeout time.Duration) context.Context
 	return context.WithValue(ctx, execTimeoutKey{}, timeout)
 }
 
+type promptKey struct{}
+
+// WithPrompt makes fn answer this call's permission Ask instead of the
+// registry's prompt. loop.Loop uses it so each run brings its own Gate,
+// whose lifetime differs by mode (2.0 F2). A nil fn is ignored.
+func WithPrompt(ctx context.Context, fn PromptFunc) context.Context {
+	return context.WithValue(ctx, promptKey{}, fn)
+}
+
 // Execute runs a tool by name with input validation.
 func (r *Registry) Execute(ctx context.Context, name string, input map[string]any) (ToolResult, error) {
 	return r.ExecuteWithProgress(ctx, name, input, nil)
@@ -344,6 +353,10 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	prompt := r.promptFn
 	hooks := r.hooks
 	r.mu.RUnlock()
+
+	if fn, ok := ctx.Value(promptKey{}).(PromptFunc); ok && fn != nil {
+		prompt = fn
+	}
 
 	hookCtx := ctx // hooks never inherit the tool's execution timeout
 	var hookContext []string
