@@ -57,6 +57,16 @@ func TestV1StdoutIsNotParsedAsJSON(t *testing.T) {
 	assert.Equal(t, Allow, res.decision, "v1 decides by exit code only")
 }
 
+// Fix round 2: v1 now shares v2's 1 MiB stdout cap, so a v1 guard that floods
+// stdout fails closed even at exit 0 — an intentional change from 1.x
+// (tracked for MIGRATING-2.0.md), not a silent truncated-allow.
+func TestV1StdoutOverCapFailsClosedAtExitZero(t *testing.T) {
+	skipV1OnWindows(t)
+	ws := t.TempDir()
+	res := runHook(context.Background(), v1Def(EventPreToolUse, "yes a | head -c 1100000; exit 0"), ws, toolPayload(ws, EventPreToolUse, "bash", nil))
+	assert.Contains(t, res.failed, "stdout exceeded")
+}
+
 // Review Focus 1: a v1 guard reads CELESTE_TOOL_COMMAND; when that had to
 // be omitted, the guard can't judge the call, so it blocks.
 func TestV1FailsClosedWhenInputOmitted(t *testing.T) {
