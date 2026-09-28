@@ -2,7 +2,9 @@ package builtin
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -335,5 +337,85 @@ func TestWriteFileErrorAfterMkdirAllLeavesNoDirs(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(workspace, "n1")); !os.IsNotExist(err) {
 			t.Fatalf("append=%v: failed write left n1 behind (err %v)", appendMode, err)
 		}
+	}
+}
+
+// recordingTransport stands in for http.DefaultTransport so a test can
+// assert that a tool made no API call (and never touches the network).
+type recordingTransport struct{ requests []string }
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.requests = append(r.requests, req.URL.String())
+	return nil, errors.New("recordingTransport: network disabled in tests")
+}
+
+// The round-5 setup reached through generate_speech's batch action instead
+// of write_file: creating the output directory d/sub would make hooks.json
+// resolve to the planted d/evil.json. The refusal must come before any
+// ElevenLabs call, and leave d/sub absent.
+func TestTTSBatchRefusesDirectoryCreationThatResolvesHookFile(t *testing.T) {
+	skipSymlinksOnWindows(t)
+	home := setProtectedHome(t)
+	t.Setenv("ELEVENLABS_API_KEY", "test-key")
+	t.Setenv("ELEVEN_LABS_API_KEY", "")
+	rt := &recordingTransport{}
+	orig := http.DefaultTransport
+	http.DefaultTransport = rt
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hooks := filepath.Join(home, ".celeste", "hooks.json")
+	mustSymlink(t, filepath.Join(workspace, "d", "sub"), filepath.Join(home, "L"))
+	mustSymlink(t, filepath.Join(home, "L")+string(filepath.Separator)+".."+string(filepath.Separator)+"evil.json", hooks)
+
+	reg := trustRegistry(t, workspace)
+	if res := execTool(t, reg, "write_file", map[string]any{
+		"path":    filepath.Join("d", "evil.json"),
+		"content": `{"planted":true}`,
+	}); res.Error {
+		t.Fatalf("plant = %+v, want success (hooks.json still dangles)", res)
+	}
+	// One clip whose name fails resolvePath, one that would call the API.
+	clips := `{"clips":[{"name":"../../../../escape","script":"x"},{"name":"ok","script":"hello"}]}`
+	if err := os.WriteFile(filepath.Join(workspace, "clips.json"), []byte(clips), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wantProtected(t, execTool(t, reg, "generate_speech", map[string]any{
+		"action":   "batch",
+		"file":     "clips.json",
+		"filename": filepath.Join("d", "sub"),
+		"voice_id": "test-voice",
+	}))
+	if len(rt.requests) != 0 {
+		t.Fatalf("API called before the refusal: %v", rt.requests)
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, "d", "sub")); !os.IsNotExist(err) {
+		t.Fatalf("refused batch left sub behind (err %v)", err)
+	}
+	if data, err := os.ReadFile(hooks); err == nil {
+		t.Fatalf("hooks.json resolves after refused batch: %q", data)
+	}
+}
+
+// guardedMkdirAll itself: an unrelated nested directory is created and its
+// undo removes it again while empty.
+func TestGuardedMkdirAllCreatesAndUndoes(t *testing.T) {
+	setProtectedHome(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "a", "b")
+	undo, err := guardedMkdirAll(dir)
+	if err != nil {
+		t.Fatalf("guardedMkdirAll: %v", err)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Fatalf("dir not created: %v", err)
+	}
+	undo()
+	if _, err := os.Lstat(filepath.Join(root, "a")); !os.IsNotExist(err) {
+		t.Fatalf("undo left a behind (err %v)", err)
 	}
 }

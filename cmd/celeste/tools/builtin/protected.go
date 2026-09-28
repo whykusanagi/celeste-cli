@@ -191,16 +191,24 @@ func pathElemEqual(a, b string) bool { return pathEqual(a, b) }
 //     ~/L -> <workspace>/d/sub with sub missing, and hooks.json ->
 //     ~/L/../evil.json. Writing d/evil.json is harmless while sub is
 //     missing; writing d/sub/.keep then creates sub, and hooks.json starts
-//     resolving to the planted file. noteMkdirAll therefore snapshots each
+//     resolving to the planted file. mkdirAll therefore snapshots each
 //     protected target before MkdirAll, and verify refuses the write (and
 //     undoes it) if any target appeared or changed identity.
 //
 // This file-tool protection is defence in depth, not the trust boundary:
 // bash can still reach these files until W4's sandbox lands.
 type protectedWriteGuard struct {
-	path        string
-	existed     bool
-	createdDirs []string // deepest first; only filled by noteMkdirAll
+	path    string
+	existed bool
+	dirGuard
+}
+
+// dirGuard is the directory-creation half of the guard (fix round 5),
+// shared by write_file (through protectedWriteGuard) and every other tool
+// that creates directories from a model-influenced path (through
+// guardedMkdirAll).
+type dirGuard struct {
+	createdDirs []string // deepest first; only filled by mkdirAll
 	// before holds os.Stat of each protected target taken right before
 	// MkdirAll (nil entry = did not resolve); nil slice = no snapshot.
 	before []os.FileInfo
@@ -226,7 +234,9 @@ func statProtectedTargets() []os.FileInfo {
 
 // protectedTargetsChanged reports whether any protected target resolves
 // now but did not before, or resolves to a different file than before.
-func (g *protectedWriteGuard) protectedTargetsChanged() bool {
+// A hook file atomically replaced by the person mid-write (new inode) reads
+// as changed too: a rare false deny, preferred over a missed plant.
+func (g *dirGuard) protectedTargetsChanged() bool {
 	if g.before == nil {
 		return false
 	}
@@ -259,21 +269,51 @@ func guardProtectedWrite(path string) (*protectedWriteGuard, error) {
 	return g, nil
 }
 
-// noteMkdirAll records which of path's ancestor directories do not exist
-// yet, so a refused write can remove exactly what it created. Call it right
-// before os.MkdirAll(filepath.Dir(path)). It also snapshots what each
-// protected target resolves to, for verify's directory-creation check.
-func (g *protectedWriteGuard) noteMkdirAll() {
+// mkdirAll snapshots what each protected target resolves to, records which
+// of dir and its ancestors do not exist yet (so a refused or failed write
+// can remove exactly what it created), then runs os.MkdirAll(dir). The
+// caller must still check protectedTargetsChanged afterwards, and undo on
+// error; guardedMkdirAll bundles all of that.
+func (g *dirGuard) mkdirAll(dir string) error {
 	g.before = statProtectedTargets()
-	for dir := filepath.Dir(g.path); ; dir = filepath.Dir(dir) {
-		if _, err := os.Lstat(dir); err == nil {
-			return
+	g.createdDirs = nil
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); err == nil {
+			break
 		}
-		g.createdDirs = append(g.createdDirs, dir)
-		if filepath.Dir(dir) == dir {
-			return
+		g.createdDirs = append(g.createdDirs, d)
+		if filepath.Dir(d) == d {
+			break
 		}
 	}
+	return os.MkdirAll(dir, 0755)
+}
+
+// removeCreatedDirs removes the directories mkdirAll recorded as missing,
+// deepest first and non-recursively, so only while they are still empty.
+func (g *dirGuard) removeCreatedDirs() {
+	for _, dir := range g.createdDirs {
+		_ = os.Remove(dir) // only succeeds while empty
+	}
+}
+
+// guardedMkdirAll is os.MkdirAll(dir, 0755) for tools other than write_file
+// whose directory comes from a model-influenced path (the TTS tools): if
+// creating the directories changed what a protected name resolves to, the
+// created directories are removed and the protected error is returned.
+// undo removes the created directories (while empty); call it when the
+// write that follows fails. It is never nil.
+func guardedMkdirAll(dir string) (undo func(), err error) {
+	g := &dirGuard{}
+	if err := g.mkdirAll(dir); err != nil {
+		g.removeCreatedDirs()
+		return func() {}, err
+	}
+	if g.protectedTargetsChanged() {
+		g.removeCreatedDirs()
+		return func() {}, protectedError(dir)
+	}
+	return g.removeCreatedDirs, nil
 }
 
 // verify runs the post-write kernel check. If the freshly created file is a
@@ -294,8 +334,8 @@ func (g *protectedWriteGuard) verify() error {
 }
 
 // undo removes what this write created: the destination file, only if it
-// did not exist before, then the directories noteMkdirAll recorded as
-// missing (deepest first, non-recursive, so only while empty). write_file
+// did not exist before, then the directories mkdirAll recorded as missing
+// (deepest first, non-recursive, so only while empty). write_file
 // defers it on every error return after MkdirAll (fix round 6): a write
 // that fails between MkdirAll and verify must not leave behind directories
 // that change what a protected name resolves to.
@@ -303,9 +343,7 @@ func (g *protectedWriteGuard) undo() {
 	if !g.existed {
 		_ = os.Remove(g.path)
 	}
-	for _, dir := range g.createdDirs {
-		_ = os.Remove(dir) // only succeeds while empty
-	}
+	g.removeCreatedDirs()
 }
 
 // sameAsProtectedTarget reports whether info is, per the kernel, the same

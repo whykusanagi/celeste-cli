@@ -110,7 +110,6 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 	}
 
-	guard.noteMkdirAll()
 	// Undo created directories (and a partial new file) on every return
 	// below unless the write fully succeeded and verify passed (fix round 6).
 	written := false
@@ -119,7 +118,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 			guard.undo()
 		}
 	}()
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := guard.mkdirAll(filepath.Dir(targetPath)); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 	// Creating directories alone can make a protected name resolve; refuse

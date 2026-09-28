@@ -246,11 +246,12 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		}
 
 		// Save to file
-		dir := filepath.Dir(filename)
-		if dir != "." && dir != "" {
-			os.MkdirAll(dir, 0755)
+		undoDirs, err := guardedMkdirAll(filepath.Dir(filename))
+		if err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("Failed to save audio: %v", err), Error: true}, nil
 		}
 		if err := os.WriteFile(filename, audioData, 0644); err != nil {
+			undoDirs()
 			return tools.ToolResult{Content: fmt.Sprintf("Failed to save audio: %v", err), Error: true}, nil
 		}
 
@@ -374,11 +375,12 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 			return tools.ToolResult{Content: fmt.Sprintf("Sound generation failed: %v", err), Error: true}, nil
 		}
 
-		dir := filepath.Dir(filename)
-		if dir != "." && dir != "" {
-			os.MkdirAll(dir, 0755)
+		undoDirs, err := guardedMkdirAll(filepath.Dir(filename))
+		if err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("Write failed: %v", err), Error: true}, nil
 		}
 		if err := os.WriteFile(filename, audioData, 0644); err != nil {
+			undoDirs()
 			return tools.ToolResult{Content: fmt.Sprintf("Write failed: %v", err), Error: true}, nil
 		}
 
@@ -443,7 +445,11 @@ func executeBatch(ctx context.Context, apiKey, voiceID, filePath, outDir string,
 		return tools.ToolResult{Content: "No clips found in file", Error: true}, nil
 	}
 
-	os.MkdirAll(outDir, 0755)
+	// Before any API call: creating outDir must not retarget a hook file.
+	undoDirs, err := guardedMkdirAll(outDir)
+	if err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("Failed to create %s: %v", outDir, err), Error: true}, nil
+	}
 	useSSML := clips.SSMLOptimized
 
 	var sb strings.Builder
@@ -493,6 +499,10 @@ func executeBatch(ctx context.Context, apiKey, voiceID, filePath, outDir string,
 
 		sb.WriteString(fmt.Sprintf("  OK    %s → %s (%d bytes)\n", clip.Name, outFile, len(audioData)))
 		generated++
+	}
+
+	if generated == 0 {
+		undoDirs() // nothing written: leave no directories behind
 	}
 
 	if skipped > 0 || failed > 0 {
@@ -683,11 +693,12 @@ func downloadHistoryItem(ctx context.Context, apiKey, itemID, filename string) (
 		return tools.ToolResult{Content: fmt.Sprintf("Read failed: %v", err), Error: true}, nil
 	}
 
-	dir := filepath.Dir(filename)
-	if dir != "." && dir != "" {
-		os.MkdirAll(dir, 0755)
+	undoDirs, err := guardedMkdirAll(filepath.Dir(filename))
+	if err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("Write failed: %v", err), Error: true}, nil
 	}
 	if err := os.WriteFile(filename, audioData, 0644); err != nil {
+		undoDirs()
 		return tools.ToolResult{Content: fmt.Sprintf("Write failed: %v", err), Error: true}, nil
 	}
 
