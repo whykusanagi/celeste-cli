@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
@@ -34,6 +35,7 @@ type chatDeps struct {
 	adapter    *TUIClientAdapter
 	mcpManager *mcp.Manager
 	indexer    *codegraph.Indexer
+	hooks      *hooks.Runner
 }
 
 // newChatApp builds the chat TUI model exactly as runChatTUI did, up to (not
@@ -276,15 +278,6 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		}()
 	}
 
-	// Wire grimoire hooks into the tool registry
-	if projectGrimoire != nil {
-		parsedHooks := hooks.ParseFromGrimoire(projectGrimoire)
-		if len(parsedHooks) > 0 {
-			executor := hooks.NewExecutor(parsedHooks, cwd)
-			registry.SetHookRunner(&hookRunnerAdapter{executor: executor})
-		}
-	}
-
 	// Create TUI client adapter
 	tuiClient := &TUIClientAdapter{
 		client:         client,
@@ -295,6 +288,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		projectContext: projectContext,
 		gitSnapshot:    gitSnapshotContent,
 	}
+	tuiClient.lifeCtx, tuiClient.lifeCancel = context.WithCancel(context.Background())
 
 	// Initialize logging for skill calls
 	if err := tui.InitLogging(); err != nil {
@@ -322,6 +316,15 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		currentSession = sessionManager.NewSession()
 	}
 
+	// Hooks (2.0 F0): global hooks run; repo hooks run only once trusted.
+	hookRunner, startContext, hookWarnings := loadChatHooks(cwd, homeDir, currentSession.ID,
+		resumeSessionID != "" && len(currentSession.Messages) > 0, registry)
+	tuiClient.hooks = hookRunner
+	if startContext != "" {
+		tuiClient.projectContext = strings.TrimSpace(tuiClient.projectContext + "\n\n# Session Start Hook Context\n\n" + startContext)
+		client.SetSystemPrompt(tuiClient.systemPrompt())
+	}
+
 	// Create TUI with session management
 	app := tui.NewApp(tuiClient)
 
@@ -345,6 +348,11 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// Restore messages from session if available
 	if len(currentSession.Messages) > 0 {
 		app = app.WithMessages(tui.ChatMessagesFromSession(currentSession.Messages))
+	}
+	// Hook load warnings printed before the alt screen hid stderr; show
+	// them in the chat too.
+	for _, w := range hookWarnings {
+		app = app.WithSystemMessage("⚠ " + w)
 	}
 
 	// Restore endpoint/provider from session, or detect from config
@@ -415,5 +423,5 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 	app = app.SetMCPManager(mcpManager, mcpConfigs)
 
-	return app, &chatDeps{registry: registry, adapter: tuiClient, mcpManager: mcpManager, indexer: indexer}, nil
+	return app, &chatDeps{registry: registry, adapter: tuiClient, mcpManager: mcpManager, indexer: indexer, hooks: hookRunner}, nil
 }

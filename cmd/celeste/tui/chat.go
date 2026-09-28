@@ -138,6 +138,62 @@ func (m ChatModel) AddHiddenUserMessage(content string) ChatModel {
 	return m
 }
 
+// Metadata keys recording a user message's UserPromptSubmit result (2.0 F0).
+const (
+	MetaPromptHookDone = "prompt_hook_done"
+	MetaHookContext    = "hook_context"
+)
+
+// findUnhookedUser returns the index of the first user message with this
+// content and timestamp that has not passed its UserPromptSubmit hooks, or
+// -1.
+func (m ChatModel) findUnhookedUser(content string, ts time.Time) int {
+	for i, msg := range m.messages {
+		if msg.Role != "user" || msg.Content != content || !msg.Timestamp.Equal(ts) {
+			continue
+		}
+		if done, _ := msg.Metadata[MetaPromptHookDone].(bool); !done {
+			return i
+		}
+	}
+	return -1
+}
+
+// MarkUserHooked records that the user message with this content and
+// timestamp passed its UserPromptSubmit hooks, with any context they added.
+func (m ChatModel) MarkUserHooked(content string, ts time.Time, context string) ChatModel {
+	i := m.findUnhookedUser(content, ts)
+	if i < 0 {
+		return m
+	}
+	msgs := append([]ChatMessage(nil), m.messages...)
+	meta := make(map[string]any, len(msgs[i].Metadata)+2)
+	for k, v := range msgs[i].Metadata {
+		meta[k] = v
+	}
+	meta[MetaPromptHookDone] = true
+	if context != "" {
+		meta[MetaHookContext] = context
+	}
+	msgs[i].Metadata = meta
+	m.messages = msgs
+	return m
+}
+
+// DropUser removes the unchecked user message with this content and
+// timestamp (a prompt a hook blocked).
+func (m ChatModel) DropUser(content string, ts time.Time) ChatModel {
+	i := m.findUnhookedUser(content, ts)
+	if i < 0 {
+		return m
+	}
+	msgs := make([]ChatMessage, 0, len(m.messages)-1)
+	msgs = append(msgs, m.messages[:i]...)
+	m.messages = append(msgs, m.messages[i+1:]...)
+	m.updateContent()
+	return m
+}
+
 // AddAssistantMessage adds an assistant message to the chat.
 func (m ChatModel) AddAssistantMessage(content string) ChatModel {
 	return m.AddAssistantMessageWithToolCalls(content, nil)
@@ -336,8 +392,12 @@ func hideAll(in []ChatMessage) []ChatMessage {
 }
 
 // RestoreMessages appends saved history as is, keeping tool calls, tool
-// results and metadata that the Add* helpers would drop.
+// results and metadata that the Add* helpers would drop. Answered user
+// messages are marked as past their UserPromptSubmit hooks, so resuming
+// does not re-check them (markAnsweredPromptsHooked).
 func (m ChatModel) RestoreMessages(msgs []ChatMessage) ChatModel {
+	msgs = append([]ChatMessage(nil), msgs...)
+	markAnsweredPromptsHooked(msgs)
 	m.messages = append(m.messages, msgs...)
 	m.updateContent()
 	m.viewport.GotoBottom()

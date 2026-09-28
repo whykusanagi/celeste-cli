@@ -85,6 +85,13 @@ func helper(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return emit(map[string]any{"decision": "allow"})
 	case "deny", "ask":
 		return emit(map[string]any{"decision": arg(0), "reason": arg(1)})
+	case "denyif":
+		// Deny when the payload contains arg(1), otherwise allow.
+		data, _ := io.ReadAll(stdin)
+		if strings.Contains(string(data), arg(1)) {
+			return emit(map[string]any{"decision": "deny", "reason": arg(2)})
+		}
+		return emit(map[string]any{"decision": "allow"})
 	case "context":
 		return emit(map[string]any{"additionalContext": arg(1)})
 	case "rewrite":

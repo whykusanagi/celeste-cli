@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -56,6 +57,11 @@ func (e Event) toolEvent() bool { return e == EventPreToolUse || e == EventPostT
 // gating reports whether a failed hook blocks the action (fail closed).
 func (e Event) gating() bool {
 	return e == EventPreToolUse || e == EventUserPromptSubmit || e == EventPreCompact
+}
+
+// decides reports whether hook decisions affect control flow for e.
+func (e Event) decides() bool {
+	return e.gating() || e == EventStop || e == EventSubagentStop
 }
 
 // Decision is a hook's verdict.
@@ -147,6 +153,15 @@ func unsafeRune(s string) rune {
 	return -1
 }
 
+// safeText returns s, or s quoted when it holds a rune unsafeRune rejects
+// or invalid UTF-8, for error text that may echo file content.
+func safeText(s string) string {
+	if unsafeRune(s) >= 0 || !utf8.ValidString(s) {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
 // matches reports whether d runs for event ev on tool.
 func (d Definition) matches(ev Event, tool string) bool {
 	if d.Event != ev {
@@ -190,7 +205,7 @@ func FromGrimoire(entries []grimoire.HookEntry) (defs []Definition, skipped []st
 	for _, e := range entries {
 		d, err := Definition{Event: Event(e.Phase), Matcher: e.ToolName, Command: e.Command, Protocol: ProtocolV1}.normalize()
 		if err != nil {
-			skipped = append(skipped, fmt.Sprintf("%s %s: %v", e.Phase, e.ToolName, err))
+			skipped = append(skipped, fmt.Sprintf("%s %s: %v", strconv.Quote(e.Phase), strconv.Quote(e.ToolName), err))
 			continue
 		}
 		defs = append(defs, d)

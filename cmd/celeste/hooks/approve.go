@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // DescribeSource prints a source's hooks as the user must see them before
@@ -41,10 +43,9 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 	}
 }
 
-// IsTerminal reports whether f is a character device. Callers require it
-// for both the input and the output of a prompt. Git Bash/mintty consoles
-// are pipes, not terminals; there, `celeste hooks trust` is the way to approve.
+// IsTerminal reports whether f is an interactive terminal. Callers require it
+// for both the input and the output of a prompt. Character devices such as
+// /dev/null and NUL are not accepted; use `celeste hooks trust` there.
 func IsTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return f != nil && term.IsTerminal(int(f.Fd()))
 }

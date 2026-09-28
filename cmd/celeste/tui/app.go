@@ -825,7 +825,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m, out = m.compactContext(true)
 					if len(out.Edits) == 0 || out.StillOver {
 						// Pruning found too little: go to the summary rung.
-						return m.startSummary("", len(out.Edits) == 0)
+						return m.startSummaryAs("", len(out.Edits) == 0, "manual")
 					}
 					return m, nil
 				}
@@ -2068,6 +2068,49 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
 
+	case PromptHookMsg:
+		m.chat = m.chat.MarkUserHooked(msg.Content, msg.Timestamp, msg.Context)
+		return m, msg.Next
+
+	case PromptBlockedMsg:
+		if msg.Cancelled {
+			// Esc/Ctrl+C cut the UserPromptSubmit hook short: that is not a
+			// block, so the prompt stays, unchecked. The interrupt already
+			// cleared cancelFunc; leave it, since it may belong to a newer
+			// request by now.
+			break
+		}
+		if msg.Next != nil {
+			// Other new messages are still answered; only this one goes.
+			m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
+			m.persistSession()
+			m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
+			return m, msg.Next
+		}
+		if m.interrupted {
+			// The send stopped on a block, but Esc came first and already
+			// reset the turn: keep the prompt; it is checked again on the
+			// next send. The request's cancelFunc was cleared by interrupt.
+			break
+		}
+		// This is the final message of the request that owns cancelFunc
+		// (no newer request starts while this one is streaming).
+		m.cancelFunc = nil
+		m.interruptPending = false
+		m.streaming = false
+		m.status = m.status.SetStreaming(false)
+		m.status = m.status.SetText("Prompt blocked by a hook")
+		m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
+		// persistSession rewrites the session's messages from the chat, so
+		// dropping the prompt from the chat drops it from the session too.
+		m.persistSession()
+		m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
+		return m, nil
+
+	case HookWarningMsg:
+		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
+		return m, nil
+
 	case ToolProgressMsg:
 		var cmd tea.Cmd
 		m.toolProgress, cmd = m.toolProgress.Update(msg)
@@ -3306,6 +3349,12 @@ func (m AppModel) WithMessages(messages []ChatMessage) AppModel {
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("📂 Resumed session (%d messages)", len(messages)))
 	}
 
+	return m
+}
+
+// WithSystemMessage appends a system notice to the chat.
+func (m AppModel) WithSystemMessage(text string) AppModel {
+	m.chat = m.chat.AddSystemMessage(text)
 	return m
 }
 

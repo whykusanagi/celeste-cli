@@ -55,3 +55,19 @@ func TestSessionCodecDropsUnpairedToolTraffic(t *testing.T) {
 	assert.Equal(t, "c1", got[1].ToolCalls[0].ID)
 	assert.Equal(t, "c1", got[2].ToolCallID)
 }
+
+// A resumed session's answered prompts are not re-checked by
+// UserPromptSubmit; a trailing unanswered prompt still is (2.0 F0).
+func TestRestoreMessagesMarksAnsweredPromptsHooked(t *testing.T) {
+	in := []ChatMessage{
+		{Role: "user", Content: "old"},
+		{Role: "assistant", Content: "reply"},
+		{Role: "user", Content: "kept"},
+	}
+	got := NewChatModel().RestoreMessages(in).GetMessages()
+	require.Len(t, got, 3)
+	done := func(m ChatMessage) bool { v, _ := m.Metadata[MetaPromptHookDone].(bool); return v }
+	assert.True(t, done(got[0]), "answered prompt should be marked")
+	assert.False(t, done(got[2]), "trailing prompt must stay unchecked")
+	assert.Nil(t, in[0].Metadata, "caller's slice must not be modified")
+}

@@ -84,6 +84,35 @@ type StreamErrorMsg struct {
 	Err error
 }
 
+// PromptHookMsg carries the UserPromptSubmit result for one user message,
+// named by its Content and Timestamp. Next continues reading the response
+// stream (2.0 F0).
+type PromptHookMsg struct {
+	Context   string
+	Content   string
+	Timestamp time.Time
+	Next      tea.Cmd
+}
+
+// PromptBlockedMsg says a UserPromptSubmit hook blocked the user message
+// named by Content and Timestamp. It is removed from the chat and the
+// session. A non-nil Next means the request goes on without it (other new
+// messages are left to answer); a nil Next means the send stopped.
+type PromptBlockedMsg struct {
+	Reason    string
+	Content   string
+	Timestamp time.Time
+	Next      tea.Cmd
+	// Cancelled means the hook was cut short by an interrupt: the prompt
+	// is kept, unchecked, and nothing is reported.
+	Cancelled bool
+}
+
+// HookWarningMsg shows a hook warning in the chat.
+type HookWarningMsg struct {
+	Text string
+}
+
 // SkillCallMsg is sent when the LLM wants to call a skill/function.
 type SkillCallMsg struct {
 	Call             FunctionCall

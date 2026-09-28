@@ -207,6 +207,22 @@ transport, and gains a set of TUI features around all of it.
 
 ## [Unreleased]
 
+### Hooks
+
+- Lifecycle hooks (`hooks.json` and grimoire `## Hooks` sections) now load with
+  explicit trust: your own `~/.celeste` files run automatically, but a
+  project's `.celeste/hooks.json` or grimoire hooks need one-time approval
+  (`celeste hooks list`, `celeste hooks trust`). Non-interactive runs never
+  auto-approve; untrusted or changed hooks are skipped with a warning.
+- Hooks now run **before** the permission prompt, not after, and each hook
+  runs in its own source's project root rather than always the workspace.
+- v1 (grimoire) hooks fail closed if their `CELESTE_TOOL_*` input had to be
+  omitted for being oversized or containing NUL, and now also fail closed if
+  they print more than 1 MiB to stdout, even at exit 0 — previously
+  unbounded.
+- See `docs/HOOKS.md` for the full hooks.json format, the v2 JSON protocol,
+  and v1 migration notes.
+
 ## [1.10.0] - 2026-06-03
 
 ### Added

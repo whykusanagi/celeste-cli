@@ -254,7 +254,7 @@ func TestDiscoverWarnsOnV1(t *testing.T) {
 	require.NoError(t, err)
 	joined := strings.Join(warnings, "\n")
 	assert.Contains(t, joined, "protocol v1")
-	assert.Contains(t, joined, "MIGRATING-2.0.md")
+	assert.Contains(t, joined, "docs/HOOKS.md")
 }
 
 func TestDiscoverIgnoresGrimoireWithoutHooks(t *testing.T) {
@@ -291,5 +291,28 @@ func TestSourcesAtRejectsUnknownFiles(t *testing.T) {
 		writeFile(t, p, oneHookJSON)
 		_, _, err := SourcesAt(p, home)
 		assert.Error(t, err, name)
+	}
+}
+
+// Final review fix 2: text taken from hook files (a grimoire heading, a
+// .celeste/grimoire file name) is quoted in warnings, so control and bidi
+// characters cannot rewrite the terminal.
+func TestDiscoverQuotesFileDerivedWarningText(t *testing.T) {
+	home := testHome(t)
+	ws := t.TempDir()
+	const evil = "x\x1b[2J\ry\u202e"
+	writeFile(t, filepath.Join(ws, ".grimoire"), "# P\n\n## Hooks\n\n### Pre"+evil+"Use\n- bash: echo pre\n")
+	if runtime.GOOS != "windows" { // Windows file names cannot hold control characters
+		writeFile(t, filepath.Join(ws, ".celeste", "grimoire", "n"+evil+".md"), grimoireWithHooks)
+	}
+	_, warnings, err := Discover(ws, home)
+	require.NoError(t, err)
+	joined := strings.Join(warnings, "\n")
+	for _, raw := range []string{"\x1b", "\r", "\u202e"} {
+		assert.NotContains(t, joined, raw, "raw control or bidi character in warnings")
+	}
+	assert.Contains(t, joined, `Prex\x1b[2J\ry\u202eUse`, "heading not escaped")
+	if runtime.GOOS != "windows" {
+		assert.Contains(t, joined, `nx\x1b[2J\ry\u202e.md`, "file name not escaped")
 	}
 }

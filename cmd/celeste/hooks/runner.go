@@ -54,7 +54,9 @@ type Runner struct {
 }
 
 // Load discovers the workspace's hooks and keeps the ones allowed to run:
-// global sources always, repo sources when trusted or approved now.
+// global sources always, repo sources when trusted or approved now. On error,
+// callers must warn the user and treat hooks as disabled; global guards are
+// not running in that state.
 func Load(opts Options) (*Runner, error) {
 	warn := opts.Warn
 	if warn == nil {
@@ -206,9 +208,12 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 		payload["project_dir"] = h.dir
 		res := runHook(ctx, h.def, h.dir, payload)
 		if res.failed != "" {
-			r.warn(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), res.failed))
+			// res.failed can carry the hook's own stderr: quote it if it
+			// holds control or bidi characters.
+			failed := safeText(res.failed)
+			r.warn(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), failed))
 			if ev.gating() {
-				out.Decision, out.Reason = Deny, "hook failed: "+res.failed
+				out.Decision, out.Reason = Deny, "hook failed: "+failed
 				break
 			}
 			continue
@@ -220,11 +225,11 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 			out.UpdatedInput = res.updated
 			payload["tool_input"] = res.updated
 		}
-		if res.decision == Deny {
+		if res.decision == Deny && ev.decides() {
 			out.Decision, out.Reason = Deny, res.reason
 			break
 		}
-		if res.decision == Ask && out.Decision == Allow {
+		if res.decision == Ask && ev.decides() && out.Decision == Allow {
 			out.Decision, out.Reason = Ask, res.reason
 		}
 	}
