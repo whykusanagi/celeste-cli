@@ -121,3 +121,41 @@ func TestHooksUsage(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, errOut.String())
 	}
 }
+
+// Final review fix 3: finding nothing is not "already trusted".
+func TestHooksTrustNoSources(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var out, errOut bytes.Buffer
+	c := hooksCLI{cwd: t.TempDir(), home: home, in: strings.NewReader(""), out: &out, errOut: &errOut}
+	if code := hooksCommand([]string{"trust", "--yes"}, c); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if s := out.String(); !strings.Contains(s, "no hook sources found") || strings.Contains(s, "already trusted") {
+		t.Fatalf("stdout = %q", s)
+	}
+}
+
+// Final review fix 3: extra arguments and unknown flags are usage errors,
+// not silently a different path.
+func TestHooksRejectsExtraArgsAndUnknownFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"list", "extra"},
+		{"trust", "--force"},
+		{"trust", "-n"},
+		{"trust", "--yes", "a", "b"},
+	} {
+		c, _, errOut := hooksCLIFixture(t, "", false)
+		if code := hooksCommand(args, c); code != 2 || !strings.Contains(errOut.String(), "Usage:") {
+			t.Errorf("%q: exit %d, stderr %q; want 2 with usage", args, code, errOut.String())
+		}
+		if repoLoaded(t, c) {
+			t.Errorf("%q trusted repo hooks", args)
+		}
+	}
+	c, _, _ := hooksCLIFixture(t, "", false)
+	if code := hooksCommand([]string{"trust", "--yes", "--", c.cwd}, c); code != 0 || !repoLoaded(t, c) {
+		t.Fatalf("-- path: exit %d", code)
+	}
+}

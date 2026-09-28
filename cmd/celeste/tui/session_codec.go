@@ -90,6 +90,28 @@ func ChatMessagesFromSession(msgs []config.SessionMessage) []ChatMessage {
 	return out
 }
 
+// markAnsweredPromptsHooked marks every user message that something came
+// after as past its UserPromptSubmit hooks: it was sent in an earlier run
+// (sessions do not store the mark). Trailing user messages (a prompt kept
+// after an interrupt, or steers that never went out) stay unchecked, so the
+// next send checks them (2.0 F0).
+func markAnsweredPromptsHooked(msgs []ChatMessage) {
+	last := len(msgs) - 1
+	for last >= 0 && msgs[last].Role == "user" {
+		last--
+	}
+	for i := 0; i < last; i++ {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		meta := map[string]any{MetaPromptHookDone: true}
+		for k, v := range msgs[i].Metadata {
+			meta[k] = v
+		}
+		msgs[i].Metadata = meta
+	}
+}
+
 func metaFlag(msg ChatMessage, key string) bool {
 	v, _ := msg.Metadata[key].(bool)
 	return v

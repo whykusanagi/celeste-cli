@@ -2069,21 +2069,38 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
 
 	case PromptHookMsg:
-		m.chat = m.chat.MarkLastUserHooked(msg.Context)
+		m.chat = m.chat.MarkUserHooked(msg.Content, msg.Timestamp, msg.Context)
 		return m, msg.Next
 
 	case PromptBlockedMsg:
-		m.cancelFunc = nil
-		if msg.Cancelled || m.interrupted {
+		if msg.Cancelled {
 			// Esc/Ctrl+C cut the UserPromptSubmit hook short: that is not a
-			// block, so the prompt stays (interrupt already reset the state).
+			// block, so the prompt stays, unchecked. The interrupt already
+			// cleared cancelFunc; leave it, since it may belong to a newer
+			// request by now.
 			break
 		}
+		if msg.Next != nil {
+			// Other new messages are still answered; only this one goes.
+			m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
+			m.persistSession()
+			m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
+			return m, msg.Next
+		}
+		if m.interrupted {
+			// The send stopped on a block, but Esc came first and already
+			// reset the turn: keep the prompt; it is checked again on the
+			// next send. The request's cancelFunc was cleared by interrupt.
+			break
+		}
+		// This is the final message of the request that owns cancelFunc
+		// (no newer request starts while this one is streaming).
+		m.cancelFunc = nil
 		m.interruptPending = false
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText("Prompt blocked by a hook")
-		m.chat = m.chat.DropLastUser()
+		m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
 		// persistSession rewrites the session's messages from the chat, so
 		// dropping the prompt from the chat drops it from the session too.
 		m.persistSession()

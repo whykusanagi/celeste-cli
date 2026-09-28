@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 )
@@ -49,6 +50,10 @@ func hooksCommand(args []string, c hooksCLI) int {
 	}
 	switch args[0] {
 	case "list":
+		if len(args) > 1 {
+			fmt.Fprintf(c.errOut, "hooks list takes no arguments, got %q\n%s", args[1:], hooksUsage)
+			return 2
+		}
 		return hooksList(c)
 	case "trust":
 		return hooksTrust(args[1:], c)
@@ -85,13 +90,29 @@ func hooksList(c hooksCLI) int {
 }
 
 func hooksTrust(args []string, c hooksCLI) int {
-	yes, target := false, c.cwd
+	yes := false
+	var paths []string
+	flags := true
 	for _, a := range args {
-		if a == "--yes" || a == "-y" {
+		switch {
+		case flags && a == "--":
+			flags = false
+		case flags && (a == "--yes" || a == "-y"):
 			yes = true
-		} else {
-			target = a
+		case flags && strings.HasPrefix(a, "-"):
+			fmt.Fprintf(c.errOut, "Unknown flag %q for hooks trust\n%s", a, hooksUsage)
+			return 2
+		default:
+			paths = append(paths, a)
 		}
+	}
+	if len(paths) > 1 {
+		fmt.Fprintf(c.errOut, "hooks trust takes at most one path, got %q\n%s", paths, hooksUsage)
+		return 2
+	}
+	target := c.cwd
+	if len(paths) == 1 {
+		target = paths[0]
 	}
 	srcs, warnings, err := hooks.SourcesAt(target, c.home)
 	for _, w := range warnings {
@@ -111,6 +132,10 @@ func hooksTrust(args []string, c hooksCLI) int {
 		if store.Status(s) != hooks.Trusted {
 			pending = append(pending, s)
 		}
+	}
+	if len(srcs) == 0 {
+		fmt.Fprintf(c.out, "Nothing to trust: no hook sources found at %s.\n", strconv.Quote(target))
+		return 0
 	}
 	if len(pending) == 0 {
 		fmt.Fprintln(c.out, "Nothing to trust: every hook source here is already trusted.")

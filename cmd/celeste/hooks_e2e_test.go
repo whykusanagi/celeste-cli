@@ -503,3 +503,82 @@ func TestPromptHookInterruptKeepsPrompt(t *testing.T) {
 		t.Fatal("interrupted prompt was dropped from the chat")
 	}
 }
+
+// Final review fix 1: every unchecked user message is checked, not only the
+// newest. Two steers join a turn as separate messages; the first is blocked,
+// so it never reaches the provider and leaves the chat, while the second is
+// sent with the tool results.
+func TestTUIPromptHookChecksEveryQueuedSteer(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "w", Name: "write_file", Args: `{"path":"x.txt","content":"hi"}`}}},
+		fakeprovider.Turn{Text: "done"},
+	)
+	m, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventUserPromptSubmit, "", "denyif", "STEER-A", "no A"))
+	})
+	release := make(chan struct{})
+	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		<-release // hold the tool until both steers are queued
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	d := newTUIDriver(t, m)
+	d.Send(tui.SendMessageMsg{Content: "write x.txt"})
+	d.RunUntil(func(m tea.Model) bool {
+		return len(srv.Requests()) == 1 && assistantHasToolCalls(m)
+	}, 30*time.Second)
+	d.Send(tui.SendMessageMsg{Content: "STEER-A first"}, tui.SendMessageMsg{Content: "steer B second"})
+	d.RunUntil(func(m tea.Model) bool { return m.(tui.AppModel).DebugQueued() == 2 }, 10*time.Second)
+	close(release)
+	m = d.RunUntil(func(m tea.Model) bool { return lastAssistant(m) == "done" && turnIdle(m) }, 30*time.Second)
+
+	if n := len(srv.Requests()); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	sawB := false
+	for _, x := range requestMessages(t, srv, 1) {
+		c := fmt.Sprint(x["content"])
+		if strings.Contains(c, "STEER-A") {
+			t.Fatalf("blocked steer reached the provider: %q", c)
+		}
+		sawB = sawB || (x["role"] == "user" && strings.Contains(c, "steer B second"))
+	}
+	if !sawB {
+		t.Fatal("the allowed steer was not sent")
+	}
+	for _, x := range chatMessages(m) {
+		if x.Role == "user" && strings.Contains(x.Content, "STEER-A") {
+			t.Fatal("blocked steer is still in the chat")
+		}
+	}
+	if !hasSystemLine(m, "Prompt blocked by a UserPromptSubmit hook: no A") {
+		t.Fatal("block not reported")
+	}
+}
+
+// Final review fix 1: a prompt kept after an interrupt cut its hook short
+// is checked before the next send, and dropped if blocked.
+func TestTUIPromptKeptAfterInterruptIsChecked(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "reply"})
+	m, _, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventUserPromptSubmit, "", "denyif", "KEPT-PROMPT", "not that"))
+	})
+	ts := time.Now()
+	app := m.(tui.AppModel).WithMessages([]tui.ChatMessage{{Role: "user", Content: "KEPT-PROMPT", Timestamp: ts}})
+	m, _ = app.Update(tui.PromptBlockedMsg{Cancelled: true, Content: "KEPT-PROMPT", Timestamp: ts})
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "next"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "reply" && turnIdle(m) }, 30*time.Second)
+	msgs := requestMessages(t, srv, 0)
+	for _, x := range msgs {
+		if strings.Contains(fmt.Sprint(x["content"]), "KEPT-PROMPT") {
+			t.Fatal("the kept prompt was sent without its hook check")
+		}
+	}
+	if got := lastOfRole(msgs, "user"); got != "next" {
+		t.Fatalf("last user message sent = %q, want next", got)
+	}
+	for _, x := range chatMessages(m) {
+		if x.Role == "user" && x.Content == "KEPT-PROMPT" {
+			t.Fatal("blocked kept prompt is still in the chat")
+		}
+	}
+}

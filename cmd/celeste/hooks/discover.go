@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
@@ -67,7 +68,7 @@ func Discover(workspace, home string) ([]Source, []string, error) {
 		src, warns, err := readSource(path, root, kind)
 		warnings = append(warnings, warns...)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("hooks: skipping %s: %v", path, err))
+			warnings = append(warnings, fmt.Sprintf("hooks: skipping %s: %s", strconv.Quote(path), safeText(err.Error())))
 			return
 		}
 		if len(src.Hooks) > 0 {
@@ -129,7 +130,7 @@ func SourcesAt(target, home string) ([]Source, []string, error) {
 	}
 	kind, root, ok := classifyFile(abs, home)
 	if !ok {
-		return nil, nil, fmt.Errorf("%s is not a hook file Celeste loads (.celeste/hooks.json, .grimoire, .grimoire.local, .celeste/grimoire/*.md, or the global ~/.celeste files)", abs)
+		return nil, nil, fmt.Errorf("%q is not a hook file Celeste loads (.celeste/hooks.json, .grimoire, .grimoire.local, .celeste/grimoire/*.md, or the global ~/.celeste files)", abs)
 	}
 	src, warns, err := readSource(abs, root, kind)
 	if err != nil {
@@ -221,11 +222,11 @@ func readSource(path, root string, kind SourceKind) (Source, []string, error) {
 		}
 		defs, skipped := FromGrimoire(g.Hooks)
 		for _, s := range skipped {
-			warnings = append(warnings, fmt.Sprintf("hooks: %s: ignoring v1 hook %s", path, s))
+			warnings = append(warnings, fmt.Sprintf("hooks: %s: ignoring v1 hook %s", strconv.Quote(path), s))
 		}
 		if len(defs) > 0 {
 			warnings = append(warnings, fmt.Sprintf(
-				"hooks: %s uses a grimoire \"## Hooks\" section (protocol v1); move it to a hooks.json file (see MIGRATING-2.0.md)", path))
+				"hooks: %s uses a grimoire \"## Hooks\" section (protocol v1); move it to a hooks.json file (see docs/HOOKS.md)", strconv.Quote(path)))
 		}
 		src.Hooks = defs
 	}

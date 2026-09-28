@@ -2,6 +2,8 @@
 
 Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model.
 
+**Only the chat UI (`celeste chat` and `celeste resume`) loads hooks today.** `celeste agent`, the MCP server, ACP, and subagents a chat starts load none until the unified agent loop lands. That includes your global `~/.celeste/hooks.json`: a global guard does not protect agent runs yet.
+
 ## Where hooks live
 
 | File | Trust |
@@ -19,8 +21,7 @@ A repo hook file that is a symlink is refused outright; copy it instead.
 
 Only a person approves. Non-interactive runs never approve anything; untrusted or changed hooks are skipped with a warning, and Celeste starts up without them rather than failing to start. Non-interactive means:
 - piped input or output;
-- Git Bash/mintty consoles, which the terminal check does not recognize as a terminal — approve ahead of time with `celeste hooks trust` instead of expecting the startup prompt;
-- in 2.0, agent, MCP and ACP runs without a client prompt.
+- Git Bash/mintty consoles, which the terminal check does not recognize as a terminal — approve ahead of time with `celeste hooks trust` instead of expecting the startup prompt.
 
 Approve ahead of time:
 
@@ -47,7 +48,7 @@ celeste hooks trust --yes [path]   # approve without asking: scripts, CI, mintty
 |---|---|
 | `event` | `PreToolUse`, `PostToolUse`, `SessionStart`, `UserPromptSubmit`, `PreCompact`, `PostCompact`, `Stop`, `SubagentStop` |
 | `matcher` | Tool events only: a tool name, or `*` (the default) |
-| `command` | Run by `sh -c` (macOS, Linux) or `cmd.exe /c` (Windows), in the **project root** of the file that defines it (the directory holding `.celeste/`), or in the workspace for `~/.celeste` hooks |
+| `command` | Run by `sh -c` (macOS, Linux) or `cmd.exe /c` (Windows), in the **project root** of the file that defines it (the directory holding `.celeste/`), or in the workspace for `~/.celeste` hooks. See [Where hooks run](#where-hooks-run). |
 | `timeout` | Seconds, 1–600, default 30. On timeout the whole process tree is killed. |
 | `protocol` | `v2` (default) or `v1` |
 
@@ -55,6 +56,15 @@ The whole file is rejected, with a warning, if any of these is true:
 - it has an unknown field or an invalid entry;
 - a `command` or `matcher` contains a control character or a bidi override;
 - the file is over 1 MiB.
+
+### Where hooks run
+
+| Defined in | Working directory (`project_dir`) |
+|---|---|
+| `~/.celeste/hooks.json`, `~/.celeste/grimoire.md` | the workspace |
+| `<dir>/.celeste/hooks.json` | `<dir>` |
+| `<dir>/.celeste/grimoire/*.md` | `<dir>` (the directory holding `.celeste`, not `.celeste/grimoire`) |
+| `<dir>/.grimoire`, `<dir>/.grimoire.local` | `<dir>` |
 
 ## Protocol v2
 
@@ -68,7 +78,7 @@ The whole file is rejected, with a warning, if any of these is true:
 - PostCompact: `trigger` and `summary`;
 - Stop and SubagentStop: `last_message`, plus `agent_id` for SubagentStop.
 
-`project_dir` is the directory the hook runs in: the directory holding the `.celeste/` (or grimoire) that defined it, or the workspace for a global `~/.celeste` hook. It is also set as `CELESTE_PROJECT_DIR` in the environment (below).
+`project_dir` is the directory the hook runs in (see [Where hooks run](#where-hooks-run)). It is also set as `CELESTE_PROJECT_DIR` in the environment (below).
 
 **Environment.** `CELESTE_HOOK_EVENT`, `CELESTE_WORKSPACE`, `CELESTE_PROJECT_DIR` and `CELESTE_SESSION_ID`. Tool events add `CELESTE_TOOL_NAME`, `CELESTE_TOOL_INPUT`, `CELESTE_TOOL_PATH` and `CELESTE_TOOL_COMMAND`.
 
@@ -81,17 +91,23 @@ A value that is too large (over 120 KiB on macOS/Linux, 8 KiB on Windows) or con
 ```
 
 - `decision` must be exactly `allow`, `deny` or `ask`, or absent. Anything else — an empty string, `"approve"`, `"block"`, a boolean, a number — is malformed output and fails the hook the same as bad JSON.
-- `deny` blocks the tool call, prompt or compaction, and the model sees `reason`. A blocked prompt is removed from the conversation.
+- `deny` blocks the tool call, prompt or compaction. Who sees `reason` depends on the event:
+  - PreToolUse: the model, in the tool result;
+  - UserPromptSubmit and PreCompact: you, in the chat. The model never sees it. A blocked prompt is removed from the conversation and the saved session. Every prompt is checked once, including each queued steer and a prompt kept after an interrupt.
 - `ask` shows the permission prompt even when the tool would be allowed. Without a prompt (headless), it denies.
 - `allow` never skips the permission prompt: a hook can force an `ask`, and hard `always_deny` rules run before any hook, but nothing a hook returns can wave a call through your own permission rules.
 - `additionalContext` reaches the model:
   - at the start of the tool result (PreToolUse, PostToolUse);
-  - with the prompt (UserPromptSubmit);
+  - with the prompt (UserPromptSubmit), in every later request of the session. It is not saved: after `celeste resume`, earlier prompts are sent without it;
   - in the system prompt (SessionStart);
   - as summary instructions (PreCompact).
+
+  PostCompact's `additionalContext` is currently ignored.
 - `updatedInput` (PreToolUse) replaces the tool's input. It goes through the same `ValidateInput` and full permission check as the model's own input — a hook cannot use `updatedInput` to sneak past validation or the permission gate.
 
-**Decisions only matter for some events.** PreToolUse, UserPromptSubmit and PreCompact are gating: `deny`/`ask` actually change what happens. Stop and SubagentStop treat `deny` as "don't stop; continue with `reason`" as the next instruction. SessionStart, PostToolUse and PostCompact are observational — any `decision` a hook returns for them is ignored; only `additionalContext` (and, for a failure, the warning) has an effect.
+**Decisions only matter for some events.** PreToolUse, UserPromptSubmit and PreCompact are gating: `deny`/`ask` actually change what happens. SessionStart, PostToolUse and PostCompact are observational: any `decision` a hook returns for them is ignored, and only `additionalContext` (not for PostCompact, above) and, for a failure, the warning have an effect.
+
+**Stop and SubagentStop are not finished yet.** Stop fires when a chat turn ends, but a `deny` ("don't stop; continue with `reason`") is not acted on: the turn ends anyway. SubagentStop is not fired at all. Both arrive with the unified agent loop.
 
 A non-zero exit, a timeout, more than 1 MiB of stdout, or anything that is not one JSON object as above is a hook failure. This applies to protocol v1 too: a hook that floods stdout fails closed even if it exits 0, so a 1.x guard that used to print a lot of debug output and rely on the exit code now needs to keep stdout under 1 MiB. PreToolUse, UserPromptSubmit and PreCompact then **block** ("hook failed: …"). The other events show a warning in the chat and carry on — they never block the session.
 
@@ -110,14 +126,14 @@ Several hooks for one event run in order: global files, then repo files from the
 These keep their 1.x behaviour:
 - `{{workspace}}`, `{{tool}}`, `{{path}}` and `{{command}}` are substituted as quoted shell words;
 - the payload is on stdin and in `CELESTE_*` (whole values up to the limits above);
-- exit 0 allows, and any other exit blocks with the output as the reason;
+- exit 0 allows. For PreToolUse any other exit blocks, with the output as the reason. For PostToolUse a non-zero exit only shows a warning;
 - they run with `sh -c`, which on Windows needs a POSIX `sh` on `PATH`.
 
 Only PreToolUse and PostToolUse are supported.
 
 Changes in 2.0:
 - hooks run **before** the permission prompt, not after;
-- they run in the grimoire's directory, not the workspace;
+- they run in the project root, not the workspace: the directory holding `.grimoire`/`.grimoire.local`, or the directory holding `.celeste` for `.celeste/grimoire/*.md` (the workspace for `~/.celeste/grimoire.md`);
 - a v1 hook whose `CELESTE_TOOL_*` value had to be left empty fails, which blocks the tool call;
 - a v1 hook that prints more than 1 MiB to stdout now fails closed even at exit 0 (1.x had no cap).
 
