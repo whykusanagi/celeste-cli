@@ -91,8 +91,8 @@ type Options struct {
 	// without it, Ask means deny.
 	PromptFunc tools.PromptFunc `json:"-"`
 	// Nested marks a runner started by another run (a subagent, an
-	// orchestrator lane). It skips SessionStart and Stop hooks, which belong
-	// to the top-level run (SubagentStop is F2c's).
+	// orchestrator lane, the TUI's /agent). It skips SessionStart and Stop
+	// hooks, which belong to the top-level run (SubagentStop is F2c's).
 	Nested bool `json:"-"`
 	// Warn receives setup and hook warnings. Nil writes them to errOut.
 	Warn func(string) `json:"-"`

@@ -99,9 +99,15 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 	// compaction (after an overflow) found nothing to prune.
 	stillOver := compact.Estimate(msgs)+overhead > compact.Threshold(r.budget.ModelLimit)
 	if r.summarize != nil && (stillOver || (force && !changed)) {
+		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{}, r.summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{}, summarize)
 		cancel()
+		if reason := blocked(); reason != "" {
+			// Always reported, not only in verbose output (TUI parity).
+			r.warning("compaction blocked by a PreCompact hook: " + reason)
+			return msgs, notes, changed
+		}
 		if err != nil {
 			if !errors.Is(err, compact.ErrNothingToSummarize) {
 				notes = append(notes, "context summary failed: "+err.Error())
@@ -111,6 +117,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 		msgs = out
 		r.budget.RecordCompaction(sres.TokensAfter)
 		notes = append(notes, "context compacted: "+sres.Line())
+		r.postCompact(ctx, sres.Summary)
 		changed = true
 	}
 	return msgs, notes, changed
@@ -183,6 +190,12 @@ func (g *callbackGate) close() {
 	g.mu.Lock()
 	g.closed = true
 	g.mu.Unlock()
+}
+
+func (g *callbackGate) isClosed() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.closed
 }
 
 // conductorRequestTimeout is the per-turn deadline for a model that plans
@@ -524,6 +537,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	}
 
 	l := r.newLoop(state)
+	stopContinued := false
 	for {
 		if state.Turn >= state.Options.MaxTurns {
 			return r.finishRun(state, StatusMaxTurnsReached), nil
@@ -588,6 +602,18 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 				return state, err
 			}
 			if completed {
+				// The run is finishing: Stop hooks may send it back once.
+				if next := r.stopHook(ctx, state, &stopContinued); next != "" {
+					state.Status = StatusRunning
+					state.Phase = PhaseExecution
+					state.CompletedAt = nil
+					state.ConsecutiveNoToolTurns = 0
+					state.Messages = append(state.Messages, tui.ChatMessage{Role: "user", Content: next, Timestamp: time.Now()})
+					if !state.Options.DisableCheckpoints {
+						_ = r.store.Save(state)
+					}
+					continue
+				}
 				r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
 				if !state.Options.DisableCheckpoints {
 					_ = r.store.Save(state)
@@ -649,8 +675,8 @@ func (r *Runner) newLoop(state *RunState) *loop.Loop {
 	lim.RequestTimeout = state.Options.RequestTimeout
 	lim.MaxInvalidArgTurns = state.Options.MaxConsecutiveInvalidToolArgs
 	lim.TextToolCalls = true
-	// Tool hooks already run in r.registry (Setup); Stop and compaction
-	// hooks are fired by this layer and the compactor (Task 11).
+	// Tool hooks already run in r.registry (Setup); Stop is fired by runState
+	// when the run finishes, PreCompact/PostCompact by compactMessages.
 	return &loop.Loop{
 		Client:    r.client,
 		Tools:     r.registry,

@@ -2,7 +2,11 @@
 
 Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model.
 
-**Only the chat UI (`celeste chat` and `celeste resume`) loads hooks today.** `celeste agent`, the MCP server, ACP, and subagents a chat starts load none until the unified agent loop lands. That includes your global `~/.celeste/hooks.json`: a global guard does not protect agent runs yet.
+**Where hooks load.** The chat UI (`celeste chat`, `celeste resume`) and every agent run load hooks: `celeste agent`, the MCP server's `celeste` tool in `mode: "agent"`, `/agent` in the chat, subagents, and `/orchestrate` lanes. The MCP server's `mode: "chat"` doesn't load hooks yet.
+
+Agent runs are **non-interactive**: they never ask you to trust a repo's hooks. Untrusted repo hooks are skipped with a warning (`hooks: skipping …`); approve them ahead of time with `celeste hooks trust`. Your global `~/.celeste/hooks.json` always runs, so a global guard now protects agent runs too.
+
+In agent runs, tool hooks fire on every tool call, and PreCompact and PostCompact fire around the agent's compaction summary (trigger `auto`, empty `custom_instructions`), never before plain pruning of old tool results. A PreCompact `deny` skips the summary and is reported as a warning. SessionStart and Stop belong to the top-level run: they fire for `celeste agent` and MCP agent mode. Subagents, `/orchestrate` lanes and `/agent` in the chat run inside a larger run, so they skip both; for `/agent`, the chat session has already fired SessionStart.
 
 ## Where hooks live
 
@@ -107,7 +111,7 @@ A value that is too large (over 120 KiB on macOS/Linux, 8 KiB on Windows) or con
 
 **Decisions only matter for some events.** PreToolUse, UserPromptSubmit and PreCompact are gating: `deny`/`ask` actually change what happens. SessionStart, PostToolUse and PostCompact are observational: any `decision` a hook returns for them is ignored, and only `additionalContext` (not for PostCompact, above) and, for a failure, the warning have an effect.
 
-**Stop and SubagentStop are not finished yet.** Stop fires when a chat turn ends, but a `deny` ("don't stop; continue with `reason`") is not acted on: the turn ends anyway. SubagentStop is not fired at all. Both arrive with the unified agent loop.
+**Stop.** In `celeste agent` and MCP agent mode, a Stop hook's `deny` is acted on: when the run is about to finish, it continues with `reason` as the next instruction (`Continue.` if empty). This happens at most once per run and only while turns remain; a second `deny`, or one with no turns left, is reported as a warning and ignored. Stop fires only when a run finishes as completed, not when it stops on the turn cap, a guard, an error or an interrupt. In the chat UI, Stop still fires when a turn ends, but a `deny` is not acted on yet. SubagentStop is not fired yet.
 
 A non-zero exit, a timeout, more than 1 MiB of stdout, or anything that is not one JSON object as above is a hook failure. This applies to protocol v1 too: a hook that floods stdout fails closed even if it exits 0, so a 1.x guard that used to print a lot of debug output and rely on the exit code now needs to keep stdout under 1 MiB. PreToolUse, UserPromptSubmit and PreCompact then **block** ("hook failed: …"). The other events show a warning in the chat and carry on — they never block the session.
 

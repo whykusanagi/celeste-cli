@@ -323,8 +323,12 @@ type promptKey struct{}
 
 // WithPrompt makes fn answer this call's permission Ask instead of the
 // registry's prompt. loop.Loop uses it so each run brings its own Gate,
-// whose lifetime differs by mode (2.0 F2). A nil fn is ignored.
+// whose lifetime differs by mode (2.0 F2). A nil fn means no one to ask,
+// the same as WithoutPrompt: it never falls back to the registry's prompt.
 func WithPrompt(ctx context.Context, fn PromptFunc) context.Context {
+	if fn == nil {
+		return WithoutPrompt(ctx)
+	}
 	return context.WithValue(ctx, promptKey{}, fn)
 }
 
@@ -367,9 +371,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 
 	switch v := ctx.Value(promptKey{}).(type) {
 	case PromptFunc:
-		if v != nil {
-			prompt = v
-		}
+		prompt = v // never nil: WithPrompt stores nil as noPrompt
 	case noPrompt:
 		prompt = nil
 	}

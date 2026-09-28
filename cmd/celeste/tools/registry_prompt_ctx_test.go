@@ -79,3 +79,23 @@ func TestInnermostPromptContextWins(t *testing.T) {
 		t.Fatalf("Gate-less parent, gated child: res=%+v err=%v, want the call to run", res, err)
 	}
 }
+
+// WithPrompt(ctx, nil) means "no one to ask", the same as WithoutPrompt:
+// it must not fall back to the registry's prompt, and it overrides a gated
+// parent.
+func TestWithPromptNilIsNoPrompt(t *testing.T) {
+	r := askRegistry()
+	r.SetPromptFunc(func(PermissionRequest) PermissionResponse {
+		t.Fatal("registry prompt must not be called for WithPrompt(ctx, nil)")
+		return PermissionResponse{}
+	})
+	res, _ := r.Execute(WithPrompt(context.Background(), nil), "w", map[string]any{})
+	if !res.Error || !strings.Contains(res.Content, "no prompt is configured") {
+		t.Fatalf("got %+v, want the headless denial", res)
+	}
+	allow := func(PermissionRequest) PermissionResponse { return PermissionResponse{Decision: "allow_once"} }
+	res, _ = r.Execute(WithPrompt(WithPrompt(context.Background(), allow), nil), "w", map[string]any{})
+	if !res.Error || !strings.Contains(res.Content, "no prompt is configured") {
+		t.Fatalf("gated parent, nil child: got %+v, want the headless denial", res)
+	}
+}
