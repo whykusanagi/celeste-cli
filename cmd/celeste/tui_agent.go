@@ -35,10 +35,45 @@ type agentRunnerAPI interface {
 	ListRuns(limit int) ([]agent.RunSummary, error)
 	Resume(ctx context.Context, runID string) (*agent.RunState, error)
 	RunGoal(ctx context.Context, goal string) (*agent.RunState, error)
+	// Close stops the runner's MCP servers and code graph; every /agent
+	// command closes its runner when it ends.
+	Close()
 }
 
 var newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
 	return agent.NewRunner(cfg, options, out, errOut)
+}
+
+// listAgentRunsForTUI reads the checkpoint store directly: listing runs
+// needs no model, MCP servers or code graph, so /agent list doesn't pay a
+// full runner's startup.
+var listAgentRunsForTUI = func(limit int) ([]agent.RunSummary, error) {
+	store, err := agent.NewCheckpointStore("")
+	if err != nil {
+		return nil, err
+	}
+	return store.List(limit)
+}
+
+// tuiAgentOptions are the options every /agent runner shares. The TUI
+// session already fired SessionStart, so the run is nested; setup and hook
+// warnings go to the log and the chat, like the session's own hook warnings.
+func tuiAgentOptions() agent.Options {
+	opts := agent.DefaultOptions()
+	if cwd, err := os.Getwd(); err == nil {
+		opts.Workspace = cwd
+	}
+	opts.Verbose = false
+	opts.Nested = true
+	opts.Warn = tuiAgentWarn
+	return opts
+}
+
+func tuiAgentWarn(s string) {
+	tui.LogInfo(s)
+	if f := hookNotify.Load(); f != nil {
+		(*f)(s)
+	}
 }
 
 // RunAgentCommand dispatches /agent sub-commands.
@@ -95,11 +130,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 			return
 		}
 
-		opts := agent.DefaultOptions()
-		if cwd, err := os.Getwd(); err == nil {
-			opts.Workspace = cwd
-		}
-		opts.Verbose = false
+		opts := tuiAgentOptions()
 		// Tools the permission policy resolves to Ask go through the TUI's
 		// permission modal; without this every mutating tool was denied (#172).
 		opts.PromptFunc = a.promptFn
@@ -162,6 +193,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: err.Error()})
 			return
 		}
+		defer runner.Close()
 
 		goal := strings.TrimSpace(strings.Join(args, " "))
 		state, runErr := runner.RunGoal(ctx, goal)
@@ -224,29 +256,27 @@ func (a *TUIClientAdapter) executeAgentCommand(args []string) (string, error) {
 		return "", fmt.Errorf("no API key or Google credentials configured for agent execution")
 	}
 
-	opts := agent.DefaultOptions()
-	if cwd, err := os.Getwd(); err == nil {
-		opts.Workspace = cwd
-	}
-	opts.Verbose = false
-
-	runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
-	if err != nil {
-		return "", fmt.Errorf("create agent runner: %w", err)
-	}
-
 	sub := strings.ToLower(strings.TrimSpace(args[0]))
-	ctx := context.Background()
-
 	switch sub {
 	case "help", "--help", "-h":
 		return agentUsage(), nil
 	case "list", "list-runs", "--list-runs":
-		runs, err := runner.ListRuns(20)
+		runs, err := listAgentRunsForTUI(20)
 		if err != nil {
 			return "", fmt.Errorf("list runs: %w", err)
 		}
 		return formatAgentRunList(runs), nil
+	}
+	// Resume runs the agent again, so it needs a full runner (model client,
+	// tools, MCP, hooks), as does a goal.
+	runner, err := newAgentRunnerForTUI(cfg, tuiAgentOptions(), io.Discard, io.Discard)
+	if err != nil {
+		return "", fmt.Errorf("create agent runner: %w", err)
+	}
+	defer runner.Close()
+	ctx := context.Background()
+
+	switch sub {
 	case "resume", "--resume":
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
 			return agentUsage(), fmt.Errorf("usage: /agent resume <run-id>")

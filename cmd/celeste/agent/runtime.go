@@ -55,6 +55,8 @@ type Runner struct {
 	// hooks is env.Hooks (nil = no hooks); warn is the warning sink.
 	hooks *hooks.Runner
 	warn  func(string)
+	// gate serializes Warn, OnProgress and OnTurnStats; Close shuts it.
+	gate *callbackGate
 	// firstRunID is the hooks' session_id; the first RunGoal adopts it.
 	firstRunID string
 }
@@ -148,15 +150,39 @@ func (r *Runner) emitProgress(kind ProgressKind, text string, turn, maxTurns int
 	}
 }
 
-// Close releases resources held by the runner (e.g. code graph DB).
+// Close releases resources held by the runner (e.g. code graph DB). After it
+// returns, no Warn, OnProgress or OnTurnStats call reaches the caller, even
+// from a tool goroutine the run abandoned.
 func (r *Runner) Close() {
 	if r.env != nil {
 		r.env.Close()
-		return
-	}
-	if r.indexer != nil {
+	} else if r.indexer != nil {
 		r.indexer.Close()
 	}
+	if r.gate != nil {
+		r.gate.close()
+	}
+}
+
+// callbackGate runs the caller's callbacks one at a time and drops them once
+// closed.
+type callbackGate struct {
+	mu     sync.Mutex
+	closed bool
+}
+
+func (g *callbackGate) do(f func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.closed {
+		f()
+	}
+}
+
+func (g *callbackGate) close() {
+	g.mu.Lock()
+	g.closed = true
+	g.mu.Unlock()
 }
 
 // conductorRequestTimeout is the per-turn deadline for a model that plans
@@ -269,19 +295,26 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	normalizeOptions(&options)
 
+	// One gate serializes every callback into the caller: hooks warn from
+	// tool goroutines (an abandoned one can outlive the run) while the event
+	// consumer reports progress, and adopters share state between these sinks
+	// unsynchronized. Close shuts the gate, so nothing reaches the caller
+	// once Close returns (an orchestrator restores its callbacks after).
+	gate := &callbackGate{}
 	warn := options.Warn
 	if warn == nil {
 		warn = func(s string) { fmt.Fprintf(errOut, "Warning: %s\n", s) }
-	} else {
-		// Setup warns from NewRunner and hooks from tool goroutines; serialize
-		// so the caller's sink never sees concurrent calls.
-		var warnMu sync.Mutex
-		userWarn := warn
-		warn = func(s string) {
-			warnMu.Lock()
-			defer warnMu.Unlock()
-			userWarn(s)
+	}
+	userWarn := warn
+	warn = func(s string) { gate.do(func() { userWarn(s) }) }
+	options.Warn = warn
+	if p := options.OnProgress; p != nil {
+		options.OnProgress = func(kind ProgressKind, text string, turn, maxTurns int) {
+			gate.do(func() { p(kind, text, turn, maxTurns) })
 		}
+	}
+	if f := options.OnTurnStats; f != nil {
+		options.OnTurnStats = func(st TurnStats) { gate.do(func() { f(st) }) }
 	}
 	firstRunID := generateRunID(time.Now())
 	env, err := loop.Setup(loop.ModeAgent, cfg, options.Workspace, loop.SetupOptions{SessionID: firstRunID, Warn: warn})
@@ -292,10 +325,6 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// IS the approval, so run in trust mode. Deny rules still apply.
 	if options.AutoApproveTools {
 		env.Trust()
-	}
-	// SessionStart belongs to the top-level run; nested runners skip it.
-	if !options.Nested {
-		env.StartSession(context.Background(), "startup")
 	}
 	registry := env.Registry
 	checker := env.Checker
@@ -314,6 +343,11 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 					"or grant them in ~/.celeste/permissions.json",
 				strings.Join(blocked, ", "))
 		}
+	}
+	// SessionStart belongs to the top-level run; nested runners skip it. It
+	// fires only once the run can start, never for a refused one.
+	if !options.Nested {
+		env.StartSession(context.Background(), "startup")
 	}
 
 	// Guardrail: warn loudly if the chosen model doesn't support tool calling —
@@ -393,6 +427,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		env:        env,
 		hooks:      env.Hooks,
 		warn:       warn,
+		gate:       gate,
 		firstRunID: firstRunID,
 	}, nil
 }

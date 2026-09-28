@@ -21,6 +21,13 @@ type fakeAgentRunner struct {
 	listRunsFn func(limit int) ([]agent.RunSummary, error)
 	resumeFn   func(ctx context.Context, runID string) (*agent.RunState, error)
 	runGoalFn  func(ctx context.Context, goal string) (*agent.RunState, error)
+	closed     chan struct{} // closed by Close; nil = not recorded
+}
+
+func (f *fakeAgentRunner) Close() {
+	if f.closed != nil {
+		close(f.closed)
+	}
 }
 
 func (f *fakeAgentRunner) ListRuns(limit int) ([]agent.RunSummary, error) {
@@ -44,24 +51,25 @@ func (f *fakeAgentRunner) RunGoal(ctx context.Context, goal string) (*agent.RunS
 	return nil, errors.New("not implemented")
 }
 
+// /agent list reads the checkpoint store; it never builds a runner.
 func TestExecuteAgentCommandListRuns(t *testing.T) {
-	originalFactory := newAgentRunnerForTUI
-	t.Cleanup(func() { newAgentRunnerForTUI = originalFactory })
+	originalFactory, originalList := newAgentRunnerForTUI, listAgentRunsForTUI
+	t.Cleanup(func() { newAgentRunnerForTUI, listAgentRunsForTUI = originalFactory, originalList })
 
 	newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
-		return &fakeAgentRunner{
-			listRunsFn: func(limit int) ([]agent.RunSummary, error) {
-				require.Equal(t, 20, limit)
-				return []agent.RunSummary{
-					{
-						RunID:     "run-123",
-						Goal:      "fix tests",
-						Status:    agent.StatusCompleted,
-						UpdatedAt: time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC),
-						Turn:      3,
-						ToolCalls: 2,
-					},
-				}, nil
+		t.Fatal("/agent list built a runner")
+		return nil, nil
+	}
+	listAgentRunsForTUI = func(limit int) ([]agent.RunSummary, error) {
+		require.Equal(t, 20, limit)
+		return []agent.RunSummary{
+			{
+				RunID:     "run-123",
+				Goal:      "fix tests",
+				Status:    agent.StatusCompleted,
+				UpdatedAt: time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC),
+				Turn:      3,
+				ToolCalls: 2,
 			},
 		}, nil
 	}
@@ -84,8 +92,10 @@ func TestExecuteAgentCommandGoal(t *testing.T) {
 	originalFactory := newAgentRunnerForTUI
 	t.Cleanup(func() { newAgentRunnerForTUI = originalFactory })
 
+	closed := make(chan struct{})
 	newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
 		return &fakeAgentRunner{
+			closed: closed,
 			runGoalFn: func(ctx context.Context, goal string) (*agent.RunState, error) {
 				require.Equal(t, "build release notes", goal)
 				return &agent.RunState{
@@ -112,6 +122,11 @@ func TestExecuteAgentCommandGoal(t *testing.T) {
 	assert.Contains(t, output, "Run ID: run-456")
 	assert.Contains(t, output, "Status: completed")
 	assert.Contains(t, output, "Final Response:")
+	select {
+	case <-closed:
+	default:
+		t.Fatal("the /agent runner was not closed")
+	}
 }
 
 func TestExecuteAgentCommandRequiresCredentials(t *testing.T) {
@@ -165,10 +180,14 @@ func TestRunGoalWithProgressIsCancellableAndPromptsForApproval(t *testing.T) {
 	t.Cleanup(func() { newAgentRunnerForTUI = originalFactory })
 
 	gotPrompt := make(chan bool, 1)
+	gotOpts := make(chan agent.Options, 1)
 	cancelled := make(chan struct{})
+	closed := make(chan struct{})
 	newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
 		gotPrompt <- options.PromptFunc != nil
+		gotOpts <- options
 		return &fakeAgentRunner{
+			closed: closed,
 			runGoalFn: func(ctx context.Context, goal string) (*agent.RunState, error) {
 				<-ctx.Done()
 				close(cancelled)
@@ -205,6 +224,24 @@ func TestRunGoalWithProgressIsCancellableAndPromptsForApproval(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelling did not stop the agent run")
 	}
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the /agent runner was not closed when the goal ended")
+	}
+	opts := <-gotOpts
+	assert.True(t, opts.Nested, "the TUI session already fired SessionStart; /agent runs are nested")
+	assert.NotNil(t, opts.Warn, "/agent warnings must reach the chat, not io.Discard")
+}
+
+// /agent warnings go to the chat through the TUI's hook-warning path.
+func TestTUIAgentWarnReachesChat(t *testing.T) {
+	var got []string
+	notify := func(s string) { got = append(got, s) }
+	hookNotify.Store(&notify)
+	t.Cleanup(func() { hookNotify.Store(nil) })
+	tuiAgentOptions().Warn("hooks: something failed")
+	assert.Equal(t, []string{"hooks: something failed"}, got)
 }
 
 // Progress sends never block the agent on a UI that has stopped reading.

@@ -40,7 +40,8 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 		// turnStatsMap holds per-turn stats from OnTurnStats until a progress event consumes them.
 		// turnStatsEmitted tracks whether stats have already been flushed for the current turn,
 		// preventing double-emit when a turn has both tool calls and a completion response.
-		// Both callbacks run on the same goroutine (agent runtime loop) — no mutex needed.
+		// No mutex needed: the runner serializes Warn, OnProgress and
+		// OnTurnStats and drops them once Close returns.
 		//
 		// Call order in runtime.go per turn:
 		//   ProgressTurnStart → SendMessageSync → OnTurnStats → ProgressToolCall* → ProgressResponse?

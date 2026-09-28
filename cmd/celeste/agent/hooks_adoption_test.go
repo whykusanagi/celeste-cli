@@ -3,12 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
 )
@@ -98,5 +101,65 @@ func TestAgentHookWarningsGoToOptionsWarn(t *testing.T) {
 	defer mu.Unlock()
 	if !strings.Contains(strings.Join(got, "\n"), "skipping") {
 		t.Fatalf("warnings = %v, want the skipped repo hooks reported through Options.Warn", got)
+	}
+}
+
+// A hook warns from a tool goroutine, and a cancelled run abandons that
+// goroutine, so the warning can land while the event consumer reports
+// progress or after RunGoal returns. Adopters (realAgentRunner,
+// runGoalAccumStats, the TUI) share state between Warn and OnProgress
+// without a lock, so the runner must serialize them and stop calling
+// either once Close returns. Fails under -race without the gate.
+func TestAgentCallbacksSerializedAndSilentAfterClose(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{
+			{ID: "a", Name: "read_file", Args: `{"path":"a.txt"}`},
+			{ID: "b", Name: "read_file", Args: `{"path":"b.txt"}`},
+		}},
+		fakeprovider.Turn{Text: "TASK_COMPLETE: ok"},
+	)
+	var events []string // deliberately unsynchronized, like the adopters
+	r, _ := fakeRunner(t, srv, func(o *Options) {
+		// The hook sleeps past ToolTimeout, but since Task 10 ToolTimeout
+		// bounds the tool, not its hooks (the watchdog adds HookBudget), so
+		// the run's deadline below is what abandons the hook goroutine.
+		o.ToolTimeout = 50 * time.Millisecond
+		o.Warn = func(s string) { events = append(events, "warn: "+s) }
+		o.OnProgress = func(_ ProgressKind, text string, _, _ int) { events = append(events, text) }
+		home, _ := os.UserHomeDir()
+		writeHooks(t, home, map[string]any{"event": "PreToolUse", "matcher": "read_file", "command": hooktest.Command(t, "sleep")})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, _ = r.RunGoal(ctx, "read both")
+	r.Close()
+	n := len(events)
+	// The abandoned hooks are killed now; any warning they raise must be
+	// dropped, not written into events.
+	time.Sleep(1500 * time.Millisecond)
+	if len(events) != n {
+		t.Fatalf("callbacks after Close: %v", events[n:])
+	}
+}
+
+// A run refused by FailOnBlockedTools never starts, so SessionStart must not
+// fire for it.
+func TestAgentRefusedRunSkipsSessionStart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	marker := filepath.Join(t.TempDir(), "session-start")
+	writeHooks(t, home, map[string]any{"event": "SessionStart", "command": hooktest.Command(t, "record", marker)})
+	opts := DefaultOptions()
+	opts.Workspace = t.TempDir()
+	opts.FailOnBlockedTools = true
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	r, err := NewRunner(cfg, opts, io.Discard, io.Discard)
+	if err == nil {
+		r.Close()
+		t.Fatal("expected FailOnBlockedTools to refuse the run")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("SessionStart fired for a refused run")
 	}
 }
