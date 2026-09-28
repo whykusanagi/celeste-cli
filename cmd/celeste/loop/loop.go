@@ -25,6 +25,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 	ident := guard{limit: lim.IdenticalCalls}
 	prog := guard{limit: lim.NoProgressTurns}
 	invalidTurns := 0
+	overflowRetried := false
 	for {
 		if cerr := ctx.Err(); cerr != nil {
 			res.StopReason = StopInterrupted
@@ -36,7 +37,11 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		}
 		turn++
 		res.Turns = turn
+		msgs = l.joinSteers(msgs)
 		l.emit(Event{Kind: EventTurnStart, Turn: turn})
+		if l.Compact != nil {
+			msgs, _ = l.compact(ctx, msgs, false)
+		}
 
 		rep, rerr := l.request(ctx, msgs, lim)
 		if rerr != nil {
@@ -44,9 +49,22 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 				res.StopReason = StopInterrupted
 				return msgs, res, ctx.Err()
 			}
+			// The history overflowed anyway (an estimate was off, or the
+			// window is smaller than configured): compact harder and retry
+			// the same turn once (#174).
+			if errors.Is(rerr, llm.ErrContextOverflow) && l.Compact != nil && !overflowRetried {
+				overflowRetried = true
+				if out, changed := l.compact(ctx, msgs, true); changed {
+					msgs = out
+					turn--
+					continue
+				}
+			}
 			res.StopReason = StopError
 			return msgs, res, rerr
 		}
+		overflowRetried = false
+		l.lastUsage = rep.usage
 
 		calls := capCalls(rep.calls, lim.MaxCallsPerTurn)
 		native := calls
@@ -61,6 +79,9 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			res.ToolCallsLastTurn = 0
 			res.NoToolTurns++
 			l.emit(Event{Kind: EventTurnEnd, Turn: turn, History: cloneHistory(msgs)})
+			if l.hasSteers() {
+				continue // a steer arrived during the final reply: answer it
+			}
 			res.StopReason = StopDone
 			return msgs, res, nil
 		}
@@ -96,6 +117,50 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			return msgs, res, nil
 		}
 	}
+}
+
+// Steer queues a user message. It joins the conversation at the next tool
+// boundary (before the next request). Safe from any goroutine.
+func (l *Loop) Steer(msg string) {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return
+	}
+	l.mu.Lock()
+	l.steers = append(l.steers, msg)
+	l.mu.Unlock()
+}
+
+func (l *Loop) hasSteers() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.steers) > 0
+}
+
+func (l *Loop) joinSteers(msgs []Message) []Message {
+	l.mu.Lock()
+	pending := l.steers
+	l.steers = nil
+	l.mu.Unlock()
+	for _, s := range pending {
+		msgs = append(msgs, Message{Role: "user", Content: s, Timestamp: time.Now()})
+		l.emit(Event{Kind: EventSteered, Text: s})
+	}
+	return msgs
+}
+
+// compact runs the Compactor with the previous request's usage.
+func (l *Loop) compact(ctx context.Context, msgs []Message, force bool) ([]Message, bool) {
+	usage := l.lastUsage
+	l.lastUsage = nil
+	out, notes, changed := l.Compact.Compact(ctx, msgs, usage, force)
+	for _, n := range notes {
+		l.emit(Event{Kind: EventCompacted, Text: n})
+	}
+	if !changed {
+		return msgs, false
+	}
+	return out, true
 }
 
 type reply struct {
