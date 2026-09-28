@@ -67,7 +67,9 @@ func (t *CodeSearchTool) Execute(ctx context.Context, input map[string]any, prog
 
 	query := getStringArg(input, "query", "")
 	mode := getStringArg(input, "mode", "semantic")
-	limit := getIntArg(input, "limit", 10)
+	// MCP exposes this argument as top_k; keep accepting limit for existing
+	// direct builtin callers.
+	limit := getIntArg(input, "top_k", getIntArg(input, "limit", 10))
 
 	if query == "" {
 		return tools.ToolResult{Error: true, Content: "query is required"}, nil

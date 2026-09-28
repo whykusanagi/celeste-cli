@@ -188,12 +188,13 @@ func TestCelesteCodeSearch_NoChatLLM_NoTruncation(t *testing.T) {
 	// Now search.
 	_, payload := callTool(t, srv, "celeste_code_search", map[string]any{
 		"query": "session token validate",
-		"top_k": 10,
+		"top_k": 1,
 	})
 	content := payload["content"].([]any)
 	require.NotEmpty(t, content, "celeste_code_search must return content blocks")
 	text := content[0].(map[string]any)["text"].(string)
 	assert.NotEmpty(t, text, "search result text must not be empty")
+	assert.Contains(t, text, "Found 1 symbols")
 	// Not asserting a specific symbol is #1 — the regex GenericParser
 	// + the tiny corpus is too small for deterministic ranking. What
 	// we care about is that the MCP round-trip completed successfully
