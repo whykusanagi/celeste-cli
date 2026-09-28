@@ -169,3 +169,91 @@ func pathEqual(a, b string) bool {
 }
 
 func pathElemEqual(a, b string) bool { return pathEqual(a, b) }
+
+// protectedWriteGuard is the kernel-level half of the protection above
+// (2.0 F0 fix round 4). protectedHookFile reasons about path strings and
+// symlink text, which cannot see every route the kernel takes: a dangling
+// chain through a directory symlink whose target the write itself creates
+// (~/.celeste/hooks.json -> L/x/hooks.json, L -> <workspace>/newdir), or
+// link text with ".." after a symlinked component ("S/../hooks-real.json",
+// which filepath.Clean collapses but the kernel resolves through S's
+// target). The guard asks the filesystem instead: os.SameFile against what
+// each protected name currently resolves to.
+//
+//   - Before writing, if the destination exists and is the same file as a
+//     protected target, the write is refused (nothing has changed yet).
+//   - If the destination did not exist, there is nothing to compare before
+//     writing; after the write, if the new file turned out to be a protected
+//     target, it is removed (along with any directories this write created)
+//     and the write is refused.
+type protectedWriteGuard struct {
+	path        string
+	existed     bool
+	createdDirs []string // deepest first; only filled by noteMkdirAll
+}
+
+// guardProtectedWrite runs the pre-write kernel check for path (already
+// passed through resolvePath) and records whether it existed.
+func guardProtectedWrite(path string) (*protectedWriteGuard, error) {
+	g := &protectedWriteGuard{path: path}
+	if _, err := os.Lstat(path); err == nil {
+		g.existed = true
+		if info, err := os.Stat(path); err == nil && sameAsProtectedTarget(info) {
+			return nil, protectedError(path)
+		}
+	}
+	return g, nil
+}
+
+// noteMkdirAll records which of path's ancestor directories do not exist
+// yet, so a refused write can remove exactly what it created. Call it right
+// before os.MkdirAll(filepath.Dir(path)).
+func (g *protectedWriteGuard) noteMkdirAll() {
+	for dir := filepath.Dir(g.path); ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); err == nil {
+			return
+		}
+		g.createdDirs = append(g.createdDirs, dir)
+		if filepath.Dir(dir) == dir {
+			return
+		}
+	}
+}
+
+// verify runs the post-write kernel check. If the freshly created file is a
+// protected target, it and the directories this write created are removed
+// and the protected error is returned.
+func (g *protectedWriteGuard) verify() error {
+	if g.existed {
+		return nil // the pre-write check was authoritative for this file
+	}
+	info, err := os.Stat(g.path)
+	if err != nil || !sameAsProtectedTarget(info) {
+		return nil
+	}
+	_ = os.Remove(g.path)
+	for _, dir := range g.createdDirs {
+		_ = os.Remove(dir) // only succeeds while empty
+	}
+	return protectedError(g.path)
+}
+
+// sameAsProtectedTarget reports whether info is, per the kernel, the same
+// file that ~/.celeste/{hooks.json,grimoire.md,trusted.json} resolve to.
+func sameAsProtectedTarget(info os.FileInfo) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	for _, name := range []string{"hooks.json", "grimoire.md", "trusted.json"} {
+		target, err := os.Stat(filepath.Join(home, ".celeste", name))
+		if err == nil && os.SameFile(info, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func protectedError(path string) error {
+	return fmt.Errorf("%s is protected: hooks and hook trust are changed by you, not by tools", path)
+}

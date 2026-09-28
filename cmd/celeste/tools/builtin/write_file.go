@@ -91,6 +91,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
+	guard, err := guardProtectedWrite(targetPath)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
 
 	// Check for stale reads before writing
 	if t.tracker != nil {
@@ -106,6 +110,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 	}
 
+	guard.noteMkdirAll()
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
@@ -122,11 +127,15 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 			return tools.ToolResult{Error: true, Content: err.Error()}, nil
 		}
 		bytesWritten = n
+		f.Close()
 	} else {
 		if err := os.WriteFile(targetPath, []byte(content), 0644); err != nil {
 			return tools.ToolResult{Error: true, Content: err.Error()}, nil
 		}
 		bytesWritten = len(content)
+	}
+	if err := guard.verify(); err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
 
 	// Auto-stamp .grimoire metadata when writing to it

@@ -110,6 +110,11 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
+	// patch_file only rewrites an existing file, so the pre-write kernel
+	// check is authoritative; a missing file fails at ReadFile below.
+	if _, err := guardProtectedWrite(targetPath); err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
 
 	// Check for stale reads before patching
 	if t.tracker != nil {
