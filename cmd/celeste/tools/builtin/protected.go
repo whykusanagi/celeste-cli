@@ -49,9 +49,7 @@ func protectedHookFile(candidate, realCandidate string) string {
 	names := []string{"hooks.json", "grimoire.md", "trusted.json"}
 
 	for _, name := range names {
-		lexicalTarget := filepath.Clean(filepath.Join(celesteDir, name))
-		targets := []string{lexicalTarget, resolveProtectedTarget(lexicalTarget)}
-		for _, target := range targets {
+		for _, target := range protectedTargetsFor(home, name) {
 			for _, s := range spellings {
 				if pathEqual(s, target) {
 					return fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", clean)
@@ -90,34 +88,74 @@ func protectedByTrustedJSONShape(path string) string {
 	return ""
 }
 
-// resolveProtectedTarget resolves target (a hook/trust file's canonical path
-// under home) as far as symlinks lead, TOLERATING a dangling final symlink.
-// This is deliberately more permissive than resolveExisting (used for the
-// path being WRITTEN, where refusing to resolve past a dangling symlink is
-// the correct, intentional behavior): a *protected* target that is itself a
-// dangling symlink must still be recognized, or an attacker could point
-// ~/.celeste/hooks.json at a file a tool is about to create for the first
-// time and slip past this check entirely. If the leaf itself isn't a
-// symlink (or doesn't exist at all yet), this falls back to resolveExisting,
-// which correctly resolves a symlinked ANCESTOR directory (the /var vs
-// /private/var case) even when the leaf file doesn't exist.
-func resolveProtectedTarget(target string) string {
-	clean := filepath.Clean(target)
-	if info, err := os.Lstat(clean); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		dir := filepath.Dir(clean)
-		if realDir, err := filepath.EvalSymlinks(dir); err == nil {
-			if link, err := os.Readlink(clean); err == nil {
-				if !filepath.IsAbs(link) {
-					link = filepath.Join(realDir, link)
-				}
-				return filepath.Clean(link)
+// protectedTargetsFor returns every path that names home's <name> hook/trust
+// file: the lexical ~/.celeste/<name>, and every hop of its symlink chain --
+// not just the final destination. Writing directly to an intermediate hop
+// changes what the chain's end reads, exactly as writing the end itself
+// would, so each hop is protected too.
+//
+// filepath.EvalSymlinks resolves a WHOLE chain (any number of hops, and any
+// symlinked directory anywhere inside it, like a symlinked parent
+// directory of the final target) in one call -- but only when every hop's
+// target fully exists; it refuses a chain with a dangling link anywhere
+// (same as resolveExisting, for the same reason: it can't canonicalize a
+// path that doesn't fully exist). Since a stow-managed ~/.celeste/hooks.json
+// can be set up before the file it names has been created, this also walks
+// the chain by hand -- capped at 40 hops against a cycle -- so a dangling
+// final (or intermediate) target is still recognized.
+func protectedTargetsFor(home, name string) []string {
+	lexical := filepath.Clean(filepath.Join(home, ".celeste", name))
+	targets := []string{lexical}
+
+	if resolved, err := filepath.EvalSymlinks(lexical); err == nil {
+		return append(targets, filepath.Clean(resolved))
+	}
+
+	cur := lexical
+	seen := map[string]bool{cur: true}
+	for hop := 0; hop < 40; hop++ {
+		info, err := os.Lstat(cur)
+		if err != nil {
+			// cur doesn't exist at all, not even as a dangling symlink:
+			// resolve as far as the existing prefix goes and stop.
+			if resolved, err := resolveExisting(cur); err == nil {
+				targets = append(targets, filepath.Clean(resolved))
 			}
+			return targets
 		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			// cur exists and isn't itself a symlink: the chain's real end.
+			// Its own directory may still be reached through a symlink.
+			if resolved, err := resolveExisting(cur); err == nil {
+				targets = append(targets, filepath.Clean(resolved))
+			} else {
+				targets = append(targets, cur)
+			}
+			return targets
+		}
+
+		link, err := os.Readlink(cur)
+		if err != nil {
+			return targets
+		}
+		dir := filepath.Dir(cur)
+		resolvedDir := dir
+		if d, err := filepath.EvalSymlinks(dir); err == nil {
+			resolvedDir = d
+		} else if d, err := resolveExisting(dir); err == nil {
+			resolvedDir = d
+		}
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(resolvedDir, link)
+		}
+		cur = filepath.Clean(link)
+		if seen[cur] {
+			return targets // cyclic chain; stop rather than loop forever
+		}
+		seen[cur] = true
+		targets = append(targets, cur) // this hop stays protected too
 	}
-	if resolved, err := resolveExisting(clean); err == nil {
-		return resolved
-	}
-	return clean
+	return targets
 }
 
 // pathEqual and pathElemEqual compare the way the filesystem would: exactly

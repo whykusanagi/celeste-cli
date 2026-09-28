@@ -7,6 +7,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
 func setProtectedHome(t *testing.T) string {
@@ -395,5 +398,301 @@ func TestSpliceFileProtectsDestAndMoveSourceButAllowsCopySource(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(home, "copied.txt")); err != nil || string(data) != "one\n" {
 		t.Fatalf("copied data = %q, err = %v; want one line copied", string(data), err)
+	}
+}
+
+func TestWriteFileDeniesStowStyleHookWithResolvedWorkspaceSpelling(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	root := t.TempDir()
+	realDotfiles := filepath.Join(root, "real-dotfiles")
+	if err := os.MkdirAll(filepath.Join(realDotfiles, "celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(realDotfiles, "celeste", "hooks.json")
+	if err := os.WriteFile(target, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dotfilesAlias := filepath.Join(root, "dotfiles-alias")
+	if err := os.Symlink(realDotfiles, dotfilesAlias); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// hooks.json's link TEXT goes through the alias spelling; the workspace
+	// below is given as the already-resolved spelling -- the reported bypass.
+	if err := os.Symlink(filepath.Join(dotfilesAlias, "celeste", "hooks.json"), filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(realDotfiles).Execute(context.Background(), map[string]any{
+		"path":    "celeste/hooks.json",
+		"content": "rewritten\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "original\n" {
+		t.Fatalf("target content = %q, err = %v; want unchanged original", string(data), err)
+	}
+}
+
+func TestWriteFileDeniesTwoLinkChainWithFinalPresent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	work := t.TempDir()
+	bPath := filepath.Join(work, "B.json")
+	if err := os.WriteFile(bPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aPath := filepath.Join(work, "A.json")
+	if err := os.Symlink(bPath, aPath); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aPath, filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	resultB, err := NewWriteFileTool(work).Execute(context.Background(), map[string]any{
+		"path":    "B.json",
+		"content": "pwned-b\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultB.Error || !strings.Contains(resultB.Content, "protected") {
+		t.Fatalf("B result = %+v, want protected error", resultB)
+	}
+	if data, _ := os.ReadFile(bPath); string(data) != "original\n" {
+		t.Fatalf("B content = %q, want unchanged", data)
+	}
+
+	// Writing to A (an intermediate hop) must be denied too.
+	resultA, err := NewWriteFileTool(work).Execute(context.Background(), map[string]any{
+		"path":    "A.json",
+		"content": "pwned-a\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultA.Error || !strings.Contains(resultA.Content, "protected") {
+		t.Fatalf("A result = %+v, want protected error", resultA)
+	}
+}
+
+func TestWriteFileDeniesTwoLinkChainWithDanglingFinal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	work := t.TempDir()
+	bPath := filepath.Join(work, "B.json") // never created: dangling until the write
+	aPath := filepath.Join(work, "A.json")
+	if err := os.Symlink(bPath, aPath); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aPath, filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	resultB, err := NewWriteFileTool(work).Execute(context.Background(), map[string]any{
+		"path":    "B.json",
+		"content": "created-b\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultB.Error || !strings.Contains(resultB.Content, "protected") {
+		t.Fatalf("B result = %+v, want protected error", resultB)
+	}
+	if _, err := os.Stat(bPath); !os.IsNotExist(err) {
+		t.Fatalf("B stat err = %v, want not exist", err)
+	}
+
+	// Writing to A (itself a dangling-chain symlink, since B doesn't exist)
+	// must also be denied -- here it's caught by resolvePath's pre-existing,
+	// unrelated dangling-symlink escape check (A's own EvalSymlinks fails
+	// because B doesn't exist yet), not necessarily the "protected" message,
+	// so only assert that it's an error.
+	resultA, err := NewWriteFileTool(work).Execute(context.Background(), map[string]any{
+		"path":    "A.json",
+		"content": "created-a\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultA.Error {
+		t.Fatalf("A result = %+v, want an error", resultA)
+	}
+}
+
+func TestWriteFileDeniesSymlinkedParentDirOfDotfilesTargetPresent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	root := t.TempDir()
+	realDir := filepath.Join(root, "R")
+	if err := os.MkdirAll(filepath.Join(realDir, "celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(realDir, "celeste", "hooks.json")
+	if err := os.WriteFile(target, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dSymlink := filepath.Join(root, "D")
+	if err := os.Symlink(realDir, dSymlink); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// hooks.json -> D/celeste/hooks.json (D, not R, is the spelling used).
+	if err := os.Symlink(filepath.Join(dSymlink, "celeste", "hooks.json"), filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(realDir).Execute(context.Background(), map[string]any{
+		"path":    "celeste/hooks.json",
+		"content": "pwned\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if data, _ := os.ReadFile(target); string(data) != "original\n" {
+		t.Fatalf("target content = %q, want unchanged", data)
+	}
+}
+
+func TestWriteFileDeniesSymlinkedParentDirOfDotfilesTargetDangling(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	root := t.TempDir()
+	realDir := filepath.Join(root, "R")
+	if err := os.MkdirAll(filepath.Join(realDir, "celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(realDir, "celeste", "hooks.json") // never created
+	dSymlink := filepath.Join(root, "D")
+	if err := os.Symlink(realDir, dSymlink); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dSymlink, "celeste", "hooks.json"), filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(realDir).Execute(context.Background(), map[string]any{
+		"path":    "celeste/hooks.json",
+		"content": "created\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Error || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("result = %+v, want protected error", result)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target stat err = %v, want not exist", err)
+	}
+}
+
+func TestWriteFileAllowsUnrelatedFilesNearSymlinkChains(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	work := t.TempDir()
+	bPath := filepath.Join(work, "B.json")
+	if err := os.WriteFile(bPath, []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aPath := filepath.Join(work, "A.json")
+	if err := os.Symlink(bPath, aPath); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aPath, filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewWriteFileTool(work).Execute(context.Background(), map[string]any{
+		"path":    "notes.md",
+		"content": "unrelated\n",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error {
+		t.Fatalf("result = %+v, want success for an unrelated file", result)
+	}
+}
+
+func TestWriteFileSymlinkCycleDoesNotHangOrDenyUnrelatedWrites(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home := setProtectedHome(t)
+	work := t.TempDir()
+	aPath := filepath.Join(work, "a.json")
+	bPath := filepath.Join(work, "b.json")
+	if err := os.Symlink(bPath, aPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aPath, bPath); err != nil {
+		t.Fatal(err)
+	}
+	homeCeleste := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(homeCeleste, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aPath, filepath.Join(homeCeleste, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan tools.ToolResult, 1)
+	go func() {
+		result, _ := NewWriteFileTool(work).Execute(context.Background(), map[string]any{
+			"path":    "notes.md",
+			"content": "unrelated\n",
+		}, nil)
+		done <- result
+	}()
+	select {
+	case result := <-done:
+		if result.Error {
+			t.Fatalf("result = %+v, want success for an unrelated file", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("write_file did not return: a symlink cycle likely caused a hang")
 	}
 }
