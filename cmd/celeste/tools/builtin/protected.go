@@ -186,10 +186,64 @@ func pathElemEqual(a, b string) bool { return pathEqual(a, b) }
 //     writing; after the write, if the new file turned out to be a protected
 //     target, it is removed (along with any directories this write created)
 //     and the write is refused.
+//   - Creating directories can change what a protected name resolves to
+//     without the written file being that target (fix round 5):
+//     ~/L -> <workspace>/d/sub with sub missing, and hooks.json ->
+//     ~/L/../evil.json. Writing d/evil.json is harmless while sub is
+//     missing; writing d/sub/.keep then creates sub, and hooks.json starts
+//     resolving to the planted file. noteMkdirAll therefore snapshots each
+//     protected target before MkdirAll, and verify refuses the write (and
+//     undoes it) if any target appeared or changed identity.
+//
+// This file-tool protection is defence in depth, not the trust boundary:
+// bash can still reach these files until W4's sandbox lands.
 type protectedWriteGuard struct {
 	path        string
 	existed     bool
 	createdDirs []string // deepest first; only filled by noteMkdirAll
+	// before holds os.Stat of each protected target taken right before
+	// MkdirAll (nil entry = did not resolve); nil slice = no snapshot.
+	before []os.FileInfo
+}
+
+var protectedHomeNames = []string{"hooks.json", "grimoire.md", "trusted.json"}
+
+// statProtectedTargets stats what each ~/.celeste/<name> resolves to right
+// now; a nil entry means it does not resolve.
+func statProtectedTargets() []os.FileInfo {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	infos := make([]os.FileInfo, len(protectedHomeNames))
+	for i, name := range protectedHomeNames {
+		if info, err := os.Stat(filepath.Join(home, ".celeste", name)); err == nil {
+			infos[i] = info
+		}
+	}
+	return infos
+}
+
+// protectedTargetsChanged reports whether any protected target resolves
+// now but did not before, or resolves to a different file than before.
+func (g *protectedWriteGuard) protectedTargetsChanged() bool {
+	if g.before == nil {
+		return false
+	}
+	after := statProtectedTargets()
+	if len(after) != len(g.before) {
+		return false
+	}
+	for i, now := range after {
+		was := g.before[i]
+		if now == nil {
+			continue // still missing, or gone: nothing now resolves to our write
+		}
+		if was == nil || !os.SameFile(was, now) {
+			return true
+		}
+	}
+	return false
 }
 
 // guardProtectedWrite runs the pre-write kernel check for path (already
@@ -207,8 +261,10 @@ func guardProtectedWrite(path string) (*protectedWriteGuard, error) {
 
 // noteMkdirAll records which of path's ancestor directories do not exist
 // yet, so a refused write can remove exactly what it created. Call it right
-// before os.MkdirAll(filepath.Dir(path)).
+// before os.MkdirAll(filepath.Dir(path)). It also snapshots what each
+// protected target resolves to, for verify's directory-creation check.
 func (g *protectedWriteGuard) noteMkdirAll() {
+	g.before = statProtectedTargets()
 	for dir := filepath.Dir(g.path); ; dir = filepath.Dir(dir) {
 		if _, err := os.Lstat(dir); err == nil {
 			return
@@ -221,14 +277,16 @@ func (g *protectedWriteGuard) noteMkdirAll() {
 }
 
 // verify runs the post-write kernel check. If the freshly created file is a
-// protected target, it and the directories this write created are removed
+// protected target, or the directories this write created changed what a
+// protected name resolves to, the file and those directories are removed
 // and the protected error is returned.
 func (g *protectedWriteGuard) verify() error {
 	if g.existed {
 		return nil // the pre-write check was authoritative for this file
 	}
 	info, err := os.Stat(g.path)
-	if err != nil || !sameAsProtectedTarget(info) {
+	isTarget := err == nil && sameAsProtectedTarget(info)
+	if !isTarget && !g.protectedTargetsChanged() {
 		return nil
 	}
 	_ = os.Remove(g.path)
@@ -245,7 +303,7 @@ func sameAsProtectedTarget(info os.FileInfo) bool {
 	if err != nil || home == "" {
 		return false
 	}
-	for _, name := range []string{"hooks.json", "grimoire.md", "trusted.json"} {
+	for _, name := range protectedHomeNames {
 		target, err := os.Stat(filepath.Join(home, ".celeste", name))
 		if err == nil && os.SameFile(info, target) {
 			return true

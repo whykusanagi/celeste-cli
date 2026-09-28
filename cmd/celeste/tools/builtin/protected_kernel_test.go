@@ -210,3 +210,62 @@ func TestMutatingToolsKernelCheckAllowsUnrelatedWrites(t *testing.T) {
 		t.Fatalf("splice dest missing: %v", err)
 	}
 }
+
+// Fix round 5: ~/L -> <workspace>/d/sub (sub missing) and hooks.json ->
+// ~/L/../evil.json. Planting d/evil.json is harmless while hooks.json
+// dangles; creating sub (by writing d/sub/.keep) would make hooks.json
+// resolve to it, so that second write is refused and undone.
+func TestWriteFileRefusesDirectoryCreationThatResolvesHookFile(t *testing.T) {
+	skipSymlinksOnWindows(t)
+	for _, spelling := range []string{"raw", "resolved"} {
+		t.Run(spelling, func(t *testing.T) {
+			home := setProtectedHome(t)
+			workspace := t.TempDir()
+			if spelling == "resolved" {
+				// macOS: /var/... vs /private/var/...
+				real, err := filepath.EvalSymlinks(workspace)
+				if err != nil {
+					t.Fatal(err)
+				}
+				workspace = real
+			}
+			if err := os.MkdirAll(filepath.Join(workspace, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			hooks := filepath.Join(home, ".celeste", "hooks.json")
+			mustSymlink(t, filepath.Join(workspace, "d", "sub"), filepath.Join(home, "L"))
+			// Link text kept verbatim: filepath.Join would Clean "L/.." away.
+			mustSymlink(t, filepath.Join(home, "L")+string(filepath.Separator)+".."+string(filepath.Separator)+"evil.json", hooks)
+
+			reg := trustRegistry(t, workspace)
+			if res := execTool(t, reg, "write_file", map[string]any{
+				"path":    filepath.Join("d", "evil.json"),
+				"content": `{"planted":true}`,
+			}); res.Error {
+				t.Fatalf("call 1 = %+v, want success (hooks.json still dangles)", res)
+			}
+			wantProtected(t, execTool(t, reg, "write_file", map[string]any{
+				"path":    filepath.Join("d", "sub", ".keep"),
+				"content": "keep\n",
+			}))
+			if _, err := os.Lstat(filepath.Join(workspace, "d", "sub")); !os.IsNotExist(err) {
+				t.Fatalf("refused write left sub behind (err %v)", err)
+			}
+			if _, err := os.Stat(hooks); err == nil {
+				t.Fatal("hooks.json resolves after refused write")
+			}
+
+			// A nested write creating directories unrelated to any
+			// protected name still succeeds.
+			if res := execTool(t, reg, "write_file", map[string]any{
+				"path":    filepath.Join("other", "deep", "x.txt"),
+				"content": "ok\n",
+			}); res.Error {
+				t.Fatalf("unrelated nested write = %+v, want success", res)
+			}
+			if _, err := os.Stat(filepath.Join(workspace, "other", "deep", "x.txt")); err != nil {
+				t.Fatalf("unrelated nested write missing: %v", err)
+			}
+		})
+	}
+}
