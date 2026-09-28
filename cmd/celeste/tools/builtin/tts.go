@@ -29,14 +29,15 @@ type TTSTool struct {
 	workspace string
 }
 
-// resolveOutput resolves a relative output filename against the tool's workspace
-// so generated audio lands in the agent workspace, not the process cwd. Absolute
-// paths are honored as-is; with no workspace configured it returns name unchanged.
-func (t *TTSTool) resolveOutput(name string) string {
-	if t.workspace != "" && name != "" && !filepath.IsAbs(name) {
-		return filepath.Join(t.workspace, name)
-	}
-	return name
+// resolveOutput resolves an output filename through resolvePath, enforcing
+// workspace containment and the protected-hook-file check. With no workspace
+// configured, resolvePath resolves against the process's current working
+// directory, matching list_files, read_file, patch_file, splice_file,
+// write_file, and search; this is a behavior change from the previous
+// empty-workspace behavior, which returned name unchanged without containment
+// checks.
+func (t *TTSTool) resolveOutput(name string) (string, error) {
+	return resolvePath(t.workspace, name, true)
 }
 
 func NewTTSTool(workspace string) *TTSTool {
@@ -223,7 +224,10 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filename == "" {
 			filename = fmt.Sprintf("speech_%d.mp3", time.Now().Unix())
 		}
-		filename = t.resolveOutput(filename)
+		filename, err := t.resolveOutput(filename)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 
 		if progress != nil {
 			mode := "text"
@@ -286,7 +290,10 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filePath == "" {
 			return tools.ToolResult{Content: "'file' is required for batch action", Error: true}, nil
 		}
-		filePath = t.resolveOutput(filePath) // read the clips file from the workspace too
+		filePath, err := t.resolveOutput(filePath) // read the clips file from the workspace too
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 
 		voiceID, _ := input["voice_id"].(string)
 		if voiceID == "" {
@@ -300,7 +307,10 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if outDir == "" {
 			outDir = filepath.Dir(filePath)
 		}
-		outDir = t.resolveOutput(outDir)
+		outDir, err = t.resolveOutput(outDir)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 
 		return executeBatch(ctx, apiKey, voiceID, filePath, outDir, progress)
 
@@ -322,7 +332,10 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filename == "" {
 			filename = fmt.Sprintf("%s.mp3", itemID)
 		}
-		filename = t.resolveOutput(filename)
+		filename, err := t.resolveOutput(filename)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 		return downloadHistoryItem(ctx, apiKey, itemID, filename)
 
 	case "sound":
@@ -344,7 +357,10 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if filename == "" {
 			filename = fmt.Sprintf("sfx_%d.mp3", time.Now().Unix())
 		}
-		filename = t.resolveOutput(filename)
+		filename, err := t.resolveOutput(filename)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
 
 		if progress != nil {
 			progress <- tools.ProgressEvent{
@@ -387,7 +403,11 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 				Error:   true,
 			}, nil
 		}
-		return mixTracks(tracksRaw, t.resolveOutput(filename), t.resolveOutput, progress)
+		filename, err := t.resolveOutput(filename)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), Error: true}, nil
+		}
+		return mixTracks(tracksRaw, filename, t.resolveOutput, progress)
 
 	default:
 		return tools.ToolResult{Content: "Invalid action. Use speak, generate, batch, sound, mix, voices, setup, history, or download.", Error: true}, nil
@@ -720,7 +740,7 @@ type mixTrack struct {
 }
 
 // mixTracks combines multiple audio files using ffmpeg.
-func mixTracks(tracksRaw []any, output string, resolve func(string) string, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
+func mixTracks(tracksRaw []any, output string, resolve func(string) (string, error), progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
 	// Check ffmpeg is available
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return tools.ToolResult{Content: "ffmpeg not found — install it to mix audio tracks", Error: true}, nil
@@ -735,7 +755,11 @@ func mixTracks(tracksRaw []any, output string, resolve func(string) string, prog
 		}
 		t := mixTrack{Volume: 1.0}
 		if f, ok := m["file"].(string); ok {
-			t.File = resolve(f) // resolve track inputs against the workspace
+			resolved, err := resolve(f) // resolve track inputs against the workspace
+			if err != nil {
+				return tools.ToolResult{Content: err.Error(), Error: true}, nil
+			}
+			t.File = resolved
 		}
 		if v, ok := m["volume"].(float64); ok {
 			t.Volume = v

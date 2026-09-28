@@ -41,10 +41,12 @@ type AudioTrack struct {
 // AudioProjectTool handles the project-based render pipeline.
 type AudioProjectTool struct {
 	BaseTool
+	workspace string
 }
 
-func NewAudioProjectTool() *AudioProjectTool {
+func NewAudioProjectTool(workspace string) *AudioProjectTool {
 	return &AudioProjectTool{
+		workspace: workspace,
 		BaseTool: BaseTool{
 			ToolName: "audio_render",
 			ToolDescription: "Render an audio project from a timeline manifest. " +
@@ -192,6 +194,11 @@ func (t *AudioProjectTool) handleCreate(input map[string]any) (tools.ToolResult,
 	}
 	project.Output = output
 	projectPath := strings.TrimSuffix(output, filepath.Ext(output)) + ".project.json"
+	resolvedProjectPath, err := resolvePath(t.workspace, projectPath, true)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
+	projectPath = resolvedProjectPath
 	data, _ := json.MarshalIndent(project, "", "  ")
 	if err := os.WriteFile(projectPath, data, 0644); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Failed to write project: %v", err), Error: true}, nil
