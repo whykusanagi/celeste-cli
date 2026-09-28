@@ -18,7 +18,7 @@ type ToolInfo interface {
 // Checker evaluates whether a tool execution should be allowed, denied, or
 // requires user approval. It implements a 6-step evaluation chain:
 //
-//  0. protected hook/trust files — Deny for non-read-only tools
+//  0. protected hook/trust files — best-effort Deny for shell commands
 //  1. alwaysDeny rules — if any match, return Deny immediately
 //  2. alwaysAllow rules — if any match, return Allow immediately
 //  3. IsReadOnly check — in default mode, read-only tools are auto-allowed
@@ -32,7 +32,6 @@ type Checker struct {
 	mode         PermissionMode
 	configPath   string   // path to persist rule additions; empty = no persistence
 	protected    []string // spellings of hook/trust files tools may not modify (protected.go)
-	home         string
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -49,7 +48,6 @@ func NewChecker(config PermissionConfig) *Checker {
 		patternRules: config.PatternRules,
 		mode:         mode,
 		protected:    protectedFragments(home),
-		home:         home,
 	}
 }
 
@@ -124,21 +122,21 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 		readOnly = tool.IsReadOnly()
 	}
 
-	// Step 0: hook and trust files are edited by the user, never by tools
-	// (2.0 F0). This comes before the user's own rules, so a permissive
-	// config can't lift it.
+	// Step 0: best-effort defence in depth. A model-authored shell command
+	// naming the hook/trust files is refused before it reaches a shell (2.0
+	// F0 fix round 1). This is a literal substring match on unparsed text --
+	// it can't catch every spelling a shell would still expand to the same
+	// file (`..`, quoting, indirection) -- and it applies only to bash's
+	// `command` argument, never to another tool's arguments or file
+	// contents (a doc that merely mentions one of these paths must not be
+	// denied). It is not the trust boundary: the real enforcement for file
+	// tools is tools/builtin's resolvePath.
 	if !readOnly {
-		if frag, hit := touchesProtected(input, c.protected); hit {
-			return CheckResult{
-				Decision: Deny,
-				Reason:   fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", frag),
-			}
-		}
-		if cwd, err := os.Getwd(); err == nil {
-			if path, hit := touchesProtectedRelative(input, c.home, cwd); hit {
+		if cmd, ok := input["command"].(string); ok {
+			if frag, hit := commandNamesProtectedFile(cmd, c.protected); hit {
 				return CheckResult{
 					Decision: Deny,
-					Reason:   fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", path),
+					Reason:   fmt.Sprintf("%s is protected: hooks and hook trust are changed by you, not by tools", frag),
 				}
 			}
 		}

@@ -13,82 +13,56 @@ type protTool struct {
 func (p protTool) ToolName() string { return p.name }
 func (p protTool) IsReadOnly() bool { return p.ro }
 
-func TestCheckerProtectsHookFiles(t *testing.T) {
+func TestCheckerDeniesBashCommandNamingHookFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	c := NewChecker(PermissionConfig{Mode: ModeTrust})
+	bash := protTool{name: "bash"}
+	denied := []string{
+		"echo '{}' > $HOME/.celeste/trusted.json",
+		"cp x ${HOME}/.celeste/hooks.json",
+		"cat ~/.celeste/grimoire.md",
+		"cp x " + filepath.Join(home, ".celeste", "hooks.json"),
+		"echo x > some/where/.celeste/trusted.json",
+	}
+	for _, cmd := range denied {
+		if got := c.Check(bash, map[string]any{"command": cmd}); got.Decision != Deny {
+			t.Errorf("%q: decision %v, want Deny", cmd, got.Decision)
+		}
+	}
+	allowed := []string{
+		"ls ~/.celeste",
+		"echo hello world",
+		"cat ~/.celeste/hooks.json.bak",
+	}
+	for _, cmd := range allowed {
+		if got := c.Check(bash, map[string]any{"command": cmd}); got.Decision == Deny {
+			t.Errorf("%q: denied (%s), want not denied", cmd, got.Reason)
+		}
+	}
+}
+
+// A non-bash tool's arguments are no longer substring-matched at all: this
+// closed a false positive where a doc's *content* merely mentioning one of
+// these paths was denied. Real protection for file tools' `path` arguments
+// now lives in tools/builtin's resolvePath (see its own tests).
+func TestCheckerDoesNotSubstringMatchNonBashTools(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	c := NewChecker(PermissionConfig{Mode: ModeTrust})
 	write := protTool{name: "write_file"}
-	bash := protTool{name: "bash"}
-	denied := []struct {
-		tool  protTool
-		input map[string]any
-	}{
-		{write, map[string]any{"path": filepath.Join(home, ".celeste", "hooks.json"), "content": "{}"}},
-		{write, map[string]any{"path": "~/.celeste/grimoire.md"}},
-		{bash, map[string]any{"command": "echo '{}' > $HOME/.celeste/trusted.json"}},
-		{bash, map[string]any{"command": "cp x ${HOME}/.celeste/hooks.json"}},
-		{write, map[string]any{"path": "some/where/.celeste/trusted.json"}},
-		{protTool{name: "patch_file"}, map[string]any{"edits": []any{map[string]any{"path": "~/.celeste/hooks.json"}}}},
+
+	cases := []map[string]any{
+		{"path": filepath.Join(home, ".celeste", "hooks.json"), "content": "{}"},
+		{"path": "~/.celeste/grimoire.md"},
+		{"path": "docs/HOOKS.md", "content": "See ~/.celeste/hooks.json for details."},
+		{"path": ".celeste/hooks.json"},
 	}
-	for _, d := range denied {
-		if got := c.Check(d.tool, d.input); got.Decision != Deny {
-			t.Errorf("%s %v: decision %v, want Deny", d.tool.name, d.input, got.Decision)
+	for _, input := range cases {
+		if got := c.Check(write, input); got.Decision == Deny {
+			t.Errorf("%v: denied (%s), want not denied by the checker (resolvePath is the real gate now)", input, got.Reason)
 		}
 	}
-	allowed := []struct {
-		tool  protTool
-		input map[string]any
-	}{
-		{protTool{name: "read_file", ro: true}, map[string]any{"path": filepath.Join(home, ".celeste", "hooks.json")}},
-		{write, map[string]any{"path": ".celeste/hooks.json"}}, // repo hooks: untrusted until approved anyway
-		{write, map[string]any{"path": "notes.md"}},
-	}
-	for _, a := range allowed {
-		if got := c.Check(a.tool, a.input); got.Decision == Deny {
-			t.Errorf("%s %v: denied (%s), want not denied", a.tool.name, a.input, got.Reason)
-		}
-	}
-}
-
-func TestCheckerProtectsRelativePathFromWorkspace(t *testing.T) {
-	t.Run("home workspace relative protected path denied", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		t.Setenv("USERPROFILE", home)
-		t.Chdir(home)
-		c := NewChecker(PermissionConfig{Mode: ModeTrust})
-
-		got := c.Check(protTool{name: "write_file"}, map[string]any{"path": ".celeste/hooks.json"})
-		if got.Decision != Deny {
-			t.Fatalf("decision %v, want Deny", got.Decision)
-		}
-	})
-
-	t.Run("unrelated workspace relative hook path allowed", func(t *testing.T) {
-		home := t.TempDir()
-		workspace := t.TempDir()
-		t.Setenv("HOME", home)
-		t.Setenv("USERPROFILE", home)
-		t.Chdir(workspace)
-		c := NewChecker(PermissionConfig{Mode: ModeTrust})
-
-		got := c.Check(protTool{name: "write_file"}, map[string]any{"path": ".celeste/hooks.json"})
-		if got.Decision == Deny {
-			t.Fatalf("denied (%s), want not denied", got.Reason)
-		}
-	})
-
-	t.Run("unrelated relative path in home workspace allowed", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		t.Setenv("USERPROFILE", home)
-		t.Chdir(home)
-		c := NewChecker(PermissionConfig{Mode: ModeTrust})
-
-		got := c.Check(protTool{name: "write_file"}, map[string]any{"path": "notes.md"})
-		if got.Decision == Deny {
-			t.Fatalf("denied (%s), want not denied", got.Reason)
-		}
-	})
 }

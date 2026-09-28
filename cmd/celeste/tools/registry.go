@@ -387,6 +387,9 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 		defer cancel()
 	}
 
+	// A Go error from the tool itself is returned as-is: PostToolUse is not
+	// run and the pre-hook's additionalContext is dropped, same as 1.x,
+	// which had no post-execution hook step on this path either.
 	result, err := tool.Execute(ctx, input, progress)
 	if err != nil {
 		return result, err

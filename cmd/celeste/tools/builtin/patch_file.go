@@ -106,7 +106,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}, nil
 	}
 
-	targetPath, err := resolvePath(t.workspace, path)
+	targetPath, err := resolvePath(t.workspace, path, true)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}

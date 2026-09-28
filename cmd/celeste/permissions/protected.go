@@ -5,11 +5,18 @@ import (
 	"strings"
 )
 
-// protectedFragments are spellings of the files a tool may never modify:
-// the user's global hooks (trusted without approval) and the hook trust
-// store. A tool that could write them could grant hooks to itself (2.0 F0).
-// Repo .celeste/hooks.json is not listed: it is untrusted until approved,
-// and any change re-prompts.
+// protectedFragments are spellings of the files a shell command must never
+// name: the user's global hooks (trusted without approval) and the hook
+// trust store. A command that could rewrite them could grant hooks to
+// itself (2.0 F0).
+//
+// This is best-effort defence in depth for bash's `command` argument only
+// (see checker.go's Step 0): a substring match on unparsed shell text
+// cannot catch every spelling a shell would still expand to the same file
+// (`..`, quoting, indirection) -- it is not the trust boundary. The real,
+// exact enforcement for file tools (write_file, patch_file, splice_file) is
+// tools/builtin's resolvePath, which resolves the actual path being
+// written.
 func protectedFragments(home string) []string {
 	var out []string
 	for _, rel := range []string{".celeste/hooks.json", ".celeste/grimoire.md", ".celeste/trusted.json"} {
@@ -18,99 +25,41 @@ func protectedFragments(home string) []string {
 			out = append(out, filepath.ToSlash(filepath.Join(home, filepath.FromSlash(rel))))
 		}
 	}
-	// The trust store only ever exists under home; any spelling of it is protected.
 	return append(out, ".celeste/trusted.json")
 }
 
-// touchesProtected reports the first protected spelling found in any string
-// anywhere in input (nested maps and lists included).
-func touchesProtected(input map[string]any, fragments []string) (string, bool) {
-	var hit string
-	var walk func(v any) bool
-	walk = func(v any) bool {
-		switch x := v.(type) {
-		case string:
-			s := filepath.ToSlash(x)
-			for _, f := range fragments {
-				if strings.Contains(s, f) {
-					hit = f
-					return true
-				}
-			}
-		case map[string]any:
-			for _, e := range x {
-				if walk(e) {
-					return true
-				}
-			}
-		case []any:
-			for _, e := range x {
-				if walk(e) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	for _, v := range input {
-		if walk(v) {
-			return hit, true
+// commandNamesProtectedFile reports the first protected spelling found
+// literally in cmd (a bash tool's `command` argument).
+func commandNamesProtectedFile(cmd string, fragments []string) (string, bool) {
+	s := filepath.ToSlash(cmd)
+	for _, f := range fragments {
+		if containsProtectedFragment(s, f) {
+			return f, true
 		}
 	}
 	return "", false
 }
 
-func protectedPaths(home string) map[string]bool {
-	paths := make(map[string]bool)
-	if home == "" {
-		return paths
+func containsProtectedFragment(s, fragment string) bool {
+	start := 0
+	for {
+		idx := strings.Index(s[start:], fragment)
+		if idx < 0 {
+			return false
+		}
+		end := start + idx + len(fragment)
+		if end == len(s) || isShellPathBoundary(s[end]) {
+			return true
+		}
+		start = end
 	}
-	for _, rel := range []string{".celeste/hooks.json", ".celeste/grimoire.md", ".celeste/trusted.json"} {
-		paths[filepath.Clean(filepath.Join(home, filepath.FromSlash(rel)))] = true
-	}
-	return paths
 }
 
-// touchesProtectedRelative catches the case where the workspace itself is the
-// home directory, so a repo-relative spelling names a global hook/trust file.
-func touchesProtectedRelative(input map[string]any, home string, cwd string) (string, bool) {
-	protected := protectedPaths(home)
-	if len(protected) == 0 || cwd == "" {
-		return "", false
-	}
-	cwd = filepath.Clean(cwd)
-	var hit string
-	var walk func(v any) bool
-	walk = func(v any) bool {
-		switch x := v.(type) {
-		case string:
-			if strings.HasPrefix(x, "~") || strings.HasPrefix(x, "$HOME") || strings.HasPrefix(x, "${HOME}") || filepath.IsAbs(x) {
-				return false
-			}
-			resolved := filepath.Clean(filepath.Join(cwd, x))
-			if protected[resolved] {
-				hit = resolved
-				return true
-			}
-		case map[string]any:
-			for _, e := range x {
-				if walk(e) {
-					return true
-				}
-			}
-		case []any:
-			for _, e := range x {
-				if walk(e) {
-					return true
-				}
-			}
-		}
+func isShellPathBoundary(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '"', '\'', '`', ';', '&', '|', '<', '>', ')', '(', ']':
+		return true
+	default:
 		return false
 	}
-	for _, v := range input {
-		if walk(v) {
-			return hit, true
-		}
-	}
-	return "", false
 }

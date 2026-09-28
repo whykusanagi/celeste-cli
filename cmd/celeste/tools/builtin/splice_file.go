@@ -83,11 +83,11 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	sourceRel := getStringArg(input, "source", "")
 	destRel := getStringArg(input, "dest", sourceRel)
 
-	sourcePath, err := resolvePath(t.workspace, sourceRel)
+	sourcePath, err := resolvePath(t.workspace, sourceRel, op == "move")
 	if err != nil {
 		return errResult(fmt.Sprintf("source path error: %s", err)), nil
 	}
-	destPath, err := resolvePath(t.workspace, destRel)
+	destPath, err := resolvePath(t.workspace, destRel, true)
 	if err != nil {
 		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
 	}
