@@ -289,11 +289,23 @@ func (g *protectedWriteGuard) verify() error {
 	if !isTarget && !g.protectedTargetsChanged() {
 		return nil
 	}
-	_ = os.Remove(g.path)
+	g.undo()
+	return protectedError(g.path)
+}
+
+// undo removes what this write created: the destination file, only if it
+// did not exist before, then the directories noteMkdirAll recorded as
+// missing (deepest first, non-recursive, so only while empty). write_file
+// defers it on every error return after MkdirAll (fix round 6): a write
+// that fails between MkdirAll and verify must not leave behind directories
+// that change what a protected name resolves to.
+func (g *protectedWriteGuard) undo() {
+	if !g.existed {
+		_ = os.Remove(g.path)
+	}
 	for _, dir := range g.createdDirs {
 		_ = os.Remove(dir) // only succeeds while empty
 	}
-	return protectedError(g.path)
 }
 
 // sameAsProtectedTarget reports whether info is, per the kernel, the same

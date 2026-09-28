@@ -111,8 +111,21 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	guard.noteMkdirAll()
+	// Undo created directories (and a partial new file) on every return
+	// below unless the write fully succeeded and verify passed (fix round 6).
+	written := false
+	defer func() {
+		if !written {
+			guard.undo()
+		}
+	}()
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
+	}
+	// Creating directories alone can make a protected name resolve; refuse
+	// before writing any bytes.
+	if guard.protectedTargetsChanged() {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", protectedError(targetPath))}, nil
 	}
 
 	var bytesWritten int
@@ -137,6 +150,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	if err := guard.verify(); err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
+	written = true
 
 	// Auto-stamp .grimoire metadata when writing to it
 	if filepath.Base(targetPath) == ".grimoire" {

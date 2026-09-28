@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -267,5 +268,72 @@ func TestWriteFileRefusesDirectoryCreationThatResolvesHookFile(t *testing.T) {
 				t.Fatalf("unrelated nested write missing: %v", err)
 			}
 		})
+	}
+}
+
+// Fix round 6: a write that fails after MkdirAll (here the final name is
+// too long, so Lstat reports it missing, MkdirAll succeeds and the write
+// itself fails) must still undo the directories it created. Otherwise the
+// round-5 setup plants a hook file through that error path.
+func TestWriteFileErrorAfterMkdirAllRemovesCreatedDirs(t *testing.T) {
+	skipSymlinksOnWindows(t)
+	longName := strings.Repeat("a", 300)
+	for _, appendMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("append=%v", appendMode), func(t *testing.T) {
+			home := setProtectedHome(t)
+			workspace := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(workspace, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			hooks := filepath.Join(home, ".celeste", "hooks.json")
+			mustSymlink(t, filepath.Join(workspace, "d", "sub"), filepath.Join(home, "L"))
+			mustSymlink(t, filepath.Join(home, "L")+string(filepath.Separator)+".."+string(filepath.Separator)+"evil.json", hooks)
+
+			reg := trustRegistry(t, workspace)
+			if res := execTool(t, reg, "write_file", map[string]any{
+				"path":    filepath.Join("d", "evil.json"),
+				"content": "PLANT",
+			}); res.Error {
+				t.Fatalf("call 1 = %+v, want success (hooks.json still dangles)", res)
+			}
+			res := execTool(t, reg, "write_file", map[string]any{
+				"path":    filepath.Join("d", "sub", longName),
+				"content": "x",
+				"append":  appendMode,
+			})
+			if !res.Error {
+				t.Fatalf("call 2 = %+v, want an error", res)
+			}
+			if _, err := os.Lstat(filepath.Join(workspace, "d", "sub")); !os.IsNotExist(err) {
+				t.Fatalf("failed write left sub behind (err %v)", err)
+			}
+			if data, err := os.ReadFile(hooks); err == nil {
+				t.Fatalf("hooks.json resolves after failed write: %q", data)
+			}
+		})
+	}
+}
+
+// An ordinary write that fails after MkdirAll, with no symlinks involved,
+// leaves none of the directories it created behind.
+func TestWriteFileErrorAfterMkdirAllLeavesNoDirs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("name-length limits differ on Windows")
+	}
+	setProtectedHome(t)
+	workspace := t.TempDir()
+	reg := trustRegistry(t, workspace)
+	for _, appendMode := range []bool{false, true} {
+		res := execTool(t, reg, "write_file", map[string]any{
+			"path":    filepath.Join("n1", "n2", strings.Repeat("b", 300)),
+			"content": "x",
+			"append":  appendMode,
+		})
+		if !res.Error {
+			t.Fatalf("append=%v: write = %+v, want an error", appendMode, res)
+		}
+		if _, err := os.Lstat(filepath.Join(workspace, "n1")); !os.IsNotExist(err) {
+			t.Fatalf("append=%v: failed write left n1 behind (err %v)", appendMode, err)
+		}
 	}
 }
