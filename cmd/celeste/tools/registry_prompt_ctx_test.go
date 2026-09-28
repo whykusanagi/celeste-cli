@@ -48,3 +48,34 @@ func TestNoPromptAnywhereStillDenies(t *testing.T) {
 		t.Fatalf("got %+v, want the headless denial", res)
 	}
 }
+
+// A run without a Gate denies as headless even when the registry has its
+// own prompt (2.0 F2a: the TUI's modal must not answer a Gate-less run).
+func TestWithoutPromptDeniesAsHeadless(t *testing.T) {
+	r := askRegistry()
+	r.SetPromptFunc(func(PermissionRequest) PermissionResponse {
+		t.Fatal("registry prompt must not be called for a run without a Gate")
+		return PermissionResponse{}
+	})
+	res, _ := r.Execute(WithoutPrompt(context.Background()), "w", map[string]any{})
+	if !res.Error || !strings.Contains(res.Content, "no prompt is configured") {
+		t.Fatalf("got %+v, want the headless denial", res)
+	}
+}
+
+// The innermost of WithPrompt and WithoutPrompt wins: a Gate-less subagent
+// inside a gated parent is headless, and a gated run inside a Gate-less one
+// asks its own Gate.
+func TestInnermostPromptContextWins(t *testing.T) {
+	r := askRegistry()
+	allow := func(PermissionRequest) PermissionResponse { return PermissionResponse{Decision: "allow_once"} }
+
+	res, _ := r.Execute(WithoutPrompt(WithPrompt(context.Background(), allow)), "w", map[string]any{})
+	if !res.Error || !strings.Contains(res.Content, "no prompt is configured") {
+		t.Fatalf("gated parent, Gate-less child: got %+v, want the headless denial", res)
+	}
+	res, err := r.Execute(WithPrompt(WithoutPrompt(context.Background()), allow), "w", map[string]any{})
+	if err != nil || res.Error {
+		t.Fatalf("Gate-less parent, gated child: res=%+v err=%v, want the call to run", res, err)
+	}
+}

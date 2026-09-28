@@ -406,7 +406,9 @@ func TestLoopSerializesGateForParallelSafeCalls(t *testing.T) {
 
 func TestLoopWithoutGateDeniesAsk(t *testing.T) {
 	out := run(gatedLoop(t), llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`})
-	if !strings.Contains(out.messages[0].Content, "Permission denied") {
+	// The headless denial text, as before the loop (agent/orchestrator F1
+	// characterization pins it).
+	if !strings.Contains(out.messages[0].Content, "no prompt is configured") {
 		t.Fatalf("got %s", out.messages[0].Content)
 	}
 }

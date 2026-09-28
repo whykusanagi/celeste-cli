@@ -149,13 +149,11 @@ func (l *Loop) invoke(ctx context.Context, t tools.Tool, input map[string]any, l
 			return l.Gate.Ask(ctx, req)
 		})
 	} else {
-		// No Gate: deny an Ask outright. Without this, the registry falls
-		// back to its own promptFn (an adopter's TUI modal, wired at
-		// SetPromptFunc call sites), which would silently defeat "no Gate
-		// means headless deny".
-		cctx = tools.WithPrompt(cctx, func(tools.PermissionRequest) tools.PermissionResponse {
-			return tools.PermissionResponse{Decision: "deny"}
-		})
+		// No Gate: deny an Ask outright, as headless ("no prompt is
+		// configured"). Without this, the registry falls back to its own
+		// promptFn (an adopter's TUI modal, wired at SetPromptFunc call
+		// sites), which would silently defeat "no Gate means headless deny".
+		cctx = tools.WithoutPrompt(cctx)
 	}
 	name := t.Name()
 	return abandonAfter(cctx, watchdog, func() (tools.ToolResult, error) {

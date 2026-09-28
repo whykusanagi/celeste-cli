@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -68,10 +69,10 @@ func TestAgentParallelTextFreeCallsThenComplete(t *testing.T) {
 	}
 }
 
-// Baseline: the agent loop has NO identical-call guard today. A model that
-// repeats the same call runs until MaxTurns. 2.0 F2 adds the guard (spec §4
-// F2 "intentional behaviour changes"); update this test then.
-func TestAgentIdenticalCallsRunToMaxTurns(t *testing.T) {
+// 2.0 F2 intentional change (F2a plan Task 10; spec §4 F2, "agent runs gain the
+// identical-call guard (3)"): the agent loop gained the identical-call guard.
+// Before F2 this run went to MaxTurns (TestAgentIdenticalCallsRunToMaxTurns).
+func TestAgentIdenticalCallsStopAtThree(t *testing.T) {
 	var turns []fakeprovider.Turn
 	for i := 0; i < 6; i++ {
 		turns = append(turns, fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "c", Name: "read_file", Args: `{"path":"a.txt"}`}}})
@@ -80,9 +81,35 @@ func TestAgentIdenticalCallsRunToMaxTurns(t *testing.T) {
 	r, ws := fakeRunner(t, srv, func(o *Options) { o.MaxTurns = 5 })
 	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("alpha"), 0o644)
 
-	st, _ := r.RunGoal(context.Background(), "loop")
-	if st.Turn != 5 {
-		t.Fatalf("turn = %d, want 5 (no identical-call guard in the agent loop today)", st.Turn)
+	st, err := r.RunGoal(context.Background(), "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Turn != 3 || st.Status != StatusNoProgressStopped || st.StopReason != "identical" {
+		t.Fatalf("turn=%d status=%q stop=%q, want 3/no_progress_stopped/identical", st.Turn, st.Status, st.StopReason)
+	}
+	if got := len(srv.Requests()); got != 3 {
+		t.Fatalf("requests = %d, want 3", got)
+	}
+}
+
+// 2.0 F2 intentional change: the progress guard stops a loop whose
+// arguments vary but whose results do not.
+func TestAgentProgressGuardStopsArgsVaryingLoop(t *testing.T) {
+	var turns []fakeprovider.Turn
+	for i := 0; i < 8; i++ {
+		turns = append(turns, fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "c", Name: "read_file", Args: fmt.Sprintf(`{"path":"a.txt","note":"%d"}`, i)}}})
+	}
+	srv := fakeprovider.NewOpenAI(t, turns...)
+	r, ws := fakeRunner(t, srv, func(o *Options) { o.MaxTurns = 10 })
+	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("alpha"), 0o644)
+
+	st, err := r.RunGoal(context.Background(), "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Turn != 6 || st.Status != StatusNoProgressStopped || st.StopReason != "progress" {
+		t.Fatalf("turn=%d status=%q stop=%q, want 6/no_progress_stopped/progress", st.Turn, st.Status, st.StopReason)
 	}
 }
 

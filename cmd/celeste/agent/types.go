@@ -195,7 +195,10 @@ type RunState struct {
 	LastAssistantResponse      string              `json:"last_assistant_response,omitempty"`
 	ArtifactBundlePath         string              `json:"artifact_bundle_path,omitempty"`
 	Error                      string              `json:"error,omitempty"`
-	Options                    Options             `json:"options"`
+	// StopReason is the loop's reason when a guard stopped the run
+	// ("identical", "progress", "invalid_args"); empty otherwise.
+	StopReason string  `json:"stop_reason,omitempty"`
+	Options    Options `json:"options"`
 }
 
 func NewRunState(goal string, options Options) *RunState {

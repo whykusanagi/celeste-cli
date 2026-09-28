@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -60,18 +59,20 @@ type Runner struct {
 	firstRunID string
 }
 
-// compactHistory keeps the history inside the window (#174). It prunes old
+// compactMessages keeps the history inside the window (#174). It prunes old
 // tool results when the history is over the compaction threshold, or
 // unconditionally when force is set (after a context-overflow error); if
 // that isn't enough it summarizes everything but the newest ~20k tokens. It
-// reports whether the history changed.
-func (r *Runner) compactHistory(ctx context.Context, state *RunState, force bool) bool {
+// returns the history, progress notes for the event stream, and whether it
+// changed. It runs on the loop goroutine and must not write r.out.
+func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, force bool) ([]tui.ChatMessage, []string, bool) {
 	// A nil prune store only disables pruning (Prune is a no-op without
 	// one); the summary rung below must still run.
 	if r.budget == nil || (r.pruned == nil && r.summarize == nil) {
-		return false
+		return msgs, nil, false
 	}
-	used := compact.Estimate(state.Messages) + r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
+	var notes []string
+	used := compact.Estimate(msgs) + r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
 	if last := r.budget.LastPromptTokens; last > used {
 		used = last // the API's count includes tool schemas the estimate misses
 	}
@@ -79,38 +80,38 @@ func (r *Runner) compactHistory(ctx context.Context, state *RunState, force bool
 	opts := compact.Options{Window: r.budget.ModelLimit, Used: used, Force: force}
 	report := func(compact.Result) {}
 	if r.jev != nil {
-		opts, report = compact.Shadow(r.jev, state.Messages, opts, func(line string) {
+		opts, report = compact.Shadow(r.jev, msgs, opts, func(line string) {
 			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
 		}, false) // inline: errOut may be a caller's bytes.Buffer, and the run must not outlive its output
 	}
-	msgs, res := compact.Prune(state.Messages, opts, r.pruned)
+	pruned, res := compact.Prune(msgs, opts, r.pruned)
 	report(res)
 	changed := res.Pruned()
 	if changed {
-		state.Messages = msgs
+		msgs = pruned
 		r.budget.RecordCompaction(compact.Estimate(msgs))
-		r.reportCompaction(state, "context compacted: "+res.Summary())
+		notes = append(notes, "context compacted: "+res.Summary())
 	}
 
 	// Next rung: summarize when pruning wasn't enough, or when a forced
 	// compaction (after an overflow) found nothing to prune.
-	stillOver := compact.Estimate(state.Messages)+overhead > compact.Threshold(r.budget.ModelLimit)
+	stillOver := compact.Estimate(msgs)+overhead > compact.Threshold(r.budget.ModelLimit)
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, state.Messages, compact.SummaryOptions{}, r.summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{}, r.summarize)
 		cancel()
 		if err != nil {
 			if !errors.Is(err, compact.ErrNothingToSummarize) {
-				r.reportCompaction(state, "context summary failed: "+err.Error())
+				notes = append(notes, "context summary failed: "+err.Error())
 			}
-			return changed
+			return msgs, notes, changed
 		}
-		state.Messages = out
+		msgs = out
 		r.budget.RecordCompaction(sres.TokensAfter)
-		r.reportCompaction(state, "context compacted: "+sres.Line())
+		notes = append(notes, "context compacted: "+sres.Line())
 		changed = true
 	}
-	return changed
+	return msgs, notes, changed
 }
 
 // SmallModelSummarizer returns a SummarizeFunc on its own client for the
@@ -298,9 +299,6 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	registry := env.Registry
 	checker := env.Checker
-	if options.PromptFunc != nil {
-		registry.SetPromptFunc(options.PromptFunc) // replaced by the loop's Gate in Task 10
-	}
 
 	// Fail fast rather than no-opping. `celeste agent` never wires an
 	// interactive prompt, so every tool that resolves to Ask is denied — and the
@@ -490,215 +488,47 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 	}
 
-	overflowRetried := false
-	for state.Turn < state.Options.MaxTurns {
-		// Honor cancellation/deadline between turns. The per-request and per-tool
-		// contexts cover work *within* a turn; this stops the loop from starting a
-		// new turn after the parent context (e.g. a subagent's overall timeout)
-		// has expired (task 349f1f14).
+	l := r.newLoop(state)
+	for {
+		if state.Turn >= state.Options.MaxTurns {
+			return r.finishRun(state, StatusMaxTurnsReached), nil
+		}
 		if err := ctx.Err(); err != nil {
-			state.Status = StatusCancelled
-			state.Error = fmt.Sprintf("run cancelled: %v", err)
-			now := time.Now()
-			state.CompletedAt = &now
-			state.UpdatedAt = now
-			if !state.Options.DisableCheckpoints {
-				_ = r.store.Save(state)
+			return r.cancelRun(state, err)
+		}
+		state.Status = StatusRunning
+		state.Phase = PhaseExecution
+		l.Limits.MaxTurns = state.Options.MaxTurns - state.Turn
+
+		msgs, res, err := r.step(ctx, l, state)
+		state.Messages = msgs
+		state.UpdatedAt = time.Now()
+		if err != nil {
+			if res.StopReason == loop.StopInterrupted {
+				return r.cancelRun(state, err)
 			}
-			r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
+			var tte *loop.TurnTimeoutError
+			err = annotateTurnTimeout(err, errors.As(err, &tte), state.Options.RequestTimeout)
+			state.Status = StatusFailed
+			state.Error = err.Error()
+			_ = r.store.Save(state)
+			r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
 			return state, err
 		}
 
-		state.Turn++
-		state.Status = StatusRunning
-		state.Phase = PhaseExecution
-
-		if state.Options.Verbose {
-			fmt.Fprintf(r.out, "\n[agent] turn %d/%d\n", state.Turn, state.Options.MaxTurns)
-		}
-		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
-
-		// Keep the history inside the window before sending (#174).
-		r.compactHistory(ctx, state, false)
-
-		requestCtx, cancel := context.WithTimeout(ctx, state.Options.RequestTimeout)
-		turnStart := time.Now()
-
-		// Use streaming events to collect the response incrementally.
-		// This is the bridge approach: we collect tool calls via the
-		// ToolUseAccumulator but still execute them serially below.
-		var result llm.ChatCompletionResult
-		acc := llm.NewToolUseAccumulator()
-
-		streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
-			switch event.Type {
-			case llm.EventContentDelta:
-				result.Content += event.ContentDelta
-			case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
-				acc.HandleEvent(event)
-			case llm.EventMessageDone:
-				result.Usage = event.Usage
-			}
-		})
-		// Capture before cancel(): afterwards ctx.Err() reports Canceled and we
-		// can no longer tell a timeout from an ordinary teardown.
-		turnTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
-		cancel()
-
-		// The history overflowed the window anyway (an estimate was off, or
-		// the window is smaller than configured): prune harder and retry the
-		// turn once before failing (#174).
-		if streamErr != nil && errors.Is(streamErr, llm.ErrContextOverflow) && !overflowRetried {
-			overflowRetried = true
-			if r.compactHistory(ctx, state, true) {
-				state.Turn--
-				continue
-			}
-		}
-		if streamErr == nil {
-			overflowRetried = false
-		}
-
-		if streamErr != nil {
-			streamErr = annotateTurnTimeout(streamErr, turnTimedOut, state.Options.RequestTimeout)
-			state.Status = StatusFailed
-			state.Error = streamErr.Error()
-			state.UpdatedAt = time.Now()
-			_ = r.store.Save(state)
-			r.emitProgress(ProgressError, streamErr.Error(), state.Turn, state.Options.MaxTurns)
-			return state, streamErr
-		}
-
-		result.ToolCalls = acc.CompletedCalls()
-
-		// Cap native tool calls per turn BEFORE recording them on the assistant
-		// message below, so declared tool_calls == tool results we return next
-		// turn. Otherwise a turn with more calls than the cap leaves orphaned
-		// tool_calls and strict APIs (Sakana Fugu) reject the next request.
-		result.ToolCalls = capToolCalls(result.ToolCalls, state.Options.MaxToolCallsPerTurn)
-
-		// Update token budget with usage from this turn.
-		if r.budget != nil && result.Usage != nil {
-			r.budget.AddTurn(result.Usage.PromptTokens, result.Usage.CompletionTokens)
-		}
-
-		if r.options.OnTurnStats != nil {
-			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: time.Since(turnStart)}
-			if result.Usage != nil {
-				stats.InputTokens = result.Usage.PromptTokens
-				stats.OutputTokens = result.Usage.CompletionTokens
-			}
-			stats.Response = strings.TrimSpace(result.Content)
-			if len(result.ToolCalls) > 0 {
-				stats.ToolCalls = make([]string, len(result.ToolCalls))
-				for i, tc := range result.ToolCalls {
-					stats.ToolCalls[i] = tc.Name
-				}
-			}
-			r.options.OnTurnStats(stats)
-		}
-
-		assistantMsg := tui.ChatMessage{
-			Role:      "assistant",
-			Content:   result.Content,
-			ToolCalls: convertToolCalls(result.ToolCalls),
-			Timestamp: time.Now(),
-		}
-		state.Messages = append(state.Messages, assistantMsg)
-		state.LastAssistantResponse = strings.TrimSpace(result.Content)
-		state.Steps = append(state.Steps, Step{
-			Turn:      state.Turn,
-			Type:      "assistant",
-			Content:   state.LastAssistantResponse,
-			Timestamp: time.Now(),
-		})
-
-		if state.Options.Verbose && state.LastAssistantResponse != "" {
-			fmt.Fprintf(r.out, "[assistant]\n%s\n", state.LastAssistantResponse)
-		}
-
-		// Text-based tool call fallback: some proxies/models don't issue native
-		// API tool_calls but describe them inline. Parse <tool_call>...</tool_call>
-		// blocks from the response content so we can execute them.
-		if len(result.ToolCalls) == 0 && result.Content != "" {
-			if textCalls := parseTextToolCalls(result.Content); len(textCalls) > 0 {
-				result.ToolCalls = textCalls
-			}
-		}
-
-		if len(result.ToolCalls) == 0 {
-			state.ConsecutiveNoToolTurns++
-			updatePlanProgressFromAssistant(state, state.LastAssistantResponse, false)
-
-			if isCompletionResponse(state.LastAssistantResponse, state.Options) {
-				completed, err := r.handleCompletionCandidate(ctx, state)
-				if err != nil {
-					state.Status = StatusFailed
-					state.Error = err.Error()
-					state.UpdatedAt = time.Now()
-					_ = r.store.Save(state)
-					r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
-					return state, err
-				}
-				if completed {
-					r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
-					if !state.Options.DisableCheckpoints {
-						_ = r.store.Save(state)
-					}
-					r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
-					return state, nil
-				}
-			}
-
-			if state.ConsecutiveNoToolTurns >= state.Options.MaxConsecutiveNoToolTurns {
-				state.Status = StatusNoProgressStopped
-				now := time.Now()
-				state.CompletedAt = &now
-				if !state.Options.DisableCheckpoints {
-					_ = r.store.Save(state)
-				}
-				r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
-				return state, nil
-			}
-
-			state.Messages = append(state.Messages, tui.ChatMessage{
-				Role:      "user",
-				Content:   buildContinuePrompt(state),
-				Timestamp: time.Now(),
-			})
-
-			if !state.Options.DisableCheckpoints {
-				_ = r.store.Save(state)
-			}
-			continue
-		}
-
-		state.ConsecutiveNoToolTurns = 0
-		updatePlanProgressFromAssistant(state, state.LastAssistantResponse, true)
-		// Native calls were already capped above (before the assistant message).
-		// Re-apply for the text-tool-call fallback path, which populates
-		// result.ToolCalls after that point.
-		toolCalls := capToolCalls(result.ToolCalls, state.Options.MaxToolCallsPerTurn)
-
-		// anyInvalidArgs tracks whether ANY tool call in this turn had invalid args;
-		// a single corrupted-args call is a signal worth acting on, so the whole turn counts as invalid.
-		anyInvalidArgs := false
-		for _, tc := range toolCalls {
-			r.emitProgress(ProgressToolCall, tc.Name, state.Turn, state.Options.MaxTurns)
-			toolMsg, argsValid := r.executeToolCall(ctx, state, tc)
-			state.Messages = append(state.Messages, toolMsg)
-			state.ToolCallCount++
-			if !argsValid {
-				anyInvalidArgs = true
-			}
-		}
-		state.ConsecutiveInvalidToolArgs = nextConsecutiveInvalid(state.ConsecutiveInvalidToolArgs, anyInvalidArgs)
-		if state.ConsecutiveInvalidToolArgs >= state.Options.MaxConsecutiveInvalidToolArgs {
+		switch res.StopReason {
+		case loop.StopCap:
+			continue // the MaxTurns check above ends the run
+		case loop.StopIdentical, loop.StopProgress:
+			state.StopReason = string(res.StopReason)
+			return r.finishRun(state, StatusNoProgressStopped), nil
+		case loop.StopInvalidArgs:
+			state.StopReason = string(res.StopReason)
+			state.ConsecutiveInvalidToolArgs = state.Options.MaxConsecutiveInvalidToolArgs
 			state.Status = StatusFailed
 			state.Error = fmt.Sprintf("tool-call arguments were invalid JSON %d turns in a row — aborting to avoid an unbounded retry loop (likely upstream stream corruption)", state.ConsecutiveInvalidToolArgs)
 			now := time.Now()
 			state.CompletedAt = &now
-			state.UpdatedAt = time.Now()
 			if !state.Options.DisableCheckpoints {
 				_ = r.store.Save(state)
 			}
@@ -706,19 +536,178 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 			return state, errors.New(state.Error)
 		}
 
+		// StopDone: the model answered without calling a tool.
+		if res.ToolCalls > 0 {
+			state.ConsecutiveNoToolTurns = 0
+		}
+		state.ConsecutiveNoToolTurns++
+
+		if isCompletionResponse(state.LastAssistantResponse, state.Options) {
+			completed, err := r.handleCompletionCandidate(ctx, state)
+			if err != nil {
+				state.Status = StatusFailed
+				state.Error = err.Error()
+				state.UpdatedAt = time.Now()
+				_ = r.store.Save(state)
+				r.emitProgress(ProgressError, err.Error(), state.Turn, state.Options.MaxTurns)
+				return state, err
+			}
+			if completed {
+				r.emitProgress(ProgressResponse, state.LastAssistantResponse, state.Turn, state.Options.MaxTurns)
+				if !state.Options.DisableCheckpoints {
+					_ = r.store.Save(state)
+				}
+				r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
+				return state, nil
+			}
+		}
+
+		if state.ConsecutiveNoToolTurns >= state.Options.MaxConsecutiveNoToolTurns {
+			return r.finishRun(state, StatusNoProgressStopped), nil
+		}
+
+		state.Messages = append(state.Messages, tui.ChatMessage{
+			Role:      "user",
+			Content:   buildContinuePrompt(state),
+			Timestamp: time.Now(),
+		})
 		if !state.Options.DisableCheckpoints {
 			_ = r.store.Save(state)
 		}
 	}
+}
 
-	state.Status = StatusMaxTurnsReached
+func (r *Runner) finishRun(state *RunState, status string) *RunState {
+	state.Status = status
 	now := time.Now()
 	state.CompletedAt = &now
 	if !state.Options.DisableCheckpoints {
 		_ = r.store.Save(state)
 	}
 	r.emitProgress(ProgressComplete, state.Status, state.Turn, state.Options.MaxTurns)
-	return state, nil
+	return state
+}
+
+// cancelRun records an interrupt: ctx was cancelled between or during turns.
+func (r *Runner) cancelRun(state *RunState, err error) (*RunState, error) {
+	state.Status = StatusCancelled
+	state.Error = fmt.Sprintf("run cancelled: %v", err)
+	now := time.Now()
+	state.CompletedAt = &now
+	state.UpdatedAt = now
+	if !state.Options.DisableCheckpoints {
+		_ = r.store.Save(state)
+	}
+	r.emitProgress(ProgressError, state.Error, state.Turn, state.Options.MaxTurns)
+	return state, err
+}
+
+// newLoop builds the run's loop from the agent options. One Loop serves
+// every step of a run. Steers are not cleared between steps: a steer left
+// over when a step ends (it arrived after the loop's last check, or the step
+// stopped on an error) is user input, so it joins the next step instead of
+// being dropped. A new run gets a new Loop, so nothing carries across runs.
+func (r *Runner) newLoop(state *RunState) *loop.Loop {
+	lim := loop.DefaultLimits()
+	lim.MaxCallsPerTurn = state.Options.MaxToolCallsPerTurn
+	lim.ToolTimeout = state.Options.ToolTimeout
+	lim.RequestTimeout = state.Options.RequestTimeout
+	lim.MaxInvalidArgTurns = state.Options.MaxConsecutiveInvalidToolArgs
+	lim.TextToolCalls = true
+	// Tool hooks already run in r.registry (Setup); Stop and compaction
+	// hooks are fired by this layer and the compactor (Task 11).
+	return &loop.Loop{
+		Client:    r.client,
+		Tools:     r.registry,
+		Limits:    lim,
+		Gate:      loop.PromptGate(r.options.PromptFunc),
+		Compact:   runCompactor{r: r},
+		SessionID: "agent-" + state.RunID,
+	}
+}
+
+// step runs the loop once. Only the event consumer touches state (and r.out)
+// while Run executes; the unbuffered event channel orders it before Run
+// returns.
+func (r *Runner) step(ctx context.Context, l *loop.Loop, state *RunState) ([]tui.ChatMessage, loop.Result, error) {
+	events := l.Events()
+	base := state.Turn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range events {
+			r.onEvent(state, base, ev)
+			if ev.Kind == loop.EventDone {
+				return
+			}
+		}
+	}()
+	msgs, res, err := l.Run(ctx, state.Messages)
+	<-done
+	return msgs, res, err
+}
+
+func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
+	switch ev.Kind {
+	case loop.EventTurnStart:
+		state.Turn = base + ev.Turn
+		if state.Options.Verbose {
+			fmt.Fprintf(r.out, "\n[agent] turn %d/%d\n", state.Turn, state.Options.MaxTurns)
+		}
+		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
+	case loop.EventCompacted:
+		r.reportCompaction(state, ev.Text)
+	case loop.EventAssistant:
+		text := strings.TrimSpace(ev.Text)
+		if r.options.OnTurnStats != nil {
+			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: ev.Elapsed, Response: text, ToolCalls: ev.ToolNames}
+			if ev.Usage != nil {
+				stats.InputTokens = ev.Usage.PromptTokens
+				stats.OutputTokens = ev.Usage.CompletionTokens
+			}
+			r.options.OnTurnStats(stats)
+		}
+		state.LastAssistantResponse = text
+		state.Steps = append(state.Steps, Step{Turn: state.Turn, Type: "assistant", Content: text, Timestamp: time.Now()})
+		if state.Options.Verbose && text != "" {
+			fmt.Fprintf(r.out, "[assistant]\n%s\n", text)
+		}
+		updatePlanProgressFromAssistant(state, text, len(ev.ToolNames) > 0)
+	case loop.EventToolStart:
+		r.emitProgress(ProgressToolCall, ev.Call.Name, state.Turn, state.Options.MaxTurns)
+		if state.Options.Verbose {
+			fmt.Fprintf(r.out, "[tool] %s\n", ev.Call.Name)
+		}
+	case loop.EventToolResult:
+		state.ToolCallCount++
+		state.Steps = append(state.Steps, Step{
+			Turn: state.Turn, Type: "tool", Name: ev.Call.Name, Content: truncateForStep(ev.Text),
+			ToolCall: ev.Call.ID, Timestamp: time.Now(),
+		})
+	case loop.EventNotice:
+		if state.Options.Verbose {
+			fmt.Fprintf(r.out, "[agent] warning: %s\n", ev.Text)
+		}
+	case loop.EventTurnEnd:
+		// A consistent history (every call paired): checkpoint per turn, as
+		// before the loop existed.
+		state.Messages = ev.History
+		state.UpdatedAt = time.Now()
+		if !state.Options.DisableCheckpoints {
+			_ = r.store.Save(state)
+		}
+	}
+}
+
+// runCompactor feeds the loop's usage into the token budget and runs the
+// agent's compaction ladder (#174) on the loop goroutine.
+type runCompactor struct{ r *Runner }
+
+func (c runCompactor) Compact(ctx context.Context, history []tui.ChatMessage, usage *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
+	if usage != nil && c.r.budget != nil {
+		c.r.budget.AddTurn(usage.PromptTokens, usage.CompletionTokens)
+	}
+	return c.r.compactMessages(ctx, history, force)
 }
 
 func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
@@ -858,98 +847,6 @@ func (r *Runner) runVerificationPhase(ctx context.Context, state *RunState) (boo
 	state.ConsecutiveNoToolTurns = 0
 	state.Phase = PhaseExecution
 	return false, nil
-}
-
-func (r *Runner) executeToolCall(ctx context.Context, state *RunState, tc llm.ToolCallResult) (tui.ChatMessage, bool) {
-	toolName := tc.Name
-	if state.Options.Verbose {
-		fmt.Fprintf(r.out, "[tool] %s\n", toolName)
-	}
-
-	// With an approval prompt, the timeout starts once the user approves (the
-	// registry applies it), so waiting on the prompt doesn't eat into it. The
-	// run context still bounds the wait: Esc or Ctrl+C cancels it (#172).
-	var toolCtx context.Context
-	var cancel context.CancelFunc
-	if r.options.PromptFunc != nil {
-		toolCtx, cancel = context.WithCancel(tools.WithExecTimeout(ctx, state.Options.ToolTimeout))
-	} else {
-		toolCtx, cancel = context.WithTimeout(ctx, state.Options.ToolTimeout)
-	}
-	defer cancel()
-
-	argsJSON := tc.Arguments
-	resultContent := ""
-	argsValid := true
-
-	if tc.ArgsError != "" {
-		argsValid = false
-		resultContent = fmt.Sprintf(`{"error": true, "message": "stream-corrupted tool arguments", "detail": %q, "tool": %q}`, tc.ArgsError, toolName)
-	} else if !json.Valid([]byte(argsJSON)) {
-		argsValid = false
-		resultContent = fmt.Sprintf(`{"error": true, "message": "invalid tool arguments JSON", "tool": %q}`, toolName)
-	} else {
-		execution, err := runToolWithTimeout(toolCtx, func() (*llm.ExecutionResult, error) {
-			return r.client.ExecuteSkill(toolCtx, toolName, argsJSON)
-		})
-		resultContent = formatToolResult(toolName, execution, err)
-	}
-
-	state.Steps = append(state.Steps, Step{
-		Turn:      state.Turn,
-		Type:      "tool",
-		Name:      toolName,
-		Content:   truncateForStep(resultContent),
-		ToolCall:  tc.ID,
-		Timestamp: time.Now(),
-	})
-
-	// Text-based tool calls have IDs like "text-tc-N"; they don't have
-	// matching tool_call_id entries in the assistant message, so we use
-	// "user" role with a labelled result instead of the "tool" role.
-	if strings.HasPrefix(tc.ID, "text-tc-") {
-		return tui.ChatMessage{
-			Role:      "user",
-			Content:   fmt.Sprintf("[Tool Result: %s]\n%s", toolName, resultContent),
-			Timestamp: time.Now(),
-		}, argsValid
-	}
-
-	return tui.ChatMessage{
-		Role:       "tool",
-		ToolCallID: tc.ID,
-		Name:       toolName,
-		Content:    resultContent,
-		Timestamp:  time.Now(),
-	}, argsValid
-}
-
-// runToolWithTimeout runs fn but returns as soon as ctx is cancelled, even if fn
-// itself ignores the context. fn runs in its own goroutine; if it is stuck in a
-// loop that never checks ctx (the v1.10 codegraph spin — task 349f1f14), the
-// goroutine is abandoned but the caller is unblocked so the agent loop can honor
-// its deadline instead of hanging forever. The send channel is buffered so the
-// abandoned goroutine can still complete its send and exit cleanly.
-//
-// Caveat: an abandoned goroutine keeps running until it returns on its own; this
-// makes the *run* terminable on deadline but does not by itself stop a tool that
-// busy-loops. The complementary fix is for long-running tools to honor ctx.
-func runToolWithTimeout(ctx context.Context, fn func() (*llm.ExecutionResult, error)) (*llm.ExecutionResult, error) {
-	type toolOutcome struct {
-		exec *llm.ExecutionResult
-		err  error
-	}
-	done := make(chan toolOutcome, 1)
-	go func() {
-		exec, err := fn()
-		done <- toolOutcome{exec: exec, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, fmt.Errorf("tool execution exceeded timeout: %w", ctx.Err())
-	case out := <-done:
-		return out.exec, out.err
-	}
 }
 
 func executeVerificationCommand(parent context.Context, workspace, command string, timeout time.Duration) VerificationCheck {
@@ -1222,43 +1119,6 @@ func parsePlanSteps(content string, maxSteps int) []PlanStep {
 	return steps
 }
 
-// parseTextToolCalls extracts <tool_call>...</tool_call> blocks from text.
-// This provides a fallback for models/proxies that understand tools but don't
-// issue native API tool_calls — they emit the invocation as structured text.
-// The expected block format is:
-//
-//	<tool_call>{"name":"write_file","arguments":{"path":"x","content":"y"}}</tool_call>
-func parseTextToolCalls(content string) []llm.ToolCallResult {
-	var results []llm.ToolCallResult
-	remaining := content
-	for {
-		start := strings.Index(remaining, "<tool_call>")
-		if start < 0 {
-			break
-		}
-		after := remaining[start+len("<tool_call>"):]
-		end := strings.Index(after, "</tool_call>")
-		if end < 0 {
-			break
-		}
-		jsonStr := strings.TrimSpace(after[:end])
-		var call struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
-		if err := json.Unmarshal([]byte(jsonStr), &call); err == nil && call.Name != "" {
-			argsJSON, _ := json.Marshal(call.Arguments)
-			results = append(results, llm.ToolCallResult{
-				ID:        fmt.Sprintf("text-tc-%d", len(results)),
-				Name:      call.Name,
-				Arguments: string(argsJSON),
-			})
-		}
-		remaining = after[end+len("</tool_call>"):]
-	}
-	return results
-}
-
 func isNumberedStep(line string) bool {
 	if len(line) < 3 {
 		return false
@@ -1374,92 +1234,12 @@ func markAllPlanStepsCompleted(state *RunState) {
 	}
 }
 
-// capToolCalls limits a turn's tool calls to maxCalls (maxCalls <= 0 means no
-// limit). The cap MUST be applied before the assistant message is recorded so the
-// number of declared tool_calls equals the number of tool results returned next
-// turn — declaring N calls but answering only M makes strict OpenAI-compatible
-// APIs (e.g. Sakana Fugu) reject the conversation as a malformed request.
-func capToolCalls(calls []llm.ToolCallResult, maxCalls int) []llm.ToolCallResult {
-	if maxCalls > 0 && len(calls) > maxCalls {
-		return calls[:maxCalls]
-	}
-	return calls
-}
-
-func convertToolCalls(calls []llm.ToolCallResult) []tui.ToolCallInfo {
-	if len(calls) == 0 {
-		return nil
-	}
-	result := make([]tui.ToolCallInfo, 0, len(calls))
-	for _, c := range calls {
-		result = append(result, tui.ToolCallInfo{
-			ID:               c.ID,
-			Name:             c.Name,
-			Arguments:        c.Arguments,
-			ThoughtSignature: c.ThoughtSignature,
-		})
-	}
-	return result
-}
-
-func formatToolResult(toolName string, execution *llm.ExecutionResult, err error) string {
-	if err != nil {
-		payload, _ := json.Marshal(map[string]interface{}{
-			"error":   true,
-			"tool":    toolName,
-			"message": err.Error(),
-		})
-		return string(payload)
-	}
-	if execution == nil {
-		payload, _ := json.Marshal(map[string]interface{}{
-			"error":   true,
-			"tool":    toolName,
-			"message": "nil execution result",
-		})
-		return string(payload)
-	}
-	if !execution.Success {
-		payload, _ := json.Marshal(map[string]interface{}{
-			"error":   true,
-			"tool":    toolName,
-			"message": execution.Error,
-		})
-		return string(payload)
-	}
-
-	switch v := execution.Result.(type) {
-	case string:
-		return v
-	default:
-		b, marshalErr := json.Marshal(v)
-		if marshalErr != nil {
-			payload, _ := json.Marshal(map[string]interface{}{
-				"error":   true,
-				"tool":    toolName,
-				"message": fmt.Sprintf("failed to marshal tool result: %v", marshalErr),
-			})
-			return string(payload)
-		}
-		return string(b)
-	}
-}
-
 func truncateForStep(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 200 {
 		return s[:200] + "..."
 	}
 	return s
-}
-
-// nextConsecutiveInvalid increments the running count when a turn had any
-// invalid-args tool call, and resets to zero otherwise.
-func nextConsecutiveInvalid(prev int, anyInvalid bool) int {
-	if anyInvalid {
-		return prev + 1
-	}
-	return 0
 }
 
 // blockedMutatingTools returns the names of non-read-only tools the current
