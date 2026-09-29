@@ -12,20 +12,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 )
 
 // newTestServerWithWorkspace builds an MCP Server bound to a fresh
-// workspace dir. The workspace is under t.TempDir() so it's under
-// the user's home (validateWorkspace requires that) via the fact that
-// t.TempDir() returns /var/folders/... on macOS — which is NOT under
-// $HOME. We monkey-patch the test setup by pointing the server at
-// $HOME/.tmp-celeste-server/<random> which IS under home.
+// workspace dir. validateWorkspace only accepts workspaces under the home
+// directory, so HOME (and USERPROFILE, for Windows) point at a temp dir and
+// the workspace is made inside it. That also keeps the codegraph index
+// (~/.celeste/projects/<hash>/codegraph.db) out of the real home.
 func newTestServerWithWorkspace(t *testing.T) (*Server, string) {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir, err := os.MkdirTemp(home, ".celeste-server-test-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
@@ -303,3 +304,23 @@ func mapKeys(m map[string]int) []string {
 // without needing strings. Silences unused-import warnings if any of
 // the assertions above ever get removed.
 var _ = strings.Contains
+
+// The codegraph tests' index must land in a temp HOME. It used to leave
+// ~/.celeste/projects/<hash>/codegraph.db in the real home on every run.
+func TestNewTestServerWithWorkspaceIsHermetic(t *testing.T) {
+	before, err := os.UserHomeDir()
+	require.NoError(t, err)
+	srv, dir := newTestServerWithWorkspace(t)
+	writeTSFile(t, dir, "a.ts", "export function a(): number { return 1; }\n")
+	callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	require.NotEqual(t, before, home, "newTestServerWithWorkspace must point HOME at a temp dir")
+	db := codegraph.DefaultIndexPath(dir)
+	rel, err := filepath.Rel(home, db)
+	require.NoError(t, err)
+	require.False(t, strings.HasPrefix(rel, ".."), "index %s is outside the test HOME %s", db, home)
+	_, err = os.Stat(db)
+	require.NoError(t, err, "rebuild did not create the index")
+}
