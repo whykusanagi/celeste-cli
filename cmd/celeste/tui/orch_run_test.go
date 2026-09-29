@@ -87,7 +87,7 @@ func TestOrchestratorCurrentRunEventsApply(t *testing.T) {
 	m, _ = step(t, m, StreamStartMsg{Cancel: func() {}, Run: client.runs[0]})
 	m, _ = step(t, m, OrchestratorEventMsg{Kind: 7, Text: "done", Run: client.runs[0]})
 	assert.False(t, m.turnActive())
-	m, _ = step(t, m, SendMessageMsg{Content: "/orch two"})
+	_, _ = step(t, m, SendMessageMsg{Content: "/orch two"})
 	require.Len(t, client.runs, 2)
 	assert.NotEqual(t, client.runs[0], client.runs[1])
 }

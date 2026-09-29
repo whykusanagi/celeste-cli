@@ -215,7 +215,7 @@ func TestOrchestratorModalEscAndCtrlCDeny(t *testing.T) {
 			d.Send(tui.SendMessageMsg{Content: "/orch write hi to out.txt"})
 			d.RunUntil(func(m tea.Model) bool { return m.(tui.AppModel).DebugPermissionPromptActive() }, 30*time.Second)
 			d.Send(key)
-			m = d.RunUntil(func(m tea.Model) bool {
+			d.RunUntil(func(m tea.Model) bool {
 				return !m.(tui.AppModel).DebugPermissionPromptActive() && turnIdle(m) && !chatHas(m, "❌")
 			}, 30*time.Second)
 			if _, err := os.Stat(filepath.Join(ws, "out.txt")); err == nil {
