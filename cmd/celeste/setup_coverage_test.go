@@ -17,8 +17,8 @@ import (
 
 // Which components each mode wires (spec F1 setup coverage, F2 target).
 // F2a moved the agent rows to true through loop.Setup (F2a plan Task 9, an
-// intentional flip of the F1 "agent.custom_skills = false" row); F2b/F2d move
-// the MCP and TUI rows.
+// intentional flip of the F1 "agent.custom_skills = false" row); F2b moved the
+// MCP rows (server TestMCPChatSetupCoverage); F2d moves the TUI rows.
 func TestSetupCoverage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -101,7 +101,8 @@ func TestSetupCoverage(t *testing.T) {
 	// Documented, not probed here:
 	//   agent.hooks = true (F2a Task 9; covered by agent TestAgentRunsGlobalHooks)
 	//   agent.mcp_clients = true (loop.Setup; covered by loop TestSetupAgentWiresEveryComponent)
-	//   mcp_server.* = false until F2b adopts loop.Setup
+	//   mcp_server.* = true (F2b: MCP chat runs on loop.Setup; probed by the
+	//   server package's TestMCPChatSetupCoverage)
 }
 
 func systemMessage(body map[string]any) string {

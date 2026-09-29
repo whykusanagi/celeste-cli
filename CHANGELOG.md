@@ -269,6 +269,36 @@ transport, and gains a set of TUI features around all of it.
 - MCP agent mode now returns setup and hook warnings in the tool result,
   under a `## Warnings` heading.
 
+### MCP chat (`celeste` tool, `mode: "chat"`)
+
+- Runs on the same tool loop and setup as agent runs. Tool names, arguments
+  and the response shape are unchanged, as are the 25-turn cap, the
+  identical-call and no-progress guards (and their texts), and the stripping
+  of unbacked "Audio saved" and "subagent spawned" claims.
+- Now loads your custom skills, global MCP servers, the code-graph tools,
+  project memories, the code-graph summary and the git state. Repo MCP
+  configs are skipped with a warning, as in agent runs.
+- The server sets this up once per workspace and reuses it across calls
+  (up to 4 workspaces). It rebuilds it on the next call after you change
+  permissions, hooks, hook trust, skills, MCP configs or the grimoire, and
+  after 10 minutes. Each call still starts with a fresh conversation.
+- Also starts the MCP servers in your home-level configs:
+  `~/.celeste/mcp.json`, and now `~/.claude/mcp.json` and
+  `~/.cursor/mcp.json`. If one of them lists `celeste serve`, each
+  workspace's setup runs a child Celeste server (at most 4 at a time).
+- Global tool hooks run on every tool call. Untrusted repo hooks are skipped
+  with a warning. Warnings are appended to the result under a `## Warnings`
+  heading, only when there are any; setup warnings appear on the call that
+  set the workspace up.
+- Concurrency-safe tool calls in one turn run in parallel. Every tool has a
+  timeout: 45s, or its own (`bash` 5m, `generate_speech` 5m). Results over
+  128 KiB are saved to a private file.
+- A failed tool call reaches the model as
+  `{"error": true, "message": …, "tool": …}` instead of the raw text.
+- Within a call, `write_file`, `patch_file` and `splice_file` refuse to edit
+  a file that changed since Celeste last read or wrote it ("read it again
+  before editing"), and snapshot a file before writing it.
+
 ## [1.10.0] - 2026-06-03
 
 ### Added
