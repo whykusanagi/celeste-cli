@@ -304,6 +304,9 @@ transport, and gains a set of TUI features around all of it.
 - Within a call, `write_file`, `patch_file` and `splice_file` refuse to edit
   a file that changed since Celeste last read or wrote it ("read it again
   before editing"), and snapshot a file before writing it.
+- Undo snapshots keep the 100 most recent: past that the oldest one (and
+  its backup file) is dropped. Before, a workspace (or a long chat session)
+  that reached 100 snapshots failed every later edit with "snapshot failed".
 - Prunes old tool results when a call nears the model's context window,
   like agent runs (context_limit is honoured). Pruned results can be
   restored with `recall_tool_result`. MCP chat never writes a summary.
