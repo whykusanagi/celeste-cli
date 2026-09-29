@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,31 +15,75 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/orchestrator"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-// drainOrchestrator follows the /orch event stream to its terminal event.
-func drainOrchestrator(t *testing.T, cmd tea.Cmd) []tui.OrchestratorEventMsg {
+// startOrchestrator runs the command /orch returns: a batch of the run's
+// StreamStartMsg and the read of its first event. It returns the run's
+// cancel, the read command (called again, it reads the next message) and
+// the first event.
+func startOrchestrator(t *testing.T, cmd tea.Cmd) (context.CancelFunc, tea.Cmd, tui.OrchestratorEventMsg) {
 	t.Helper()
-	var out []tui.OrchestratorEventMsg
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("/orch did not return a batch with its cancel")
+	}
+	type result struct {
+		cmd tea.Cmd
+		msg tea.Msg
+	}
+	got := make(chan result, len(batch))
+	for _, c := range batch {
+		go func(c tea.Cmd) { got <- result{c, c()} }(c)
+	}
+	var cancel context.CancelFunc
+	var read tea.Cmd
+	var first tui.OrchestratorEventMsg
+	for range batch {
+		select {
+		case r := <-got:
+			switch m := r.msg.(type) {
+			case tui.StreamStartMsg:
+				cancel = m.Cancel
+			case tui.OrchestratorEventMsg:
+				read, first = r.cmd, m
+			}
+		case <-time.After(90 * time.Second):
+			t.Fatal("the /orch run did not start")
+		}
+	}
+	if cancel == nil || read == nil {
+		t.Fatalf("/orch batch: cancel set %v, first event read %v", cancel != nil, read != nil)
+	}
+	return cancel, read, first
+}
+
+// drainOrchestrator follows the /orch event stream to its terminal event and
+// returns the events and the read command.
+func drainOrchestrator(t *testing.T, cmd tea.Cmd) ([]tui.OrchestratorEventMsg, tea.Cmd) {
+	t.Helper()
+	_, read, first := startOrchestrator(t, cmd)
+	out := []tui.OrchestratorEventMsg{first}
 	deadline := time.After(90 * time.Second)
-	for cmd != nil {
+	next := first.ReadNext()
+	for next != nil {
 		got := make(chan tea.Msg, 1)
-		go func(c tea.Cmd) { got <- c() }(cmd)
+		go func(c tea.Cmd) { got <- c() }(next)
 		select {
 		case m := <-got:
 			ev, ok := m.(tui.OrchestratorEventMsg)
 			if !ok {
-				return out // channel closed
+				return out, read // channel closed
 			}
 			out = append(out, ev)
-			cmd = ev.ReadNext()
+			next = ev.ReadNext()
 		case <-deadline:
 			t.Fatal("the /orch run did not finish")
 		}
 	}
-	return out
+	return out, read
 }
 
 // /orch lanes ask the chat's permission modal instead of silently denying
@@ -64,11 +112,10 @@ func TestOrchestratorCommandAsksThroughTheTUIPrompt(t *testing.T) {
 			return tools.PermissionResponse{Decision: "allow_once"}
 		},
 	}
-	first := adapter.RunOrchestratorCommand("write hi to out.txt")
-	events := drainOrchestrator(t, first)
+	events, read := drainOrchestrator(t, adapter.RunOrchestratorCommand("write hi to out.txt"))
 
 	closed := make(chan tea.Msg, 1)
-	go func() { closed <- first() }()
+	go func() { closed <- read() }()
 	select {
 	case m := <-closed:
 		if m != nil {
@@ -111,7 +158,7 @@ func TestOrchestratorCommandKeepsGoingAfterASkippedDebate(t *testing.T) {
 		"code": {Primary: "fake-model", Reviewer: "fake-model", ReviewerBaseURL: "http://127.0.0.1:1"},
 	}}
 	adapter := &TUIClientAdapter{baseConfig: cfg}
-	events := drainOrchestrator(t, adapter.RunOrchestratorCommand("fix the bug in main.go"))
+	events, _ := drainOrchestrator(t, adapter.RunOrchestratorCommand("fix the bug in main.go"))
 
 	if len(events) == 0 {
 		t.Fatal("no events")
@@ -132,4 +179,122 @@ func TestOrchestratorCommandKeepsGoingAfterASkippedDebate(t *testing.T) {
 	if last.Kind != 7 || !strings.Contains(last.Text, "fixed") {
 		t.Fatalf("last event = kind %d %q, want EventComplete with the primary's output", last.Kind, last.Text)
 	}
+}
+
+// modalPrompt is main.go's promptFn against a test driver: it shows the
+// TUI's permission modal and waits for the key the user presses.
+func modalPrompt(d *tuiTestDriver) tools.PromptFunc {
+	return func(req tools.PermissionRequest) tools.PermissionResponse {
+		ch := make(chan tui.PermissionResponse, 1)
+		d.external <- tui.PermissionRequestMsg{ToolName: req.ToolName, InputSummary: req.InputSummary, RiskLevel: req.RiskLevel, Response: ch}
+		r := <-ch
+		return tools.PermissionResponse{Decision: r.Decision, Pattern: r.Pattern}
+	}
+}
+
+func chatHas(m tea.Model, s string) bool {
+	for _, msg := range chatMessages(m) {
+		if strings.Contains(msg.Content, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// Esc and Ctrl+C while an /orch lane's permission modal is up answer "deny":
+// the lane gets the denial and the run finishes. Before, the modal took
+// only a/A/d/D, and the run could not be cancelled either.
+func TestOrchestratorModalEscAndCtrlCDeny(t *testing.T) {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyCtrlC}} {
+		t.Run(key.String(), func(t *testing.T) {
+			srv := writeScriptTUI(t)
+			m, deps, ws := chatApp(t, srv)
+			t.Chdir(ws)
+			d := newTUIDriver(t, m)
+			deps.adapter.promptFn = modalPrompt(d)
+			d.Send(tui.SendMessageMsg{Content: "/orch write hi to out.txt"})
+			d.RunUntil(func(m tea.Model) bool { return m.(tui.AppModel).DebugPermissionPromptActive() }, 30*time.Second)
+			d.Send(key)
+			m = d.RunUntil(func(m tea.Model) bool {
+				return !m.(tui.AppModel).DebugPermissionPromptActive() && turnIdle(m) && !chatHas(m, "❌")
+			}, 30*time.Second)
+			if _, err := os.Stat(filepath.Join(ws, "out.txt")); err == nil {
+				t.Fatal("out.txt was written after the modal was dismissed")
+			}
+			var bodies []string
+			for _, r := range srv.Requests() {
+				bodies = append(bodies, fmt.Sprint(r.Body["messages"]))
+			}
+			if !strings.Contains(strings.Join(bodies, "\n"), "user denied execution of") {
+				t.Fatalf("the lane never got the denial; %d requests:\n%s", len(bodies), strings.Join(bodies, "\n"))
+			}
+		})
+	}
+}
+
+// writeScriptTUI is one /orch lane that writes out.txt.
+func writeScriptTUI(t *testing.T) *fakeprovider.Server {
+	return fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "1. Write hi to out.txt"},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "w", Name: "write_file", Args: `{"path":"out.txt","content":"hi"}`}}},
+		fakeprovider.Turn{Text: "TASK_COMPLETE: done"},
+	)
+}
+
+// The TUI's interrupt (Esc on an empty input) cancels a running /orch: its
+// lanes run on a context the TUI holds, not context.Background().
+func TestOrchestratorInterruptCancelsTheRun(t *testing.T) {
+	started, stop := make(chan struct{}, 8), make(chan struct{})
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		select { // answers only when the client gives up
+		case <-r.Context().Done():
+			return
+		case <-stop:
+		}
+	}))
+	t.Cleanup(hang.Close)
+	t.Cleanup(func() { close(stop) })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	t.Chdir(ws)
+	app, deps, err := newChatApp(&config.Config{APIKey: "k", BaseURL: hang.URL + "/v1", Model: "fake-model", Timeout: 120}, ws, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	var m tea.Model = app
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
+	d := newTUIDriver(t, m)
+	d.Send(tui.SendMessageMsg{Content: "/orch say hi"})
+	go func() {
+		<-started
+		d.external <- tea.KeyMsg{Type: tea.KeyEsc}
+	}()
+	d.RunUntil(func(m tea.Model) bool { return m.(tui.AppModel).DebugInterrupted() }, 30*time.Second)
+	m = d.RunUntil(func(m tea.Model) bool { return chatHas(m, "❌") && turnIdle(m) }, 20*time.Second)
+	if !chatHas(m, "context canceled") {
+		t.Fatalf("the run ended, but not by the interrupt: %v", chatMessages(m))
+	}
+}
+
+// After the terminal event /orch's callback drops events: it returns without
+// sending (nobody reads) and without panicking once the channel is closed.
+func TestOrchestratorEventSenderDropsEventsAfterTheTerminalOne(t *testing.T) {
+	ch := make(chan tui.OrchestratorEventMsg, 1)
+	send := orchestratorEventSender(ch, ch)
+	send(orchestrator.OrchestratorEvent{Kind: orchestrator.EventComplete, Text: "done"})
+	if m := <-ch; m.Kind != int(orchestrator.EventComplete) || m.Ch != nil {
+		t.Fatalf("terminal message = %#v, want EventComplete with no next read", m)
+	}
+	send(orchestrator.OrchestratorEvent{Kind: orchestrator.EventAction, Text: "late"})
+	select {
+	case m := <-ch:
+		t.Fatalf("an event after the terminal one was sent: %#v", m)
+	default:
+	}
+	close(ch)
+	send(orchestrator.OrchestratorEvent{Kind: orchestrator.EventAction, Text: "after close"}) // must not panic
 }

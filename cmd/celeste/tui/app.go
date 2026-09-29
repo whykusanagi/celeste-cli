@@ -2366,6 +2366,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.AddAction(label)
 			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
+			m.cancelFunc = nil
 			m.streaming = false
 			// Keep splitPanelMode = true so results stay visible; user closes by sending next message
 			m.status = m.status.SetStreaming(false)
@@ -2380,6 +2381,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.persistSession()
 		case 8: // EventError
+			m.cancelFunc = nil
 			m.streaming = false
 			m.splitPanelMode = false
 			m.status = m.status.SetStreaming(false)

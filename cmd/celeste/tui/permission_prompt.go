@@ -63,7 +63,9 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 				Decision: "always_allow",
 				Pattern:  m.buildPattern(),
 			}
-		case "d":
+		case "d", "esc", "ctrl+c":
+			// Esc and Ctrl+C dismiss the modal as a denial, so a waiting
+			// run (an /orch lane, /agent) is never stuck on it.
 			resp = PermissionResponse{Decision: "deny"}
 		case "D":
 			resp = PermissionResponse{
@@ -152,7 +154,7 @@ func (m PermissionPromptModel) View() string {
 	pattern := m.buildPattern()
 	optA := pad(keyStyle.Render("[a]") + mutedStyle.Render(" Allow once"))
 	optAA := pad(keyStyle.Render("[A]") + mutedStyle.Render(fmt.Sprintf(" Always allow %q", pattern)))
-	optD := pad(keyStyle.Render("[d]") + mutedStyle.Render(" Deny"))
+	optD := pad(keyStyle.Render("[d]") + mutedStyle.Render(" Deny (also Esc)"))
 	optDD := pad(keyStyle.Render("[D]") + mutedStyle.Render(fmt.Sprintf(" Always deny %q", pattern)))
 
 	// Bottom border

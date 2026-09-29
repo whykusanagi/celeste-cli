@@ -13,3 +13,6 @@ func (m AppModel) DebugQueued() int { return len(m.steerQueue) + len(m.followUpQ
 
 // DebugInterrupted reports whether the last turn was stopped by Esc (see interrupted).
 func (m AppModel) DebugInterrupted() bool { return m.interrupted }
+
+// DebugPermissionPromptActive reports whether the permission modal is up.
+func (m AppModel) DebugPermissionPromptActive() bool { return m.permissionPrompt.Active() }

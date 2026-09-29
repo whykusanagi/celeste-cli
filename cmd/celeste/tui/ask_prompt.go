@@ -63,7 +63,7 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 			}
 		case "enter":
 			m.send(m.collect())
-		case "esc", "q":
+		case "esc", "q", "ctrl+c":
 			m.send(AskResponseMsg{Cancelled: true})
 		}
 	}

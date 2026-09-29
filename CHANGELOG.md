@@ -292,6 +292,10 @@ transport, and gains a set of TUI features around all of it.
   as the chat, shown over the orchestrator view. Before, every such call
   was silently denied. An orchestrator run without a prompt still denies
   them, and now says so.
+- Esc and Ctrl+C now dismiss the permission prompt as a denial (and cancel
+  the `ask` tool's question), so a run waiting on it, such as an
+  `/orchestrate` lane or `/agent`, carries on. Esc on an empty input and
+  Ctrl+C now also cancel a running `/orchestrate`, as they do `/agent`.
 - `/orchestrate` lanes (primary, reviewer and each debate round) share one
   set of MCP servers, hooks and code graph per run instead of each starting
   its own. Their hooks see one `session_id` for the run,

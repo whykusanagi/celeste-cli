@@ -57,65 +57,76 @@ func logOrchestratorEvent(e orchestrator.OrchestratorEvent) {
 	}
 }
 
+// orchestratorEventSender is /orch's event callback: it logs every event
+// and forwards it to ch, handing the TUI recv (ch's receive end) to read the
+// next one from, until the terminal event (EventComplete or EventError).
+// After that the TUI stops reading (the terminal message's Ch is nil), so
+// anything later is logged and dropped, never sent: a send would block on a
+// channel nobody reads, or panic once it is closed. The orchestrator
+// delivers events one at a time, so finished needs no lock.
+func orchestratorEventSender(ch chan<- tui.OrchestratorEventMsg, recv <-chan tui.OrchestratorEventMsg) func(orchestrator.OrchestratorEvent) {
+	finished := false
+	return func(e orchestrator.OrchestratorEvent) {
+		logOrchestratorEvent(e)
+		if finished {
+			return
+		}
+		terminal := e.Kind == orchestrator.EventComplete || e.Kind == orchestrator.EventError
+		next := recv
+		if terminal {
+			next = nil
+		}
+		ch <- tui.OrchestratorEventMsg{
+			Kind:         int(e.Kind),
+			Lane:         string(e.Lane),
+			Text:         e.Text,
+			Model:        e.Model,
+			Duration:     e.Duration,
+			InputTokens:  e.InputTokens,
+			OutputTokens: e.OutputTokens,
+			Response:     e.Response,
+			FilePath:     e.FilePath,
+			Diff:         e.Diff,
+			Score:        e.Score,
+			Ch:           next,
+		}
+		finished = terminal
+	}
+}
+
 // RunOrchestratorCommand launches an orchestrated agent run from the TUI.
-// Returns a tea.Cmd that streams OrchestratorEventMsg to the TUI.
+// Returns a tea.Cmd that streams OrchestratorEventMsg to the TUI. The run is
+// cancellable: the TUI stores its cancel via StreamStartMsg, so Esc and
+// Ctrl+C stop it, as they do /agent.
 func (a *TUIClientAdapter) RunOrchestratorCommand(goal string) tea.Cmd {
 	// Buffer=1: allows the goroutine to be at most one event ahead of the TUI reader.
 	// This creates backpressure so events stream in real-time rather than all appearing
 	// at once after the agent run completes (what happens with a large buffer).
 	ch := make(chan tui.OrchestratorEventMsg, 1)
+	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
 		defer close(ch)
+		defer cancel()
 		cfg := a.currentAgentConfig()
 		// Lanes ask the chat's permission modal, as /agent does (#172);
 		// before 2.0 every mutating tool was silently denied (spec §3.2).
 		o := orchestrator.New(cfg, orchestrator.WithPrompt(a.promptFn))
 		tui.LogInfo(fmt.Sprintf("[ORCH] run started goal=%q", goal))
-		// recvCh is the receive end of ch; needed because OrchestratorEventMsg.Ch
-		// is <-chan (receive-only) but ch is bidirectional.
-		recvCh := (<-chan tui.OrchestratorEventMsg)(ch)
-		// After the terminal event the TUI stops reading (its Ch is nil), so
-		// anything later is logged and dropped instead of blocking this
-		// goroutine on a send nobody reads. emit calls this one event at a
-		// time, so finished needs no lock.
-		finished := false
-		o.OnEvent(func(e orchestrator.OrchestratorEvent) {
-			logOrchestratorEvent(e)
-			if finished {
-				return
-			}
-			terminal := e.Kind == orchestrator.EventComplete || e.Kind == orchestrator.EventError
-			var msgCh <-chan tui.OrchestratorEventMsg
-			if !terminal {
-				msgCh = recvCh
-			}
-			ch <- tui.OrchestratorEventMsg{
-				Kind:         int(e.Kind),
-				Lane:         string(e.Lane),
-				Text:         e.Text,
-				Model:        e.Model,
-				Duration:     e.Duration,
-				InputTokens:  e.InputTokens,
-				OutputTokens: e.OutputTokens,
-				Response:     e.Response,
-				FilePath:     e.FilePath,
-				Diff:         e.Diff,
-				Score:        e.Score,
-				Ch:           msgCh,
-			}
-			finished = terminal
-		})
+		o.OnEvent(orchestratorEventSender(ch, ch))
 		// Run emits EventComplete or EventError via OnEvent before returning.
-		_, _ = o.Run(context.Background(), goal)
+		_, _ = o.Run(ctx, goal)
 		tui.LogInfo("[ORCH] run finished")
 	}()
 
-	return func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return msg
-	}
+	return tea.Batch(
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		func() tea.Msg {
+			msg, ok := <-ch
+			if !ok {
+				return nil
+			}
+			return msg
+		},
+	)
 }
