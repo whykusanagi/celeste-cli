@@ -130,11 +130,50 @@ func SaveConfig(path string, config *PermissionConfig) error {
 	// Append newline for POSIX compliance
 	data = append(data, '\n')
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := writeFileAtomic(path, data); err != nil {
 		return fmt.Errorf("write permissions config: %w", err)
 	}
 
 	return nil
+}
+
+// writeFileAtomic replaces path with data so that a concurrent reader (a new
+// lane's setup, another celeste process) sees either the old file or the new
+// one, never a half-written one. It writes a temp file in the same
+// directory, syncs it, and renames it over path. An existing file keeps its
+// mode; a new one is 0600.
+func writeFileAtomic(path string, data []byte) (err error) {
+	mode := os.FileMode(0600)
+	if fi, statErr := os.Stat(path); statErr == nil {
+		mode = fi.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	// Close before rename: Windows cannot rename an open file.
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // convertRulesFromJSON converts JSON rule representations to Rule structs.

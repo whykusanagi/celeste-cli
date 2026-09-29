@@ -314,7 +314,11 @@ transport, and gains a set of TUI features around all of it.
   answer only applied to that one lane or run. Runs without a prompt
   (`celeste agent`, MCP, subagents) never write the file. A save now adds
   the rule to the file as it is on disk, so rules saved from the chat and
-  from these runs no longer overwrite each other.
+  from these runs no longer overwrite each other. A `permissions.json` that
+  can't be read or parsed is never rewritten: the save fails with a warning
+  and the file keeps your rules. Saves replace the file atomically (temp
+  file and rename, keeping its mode; a new file is 0600), so a lane or
+  another celeste starting mid-save never reads a half-written file.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

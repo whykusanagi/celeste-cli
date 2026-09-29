@@ -30,8 +30,9 @@ type Checker struct {
 	alwaysAllow  []Rule
 	patternRules []Rule
 	mode         PermissionMode
-	configPath   string   // path to persist rule additions; empty = no persistence
-	protected    []string // spellings of hook/trust files tools may not modify (protected.go)
+	configPath   string      // path to persist rule additions; empty = no persistence
+	persistWarn  func(error) // told when a rule could not be saved; nil = ignore
+	protected    []string    // spellings of hook/trust files tools may not modify (protected.go)
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -61,6 +62,14 @@ func (c *Checker) SetConfigPath(path string) {
 	c.configPath = path
 }
 
+// SetPersistWarn sets a function told when an always-allow or always-deny
+// rule could not be saved to disk (the rule still applies in memory).
+func (c *Checker) SetPersistWarn(warn func(error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.persistWarn = warn
+}
+
 // AddPersistentAllow appends an always-allow rule and, if a config path is
 // set, adds it to the config on disk (see persistRule).
 // The in-memory mutation happens under the lock; disk I/O happens after
@@ -83,12 +92,16 @@ func (c *Checker) addPersistent(rule Rule, d Decision) error {
 	} else {
 		c.alwaysAllow = append(c.alwaysAllow, rule)
 	}
-	cfg, path := c.snapshotConfigLocked()
+	path, warn := c.configPath, c.persistWarn
 	c.mu.Unlock()
 	if path == "" {
 		return nil
 	}
-	return persistRule(path, rule, cfg)
+	err := persistRule(path, rule)
+	if err != nil && warn != nil {
+		warn(err)
+	}
+	return err
 }
 
 // persistMu serializes the load-modify-save in persistRule within the
@@ -99,14 +112,15 @@ var persistMu sync.Mutex
 // one file (the chat's, each /agent run's and /orchestrate lane's), so it
 // re-reads the file and adds the rule there, keeping rules the others saved
 // since this checker loaded it, rather than writing this checker's snapshot
-// over them. A file it cannot read is replaced by fallback, this checker's
-// rules, as before.
-func persistRule(path string, rule Rule, fallback PermissionConfig) error {
+// over them. Only a missing file is created fresh: a file it cannot read or
+// parse is left untouched and the error returned, so a damaged
+// permissions.json never loses the user's deny rules to a rewrite.
+func persistRule(path string, rule Rule) error {
 	persistMu.Lock()
 	defer persistMu.Unlock()
 	cfg, err := LoadConfig(path)
 	if err != nil {
-		return SaveConfig(path, &fallback)
+		return fmt.Errorf("not saving permission rule %q: %w", rule.ToolPattern, err)
 	}
 	list := &cfg.AlwaysAllow
 	if rule.Decision == Deny {
@@ -119,18 +133,6 @@ func persistRule(path string, rule Rule, fallback PermissionConfig) error {
 	}
 	*list = append(*list, rule)
 	return SaveConfig(path, cfg)
-}
-
-// snapshotConfigLocked returns a copy of the current PermissionConfig and the
-// configPath. Must be called with mu held.
-func (c *Checker) snapshotConfigLocked() (PermissionConfig, string) {
-	cfg := PermissionConfig{
-		Mode:         c.mode,
-		AlwaysAllow:  append([]Rule(nil), c.alwaysAllow...),
-		AlwaysDeny:   append([]Rule(nil), c.alwaysDeny...),
-		PatternRules: append([]Rule(nil), c.patternRules...),
-	}
-	return cfg, c.configPath
 }
 
 // Check evaluates whether the given tool invocation is permitted.
