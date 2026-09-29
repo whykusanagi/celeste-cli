@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
 // AgentRunner is the interface the orchestrator uses to execute a goal.
@@ -22,9 +25,75 @@ type RunnerFactory func(model string) AgentRunner
 
 // Result is the final output of an orchestrator run.
 type Result struct {
-	Lane    TaskLane
-	Primary string        // final response from primary agent
-	Verdict *DebateResult // nil when no debate was run
+	Lane     TaskLane
+	Primary  string        // final response from primary agent
+	Verdict  *DebateResult // nil when no debate was run
+	Approval Approval      // how the lanes answered tools that need approval
+}
+
+// Approval is how the lanes answer a tool call the permission policy
+// resolves to Ask. Spec §4 F2: the orchestrator inherits its caller's Gate.
+type Approval int
+
+const (
+	// ApprovalDeny is the headless default: no caller prompt, so Asks are
+	// denied. Run says so in an event and records it in Result.Approval.
+	ApprovalDeny Approval = iota
+	// ApprovalPrompt asks the caller's prompt (the TUI's permission modal).
+	ApprovalPrompt
+	// ApprovalTrust makes invoking the orchestrator the approval: lanes run
+	// in trust mode, and the user's deny rules still apply.
+	ApprovalTrust
+)
+
+func (a Approval) String() string {
+	switch a {
+	case ApprovalPrompt:
+		return "prompt"
+	case ApprovalTrust:
+		return "trust"
+	default:
+		return "deny"
+	}
+}
+
+// headlessDenyNotice is emitted once per headless Run.
+const headlessDenyNotice = "⚠ no approval prompt: tools that need approval will be denied"
+
+// WithPrompt makes the lanes ask fn (the TUI's permission modal) for tools
+// the policy resolves to Ask. A nil fn keeps the headless default.
+func WithPrompt(fn tools.PromptFunc) Option {
+	return func(o *Orchestrator) {
+		if fn == nil {
+			o.approval, o.prompt = ApprovalDeny, nil
+			return
+		}
+		o.approval, o.prompt = ApprovalPrompt, fn
+	}
+}
+
+// WithTrust makes invoking the orchestrator the approval: lanes run in trust
+// mode (deny rules still apply). For headless callers acting on the user's
+// explicit go-ahead.
+func WithTrust() Option {
+	return func(o *Orchestrator) { o.approval, o.prompt = ApprovalTrust, nil }
+}
+
+// newLanes builds one Run's shared lane environment. A var so tests can
+// observe it.
+var newLanes = loop.NewParent
+
+// laneInheritance is what a lane inherits from its orchestrator run: the
+// caller's approval (spec §4 F2) and the run's shared environment.
+type laneInheritance struct {
+	Approval Approval
+	Prompt   tools.PromptFunc
+	Env      loop.Nester // nil: the lane builds its own (loop.Setup)
+}
+
+// laneInherit is what every real lane of a Run nesting under env inherits.
+func (o *Orchestrator) laneInherit(env loop.Nester) laneInheritance {
+	return laneInheritance{Approval: o.approval, Prompt: o.prompt, Env: env}
 }
 
 // Orchestrator manages multi-model agent execution.
@@ -33,6 +102,8 @@ type Orchestrator struct {
 	router        *Router
 	runnerFactory RunnerFactory // WithRunnerFactory; nil = real agent lanes
 	debateRounds  int
+	approval      Approval
+	prompt        tools.PromptFunc
 
 	// mu serializes event delivery: emit holds it while it updates the
 	// active token accumulators and calls onEvent, so lanes, tool
@@ -98,33 +169,59 @@ func (o *Orchestrator) emit(e OrchestratorEvent) {
 }
 
 // Run classifies the goal, routes to models, executes the primary agent,
-// and optionally runs a reviewer debate. Returns the final Result.
+// and optionally runs a reviewer debate. Every real lane of the run nests
+// under one environment (loop.Parent). That environment is local to this
+// call, so concurrent Runs never close each other's lanes, and it is closed
+// before the terminal event (EventComplete or EventError), so nothing from
+// it reaches a caller that stops reading there.
 func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
-	// 1. Classify
-	lane, confidence := ClassifyHeuristic(goal)
-	o.emit(OrchestratorEvent{Kind: EventClassified, Lane: lane, Text: fmt.Sprintf("%.0f%% confidence", confidence*100)})
-
-	// 2. Route
-	assignment, err := o.router.Resolve(lane)
+	ws, err := os.Getwd()
 	if err != nil {
 		o.emit(OrchestratorEvent{Kind: EventError, Text: err.Error()})
 		return nil, err
 	}
+	lanes := newLanes(o.cfg, ws, loop.SetupOptions{
+		// One session_id for every lane's hooks.
+		SessionID: fmt.Sprintf("orchestrator-%d", time.Now().UnixNano()),
+		// Load-time warnings only (hooks skipped, MCP failures): a lane's
+		// hook warnings follow its own runner (hooks.WithWarn).
+		Warn: func(s string) { o.emit(OrchestratorEvent{Kind: EventAction, Text: "⚠ " + s}) },
+	})
+	result, end, err := o.run(ctx, goal, o.laneInherit(lanes))
+	lanes.Close()
+	o.emit(end)
+	return result, err
+}
+
+// run is Run up to its terminal event, which it returns for Run to emit
+// once the lanes' environment is closed.
+func (o *Orchestrator) run(ctx context.Context, goal string, li laneInheritance) (*Result, OrchestratorEvent, error) {
+	// 1. Classify
+	lane, confidence := ClassifyHeuristic(goal)
+	o.emit(OrchestratorEvent{Kind: EventClassified, Lane: lane, Text: fmt.Sprintf("%.0f%% confidence", confidence*100)})
+	if o.approval == ApprovalDeny {
+		o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: headlessDenyNotice})
+	}
+
+	// 2. Route
+	assignment, err := o.router.Resolve(lane)
+	if err != nil {
+		return nil, OrchestratorEvent{Kind: EventError, Text: err.Error()}, err
+	}
 
 	// 3. Run primary agent
 	o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Model: assignment.Primary, Text: fmt.Sprintf("[%s] primary agent", assignment.Primary)})
-	primary := o.makeRunner(assignment.Primary, assignment.PrimaryBaseURL, assignment.PrimaryAPIKey)
+	primary := o.makeRunner(li, assignment.Primary, assignment.PrimaryBaseURL, assignment.PrimaryAPIKey)
 	primaryResponse, err := primary.RunGoal(ctx, goal)
 	if err != nil {
-		o.emit(OrchestratorEvent{Kind: EventError, Text: err.Error()})
-		return nil, fmt.Errorf("primary agent failed: %w", err)
+		return nil, OrchestratorEvent{Kind: EventError, Text: err.Error()}, fmt.Errorf("primary agent failed: %w", err)
 	}
 
-	result := &Result{Lane: lane, Primary: primaryResponse}
+	result := &Result{Lane: lane, Primary: primaryResponse, Approval: o.approval}
 
 	// 4. Debate (code/review lanes with a configured reviewer only)
 	if assignment.HasReviewer() && (lane == LaneCode || lane == LaneReview) {
-		verdict, debateErr := o.runDebate(ctx, goal, primaryResponse, assignment)
+		verdict, debateErr := o.runDebate(ctx, li, goal, primaryResponse, assignment)
 		if debateErr != nil {
 			// Debate failure is non-fatal — emit warning and continue.
 			o.emit(OrchestratorEvent{Kind: EventError, Text: fmt.Sprintf("debate skipped: %v", debateErr)})
@@ -133,14 +230,13 @@ func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
 		}
 	}
 
-	o.emit(OrchestratorEvent{Kind: EventComplete, Lane: lane, Text: result.Primary})
-	return result, nil
+	return result, OrchestratorEvent{Kind: EventComplete, Lane: lane, Text: result.Primary}, nil
 }
 
-// makeRunner creates an AgentRunner for model. A base URL or API key
-// override (cross-provider orchestration) always gets a real agent lane;
-// otherwise a WithRunnerFactory factory, when set, makes it.
-func (o *Orchestrator) makeRunner(model, baseURL, apiKey string) AgentRunner {
+// makeRunner creates an AgentRunner for model that inherits li. A base URL
+// or API key override (cross-provider orchestration) always gets a real
+// agent lane; otherwise a WithRunnerFactory factory, when set, makes it.
+func (o *Orchestrator) makeRunner(li laneInheritance, model, baseURL, apiKey string) AgentRunner {
 	cfg := o.cfg
 	if baseURL != "" || apiKey != "" {
 		c := *o.cfg
@@ -154,12 +250,12 @@ func (o *Orchestrator) makeRunner(model, baseURL, apiKey string) AgentRunner {
 	} else if o.runnerFactory != nil {
 		return o.runnerFactory(model)
 	}
-	return defaultRunnerFactory(cfg, o.emit)(model)
+	return defaultRunnerFactory(cfg, o.emit, li)(model)
 }
 
-func (o *Orchestrator) runDebate(ctx context.Context, goal, primaryOutput string, assignment ModelAssignment) (*DebateResult, error) {
+func (o *Orchestrator) runDebate(ctx context.Context, li laneInheritance, goal, primaryOutput string, assignment ModelAssignment) (*DebateResult, error) {
 	dm := NewDebateManager(DebateOptions{MaxRounds: o.debateRounds})
-	reviewer := o.makeRunner(assignment.Reviewer, assignment.ReviewerBaseURL, assignment.ReviewerAPIKey)
+	reviewer := o.makeRunner(li, assignment.Reviewer, assignment.ReviewerBaseURL, assignment.ReviewerAPIKey)
 
 	reviewPrompt := fmt.Sprintf(
 		"You are reviewing code produced by another model. Evaluate purely on correctness, security, and clarity.\n\nOriginal goal: %s\n\nOutput to review:\n%s\n\nList any issues as JSON: [{\"file\":\"\",\"line\":0,\"severity\":\"low|medium|high\",\"description\":\"\"}]",
@@ -203,7 +299,7 @@ func (o *Orchestrator) runDebate(ctx context.Context, goal, primaryOutput string
 
 		// Primary agent responds to critique
 		defensePrompt := fmt.Sprintf("The reviewer found these issues:\n%s\n\nAddress each issue and provide the corrected output.", reviewOutput)
-		defenseRunner := o.makeRunner(assignment.Primary, "", "")
+		defenseRunner := o.makeRunner(li, assignment.Primary, "", "")
 		defenseOutput, defenseElapsed, defenseIn, defenseOut, err := o.runGoalAccumStats(ctx, defenseRunner, defensePrompt)
 		if err != nil {
 			return nil, fmt.Errorf("primary defense round %d failed: %w", round, err)

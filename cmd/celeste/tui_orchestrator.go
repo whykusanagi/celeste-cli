@@ -68,15 +68,26 @@ func (a *TUIClientAdapter) RunOrchestratorCommand(goal string) tea.Cmd {
 	go func() {
 		defer close(ch)
 		cfg := a.currentAgentConfig()
-		o := orchestrator.New(cfg)
+		// Lanes ask the chat's permission modal, as /agent does (#172);
+		// before 2.0 every mutating tool was silently denied (spec §3.2).
+		o := orchestrator.New(cfg, orchestrator.WithPrompt(a.promptFn))
 		tui.LogInfo(fmt.Sprintf("[ORCH] run started goal=%q", goal))
 		// recvCh is the receive end of ch; needed because OrchestratorEventMsg.Ch
 		// is <-chan (receive-only) but ch is bidirectional.
 		recvCh := (<-chan tui.OrchestratorEventMsg)(ch)
+		// After the terminal event the TUI stops reading (its Ch is nil), so
+		// anything later is logged and dropped instead of blocking this
+		// goroutine on a send nobody reads. emit calls this one event at a
+		// time, so finished needs no lock.
+		finished := false
 		o.OnEvent(func(e orchestrator.OrchestratorEvent) {
 			logOrchestratorEvent(e)
+			if finished {
+				return
+			}
+			terminal := e.Kind == orchestrator.EventComplete || e.Kind == orchestrator.EventError
 			var msgCh <-chan tui.OrchestratorEventMsg
-			if e.Kind != orchestrator.EventComplete && e.Kind != orchestrator.EventError {
+			if !terminal {
 				msgCh = recvCh
 			}
 			ch <- tui.OrchestratorEventMsg{
@@ -93,6 +104,7 @@ func (a *TUIClientAdapter) RunOrchestratorCommand(goal string) tea.Cmd {
 				Score:        e.Score,
 				Ch:           msgCh,
 			}
+			finished = terminal
 		})
 		// Run emits EventComplete or EventError via OnEvent before returning.
 		_, _ = o.Run(context.Background(), goal)

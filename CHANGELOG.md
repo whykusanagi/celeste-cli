@@ -287,6 +287,15 @@ transport, and gains a set of TUI features around all of it.
   in its own worktree still loads hooks, project context and the code
   graph for that worktree. Subagent setup and hook warnings now show in
   the chat, and subagent hooks get the chat session's `session_id`.
+- `/orchestrate` asks before running tools your permission policy doesn't
+  allow outright (writes, edits, shell commands), through the same prompt
+  as the chat, shown over the orchestrator view. Before, every such call
+  was silently denied. An orchestrator run without a prompt still denies
+  them, and now says so.
+- `/orchestrate` lanes (primary, reviewer and each debate round) share one
+  set of MCP servers, hooks and code graph per run instead of each starting
+  its own. Their hooks see one `session_id` for the run,
+  `orchestrator-<n>`, instead of one per lane.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

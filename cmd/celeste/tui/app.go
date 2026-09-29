@@ -2807,12 +2807,27 @@ func (m AppModel) View() string {
 	}
 
 	if m.splitPanelMode && m.splitPanel != nil {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.header.View(),
-			m.splitPanel.View(),
-			m.status.View(),
-			m.input.View(),
-		)
+		// A /orch lane can be waiting on the permission modal or the ask
+		// tool, and Update routes keys to them in this mode too: render them
+		// here, or the run waits on a prompt nobody can see. The panel gives
+		// up the rows they take.
+		var modals []string
+		if m.permissionPrompt.Active() {
+			modals = append(modals, m.permissionPrompt.View())
+		}
+		if m.askPrompt.Active() {
+			modals = append(modals, m.askPrompt.View())
+		}
+		panel := *m.splitPanel
+		for _, v := range modals {
+			panel.height -= lipgloss.Height(v)
+		}
+		if panel.height < 5 {
+			panel.height = 5
+		}
+		sections := append([]string{m.header.View(), panel.View()}, modals...)
+		sections = append(sections, m.status.View(), m.input.View())
+		return lipgloss.JoinVertical(lipgloss.Left, sections...)
 	}
 
 	// Build the layout vertically
