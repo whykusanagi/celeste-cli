@@ -66,3 +66,12 @@ func (ft *FileTracker) ClearStale(path string) {
 	delete(ft.readTimes, path)
 	ft.mu.Unlock()
 }
+
+// Reset forgets every recorded read, so the next write to any file is
+// allowed as a first write. MCP chat calls it when a shared environment
+// starts a call with no other call in flight: staleness is judged per call.
+func (ft *FileTracker) Reset() {
+	ft.mu.Lock()
+	ft.readTimes = make(map[string]time.Time)
+	ft.mu.Unlock()
+}

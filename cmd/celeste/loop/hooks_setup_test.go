@@ -128,3 +128,27 @@ func TestSetupWarnsWhenHooksFailToLoad(t *testing.T) {
 	}
 	env.StartSession(context.Background(), "startup") // nil runner: no-op
 }
+
+// SessionStartContext fires SessionStart without touching the Env, so a
+// shared Env (MCP chat) gives each call its own session context.
+func TestSessionStartContextLeavesTheEnvAlone(t *testing.T) {
+	home := setupHome(t)
+	write(t, filepath.Join(home, ".celeste", "hooks.json"), hooksJSON(t,
+		hookDef("SessionStart", "", hooktest.Command(t, "context", "per-call-marker")),
+	))
+	env, _ := mustSetup(t, ModeMCPChat, t.TempDir())
+	before := env.ProjectContext
+	got := env.SessionStartContext(context.Background(), "startup")
+	if got != "per-call-marker" {
+		t.Fatalf("SessionStartContext = %q", got)
+	}
+	if env.ProjectContext != before {
+		t.Fatal("SessionStartContext changed the Env")
+	}
+	if sys := env.SystemPromptWithSession(got, "", nil); !strings.Contains(sys, "# Session Start Hook Context\n\nper-call-marker") {
+		t.Fatalf("session context missing:\n%s", sys)
+	}
+	if strings.Contains(env.SystemPrompt("", nil), "per-call-marker") {
+		t.Fatal("SystemPrompt carries a call's session context")
+	}
+}

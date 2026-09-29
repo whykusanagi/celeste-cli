@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
@@ -283,5 +284,32 @@ func TestSetupAgentStartsGlobalMCPConfig(t *testing.T) {
 	}
 	if strings.Contains(w.all(), "repo MCP") {
 		t.Errorf("unexpected repo-MCP warning:\n%s", w.all())
+	}
+}
+
+// Timing notices go to SetupOptions.Notice, not Warn: they depend on the
+// machine, not the configuration.
+func TestSetupTimingNoticesGoToNotice(t *testing.T) {
+	setupHome(t)
+	origTimeout, origUpdate := codeGraphTimeout, updateCodeGraph
+	t.Cleanup(func() { codeGraphTimeout, updateCodeGraph = origTimeout, origUpdate })
+	codeGraphTimeout = 50 * time.Millisecond
+	// The update blocks until Close cancels it, so the timeout always wins:
+	// no race between a real update and the timer.
+	updateCodeGraph = func(ctx context.Context, _ *codegraph.Indexer) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	warns, notices := &warnings{}, &warnings{}
+	env, err := Setup(ModeMCPChat, testCfg(), t.TempDir(), SetupOptions{Warn: warns.add, Notice: notices.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	if !strings.Contains(notices.all(), "code graph update timed out") {
+		t.Fatalf("notices = %q", notices.all())
+	}
+	if strings.Contains(warns.all(), "timed out") {
+		t.Fatalf("a timing notice reached Warn: %q", warns.all())
 	}
 }
