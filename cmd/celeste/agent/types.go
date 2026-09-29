@@ -7,6 +7,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -96,6 +97,12 @@ type Options struct {
 	Nested bool `json:"-"`
 	// Warn receives setup and hook warnings. Nil writes them to errOut.
 	Warn func(string) `json:"-"`
+	// ParentEnv, when set, is the environment of the run that started this
+	// one (the subagent manager's or an orchestrator run's loop.Parent, or a
+	// Setup Env). NewRunner builds its Env with ParentEnv.Nested instead of
+	// loop.Setup, sharing MCP clients, hooks and the code graph, and the run
+	// is Nested. The runner never closes ParentEnv; its owner does.
+	ParentEnv loop.Nester `json:"-"`
 	// Client, when set, is used instead of building an llm.Client from the
 	// config. Tests inject a client around a fake backend (2.0 F1).
 	Client *llm.Client `json:"-"`
