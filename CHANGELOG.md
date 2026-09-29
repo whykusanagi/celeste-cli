@@ -275,6 +275,18 @@ transport, and gains a set of TUI features around all of it.
   other tools for the rest of the session (#221).
 - MCP agent mode now returns setup and hook warnings in the tool result,
   under a `## Warnings` heading.
+- Subagents share one set of MCP servers, hooks and code graph per chat
+  session instead of each starting its own (up to 15 s per subagent). The
+  shared setup is rebuilt for the next subagent after you change
+  permissions, hooks, hook trust, MCP configs or the home or workspace
+  grimoire, or add or remove a skill; subagents already running finish on
+  the old one. Each subagent also reloads your permissions, captures the
+  git state, and brings the code graph up to date with files changed
+  since the last update, waiting at most 2 s for it. The code-graph summary
+  in its system prompt is from when the shared setup was built. A subagent
+  in its own worktree still loads hooks, project context and the code
+  graph for that worktree. Subagent setup and hook warnings now show in
+  the chat, and subagent hooks get the chat session's `session_id`.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

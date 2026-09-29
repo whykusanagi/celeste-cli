@@ -233,6 +233,7 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 	registry, tuiClient := deps.registry, deps.adapter
+	defer tuiClient.subMgr.Close()
 	defer func() { _ = deps.mcpManager.Stop() }()
 	if deps.indexer != nil {
 		defer deps.indexer.Close()

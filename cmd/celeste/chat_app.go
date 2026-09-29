@@ -316,6 +316,10 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		currentSession = sessionManager.NewSession()
 	}
 
+	// Subagents share one environment per chat session: their hooks see this
+	// session's ID, and their warnings reach the chat like /agent's.
+	subMgr.SetEnvOptions(currentSession.ID, tuiAgentWarn)
+
 	// Hooks (2.0 F0): global hooks run; repo hooks run only once trusted.
 	hookRunner, startContext, hookWarnings := loadChatHooks(cwd, homeDir, currentSession.ID,
 		resumeSessionID != "" && len(currentSession.Messages) > 0, registry)

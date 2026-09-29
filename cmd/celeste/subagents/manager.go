@@ -9,13 +9,16 @@ package subagents
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 )
 
 // recursionMarker is injected into subagent messages to detect and block
@@ -110,6 +113,20 @@ type Manager struct {
 	// It is called from a goroutine; implementations must be goroutine-safe.
 	// nil = no notification (default; non-TUI callers are unaffected).
 	OnBackgroundComplete func(*SubagentRun)
+
+	// parent is the environment every subagent nests under (MCP clients,
+	// hooks, code graph): built by the first spawn and rebuilt when the
+	// configuration changes (loop.Parent). sessionID configures it.
+	envMu     sync.Mutex
+	parent    *loop.Parent
+	envClosed bool
+	sessionID string
+	// warnMu guards warnFn and warnClosed. warn holds it while warnFn runs,
+	// so warnings arrive one at a time and none starts after Close; warnFn
+	// must not call back into the Manager.
+	warnMu     sync.Mutex
+	warnFn     func(string)
+	warnClosed bool
 }
 
 // NewManager creates a subagent manager. Pass isChild=true when the manager
@@ -125,6 +142,72 @@ func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
 	}
 	m.execFn = m.executeSubagent
 	return m
+}
+
+// SetEnvOptions sets the hooks' session_id and the warning sink for the
+// subagents' shared environment. The chat passes its session ID and its
+// chat-visible sink. Call it before the first spawn: the session ID is read
+// when the environment is first created.
+func (m *Manager) SetEnvOptions(sessionID string, warn func(string)) {
+	m.envMu.Lock()
+	m.sessionID = sessionID
+	m.envMu.Unlock()
+	m.warnMu.Lock()
+	m.warnFn = warn
+	m.warnMu.Unlock()
+}
+
+// warn reports a setup or hook warning from the subagents, one at a time.
+// Nothing is reported once Close has started.
+func (m *Manager) warn(s string) {
+	m.warnMu.Lock()
+	defer m.warnMu.Unlock()
+	if m.warnClosed {
+		return
+	}
+	if m.warnFn == nil {
+		fmt.Fprintln(os.Stderr, "Warning: "+s)
+		return
+	}
+	m.warnFn(s)
+}
+
+// parentEnv returns the environment every subagent nests under, creating
+// the loop.Parent on first use. It builds its Env on the first Nested call
+// and rebuilds it when the configuration changes, so MCP servers start and
+// hooks load once per chat session, not once per subagent.
+func (m *Manager) parentEnv() (loop.Nester, error) {
+	m.envMu.Lock()
+	defer m.envMu.Unlock()
+	if m.envClosed {
+		return nil, errors.New("subagent manager is closed")
+	}
+	if m.parent == nil {
+		sid := m.sessionID
+		if sid == "" {
+			sid = fmt.Sprintf("subagents-%d", os.Getpid())
+		}
+		m.parent = loop.NewParent(m.cfg, m.workspace, loop.SetupOptions{SessionID: sid, Warn: m.warn})
+	}
+	return m.parent, nil
+}
+
+// Close releases the subagents' shared environment. Warnings stop first, so
+// none reaches the sink after Close, even from the environment's own
+// shutdown; subagents still running keep it open until they finish, and a
+// spawn after Close fails cleanly.
+func (m *Manager) Close() {
+	m.warnMu.Lock()
+	m.warnClosed = true
+	m.warnMu.Unlock()
+	m.envMu.Lock()
+	m.envClosed = true
+	p := m.parent
+	m.parent = nil
+	m.envMu.Unlock()
+	if p != nil {
+		p.Close()
+	}
 }
 
 // TurnCallback is called on each subagent turn so the parent can
@@ -440,9 +523,10 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 
 // buildAgentOptions constructs the agent runner options shared by spawn and
 // resume so the two paths can't drift. maxTurns <= 0 falls back to the
-// default of 20. The options set are Workspace, MaxTurns, Verbose, and the
-// OnTurnStats callback wired from turnCb (nil turnCb → no callback).
-func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback, sliders *config.SliderConfig) agent.Options {
+// default of 20. agentID names the subagent for SubagentStop hooks (the ID
+// spawn_agent returned); parent is the manager's shared environment (nil
+// only in tests that never run).
+func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback, sliders *config.SliderConfig, agentID string, parent loop.Nester) agent.Options {
 	if maxTurns <= 0 {
 		maxTurns = 20
 	}
@@ -459,8 +543,12 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 		// write/commit/bash (broke worktree work + made background agents inert).
 		AutoApproveTools: true,
 		Sliders:          sliders,
-		// A subagent is part of its parent's run: no SessionStart/Stop hooks.
-		Nested: true,
+		// A subagent is part of its parent's run: no SessionStart/Stop hooks,
+		// SubagentStop instead, and the manager's shared environment.
+		Nested:    true,
+		AgentID:   agentID,
+		ParentEnv: parent,
+		Warn:      m.warn,
 	}
 	if turnCb != nil {
 		cb := turnCb
@@ -576,7 +664,16 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	var outBuf, errBuf bytes.Buffer
 	// Use execWorkspace (worktree path when isolated, otherwise workspace) for
 	// the actual agent run. run.Workspace retains the durable repo path.
-	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders)
+	parent, err := m.parentEnv()
+	if err != nil {
+		m.mu.Lock()
+		run.Status = "failed"
+		run.Error = err.Error()
+		run.EndedAt = time.Now()
+		m.mu.Unlock()
+		return run, fmt.Errorf("create subagent: %w", err)
+	}
+	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders, run.ID, parent)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -846,17 +943,26 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	// run isn't in memory (e.g. after a process restart).
 	workspace := m.workspace
 	var sliders *config.SliderConfig
+	// SubagentStop's agent_id stays the ID spawn_agent returned. After a
+	// restart the original run is unknown and the checkpoint ID is all
+	// there is.
+	agentID := checkpointID
 	m.mu.Lock()
 	for _, r := range m.runs {
 		if r.CheckpointID == checkpointID && r.Workspace != "" {
 			workspace = r.Workspace
 			sliders = r.sliders
+			agentID = r.ID
 			break
 		}
 	}
 	m.mu.Unlock()
 
-	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders)
+	parent, err := m.parentEnv()
+	if err != nil {
+		return nil, fmt.Errorf("create runner for resume: %w", err)
+	}
+	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders, agentID, parent)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
