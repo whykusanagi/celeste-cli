@@ -421,3 +421,33 @@ func TestNestedChildRunsMCPToolAfterParentClose(t *testing.T) {
 	}
 	child.Close()
 }
+
+// Parent reads ConfigStamp under its lock: a caller that waited for the lock
+// while a config file changed rebuilds, instead of comparing a stamp read
+// before the change and nesting under the stale Env.
+func TestParentReadsTheStampUnderItsLock(t *testing.T) {
+	home := setupHome(t)
+	p := NewParent(testCfg(), goWorkspace(t), SetupOptions{Warn: func(string) {}})
+	t.Cleanup(p.Close)
+	mustNested(t, p, NestedOptions{})
+	first := p.env
+
+	p.mu.Lock() // another caller is nesting
+	done := make(chan *Env, 1)
+	go func() {
+		c, err := p.Nested(NestedOptions{})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- c
+	}()
+	time.Sleep(100 * time.Millisecond) // let the waiting caller reach the lock
+	write(t, filepath.Join(home, ".celeste", "permissions.json"), `{"mode":"default","always_deny":[{"tool_pattern":"write_file"}]}`)
+	p.mu.Unlock()
+	if c := <-done; c != nil {
+		c.Close()
+	}
+	if p.env == first {
+		t.Fatal("a config change made while the caller waited for the lock did not rebuild the Env")
+	}
+}

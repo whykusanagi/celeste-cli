@@ -36,12 +36,14 @@ func NewParent(cfg *config.Config, workspace string, opts SetupOptions) *Parent 
 // nesting under it; concurrent callers wait for each other (Setup takes up
 // to 15 s, a child's refresh up to nestedCodeGraphTimeout).
 func (p *Parent) Nested(opts NestedOptions) (*Env, error) {
-	stamp := ConfigStamp(p.ws)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return nil, errors.New("loop: parent environment is closed")
 	}
+	// Read under the lock: a stamp read before waiting for it could predate
+	// a config change and keep a stale Env.
+	stamp := ConfigStamp(p.ws)
 	if p.env != nil && p.stamp != stamp {
 		// Runners still using it keep its shared parts open until they close.
 		p.env.Close()
