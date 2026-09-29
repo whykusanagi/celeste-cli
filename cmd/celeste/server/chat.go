@@ -55,10 +55,21 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	ctx = hooks.WithWarn(ctx, warns.add)
 	env := ce.env
 
-	system := env.SystemPrompt("", nil)
+	// Each MCP chat call is a session from the plugin's view: SessionStart
+	// fires per call and its context goes into this call's system prompt
+	// only, never into the shared Env. Then the prompt goes through
+	// UserPromptSubmit, in the chat UI's order. Both run under ctx, so a
+	// failed hook's warning lands on this call.
+	session := env.SessionStartContext(ctx, "startup")
+	prompt, err = submitPrompt(ctx, env.Hooks, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("%w%s", err, warns.section())
+	}
+
+	system := env.SystemPromptWithSession(session, "", nil)
 	sessionID := fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano())
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
-	text, err := runChat(ctx, l, prompt)
+	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add)
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
@@ -157,14 +168,34 @@ func (c *chatCompactor) Compact(_ context.Context, history []loop.Message, usage
 }
 
 // runChat runs the loop for one prompt and returns the tool-result text.
-func runChat(ctx context.Context, l *loop.Loop, prompt string) (string, error) {
+// When a run finishes as done, Stop hooks may continue it once with turns
+// left out of the 25 (chatStopHook). Guard and cap stops never reach Stop.
+// The claim flags span the whole call, as the pre-loop session flags did.
+func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, warn func(string)) (string, error) {
 	lim := l.Limits
+	history := []loop.Message{{Role: "user", Content: prompt, Timestamp: time.Now()}}
 	var claims chatClaims
-	_, res, err := runObserved(ctx, l, []loop.Message{{Role: "user", Content: prompt, Timestamp: time.Now()}}, &claims)
-	if err != nil {
-		return "", err
+	turnsLeft := lim.MaxTurns
+	continued := false
+	for {
+		l.Limits.MaxTurns = turnsLeft // >= 1: chatStopHook stops at 0
+		var res loop.Result
+		var err error
+		history, res, err = runObserved(ctx, l, history, &claims)
+		if err != nil {
+			return "", err
+		}
+		turnsLeft -= res.Turns
+		if res.StopReason != loop.StopDone {
+			return chatText(res, lim, &claims), nil
+		}
+		next := chatStopHook(ctx, h, strings.TrimSpace(res.FinalText), continued, turnsLeft, warn)
+		if next == "" {
+			return chatText(res, lim, &claims), nil
+		}
+		continued = true
+		history = append(history, loop.Message{Role: "user", Content: next, Timestamp: time.Now()})
 	}
-	return chatText(res, lim, &claims), nil
 }
 
 // runObserved runs l once and feeds its events to claims. The event channel

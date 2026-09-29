@@ -226,13 +226,17 @@ transport, and gains a set of TUI features around all of it.
   in `mode: "agent"`, `/agent` in the chat, subagents and `/orchestrate`
   lanes. Your global hooks run; untrusted repo hooks are skipped with a
   warning, because agent runs never prompt for trust. Approve them ahead of
-  time with `celeste hooks trust`. The MCP server's `mode: "chat"` still
-  loads no hooks.
-- A Stop hook's `deny` is now acted on in `celeste agent` and MCP agent
-  mode: the run continues once with the hook's `reason` as the next
+  time with `celeste hooks trust`.
+- A Stop hook's `deny` is now acted on in `celeste agent`, MCP agent mode
+  and MCP chat: the run continues once with the hook's `reason` as the next
   instruction, and only while turns remain. Subagents, `/orchestrate` lanes
   and `/agent` in the chat skip SessionStart and Stop. SubagentStop is not
   fired yet.
+- MCP chat (`celeste` tool, `mode: "chat"`) now loads hooks like agent
+  runs: your global hooks run, and untrusted repo hooks are skipped with a
+  warning returned in the result. Each call fires SessionStart (`startup`),
+  and UserPromptSubmit sees the call's `prompt`: a `deny` refuses the call
+  with an error result, and `additionalContext` is sent with the prompt.
 - Agent compaction summaries fire PreCompact (trigger `auto`) and
   PostCompact (with the summary text). A PreCompact `deny` skips the summary
   and is reported as a warning.
