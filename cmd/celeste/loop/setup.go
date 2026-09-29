@@ -77,11 +77,13 @@ type Env struct {
 	ownsIndex bool // a child in another workspace closes its own code graph
 	// indexOwner is the Env whose code graph this one uses (itself when it
 	// built one); indexCtx is that update context, cancelled by Close.
-	// indexMu is held while an update of this Env's code graph runs, so
-	// updates never overlap (the indexer's parsers are not concurrency-safe).
+	// indexSem (capacity 1) is held while an update of this Env's code
+	// graph runs, so updates never overlap (the indexer's parsers are not
+	// concurrency-safe); a channel, so a child can wait for it with a
+	// deadline.
 	indexOwner *Env
 	indexCtx   context.Context
-	indexMu    sync.Mutex
+	indexSem   chan struct{}
 	lifeMu     sync.Mutex // guards closed against a concurrent Nested
 	closed     bool
 }
@@ -329,10 +331,11 @@ func (e *Env) setupCodeGraph(ws string) string {
 	e.indexCtx, e.indexCancel, e.indexOwner = ctx, cancel, e
 	done := make(chan error, 1)
 	e.indexing.Add(1)
-	e.indexMu.Lock() // the update unlocks it: a child's refresh never overlaps it
+	e.indexSem = make(chan struct{}, 1)
+	e.indexSem <- struct{}{} // the update releases it: a child's refresh never overlaps it
 	go func() {
 		defer e.indexing.Done()
-		defer e.indexMu.Unlock()
+		defer func() { <-e.indexSem }()
 		done <- updateCodeGraph(ctx, idx)
 	}()
 	select {

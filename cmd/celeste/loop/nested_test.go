@@ -333,8 +333,8 @@ func TestParentRebuildsWhenConfigChanges(t *testing.T) {
 }
 
 // refreshIndex serializes code-graph updates: concurrent same-workspace
-// refreshes never run updateCodeGraph at the same time (indexMu.TryLock in
-// refreshIndex, nested.go). This must fail if that TryLock/Unlock is removed.
+// refreshes never run updateCodeGraph at the same time (indexSem in
+// refreshIndex, nested.go). This must fail if that semaphore is removed.
 func TestNestedRefreshIndexSerializesUpdates(t *testing.T) {
 	setupHome(t)
 	parent, _ := mustSetup(t, ModeAgent, goWorkspace(t))
@@ -366,7 +366,7 @@ func TestNestedRefreshIndexSerializesUpdates(t *testing.T) {
 	wg.Wait()
 
 	if got := atomic.LoadInt32(&max); got != 1 {
-		t.Fatalf("max concurrent updateCodeGraph calls = %d, want 1 (refreshIndex must serialize via indexMu.TryLock/Unlock)", got)
+		t.Fatalf("max concurrent updateCodeGraph calls = %d, want 1 (refreshIndex must serialize via indexSem)", got)
 	}
 }
 
@@ -449,5 +449,42 @@ func TestParentReadsTheStampUnderItsLock(t *testing.T) {
 	}
 	if p.env == first {
 		t.Fatal("a config change made while the caller waited for the lock did not rebuild the Env")
+	}
+}
+
+// A child that arrives while Setup's timed-out update still runs waits for
+// it (within nestedCodeGraphTimeout) and then brings the graph up to date
+// itself. It used to skip the refresh when the update held the lock, and
+// nothing retried it, so the child saw a stale code graph.
+func TestNestedRefreshWaitsForAnInFlightUpdate(t *testing.T) {
+	setupHome(t)
+	ws := goWorkspace(t)
+	origUpdate, origSetupTimeout := updateCodeGraph, codeGraphTimeout
+	t.Cleanup(func() { updateCodeGraph, codeGraphTimeout = origUpdate, origSetupTimeout })
+	indexed, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	updateCodeGraph = func(ctx context.Context, idx *codegraph.Indexer) error {
+		if calls.Add(1) > 1 {
+			return origUpdate(ctx, idx)
+		}
+		// Setup's update: index, then keep running past Setup's wait.
+		err := origUpdate(ctx, idx)
+		close(indexed)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return err
+	}
+	codeGraphTimeout = 20 * time.Millisecond
+	parent, _ := mustSetup(t, ModeAgent, ws)
+	<-indexed
+	write(t, filepath.Join(ws, "later.go"), "package main\n\nfunc probeAddedLater() {}\n")
+	time.AfterFunc(200*time.Millisecond, func() { close(release) })
+
+	child := mustNested(t, parent, NestedOptions{})
+	res, err := searchCode(child, "probeAddedLater")
+	if err != nil || res.Error || !strings.Contains(res.Content, "Found 1 symbols") {
+		t.Fatalf("the child skipped its refresh while Setup's update ran: %v %s", err, res.Content)
 	}
 }

@@ -134,21 +134,36 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 
 // refreshIndex brings the shared code graph up to date with files changed
 // since its last update. Only changed files are re-indexed. It waits at most
-// nestedCodeGraphTimeout; a longer update carries on in the background. It is
-// skipped while another update runs, which brings the graph up to date
-// anyway. The update runs under the owner's ctx and WaitGroup, so the
-// family's last Close cancels and waits for it. (The child holds a reference
-// here, so that Close cannot be running while the WaitGroup is added to.)
+// nestedCodeGraphTimeout in all: first for an update already running (Setup's
+// can outlive its own wait) to finish, then for its own, which it starts only
+// if time remains; one that runs longer carries on in the background.
+// Updates never overlap. They run under the owner's ctx and WaitGroup, so
+// the family's last Close cancels and waits for them. (The child holds a
+// reference here, so that Close cannot be running while the WaitGroup is
+// added to.)
 func (e *Env) refreshIndex() {
 	o := e.indexOwner
-	if o == nil || o.Indexer == nil || !o.indexMu.TryLock() {
+	if o == nil || o.Indexer == nil {
+		return
+	}
+	timer := time.NewTimer(nestedCodeGraphTimeout)
+	defer timer.Stop()
+	timedOut := func() {
+		e.opts.Notice(fmt.Sprintf("code graph update timed out (%s), continuing with the index as it is", nestedCodeGraphTimeout))
+	}
+	select {
+	case o.indexSem <- struct{}{}:
+	case <-o.indexCtx.Done():
+		return
+	case <-timer.C:
+		timedOut()
 		return
 	}
 	done := make(chan error, 1)
 	o.indexing.Add(1)
 	go func() {
 		defer o.indexing.Done()
-		defer o.indexMu.Unlock()
+		defer func() { <-o.indexSem }()
 		done <- updateCodeGraph(o.indexCtx, o.Indexer)
 	}()
 	select {
@@ -156,8 +171,8 @@ func (e *Env) refreshIndex() {
 		if err != nil && o.indexCtx.Err() == nil {
 			e.warn("code graph update failed: %v", err)
 		}
-	case <-time.After(nestedCodeGraphTimeout):
-		e.opts.Notice(fmt.Sprintf("code graph update timed out (%s), continuing with the index as it is", nestedCodeGraphTimeout))
+	case <-timer.C:
+		timedOut()
 	}
 }
 
