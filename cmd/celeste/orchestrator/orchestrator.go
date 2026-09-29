@@ -300,7 +300,7 @@ func (o *Orchestrator) runDebate(ctx context.Context, li laneInheritance, goal, 
 
 		// Primary agent responds to critique
 		defensePrompt := fmt.Sprintf("The reviewer found these issues:\n%s\n\nAddress each issue and provide the corrected output.", reviewOutput)
-		defenseRunner := o.makeRunner(li, assignment.Primary, "", "")
+		defenseRunner := o.makeRunner(li, assignment.Primary, assignment.PrimaryBaseURL, assignment.PrimaryAPIKey)
 		defenseOutput, defenseElapsed, defenseIn, defenseOut, err := o.runGoalAccumStats(ctx, defenseRunner, defensePrompt)
 		if err != nil {
 			return nil, fmt.Errorf("primary defense round %d failed: %w", round, err)

@@ -239,3 +239,34 @@ func TestOrchestratorClosesLanesBeforeTheTerminalEvent(t *testing.T) {
 		t.Fatalf("at EventComplete the lanes' environment was still open (Nested err = %v)", atEnd)
 	}
 }
+
+// A lane whose primary has its own endpoint (cross-provider orchestration)
+// answers the reviewer's critique from that endpoint too: the defense turn
+// used to drop PrimaryBaseURL/PrimaryAPIKey and hit the main config's.
+func TestOrchestratorDefenseUsesThePrimarysEndpoint(t *testing.T) {
+	orchWorkspace(t)
+	primary := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "1. Fix it"},              // primary: plan
+		fakeprovider.Turn{Text: "TASK_COMPLETE: fixed"},   // primary: done
+		fakeprovider.Turn{Text: "1. Address the review"},  // defense: plan
+		fakeprovider.Turn{Text: "TASK_COMPLETE: revised"}, // defense: done
+	)
+	main := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "1. Review it"}, // reviewer: plan
+		fakeprovider.Turn{Text: `TASK_COMPLETE: [{"file":"main.go","line":1,"severity":"high","description":"broken"}]`},
+	)
+	cfg := fakeOrchCfg(main)
+	cfg.Orchestrator = &config.OrchestratorConfig{DebateRounds: 1, Lanes: map[string]config.LaneConfig{
+		"code": {Primary: "fake-primary", PrimaryBaseURL: primary.BaseURL(), PrimaryAPIKey: "pk", Reviewer: "fake-model"},
+	}}
+	_, log := runOrch(t, New(cfg, WithTrust()), "fix the bug in main.go")
+	if !strings.Contains(log.texts(), "revised") {
+		t.Fatalf("no defense turn in the events:\n%s", log.texts())
+	}
+	if n := len(primary.Requests()); n != 4 {
+		t.Fatalf("the primary's endpoint got %d requests, want 4 (primary and defense)", n)
+	}
+	if n := len(main.Requests()); n != 2 {
+		t.Fatalf("the main endpoint got %d requests, want the reviewer's 2", n)
+	}
+}

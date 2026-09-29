@@ -300,6 +300,10 @@ transport, and gains a set of TUI features around all of it.
   "debate skipped" as a notice and carries on to the primary agent's
   result. Before, the chat treated it as the end of the run and never
   showed the result.
+- In an `/orchestrate` lane configured with its own `primary_base_url` or
+  `primary_api_key`, the primary's answers to the reviewer (the debate's
+  defense turns) now go to that endpoint too. Before, they went to the main
+  config's provider.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 
