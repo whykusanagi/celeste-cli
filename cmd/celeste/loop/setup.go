@@ -167,7 +167,7 @@ func (e *Env) setupPermissions(home string) {
 	e.permConfig = *pc
 	e.Checker = permissions.NewChecker(*pc)
 	if e.Mode == ModeChat {
-		e.Checker.SetConfigPath(path) // "always allow" from the modal persists
+		e.PersistRules() // "always allow" from the modal persists
 	}
 	e.Registry.SetPermissionChecker(e.Checker)
 }
@@ -222,6 +222,14 @@ func withSessionContext(project, session string) string {
 		return project
 	}
 	return strings.TrimSpace(project + "\n\n# Session Start Hook Context\n\n" + session)
+}
+
+// PersistRules makes the checker save "always allow" and "always deny"
+// answers to permissions.json, as the chat's does. An adopter calls it only
+// when the answers come from the user's interactive prompt (the TUI modal
+// behind /agent and /orchestrate lanes); headless runs never write.
+func (e *Env) PersistRules() {
+	e.Checker.SetConfigPath(filepath.Join(e.home, ".celeste", "permissions.json"))
 }
 
 // Trust switches the checker to trust mode, keeping the deny rules. An

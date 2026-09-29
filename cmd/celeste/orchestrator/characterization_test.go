@@ -270,3 +270,51 @@ func TestOrchestratorDefenseUsesThePrimarysEndpoint(t *testing.T) {
 		t.Fatalf("the main endpoint got %d requests, want the reviewer's 2", n)
 	}
 }
+
+// "Always allow" from the TUI's modal in an /orch lane persists to
+// permissions.json, as it does in the chat: the next lane of the same run
+// and the next run don't ask again.
+func TestOrchestratorAlwaysAllowPersists(t *testing.T) {
+	ws := orchWorkspace(t)
+	write := func(id, path string) fakeprovider.Turn {
+		return fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: id, Name: "write_file", Args: `{"path":"` + path + `","content":"hi"}`}}}
+	}
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "1. Fix it"}, // primary
+		write("w1", "a.txt"),
+		fakeprovider.Turn{Text: "TASK_COMPLETE: fixed"},
+		fakeprovider.Turn{Text: "1. Review it"}, // reviewer
+		write("w2", "b.txt"),
+		fakeprovider.Turn{Text: "TASK_COMPLETE: []"},
+	)
+	var mu sync.Mutex
+	asked := 0
+	prompt := func(tools.PermissionRequest) tools.PermissionResponse {
+		mu.Lock()
+		asked++
+		mu.Unlock()
+		return tools.PermissionResponse{Decision: "always_allow", Pattern: "write_file"}
+	}
+	cfg := fakeOrchCfg(srv)
+	cfg.Orchestrator = &config.OrchestratorConfig{Lanes: map[string]config.LaneConfig{
+		"code": {Primary: "fake-model", Reviewer: "fake-model"},
+	}}
+	runOrch(t, New(cfg, WithPrompt(prompt)), "fix the bug in main.go")
+	for _, f := range []string{"a.txt", "b.txt"} {
+		if _, err := os.Stat(filepath.Join(ws, f)); err != nil {
+			t.Fatalf("%s not written: %v", f, err)
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("asked %d times in one run, want once (the reviewer lane asked again)", asked)
+	}
+
+	srv.Push(fakeprovider.Turn{Text: "1. Write it"}, write("w3", "c.txt"), fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+	runOrch(t, New(fakeOrchCfg(srv), WithPrompt(prompt)), "write hi to c.txt")
+	if _, err := os.Stat(filepath.Join(ws, "c.txt")); err != nil {
+		t.Fatalf("c.txt not written: %v", err)
+	}
+	if asked != 1 {
+		t.Fatalf("asked %d times, want once: the next run asked again", asked)
+	}
+}

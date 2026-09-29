@@ -346,6 +346,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// IS the approval, so run in trust mode. Deny rules still apply.
 	if options.AutoApproveTools {
 		env.Trust()
+	} else if options.PromptFunc != nil {
+		// The user's own prompt (the TUI modal behind /agent and
+		// /orchestrate lanes): "always allow/deny" persists, as in the chat.
+		env.PersistRules()
 	}
 	registry := env.Registry
 	checker := env.Checker

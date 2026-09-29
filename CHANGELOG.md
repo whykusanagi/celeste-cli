@@ -304,6 +304,13 @@ transport, and gains a set of TUI features around all of it.
   `primary_api_key`, the primary's answers to the reviewer (the debate's
   defense turns) now go to that endpoint too. Before, they went to the main
   config's provider.
+- "Always allow" and "Always deny" in the permission prompt of `/agent` and
+  `/orchestrate` now save to `~/.celeste/permissions.json`, as in the chat:
+  later lanes of the same run and later runs don't ask again. Before, the
+  answer only applied to that one lane or run. Runs without a prompt
+  (`celeste agent`, MCP, subagents) never write the file. A save now adds
+  the rule to the file as it is on disk, so rules saved from the chat and
+  from these runs no longer overwrite each other.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

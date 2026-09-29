@@ -89,6 +89,35 @@ func TestAgentPromptFuncIsTheGate(t *testing.T) {
 	}
 }
 
+// "Always allow" in /agent's modal persists to permissions.json, as in the
+// chat; a run with no prompt (headless) never writes the file.
+func TestAgentAlwaysAllowFromThePromptPersists(t *testing.T) {
+	write := fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "w", Name: "write_file", Args: `{"path":"out.txt","content":"hi"}`}}}
+	srv := fakeprovider.NewOpenAI(t, write, fakeprovider.Turn{Text: "TASK_COMPLETE: wrote"})
+	r, _ := fakeRunner(t, srv, func(o *Options) {
+		o.AutoApproveTools = false
+		o.PromptFunc = func(tools.PermissionRequest) tools.PermissionResponse {
+			return tools.PermissionResponse{Decision: "always_allow", Pattern: "write_file"}
+		}
+	})
+	if _, err := r.RunGoal(context.Background(), "write"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".celeste", "permissions.json"))
+	if err != nil || !strings.Contains(string(b), `"write_file"`) {
+		t.Fatalf("permissions.json = %q (err %v), want the write_file rule", b, err)
+	}
+
+	srv = fakeprovider.NewOpenAI(t, write, fakeprovider.Turn{Text: "TASK_COMPLETE: denied"})
+	r, _ = fakeRunner(t, srv, func(o *Options) { o.AutoApproveTools = false })
+	if _, err := r.RunGoal(context.Background(), "write"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".celeste", "permissions.json")); err == nil {
+		t.Fatal("a headless run wrote permissions.json")
+	}
+}
+
 // A cancelled run reports cancelled, and its history stays paired.
 func TestAgentInterruptIsCancelled(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "unused"})
