@@ -331,3 +331,93 @@ func TestParentRebuildsWhenConfigChanges(t *testing.T) {
 		t.Fatalf("Nested on a closed Parent: err = %v, want a 'closed' error", err)
 	}
 }
+
+// refreshIndex serializes code-graph updates: concurrent same-workspace
+// refreshes never run updateCodeGraph at the same time (indexMu.TryLock in
+// refreshIndex, nested.go). This must fail if that TryLock/Unlock is removed.
+func TestNestedRefreshIndexSerializesUpdates(t *testing.T) {
+	setupHome(t)
+	parent, _ := mustSetup(t, ModeAgent, goWorkspace(t))
+
+	origUpdate := updateCodeGraph
+	t.Cleanup(func() { updateCodeGraph = origUpdate })
+	var current, max int32
+	updateCodeGraph = func(ctx context.Context, idx *codegraph.Indexer) error {
+		n := atomic.AddInt32(&current, 1)
+		for {
+			old := atomic.LoadInt32(&max)
+			if n <= old || atomic.CompareAndSwapInt32(&max, old, n) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond) // hold the lock so racing callers overlap if unserialized
+		atomic.AddInt32(&current, -1)
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			parent.refreshIndex()
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&max); got != 1 {
+		t.Fatalf("max concurrent updateCodeGraph calls = %d, want 1 (refreshIndex must serialize via indexMu.TryLock/Unlock)", got)
+	}
+}
+
+// Worktree hook rebuild (nested.go's `c.setupHooks(c.home)` for a different
+// workspace): an other-workspace child rebuilds its own hooks instead of
+// sharing the parent's, so an untrusted repo hooks.json there warns the
+// child, not the parent, and the child's Hooks differ from the parent's.
+// This must fail if that setupHooks call is replaced with `c.Hooks = e.Hooks`.
+func TestNestedOtherWorkspaceRebuildsHooksAndWarnsTheChild(t *testing.T) {
+	setupHome(t)
+	parent, parentWarns := mustSetup(t, ModeAgent, goWorkspace(t))
+	other := goWorkspace(t)
+	untrustedRepoHooks(t, other)
+
+	childWarns := &warnings{}
+	child := mustNested(t, parent, NestedOptions{Workspace: other, Warn: childWarns.add})
+
+	if child.Hooks == parent.Hooks {
+		t.Fatal("an other-workspace child must rebuild its own hooks, not share the parent's")
+	}
+	if n := strings.Count(childWarns.all(), "skipping"); n != 1 {
+		t.Fatalf("child warnings = %q, want the other workspace's untrusted hooks.json warning once", childWarns.all())
+	}
+	if strings.Contains(parentWarns.all(), "skipping") {
+		t.Fatalf("the other workspace's hook warning reached the parent's sink:\n%s", parentWarns.all())
+	}
+}
+
+// A child keeps using its shared MCP tool (the Windows-safe test-binary
+// stub) after its parent has closed.
+func TestNestedChildRunsMCPToolAfterParentClose(t *testing.T) {
+	home := setupHome(t)
+	write(t, filepath.Join(home, ".celeste", "mcp.json"), stubMCPConfig(t))
+	parent, w := mustSetup(t, ModeAgent, t.TempDir())
+	name := mcp.ToolName("probe", "echo")
+	if _, ok := parent.Registry.Get(name); !ok {
+		t.Fatalf("the parent did not start the stub MCP server:\n%s", w.all())
+	}
+	child, err := parent.Nested(NestedOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.Close()
+
+	tool, ok := child.Registry.Get(name)
+	if !ok {
+		t.Fatal("the child lost its MCP tool once the parent closed")
+	}
+	res, err := tool.Execute(context.Background(), map[string]any{}, nil)
+	if err != nil || res.Error {
+		t.Fatalf("MCP tool call after parent close: err=%v res=%+v", err, res)
+	}
+	child.Close()
+}

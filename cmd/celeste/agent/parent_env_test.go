@@ -141,7 +141,10 @@ func TestAgentParentEnvHookWarningsFollowTheRunner(t *testing.T) {
 
 // The F2a after-Close rule (TestAgentCallbacksSerializedAndSilentAfterClose)
 // holds with a shared hooks runner: a hook the run abandoned warns into
-// neither the runner's sink nor the parent's once the runner is closed.
+// neither the runner's sink nor the parent's once the runner is closed. It
+// also pins the ctx routing itself (runState's hooks.WithWarn(ctx, r.warn)):
+// the abandoned hook's failure must reach the runner's own sink, never the
+// parent's shared one, whether that happens before or after Close.
 func TestAgentParentEnvSilentAfterClose(t *testing.T) {
 	home := isolateHome(t)
 	writeHooks(t, home, map[string]any{"event": "PreToolUse", "matcher": "read_file", "command": hooktest.Command(t, "sleep")})
@@ -167,5 +170,15 @@ func TestAgentParentEnvSilentAfterClose(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond) // the abandoned hook is killed and fails meanwhile
 	if runWarns.all() != run || parentWarns.all() != par {
 		t.Fatalf("warnings after Close:\nrunner: %q\nparent: %q", strings.TrimPrefix(runWarns.all(), run), strings.TrimPrefix(parentWarns.all(), par))
+	}
+	// The failure itself must have followed the ctx (hooks.WithWarn) to the
+	// runner's sink, not the shared hooks Runner's own default (the
+	// parent's): without that wrap, warnFor(ctx) falls back to the parent's
+	// sink instead.
+	if !strings.Contains(runWarns.all(), "PreToolUse hook") {
+		t.Fatalf("the runner's own sink is missing the abandoned hook's failure (ctx routing broken): run=%q par=%q", runWarns.all(), parentWarns.all())
+	}
+	if strings.Contains(parentWarns.all(), "PreToolUse hook") {
+		t.Fatalf("the abandoned hook's failure reached the parent's shared sink instead of the runner's own (ctx routing broken): par=%q", parentWarns.all())
 	}
 }
