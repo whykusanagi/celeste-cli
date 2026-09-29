@@ -3,7 +3,10 @@ package mcp
 
 import (
 	"encoding/json"
+	"io"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,4 +83,43 @@ func TestExpandEnvVars_NoMatch(t *testing.T) {
 	expanded := expandEnvVars(env)
 	// Unset vars expand to empty string
 	assert.Equal(t, "", expanded["KEY"])
+}
+
+// hungServerEnv makes the test binary act as a stdio MCP server that ignores
+// stdin EOF (see TestMCPHungServer).
+const hungServerEnv = "CELESTE_MCP_HUNG_SERVER"
+
+// TestMCPHungServer is not a test: run with hungServerEnv set, it drains
+// stdin and then keeps running long after EOF, like a hung server.
+func TestMCPHungServer(t *testing.T) {
+	if os.Getenv(hungServerEnv) != "1" {
+		t.Skip("helper process for TestStdioTransport_CloseKillsHungServer")
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	time.Sleep(5 * time.Minute)
+	os.Exit(0)
+}
+
+// Close kills a server that doesn't exit on stdin EOF instead of waiting on
+// it forever, so a retired chat Env can't freeze the call closing it.
+func TestStdioTransport_CloseKillsHungServer(t *testing.T) {
+	t.Setenv(hungServerEnv, "1")
+	tr, err := NewStdioTransport(os.Args[0], []string{"-test.run=^TestMCPHungServer$"}, nil)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		_ = tr.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		_ = tr.cmd.Process.Kill()
+		t.Fatal("Close blocked on a server that ignores stdin EOF")
+	}
+	require.Less(t, time.Since(start), 10*time.Second)
+	require.NotNil(t, tr.cmd.ProcessState, "the server process was not reaped")
+	require.False(t, tr.cmd.ProcessState.Success(), "the server should have been killed")
 }

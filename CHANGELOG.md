@@ -284,8 +284,10 @@ transport, and gains a set of TUI features around all of it.
   configs are skipped with a warning, as in agent runs.
 - The server sets this up once per workspace and reuses it across calls
   (up to 4 workspaces). It rebuilds it on the next call after you change
-  permissions, hooks, hook trust, skills, MCP configs or the grimoire, and
-  after 10 minutes. Each call still starts with a fresh conversation.
+  permissions, hooks, hook trust, MCP configs or the home or workspace
+  grimoire, or add or remove a skill. Anything else (an edit inside a skill,
+  a grimoire in a parent directory) applies within 10 minutes, when it is
+  rebuilt anyway. Each call still starts with a fresh conversation.
 - Also starts the MCP servers in your home-level configs:
   `~/.celeste/mcp.json`, and now `~/.claude/mcp.json` and
   `~/.cursor/mcp.json`. If one of them lists `celeste serve`, each

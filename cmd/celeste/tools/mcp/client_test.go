@@ -399,6 +399,53 @@ func TestClient_CallToolDropsAnswerAfterReceiveError(t *testing.T) {
 	awaitCall(t, done, "answer to the next call")
 }
 
+// A null-ID error that may be the late answer to an abandoned call is
+// dropped; once nothing is abandoned (or the abandoned call's own answer came
+// back), a null-ID error reaches the current call instead of hanging it.
+func TestClient_NullIDResponses(t *testing.T) {
+	nullErr := &Response{JSONRPC: "2.0", Error: &ErrorObject{Code: -32700, Message: "parse error"}}
+
+	// Nothing abandoned: a genuine parse error on this request is returned.
+	c, tr := newStallClient(t)
+	done := callAsync(c, "garbled")
+	awaitSent(t, tr)
+	tr.replies <- nullErr
+	select {
+	case o := <-done:
+		require.Error(t, o.err)
+		require.Contains(t, o.err.Error(), "parse error")
+	case <-time.After(2 * time.Second):
+		t.Fatal("a null-ID error with nothing abandoned hung the call")
+	}
+
+	// An abandoned call is outstanding: the null-ID error is dropped.
+	c, tr = newStallClient(t)
+	cancelledCall(t, c)
+	first := <-tr.sent
+	done = callAsync(c, "next")
+	second := awaitSent(t, tr)
+	tr.replies <- nullErr
+	tr.replies <- textReply(second.ID, "answer to the next call")
+	awaitCall(t, done, "answer to the next call")
+
+	// The abandoned call's answer arrives; a later null-ID error is the
+	// current call's again.
+	done = callAsync(c, "next")
+	third := awaitSent(t, tr)
+	tr.replies <- textReply(first.ID, "late answer to the cancelled call")
+	tr.replies <- textReply(third.ID, "answer to the third call")
+	awaitCall(t, done, "answer to the third call")
+	done = callAsync(c, "garbled")
+	awaitSent(t, tr)
+	tr.replies <- nullErr
+	select {
+	case o := <-done:
+		require.Error(t, o.err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a null-ID error hung the call after the abandoned one was answered")
+	}
+}
+
 // Cancelled calls share one outstanding Receive instead of starting one each.
 func TestClient_CancelledCallsLeaveOneReader(t *testing.T) {
 	c, tr := newStallClient(t)

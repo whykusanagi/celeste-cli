@@ -9,7 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 )
+
+// stdioCloseGrace is how long Close waits for the server to exit after its
+// stdin is closed before killing it, so a hung server can't block Close.
+const stdioCloseGrace = 2 * time.Second
 
 // StdioTransport communicates with an MCP server via a child process's
 // stdin and stdout. Each JSON-RPC message is a single line of JSON.
@@ -51,6 +56,8 @@ func NewStdioTransport(command string, args []string, env map[string]string) (*S
 
 	// Discard stderr to avoid blocking
 	cmd.Stderr = io.Discard
+	// Bound Wait's stderr copy if a grandchild keeps the pipe open.
+	cmd.WaitDelay = stdioCloseGrace
 
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
@@ -131,8 +138,19 @@ func (t *StdioTransport) Close() error {
 	t.closed = true
 
 	t.stdin.Close()
-	// Wait for process to exit (ignore error -- process may have already exited)
-	_ = t.cmd.Wait()
+	// Give the server a grace period to exit on stdin EOF, then kill it.
+	// Errors are ignored: the process may have already exited.
+	done := make(chan struct{})
+	go func() {
+		_ = t.cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(stdioCloseGrace):
+		_ = t.cmd.Process.Kill()
+		<-done
+	}
 	return nil
 }
 

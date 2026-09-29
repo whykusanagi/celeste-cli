@@ -82,6 +82,12 @@ type Client struct {
 	// next call takes it over, so at most one Receive per client is ever
 	// outstanding. Guarded by mu.
 	inflight chan received
+
+	// abandoned holds the IDs of calls that gave up (cancelled, or failed on
+	// a Receive error) and whose answer hasn't arrived yet. While any are
+	// outstanding, a response with no ID can't be told apart from their late
+	// answer and is dropped. Guarded by mu.
+	abandoned map[string]struct{}
 }
 
 // NewClient creates a new MCP client over the given transport.
@@ -130,6 +136,11 @@ func (c *Client) sendNotification(ctx context.Context, notif *Notification) erro
 // the late answer to a call that gave up (cancelled, or failed on a Receive
 // error) and is dropped. Messages that are not responses (a notification or
 // a server-to-client request carries neither result nor error) are skipped.
+//
+// A response with no ID (id:null, sent when the server couldn't read the
+// request's ID) is returned to the current call only while no abandoned call
+// is still unanswered; otherwise it may belong to one of those and is
+// dropped, and the current call waits on its ctx instead.
 // The caller holds c.mu.
 func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
 	want := strconv.FormatInt(id, 10)
@@ -144,21 +155,36 @@ func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
 		}
 		select {
 		case <-ctx.Done():
+			c.abandon(want)
 			return nil, ctx.Err()
 		case r := <-c.inflight:
 			c.inflight = nil
 			if r.err != nil {
+				c.abandon(want)
 				return nil, r.err
 			}
 			if r.resp == nil || (r.resp.Result == nil && r.resp.Error == nil) {
 				continue // a notification or server request, not an answer
 			}
-			if key := r.resp.ID.String(); key != "" && key != want {
+			key := r.resp.ID.String()
+			if key == "" && len(c.abandoned) > 0 {
+				continue // maybe the late parse error for a call that gave up
+			}
+			if key != "" && key != want {
+				delete(c.abandoned, key)
 				continue // the late answer to a call that gave up
 			}
 			return r.resp, nil
 		}
 	}
+}
+
+// abandon records that the call with ID id gave up before its answer came.
+func (c *Client) abandon(id string) {
+	if c.abandoned == nil {
+		c.abandoned = make(map[string]struct{})
+	}
+	c.abandoned[id] = struct{}{}
 }
 
 // ServerName returns the server's name after initialization.
