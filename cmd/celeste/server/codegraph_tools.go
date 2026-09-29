@@ -262,6 +262,11 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	}
 	s.indexerMu.Unlock()
 
+	// A cached MCP chat Env holds the same codegraph DB open. Retire it so
+	// the delete below succeeds (on Windows an open file can't be removed)
+	// and the next chat call opens the rebuilt index.
+	s.chatEnvs.invalidate(workspace)
+
 	// Remove the existing db + WAL files so Build starts fresh.
 	dbPath := codegraph.DefaultIndexPath(workspace)
 	for _, suffix := range []string{"", "-wal", "-shm"} {

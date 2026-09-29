@@ -76,6 +76,10 @@ type Server struct {
 	// In-memory: a run dies with the server when the client restarts.
 	runMu sync.Mutex
 	runs  map[string]*BackgroundRun
+
+	// chatEnvs caches MCP chat's loop.Env per workspace (2.0 F2b). Released
+	// on Close.
+	chatEnvs *chatEnvs
 }
 
 // New creates a new MCP server with the given configuration.
@@ -86,6 +90,7 @@ func New(cfg Config) *Server {
 		done:     make(chan struct{}),
 		indexers: make(map[string]*codegraph.Indexer),
 		runs:     make(map[string]*BackgroundRun),
+		chatEnvs: newChatEnvs(),
 	}
 	return s
 }
@@ -95,6 +100,9 @@ func New(cfg Config) *Server {
 // flush otherwise. Safe to call multiple times; second and subsequent
 // calls are no-ops.
 func (s *Server) Close() error {
+	if s.chatEnvs != nil {
+		s.chatEnvs.close()
+	}
 	s.indexerMu.Lock()
 	defer s.indexerMu.Unlock()
 	for path, idx := range s.indexers {
