@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -76,6 +77,13 @@ type Client struct {
 	serverProto string
 	initialized bool
 	mu          sync.Mutex
+
+	// inflight is a Receive still running for a call that was cancelled; the
+	// next call takes it over, so at most one Receive per client is ever
+	// outstanding. abandoned holds the IDs of requests whose callers gave
+	// up, so their late answers are dropped. Both are guarded by mu.
+	inflight  chan received
+	abandoned map[string]bool
 }
 
 // NewClient creates a new MCP client over the given transport.
@@ -84,6 +92,55 @@ func NewClient(transport Transport, clientName, clientVersion string) *Client {
 		transport:  transport,
 		clientName: clientName,
 		clientVer:  clientVersion,
+	}
+}
+
+// received is one Transport.Receive result.
+type received struct {
+	resp *Response
+	err  error
+}
+
+// recv waits for the response to request id, honouring ctx (#221).
+//
+// Transport.Receive can't be interrupted, so it runs on a goroutine. On
+// cancel, that Receive is left in c.inflight for the next call to take over
+// and id is marked abandoned; when its late answer arrives, a later recv
+// drops it by ID. Messages that are not responses (a notification or a
+// server-to-client request carries neither result nor error) are skipped.
+// Any other response is returned, as before. The caller holds c.mu.
+func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
+	want := strconv.FormatInt(id, 10)
+	for {
+		if c.inflight == nil {
+			ch := make(chan received, 1)
+			go func() {
+				resp, err := c.transport.Receive()
+				ch <- received{resp, err}
+			}()
+			c.inflight = ch
+		}
+		select {
+		case <-ctx.Done():
+			if c.abandoned == nil {
+				c.abandoned = map[string]bool{}
+			}
+			c.abandoned[want] = true
+			return nil, ctx.Err()
+		case r := <-c.inflight:
+			c.inflight = nil
+			if r.err != nil {
+				return nil, r.err
+			}
+			if r.resp == nil || (r.resp.Result == nil && r.resp.Error == nil) {
+				continue // a notification or server request, not an answer
+			}
+			if key := r.resp.ID.String(); key != want && c.abandoned[key] {
+				delete(c.abandoned, key)
+				continue // the late answer to a cancelled call
+			}
+			return r.resp, nil
+		}
 	}
 }
 
@@ -127,7 +184,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("send initialize: %w", err)
 	}
 
-	resp, err := c.transport.Receive()
+	resp, err := c.recv(ctx, req.ID)
 	if err != nil {
 		return fmt.Errorf("receive initialize response: %w", err)
 	}
@@ -177,7 +234,7 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPToolDef, error) {
 		return nil, fmt.Errorf("send tools/list: %w", err)
 	}
 
-	resp, err := c.transport.Receive()
+	resp, err := c.recv(ctx, req.ID)
 	if err != nil {
 		return nil, fmt.Errorf("receive tools/list response: %w", err)
 	}
@@ -218,7 +275,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 		return "", fmt.Errorf("send tools/call: %w", err)
 	}
 
-	resp, err := c.transport.Receive()
+	resp, err := c.recv(ctx, req.ID)
 	if err != nil {
 		return "", fmt.Errorf("receive tools/call response: %w", err)
 	}

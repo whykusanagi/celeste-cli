@@ -263,6 +263,9 @@ transport, and gains a set of TUI features around all of it.
   Move a server to a global config (`~/.celeste/mcp.json`,
   `~/.claude/mcp.json` or `~/.cursor/mcp.json`) to use it there. The chat
   itself still loads them.
+- A cancelled or timed-out call to a tool from an MCP server now returns
+  promptly, and a server that never answers no longer blocks that server's
+  other tools for the rest of the session (#221).
 - MCP agent mode now returns setup and hook warnings in the tool result,
   under a `## Warnings` heading.
 

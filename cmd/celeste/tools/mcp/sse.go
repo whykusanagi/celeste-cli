@@ -164,12 +164,18 @@ func (t *SSETransport) SendNotification(notif *Notification) error {
 }
 
 // Receive reads the next JSON-RPC response from the SSE event stream.
+// It also returns once the transport is closed, so a Receive the client left
+// running for a cancelled call doesn't outlive Close.
 func (t *SSETransport) Receive() (*Response, error) {
-	resp, ok := <-t.responseCh
-	if !ok {
+	select {
+	case resp, ok := <-t.responseCh:
+		if !ok {
+			return nil, fmt.Errorf("transport closed")
+		}
+		return resp, nil
+	case <-t.done:
 		return nil, fmt.Errorf("transport closed")
 	}
-	return resp, nil
 }
 
 // Close shuts down the SSE connection.
