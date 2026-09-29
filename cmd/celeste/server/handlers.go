@@ -166,10 +166,7 @@ var agentExecFn = execAgent
 
 // execAgent runs a multi-turn agent loop for complex tasks.
 func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
-	// Auto-init grimoire if not present
-	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
-		_, _ = grimoire.Init(workspace)
-	}
+	initGrimoire(workspace)
 
 	var outBuf, errBuf bytes.Buffer
 	var warnMu sync.Mutex

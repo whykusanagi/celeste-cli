@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -48,7 +49,10 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	if err != nil {
 		return nil, fmt.Errorf("chat setup: %w%s", err, warns.section())
 	}
-	defer s.chatEnvs.release(ce, &warns)
+	defer s.chatEnvs.release(ce)
+	// This call's hook warnings come back on this call only: the Env and
+	// its hook runner are shared with any overlapping call.
+	ctx = hooks.WithWarn(ctx, warns.add)
 	env := ce.env
 
 	system := env.SystemPrompt("", nil)

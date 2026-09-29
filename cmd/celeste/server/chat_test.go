@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -406,6 +410,71 @@ func TestMCPChatConcurrentCallsShareOneEnv(t *testing.T) {
 		if b, err := os.ReadFile(filepath.Join(ws, name)); err != nil || string(b) != want {
 			t.Errorf("%s: %v %q", name, err, b)
 		}
+	}
+}
+
+// A hook warning belongs to the call whose tool raised it. Call B is held
+// mid-run (after its tool ran) while call A's PreToolUse hook fails; B's
+// result must not carry A's warning, which a caller may paste into a file.
+func TestMCPChatHookWarningsStayOnTheirCall(t *testing.T) {
+	fpA := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "warm"},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "a", Name: "write_file", Args: `{"path":"a.txt","content":"A"}`}}},
+		fakeprovider.Turn{Text: "wrote a"},
+	)
+	fpB := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "b", Name: "list_files", Args: `{"path":"."}`}}},
+		fakeprovider.Turn{Text: "listed"},
+	)
+	// B's second model request waits here until A has finished.
+	target, err := url.Parse(fpB.BaseURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: target.Scheme, Host: target.Host})
+	proxy.FlushInterval = -1
+	held, resume := make(chan struct{}), make(chan struct{})
+	var n atomic.Int32
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n.Add(1) == 2 {
+			close(held)
+			<-resume
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(gate.Close)
+
+	cfg, ws := contractCfg(t, fpA)
+	writeFile(t, filepath.Join(testHome(t), ".celeste", "hooks.json"), hooksJSON(t,
+		hookDef("PreToolUse", "write_file", hooktest.Command(t, "exit", "1", "boom"))))
+	srv := chatServer(t, cfg)
+	ccA := *cfg.CelesteConfig
+	if _, err := srv.runChatMode(context.Background(), &ccA, "warm", ws); err != nil {
+		t.Fatal(err) // builds the Env, so neither call below gets Setup warnings
+	}
+	ccB := ccA
+	ccB.BaseURL = gate.URL + target.Path
+	var outB []ContentBlock
+	var errB error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		outB, errB = srv.runChatMode(context.Background(), &ccB, "list", ws)
+	}()
+	select {
+	case <-held:
+	case <-done:
+		t.Fatalf("call B finished before its second request: %v %+v", errB, outB)
+	}
+	outA, errA := srv.runChatMode(context.Background(), &ccA, "write", ws)
+	close(resume)
+	<-done
+	if errA != nil || len(outA) != 1 || !strings.HasPrefix(outA[0].Text, "wrote a\n\n## Warnings\n\n- ") ||
+		!strings.Contains(outA[0].Text, "PreToolUse hook from") {
+		t.Fatalf("call A must carry its own hook warning: %v %+v", errA, outA)
+	}
+	if errB != nil || len(outB) != 1 || outB[0].Text != "listed" {
+		t.Fatalf("call B got another call's warning: %v %+v", errB, outB)
 	}
 }
 

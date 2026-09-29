@@ -58,7 +58,7 @@ func (f *fakeEnvs) use(t *testing.T, ws string) (*chatEnv, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.release(e, &w)
+	f.release(e)
 	return e, w.section()
 }
 
@@ -102,7 +102,7 @@ func TestChatEnvsSharesOneBuildBetweenConcurrentFirstCalls(t *testing.T) {
 				return
 			}
 			got[i] = e
-			f.release(e, &w)
+			f.release(e)
 		}()
 	}
 	time.Sleep(50 * time.Millisecond) // let every call reach the build
@@ -161,7 +161,7 @@ func TestChatEnvsReplacesAStaleEnvUnderARunningCall(t *testing.T) {
 	if f.isClosed(held) {
 		t.Fatal("closed the Env a running call still uses")
 	}
-	f.release(held, &w)
+	f.release(held)
 	if !f.isClosed(held) {
 		t.Fatal("the replaced Env was not closed on its last release")
 	}
@@ -193,7 +193,7 @@ func TestChatEnvsInvalidate(t *testing.T) {
 	if f.isClosed(busy) {
 		t.Fatal("invalidate closed an Env in use")
 	}
-	f.release(busy, &w)
+	f.release(busy)
 	if !f.isClosed(busy) {
 		t.Fatal("invalidated Env not closed on its last release")
 	}
@@ -234,7 +234,7 @@ func TestChatEnvsEvictionWaitsForInFlightCalls(t *testing.T) {
 	if f.isClosed(held) {
 		t.Fatal("closed an Env a call is still using")
 	}
-	f.release(held, &w)
+	f.release(held)
 	if !f.isClosed(held) {
 		t.Fatal("retired Env not closed on its last release")
 	}
@@ -252,7 +252,7 @@ func TestChatEnvsCloseOnShutdown(t *testing.T) {
 	if !f.isClosed(idle) || f.isClosed(busy) {
 		t.Fatalf("idle closed = %v, busy closed = %v", f.isClosed(idle), f.isClosed(busy))
 	}
-	f.release(busy, &w)
+	f.release(busy)
 	if !f.isClosed(busy) {
 		t.Fatal("busy Env not closed on release after shutdown")
 	}
@@ -283,8 +283,8 @@ func TestChatEnvsResetsTheFileTrackerBetweenCalls(t *testing.T) {
 	if overlap.env.Files.CheckStale(path) == nil {
 		t.Fatal("an overlapping call must share the tracker")
 	}
-	f.release(overlap, &w2)
-	f.release(e, &w1)
+	f.release(overlap)
+	f.release(e)
 
 	next, _ := f.use(t, ws) // first call on an idle Env: reset
 	if err := next.env.Files.CheckStale(path); err != nil {
@@ -327,7 +327,7 @@ func TestIndexRebuildInvalidatesTheChatEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.chatEnvs.release(e, &w)
+	srv.chatEnvs.release(e)
 	writeTSFile(t, dir, "a.ts", "export function a(): number { return 1; }\n")
 	callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	if len(closed) != 1 || closed[0] != e.env {

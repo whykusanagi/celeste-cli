@@ -76,9 +76,9 @@ func newChatEnvs() *chatEnvs {
 func chatNotice(s string) { fmt.Fprintln(os.Stderr, "celeste chat: "+s) }
 
 // acquire returns the workspace's Env, building it on first use or when the
-// cached one is stale, with sink attached for its warnings until release.
-// Setup's warnings reach only the call that builds the Env: other calls
-// attach after the build.
+// cached one is stale. Setup's warnings reach sink only when this call builds
+// the Env. Hook warnings while the call runs go to the sink the call puts in
+// its ctx (hooks.WithWarn), so overlapping calls never see each other's.
 func (c *chatEnvs) acquire(cfg *config.Config, workspace string, sink *warnSink) (*chatEnv, error) {
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
@@ -113,10 +113,9 @@ func (c *chatEnvs) acquire(cfg *config.Config, workspace string, sink *warnSink)
 		c.closeAll(toClose)
 		<-e.ready
 		if e.err != nil {
-			c.release(e, nil)
+			c.release(e)
 			return nil, e.err
 		}
-		e.warns.attach(sink)
 		return e, nil
 	}
 
@@ -132,6 +131,7 @@ func (c *chatEnvs) acquire(cfg *config.Config, workspace string, sink *warnSink)
 		Warn:      e.warns.warn,
 		Notice:    chatNotice,
 	})
+	e.warns.detach(sink) // Setup is over: later warnings belong to a call's ctx
 	c.mu.Lock()
 	e.env, e.err = env, err
 	if err != nil && c.entries[key] == e {
@@ -140,7 +140,7 @@ func (c *chatEnvs) acquire(cfg *config.Config, workspace string, sink *warnSink)
 	close(e.ready)
 	c.mu.Unlock()
 	if err != nil {
-		c.release(e, sink)
+		c.release(e)
 		return nil, err
 	}
 	return e, nil
@@ -196,8 +196,7 @@ func (c *chatEnvs) evictLocked(keep string) []*chatEnv {
 }
 
 // release ends a call's use of e. A retired Env closes with its last call.
-func (c *chatEnvs) release(e *chatEnv, sink *warnSink) {
-	e.warns.detach(sink)
+func (c *chatEnvs) release(e *chatEnv) {
 	c.mu.Lock()
 	e.inUse--
 	e.lastUsed = c.now()
@@ -270,9 +269,10 @@ func chatEnvStamp(ws string) string {
 	return b.String()
 }
 
-// warnRouter delivers a shared Env's warnings (Setup's, then its hooks') to
-// every call using the Env at that moment. A warning raised with no call
-// attached, e.g. from a tool abandoned after its call returned, is dropped.
+// warnRouter is a shared Env's own warn sink. It delivers Setup's warnings to
+// the call building the Env, attached only while Setup runs. Once built,
+// hook warnings follow the call's ctx instead (hooks.WithWarn); anything
+// still raised here after the build has no call to belong to and is dropped.
 type warnRouter struct {
 	mu    sync.Mutex
 	sinks map[*warnSink]struct{}

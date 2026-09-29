@@ -127,6 +127,18 @@ func TestRunnerFailureFailsClosedOnlyForGatingEvents(t *testing.T) {
 	}
 }
 
+// A ctx warn sink takes a hook's failure instead of the Runner's own.
+func TestRunnerWarnFollowsCtx(t *testing.T) {
+	r, warnings := testRunner(t, v2(t, EventPreToolUse, "canned", "garbage"))
+	var mine []string
+	ctx := WithWarn(context.Background(), func(s string) { mine = append(mine, s) })
+	r.run(ctx, EventPreToolUse, "bash", map[string]any{})
+	assert.Len(t, mine, 1)
+	assert.Empty(t, *warnings)
+	r.run(WithWarn(context.Background(), nil), EventPreToolUse, "bash", map[string]any{})
+	assert.Len(t, *warnings, 1, "no ctx sink falls back to the Runner's")
+}
+
 func TestRunnerEventPayloads(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {
