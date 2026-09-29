@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,12 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 func hooksJSON(t *testing.T, defs ...map[string]any) string {
@@ -447,11 +450,71 @@ func TestChatClaimsFollowToolResults(t *testing.T) {
 // asks for nothing else) is denied.
 func TestNewChatLoopIsHeadless(t *testing.T) {
 	env, cfg := mcpChatEnv(t)
-	l := newChatLoop(newChatClient(cfg, env.Registry, "sys"), env, "mcp-chat-test")
+	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, "sys"), env, "sys", "mcp-chat-test")
 	if l.Gate != nil {
 		t.Error("MCP chat must have no Gate")
 	}
 	if l.Tools != env.Registry || l.Limits != chatLimits() || l.SessionID != "mcp-chat-test" {
 		t.Errorf("loop = %+v", l)
+	}
+}
+
+// toolTurns builds a history of n read_file calls, oldest first, whose
+// results are size bytes each.
+func toolTurns(n, size int) []loop.Message {
+	msgs := []loop.Message{{Role: "user", Content: "read everything"}}
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("c%d", i)
+		msgs = append(msgs,
+			loop.Message{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			loop.Message{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", size)},
+		)
+	}
+	return msgs
+}
+
+// 2.0 F2b intentional change: about 96k tokens of results against a 64k
+// window (48k threshold) get the oldest elided, never removed.
+func TestChatCompactorPrunesNearTheWindow(t *testing.T) {
+	c := &chatCompactor{window: 64_000, store: &compact.Store{Dir: t.TempDir()}}
+	in := toolTurns(12, 32_000)
+	out, notes, changed := c.Compact(context.Background(), in, nil, false)
+	if !changed || len(notes) != 1 || !strings.HasPrefix(notes[0], "context compacted: ") {
+		t.Fatalf("changed=%v notes=%q", changed, notes)
+	}
+	if len(out) != len(in) {
+		t.Fatalf("pruning removed messages: %d -> %d", len(in), len(out))
+	}
+	if !strings.Contains(out[2].Content, "recall_tool_result") {
+		t.Fatalf("oldest result not elided: %.80q", out[2].Content)
+	}
+	if compact.Estimate(out) >= compact.Estimate(in) {
+		t.Fatal("pruning saved nothing")
+	}
+}
+
+// Well under the window nothing is pruned, unless the loop forces it after
+// a context-overflow error.
+func TestChatCompactorOnlyForcedBelowTheWindow(t *testing.T) {
+	c := &chatCompactor{window: 64_000, store: &compact.Store{Dir: t.TempDir()}}
+	in := toolTurns(6, 8_000) // ~12k tokens
+	if _, notes, changed := c.Compact(context.Background(), in, nil, false); changed || notes != nil {
+		t.Fatalf("pruned below the threshold: %q", notes)
+	}
+	if _, _, changed := c.Compact(context.Background(), in, nil, true); !changed {
+		t.Fatal("a forced compaction after an overflow pruned nothing")
+	}
+}
+
+func TestNewChatLoopCompacts(t *testing.T) {
+	env, cfg := mcpChatEnv(t)
+	cfg.ContextLimit = 64_000
+	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, "sys"), env, "sys", "mcp-chat-test")
+	c, ok := l.Compact.(*chatCompactor)
+	if !ok {
+		t.Fatalf("Compact = %T, want *chatCompactor", l.Compact)
+	}
+	if c.window != 64_000 || c.store == nil || c.overhead <= 0 {
+		t.Fatalf("compactor = %+v", c)
 	}
 }

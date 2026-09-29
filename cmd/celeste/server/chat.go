@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,11 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 // chatMaxTurns is MCP chat's turn cap, unchanged from the pre-loop server.
@@ -49,7 +53,7 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 
 	system := env.SystemPrompt("", nil)
 	sessionID := fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano())
-	l := newChatLoop(newChatClient(cfg, env.Registry, system), env, sessionID)
+	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
 	text, err := runChat(ctx, l, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
@@ -89,14 +93,63 @@ func newChatClient(cfg *config.Config, reg *tools.Registry, system string) *llm.
 
 // newChatLoop builds one call's loop. There is no Gate: an Ask (only a
 // hook-forced one, since Trust mode asks for nothing else) is denied
-// headless, as before. Tool hooks already run in env.Registry.
-func newChatLoop(client *llm.Client, env *loop.Env, sessionID string) *loop.Loop {
-	return &loop.Loop{
+// headless, as before. Tool hooks already run in env.Registry. Old tool
+// results are pruned near the window (spec §4 F2: MCP chat gains
+// compaction).
+func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, sessionID string) *loop.Loop {
+	l := &loop.Loop{
 		Client:    client,
 		Tools:     env.Registry,
 		Limits:    chatLimits(),
 		SessionID: sessionID, // names this call's spill directory
 	}
+	// Assigned only when non-nil: a nil *chatCompactor in the interface
+	// would be a non-nil Compactor.
+	if c := newChatCompactor(cfg, system, client.GetSkills()); c != nil {
+		l.Compact = c
+	}
+	return l
+}
+
+// chatCompactor prunes old tool results when a call's history nears the
+// model's window: the first rung of the agent's ladder (#174). Pruned bodies
+// go to the pruned-results store, where recall_tool_result restores them.
+// MCP chat has no summary rung: a call is one prompt of at most 25 turns.
+type chatCompactor struct {
+	window   int // the model's context window, in tokens
+	overhead int // system prompt and tool definitions, estimated
+	store    *compact.Store
+}
+
+// newChatCompactor sizes the compactor for cfg's model (context_limit
+// honoured, as in the TUI and agent). Without a store it returns nil:
+// compact.Prune never prunes without one.
+func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefinition) *chatCompactor {
+	store, err := compact.DefaultStore()
+	if err != nil {
+		return nil
+	}
+	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	defs, _ := json.Marshal(skills)
+	return &chatCompactor{
+		window:   window,
+		overhead: ctxmgr.EstimateTokens(system) + len(defs)/4,
+		store:    store,
+	}
+}
+
+// Compact implements loop.Compactor. The loop calls it before every request,
+// and once with force after a context-overflow error.
+func (c *chatCompactor) Compact(_ context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
+	used := compact.Estimate(history) + c.overhead
+	if usage != nil && usage.PromptTokens > used {
+		used = usage.PromptTokens // the provider's count includes what the estimate misses
+	}
+	out, res := compact.Prune(history, compact.Options{Window: c.window, Used: used, Force: force}, c.store)
+	if !res.Pruned() {
+		return history, nil, false
+	}
+	return out, []string{"context compacted: " + res.Summary()}, true
 }
 
 // runChat runs the loop for one prompt and returns the tool-result text.

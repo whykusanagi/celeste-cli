@@ -298,6 +298,9 @@ transport, and gains a set of TUI features around all of it.
 - Within a call, `write_file`, `patch_file` and `splice_file` refuse to edit
   a file that changed since Celeste last read or wrote it ("read it again
   before editing"), and snapshot a file before writing it.
+- Prunes old tool results when a call nears the model's context window,
+  like agent runs (context_limit is honoured). Pruned results can be
+  restored with `recall_tool_result`. MCP chat never writes a summary.
 
 ## [1.10.0] - 2026-06-03
 
