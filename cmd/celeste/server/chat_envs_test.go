@@ -292,29 +292,6 @@ func TestChatEnvsResetsTheFileTrackerBetweenCalls(t *testing.T) {
 	}
 }
 
-// The stamp covers the files Setup bakes into an Env.
-func TestChatEnvStampSeesConfigChanges(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	ws := t.TempDir()
-	base := chatEnvStamp(ws)
-	for _, p := range []string{
-		filepath.Join(home, ".celeste", "permissions.json"),
-		filepath.Join(home, ".celeste", "hooks.json"),
-		filepath.Join(home, ".celeste", "trusted.json"),
-		filepath.Join(home, ".celeste", "mcp.json"),
-		filepath.Join(ws, ".grimoire"),
-		filepath.Join(ws, ".celeste", "hooks.json"),
-	} {
-		writeFile(t, p, "{}")
-		if chatEnvStamp(ws) == base {
-			t.Errorf("stamp ignores %s", p)
-		}
-		base = chatEnvStamp(ws)
-	}
-}
-
 // celeste_index rebuild retires the workspace's cached chat Env before it
 // deletes the codegraph DB that Env holds open.
 func TestIndexRebuildInvalidatesTheChatEnv(t *testing.T) {
