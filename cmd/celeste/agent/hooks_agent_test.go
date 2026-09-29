@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,5 +192,83 @@ func TestAgentClosedRunnerFiresNoHooks(t *testing.T) {
 	r.postCompact(context.Background(), "s")
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
 		t.Fatalf("a hook fired after Close (stat err=%v)", err)
+	}
+}
+
+// A subagent (nested, with an AgentID) fires SubagentStop instead of Stop,
+// and its deny continues the run once, like Stop's.
+func TestAgentSubagentStopContinuesOnce(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "TASK_COMPLETE: too early"},
+		fakeprovider.Turn{Text: "TASK_COMPLETE: verified"},
+	)
+	warns := &sink{}
+	r, _ := fakeRunner(t, srv, func(o *Options) {
+		o.Nested = true
+		o.AgentID = "sub-1-1"
+		o.Warn = warns.add
+		home, _ := os.UserHomeDir()
+		writeHooks(t, home,
+			map[string]any{"event": "SubagentStop", "command": hooktest.Command(t, "deny", "check the diff first")},
+			map[string]any{"event": "Stop", "command": hooktest.Command(t, "deny", "stop hook must not fire")},
+		)
+	})
+	st, err := r.RunGoal(context.Background(), "do it")
+	if err != nil || st.Status != StatusCompleted || st.LastAssistantResponse != "TASK_COMPLETE: verified" {
+		t.Fatalf("status=%q last=%q err=%v", st.Status, st.LastAssistantResponse, err)
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 2 || !strings.Contains(toJSONString(reqs[1].Body["messages"]), "check the diff first") {
+		t.Fatalf("requests=%d, want the SubagentStop reason in the second request", len(reqs))
+	}
+	if strings.Contains(toJSONString(reqs[1].Body["messages"]), "stop hook must not fire") {
+		t.Fatal("a subagent fired Stop")
+	}
+	if !strings.Contains(warns.all(), "a SubagentStop hook asked the agent to continue again") {
+		t.Fatalf("warnings = %q, want the ignored second deny reported", warns.all())
+	}
+}
+
+// SubagentStop's payload names the subagent and carries its last message.
+func TestAgentSubagentStopPayload(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: sub done"})
+	record := filepath.Join(t.TempDir(), "substop.json")
+	r, _ := fakeRunner(t, srv, func(o *Options) {
+		o.Nested = true
+		o.AgentID = "sub-7-2"
+		home, _ := os.UserHomeDir()
+		writeHooks(t, home, map[string]any{"event": "SubagentStop", "command": hooktest.Command(t, "record", record)})
+	})
+	if _, err := r.RunGoal(context.Background(), "do it"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("SubagentStop did not fire: %v", err)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(data, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p["event"] != "SubagentStop" || p["agent_id"] != "sub-7-2" || p["last_message"] != "TASK_COMPLETE: sub done" {
+		t.Fatalf("payload = %v", p)
+	}
+}
+
+// Orchestrator lanes and the TUI's /agent are nested without an AgentID:
+// neither Stop nor SubagentStop fires.
+func TestAgentNestedWithoutAgentIDSkipsSubagentStop(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+	record := filepath.Join(t.TempDir(), "substop.json")
+	r, _ := fakeRunner(t, srv, func(o *Options) {
+		o.Nested = true
+		home, _ := os.UserHomeDir()
+		writeHooks(t, home, map[string]any{"event": "SubagentStop", "command": hooktest.Command(t, "record", record)})
+	})
+	if _, err := r.RunGoal(context.Background(), "do it"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Fatalf("SubagentStop fired for a nested run without an AgentID (stat err=%v)", err)
 	}
 }

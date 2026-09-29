@@ -93,8 +93,14 @@ type Options struct {
 	PromptFunc tools.PromptFunc `json:"-"`
 	// Nested marks a runner started by another run (a subagent, an
 	// orchestrator lane, the TUI's /agent). It skips SessionStart and Stop
-	// hooks, which belong to the top-level run (SubagentStop is F2c's).
+	// hooks, which belong to the top-level run; a subagent fires
+	// SubagentStop instead (AgentID).
 	Nested bool `json:"-"`
+	// AgentID names a subagent for SubagentStop hooks: the ID spawn_agent
+	// returned, kept across a resume. A Nested runner with an AgentID fires
+	// SubagentStop when it finishes as completed; one without (an
+	// orchestrator lane, /agent) fires neither.
+	AgentID string `json:"-"`
 	// Warn receives setup and hook warnings. Nil writes them to errOut.
 	Warn func(string) `json:"-"`
 	// ParentEnv, when set, is the environment of the run that started this

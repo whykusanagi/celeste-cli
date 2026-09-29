@@ -230,8 +230,11 @@ transport, and gains a set of TUI features around all of it.
 - A Stop hook's `deny` is now acted on in `celeste agent`, MCP agent mode
   and MCP chat: the run continues once with the hook's `reason` as the next
   instruction, and only while turns remain. Subagents, `/orchestrate` lanes
-  and `/agent` in the chat skip SessionStart and Stop. SubagentStop is not
-  fired yet.
+  and `/agent` in the chat skip SessionStart and Stop.
+- A subagent started with `spawn_agent` fires SubagentStop when it finishes
+  (`agent_id` is the ID `spawn_agent` returned, kept when it is resumed). A
+  `deny` continues it once, like Stop. `/orchestrate` lanes and `/agent`
+  fire neither.
 - MCP chat (`celeste` tool, `mode: "chat"`) now loads hooks like agent
   runs: your global hooks run, and untrusted repo hooks are skipped with a
   warning returned in the result. Each call fires SessionStart (`startup`),
