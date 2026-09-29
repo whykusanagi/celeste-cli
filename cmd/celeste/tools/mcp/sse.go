@@ -4,6 +4,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,27 +23,34 @@ type SSETransport struct {
 	mu         sync.Mutex
 	closed     bool
 	done       chan struct{}
+	cancel     context.CancelFunc // ends the GET stream started by connectSSE
 }
 
 // NewSSETransport connects to an MCP server's SSE endpoint.
 // url is the base URL of the MCP server (e.g., "http://localhost:3000/sse").
 func NewSSETransport(url string) (*SSETransport, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	t := &SSETransport{
 		baseURL:    url,
 		client:     &http.Client{},
 		responseCh: make(chan *Response, 100),
 		done:       make(chan struct{}),
+		cancel:     cancel,
 	}
 
 	// Connect to the SSE stream in a goroutine
-	go t.connectSSE()
+	go t.connectSSE(ctx)
 
 	return t, nil
 }
 
 // connectSSE establishes the SSE connection and reads events.
-func (t *SSETransport) connectSSE() {
-	resp, err := t.client.Get(t.baseURL)
+func (t *SSETransport) connectSSE(ctx context.Context) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.baseURL, nil)
+	if err != nil {
+		return
+	}
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return
 	}
@@ -92,7 +100,11 @@ func (t *SSETransport) connectSSE() {
 			case "message":
 				var rpcResp Response
 				if err := json.Unmarshal([]byte(data), &rpcResp); err == nil {
-					t.responseCh <- &rpcResp
+					select {
+					case t.responseCh <- &rpcResp:
+					case <-t.done:
+						return
+					}
 				}
 			}
 
@@ -104,6 +116,11 @@ func (t *SSETransport) connectSSE() {
 
 // Send sends a JSON-RPC request via HTTP POST to the server's endpoint.
 func (t *SSETransport) Send(req *Request) error {
+	return t.SendContext(context.Background(), req)
+}
+
+// SendContext is Send, abandoned when ctx is done.
+func (t *SSETransport) SendContext(ctx context.Context, req *Request) error {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -122,7 +139,7 @@ func (t *SSETransport) Send(req *Request) error {
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpResp, err := t.client.Post(postURL, "application/json", bytes.NewReader(data))
+	httpResp, err := t.post(ctx, postURL, data)
 	if err != nil {
 		return fmt.Errorf("POST request: %w", err)
 	}
@@ -137,6 +154,11 @@ func (t *SSETransport) Send(req *Request) error {
 
 // SendNotification sends a JSON-RPC notification via HTTP POST.
 func (t *SSETransport) SendNotification(notif *Notification) error {
+	return t.SendNotificationContext(context.Background(), notif)
+}
+
+// SendNotificationContext is SendNotification, abandoned when ctx is done.
+func (t *SSETransport) SendNotificationContext(ctx context.Context, notif *Notification) error {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -154,7 +176,7 @@ func (t *SSETransport) SendNotification(notif *Notification) error {
 		return fmt.Errorf("marshal notification: %w", err)
 	}
 
-	httpResp, err := t.client.Post(postURL, "application/json", bytes.NewReader(data))
+	httpResp, err := t.post(ctx, postURL, data)
 	if err != nil {
 		return fmt.Errorf("POST notification: %w", err)
 	}
@@ -163,13 +185,28 @@ func (t *SSETransport) SendNotification(notif *Notification) error {
 	return nil
 }
 
+func (t *SSETransport) post(ctx context.Context, url string, data []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return t.client.Do(req)
+}
+
 // Receive reads the next JSON-RPC response from the SSE event stream.
+// It also returns once the transport is closed, so a Receive the client left
+// running for a cancelled call doesn't outlive Close.
 func (t *SSETransport) Receive() (*Response, error) {
-	resp, ok := <-t.responseCh
-	if !ok {
+	select {
+	case resp, ok := <-t.responseCh:
+		if !ok {
+			return nil, fmt.Errorf("transport closed")
+		}
+		return resp, nil
+	case <-t.done:
 		return nil, fmt.Errorf("transport closed")
 	}
-	return resp, nil
 }
 
 // Close shuts down the SSE connection.
@@ -182,5 +219,6 @@ func (t *SSETransport) Close() error {
 	}
 	t.closed = true
 	close(t.done)
+	t.cancel()
 	return nil
 }

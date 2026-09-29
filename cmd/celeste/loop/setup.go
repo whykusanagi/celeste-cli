@@ -74,6 +74,10 @@ type Env struct {
 type SetupOptions struct {
 	SessionID string       // hooks' session_id; "" = "<mode>-<pid>"
 	Warn      func(string) // setup and hook warnings; nil = stderr
+	// Notice gets timing notices (a git snapshot or code-graph update that
+	// ran out of time). They depend on the machine, not the configuration.
+	// nil = Warn.
+	Notice func(string)
 }
 
 // Setup builds the registry, MCP clients, custom skills, permission checker,
@@ -92,6 +96,9 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 
 	if opts.Warn == nil {
 		opts.Warn = func(s string) { fmt.Fprintln(os.Stderr, "Warning: "+s) }
+	}
+	if opts.Notice == nil {
+		opts.Notice = opts.Warn
 	}
 	if opts.SessionID == "" {
 		opts.SessionID = fmt.Sprintf("%s-%d", mode, os.Getpid())
@@ -176,15 +183,26 @@ func (e *Env) setupHooks(home string) {
 // StartSession fires SessionStart for a top-level run and adds its context
 // to the project context, under the TUI's heading. Call it before
 // SystemPrompt; nested runs (subagents, orchestrator lanes) don't call it.
+// A shared Env (MCP chat) uses SessionStartContext instead.
 func (e *Env) StartSession(ctx context.Context, source string) {
+	e.ProjectContext = withSessionContext(e.ProjectContext, e.SessionStartContext(ctx, source))
+}
+
+// SessionStartContext fires SessionStart and returns its additional
+// context, leaving the Env unchanged, so several runs sharing one Env each
+// get their own session. Pass the result to SystemPromptWithSession.
+func (e *Env) SessionStartContext(ctx context.Context, source string) string {
 	if e.Hooks == nil {
-		return
+		return ""
 	}
-	start := e.Hooks.SessionStart(ctx, source)
-	if start.AdditionalContext == "" {
-		return
+	return e.Hooks.SessionStart(ctx, source).AdditionalContext
+}
+
+func withSessionContext(project, session string) string {
+	if session == "" {
+		return project
 	}
-	e.ProjectContext = strings.TrimSpace(e.ProjectContext + "\n\n# Session Start Hook Context\n\n" + start.AdditionalContext)
+	return strings.TrimSpace(project + "\n\n# Session Start Hook Context\n\n" + session)
 }
 
 // Trust switches the checker to trust mode, keeping the deny rules. An
@@ -260,6 +278,14 @@ func (e *Env) setupContext(ws string) {
 	e.ProjectContext = text
 }
 
+// Setup's waits and its code-graph update, as vars so tests can shorten the
+// waits and block the update.
+var (
+	gitSnapshotTimeout = 5 * time.Second
+	codeGraphTimeout   = 10 * time.Second
+	updateCodeGraph    = func(ctx context.Context, idx *codegraph.Indexer) error { return idx.UpdateWithContext(ctx) }
+)
+
 func (e *Env) captureGit(ws string) string {
 	done := make(chan *grimoire.GitSnapshot, 1)
 	go func() { done <- grimoire.CaptureGitSnapshot(ws) }()
@@ -268,8 +294,8 @@ func (e *Env) captureGit(ws string) string {
 		if snap != nil {
 			return snap.FormatForPrompt()
 		}
-	case <-time.After(5 * time.Second):
-		e.warn("git snapshot timed out, skipping")
+	case <-time.After(gitSnapshotTimeout):
+		e.opts.Notice("git snapshot timed out, skipping")
 	}
 	return ""
 }
@@ -288,15 +314,15 @@ func (e *Env) setupCodeGraph(ws string) string {
 	e.indexing.Add(1)
 	go func() {
 		defer e.indexing.Done()
-		done <- idx.UpdateWithContext(ctx)
+		done <- updateCodeGraph(ctx, idx)
 	}()
 	select {
 	case err := <-done:
 		if err != nil {
 			e.warn("code graph update failed: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		e.warn("code graph update timed out (10s), skipping")
+	case <-time.After(codeGraphTimeout):
+		e.opts.Notice(fmt.Sprintf("code graph update timed out (%s), skipping", codeGraphTimeout))
 	}
 	builtin.RegisterCodeGraphTools(e.Registry, idx)
 	e.Indexer = idx
@@ -306,6 +332,17 @@ func (e *Env) setupCodeGraph(ws string) string {
 // SystemPrompt composes the mode's system prompt: persona (unless skipped),
 // contract (agent mode), sliders, project context and git state.
 func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string {
+	return e.compose(e.ProjectContext, contract, sliders)
+}
+
+// SystemPromptWithSession is SystemPrompt with one run's SessionStart
+// context added to the project context, under the TUI's heading. The Env is
+// not changed.
+func (e *Env) SystemPromptWithSession(session, contract string, sliders *config.SliderConfig) string {
+	return e.compose(withSessionContext(e.ProjectContext, session), contract, sliders)
+}
+
+func (e *Env) compose(projectContext, contract string, sliders *config.SliderConfig) string {
 	pm := prompts.ModeChat
 	if e.Mode == ModeAgent {
 		pm = prompts.ModeAgent
@@ -315,7 +352,7 @@ func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string
 		SkipPersona:    e.skipPersona,
 		Contract:       contract,
 		Sliders:        sliders,
-		ProjectContext: e.ProjectContext,
+		ProjectContext: projectContext,
 		GitSnapshot:    e.GitSnapshot,
 	})
 }

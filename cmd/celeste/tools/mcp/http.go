@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,8 +38,8 @@ func (t *HTTPTransport) SetProtocolVersion(v string) {
 	t.mu.Unlock()
 }
 
-func (t *HTTPTransport) newPost(body []byte) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodPost, t.url, bytes.NewReader(body))
+func (t *HTTPTransport) newPost(ctx context.Context, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -52,8 +53,8 @@ func (t *HTTPTransport) newPost(body []byte) (*http.Request, error) {
 	return req, nil
 }
 
-func (t *HTTPTransport) post(body []byte) error {
-	req, err := t.newPost(body)
+func (t *HTTPTransport) post(ctx context.Context, body []byte) error {
+	req, err := t.newPost(ctx, body)
 	if err != nil {
 		return err
 	}
@@ -106,20 +107,31 @@ func (t *HTTPTransport) enqueue(r *Response) {
 
 // Send POSTs a request and queues the resulting response(s).
 func (t *HTTPTransport) Send(req *Request) error {
+	return t.SendContext(context.Background(), req)
+}
+
+// SendContext is Send, abandoned when ctx is done. The server answers inside
+// the POST, so this bounds the whole call.
+func (t *HTTPTransport) SendContext(ctx context.Context, req *Request) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	return t.post(body)
+	return t.post(ctx, body)
 }
 
 // SendNotification POSTs a notification; no response is queued.
 func (t *HTTPTransport) SendNotification(notif *Notification) error {
+	return t.SendNotificationContext(context.Background(), notif)
+}
+
+// SendNotificationContext is SendNotification, abandoned when ctx is done.
+func (t *HTTPTransport) SendNotificationContext(ctx context.Context, notif *Notification) error {
 	body, err := json.Marshal(notif)
 	if err != nil {
 		return err
 	}
-	req, err := t.newPost(body)
+	req, err := t.newPost(ctx, body)
 	if err != nil {
 		return err
 	}

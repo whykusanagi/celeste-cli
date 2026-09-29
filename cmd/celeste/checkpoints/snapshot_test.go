@@ -1,8 +1,10 @@
 package checkpoints
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -194,20 +196,93 @@ func TestCleanup(t *testing.T) {
 	assert.Nil(t, sm.snapshots)
 }
 
-func TestSnapshot_MaxCountEnforced(t *testing.T) {
+func TestSnapshot_EvictsOldestAtCap(t *testing.T) {
 	dir := t.TempDir()
 	backupDir := filepath.Join(dir, "backups")
 	sm := newSnapshotManagerWithBase(backupDir)
 	sm.maxCount = 3
 
 	srcFile := filepath.Join(dir, "source.txt")
-	require.NoError(t, os.WriteFile(srcFile, []byte("content"), 0644))
-
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
+		require.NoError(t, os.WriteFile(srcFile, []byte(fmt.Sprintf("content %d", i)), 0644))
 		require.NoError(t, sm.Snapshot(srcFile))
 	}
 
-	err := sm.Snapshot(srcFile)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "snapshot limit reached")
+	require.Len(t, sm.snapshots, 3)
+	assert.Equal(t, 3, sm.snapshots[0].Version)
+	assert.Equal(t, 5, sm.snapshots[2].Version)
+	entries, err := os.ReadDir(backupDir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 3, "evicted backups are removed from disk")
+
+	require.NoError(t, os.WriteFile(srcFile, []byte("edited"), 0644))
+	require.NoError(t, sm.Revert(srcFile))
+	got, err := os.ReadFile(srcFile)
+	require.NoError(t, err)
+	assert.Equal(t, "content 4", string(got))
+}
+
+func TestSnapshot_DefaultCapEvictsOldestBackup(t *testing.T) {
+	dir := t.TempDir()
+	backupDir := filepath.Join(dir, "backups")
+	sm := newSnapshotManagerWithBase(backupDir)
+
+	var paths []string
+	for i := 0; i < 101; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("f%03d.txt", i))
+		require.NoError(t, os.WriteFile(p, []byte(fmt.Sprintf("v%d", i)), 0644))
+		require.NoError(t, sm.Snapshot(p))
+		paths = append(paths, p)
+	}
+
+	require.Len(t, sm.snapshots, 100)
+	assert.Equal(t, paths[1], sm.snapshots[0].OriginalPath)
+	entries, err := os.ReadDir(backupDir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 100)
+	_, err = os.Stat(filepath.Join(backupDir, sanitizeFilename(paths[0])+"_v1"))
+	assert.True(t, os.IsNotExist(err), "oldest backup file should be removed")
+	assert.Error(t, sm.Revert(paths[0]), "evicted snapshot is gone")
+
+	require.NoError(t, os.WriteFile(paths[100], []byte("edited"), 0644))
+	reverted, err := sm.RevertLast()
+	require.NoError(t, err)
+	assert.Equal(t, paths[100], reverted)
+	got, err := os.ReadFile(paths[100])
+	require.NoError(t, err)
+	assert.Equal(t, "v100", string(got))
+}
+
+func TestSnapshot_ConcurrentPastCap(t *testing.T) {
+	dir := t.TempDir()
+	backupDir := filepath.Join(dir, "backups")
+	sm := newSnapshotManagerWithBase(backupDir)
+	sm.maxCount = 10
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 80)
+	for g := 0; g < 8; g++ {
+		p := filepath.Join(dir, fmt.Sprintf("g%d.txt", g))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0644))
+		wg.Add(1)
+		go func(p string) {
+			defer wg.Done()
+			for i := 0; i < 10; i++ {
+				errs <- sm.Snapshot(p)
+			}
+		}(p)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	sm.mu.Lock()
+	n := len(sm.snapshots)
+	sm.mu.Unlock()
+	assert.Equal(t, 10, n)
+	entries, err := os.ReadDir(backupDir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 10)
 }

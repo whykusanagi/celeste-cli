@@ -101,3 +101,27 @@ func TestClearStale(t *testing.T) {
 	ft.mu.RUnlock()
 	assert.False(t, tracked)
 }
+
+// Reset forgets every recorded read: a file changed after an earlier read
+// may be written again as a first write (MCP chat judges staleness per call).
+func TestFileTrackerReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(path, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ft := NewFileTracker()
+	if err := ft.RecordRead(path); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if ft.CheckStale(path) == nil {
+		t.Fatal("precondition: the change was not detected")
+	}
+	ft.Reset()
+	if err := ft.CheckStale(path); err != nil {
+		t.Fatalf("after Reset: %v", err)
+	}
+}

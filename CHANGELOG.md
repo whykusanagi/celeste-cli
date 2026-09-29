@@ -226,13 +226,17 @@ transport, and gains a set of TUI features around all of it.
   in `mode: "agent"`, `/agent` in the chat, subagents and `/orchestrate`
   lanes. Your global hooks run; untrusted repo hooks are skipped with a
   warning, because agent runs never prompt for trust. Approve them ahead of
-  time with `celeste hooks trust`. The MCP server's `mode: "chat"` still
-  loads no hooks.
-- A Stop hook's `deny` is now acted on in `celeste agent` and MCP agent
-  mode: the run continues once with the hook's `reason` as the next
+  time with `celeste hooks trust`.
+- A Stop hook's `deny` is now acted on in `celeste agent`, MCP agent mode
+  and MCP chat: the run continues once with the hook's `reason` as the next
   instruction, and only while turns remain. Subagents, `/orchestrate` lanes
   and `/agent` in the chat skip SessionStart and Stop. SubagentStop is not
   fired yet.
+- MCP chat (`celeste` tool, `mode: "chat"`) now loads hooks like agent
+  runs: your global hooks run, and untrusted repo hooks are skipped with a
+  warning returned in the result. Each call fires SessionStart (`startup`),
+  and UserPromptSubmit sees the call's `prompt`: a `deny` refuses the call
+  with an error result, and `additionalContext` is sent with the prompt.
 - Agent compaction summaries fire PreCompact (trigger `auto`) and
   PostCompact (with the summary text). A PreCompact `deny` skips the summary
   and is reported as a warning.
@@ -263,8 +267,49 @@ transport, and gains a set of TUI features around all of it.
   Move a server to a global config (`~/.celeste/mcp.json`,
   `~/.claude/mcp.json` or `~/.cursor/mcp.json`) to use it there. The chat
   itself still loads them.
+- A cancelled or timed-out call to a tool from an MCP server now returns
+  promptly, and a server that never answers no longer blocks that server's
+  other tools for the rest of the session (#221).
 - MCP agent mode now returns setup and hook warnings in the tool result,
   under a `## Warnings` heading.
+
+### MCP chat (`celeste` tool, `mode: "chat"`)
+
+- Runs on the same tool loop and setup as agent runs. Tool names, arguments
+  and the response shape are unchanged, as are the 25-turn cap, the
+  identical-call and no-progress guards (and their texts), and the stripping
+  of unbacked "Audio saved" and "subagent spawned" claims.
+- Now loads your custom skills, global MCP servers, the code-graph tools,
+  project memories, the code-graph summary and the git state. Repo MCP
+  configs are skipped with a warning, as in agent runs.
+- The server sets this up once per workspace and reuses it across calls
+  (up to 4 workspaces). It rebuilds it on the next call after you change
+  permissions, hooks, hook trust, MCP configs or the home or workspace
+  grimoire, or add or remove a skill. Anything else (an edit inside a skill,
+  a grimoire in a parent directory) applies within 10 minutes, when it is
+  rebuilt anyway. Each call still starts with a fresh conversation.
+- Also starts the MCP servers in your home-level configs:
+  `~/.celeste/mcp.json`, and now `~/.claude/mcp.json` and
+  `~/.cursor/mcp.json`. If one of them lists `celeste serve`, each
+  workspace's setup runs a child Celeste server (at most 4 at a time).
+- Global tool hooks run on every tool call. Untrusted repo hooks are skipped
+  with a warning. Warnings are appended to the result under a `## Warnings`
+  heading, only when there are any; setup warnings appear on the call that
+  set the workspace up.
+- Concurrency-safe tool calls in one turn run in parallel. Every tool has a
+  timeout: 45s, or its own (`bash` 5m, `generate_speech` 5m). Results over
+  128 KiB are saved to a private file.
+- A failed tool call reaches the model as
+  `{"error": true, "message": …, "tool": …}` instead of the raw text.
+- Within a call, `write_file`, `patch_file` and `splice_file` refuse to edit
+  a file that changed since Celeste last read or wrote it ("read it again
+  before editing"), and snapshot a file before writing it.
+- Undo snapshots keep the 100 most recent: past that the oldest one (and
+  its backup file) is dropped. Before, a workspace (or a long chat session)
+  that reached 100 snapshots failed every later edit with "snapshot failed".
+- Prunes old tool results when a call nears the model's context window,
+  like agent runs (context_limit is honoured). Pruned results can be
+  restored with `recall_tool_result`. MCP chat never writes a summary.
 
 ## [1.10.0] - 2026-06-03
 

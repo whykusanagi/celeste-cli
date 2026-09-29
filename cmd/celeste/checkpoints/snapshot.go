@@ -21,7 +21,7 @@ type FileSnapshot struct {
 type SnapshotManager struct {
 	baseDir   string // ~/.celeste/checkpoints/<session-id>/
 	snapshots []FileSnapshot
-	maxCount  int // maximum number of snapshots to retain
+	maxCount  int // maximum number of snapshots to retain; the oldest is evicted past it
 	mu        sync.Mutex
 }
 
@@ -49,22 +49,21 @@ func newSnapshotManagerWithBase(baseDir string) *SnapshotManager {
 // Snapshot creates a backup of the file at filePath before it is modified.
 // If the file does not exist, a sentinel snapshot is recorded (BackupPath = "").
 // Uses two-phase mtime checking to detect concurrent modifications during backup.
+// Past maxCount the oldest snapshot is evicted (its backup file removed), so a
+// long-lived manager keeps accepting snapshots.
 func (sm *SnapshotManager) Snapshot(filePath string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// Enforce snapshot limit
-	if len(sm.snapshots) >= sm.maxCount {
-		return fmt.Errorf("snapshot limit reached (%d) — consider cleaning up", sm.maxCount)
-	}
-
+	// Computed before any eviction, so a new backup never reuses the file
+	// name of the snapshot about to be evicted.
 	version := sm.nextVersion(filePath)
 	ts := time.Now()
 
 	info, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
 		// File doesn't exist yet — record sentinel
-		sm.snapshots = append(sm.snapshots, FileSnapshot{
+		sm.appendLocked(FileSnapshot{
 			OriginalPath: filePath,
 			BackupPath:   "", // sentinel: file was new
 			Version:      version,
@@ -106,13 +105,26 @@ func (sm *SnapshotManager) Snapshot(filePath string) error {
 		}
 	}
 
-	sm.snapshots = append(sm.snapshots, FileSnapshot{
+	sm.appendLocked(FileSnapshot{
 		OriginalPath: filePath,
 		BackupPath:   backupPath,
 		Version:      version,
 		Timestamp:    ts,
 	})
 	return nil
+}
+
+// appendLocked records snap and evicts the oldest snapshots past maxCount,
+// removing their backup files. Callers hold sm.mu.
+func (sm *SnapshotManager) appendLocked(snap FileSnapshot) {
+	sm.snapshots = append(sm.snapshots, snap)
+	for sm.maxCount > 0 && len(sm.snapshots) > sm.maxCount {
+		if old := sm.snapshots[0]; old.BackupPath != "" {
+			os.Remove(old.BackupPath)
+		}
+		sm.snapshots[0] = FileSnapshot{}
+		sm.snapshots = sm.snapshots[1:]
+	}
 }
 
 // Revert restores the most recent backup for the given file path.

@@ -211,7 +211,7 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 			// res.failed can carry the hook's own stderr: quote it if it
 			// holds control or bidi characters.
 			failed := safeText(res.failed)
-			r.warn(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), failed))
+			r.warnFor(ctx)(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), failed))
 			if ev.gating() {
 				out.Decision, out.Reason = Deny, "hook failed: "+failed
 				break
@@ -235,6 +235,27 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 	}
 	out.AdditionalContext = truncate(strings.Join(contexts, "\n"), maxContext)
 	return out
+}
+
+type warnKey struct{}
+
+// WithWarn returns ctx carrying warn as the sink for warnings raised by hooks
+// run under it. A Runner shared by concurrent callers (MCP chat's cached Env)
+// sends each caller's hook failures to that caller, not to the sink it was
+// loaded with. A nil warn leaves ctx unchanged.
+func WithWarn(ctx context.Context, warn func(string)) context.Context {
+	if warn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, warnKey{}, warn)
+}
+
+// warnFor returns ctx's warn sink, or the Runner's own when ctx has none.
+func (r *Runner) warnFor(ctx context.Context) func(string) {
+	if w, ok := ctx.Value(warnKey{}).(func(string)); ok {
+		return w
+	}
+	return r.warn
 }
 
 // DisabledWarning is the one warning every adopter shows when Load fails.

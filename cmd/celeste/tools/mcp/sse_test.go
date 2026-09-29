@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,4 +109,57 @@ func TestSSETransport_Close(t *testing.T) {
 
 	err = transport.Close()
 	assert.NoError(t, err)
+}
+
+// Close ends a Receive left running on a goroutine and cancels the GET
+// stream, so neither outlives the transport.
+func TestSSETransport_CloseEndsReceiveAndStream(t *testing.T) {
+	streamOpen, streamEnded := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", r.URL.Path)
+		w.(http.Flusher).Flush()
+		close(streamOpen)
+		<-r.Context().Done()
+		close(streamEnded)
+	}))
+	defer server.Close()
+
+	transport, err := NewSSETransport(server.URL)
+	require.NoError(t, err)
+
+	received := make(chan error, 1)
+	go func() {
+		_, err := transport.Receive()
+		received <- err
+	}()
+
+	select {
+	case <-streamOpen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE GET stream never opened")
+	}
+	// Let the reader take the endpoint event and block on the idle stream,
+	// where only cancelling the GET can end it.
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		transport.mu.Lock()
+		got := transport.postURL
+		transport.mu.Unlock()
+		if got != "" || time.Now().After(deadline) {
+			break
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	require.NoError(t, transport.Close())
+	select {
+	case err := <-received:
+		assert.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Receive still blocked after Close")
+	}
+	select {
+	case <-streamEnded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE GET stream still open after Close")
+	}
 }
