@@ -112,7 +112,7 @@ func TestOrchestratorCommandAsksThroughTheTUIPrompt(t *testing.T) {
 			return tools.PermissionResponse{Decision: "allow_once"}
 		},
 	}
-	events, read := drainOrchestrator(t, adapter.RunOrchestratorCommand("write hi to out.txt"))
+	events, read := drainOrchestrator(t, adapter.RunOrchestratorCommand("write hi to out.txt", 1))
 
 	closed := make(chan tea.Msg, 1)
 	go func() { closed <- read() }()
@@ -158,7 +158,7 @@ func TestOrchestratorCommandKeepsGoingAfterASkippedDebate(t *testing.T) {
 		"code": {Primary: "fake-model", Reviewer: "fake-model", ReviewerBaseURL: "http://127.0.0.1:1"},
 	}}
 	adapter := &TUIClientAdapter{baseConfig: cfg}
-	events, _ := drainOrchestrator(t, adapter.RunOrchestratorCommand("fix the bug in main.go"))
+	events, _ := drainOrchestrator(t, adapter.RunOrchestratorCommand("fix the bug in main.go", 1))
 
 	if len(events) == 0 {
 		t.Fatal("no events")
@@ -274,9 +274,13 @@ func TestOrchestratorInterruptCancelsTheRun(t *testing.T) {
 		d.external <- tea.KeyMsg{Type: tea.KeyEsc}
 	}()
 	d.RunUntil(func(m tea.Model) bool { return m.(tui.AppModel).DebugInterrupted() }, 30*time.Second)
-	m = d.RunUntil(func(m tea.Model) bool { return chatHas(m, "❌") && turnIdle(m) }, 20*time.Second)
-	if !chatHas(m, "context canceled") {
-		t.Fatalf("the run ended, but not by the interrupt: %v", chatMessages(m))
+	// The server never answers, so the run's event stream ending (no
+	// pending reads) means the interrupt cancelled it; a StreamStartMsg
+	// arriving after Esc cancels its run then. The run's own EventError is
+	// ignored, since Esc already ended the turn.
+	m = d.RunUntil(func(tea.Model) bool { return d.pending == 0 }, 20*time.Second)
+	if !turnIdle(m) || chatHas(m, "❌") {
+		t.Fatalf("the cancelled run's error reached the chat or reopened the turn: %v", chatMessages(m))
 	}
 }
 
@@ -284,7 +288,7 @@ func TestOrchestratorInterruptCancelsTheRun(t *testing.T) {
 // sending (nobody reads) and without panicking once the channel is closed.
 func TestOrchestratorEventSenderDropsEventsAfterTheTerminalOne(t *testing.T) {
 	ch := make(chan tui.OrchestratorEventMsg, 1)
-	send := orchestratorEventSender(ch, ch)
+	send := orchestratorEventSender(ch, ch, 1)
 	send(orchestrator.OrchestratorEvent{Kind: orchestrator.EventComplete, Text: "done"})
 	if m := <-ch; m.Kind != int(orchestrator.EventComplete) || m.Ch != nil {
 		t.Fatalf("terminal message = %#v, want EventComplete with no next read", m)

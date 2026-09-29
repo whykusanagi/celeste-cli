@@ -159,6 +159,12 @@ type AppModel struct {
 	// Running token totals for the current orchestrator run
 	orchInputTokens  int
 	orchOutputTokens int
+	// orchRun tags the /orch run that owns the turn (0 = none); orchSeq
+	// numbers them. Events and the StreamStartMsg of any other run (one
+	// Esc or Ctrl+C cancelled) are ignored, so a late terminal event can't
+	// clear a newer turn's cancel or set streaming again.
+	orchRun uint64
+	orchSeq uint64
 
 	// Running token totals for the current agent run
 	agentInputTokens  int
@@ -227,7 +233,9 @@ type AgentCommandRunner interface {
 
 // OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
 type OrchestratorCommandRunner interface {
-	RunOrchestratorCommand(goal string) tea.Cmd
+	// RunOrchestratorCommand starts the run and tags its StreamStartMsg and
+	// every OrchestratorEventMsg with run.
+	RunOrchestratorCommand(goal string, run uint64) tea.Cmd
 }
 
 // SubagentInfo is a TUI-facing view of a subagent run.
@@ -616,6 +624,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Active operation running — cancel it
 				m.cancelFunc()
 				m.cancelFunc = nil
+				m.orchRun = 0
 				m.streaming = false
 				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
 				// Double Ctrl+C within 3s => quit
@@ -783,8 +792,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat = m.chat.AddSystemMessage("🎭 Orchestrator: " + goal)
 				m.orchInputTokens = 0
 				m.orchOutputTokens = 0
+				m.orchSeq++
+				m.orchRun = m.orchSeq
 				return m, tea.Batch(
-					orchRunner.RunOrchestratorCommand(goal),
+					orchRunner.RunOrchestratorCommand(goal, m.orchRun),
 					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 						return TickMsg{Time: t}
 					}),
@@ -1957,6 +1968,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case StreamStartMsg:
+		if msg.Run != 0 && msg.Run != m.orchRun {
+			// An /orch run cancelled (Esc, Ctrl+C) before its cancel
+			// arrived: stop it, and leave the current turn's cancel alone.
+			if msg.Cancel != nil {
+				msg.Cancel()
+			}
+			return m, nil
+		}
 		// Store the cancel function so Ctrl+C can cancel the active request
 		m.cancelFunc = msg.Cancel
 		return m, nil
@@ -2270,6 +2289,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case OrchestratorEventMsg:
+		if msg.Run != m.orchRun {
+			// From a run that is no longer current (cancelled): keep
+			// draining it so its goroutine can finish, change nothing.
+			return m, msg.ReadNext()
+		}
 		var cmds []tea.Cmd
 
 		if m.splitPanel == nil {
@@ -2366,6 +2390,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.AddAction(label)
 			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
+			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
 			// Keep splitPanelMode = true so results stay visible; user closes by sending next message
@@ -2381,6 +2406,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.persistSession()
 		case 8: // EventError
+			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
 			m.splitPanelMode = false

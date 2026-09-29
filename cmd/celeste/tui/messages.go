@@ -70,6 +70,7 @@ type TokenUsage struct {
 // an in-progress LLM request on Ctrl+C.
 type StreamStartMsg struct {
 	Cancel context.CancelFunc
+	Run    uint64 // the /orch run it belongs to; 0 for other requests
 }
 
 // StreamDoneMsg is sent when streaming is complete.
@@ -282,6 +283,7 @@ type OrchestratorEventMsg struct {
 	Diff         string
 	Score        float64
 	Ch           <-chan OrchestratorEventMsg // nil on terminal events
+	Run          uint64                      // the /orch run that sent it
 }
 
 // ReadNext returns a cmd to read the next OrchestratorEventMsg.

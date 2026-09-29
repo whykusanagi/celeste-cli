@@ -64,7 +64,7 @@ func logOrchestratorEvent(e orchestrator.OrchestratorEvent) {
 // anything later is logged and dropped, never sent: a send would block on a
 // channel nobody reads, or panic once it is closed. The orchestrator
 // delivers events one at a time, so finished needs no lock.
-func orchestratorEventSender(ch chan<- tui.OrchestratorEventMsg, recv <-chan tui.OrchestratorEventMsg) func(orchestrator.OrchestratorEvent) {
+func orchestratorEventSender(ch chan<- tui.OrchestratorEventMsg, recv <-chan tui.OrchestratorEventMsg, run uint64) func(orchestrator.OrchestratorEvent) {
 	finished := false
 	return func(e orchestrator.OrchestratorEvent) {
 		logOrchestratorEvent(e)
@@ -89,6 +89,7 @@ func orchestratorEventSender(ch chan<- tui.OrchestratorEventMsg, recv <-chan tui
 			Diff:         e.Diff,
 			Score:        e.Score,
 			Ch:           next,
+			Run:          run,
 		}
 		finished = terminal
 	}
@@ -97,8 +98,9 @@ func orchestratorEventSender(ch chan<- tui.OrchestratorEventMsg, recv <-chan tui
 // RunOrchestratorCommand launches an orchestrated agent run from the TUI.
 // Returns a tea.Cmd that streams OrchestratorEventMsg to the TUI. The run is
 // cancellable: the TUI stores its cancel via StreamStartMsg, so Esc and
-// Ctrl+C stop it, as they do /agent.
-func (a *TUIClientAdapter) RunOrchestratorCommand(goal string) tea.Cmd {
+// Ctrl+C stop it, as they do /agent. run tags the StreamStartMsg and every
+// event, so the TUI can ignore a run it already cancelled.
+func (a *TUIClientAdapter) RunOrchestratorCommand(goal string, run uint64) tea.Cmd {
 	// Buffer=1: allows the goroutine to be at most one event ahead of the TUI reader.
 	// This creates backpressure so events stream in real-time rather than all appearing
 	// at once after the agent run completes (what happens with a large buffer).
@@ -113,14 +115,14 @@ func (a *TUIClientAdapter) RunOrchestratorCommand(goal string) tea.Cmd {
 		// before 2.0 every mutating tool was silently denied (spec §3.2).
 		o := orchestrator.New(cfg, orchestrator.WithPrompt(a.promptFn))
 		tui.LogInfo(fmt.Sprintf("[ORCH] run started goal=%q", goal))
-		o.OnEvent(orchestratorEventSender(ch, ch))
+		o.OnEvent(orchestratorEventSender(ch, ch, run))
 		// Run emits EventComplete or EventError via OnEvent before returning.
 		_, _ = o.Run(ctx, goal)
 		tui.LogInfo("[ORCH] run finished")
 	}()
 
 	return tea.Batch(
-		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel, Run: run} },
 		func() tea.Msg {
 			msg, ok := <-ch
 			if !ok {
