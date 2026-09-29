@@ -296,6 +296,10 @@ transport, and gains a set of TUI features around all of it.
   set of MCP servers, hooks and code graph per run instead of each starting
   its own. Their hooks see one `session_id` for the run,
   `orchestrator-<n>`, instead of one per lane.
+- When the reviewer debate in `/orchestrate` fails, the run now shows
+  "debate skipped" as a notice and carries on to the primary agent's
+  result. Before, the chat treated it as the end of the run and never
+  showed the result.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

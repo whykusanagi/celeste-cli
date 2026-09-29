@@ -223,8 +223,9 @@ func (o *Orchestrator) run(ctx context.Context, goal string, li laneInheritance)
 	if assignment.HasReviewer() && (lane == LaneCode || lane == LaneReview) {
 		verdict, debateErr := o.runDebate(ctx, li, goal, primaryResponse, assignment)
 		if debateErr != nil {
-			// Debate failure is non-fatal — emit warning and continue.
-			o.emit(OrchestratorEvent{Kind: EventError, Text: fmt.Sprintf("debate skipped: %v", debateErr)})
+			// Debate failure is non-fatal: a notice, not EventError, which
+			// callers (the TUI) treat as the end of the run.
+			o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: fmt.Sprintf("⚠ debate skipped: %v", debateErr)})
 		} else {
 			result.Verdict = verdict
 		}

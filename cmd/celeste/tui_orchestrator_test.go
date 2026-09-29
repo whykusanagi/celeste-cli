@@ -91,3 +91,45 @@ func TestOrchestratorCommandAsksThroughTheTUIPrompt(t *testing.T) {
 		}
 	}
 }
+
+// A failed debate is not a failed run: "debate skipped" is a notice, not the
+// terminal EventError, so /orch keeps reading and reaches EventComplete with
+// the primary's output (F2c ruling; before, /orch stopped at the notice and
+// dropped the result). The reviewer lane points at a closed port, so it
+// fails at once without retries.
+func TestOrchestratorCommandKeepsGoingAfterASkippedDebate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Chdir(t.TempDir())
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "1. Fix it"},
+		fakeprovider.Turn{Text: "TASK_COMPLETE: fixed"},
+	)
+	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
+	cfg.Orchestrator = &config.OrchestratorConfig{Lanes: map[string]config.LaneConfig{
+		"code": {Primary: "fake-model", Reviewer: "fake-model", ReviewerBaseURL: "http://127.0.0.1:1"},
+	}}
+	adapter := &TUIClientAdapter{baseConfig: cfg}
+	events := drainOrchestrator(t, adapter.RunOrchestratorCommand("fix the bug in main.go"))
+
+	if len(events) == 0 {
+		t.Fatal("no events")
+	}
+	skipped := false
+	for _, e := range events[:len(events)-1] {
+		if strings.Contains(e.Text, "debate skipped") {
+			skipped = true
+			if e.Ch == nil {
+				t.Fatalf("the debate-skipped event is terminal: %#v", e)
+			}
+		}
+	}
+	if !skipped {
+		t.Fatalf("no debate-skipped notice before the last event: %#v", events)
+	}
+	last := events[len(events)-1]
+	if last.Kind != 7 || !strings.Contains(last.Text, "fixed") {
+		t.Fatalf("last event = kind %d %q, want EventComplete with the primary's output", last.Kind, last.Text)
+	}
+}
