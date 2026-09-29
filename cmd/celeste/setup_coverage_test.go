@@ -5,17 +5,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 )
 
-// Which components each mode wires today (spec F1 setup coverage).
-// F2's Setup(mode) moves every row to all-true; update the want table then.
-func TestSetupCoverageToday(t *testing.T) {
+// Which components each mode wires (spec F1 setup coverage, F2 target).
+// F2a moved the agent rows to true through loop.Setup (F2a plan Task 9, an
+// intentional flip of the F1 "agent.custom_skills = false" row); F2b/F2d move
+// the MCP and TUI rows.
+func TestSetupCoverage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -36,9 +40,24 @@ func TestSetupCoverageToday(t *testing.T) {
 	cleanupChatDeps(t, deps)
 	_, tuiHasSkill := deps.registry.Get("hello_skill")
 
+	agentWS := t.TempDir()
+	if err := os.WriteFile(filepath.Join(agentWS, "go.mod"), []byte("module coverageprobe\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentWS, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _ := filepath.Abs(agentWS)
+	store := memories.NewStore(absWS)
+	idx, _ := memories.LoadIndex(filepath.Join(store.BaseDir(), "MEMORY.md"))
+	_ = idx.Add(memories.IndexEntry{Name: "coverage-memory", File: "c.md", Description: "probe"})
+	if err := idx.Save(); err != nil {
+		t.Fatal(err)
+	}
+
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: ok"})
 	opts := agent.DefaultOptions()
-	opts.Workspace = t.TempDir()
+	opts.Workspace = agentWS
 	opts.EnablePlanning = false
 	opts.RequireVerification = false
 	opts.AutoApproveTools = true
@@ -54,41 +73,47 @@ func TestSetupCoverageToday(t *testing.T) {
 	}
 	requests := srv.Requests()
 	if len(requests) == 0 {
-		t.Fatal("agent.custom_skills probe made no provider requests")
+		t.Fatal("agent probe made no provider requests")
 	}
 	names := toolNames(requests[0].Body)
 	if !hasString(names, "read_file") {
-		t.Fatalf("agent.custom_skills probe tools = %v, want builtin positive control read_file", names)
+		t.Fatalf("agent probe tools = %v, want builtin positive control read_file", names)
 	}
-	agentHasSkill := hasString(names, "hello_skill")
+	system := systemMessage(requests[0].Body)
 
-	want := map[string]bool{"tui.custom_skills": true, "agent.custom_skills": false}
-	got := map[string]bool{"tui.custom_skills": tuiHasSkill, "agent.custom_skills": agentHasSkill}
+	want := map[string]bool{
+		"tui.custom_skills":        true,
+		"agent.custom_skills":      true, // F2a: loop.Setup
+		"agent.memories":           true, // F2a: loop.Setup
+		"agent.code_graph_summary": true, // F2a: loop.Setup
+	}
+	got := map[string]bool{
+		"tui.custom_skills":        tuiHasSkill,
+		"agent.custom_skills":      hasString(names, "hello_skill"),
+		"agent.memories":           strings.Contains(system, "coverage-memory"),
+		"agent.code_graph_summary": strings.Contains(system, "# Code Graph"),
+	}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %v, want %v", k, got[k], v)
 		}
 	}
+	// Documented, not probed here:
+	//   agent.hooks = true (F2a Task 9; covered by agent TestAgentRunsGlobalHooks)
+	//   agent.mcp_clients = true (loop.Setup; covered by loop TestSetupAgentWiresEveryComponent)
+	//   mcp_server.* = false until F2b adopts loop.Setup
+}
 
-	// Agent mode is probed by running a fake-provider round trip with the same
-	// HOME used above, then inspecting the first OpenAI request's tools list.
-	// Source-read confirms: cmd/celeste/agent/runtime.go's NewRunner builds its
-	// own tools.Registry via builtin.RegisterAll with a nil skill config loader
-	// (comment: "Agent registry: register dev tools only (no configLoader = no
-	// skill tools)"), so agent mode never registers custom JSON skills today.
-	//
-	// The MCP row is documented, not probed: server.Server exposes MCP tool
-	// registration/listing, but that is a private []mcp.MCPToolDef/handlers map,
-	// not the chat/agent *tools.Registry, and this task must not add a
-	// production accessor just to probe it. cmd/celeste/server similarly builds
-	// a private MCP tool list through New + RegisterHandlers, with no exported
-	// way to list or query any internal tools.Registry from package main.
-	// want table for that row, for the record (not asserted above because there
-	// is no observable probe today):
-	//   mcp_server.custom_skills = false
-	// Hooks (grimoire) and memories are wired identically for every mode via
-	// shared prompt composition, so this survey does not add a hooks/memories
-	// probe row.
+func systemMessage(body map[string]any) string {
+	msgs, _ := body["messages"].([]any)
+	for _, m := range msgs {
+		mm, _ := m.(map[string]any)
+		if mm["role"] == "system" {
+			s, _ := mm["content"].(string)
+			return s
+		}
+	}
+	return ""
 }
 
 func toolNames(body map[string]any) []string {

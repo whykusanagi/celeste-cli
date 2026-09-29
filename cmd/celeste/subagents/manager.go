@@ -459,6 +459,8 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 		// write/commit/bash (broke worktree work + made background agents inert).
 		AutoApproveTools: true,
 		Sliders:          sliders,
+		// A subagent is part of its parent's run: no SessionStart/Stop hooks.
+		Nested: true,
 	}
 	if turnCb != nil {
 		cb := turnCb

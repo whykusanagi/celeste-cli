@@ -43,6 +43,7 @@ func NewBashTool(workspace string) *BashTool {
 			ConcurrencySafe: false,
 			Interrupt:       tools.InterruptCancel,
 			RequiredFields:  []string{"command"},
+			ExecTimeout:     5 * time.Minute,
 		},
 		workspace: workspace,
 	}

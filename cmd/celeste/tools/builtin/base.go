@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
@@ -18,6 +19,9 @@ type BaseTool struct {
 	ConcurrencySafe bool
 	Interrupt       tools.InterruptBehavior
 	RequiredFields  []string
+	// ExecTimeout is this tool's own execution timeout; zero uses the
+	// caller's default (tools.Timeouter).
+	ExecTimeout time.Duration
 }
 
 func (b *BaseTool) Name() string                                { return b.ToolName }
@@ -26,6 +30,7 @@ func (b *BaseTool) Parameters() json.RawMessage                 { return b.ToolP
 func (b *BaseTool) IsConcurrencySafe(input map[string]any) bool { return b.ConcurrencySafe }
 func (b *BaseTool) IsReadOnly() bool                            { return b.ReadOnly }
 func (b *BaseTool) InterruptBehavior() tools.InterruptBehavior  { return b.Interrupt }
+func (b *BaseTool) Timeout() time.Duration                      { return b.ExecTimeout }
 
 // ValidateInput checks that all required fields are present and non-empty.
 func (b *BaseTool) ValidateInput(input map[string]any) error {

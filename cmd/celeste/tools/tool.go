@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // Tool defines the interface that all tools must implement.
@@ -15,6 +16,22 @@ type Tool interface {
 	ValidateInput(input map[string]any) error
 	Execute(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error)
 	InterruptBehavior() InterruptBehavior
+}
+
+// Timeouter is implemented by tools that need their own execution timeout
+// (a long build, a subagent, TTS). Zero means "use the caller's default".
+type Timeouter interface {
+	Timeout() time.Duration
+}
+
+// TimeoutFor returns t's own timeout when it has one, else def.
+func TimeoutFor(t Tool, def time.Duration) time.Duration {
+	if tt, ok := t.(Timeouter); ok {
+		if d := tt.Timeout(); d > 0 {
+			return d
+		}
+	}
+	return def
 }
 
 // InterruptBehavior defines how a tool responds to cancellation signals.

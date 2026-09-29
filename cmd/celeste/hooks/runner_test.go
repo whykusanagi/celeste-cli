@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -327,4 +328,14 @@ func TestLoadAncestorHookRunsInItsRoot(t *testing.T) {
 
 func TestHooktestCommandIsQuoted(t *testing.T) {
 	assert.True(t, strings.HasPrefix(hooktest.Command(t, "allow"), `"`))
+}
+
+func TestDisabledWarning(t *testing.T) {
+	got := DisabledWarning(errors.New("boom"))
+	if got != "hooks disabled: boom (no hooks run this session, including global guards)" {
+		t.Fatalf("got %q", got)
+	}
+	if DisabledWarning(nil) != "" {
+		t.Fatal("nil error must give no warning")
+	}
 }

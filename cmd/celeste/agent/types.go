@@ -90,6 +90,12 @@ type Options struct {
 	// resolves to Ask. The TUI's /agent sets it to its permission modal (#172);
 	// without it, Ask means deny.
 	PromptFunc tools.PromptFunc `json:"-"`
+	// Nested marks a runner started by another run (a subagent, an
+	// orchestrator lane, the TUI's /agent). It skips SessionStart and Stop
+	// hooks, which belong to the top-level run (SubagentStop is F2c's).
+	Nested bool `json:"-"`
+	// Warn receives setup and hook warnings. Nil writes them to errOut.
+	Warn func(string) `json:"-"`
 	// Client, when set, is used instead of building an llm.Client from the
 	// config. Tests inject a client around a fake backend (2.0 F1).
 	Client *llm.Client `json:"-"`
@@ -189,7 +195,10 @@ type RunState struct {
 	LastAssistantResponse      string              `json:"last_assistant_response,omitempty"`
 	ArtifactBundlePath         string              `json:"artifact_bundle_path,omitempty"`
 	Error                      string              `json:"error,omitempty"`
-	Options                    Options             `json:"options"`
+	// StopReason is the loop's reason when a guard stopped the run
+	// ("identical", "progress", "invalid_args"); empty otherwise.
+	StopReason string  `json:"stop_reason,omitempty"`
+	Options    Options `json:"options"`
 }
 
 func NewRunState(goal string, options Options) *RunState {

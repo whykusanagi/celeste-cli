@@ -319,6 +319,30 @@ func WithExecTimeout(ctx context.Context, timeout time.Duration) context.Context
 	return context.WithValue(ctx, execTimeoutKey{}, timeout)
 }
 
+type promptKey struct{}
+
+// WithPrompt makes fn answer this call's permission Ask instead of the
+// registry's prompt. loop.Loop uses it so each run brings its own Gate,
+// whose lifetime differs by mode (2.0 F2). A nil fn means no one to ask,
+// the same as WithoutPrompt: it never falls back to the registry's prompt.
+func WithPrompt(ctx context.Context, fn PromptFunc) context.Context {
+	if fn == nil {
+		return WithoutPrompt(ctx)
+	}
+	return context.WithValue(ctx, promptKey{}, fn)
+}
+
+// noPrompt marks a call with no one to ask (see WithoutPrompt).
+type noPrompt struct{}
+
+// WithoutPrompt makes this call's permission Ask deny as headless ("no
+// prompt is configured"), ignoring the registry's own prompt. loop.Loop uses
+// it for a run without a Gate. It shares WithPrompt's key, so the innermost
+// of the two wins (a subagent's run inside a gated parent, or the reverse).
+func WithoutPrompt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, promptKey{}, noPrompt{})
+}
+
 // Execute runs a tool by name with input validation.
 func (r *Registry) Execute(ctx context.Context, name string, input map[string]any) (ToolResult, error) {
 	return r.ExecuteWithProgress(ctx, name, input, nil)
@@ -344,6 +368,13 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	prompt := r.promptFn
 	hooks := r.hooks
 	r.mu.RUnlock()
+
+	switch v := ctx.Value(promptKey{}).(type) {
+	case PromptFunc:
+		prompt = v // never nil: WithPrompt stores nil as noPrompt
+	case noPrompt:
+		prompt = nil
+	}
 
 	hookCtx := ctx // hooks never inherit the tool's execution timeout
 	var hookContext []string

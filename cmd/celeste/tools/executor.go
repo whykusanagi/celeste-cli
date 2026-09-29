@@ -68,6 +68,11 @@ type toolEntry struct {
 	concurrent bool // whether this tool can run concurrently
 }
 
+// ExecFunc runs one call for the executor. The default calls tool.Execute
+// directly; loop.Loop installs one that goes through the registry so the
+// permission checker, timeouts and hooks apply.
+type ExecFunc func(ctx context.Context, callID string, tool Tool, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error)
+
 // StreamingToolExecutor accepts tool calls as they arrive during LLM
 // streaming and dispatches them for execution. Concurrency-safe tools
 // run in parallel goroutines; non-concurrent tools are queued and
@@ -90,6 +95,7 @@ type StreamingToolExecutor struct {
 	progressMu sync.RWMutex
 
 	cascadeOnFailure bool // when true, a failed tool cancels all siblings
+	execFn           ExecFunc
 }
 
 // NewStreamingToolExecutor creates a new executor bound to the given registry.
@@ -142,6 +148,13 @@ func (e *StreamingToolExecutor) SetCascadeOnFailure(enabled bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cascadeOnFailure = enabled
+}
+
+// SetExecFunc replaces how each call runs. Call it before AddTool.
+func (e *StreamingToolExecutor) SetExecFunc(fn ExecFunc) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.execFn = fn
 }
 
 // AddTool submits a tool call for execution. This method is non-blocking.
@@ -330,6 +343,7 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 		return
 	}
 	entry.state = ToolStateExecuting
+	run := e.execFn
 	e.mu.Unlock()
 
 	// Set up progress channel
@@ -367,7 +381,13 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 	}
 
 	// Execute the tool
-	result, err := tool.Execute(execCtx, input, progressCh)
+	var result ToolResult
+	var err error
+	if run != nil {
+		result, err = run(execCtx, entry.callID, tool, input, progressCh)
+	} else {
+		result, err = tool.Execute(execCtx, input, progressCh)
+	}
 
 	// Close progress channel and wait for forwarding goroutine to drain
 	if progressCh != nil {
