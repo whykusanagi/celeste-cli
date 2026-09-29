@@ -80,10 +80,8 @@ type Client struct {
 
 	// inflight is a Receive still running for a call that was cancelled; the
 	// next call takes it over, so at most one Receive per client is ever
-	// outstanding. abandoned holds the IDs of requests whose callers gave
-	// up, so their late answers are dropped. Both are guarded by mu.
-	inflight  chan received
-	abandoned map[string]bool
+	// outstanding. Guarded by mu.
+	inflight chan received
 }
 
 // NewClient creates a new MCP client over the given transport.
@@ -101,14 +99,38 @@ type received struct {
 	err  error
 }
 
+// contextSender is implemented by transports whose sends can be cut short by
+// a context (HTTP and SSE). Stdio writes a line to a pipe and doesn't need it.
+type contextSender interface {
+	SendContext(ctx context.Context, req *Request) error
+	SendNotificationContext(ctx context.Context, notif *Notification) error
+}
+
+// send sends req, honouring ctx when the transport can (#221). Streamable
+// HTTP runs the whole call inside its POST, so this is where it gets cut off.
+func (c *Client) send(ctx context.Context, req *Request) error {
+	if cs, ok := c.transport.(contextSender); ok {
+		return cs.SendContext(ctx, req)
+	}
+	return c.transport.Send(req)
+}
+
+func (c *Client) sendNotification(ctx context.Context, notif *Notification) error {
+	if cs, ok := c.transport.(contextSender); ok {
+		return cs.SendNotificationContext(ctx, notif)
+	}
+	return c.transport.SendNotification(notif)
+}
+
 // recv waits for the response to request id, honouring ctx (#221).
 //
 // Transport.Receive can't be interrupted, so it runs on a goroutine. On
-// cancel, that Receive is left in c.inflight for the next call to take over
-// and id is marked abandoned; when its late answer arrives, a later recv
-// drops it by ID. Messages that are not responses (a notification or a
-// server-to-client request carries neither result nor error) are skipped.
-// Any other response is returned, as before. The caller holds c.mu.
+// cancel, that Receive is left in c.inflight for the next call to take over.
+// Request IDs are unique per process, so any response carrying another ID is
+// the late answer to a call that gave up (cancelled, or failed on a Receive
+// error) and is dropped. Messages that are not responses (a notification or
+// a server-to-client request carries neither result nor error) are skipped.
+// The caller holds c.mu.
 func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
 	want := strconv.FormatInt(id, 10)
 	for {
@@ -122,10 +144,6 @@ func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
 		}
 		select {
 		case <-ctx.Done():
-			if c.abandoned == nil {
-				c.abandoned = map[string]bool{}
-			}
-			c.abandoned[want] = true
 			return nil, ctx.Err()
 		case r := <-c.inflight:
 			c.inflight = nil
@@ -135,9 +153,8 @@ func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
 			if r.resp == nil || (r.resp.Result == nil && r.resp.Error == nil) {
 				continue // a notification or server request, not an answer
 			}
-			if key := r.resp.ID.String(); key != want && c.abandoned[key] {
-				delete(c.abandoned, key)
-				continue // the late answer to a cancelled call
+			if key := r.resp.ID.String(); key != "" && key != want {
+				continue // the late answer to a call that gave up
 			}
 			return r.resp, nil
 		}
@@ -180,7 +197,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("create initialize request: %w", err)
 	}
 
-	if err := c.transport.Send(req); err != nil {
+	if err := c.send(ctx, req); err != nil {
 		return fmt.Errorf("send initialize: %w", err)
 	}
 
@@ -209,7 +226,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 	// Send notifications/initialized
 	notif := NewNotification("notifications/initialized")
-	if err := c.transport.SendNotification(notif); err != nil {
+	if err := c.sendNotification(ctx, notif); err != nil {
 		return fmt.Errorf("send initialized notification: %w", err)
 	}
 
@@ -230,7 +247,7 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPToolDef, error) {
 		return nil, fmt.Errorf("create tools/list request: %w", err)
 	}
 
-	if err := c.transport.Send(req); err != nil {
+	if err := c.send(ctx, req); err != nil {
 		return nil, fmt.Errorf("send tools/list: %w", err)
 	}
 
@@ -271,7 +288,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 		return "", fmt.Errorf("create tools/call request: %w", err)
 	}
 
-	if err := c.transport.Send(req); err != nil {
+	if err := c.send(ctx, req); err != nil {
 		return "", fmt.Errorf("send tools/call: %w", err)
 	}
 

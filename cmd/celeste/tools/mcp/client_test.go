@@ -51,6 +51,12 @@ func (m *mockTransport) Receive() (*Response, error) {
 	}
 	resp := m.responses[m.idx]
 	m.idx++
+	// Answer the request just sent: the client drops responses to other IDs.
+	if len(m.sent) > 0 && resp.ID != "" {
+		cp := *resp
+		cp.ID = json.Number(strconv.FormatInt(m.sent[len(m.sent)-1].ID, 10))
+		resp = &cp
+	}
 	return resp, nil
 }
 
@@ -236,6 +242,7 @@ func TestClient_Close(t *testing.T) {
 }
 
 // stallTransport answers only when the test says so, like a hung MCP server.
+// A nil reply makes Receive fail, like a transient read error.
 type stallTransport struct {
 	sent    chan *Request
 	replies chan *Response
@@ -247,6 +254,9 @@ func (s *stallTransport) Receive() (*Response, error) {
 	r, ok := <-s.replies
 	if !ok {
 		return nil, fmt.Errorf("closed")
+	}
+	if r == nil {
+		return nil, fmt.Errorf("transient read error")
 	}
 	return r, nil
 }
@@ -368,6 +378,25 @@ func TestClient_CallToolDropsLateAnswersAndSkipsNotifications(t *testing.T) {
 	tr.replies <- textReply(first.ID, "very late answer to the first call")
 	tr.replies <- textReply(fourth.ID, "answer to the fourth call")
 	awaitCall(t, done, "answer to the fourth call")
+}
+
+// A call that failed on a Receive error leaves its real answer behind; the
+// next call drops it instead of taking it as its own.
+func TestClient_CallToolDropsAnswerAfterReceiveError(t *testing.T) {
+	c, tr := newStallClient(t)
+
+	done := callAsync(c, "failed")
+	first := awaitSent(t, tr)
+	tr.replies <- nil
+	if o := <-done; o.err == nil {
+		t.Fatalf("call after a Receive error = %q, want an error", o.text)
+	}
+
+	done = callAsync(c, "next")
+	second := awaitSent(t, tr)
+	tr.replies <- textReply(first.ID, "answer to the failed call")
+	tr.replies <- textReply(second.ID, "answer to the next call")
+	awaitCall(t, done, "answer to the next call")
 }
 
 // Cancelled calls share one outstanding Receive instead of starting one each.
