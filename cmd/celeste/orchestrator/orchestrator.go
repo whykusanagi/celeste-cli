@@ -106,11 +106,18 @@ type Orchestrator struct {
 	prompt        tools.PromptFunc
 
 	// mu serializes event delivery: emit holds it while it updates the
-	// active token accumulators and calls onEvent, so lanes, tool
-	// goroutines and OnEvent never race.
+	// run's active token accumulators and calls onEvent, so lanes, tool
+	// goroutines, concurrent Runs and OnEvent never race.
 	mu      sync.Mutex
 	onEvent func(OrchestratorEvent)
-	accs    []*tokenAcc
+}
+
+// orchRun is one Run: its events go to the Orchestrator's callback, and its
+// token accumulators are its own, so concurrent Runs never count each
+// other's tokens.
+type orchRun struct {
+	*Orchestrator
+	accs []*tokenAcc // guarded by Orchestrator.mu
 }
 
 // tokenAcc sums the tokens of the events emitted while one runGoalAccumStats
@@ -156,9 +163,9 @@ func (o *Orchestrator) OnEvent(fn func(OrchestratorEvent)) {
 }
 
 // emit delivers e to the caller and adds its tokens to every running
-// runGoalAccumStats call. Every event goes through here, and every event it
+// runGoalAccumStats call of this run. Every event goes through here, and every event it
 // is given is delivered. Not reentrant: it holds o.mu while the callback runs.
-func (o *Orchestrator) emit(e OrchestratorEvent) {
+func (o *orchRun) emit(e OrchestratorEvent) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, a := range o.accs {
@@ -174,7 +181,8 @@ func (o *Orchestrator) emit(e OrchestratorEvent) {
 // call, so concurrent Runs never close each other's lanes, and it is closed
 // before the terminal event (EventComplete or EventError), so nothing from
 // it reaches a caller that stops reading there.
-func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
+func (orch *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
+	o := &orchRun{Orchestrator: orch}
 	ws, err := os.Getwd()
 	if err != nil {
 		o.emit(OrchestratorEvent{Kind: EventError, Text: err.Error()})
@@ -195,7 +203,7 @@ func (o *Orchestrator) Run(ctx context.Context, goal string) (*Result, error) {
 
 // run is Run up to its terminal event, which it returns for Run to emit
 // once the lanes' environment is closed.
-func (o *Orchestrator) run(ctx context.Context, goal string, li laneInheritance) (*Result, OrchestratorEvent, error) {
+func (o *orchRun) run(ctx context.Context, goal string, li laneInheritance) (*Result, OrchestratorEvent, error) {
 	// 1. Classify
 	lane, confidence := ClassifyHeuristic(goal)
 	o.emit(OrchestratorEvent{Kind: EventClassified, Lane: lane, Text: fmt.Sprintf("%.0f%% confidence", confidence*100)})
@@ -237,7 +245,7 @@ func (o *Orchestrator) run(ctx context.Context, goal string, li laneInheritance)
 // makeRunner creates an AgentRunner for model that inherits li. A base URL
 // or API key override (cross-provider orchestration) always gets a real
 // agent lane; otherwise a WithRunnerFactory factory, when set, makes it.
-func (o *Orchestrator) makeRunner(li laneInheritance, model, baseURL, apiKey string) AgentRunner {
+func (o *orchRun) makeRunner(li laneInheritance, model, baseURL, apiKey string) AgentRunner {
 	cfg := o.cfg
 	if baseURL != "" || apiKey != "" {
 		c := *o.cfg
@@ -254,7 +262,7 @@ func (o *Orchestrator) makeRunner(li laneInheritance, model, baseURL, apiKey str
 	return defaultRunnerFactory(cfg, o.emit, li)(model)
 }
 
-func (o *Orchestrator) runDebate(ctx context.Context, li laneInheritance, goal, primaryOutput string, assignment ModelAssignment) (*DebateResult, error) {
+func (o *orchRun) runDebate(ctx context.Context, li laneInheritance, goal, primaryOutput string, assignment ModelAssignment) (*DebateResult, error) {
 	dm := NewDebateManager(DebateOptions{MaxRounds: o.debateRounds})
 	reviewer := o.makeRunner(li, assignment.Reviewer, assignment.ReviewerBaseURL, assignment.ReviewerAPIKey)
 
@@ -329,7 +337,7 @@ func (o *Orchestrator) runDebate(ctx context.Context, li laneInheritance, goal, 
 // another goroutine never races a swap. A lane's runner is closed before
 // RunGoal returns, so none of its callbacks arrive after the accumulator is
 // removed.
-func (o *Orchestrator) runGoalAccumStats(ctx context.Context, runner AgentRunner, goal string) (output string, elapsed time.Duration, totalIn, totalOut int, err error) {
+func (o *orchRun) runGoalAccumStats(ctx context.Context, runner AgentRunner, goal string) (output string, elapsed time.Duration, totalIn, totalOut int, err error) {
 	acc := &tokenAcc{}
 	o.mu.Lock()
 	o.accs = append(o.accs, acc)

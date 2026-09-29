@@ -35,7 +35,7 @@ func (r *lateRunner) RunGoal(context.Context, string) (string, error) {
 // late ones is the lane runner's gate, not emit's), and replacing the
 // callback mid-stream is race-free (run with -race).
 func TestRunGoalAccumStatsDoesNotSwapOnEvent(t *testing.T) {
-	o := New(&config.Config{Model: "m"})
+	o := &orchRun{Orchestrator: New(&config.Config{Model: "m"})}
 	var mu sync.Mutex
 	got := 0
 	count := func(OrchestratorEvent) { mu.Lock(); got++; mu.Unlock() }
@@ -53,5 +53,44 @@ func TestRunGoalAccumStatsDoesNotSwapOnEvent(t *testing.T) {
 	defer mu.Unlock()
 	if got != 52 {
 		t.Fatalf("callback saw %d events, want all 52", got)
+	}
+}
+
+// tokenRunner emits one event carrying n input tokens, then waits for
+// release, so two runs' lanes overlap.
+type tokenRunner struct {
+	emit    func(OrchestratorEvent)
+	n       int
+	emitted chan struct{}
+	release chan struct{}
+}
+
+func (r *tokenRunner) RunGoal(context.Context, string) (string, error) {
+	r.emit(OrchestratorEvent{Kind: EventAction, InputTokens: r.n})
+	close(r.emitted)
+	<-r.release
+	return "", nil
+}
+
+// Two Runs of one Orchestrator in flight at once each total only their own
+// lanes' tokens (the accumulators used to live on the Orchestrator, shared
+// by every Run, so a run counted the other's tokens too).
+func TestConcurrentRunsCountOnlyTheirOwnTokens(t *testing.T) {
+	orch := New(&config.Config{Model: "m"})
+	ra, rb := &orchRun{Orchestrator: orch}, &orchRun{Orchestrator: orch}
+	a := &tokenRunner{emit: ra.emit, n: 10, emitted: make(chan struct{}), release: make(chan struct{})}
+	b := &tokenRunner{emit: rb.emit, n: 100, emitted: make(chan struct{}), release: make(chan struct{})}
+	var wg sync.WaitGroup
+	var inA, inB int
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _, inA, _, _ = ra.runGoalAccumStats(context.Background(), a, "a") }()
+	<-a.emitted
+	go func() { defer wg.Done(); _, _, inB, _, _ = rb.runGoalAccumStats(context.Background(), b, "b") }()
+	<-b.emitted
+	close(a.release)
+	close(b.release)
+	wg.Wait()
+	if inA != 10 || inB != 100 {
+		t.Fatalf("run A counted %d tokens, run B %d; want 10 and 100", inA, inB)
 	}
 }
