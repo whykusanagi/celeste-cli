@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -163,16 +165,58 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 	return l
 }
 
-// runTurn is the turn's goroutine.
+// runTurn is the turn's goroutine. A Stop hook's deny continues the turn
+// once, while turns remain; the continuation joins the history hidden, as
+// the Stop hook's instruction, not the user's words.
 func (a *TUIClientAdapter) runTurn(t *chatTurn, history []tui.ChatMessage) {
 	defer a.endRun()
 	defer t.box.close()
 	defer t.cancel()
-	_, res, err := a.runOnce(t, history)
-	if err == nil && res.StopReason == loop.StopDone {
-		a.hooks.Stop(t.ctx, res.FinalText) // observed; Task 13 acts on a deny
+	turnsLeft := t.loop.Limits.MaxTurns
+	continued := false
+	for {
+		t.loop.Limits.MaxTurns = turnsLeft // >= 1: stopHook stops at 0
+		msgs, res, err := a.runOnce(t, history)
+		turnsLeft -= res.Turns
+		if err == nil && res.StopReason == loop.StopDone {
+			if next := a.stopHook(t, res.FinalText, continued, turnsLeft); next != "" {
+				continued = true
+				msg := tui.ChatMessage{Role: "user", Content: next, Timestamp: time.Now(),
+					Metadata: map[string]any{"hidden": true, tui.MetaPromptHookDone: true}}
+				t.box.put(tui.StopContinueMsg{Message: msg, Reason: next})
+				history = append(withoutEmptyReplies(msgs), msg)
+				continue
+			}
+		}
+		t.box.put(a.doneMsg(t, res, err))
+		return
 	}
-	t.box.put(a.doneMsg(t, res, err))
+}
+
+// stopHook asks Stop hooks whether a finished turn may end, and returns the
+// instruction to continue with, or "" to finish. A deny is honoured once per
+// user turn and only while turns remain (the agent and MCP chat rule);
+// later ones are reported in the chat and ignored.
+func (a *TUIClientAdapter) stopHook(t *chatTurn, final string, continued bool, turnsLeft int) string {
+	if !a.hooks.Has(hooks.EventStop) {
+		return ""
+	}
+	out := a.hooks.Stop(t.ctx, final)
+	if out.Decision != hooks.Deny {
+		return ""
+	}
+	switch {
+	case continued:
+		t.box.put(tui.HookWarningMsg{Text: "a Stop hook asked the chat to continue again; ignored (one continuation per turn)"})
+		return ""
+	case turnsLeft <= 0:
+		t.box.put(tui.HookWarningMsg{Text: "a Stop hook asked the chat to continue, but the turn has no turns left"})
+		return ""
+	}
+	if strings.TrimSpace(out.Reason) == "" {
+		return "Continue."
+	}
+	return out.Reason
 }
 
 // runOnce runs the loop once while a pump turns its events into the chat's

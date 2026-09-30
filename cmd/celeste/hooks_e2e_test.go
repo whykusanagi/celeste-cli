@@ -615,3 +615,87 @@ func TestTUIBlockedPromptAfterInterruptedToolLoopSendsNothing(t *testing.T) {
 		}
 	}
 }
+
+// Intentional change (F2d Task 13): a Stop hook's deny continues the chat
+// once, with its reason as a hidden instruction; a second deny is reported
+// and ignored.
+func TestTUIStopHookDenyContinuesOnce(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "first"}, fakeprovider.Turn{Text: "second"})
+	m, _, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "deny", "KEEP-GOING"))
+	})
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "finish"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "second" && turnIdle(m) }, 30*time.Second)
+	if n := len(srv.Requests()); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	if got := lastOfRole(requestMessages(t, srv, 1), "user"); got != "KEEP-GOING" {
+		t.Fatalf("continuation sent as %q", got)
+	}
+	if !hasSystemLine(m, "A Stop hook asked to continue: KEEP-GOING") {
+		t.Fatal("the continuation is not shown")
+	}
+	if !hasSystemLine(m, "one continuation per turn") {
+		t.Fatal("the second deny was not reported")
+	}
+	for _, x := range chatMessages(m) {
+		if x.Role == "user" && x.Content == "KEEP-GOING" {
+			if hidden, _ := x.Metadata["hidden"].(bool); !hidden {
+				t.Fatal("the continuation is shown as the user's own prompt")
+			}
+		}
+	}
+}
+
+// A Stop hook's deny continues only while turns remain: with the turn cap
+// spent, the deny is reported and the turn ends.
+func TestTUIStopHookDenyWithoutTurnsLeftEndsTheTurn(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "first"}, fakeprovider.Turn{Text: "second"})
+	m, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "deny", "KEEP-GOING"))
+	})
+	deps.adapter.baseConfig.ClawMaxToolIterations = 1 // no turn is running yet
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "finish"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "first" && turnIdle(m) }, 30*time.Second)
+	if n := len(srv.Requests()); n != 1 {
+		t.Fatalf("requests = %d, want 1", n)
+	}
+	if !hasSystemLine(m, "the turn has no turns left") {
+		t.Fatal("the ignored deny was not reported")
+	}
+	if hasSystemLine(m, "A Stop hook asked to continue") {
+		t.Fatal("the chat continued without turns left")
+	}
+}
+
+// A deny without a reason continues with "Continue.", and the continuation
+// starts from the history without the empty reply the Stop hook saw. The
+// continuation is the hook's instruction, not a prompt: UserPromptSubmit
+// does not check it.
+func TestTUIStopHookDenyAfterAnEmptyReplyContinues(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: ""}, fakeprovider.Turn{Text: "second"})
+	m, _, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home),
+			hookDef(t, hooks.EventStop, "", "deny"),
+			hookDef(t, hooks.EventUserPromptSubmit, "", "denyif", "Continue.", "not a prompt"))
+	})
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "finish"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "second" && turnIdle(m) }, 30*time.Second)
+	if n := len(srv.Requests()); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	var roles []string
+	for _, x := range requestMessages(t, srv, 1) {
+		if x["role"] == "system" {
+			continue
+		}
+		c, _ := x["content"].(string)
+		roles = append(roles, fmt.Sprintf("%v:%s", x["role"], c))
+	}
+	if want := []string{"user:finish", "user:Continue."}; fmt.Sprint(roles) != fmt.Sprint(want) {
+		t.Fatalf("continuation request = %q, want %q", roles, want)
+	}
+	if hasSystemLine(m, "not a prompt") {
+		t.Fatal("UserPromptSubmit checked the Stop hook's continuation")
+	}
+}

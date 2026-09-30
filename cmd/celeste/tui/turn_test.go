@@ -518,3 +518,46 @@ func TestSwitchesAndContextCompactWaitForTheTurn(t *testing.T) {
 	assert.Equal(t, []string{"venice", "openai", "work"}, client.switches, "the queued switches ran after the turn, in order")
 	assert.NotEmpty(t, client.calls, "/context compact ran after the turn")
 }
+
+// A Stop continuation joins the chat as soon as it is reported, while the
+// reply the hook saw is still being typed, so the next run's snapshots line
+// up with the chat and the typing still lands on that reply (Task 9 review
+// ruling: every turn start appends its prompt before any keepLive sync).
+func TestStopContinuationJoinsBeforeTheNextRunsSnapshots(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "go"})
+	require.NotNil(t, m.turn)
+	user := m.chat.GetLLMMessages()[0]
+	first := ChatMessage{Role: "assistant", Content: "first reply"}
+	m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+	m, _ = feed(t, m, StreamChunkMsg{Chunk: StreamChunk{Content: "fir", IsFirst: true}})
+	m, _ = feed(t, m, StreamDoneMsg{FullContent: "first reply", FinishReason: "stop"})
+	m, _ = feed(t, m, HistoryMsg{History: []ChatMessage{user, first}})
+	require.NotEmpty(t, m.typingContent, "the first reply must still be typing")
+
+	cont := ChatMessage{Role: "user", Content: "KEEP-GOING", Metadata: map[string]any{"hidden": true, MetaPromptHookDone: true}}
+	m, _ = feed(t, m, StopContinueMsg{Message: cont, Reason: "KEEP-GOING"})
+	assert.Equal(t, []string{"user:go", "assistant:first reply", "user:KEEP-GOING"}, llmRoles(m.chat),
+		"the continuation must join before the next run's snapshots")
+	var saved []string
+	for _, msg := range m.savedMessages() {
+		if msg.Role != "system" {
+			saved = append(saved, msg.Role+":"+msg.Content)
+		}
+	}
+	assert.Equal(t, []string{"user:go", "assistant:first reply", "user:KEEP-GOING"}, saved,
+		"a quit now saves the typed reply in place")
+
+	m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+	m, _ = feed(t, m, StreamChunkMsg{Chunk: StreamChunk{Content: "sec", IsFirst: true}})
+	snap := []ChatMessage{user, first, cont, {Role: "assistant", Content: "second"}}
+	m, _ = feed(t, m, HistoryMsg{History: snap})
+	m, _ = feed(t, m, StreamDoneMsg{FullContent: "second", FinishReason: "stop"})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+	for i := 0; i < 100 && m.typingContent != ""; i++ {
+		m, _ = step(t, m, TickMsg{})
+	}
+	assert.Equal(t, []string{"user:go", "assistant:first reply", "user:KEEP-GOING", "assistant:second"}, llmRoles(m.chat))
+	hidden, _ := m.chat.GetLLMMessages()[2].Metadata["hidden"].(bool)
+	assert.True(t, hidden, "the continuation is shown as the user's own prompt")
+}

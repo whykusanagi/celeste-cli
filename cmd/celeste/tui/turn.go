@@ -197,6 +197,10 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Line)
 		LogInfo("context compacted: " + msg.Line)
 	case StopContinueMsg:
+		// The reply the hook saw is shown in full before the continuation
+		// joins after it, so it is never an empty bubble in the middle of
+		// the history when the next run's snapshots arrive.
+		m = m.finishTyping()
 		m.chat = m.chat.AddSystemMessage("↻ A Stop hook asked to continue: " + msg.Reason)
 		m.chat = m.chat.AppendLLM(msg.Message)
 	case HookWarningMsg:
