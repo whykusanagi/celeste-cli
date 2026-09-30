@@ -95,7 +95,7 @@ User types message
   → Status bar: "Ready (2.1s · ↑1.2k ↓483)"
 ```
 
-If the LLM requests a tool call, it is executed and the result is shown inline, but no further LLM call is made automatically. Use claw mode if you want automatic follow-up.
+Tool calls run on the same `loop.Loop` as claw mode (below): the result is shown inline and sent back to the model, which continues until it answers without tools or the turn cap stops it.
 
 **When to use**: Conversational questions, code review, content generation — anything where a single exchange is sufficient.
 
