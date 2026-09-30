@@ -303,3 +303,49 @@ func TestLoopInterruptedSteerCheckRequeues(t *testing.T) {
 		t.Fatalf("TakeSteers = %v, want [a b]", got)
 	}
 }
+
+// A steer that arrives during the final reply of the last allowed turn:
+// without CheckPrompt the loop goes round to answer it and hits the cap,
+// the steer still queued; with CheckPrompt the run ends StopDone and
+// TakeSteers hands it back.
+func TestLoopLateSteerAtMaxTurns(t *testing.T) {
+	for _, withCheck := range []bool{false, true} {
+		var l *Loop
+		stub := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+			l.Steer("late")
+			sayText(cb, "reply", nil)
+			return nil
+		}}
+		lim := DefaultLimits()
+		lim.MaxTurns = 1
+		l = &Loop{Client: stub, Tools: newRegistry(), Limits: lim}
+		want := StopCap
+		if withCheck {
+			l.CheckPrompt = withContext("CTX")
+			want = StopDone
+		}
+		_, res, err := l.Run(context.Background(), userMsg("go"))
+		if err != nil || res.StopReason != want || stub.calls != 1 {
+			t.Fatalf("check=%v: res=%+v err=%v calls=%d, want %v", withCheck, res, err, stub.calls, want)
+		}
+		if got := l.TakeSteers(); len(got) != 1 || got[0] != "late" {
+			t.Fatalf("check=%v: TakeSteers = %v, want [late]", withCheck, got)
+		}
+	}
+}
+
+// EventPromptsChecked means a prompt was checked: a history whose prompts
+// are all already checked emits none.
+func TestLoopNoPromptsCheckedEventWhenNothingToCheck(t *testing.T) {
+	l := &Loop{Client: textStub(), Tools: newRegistry(), Limits: DefaultLimits(), CheckPrompt: withContext("CTX")}
+	wait := collect(l)
+	history := []Message{markChecked(Message{Role: "user", Content: "go"})}
+	if _, _, err := l.Run(context.Background(), history); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range wait() {
+		if e.Kind == EventPromptsChecked {
+			t.Fatal("EventPromptsChecked emitted with nothing to check")
+		}
+	}
+}

@@ -683,6 +683,12 @@ func TestLoopKeepToolMetadata(t *testing.T) {
 		if evMeta["format"] != "png" {
 			t.Fatalf("keep=%v: EventToolResult.Metadata = %v", keep, evMeta)
 		}
+		if keep {
+			msg.Metadata["x"] = 1
+			if _, ok := evMeta["x"]; ok {
+				t.Fatal("the tool message and EventToolResult share one metadata map")
+			}
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"strconv"
@@ -134,9 +135,11 @@ func (l *Loop) runGroup(ctx context.Context, group []*pending, lim Limits) {
 // its context is abandoned by a watchdog at tool timeout + HookBudget. With
 // a Gate the watchdog is paused while the Gate is asked and restarts the
 // full budget after the answer (F2d: before, gated runs had no watchdog).
+// Rarely a call is abandoned just as approval starts: the timer fires while
+// pause runs, so the Gate is asked for a call already given up on.
 // The Gate is asked with the call's own context, which ends when invoke
-// returns, so a call abandoned before it reached the Gate cannot open the
-// modal afterwards.
+// returns, so for a call abandoned before it reached the Gate, PromptGate
+// won't open the modal afterwards (a raw GateFunc may ignore ctx).
 func (l *Loop) invoke(ctx context.Context, t tools.Tool, input map[string]any, lim Limits) (tools.ToolResult, error) {
 	timeout := tools.TimeoutFor(t, lim.ToolTimeout)
 	cctx, cancel := context.WithCancel(tools.WithExecTimeout(ctx, timeout))
@@ -333,7 +336,9 @@ func toolMessage(c ToolCall, content string, meta map[string]any, keep bool) Mes
 	}
 	msg := Message{Role: "tool", ToolCallID: c.ID, Name: c.Name, Content: content, Timestamp: time.Now()}
 	if kind, _ := meta["type"].(string); keep && kind == "image" {
-		msg.Metadata = meta
+		// A copy: EventToolResult carries meta, and a consumer changing
+		// one must not change the other.
+		msg.Metadata = maps.Clone(meta)
 		if format, _ := meta["format"].(string); format != "" {
 			msg.Content += fmt.Sprintf("\n\n[Image data available: format=%s. The image content has been captured and will be provided to vision-capable models.]", format)
 		}

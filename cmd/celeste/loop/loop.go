@@ -56,8 +56,12 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		res.Turns = turn
 		msgs, _ = l.joinSteers(ctx, msgs)
 		if l.CheckPrompt != nil && ctx.Err() != nil {
-			// A steer check cut short: the steers went back in the queue
-			// and no request is sent.
+			// A steer check cut short: the steer whose check errored and
+			// the ones after it went back in the queue (steers checked and
+			// joined before it stay in the history), and no request is sent.
+			// A CheckPrompt error that is not an interrupt requeues the
+			// same way but the turn still sends; in the final-reply branch
+			// below it ends the run StopDone, leaving them for TakeSteers.
 			turn--
 			res.Turns = turn
 			res.StopReason = StopInterrupted
