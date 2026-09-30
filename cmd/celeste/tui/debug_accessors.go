@@ -17,3 +17,6 @@ func (m AppModel) DebugInterrupted() bool { return m.interrupted }
 
 // DebugPermissionPromptActive reports whether the permission modal is up.
 func (m AppModel) DebugPermissionPromptActive() bool { return m.permissionPrompt.Active() }
+
+// DebugLLMMessages returns the messages the next turn would send.
+func (m AppModel) DebugLLMMessages() []ChatMessage { return m.chat.GetLLMMessages() }
