@@ -171,13 +171,10 @@ func TestAgentParentEnvSilentAfterClose(t *testing.T) {
 	if runWarns.all() != run || parentWarns.all() != par {
 		t.Fatalf("warnings after Close:\nrunner: %q\nparent: %q", strings.TrimPrefix(runWarns.all(), run), strings.TrimPrefix(parentWarns.all(), par))
 	}
-	// The failure itself must have followed the ctx (hooks.WithWarn) to the
-	// runner's sink, not the shared hooks Runner's own default (the
-	// parent's): without that wrap, warnFor(ctx) falls back to the parent's
-	// sink instead.
-	if !strings.Contains(runWarns.all(), "PreToolUse hook") {
-		t.Fatalf("the runner's own sink is missing the abandoned hook's failure (ctx routing broken): run=%q par=%q", runWarns.all(), parentWarns.all())
-	}
+	// Whether the killed hook's failure lands before Close is timing
+	// (taskkill on Windows is slow), so only assert it never reaches the
+	// parent. TestAgentParentEnvHookWarningsFollowTheRunner pins the
+	// ctx routing itself deterministically.
 	if strings.Contains(parentWarns.all(), "PreToolUse hook") {
 		t.Fatalf("the abandoned hook's failure reached the parent's shared sink instead of the runner's own (ctx routing broken): par=%q", parentWarns.all())
 	}
