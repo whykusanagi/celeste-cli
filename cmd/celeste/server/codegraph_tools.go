@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
@@ -39,10 +40,13 @@ import (
 // registered.
 func registerCodegraphTools(s *Server) {
 	s.RegisterTool(celesteIndexToolDef(), s.handleCelesteIndex)
-	s.RegisterTool(celesteCodeSearchToolDef(), s.makeDirectToolHandler(
+	search := s.makeDirectToolHandler(
 		"celeste_code_search",
 		func(idx *codegraph.Indexer) tools.Tool { return builtin.NewCodeSearchTool(idx) },
-	))
+	)
+	s.RegisterTool(celesteCodeSearchToolDef(), func(ctx context.Context, args map[string]any) ([]ContentBlock, error) {
+		return search(ctx, searchArgs(args))
+	})
 	s.RegisterTool(celesteCodeReviewToolDef(), s.makeDirectToolHandler(
 		"celeste_code_review",
 		func(idx *codegraph.Indexer) tools.Tool { return builtin.NewCodeReviewTool(idx) },
@@ -326,6 +330,53 @@ func celesteCodeSearchToolDef() mcp.MCPToolDef {
 		Name:        "celeste_code_search",
 		Description: "Semantic code search over the celeste codegraph. Returns symbols matching the query ranked by MinHash Jaccard + BM25 rank fusion, with path flags and confidence warnings. Reads the cached index — call celeste_index update first if the code has changed.",
 		InputSchema: schema,
+	}
+}
+
+// maxSearchResults caps celeste_code_search's result count. The semantic
+// search sizes buffers from it (codegraph SemanticSearchOptions.TopK), so an
+// unbounded top_k from a client would be an allocation, not just a long list.
+const maxSearchResults = 100
+
+// searchArgs maps the MCP contract's top_k (spec §3.1) onto the builtin
+// code_search tool's limit (#209). top_k wins over a limit sent with it. A
+// top_k or limit that is not a whole number of at least 1 is dropped, so the
+// tool's default (10) applies; the builtin would otherwise parse a string or
+// truncate a float itself, and a huge or negative value panics the search's
+// make([]SearchResult, 0, TopK). The result is capped at maxSearchResults.
+// args is modified in place.
+func searchArgs(args map[string]any) map[string]any {
+	if v, ok := args["top_k"]; ok {
+		delete(args, "top_k")
+		if n, ok := wholeNumber(v); ok && n >= 1 {
+			args["limit"] = n
+		}
+	}
+	if v, ok := args["limit"]; ok {
+		n, ok := wholeNumber(v)
+		switch {
+		case !ok || n < 1:
+			delete(args, "limit")
+		case n > maxSearchResults:
+			args["limit"] = maxSearchResults
+		}
+	}
+	return args
+}
+
+// wholeNumber reads a JSON number (float64 after decoding) or a Go int as an
+// int. Fractions, strings and other types are rejected.
+func wholeNumber(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		if n != math.Trunc(n) || n > math.MaxInt32 || n < math.MinInt32 {
+			return 0, false
+		}
+		return int(n), true
+	default:
+		return 0, false
 	}
 }
 

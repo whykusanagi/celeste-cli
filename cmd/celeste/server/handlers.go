@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
@@ -192,6 +193,15 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 		Verbose:          false,
 	}
 
+	if tally := costFrom(ctx); tally != nil {
+		model := opts.Model
+		opts.OnTurnStats = func(st agent.TurnStats) {
+			if st.InputTokens+st.OutputTokens > 0 {
+				tally.record(model, &llm.TokenUsage{PromptTokens: st.InputTokens, CompletionTokens: st.OutputTokens})
+			}
+		}
+	}
+
 	runner, err := agent.NewRunner(cfg, opts, &outBuf, &errBuf)
 	if err != nil {
 		return agentOutcome{}, fmt.Errorf("create agent runner: %w", err)
@@ -299,6 +309,7 @@ func formatWarnings(warnings []string) string {
 func (s *Server) runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace string) ([]ContentBlock, error) {
 	// The background goroutine must outlive this request, so it cannot inherit
 	// the request context — that is cancelled the moment we return the handle.
+	ctx = withCost(ctx, &s.cost)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	type outcome struct {
@@ -437,6 +448,7 @@ func registerCelesteContentTool(s *Server) {
 		if err != nil {
 			return nil, fmt.Errorf("content generation error: %w", err)
 		}
+		s.cost.record(cfg.Model, result.Usage)
 
 		return []ContentBlock{{Type: "text", Text: strings.TrimSpace(result.Content)}}, nil
 	})
@@ -526,6 +538,11 @@ func registerCelesteStatusTool(s *Server) {
 
 		status["workspace"] = s.config.Workspace
 		status["transport"] = s.config.Transport
+		// Additive fields (#210, spec §3.1): the plugin's celeste-context
+		// skill reads them.
+		status["grimoire"] = grimoireStatus(s.config.Workspace)
+		status["project"] = s.projectStatus(s.config.Workspace)
+		status["session_cost"] = s.cost.snapshot()
 
 		data, err := json.MarshalIndent(status, "", "  ")
 		if err != nil {
@@ -534,4 +551,59 @@ func registerCelesteStatusTool(s *Server) {
 
 		return []ContentBlock{{Type: "text", Text: string(data)}}, nil
 	})
+}
+
+// grimoireStatus reports whether a grimoire applies to workspace and which
+// files it came from: the workspace's .grimoire, fragments, parent
+// directories and ~/.celeste/grimoire.md (grimoire.Discover's order).
+func grimoireStatus(workspace string) map[string]any {
+	out := map[string]any{"loaded": false, "sources": []string{}}
+	if workspace == "" {
+		return out
+	}
+	g, err := grimoire.LoadAll(workspace)
+	if err != nil || g == nil || g.IsEmpty() {
+		return out
+	}
+	out["loaded"] = true
+	if len(g.Sources) > 0 {
+		out["sources"] = g.Sources
+	}
+	return out
+}
+
+// projectStatus reports whether the workspace has a built code graph and its
+// size. It opens an index only when one exists on disk (or is cached), so a
+// status call never builds an index or creates its directory.
+func (s *Server) projectStatus(workspace string) map[string]any {
+	out := map[string]any{"indexed": false}
+	if workspace == "" {
+		return out
+	}
+	s.indexerMu.Lock()
+	idx := s.indexers[workspace]
+	s.indexerMu.Unlock()
+	if idx == nil {
+		if _, err := os.Stat(codegraph.IndexPath(workspace)); err != nil {
+			return out
+		}
+		var err error
+		if idx, _, err = s.indexerFor(workspace); err != nil {
+			out["error"] = err.Error()
+			return out
+		}
+	}
+	stats, err := idx.Stats()
+	if err != nil {
+		out["error"] = err.Error()
+		return out
+	}
+	if stats.TotalFiles == 0 {
+		return out
+	}
+	out["indexed"] = true
+	out["total_files"] = stats.TotalFiles
+	out["total_symbols"] = stats.TotalSymbols
+	out["total_edges"] = stats.TotalEdges
+	return out
 }

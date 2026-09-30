@@ -16,7 +16,7 @@ Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beas
 
 **Runtime Modes:** Chat (auto-loop tools), Agent (autonomous), Orchestrator (debate).
 
-**9 Providers:** Grok/xAI, OpenAI, Anthropic (native), Google Gemini, Venice.ai, Vertex AI, OpenRouter, Sakana AI, and any local OpenAI-compatible server (mlx-vlm, Ollama, LM Studio, llama.cpp).
+**9 Chat Providers:** Sakana AI (default), Grok/xAI, OpenAI, Anthropic (native), Google Gemini, Venice.ai (chat only for now), Vertex AI, OpenRouter, and any local OpenAI-compatible server (mlx-vlm, Ollama, LM Studio, llama.cpp).
 
 ## Observability
 Real token streaming, corruption typing, TUI splits, graph viz.

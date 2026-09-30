@@ -402,3 +402,28 @@ func TestLocalProvider_DrivesTUISkillGate(t *testing.T) {
 	assert.Empty(t, caps.PreferredToolModel,
 		"must not auto-select a model for a local server")
 }
+
+// #151: Venice has no tools by default but some catalogue models do, and it
+// is the only such provider. The docs count it as "per model".
+func TestPerModelToolProviders(t *testing.T) {
+	assert.Equal(t, []string{"venice"}, GetPerModelToolProviders())
+	venice, _ := GetProvider("venice")
+	assert.False(t, venice.SupportsFunctionCalling, "drives the TUI skill gate for venice-uncensored")
+}
+
+// #151: Vertex keeps gemini-2.0-flash (checking another needs a billed GCP
+// project) and says so; no other provider is marked.
+func TestOnlyVertexDefaultIsUnverified(t *testing.T) {
+	for name, caps := range Registry {
+		assert.Equal(t, name == "vertex", caps.DefaultModelUnverified, name)
+	}
+}
+
+// Providers whose endpoint is the user's own ship an example URL instead.
+func TestEmptyBaseURLHasExample(t *testing.T) {
+	for name, caps := range Registry {
+		if caps.BaseURL == "" {
+			assert.NotEmpty(t, caps.ExampleBaseURL, "%s has no BaseURL and no ExampleBaseURL", name)
+		}
+	}
+}

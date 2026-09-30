@@ -80,6 +80,9 @@ type Server struct {
 	// chatEnvs caches MCP chat's loop.Env per workspace (2.0 F2b). Released
 	// on Close.
 	chatEnvs *chatEnvs
+
+	// cost adds up this process's LLM usage for celeste_status (#210).
+	cost sessionCost
 }
 
 // New creates a new MCP server with the given configuration.

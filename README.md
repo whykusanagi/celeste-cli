@@ -29,7 +29,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 🔌 **Direct Codegraph MCP Tools** - `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` served verbatim from the cached graph (no chat-LLM round-trip, no `max_tokens` ceiling, streaming progress notifications)
 - 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching
 - 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection and revert
-- 🌐 **Multi-Provider** - Grok/xAI (default), OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter, Sakana AI
+- 🌐 **Multi-Provider** - Sakana AI (default), Grok/xAI, OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter, local OpenAI-compatible servers
 - 💰 **Cost Tracking** - Per-model pricing with live session cost display
 - 🪝 **Hooks** - Pre/post tool execution hooks defined in `.grimoire`
 - 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok) with `/effort` control
@@ -41,7 +41,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 
 | Mode | Command | What it does |
 |------|---------|-------------|
-| **Chat** | `celeste chat` (default) | Interactive chat with auto-looping tool calls (50-turn safety cap). |
+| **Chat** | `celeste chat` (default) | Interactive chat with auto-looping tool calls (25-turn safety cap). |
 | **Agent** | `/agent <goal>` (in TUI) or `celeste agent --goal "..."` | Fully autonomous multi-turn agent with planning, file I/O, checkpointing, and resume. For long-running tasks. |
 | **Orchestrator** | `/orchestrate <goal>` (in TUI) | Agent run with a second reviewer model that critiques and debates the output. For high-quality deliverables. |
 
@@ -255,6 +255,11 @@ configure collections:
 - Blockchain (IPFS, Alchemy, wallet security)
 - Subagent Orchestration (`spawn_agent`, `post_message`)
 
+Chat offers all 48, plus `spawn_agent` and `post_message`, which the chat registers
+itself. Agent runs offer 24 of them: the dev, git, web and code-graph tools, `save_memory`,
+`todo`, `ask`, `find_tools`, `audio_render` and collections search. `celeste message`
+sends none. Tools from MCP servers and custom skills come on top, in both modes.
+
 [See complete tool list below](#-tool-system-48-tools)
 
 ### Collections Support (xAI RAG)
@@ -278,16 +283,20 @@ configure collections:
 - **Session Listing** - Browse and load previous sessions by ID
 - **Session Clearing** - Bulk delete sessions when needed
 
-### Multi-Provider Support (9 Providers)
+### Multi-Provider Support (9 Chat Providers)
 - ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-flash-latest) - Simple API keys, free tier, full streaming • Token tracking ✓
-- ⚠️ **Google Vertex AI** (gemini-flash-latest) - Enterprise, requires GCP project + billing • Token tracking ✓
-- ✅ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling • Token tracking ✓
+- ⚠️ **Google Vertex AI** (gemini-2.0-flash, unverified) - Enterprise, requires GCP project + billing. The default has not been checked against Vertex's own model lifecycle • Token tracking ✓
+- ⚠️ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling. Chat only for now: some Venice models support tools, but the chat does not use them yet • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
 - ✅ **Sakana AI** (fugu, fugu-ultra) - **DEFAULT** - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
-- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported, no API key • Cost tracked as $0
+- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported. No real key: set any placeholder, since celeste requires a non-empty `api_key` • Cost tracked as $0
+
+Nine chat providers: eight with tool calling, and Venice, which chats without tools for now.
+`celeste providers` lists 11: these nine plus DigitalOcean (its tools run in its own
+cloud) and ElevenLabs (voice).
 
 **Dynamic Model Selection** - Auto-selects best tool-calling model per provider
 **Capability Indicators** - Visual feedback (✓ skills / ⚠️ no skills) in header
@@ -598,8 +607,8 @@ are a convenience for natural-language interactions.
 | **Language** | Go | TypeScript | Go | TS + Rust | Python |
 | **Deploy** | 54MB binary, zero deps | Node.js (~393MB) | 9MB binary | Bun + Rust | pip package |
 | **RAM** | Low | High (Node.js) | ~10MB | Medium | Medium |
-| **Providers** | 8 (native + OpenAI-compat) | OpenAI primary | OpenAI only | 6+ | 7+ |
-| **Tools** | 44 | Many | 16 | Many | ~10 |
+| **Providers** | 9 (native + OpenAI-compat) | OpenAI primary | OpenAI only | 6+ | 7+ |
+| **Tools** | 48 | Many | 16 | Many | ~10 |
 | **Code Graph** | Yes (MinHash) | No | No | No | No |
 | **Code Review** | Yes (6 categories) | No | No | No | No |
 | **Collections/RAG** | Yes (xAI) | No | No | No | Yes |
@@ -646,6 +655,7 @@ Celeste prints a **loud warning at agent start** if the resolved agent model doe
 
 | Provider | Function Calling | Status | Setup Difficulty |
 |----------|------------------|---------|------------------|
+| **Sakana AI** | ✅ OpenAI-Compatible | Fully Supported (the default) | Easy |
 | **OpenAI** | ✅ Native | Fully Supported | Easy |
 | **Grok (xAI)** | ✅ OpenAI-Compatible | Fully Supported | Easy |
 | **DigitalOcean** | ⚠️ Cloud Functions Only | Limited | Advanced (requires cloud deployment) |
@@ -654,15 +664,17 @@ Celeste prints a **loud warning at agent start** if the resolved agent model doe
 | **ElevenLabs** | ❓ Unknown | Needs Testing | Unknown |
 | **Local (OpenAI-compat)** | ✅ Yes | Varies | Medium (model-dependent) |
 
-### ✅ Fully Supported: Grok/xAI (Default)
+### ✅ Fully Supported: Grok/xAI
 
 **Setup:**
 ```bash
-celeste config --set-key your-xai-key
-celeste chat
+celeste config -config grok --set-url https://api.x.ai/v1
+celeste config -config grok --set-model grok-4.20-0309-non-reasoning
+celeste config -config grok --set-key your-xai-key
+celeste -config grok chat
 ```
 
-Default config points to xAI (`https://api.x.ai/v1`, model `grok-4.20-0309-non-reasoning`) — reliable tool calling with no reasoning-token burn, and it never routes to the cost-prohibitive grok-4.3. Avoid the `grok-4-1-*` models: xAI silently routes them to grok-4.3.
+xAI's default model is `grok-4.20-0309-non-reasoning` — reliable tool calling with no reasoning-token burn, and it never routes to the cost-prohibitive grok-4.3. Avoid the `grok-4-1-*` models: xAI silently routes them to grok-4.3.
 
 ### ✅ Fully Supported: OpenAI
 
@@ -938,7 +950,7 @@ celeste -config grok chat
 
 ✅ **Full Support** (Returns usage data with automatic token tracking):
 - OpenAI (gpt-4o, gpt-4o-mini, etc.)
-- xAI/Grok (grok-4.20-0309-non-reasoning [default], grok-build-0.1, etc.)
+- xAI/Grok (grok-4.20-0309-non-reasoning [xAI default], grok-build-0.1, etc.)
 - Venice.ai (venice-uncensored, etc.)
 - Google Gemini AI Studio (gemini-flash-latest — a Google-maintained alias; the 2.x line is retired)
 - Google Vertex AI (gemini models via OpenAI endpoint)
@@ -1016,8 +1028,8 @@ Planning:          fugu (server-side)     # the model's own conductor plans; loc
 Planning:          local                  # Celeste plans locally
 ```
 
-A server-side conductor leaves no local trace. See `docs/LLM_PROVIDERS.md` for
-what you give up in observability.
+A server-side conductor leaves no local trace: celeste sees the reply and the
+tool calls, not the conductor's plan or which models it consulted.
 
 ### Single Message Mode (Non-Interactive)
 
@@ -1028,6 +1040,10 @@ celeste message "What is the meaning of life?"
 # Or use shorthand
 celeste "Hello, Celeste!"
 ```
+
+`celeste models`, `celeste model` and `celeste status` are not commands: on their
+own they print a hint instead of reaching the model. Send one of those words with
+`celeste message <word>`. Any other text, one word included, is a message.
 
 ### Session Management
 

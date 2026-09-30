@@ -78,14 +78,20 @@ type Indexer struct {
 
 // DefaultIndexPath returns the path to the code graph database for a project.
 // It stores the index under ~/.celeste/projects/<hash>/codegraph.db to avoid
-// polluting the project directory.
+// polluting the project directory, and creates that directory.
 func DefaultIndexPath(projectRoot string) string {
+	path := IndexPath(projectRoot)
+	os.MkdirAll(filepath.Dir(path), 0755)
+	return path
+}
+
+// IndexPath is DefaultIndexPath without creating the directory, for callers
+// that only check whether an index exists (celeste_status).
+func IndexPath(projectRoot string) string {
 	homeDir, _ := os.UserHomeDir()
 	hash := sha256.Sum256([]byte(projectRoot))
 	hexHash := hex.EncodeToString(hash[:8]) // first 8 bytes = 16 hex chars
-	dir := filepath.Join(homeDir, ".celeste", "projects", hexHash)
-	os.MkdirAll(dir, 0755)
-	return filepath.Join(dir, "codegraph.db")
+	return filepath.Join(homeDir, ".celeste", "projects", hexHash, "codegraph.db")
 }
 
 // NewIndexer creates an indexer for the given workspace, using the specified

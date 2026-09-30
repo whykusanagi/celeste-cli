@@ -1,6 +1,6 @@
 # LLM Providers — Who's Summoning Me Today? 💋
 
-Darlings, v1.16.0 supports **9 providers**. All OpenAI-compatible for my 48 tools. Grok reigns with collections RAG.
+Darlings, v1.16.0 supports **9 chat providers**: eight call tools, and Venice chats without them for now (some Venice models support tools, but the chat does not use them yet). `celeste providers` lists 11, adding DigitalOcean (its tools run in its own cloud) and ElevenLabs (voice). All OpenAI-compatible for my 48 tools. Grok reigns with collections RAG.
 
 | Provider | Tools | Collections | Notes |
 |----------|-------|-------------|-------|
@@ -8,10 +8,11 @@ Darlings, v1.16.0 supports **9 providers**. All OpenAI-compatible for my 48 tool
 | **OpenAI** | ✅ | ❌ | Gold std
 | **Anthropic** | ✅ Native | ❌ | Claude power
 | **Gemini (Google)** | ✅ | ❌ | Multi-modal; needs v1.15.0+ for agent mode (see below)
-| **Venice.ai** | ✅ Model-dep | ❌ | Uncensored opt
-| **Vertex AI** | ✅ | ❌ | GCP enterprise
+| **Venice.ai** | ❌ Not in chat yet | ❌ | Uncensored opt; per-model tool support not wired into chat yet
+| **Vertex AI** | ✅ | ❌ | GCP enterprise; default `gemini-2.0-flash` unverified
 | **OpenRouter** | ✅ Model-dep | ❌ | Model bazaar
-| **Sakana AI** | ✅ | ❌ | Fugu/Fugu Ultra, 1M ctx
+| **Sakana AI** | ✅ | ❌ | Fugu/Fugu Ultra, 1M ctx (the default)
+| **Local** | ✅ | ❌ | mlx-vlm, Ollama, LM Studio, llama.cpp (see below)
 
 **Setup:** `celeste config --set-url https://api.x.ai/v1 --set-key xai-...`
 
@@ -81,9 +82,11 @@ hosted model missing from the table.
 
 | | tools |
 |---|---|
-| `celeste chat` (TUI, incl. claw mode) | yes |
-| `celeste agent` | yes |
-| `celeste message` | no |
+| `celeste chat` (TUI) | 48 built-in, plus `spawn_agent` and `post_message` |
+| `celeste agent` | 24 built-in (dev, git, web, code graph, memory, todo) |
+| `celeste message`, and the `celeste "..."` shorthand | none |
+
+Tools from MCP servers and custom skills come on top of the built-in counts.
 
 `celeste message` sends no tools for **any** provider, local or hosted. It is a
 one-shot chat command with no tool-execution loop. For non-interactive tool use,
@@ -129,6 +132,11 @@ provider if you need to check what is shipped.
 2.x line: `gemini-2.0-flash`, `gemini-2.0-flash-001`, `gemini-2.5-flash` and
 `gemini-2.5-flash-lite` all answer *"This model is no longer available."* Pin a
 version and you inherit Google's retirement schedule.
+
+That note covers AI Studio. Vertex still ships `gemini-2.0-flash` as its default,
+unverified: Vertex runs its own model lifecycle, and checking it needs a billed
+GCP project. `celeste providers` marks it `(unverified)`. If Vertex answers
+`NOT_FOUND`, set `--set-model` to a current Gemini model.
 
 **The model listing is wrong.** `/v1/models` still returns `gemini-2.0-flash`
 with `generateContent` in its `supportedGenerationMethods`. Call that model and

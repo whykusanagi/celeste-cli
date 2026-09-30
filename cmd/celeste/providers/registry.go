@@ -15,6 +15,17 @@ type ProviderCapabilities struct {
 	RequiresAPIKey          bool
 	IsOpenAICompatible      bool
 	Notes                   string
+	// ToolsPerModel marks a provider with no tool support by default whose
+	// catalogue has some tool-capable models (checked live per model, see
+	// ModelDetection.SupportsTools). SupportsFunctionCalling stays false: it
+	// drives the TUI's skill gate for the provider's default model.
+	ToolsPerModel bool
+	// DefaultModelUnverified marks a shipped default model nobody has
+	// checked against the live service.
+	DefaultModelUnverified bool
+	// ExampleBaseURL is shown by `providers info` when BaseURL is empty
+	// because the endpoint is the user's own (a local server, a DO agent).
+	ExampleBaseURL string
 }
 
 // ModelInfo represents metadata about a model.
@@ -72,6 +83,7 @@ var Registry = map[string]ProviderCapabilities{
 		PreferredToolModel:      "", // No tool calling support in uncensored mode
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
+		ToolsPerModel:           true, // live catalogue: some models have tools (#151)
 		Notes:                   "NSFW mode uses Venice. No function calling in uncensored mode. Image generation available.",
 	},
 
@@ -120,11 +132,12 @@ var Registry = map[string]ProviderCapabilities{
 		// lifecycle and does not carry the -latest aliases, so this was left
 		// alone rather than changed blind — verifying needs a GCP project with
 		// billing. If Vertex runs also fail with NOT_FOUND, this is the line.
-		DefaultModel:       "gemini-2.0-flash",
-		PreferredToolModel: "gemini-2.0-flash",
-		RequiresAPIKey:     false, // Uses ADC or service account - NO manual token needed!
-		IsOpenAICompatible: false, // Uses native Google GenAI SDK
-		Notes:              "ENTERPRISE: Native Google GenAI SDK with automatic authentication. No manual token refresh! Use: (1) gcloud auth application-default login OR (2) Service account JSON. Tokens auto-refresh indefinitely. Requires GCP project + billing.",
+		DefaultModel:           "gemini-2.0-flash",
+		PreferredToolModel:     "gemini-2.0-flash",
+		DefaultModelUnverified: true,  // shown as "(unverified)" (#151)
+		RequiresAPIKey:         false, // Uses ADC or service account - NO manual token needed!
+		IsOpenAICompatible:     false, // Uses native Google GenAI SDK
+		Notes:                  "ENTERPRISE: Native Google GenAI SDK with automatic authentication. No manual token refresh! Use: (1) gcloud auth application-default login OR (2) Service account JSON. Tokens auto-refresh indefinitely. Requires GCP project + billing.",
 	},
 
 	// Local OpenAI-compatible servers: mlx-vlm, Ollama, LM Studio, llama.cpp.
@@ -144,6 +157,7 @@ var Registry = map[string]ProviderCapabilities{
 		PreferredToolModel:    "",
 		RequiresAPIKey:        false,
 		IsOpenAICompatible:    true,
+		ExampleBaseURL:        "http://127.0.0.1:8080/v1",
 		Notes:                 "Any OpenAI-compatible server on localhost (mlx-vlm, Ollama, LM Studio, llama.cpp). Set the model to whatever the server expects — mlx-vlm wants the full filesystem path. No API key required.",
 	},
 
@@ -182,7 +196,8 @@ var Registry = map[string]ProviderCapabilities{
 
 	"digitalocean": {
 		Name:                    "DigitalOcean Gradient",
-		BaseURL:                 "",    // Agent-specific URL
+		BaseURL:                 "", // Agent-specific URL
+		ExampleBaseURL:          "https://your-agent.ondigitalocean.app/api/v1",
 		SupportsFunctionCalling: false, // Requires cloud-hosted functions
 		SupportsModelListing:    false,
 		SupportsTokenTracking:   true, // Returns usage data with stream_options.include_usage
@@ -234,6 +249,19 @@ func GetToolCallingProviders() []string {
 	var providers []string
 	for name, caps := range Registry {
 		if caps.SupportsFunctionCalling {
+			providers = append(providers, name)
+		}
+	}
+	sort.Strings(providers)
+	return providers
+}
+
+// GetPerModelToolProviders returns the providers with no default tool
+// support whose tool support is decided per model (ToolsPerModel), sorted.
+func GetPerModelToolProviders() []string {
+	var providers []string
+	for name, caps := range Registry {
+		if !caps.SupportsFunctionCalling && caps.ToolsPerModel {
 			providers = append(providers, name)
 		}
 	}

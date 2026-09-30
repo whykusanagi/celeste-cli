@@ -155,11 +155,36 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
 		}
 	default:
-		// Treat unknown command as a message.
+		// A lone word people guess for a command (`celeste models`) errors
+		// with a hint instead of reaching the model (#151). Every other
+		// input, a lone word included, is a message.
+		if _, guessed := commandHints[command]; guessed && len(args) == 1 {
+			fmt.Fprint(stderr, unknownCommandMessage(command))
+			return 1
+		}
 		runner.RunSingleMessage(strings.Join(args, " "))
 	}
 
 	return 0
+}
+
+// commandHints answer the lone words people guess for a command. Only these
+// exact words error; there is no typo matching, so any other word chats.
+var commandHints = map[string]string{
+	"models": "celeste providers    (each provider's default model; /set-model lists models inside chat)",
+	"model":  "celeste providers    (each provider's default model; /set-model lists models inside chat)",
+	"status": "celeste config       (the active profile, provider and model)",
+}
+
+// unknownCommandMessage is the error for a lone guessed word: its hint, how
+// to send the word as a message, and where the command list is.
+func unknownCommandMessage(word string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Unknown command %q.\n", word)
+	fmt.Fprintf(&b, "Did you mean: %s\n", commandHints[word])
+	fmt.Fprintf(&b, "To send it to Celeste as a message: celeste message %s\n", word)
+	b.WriteString("Run celeste help for the command list.\n")
+	return b.String()
 }
 
 func resetGlobalFlags() {
