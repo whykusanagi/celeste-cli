@@ -227,10 +227,10 @@ transport, and gains a set of TUI features around all of it.
   lanes. Your global hooks run; untrusted repo hooks are skipped with a
   warning, because agent runs never prompt for trust. Approve them ahead of
   time with `celeste hooks trust`.
-- A Stop hook's `deny` is now acted on in `celeste agent`, MCP agent mode
-  and MCP chat: the run continues once with the hook's `reason` as the next
-  instruction, and only while turns remain. Subagents, `/orchestrate` lanes
-  and `/agent` in the chat skip SessionStart and Stop.
+- A Stop hook's `deny` is now acted on in the chat, `celeste agent`, MCP
+  agent mode and MCP chat: the run continues once with the hook's `reason`
+  as the next instruction, and only while turns remain. Subagents,
+  `/orchestrate` lanes and `/agent` in the chat skip SessionStart and Stop.
 - A subagent started with `spawn_agent` fires SubagentStop when it finishes
   (`agent_id` is the ID `spawn_agent` returned, kept when it is resumed). A
   `deny` continues it once, like Stop. `/orchestrate` lanes and `/agent`
@@ -319,6 +319,52 @@ transport, and gains a set of TUI features around all of it.
   and the file keeps your rules. Saves replace the file atomically (temp
   file and rename, keeping its mode; a new file is 0600), so a lane or
   another celeste starting mid-save never reads a half-written file.
+
+### Chat
+
+- The chat runs its tool calls on the same loop as agent runs and MCP chat.
+  It no longer executes tools inside the UI's update loop, so the screen
+  stays responsive while tools run.
+- The default tool timeout in the chat is 45s (was 30s). Tools with their
+  own timeout keep it.
+- The chat stops a turn when the tools return the same results 6 turns in a
+  row, as agent runs do. The identical-call guard (3) is unchanged. The turn
+  cap (`claw_max_tool_iterations`, default 25) now counts every model turn.
+  When a turn stops on the cap or a guard, the status bar says "Stopped",
+  and the cap's notice gives the number of model turns the loop ran.
+- A failed tool call reaches the model as a JSON error with `tool` and
+  `message` fields, the same shape agent runs use. The tool's card in the
+  chat still shows `Error: <message>`.
+- Esc cancels the running tools, not only the ones still queued. Every call
+  still gets a result, so the conversation stays valid.
+- Which tools run in parallel is decided by each tool, including MCP and
+  custom tools, instead of a fixed list. The status bar shows
+  `⚡ Executing: <name>` as each call starts, instead of
+  `⚡ Executing N tools in parallel`.
+- A message typed during a turn (a steer) is checked by your
+  UserPromptSubmit hooks when it joins the conversation at the next tool
+  step. A blocked steer is reported and dropped; the model still finishes
+  the step it was on.
+- While a Stop hook decides whether a turn may end, the status bar says
+  "Running Stop hook…" instead of "Ready". A message typed then waits for
+  the turn: it is sent when the turn ends, or joins the conversation if
+  the hook asks the chat to continue.
+- When pruning old tool results is not enough, the automatic summary starts
+  when the turn ends instead of in the middle of it.
+- Costs now include the tokens of tool-call turns.
+- Tool results over 128 KiB are saved as `<call-id>-<n>.txt`, numbered
+  across the whole chat session, so a repeated call ID no longer overwrites
+  an earlier result.
+- Whether tools are offered at all (off in NSFW mode and for a provider
+  without function calling) is decided when you send a message and holds
+  for the whole turn. Turning NSFW mode on or off from a tool changes it
+  from your next message, not partway through the current one.
+- Warnings and notices from starting the chat (an MCP server that fails to
+  start, an invalid `permissions.json`, a git snapshot or code-graph update
+  that timed out) are shown in the chat as well as on stderr.
+- A permission prompt or `ask` question left open when its turn, `/agent`
+  run or `/orchestrate` run ends is closed (as a denial or a cancel)
+  instead of staying on screen and taking your keys.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

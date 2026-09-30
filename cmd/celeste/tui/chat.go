@@ -159,27 +159,6 @@ func (m ChatModel) findUnhookedUser(content string, ts time.Time) int {
 	return -1
 }
 
-// MarkUserHooked records that the user message with this content and
-// timestamp passed its UserPromptSubmit hooks, with any context they added.
-func (m ChatModel) MarkUserHooked(content string, ts time.Time, context string) ChatModel {
-	i := m.findUnhookedUser(content, ts)
-	if i < 0 {
-		return m
-	}
-	msgs := append([]ChatMessage(nil), m.messages...)
-	meta := make(map[string]any, len(msgs[i].Metadata)+2)
-	for k, v := range msgs[i].Metadata {
-		meta[k] = v
-	}
-	meta[MetaPromptHookDone] = true
-	if context != "" {
-		meta[MetaHookContext] = context
-	}
-	msgs[i].Metadata = meta
-	m.messages = msgs
-	return m
-}
-
 // DropUser removes the unchecked user message with this content and
 // timestamp (a prompt a hook blocked).
 func (m ChatModel) DropUser(content string, ts time.Time) ChatModel {
@@ -291,10 +270,16 @@ func (m ChatModel) AddFunctionCall(call FunctionCall) ChatModel {
 	return m
 }
 
-// UpdateFunctionResult updates the result of a function call.
-func (m ChatModel) UpdateFunctionResult(name, result string) ChatModel {
+// UpdateFunctionResult records the result of the executing call with this
+// tool call ID, so parallel calls to the same tool never swap results. An
+// empty id falls back to the latest executing call with this name.
+func (m ChatModel) UpdateFunctionResult(id, name, result string) ChatModel {
 	for i := len(m.functionCalls) - 1; i >= 0; i-- {
-		if m.functionCalls[i].Name == name && m.functionCalls[i].Status == "executing" {
+		c := m.functionCalls[i]
+		if c.Status != "executing" {
+			continue
+		}
+		if (id != "" && c.ID == id) || (id == "" && c.Name == name) {
 			m.functionCalls[i].Result = result
 			m.functionCalls[i].Status = "completed"
 			break
@@ -611,4 +596,103 @@ func formatArgs(args map[string]any) string {
 		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// SyncLLM makes the chat's LLM messages match history, a snapshot of a
+// running turn's loop history (2.0 F2d). The loop only appends messages and
+// rewrites tool results in place (pruning), and its input was this chat's
+// GetLLMMessages, so the chat's LLM messages line up with history position
+// by position: each takes its history version (content, tool calls,
+// metadata) and the rest of history is appended. System lines and
+// summarized messages are not LLM messages and keep their places. With
+// keepLive, the last LLM message keeps its content if it is an assistant
+// reply still being typed out. An empty text-only assistant reply before
+// the last LLM message (a resumed session, a turn from before the loop) is
+// dropped: the adapter removes those from the loop's input and from every
+// snapshot, so keeping it would shift every later position by one. The
+// last one is the live typing bubble, which starts empty. A position where
+// the two disagree (syncDrift) is logged; the loop's copy still wins.
+func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
+	last := -1
+	for i, msg := range m.messages {
+		if msg.Role != "system" && !isCompacted(msg) {
+			last = i
+		}
+	}
+	msgs := make([]ChatMessage, 0, len(m.messages)+len(history))
+	j := 0
+	for i, msg := range m.messages {
+		if msg.Role == "system" || isCompacted(msg) || j >= len(history) {
+			msgs = append(msgs, msg)
+			continue
+		}
+		if i != last && msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
+			continue
+		}
+		h := history[j]
+		if drift := syncDrift(msg, h); drift != "" {
+			LogInfo(fmt.Sprintf("chat history drift at LLM position %d: %s", j, drift))
+		}
+		j++
+		if keepLive && i == last && msg.Role == "assistant" && h.Role == "assistant" {
+			h.Content = msg.Content
+		}
+		msgs = append(msgs, h)
+	}
+	msgs = append(msgs, history[j:]...)
+	m.messages = msgs
+	m.updateContent()
+	if !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+// DropEmptyLastReply removes an empty text-only assistant reply that is the
+// last LLM message (a bubble an interrupt left empty). Every turn start
+// calls it, so such a stale reply is never the last message when a keepLive
+// snapshot arrives: SyncLLM would keep its empty content over the loop's
+// reply (Task 9 review ruling).
+func (m ChatModel) DropEmptyLastReply() ChatModel {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == "system" || isCompacted(msg) {
+			continue
+		}
+		if msg.Role != "assistant" || msg.Content != "" || len(msg.ToolCalls) != 0 {
+			return m
+		}
+		m.messages = append(append([]ChatMessage(nil), m.messages[:i]...), m.messages[i+1:]...)
+		m.updateContent()
+		return m
+	}
+	return m
+}
+
+// syncDrift describes how the chat's message and the loop's message at the
+// same position disagree, or returns "". SyncLLM takes the loop's copy
+// either way; the log is how a broken positional invariant shows up.
+func syncDrift(chat, loop ChatMessage) string {
+	switch {
+	case chat.Role != loop.Role:
+		return fmt.Sprintf("role %s in the chat, %s in the loop", chat.Role, loop.Role)
+	case chat.ToolCallID != loop.ToolCallID:
+		return fmt.Sprintf("tool call %q in the chat, %q in the loop", chat.ToolCallID, loop.ToolCallID)
+	case chat.Role == "user" && (chat.Content != loop.Content || !chat.Timestamp.Equal(loop.Timestamp)):
+		return fmt.Sprintf("user prompt %q (%s) in the chat, %q (%s) in the loop",
+			truncateQueued(chat.Content), chat.Timestamp.Format(time.RFC3339Nano),
+			truncateQueued(loop.Content), loop.Timestamp.Format(time.RFC3339Nano))
+	}
+	return ""
+}
+
+// AppendLLM adds one message as the loop recorded it (a steer that joined,
+// a Stop hook's continuation), metadata included.
+func (m ChatModel) AppendLLM(msg ChatMessage) ChatModel {
+	m.messages = append(append([]ChatMessage(nil), m.messages...), msg)
+	m.updateContent()
+	if !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
+	return m
 }

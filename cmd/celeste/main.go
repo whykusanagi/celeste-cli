@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,11 +24,11 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
@@ -233,7 +235,7 @@ func runChatTUI() {
 	defer deps.env.Close() // last: MCP clients and the code graph
 	defer tuiClient.subMgr.Close()
 	defer tui.CloseLogging()
-	defer tuiClient.lifeCancel()
+	defer tuiClient.shutdown(3 * time.Second) // cancel running turns and wait for them
 
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
@@ -354,6 +356,22 @@ type TUIClientAdapter struct {
 	// are cancelled on exit rather than outliving the program.
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
+
+	// gate answers the chat loop's permission asks with the modal
+	// (chatGate); nil denies (tests that build an adapter by hand).
+	gate loop.Gate
+	// compactMu serializes compactWith: the loop's compactor calls it on
+	// a run goroutine, /context compact on the Update goroutine.
+	compactMu sync.Mutex
+	// Running turns, so shutdown can wait for them before the Env closes.
+	runsMu  sync.Mutex
+	running int
+	closing bool
+	idle    chan struct{}
+	// spillSeq numbers spill files across the session's turns
+	// (loop.Loop.SpillCounter), so a call ID repeated in a later turn
+	// never overwrites an earlier spill.
+	spillSeq atomic.Int64
 }
 
 // systemPrompt composes the chat system prompt for the current config,
@@ -363,269 +381,9 @@ func (a *TUIClientAdapter) systemPrompt() string {
 	return prompts.GetSystemPromptWithContext(skip, a.projectContext, a.gitSnapshot)
 }
 
-// SendMessage implements tui.LLMClient.
-func (a *TUIClientAdapter) SendMessage(messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
-	// Cancel-only context so Ctrl+C can abort in-flight requests. The per-attempt
-	// request deadline is owned by the LLM client (see perAttemptTimeout), so a
-	// timeout on one attempt doesn't leave an expired ctx that dooms the retry.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Return a batch: first deliver the cancel func to the TUI model, then
-	// start the actual LLM call.
-	return tea.Batch(
-		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
-		a.sendMessageWithCtx(ctx, cancel, messages, tools),
-	)
-}
-
-// readStreamCh returns a Cmd that reads the next message from the stream channel.
-// Each StreamChunkMsg carries this same Cmd as .Next so the TUI can chain reads.
-func readStreamCh(ch <-chan tea.Msg) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return msg
-	}
-}
-
-// sendMessageWithCtx performs the actual LLM call using the provided context.
-// Streams content deltas to the TUI as StreamChunkMsg via a channel, then sends
-// StreamDoneMsg (or tool calls) when the stream completes.
-func (a *TUIClientAdapter) sendMessageWithCtx(ctx context.Context, cancel context.CancelFunc, messages []tui.ChatMessage, tools []tui.SkillDefinition) tea.Cmd {
-	ch := make(chan tea.Msg, 32)
-
-	go func() {
-		defer cancel()
-		defer close(ch)
-
-		messages, stop := a.applyPromptHooks(ctx, messages, ch)
-		if stop {
-			return
-		}
-
-		currentConfig := a.client.GetConfig()
-		tui.LogInfo(fmt.Sprintf("→ Sending request to: %s (model: %s)", currentConfig.BaseURL, currentConfig.Model))
-		tui.LogLLMRequest(len(messages), len(tools))
-
-		for i, msg := range messages {
-			tui.LogInfo(fmt.Sprintf("  Message[%d]: role=%s, content_len=%d, tool_calls=%d",
-				i, msg.Role, len(msg.Content), len(msg.ToolCalls)))
-		}
-
-		for _, msg := range messages {
-			if msg.Role == "tool" && msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					tui.LogInfo(fmt.Sprintf("  Image in tool result will be forwarded: %s (format: %s)",
-						msg.Metadata["filename"], msg.Metadata["format"]))
-				}
-			}
-		}
-
-		if strings.Contains(currentConfig.BaseURL, "venice") && currentConfig.Model == "venice-uncensored" && len(tools) > 0 {
-			tui.LogInfo(fmt.Sprintf("  ⚠️  WARNING: Sending %d tools to venice-uncensored model", len(tools)))
-		}
-
-		var fullContent string
-		var usage *llm.TokenUsage
-		var finishReason string
-		isFirst := true
-		acc := llm.NewToolUseAccumulator()
-
-		err := a.client.SendMessageStreamEvents(ctx, messages, tools, func(event llm.StreamEvent) {
-			switch event.Type {
-			case llm.EventContentDelta:
-				fullContent += event.ContentDelta
-				// Send each content delta to the TUI for real-time display
-				ch <- tui.StreamChunkMsg{
-					Chunk: tui.StreamChunk{
-						Content: event.ContentDelta,
-						IsFirst: isFirst,
-					},
-					Next: readStreamCh(ch),
-				}
-				isFirst = false
-			case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
-				acc.HandleEvent(event)
-			case llm.EventMessageDone:
-				usage = event.Usage
-				finishReason = event.FinishReason
-			}
-		})
-
-		if err != nil {
-			errorMsg := err.Error()
-			tui.LogInfo(fmt.Sprintf("LLM error: %s", errorMsg))
-			tui.LogInfo(fmt.Sprintf("  Endpoint: %s", currentConfig.BaseURL))
-			tui.LogInfo(fmt.Sprintf("  Model: %s", currentConfig.Model))
-			ch <- tui.StreamErrorMsg{Err: err}
-			return
-		}
-
-		// Collect completed tool calls from accumulator
-		toolCalls := acc.CompletedCalls()
-
-		if finishReason == "" {
-			finishReason = "stop"
-		}
-
-		tui.LogLLMResponse(len(fullContent), len(toolCalls) > 0)
-
-		// Handle tool calls
-		if len(toolCalls) > 0 {
-			toolCallInfos := make([]tui.ToolCallInfo, len(toolCalls))
-			callRequests := make([]tui.SkillCallRequest, len(toolCalls))
-			for i, t := range toolCalls {
-				tui.LogInfo(fmt.Sprintf("LLM requested tool call: %s (ID: %s)", t.Name, t.ID))
-				args, parseErr := parseArgs(t.Arguments)
-				if parseErr != nil {
-					tui.LogInfo(fmt.Sprintf("Tool argument parse error for '%s' (ID: %s): %v", t.Name, t.ID, parseErr))
-				}
-
-				toolCallInfos[i] = tui.ToolCallInfo{
-					ID:               t.ID,
-					Name:             t.Name,
-					Arguments:        t.Arguments,
-					ThoughtSignature: t.ThoughtSignature,
-				}
-				callRequests[i] = tui.SkillCallRequest{
-					Call: tui.FunctionCall{
-						Name:      t.Name,
-						Arguments: args,
-						Status:    "executing",
-						Timestamp: time.Now(),
-					},
-					ToolCallID: t.ID,
-				}
-				if parseErr != nil {
-					callRequests[i].ParseError = parseErr.Error()
-				}
-			}
-
-			ch <- tui.SkillCallBatchMsg{
-				Calls:            callRequests,
-				AssistantContent: fullContent,
-				ToolCalls:        toolCallInfos,
-			}
-			return
-		}
-
-		// Convert usage and send done
-		var tuiUsage *tui.TokenUsage
-		if usage != nil {
-			tuiUsage = &tui.TokenUsage{
-				PromptTokens:     usage.PromptTokens,
-				CompletionTokens: usage.CompletionTokens,
-				TotalTokens:      usage.TotalTokens,
-			}
-			a.costTracker.RecordUsage(currentConfig.Model, usage.PromptTokens, usage.CompletionTokens)
-			summary := a.costTracker.GetSummary()
-			if summary.TotalCostUSD > 0 {
-				tui.LogInfo(fmt.Sprintf("Session cost: $%.4f (%d turns)", summary.TotalCostUSD, summary.Turns))
-			}
-		}
-
-		ch <- tui.StreamDoneMsg{
-			FullContent:  fullContent,
-			FinishReason: finishReason,
-			Usage:        tuiUsage,
-		}
-		// The turn ended without tool calls. Stop hooks observe it; acting on
-		// a deny ("keep going") is F2's loop. The TUI stops reading ch after
-		// StreamDoneMsg, so this doesn't delay the reply.
-		a.hooks.Stop(a.lifeContext(), fullContent)
-	}()
-
-	// Return the first read — TUI chains subsequent reads via StreamChunkMsg.Next
-	return readStreamCh(ch)
-}
-
 // GetSkills implements tui.LLMClient.
 func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
 	return a.client.GetSkills()
-}
-
-// ExecuteSkill implements tui.LLMClient.
-func (a *TUIClientAdapter) ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd {
-	return func() tea.Msg {
-		// Long-running tools (spawn_agent, bash, generate_speech,
-		// audio_render) carry their own timeout (tools.Timeouter); the rest
-		// keep the TUI's 30s default until the TUI moves onto loop.Loop (F2d).
-		timeout := 30 * time.Second
-		if t, ok := a.registry.Get(name); ok {
-			timeout = tools.TimeoutFor(t, timeout)
-		}
-		// The registry starts the timeout once the tool is approved, so time
-		// spent on the permission prompt doesn't count against it (#172).
-		ctx := tools.WithExecTimeout(context.Background(), timeout)
-
-		startTime := time.Now()
-		tui.LogInfo(fmt.Sprintf("Executing skill '%s' with timeout: %s", name, timeout))
-
-		// Convert args to JSON
-		argsJSON, err := json.Marshal(args)
-		if err != nil {
-			tui.LogInfo(fmt.Sprintf("Failed to marshal args for '%s': %v", name, err))
-			return tui.SkillResultMsg{
-				Name:       name,
-				Result:     "",
-				Err:        fmt.Errorf("failed to marshal arguments: %w", err),
-				ToolCallID: toolCallID,
-			}
-		}
-
-		// Execute the skill
-		result, err := a.client.ExecuteSkill(ctx, name, string(argsJSON))
-
-		elapsed := time.Since(startTime)
-		if err != nil {
-			tui.LogInfo(fmt.Sprintf("Skill '%s' failed after %v: %v", name, elapsed, err))
-			return tui.SkillResultMsg{
-				Name:       name,
-				Result:     "",
-				Err:        err,
-				ToolCallID: toolCallID,
-			}
-		}
-
-		// Format result as string
-		var resultStr string
-		if result.Success {
-			switch v := result.Result.(type) {
-			case string:
-				resultStr = v
-			case map[string]interface{}:
-				b, _ := json.Marshal(v)
-				resultStr = string(b)
-			default:
-				b, _ := json.Marshal(result.Result)
-				resultStr = string(b)
-			}
-			tui.LogInfo(fmt.Sprintf("Skill '%s' completed successfully in %v", name, elapsed))
-		} else {
-			resultStr = fmt.Sprintf("Error: %s", result.Error)
-			tui.LogInfo(fmt.Sprintf("Skill '%s' returned error after %v: %s", name, elapsed, result.Error))
-		}
-
-		// Cap large tool results to avoid blowing the context window.
-		sessionID := fmt.Sprintf("tui-%d", os.Getpid())
-		capped, wasCapped, capErr := ctxmgr.CapToolResult(resultStr, 0, sessionID, toolCallID, "")
-		if capErr != nil {
-			tui.LogInfo(fmt.Sprintf("Warning: failed to cap tool result for '%s': %v", name, capErr))
-		} else if wasCapped {
-			tui.LogInfo(fmt.Sprintf("Tool result for '%s' was capped from %d to %d bytes", name, len(resultStr), len(capped)))
-			resultStr = capped
-		}
-
-		return tui.SkillResultMsg{
-			Name:       name,
-			Result:     resultStr,
-			Err:        nil,
-			ToolCallID: toolCallID,
-			Metadata:   result.Metadata,
-		}
-	}
 }
 
 // SwitchEndpoint switches to a different endpoint by loading its named config.
@@ -803,8 +561,20 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 
 // CompactContext implements tui.ContextCompactor: it prunes old tool results
 // when the history is over the compaction threshold (or always, with force)
-// and returns the replacement for each pruned result (#174).
+// and returns the replacement for each pruned result (#174). /context compact
+// calls it on the Update goroutine, never while a turn runs (commands wait
+// for the turn).
 func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
+	return a.compactWith(msgs, window, used, force, a.jevShadow())
+}
+
+// compactWith prunes with jc as the Jev shadow scorer (nil: none). A chat
+// turn's compactor passes the client RunTurn resolved, so the run goroutine
+// never reads the adapter's config, which endpoint and profile switches
+// replace on the Update goroutine.
+func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client) tui.CompactOutcome {
+	a.compactMu.Lock()
+	defer a.compactMu.Unlock()
 	if est := compact.Estimate(msgs); est > used {
 		used = est
 	}
@@ -816,8 +586,8 @@ func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used i
 	}
 	opts := compact.Options{Window: window, Used: used, Force: force}
 	report := func(compact.Result) {}
-	if c := a.jevShadow(); c != nil {
-		opts, report = compact.Shadow(c, msgs, opts, tui.LogInfo, true)
+	if jc != nil {
+		opts, report = compact.Shadow(jc, msgs, opts, tui.LogInfo, true)
 	}
 	after, res := compact.Prune(msgs, opts, a.pruned)
 	report(res)
@@ -837,7 +607,8 @@ func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used i
 }
 
 // jevShadow returns the Jev client when jev_prune is "shadow", resolved once
-// per config. Reports go to the log file: the TUI owns the terminal.
+// per config. Reports go to the log file: the TUI owns the terminal. Update
+// goroutine only (CompactContext, RunTurn).
 func (a *TUIClientAdapter) jevShadow() *jev.Client {
 	// Re-resolve after a profile switch replaces baseConfig, so turning
 	// jev_prune off (or on) takes effect.
@@ -943,11 +714,6 @@ func (a *TUIClientAdapter) HandoffContext(ctx context.Context, msgs []tui.ChatMe
 		return "", err
 	}
 	return compact.HandoffText(res.Summary), nil
-}
-
-// IsContextOverflow implements tui.ContextCompactor.
-func (a *TUIClientAdapter) IsContextOverflow(err error) bool {
-	return errors.Is(err, llm.ErrContextOverflow)
 }
 
 // RefreshSystemPrompt recomposes and re-injects the system prompt.

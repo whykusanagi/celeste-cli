@@ -33,42 +33,45 @@ sequenceDiagram
     participant User
     participant TUI as TUI (app.go)
     participant Adapter as TUIClientAdapter
+    participant Loop as loop.Loop
     participant LLM as LLM Backend
     participant Tools as Tool Registry
 
     User->>TUI: Send message
     TUI->>TUI: AddUserMessage
-    TUI->>Adapter: SendMessage()
-    Adapter->>LLM: SendMessageStreamEvents()
+    TUI->>Adapter: RunTurn()
+    Adapter->>Loop: Run() on its own goroutine
+    Loop->>LLM: SendMessageStreamEvents()
 
     loop Real-time streaming
-        LLM-->>TUI: StreamChunkMsg (content delta)
+        Loop-->>TUI: StreamChunkMsg (content delta, in a TurnEventMsg)
         TUI->>TUI: Typing animation + corruption at cursor
     end
 
     alt Has tool_calls
-        LLM-->>TUI: SkillCallBatchMsg
-        TUI->>Tools: Registry.Execute() per tool
-        Tools-->>TUI: Tool results
-        TUI->>LLM: Re-send with results (auto-loop)
+        Loop-->>TUI: ToolTurnMsg, ToolStartMsg
+        Loop->>Tools: Registry.Execute() per tool (parallel when safe)
+        Tools-->>Loop: Tool results
+        Loop-->>TUI: ToolResultMsg, HistoryMsg
+        Loop->>LLM: Re-send with results (auto-loop)
     else No tool_calls
-        LLM-->>TUI: StreamDoneMsg
+        Loop-->>TUI: StreamDoneMsg, then TurnDoneMsg
         TUI->>TUI: Final content + session persist
     end
 ```
 
 ## Tool Execution Loop
 
-Tools auto-loop with a 50-turn safety cap:
+Tools auto-loop on `loop.Loop` with a turn cap (`claw_max_tool_iterations`,
+default 25) and the identical-call (3) and no-progress (6) guards:
 
 ```mermaid
 flowchart TD
     Response["LLM Response"] --> HasTools{"Has tool_calls?"}
     HasTools -->|No| Display["Display response"]
-    HasTools -->|Yes| Batch["SkillCallBatchMsg"]
-    Batch --> Execute["Registry.Execute() per tool"]
-    Execute --> Results["Add tool results to chat"]
-    Results --> Cap{"Turn < 50?"}
+    HasTools -->|Yes| Execute["loop.Loop: Registry.Execute() per tool"]
+    Execute --> Results["Add tool results to the history"]
+    Results --> Cap{"Turn < cap?"}
     Cap -->|Yes| Resend["Re-send to LLM"]
     Resend --> Response
     Cap -->|No| Stop["Safety cap reached"]

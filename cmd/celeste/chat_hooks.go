@@ -7,8 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -56,89 +56,34 @@ func (s *chatWarnSink) done() []string {
 	return s.warnings
 }
 
-// applyPromptHooks runs UserPromptSubmit, in order, for every user message
-// not yet checked (MetaPromptHookDone unset) and returns the copy of
-// messages to send. More than one can be pending: queued steers join a turn
-// as separate messages, and a prompt whose hook an interrupt cut short is
-// kept unchecked. Hidden messages are the app's own directives and
-// summaries, not prompts, and are not checked.
-//   - Allowed: it sends tui.PromptHookMsg, so the TUI records the result on
-//     that message; the context rides on it in every request from then on.
-//   - Blocked: the message leaves this request, and tui.PromptBlockedMsg
-//     tells the TUI to remove it from the chat and session. If no new
-//     prompt was allowed this round, the send stops (stop=true) and the
-//     last PromptBlockedMsg has a nil Next, whatever the history ends with
-//     (after Esc interrupts a tool loop it ends with tool results, and
-//     sending would resume that turn). Otherwise the request goes out
-//     without the blocked ones.
-//   - Interrupted (cancelled context): it sends PromptBlockedMsg{Cancelled}
-//     and stops; the unchecked prompts are kept and checked on the next send.
-func (a *TUIClientAdapter) applyPromptHooks(ctx context.Context, messages []tui.ChatMessage, ch chan tea.Msg) ([]tui.ChatMessage, bool) {
-	sent := make([]tui.ChatMessage, 0, len(messages))
-	var pending *tui.PromptBlockedMsg // the newest block, sent once we know whether to stop
-	flush := func(next tea.Cmd) {
-		if pending != nil {
-			pending.Next = next
-			ch <- *pending
-			pending = nil
-		}
+// checkPrompt is the chat's loop.PromptCheck: UserPromptSubmit for every new
+// prompt, and for each steer when it joins (2.0 F2d). Hook context rides in
+// the message's metadata (tui.MetaHookContext); the loop appends it to the
+// copy it sends.
+func (a *TUIClientAdapter) checkPrompt(ctx context.Context, msg tui.ChatMessage) (tui.ChatMessage, loop.PromptVerdict, error) {
+	if !a.hooks.Has(hooks.EventUserPromptSubmit) { // Has is nil-safe
+		return msg, loop.PromptVerdict{}, nil
 	}
-	blocked, allowed := false, 0
-	for _, msg := range messages {
-		if msg.Role != "user" || !a.hooks.Has(hooks.EventUserPromptSubmit) {
-			sent = append(sent, msg)
-			continue
+	out := a.hooks.UserPromptSubmit(ctx, msg.Content)
+	if err := ctx.Err(); err != nil {
+		return msg, loop.PromptVerdict{}, err // an interrupt, not a verdict
+	}
+	if out.Decision != hooks.Allow {
+		reason := out.Reason
+		if reason == "" {
+			reason = "no reason given"
 		}
-		done, _ := msg.Metadata[tui.MetaPromptHookDone].(bool)
-		hidden, _ := msg.Metadata["hidden"].(bool)
-		if done || hidden {
-			sent = append(sent, msg)
-			continue
-		}
-		out := a.hooks.UserPromptSubmit(ctx, msg.Content)
-		if ctx.Err() != nil {
-			// An interrupt (Esc/Ctrl+C), not a verdict: the TUI keeps the
-			// prompt and it is checked again on the next send.
-			flush(readStreamCh(ch))
-			ch <- tui.PromptBlockedMsg{Cancelled: true, Content: msg.Content, Timestamp: msg.Timestamp}
-			return nil, true
-		}
-		if out.Decision != hooks.Allow {
-			reason := out.Reason
-			if reason == "" {
-				reason = "no reason given"
-			}
-			flush(readStreamCh(ch))
-			pending = &tui.PromptBlockedMsg{Reason: reason, Content: msg.Content, Timestamp: msg.Timestamp}
-			blocked = true
-			continue
-		}
-		ch <- tui.PromptHookMsg{Context: out.AdditionalContext, Content: msg.Content, Timestamp: msg.Timestamp, Next: readStreamCh(ch)}
-		meta := map[string]any{tui.MetaPromptHookDone: true}
+		return msg, loop.PromptVerdict{Blocked: true, Reason: reason}, nil
+	}
+	if out.AdditionalContext != "" {
+		meta := make(map[string]any, len(msg.Metadata)+1)
 		for k, v := range msg.Metadata {
 			meta[k] = v
 		}
-		if out.AdditionalContext != "" {
-			meta[tui.MetaHookContext] = out.AdditionalContext
-		}
+		meta[tui.MetaHookContext] = out.AdditionalContext
 		msg.Metadata = meta
-		sent = append(sent, msg)
-		allowed++
 	}
-	if blocked && allowed == 0 {
-		flush(nil)
-		return nil, true
-	}
-	flush(readStreamCh(ch))
-	for i := range sent {
-		if sent[i].Role != "user" {
-			continue
-		}
-		if c, _ := sent[i].Metadata[tui.MetaHookContext].(string); c != "" {
-			sent[i].Content += "\n\n<hook-context>\n" + c + "\n</hook-context>"
-		}
-	}
-	return sent, false
+	return msg, loop.PromptVerdict{}, nil
 }
 
 // lifeContext is cancelled when the chat app shuts down.

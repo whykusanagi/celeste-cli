@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -14,8 +15,8 @@ import (
 func cleanupChatDeps(t *testing.T, deps *chatDeps) {
 	t.Helper()
 	t.Cleanup(func() {
-		if deps.adapter != nil && deps.adapter.lifeCancel != nil {
-			deps.adapter.lifeCancel()
+		if deps.adapter != nil {
+			deps.adapter.shutdown(10 * time.Second)
 		}
 		if deps.adapter != nil && deps.adapter.subMgr != nil {
 			deps.adapter.subMgr.Close()

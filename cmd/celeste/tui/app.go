@@ -88,15 +88,6 @@ type AppModel struct {
 	// captured reproduction.
 	streamDone bool
 
-	// Pending tool call tracking
-	pendingToolCallID  string // Track tool call ID for sending result back to LLM
-	pendingToolCalls   []pendingToolCall
-	toolBatchActive    bool
-	clawToolIterations int    // Assistant tool-call turns in the current user turn
-	clawMaxIterations  int    // Safety cap for claw mode tool loops
-	lastToolSig        string // signature of the previous tool-call batch (repetition guard)
-	sameToolStreak     int    // consecutive identical single-tool batches (repetition guard)
-
 	// Input submitted while a turn is running (#172). Steers are injected as
 	// user messages at the next tool boundary; follow-ups are sent, one at a
 	// time, once the turn finishes. Steers still queued when the turn ends
@@ -109,12 +100,20 @@ type AppModel struct {
 	// interrupted is set by Esc: tools already running finish, queued ones
 	// are skipped, and no follow-up request is sent for the turn.
 	interrupted bool
-	// overflowRetried limits the compact-and-resend after a context
-	// overflow to once per user turn (#174).
-	overflowRetried bool
 	// summarizing is set while a compaction summary is being written, so
 	// only one runs at a time.
 	summarizing bool
+
+	// The running chat turn (2.0 F2d): a loop.Loop run whose events arrive
+	// as TurnEventMsg tagged turnRun; nil when idle. loopSteers counts steers
+	// handed to it that it has not joined or blocked yet. heldSummary is a
+	// background summary that finished while the turn ran; onTurnDone
+	// applies it if it still fits.
+	turn        TurnHandle
+	turnRun     uint64
+	turnSeq     uint64
+	loopSteers  int
+	heldSummary *ContextSummarizedMsg
 
 	// LLM client (injected)
 	llmClient LLMClient
@@ -169,6 +168,21 @@ type AppModel struct {
 	// Running token totals for the current agent run
 	agentInputTokens  int
 	agentOutputTokens int
+	// agentActive is set while an /agent command runs.
+	agentActive bool
+
+	// The run each modal belongs to (none: it stays until answered). When
+	// that run ends, its modal is answered (deny, cancelled) and closed, so
+	// it never stays up swallowing keys and holding the Gate's lock.
+	permissionOwner runOwner
+	askOwner        runOwner
+
+	// planning keeps /plan's "Planning..." status until the reply streams.
+	planning bool
+	// stopHookRunning is set while the Stop hook decides whether the turn
+	// may end; heldReady is the "Ready" status it shows when the turn ends.
+	stopHookRunning bool
+	heldReady       string
 
 	// Graceful Ctrl+C handling
 	cancelFunc       context.CancelFunc
@@ -182,28 +196,20 @@ type AppModel struct {
 	lastMsgOutTok int
 }
 
-type pendingToolCall struct {
-	name       string
-	args       map[string]any
-	toolCallID string
-	parseError string
-}
-
 // LLMClient interface for sending messages to the LLM.
 type LLMClient interface {
-	SendMessage(messages []ChatMessage, tools []SkillDefinition) tea.Cmd
+	TurnRunner
 	GetSkills() []SkillDefinition
-	ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd
 }
 
 // ContextCompactor is an optional extension that keeps the history inside
 // the context window (#174). CompactContext prunes old tool results;
 // SummarizeContext replaces older history with a structured summary written
 // by the small-model role (it blocks, so the app calls it from a command).
+// A context overflow during a turn is the loop's to retry (2.0 F2d).
 type ContextCompactor interface {
 	CompactContext(msgs []ChatMessage, window, used int, force bool) CompactOutcome
 	SummarizeContext(ctx context.Context, msgs []ChatMessage, focus string) (SummaryOutcome, error)
-	IsContextOverflow(err error) bool
 }
 
 // CompactOutcome is the result of a prune.
@@ -325,21 +331,20 @@ func loadVeniceConfig() (VeniceConfigData, error) {
 // NewApp creates a new TUI application model.
 func NewApp(llmClient LLMClient) AppModel {
 	return AppModel{
-		header:            NewHeaderModel(),
-		chat:              NewChatModel(),
-		input:             NewInputModel(),
-		skills:            NewSkillsModel(),
-		status:            NewStatusModel(),
-		toolProgress:      NewToolProgressModel(),
-		contextBar:        NewContextBarModel(),
-		permissionPrompt:  NewPermissionPromptModel(),
-		askPrompt:         NewAskPromptModel(),
-		statusLine:        NewStatusLineModel(),
-		mcpPanel:          NewMCPPanelModel(),
-		llmClient:         llmClient,
-		viewMode:          "chat",
-		runtimeMode:       config.RuntimeModeClassic,
-		clawMaxIterations: config.DefaultClawMaxToolIterations,
+		header:           NewHeaderModel(),
+		chat:             NewChatModel(),
+		input:            NewInputModel(),
+		skills:           NewSkillsModel(),
+		status:           NewStatusModel(),
+		toolProgress:     NewToolProgressModel(),
+		contextBar:       NewContextBarModel(),
+		permissionPrompt: NewPermissionPromptModel(),
+		askPrompt:        NewAskPromptModel(),
+		statusLine:       NewStatusLineModel(),
+		mcpPanel:         NewMCPPanelModel(),
+		llmClient:        llmClient,
+		viewMode:         "chat",
+		runtimeMode:      config.RuntimeModeClassic,
 	}
 }
 
@@ -419,6 +424,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input = m.input.SetWidth(m.width)
 		m.status = m.status.SetWidth(m.width)
 		// Don't return — let sub-views also handle the resize
+	}
+
+	// Chat turn events bypass the sub-view routing below: the turn must keep
+	// reading its events whichever view is showing.
+	if ev, ok := msg.(TurnEventMsg); ok {
+		return m.onTurnEvent(ev)
 	}
 
 	// Route to collections view if in that mode
@@ -620,15 +631,19 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
-			if m.cancelFunc != nil {
-				// Active operation running — cancel it
-				m.cancelFunc()
-				m.cancelFunc = nil
-				m.orchRun = 0
-				m.streaming = false
+			if m.turn != nil || m.cancelFunc != nil {
+				// Active operation running: cancel it. Double Ctrl+C within 3s quits.
+				again := m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second
+				if m.turn != nil {
+					m = m.interrupt()
+				} else {
+					m.cancelFunc()
+					m.cancelFunc = nil
+					m.orchRun = 0
+					m.streaming = false
+				}
 				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
-				// Double Ctrl+C within 3s => quit
-				if m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second {
+				if again {
 					m.persistSession()
 					return m, tea.Quit
 				}
@@ -763,6 +778,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.streaming = true
+				m.agentActive = true
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
@@ -985,13 +1001,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 
-					// Send to LLM
-					m.streaming = true
-					m.streamStart = time.Now()
-					m.status = m.status.SetStreaming(true)
+					// Send to the loop.
+					var turnCmd tea.Cmd
+					m, turnCmd = m.startTurn()
 					m.status = m.status.SetText("Planning...")
-					tools := m.getToolsForDispatch()
-					return m, m.llmClient.SendMessage(m.chat.GetLLMMessages(), tools)
+					m.planning = m.turn != nil
+					return m, turnCmd
 				}
 				return m, nil
 
@@ -1759,9 +1774,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Add user message to chat
 		m.chat = m.chat.AddUserMessage(content)
-		m.clawToolIterations = 0
-		m.lastToolSig = ""
-		m.sameToolStreak = 0
 		m.streaming = true
 		m.status = m.status.SetStreaming(true)
 		m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
@@ -1785,22 +1797,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastMsgInTok = 0
 		m.lastMsgOutTok = 0
 
-		// Send to LLM and start animation
-		if m.llmClient != nil {
-			m.overflowRetried = false
-			var out CompactOutcome
-			m, out = m.compactContext(false)
-			if out.StillOver {
-				var summaryCmd tea.Cmd
-				m, summaryCmd = m.startSummary("", false)
-				cmds = append(cmds, summaryCmd)
-			}
-			toolsToSend := m.getToolsForDispatch()
-			cmds = append(cmds, m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend))
-			// Start animation tick for waiting state
-			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-				return TickMsg{Time: t}
-			}))
+		// Send to the loop (2.0 F2d). It checks the prompt with
+		// UserPromptSubmit, prunes before every request and answers a
+		// context overflow itself.
+		var turnCmd tea.Cmd
+		m, turnCmd = m.startTurn()
+		cmds = append(cmds, turnCmd)
+		if m.turn != nil {
+			// The spinner animates from Enter, also while a
+			// UserPromptSubmit hook runs before the first request.
+			cmds = append(cmds, tickCmd(typingTickInterval*2))
 		}
 
 	case GenerateMediaMsg:
@@ -1930,42 +1936,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 
 	case StreamChunkMsg:
-		if m.interrupted {
-			// Late output from a request Esc cancelled: keep draining the
-			// stream so its goroutine can exit, but don't show it.
-			if msg.Next != nil {
-				cmds = append(cmds, msg.Next)
-			}
-			break
-		}
-		if msg.Chunk.IsFirst {
-			// First chunk: start the assistant message and typing animation.
-			// Reset streamDone here — the tick handler uses it to decide
-			// whether to commit when typing catches up.
-			m.chat = m.chat.AddAssistantMessage("")
-			m.chat = m.chat.SetTypingActive(true) // skip Glamour for corruption buffer
-			m.typingContent = msg.Chunk.Content
-			m.typingPos = 0
-			m.streaming = true
-			m.streamDone = false
-			m.status = m.status.SetStreaming(true)
-			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
-			cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-				return TickMsg{Time: t}
-			}))
-		} else {
-			// Subsequent chunks: extend the typing buffer. The running
-			// ticker will pick up the extension on its next fire. If the
-			// ticker happened to die right before this chunk arrived (the
-			// "O" race — see the streamDone comment on AppModel), the
-			// tick handler's new `!streamDone` guard would have kept it
-			// alive, so this append is safe to land without rescheduling.
-			m.typingContent += msg.Chunk.Content
-		}
-		// Chain the next read from the stream channel
-		if msg.Next != nil {
-			cmds = append(cmds, msg.Next)
-		}
+		var more []tea.Cmd
+		m, more = m.onStreamChunk(msg)
+		cmds = append(cmds, more...)
 
 	case StreamStartMsg:
 		if msg.Run != 0 && msg.Run != m.orchRun {
@@ -1981,150 +1954,17 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamDoneMsg:
-		if m.interrupted {
-			// The request Esc cancelled finished anyway; its reply is dropped.
-			m.cancelFunc = nil
-			break
-		}
-		// Clear cancel function — operation completed.
-		// Flip streamDone so the TickMsg tick-complete branch can commit
-		// the final content once the typing animation catches up.
-		m.cancelFunc = nil
-		m.interruptPending = false
-		m.streamDone = true
-		// Update token counts from API response
-		if msg.Usage != nil && (msg.Usage.PromptTokens > 0 || msg.Usage.CompletionTokens > 0) {
-			m.lastMsgInTok = msg.Usage.PromptTokens
-			m.lastMsgOutTok = msg.Usage.CompletionTokens
-			if m.contextTracker != nil {
-				m.contextTracker.UpdateTokens(
-					msg.Usage.PromptTokens,
-					msg.Usage.CompletionTokens,
-					msg.Usage.TotalTokens,
-				)
-				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-
-				// Update context bar
-				budgetMsg := ContextBudgetMsg{
-					UsedTokens:   m.contextTracker.CurrentTokens,
-					MaxTokens:    m.contextTracker.MaxTokens,
-					UsagePercent: float64(m.contextTracker.CurrentTokens) / float64(m.contextTracker.MaxTokens) * 100,
-				}
-				if m.contextTracker.Budget != nil {
-					budgetMsg.CompactCount = m.contextTracker.Budget.CompactCount
-					budgetMsg.TurnCount = m.contextTracker.Budget.TurnCount
-				}
-				m.contextBar, _ = m.contextBar.Update(budgetMsg)
-			}
-		} else if msg.FullContent != "" {
-			// API didn't return token usage — estimate from response length and
-			// update the context tracker so the header counter keeps moving.
-			estOut := config.EstimateTokens(msg.FullContent)
-			if m.contextTracker != nil && estOut > 0 {
-				cur := m.contextTracker.CurrentTokens + estOut
-				m.contextTracker.UpdateTokens(0, estOut, cur)
-				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-			}
-			// Leave lastMsgInTok/lastMsgOutTok at 0 so the TickMsg inferred path runs.
-		}
-
-		if msg.FullContent != "" {
-			if commands.IsContentPolicyRefusal(msg.FullContent) && m.endpoint != "venice" {
-				m.chat = m.chat.AddSystemMessage(
-					"⚠️  Content policy refusal detected.\n\n" +
-						"💡 Tip: Use /nsfw to switch to Venice.ai for uncensored responses,\n" +
-						"or add 'nsfw' at the end of your message for auto-routing.",
-				)
-			}
-
-			if m.typingContent != "" {
-				// Real streaming was active — typing animation is already running.
-				// Just ensure the full content is in the buffer (in case final
-				// chunks arrived after EventMessageDone).
-				m.typingContent = msg.FullContent
-			} else {
-				// No streaming chunks arrived (non-streaming backend or empty deltas).
-				// Fall back to simulated typing on the full response.
-				m.typingContent = msg.FullContent
-				m.typingPos = 0
-				m.streaming = true
-				m.status = m.status.SetStreaming(true)
-				m.chat = m.chat.AddAssistantMessage("")
-				m.chat = m.chat.SetTypingActive(true)
-				m.status = m.status.SetText("Typing...")
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
-			}
-		} else if m.typingContent == "" {
-			// No content at all — empty response. This happens when the LLM
-			// "acknowledges" internally but produces nothing. Show feedback
-			// so the user knows to re-prompt.
-			m.streaming = false
-			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText("Ready (empty response)")
-			m.chat = m.chat.AddSystemMessage("(No response — try rephrasing or say 'go' to execute)")
-		}
+		var more []tea.Cmd
+		m, more = m.onStreamDone(msg)
+		cmds = append(cmds, more...)
 
 	case StreamErrorMsg:
 		m.cancelFunc = nil
 		m.interruptPending = false
-		// The history overflowed the window: prune harder and resend once
-		// before reporting the error (#174).
-		if c, ok := m.llmClient.(ContextCompactor); ok && c.IsContextOverflow(msg.Err) && !m.overflowRetried && !m.interrupted {
-			m.overflowRetried = true
-			var out CompactOutcome
-			if m, out = m.compactContext(true); len(out.Edits) > 0 {
-				m.streamStart = time.Now()
-				return m, tea.Batch(
-					m.llmClient.SendMessage(m.chat.GetLLMMessages(), m.getToolsForDispatch()),
-					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg { return TickMsg{Time: t} }),
-				)
-			}
-		}
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
-
-	case PromptHookMsg:
-		m.chat = m.chat.MarkUserHooked(msg.Content, msg.Timestamp, msg.Context)
-		return m, msg.Next
-
-	case PromptBlockedMsg:
-		if msg.Cancelled {
-			// Esc/Ctrl+C cut the UserPromptSubmit hook short: that is not a
-			// block, so the prompt stays, unchecked. The interrupt already
-			// cleared cancelFunc; leave it, since it may belong to a newer
-			// request by now.
-			break
-		}
-		if msg.Next != nil {
-			// Other new messages are still answered; only this one goes.
-			m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
-			m.persistSession()
-			m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
-			return m, msg.Next
-		}
-		if m.interrupted {
-			// The send stopped on a block, but Esc came first and already
-			// reset the turn: keep the prompt; it is checked again on the
-			// next send. The request's cancelFunc was cleared by interrupt.
-			break
-		}
-		// This is the final message of the request that owns cancelFunc
-		// (no newer request starts while this one is streaming).
-		m.cancelFunc = nil
-		m.interruptPending = false
-		m.streaming = false
-		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText("Prompt blocked by a hook")
-		m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
-		// persistSession rewrites the session's messages from the chat, so
-		// dropping the prompt from the chat drops it from the session too.
-		m.persistSession()
-		m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
-		return m, nil
 
 	case HookWarningMsg:
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
@@ -2136,7 +1976,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case ContextSummarizedMsg:
-		m = m.applySummary(msg)
+		if m.turn != nil {
+			// The loop's snapshots line up with the chat position by
+			// position; applying a summary now would shift them. It waits
+			// for the turn to end (onTurnDone re-validates it).
+			held := msg
+			m.heldSummary = &held
+			break
+		}
+		m, _ = m.applySummary(msg)
 
 	case HandoffReadyMsg:
 		m = m.applyHandoff(msg)
@@ -2149,11 +1997,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PermissionRequestMsg:
 		var cmd tea.Cmd
 		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
+		m.permissionOwner = m.currentRun()
 		cmds = append(cmds, cmd)
 
 	case AskRequestMsg:
 		var cmd tea.Cmd
 		m.askPrompt, cmd = m.askPrompt.Update(msg)
+		m.askOwner = m.currentRun()
 		cmds = append(cmds, cmd)
 
 	case GitStatusMsg:
@@ -2257,6 +2107,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case AgentProgressComplete:
+			m = m.endAgentRun()
 			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
@@ -2271,6 +2122,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.persistSession()
 
 		case AgentProgressError:
+			m = m.endAgentRun()
 			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
@@ -2390,6 +2242,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.AddAction(label)
 			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
+			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2406,6 +2259,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.persistSession()
 		case 8: // EventError
+			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2422,6 +2276,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case AgentCommandResultMsg:
+		m = m.endAgentRun()
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 
@@ -2439,157 +2294,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.persistSession()
-
-	case SkillCallMsg:
-		batchMsg := SkillCallBatchMsg{
-			Calls: []SkillCallRequest{
-				{
-					Call:       msg.Call,
-					ToolCallID: msg.ToolCallID,
-				},
-			},
-			AssistantContent: msg.AssistantContent,
-			ToolCalls:        msg.ToolCalls,
-		}
-		var batchCmds []tea.Cmd
-		m, batchCmds = m.handleSkillCallBatch(batchMsg)
-		cmds = append(cmds, batchCmds...)
-
-	case SkillCallBatchMsg:
-		var batchCmds []tea.Cmd
-		m, batchCmds = m.handleSkillCallBatch(msg)
-		cmds = append(cmds, batchCmds...)
-
-	case SkillResultMsg:
-		// Log the skill result
-		LogSkillResult(msg.Name, msg.Result, msg.Err)
-
-		// Update tool progress display
-		state := "done"
-		if msg.Err != nil {
-			state = "failed"
-		}
-		progMsg := ToolProgressMsg{
-			ToolCallID: msg.ToolCallID,
-			ToolName:   msg.Name,
-			State:      state,
-		}
-		// Inject element identity for subagent results
-		if msg.Name == "spawn_agent" && msg.Metadata != nil {
-			if name, ok := msg.Metadata["subagent_name"].(string); ok {
-				progMsg.DisplayName = "〔" + name + "〕"
-			}
-			if elem, ok := msg.Metadata["element"].(string); ok {
-				progMsg.Element = elem
-			}
-		}
-		m.toolProgress, _ = m.toolProgress.Update(progMsg)
-
-		isBatchResult := m.toolBatchActive
-		shouldFollowUp := msg.ToolCallID != ""
-		if isBatchResult {
-			m.popPendingToolCall(msg.ToolCallID)
-		}
-
-		resultForLLM := msg.Result
-		if msg.Err != nil {
-			m.skills = m.skills.SetError(msg.Name, msg.Err)
-			m.chat = m.chat.UpdateFunctionResult(msg.Name, fmt.Sprintf("Error: %v", msg.Err))
-
-			// Format error as JSON for LLM to interpret
-			errorMsg := strings.ReplaceAll(msg.Err.Error(), `"`, `\"`)
-			errorMsg = strings.ReplaceAll(errorMsg, "\n", "\\n")
-			resultForLLM = fmt.Sprintf(`{"error": true, "message": "%s", "skill": "%s"}`, errorMsg, msg.Name)
-		} else {
-			m.skills = m.skills.SetCompleted(msg.Name)
-			m.chat = m.chat.UpdateFunctionResult(msg.Name, msg.Result)
-
-			// Handle NSFW mode toggle
-			if msg.Name == "nsfw_mode" && strings.Contains(msg.Result, "enabled") {
-				m.nsfwMode = true
-				m.header = m.header.SetNSFWMode(true)
-				m.persistSession()
-			} else if msg.Name == "nsfw_mode" && strings.Contains(msg.Result, "disabled") {
-				m.nsfwMode = false
-				m.header = m.header.SetNSFWMode(false)
-				m.persistSession()
-			}
-		}
-
-		if m.llmClient != nil && msg.ToolCallID != "" {
-			// If the tool result contains image metadata, enrich the text
-			// content so the LLM knows an image was captured, and forward
-			// the metadata so backends can build multimodal messages.
-			var resultMetadata map[string]any
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					resultMetadata = msg.Metadata
-					if format, ok := msg.Metadata["format"].(string); ok {
-						if filename, ok := msg.Metadata["filename"].(string); ok {
-							LogInfo(fmt.Sprintf("Forwarding image from tool result: %s (format: %s)", filename, format))
-						}
-						// Append a marker so the LLM is aware an image was read.
-						// The actual base64 data is carried in Metadata for
-						// backends that support multimodal tool results.
-						resultForLLM += fmt.Sprintf("\n\n[Image data available: format=%s. The image content has been captured and will be provided to vision-capable models.]", format)
-					}
-				}
-			}
-			m.chat = m.chat.AddToolResult(msg.ToolCallID, msg.Name, resultForLLM, resultMetadata)
-		}
-
-		if isBatchResult {
-			// Track how many parallel results are still outstanding.
-			// Parallel calls were dispatched and removed from pendingToolCalls,
-			// so we track them via the tool progress entries.
-			parallelStillRunning := false
-			for _, entry := range m.toolProgress.entries {
-				if entry.state == "executing" {
-					parallelStillRunning = true
-					break
-				}
-			}
-
-			if m.interrupted && len(m.pendingToolCalls) > 0 && !parallelStillRunning {
-				m = m.skipPendingToolCalls()
-			}
-			if len(m.pendingToolCalls) > 0 && !parallelStillRunning {
-				// Serial queue has items and all parallel tools are done —
-				// start the next serial tool.
-				nextCall := m.pendingToolCalls[0]
-				m.skills = m.skills.SetExecuting(nextCall.name)
-				m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", nextCall.name))
-				m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
-					ToolCallID: nextCall.toolCallID,
-					ToolName:   nextCall.name,
-					State:      "executing",
-				})
-				nextCmd := m.executePendingToolCall(nextCall)
-				if nextCmd != nil {
-					cmds = append(cmds, nextCmd)
-				} else {
-					m.pendingToolCalls = nil
-					m.toolBatchActive = false
-				}
-			} else if len(m.pendingToolCalls) == 0 && !parallelStillRunning {
-				// All tools (parallel + serial) are done — follow up with LLM.
-				m.pendingToolCallID = ""
-				m.toolBatchActive = false
-				if shouldFollowUp {
-					var followCmds []tea.Cmd
-					m, followCmds = m.buildToolFollowUpCmds()
-					cmds = append(cmds, followCmds...)
-				}
-			}
-			// else: parallel tools still running — wait for more results
-		} else {
-			m.pendingToolCallID = ""
-			if shouldFollowUp {
-				var followCmds []tea.Cmd
-				m, followCmds = m.buildToolFollowUpCmds()
-				cmds = append(cmds, followCmds...)
-			}
-		}
 
 	case ShowSelectorMsg:
 		// Activate the selector
@@ -2751,6 +2455,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.status = m.status.SetText("Ready")
 				}
+				if m.stopHookRunning {
+					// The turn is not over yet: shown when it ends.
+					m.heldReady = m.status.text
+					m.status = m.status.SetText(stopHookStatus)
+				}
 
 				// Clear completed tool progress entries now that the
 				// response is fully rendered — no need to keep them
@@ -2762,7 +2471,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else if m.streaming {
 			// Just streaming (waiting for response) - show animated status
-			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
+			if !m.planning {
+				m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
+			}
 			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 				return TickMsg{Time: t}
 			}))
@@ -2952,309 +2663,6 @@ func (m AppModel) getAvailableSkills() []SkillDefinition {
 	return m.llmClient.GetSkills()
 }
 
-func (m AppModel) getToolsForDispatch() []SkillDefinition {
-	if m.nsfwMode || !m.skillsEnabled {
-		return nil
-	}
-	return m.getAvailableSkills()
-}
-
-// isClawMode is deprecated — tools always auto-loop now.
-// Kept for backward compatibility with config files that set runtime_mode.
-
-// toolBatchSignature returns a signature of a tool-call batch that INCLUDES the
-// arguments, so the repetition guard only trips when the model re-issues the
-// IDENTICAL call (a true stuck loop) — never on legitimate bulk work where each
-// call has distinct args (e.g. generating 30 different mp3 lines).
-func toolBatchSignature(calls []SkillCallRequest) string {
-	parts := make([]string, 0, len(calls))
-	for _, c := range calls {
-		b, _ := json.Marshal(c.Call.Arguments)
-		parts = append(parts, c.Call.Name+"("+string(b)+")")
-	}
-	return strings.Join(parts, ",")
-}
-
-func (m AppModel) handleSkillCallBatch(msg SkillCallBatchMsg) (AppModel, []tea.Cmd) {
-	if len(msg.Calls) == 0 {
-		return m, nil
-	}
-	if m.interrupted {
-		// The turn was interrupted while this response was in flight. Drop
-		// the calls before the assistant tool_calls message is recorded, so
-		// the history has no calls without results.
-		return m, nil
-	}
-
-	// Stop any in-progress typing animation — tools are executing now
-	if m.typingContent != "" {
-		// Finalize whatever was being typed
-		m.chat = m.chat.SetLastAssistantContent(m.typingContent)
-		m.typingContent = ""
-		m.typingPos = 0
-	}
-	m.streaming = false
-	m.status = m.status.SetStreaming(false)
-
-	// Safety cap: prevent infinite tool-call loops.
-	maxToolTurns := m.clawMaxIterations
-	if maxToolTurns <= 0 {
-		maxToolTurns = 50 // generous default — let the model work
-	}
-	if m.clawToolIterations >= maxToolTurns {
-		LogInfo(fmt.Sprintf("Tool loop safety cap reached (%d turns)", maxToolTurns))
-		m.streaming = false
-		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText(fmt.Sprintf("Tool loop capped at %d turns", maxToolTurns))
-		m.chat = m.chat.AddSystemMessage(
-			fmt.Sprintf("⚠️ Tool loop stopped after %d turn(s). Send another message to continue.", maxToolTurns),
-		)
-		return m, nil
-	}
-	m.clawToolIterations++
-
-	// Repetition guard: stop only when the model re-issues the IDENTICAL call
-	// (same tool AND same args) several turns in a row — a genuine stuck loop.
-	// Because the signature includes args, legitimate bulk work (e.g. 30 distinct
-	// mp3 lines) is NEVER blocked; only true "spinning on the same thing" trips it.
-	// Safety net — it halts a runaway, it doesn't make the model finish. (#48 follow-up)
-	const maxSameCallStreak = 3
-	if sig := toolBatchSignature(msg.Calls); sig != "" {
-		if sig == m.lastToolSig {
-			m.sameToolStreak++
-		} else {
-			m.sameToolStreak = 1
-			m.lastToolSig = sig
-		}
-		if m.sameToolStreak >= maxSameCallStreak {
-			LogInfo(fmt.Sprintf("Repetition guard: identical call repeated %d turns — stopping", m.sameToolStreak))
-			m.streaming = false
-			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText("Stopped: identical tool call repeated")
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf(
-				"⚠️ Stopped: the model made the identical tool call %d times in a row (stuck loop). Send another message (or rephrase the goal) to continue.",
-				m.sameToolStreak))
-			m.sameToolStreak = 0
-			m.lastToolSig = ""
-			return m, nil
-		}
-	} else {
-		m.sameToolStreak = 0
-		m.lastToolSig = ""
-	}
-
-	// Always record the tool_calls message, even with no text: the results
-	// that follow must pair with it or the provider rejects the next request.
-	// The renderer hides the empty bubble.
-	m.chat = m.chat.AddAssistantMessageWithToolCalls(msg.AssistantContent, msg.ToolCalls)
-	m.pendingToolCalls = make([]pendingToolCall, 0, len(msg.Calls))
-	m.toolBatchActive = true
-
-	for _, call := range msg.Calls {
-		LogSkillCall(call.Call.Name, call.Call.Arguments)
-		m.chat = m.chat.AddFunctionCall(call.Call)
-		m.pendingToolCalls = append(m.pendingToolCalls, pendingToolCall{
-			name:       call.Call.Name,
-			args:       call.Call.Arguments,
-			toolCallID: call.ToolCallID,
-			parseError: call.ParseError,
-		})
-	}
-
-	// Note: progress events are emitted when tools actually start executing,
-	// not here. Parallel tools get their "executing" state in the dispatch
-	// loop below; serial tools get it when they're popped from the queue.
-
-	LogInfo(fmt.Sprintf("Starting execution of %d skill call(s)", len(m.pendingToolCalls)))
-
-	// Dispatch ALL concurrency-safe tools in parallel. Non-safe tools
-	// queue behind: the first non-safe tool blocks until all prior
-	// safe tools have finished, then runs alone.
-	var batchCmds []tea.Cmd
-	var serialQueue []pendingToolCall
-
-	for _, call := range m.pendingToolCalls {
-		// Check if this tool is concurrency-safe by looking it up
-		// in the registry. If we can't determine safety, default to serial.
-		isSafe := false
-		if m.llmClient != nil {
-			isSafe = m.isToolConcurrencySafe(call.name, call.args)
-		}
-
-		if isSafe && len(serialQueue) == 0 {
-			// Safe tool with no serial blockers ahead — dispatch immediately
-			cmd := m.executePendingToolCall(call)
-			if cmd != nil {
-				batchCmds = append(batchCmds, cmd)
-			}
-			m.skills = m.skills.SetExecuting(call.name)
-			m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
-				ToolCallID: call.toolCallID,
-				ToolName:   call.name,
-				State:      "executing",
-			})
-		} else {
-			// Queue for sequential execution after parallel batch
-			serialQueue = append(serialQueue, call)
-		}
-	}
-
-	// Replace pendingToolCalls with only the serial queue — parallel
-	// ones are already dispatched and will come back as SkillResultMsg.
-	m.pendingToolCalls = serialQueue
-
-	if len(batchCmds) > 0 {
-		// Multiple tools running in parallel
-		m.pendingToolCallID = "" // no single active ID
-		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing %d tools in parallel", len(batchCmds)))
-		return m, batchCmds
-	}
-
-	// No parallel tools — fall back to sequential dispatch
-	if len(m.pendingToolCalls) > 0 {
-		firstCall := m.pendingToolCalls[0]
-		m.pendingToolCallID = firstCall.toolCallID
-		m.skills = m.skills.SetExecuting(firstCall.name)
-		m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", firstCall.name))
-		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
-			ToolCallID: firstCall.toolCallID,
-			ToolName:   firstCall.name,
-			State:      "executing",
-		})
-		nextCmd := m.executePendingToolCall(firstCall)
-		if nextCmd == nil {
-			m.pendingToolCalls = nil
-			m.toolBatchActive = false
-			return m, nil
-		}
-		return m, []tea.Cmd{nextCmd}
-	}
-
-	m.toolBatchActive = false
-	return m, nil
-}
-
-func (m AppModel) executePendingToolCall(call pendingToolCall) tea.Cmd {
-	if call.parseError != "" {
-		parseErr := call.parseError
-		return func() tea.Msg {
-			return SkillResultMsg{
-				Name:       call.name,
-				Result:     "",
-				Err:        fmt.Errorf("failed to parse tool arguments: %s", parseErr),
-				ToolCallID: call.toolCallID,
-			}
-		}
-	}
-
-	if m.llmClient == nil {
-		return nil
-	}
-
-	return m.llmClient.ExecuteSkill(call.name, call.args, call.toolCallID)
-}
-
-// concurrencySafeTools lists tools that can be dispatched in parallel.
-// These correspond to tools that return IsConcurrencySafe=true in the
-// builtin registry. Maintained here because the TUI doesn't have direct
-// access to the tool registry at dispatch time.
-var concurrencySafeTools = map[string]bool{
-	"spawn_agent":        true,
-	"read_file":          true,
-	"list_files":         true,
-	"search":             true,
-	"code_search":        true,
-	"code_review":        true,
-	"code_graph":         true,
-	"code_symbols":       true,
-	"git_status":         true,
-	"git_log":            true,
-	"web_search":         true,
-	"web_fetch":          true,
-	"collections_search": true,
-}
-
-// isToolConcurrencySafe checks if a tool can be dispatched in parallel
-// with other safe tools.
-func (m AppModel) isToolConcurrencySafe(name string, args map[string]any) bool {
-	return concurrencySafeTools[name]
-}
-
-func (m *AppModel) popPendingToolCall(toolCallID string) {
-	if len(m.pendingToolCalls) == 0 {
-		return
-	}
-
-	if toolCallID == "" {
-		m.pendingToolCalls = m.pendingToolCalls[1:]
-		return
-	}
-
-	for i, call := range m.pendingToolCalls {
-		if call.toolCallID == toolCallID {
-			m.pendingToolCalls = append(m.pendingToolCalls[:i], m.pendingToolCalls[i+1:]...)
-			return
-		}
-	}
-
-	// Fallback: dequeue the head if the ID wasn't found.
-	m.pendingToolCalls = m.pendingToolCalls[1:]
-}
-
-func (m AppModel) buildToolFollowUpCmds() (AppModel, []tea.Cmd) {
-	if m.llmClient == nil {
-		return m, nil
-	}
-
-	// Clear completed tool progress entries now that all tools are done
-	// and we're about to stream the follow-up response. Keeping stale
-	// "done" cards visible during the typing animation adds extra rows
-	// that weren't accounted for in the chat panel height calculation,
-	// pushing the typed content past the bottom of the terminal.
-	m.toolProgress.ClearCompleted()
-
-	if m.interrupted {
-		// Esc: the tools have finished; don't ask the model to continue.
-		m.interrupted = false
-		m.streaming = false
-		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText("Interrupted")
-		m.persistSession()
-		return m, nil
-	}
-
-	// Tool boundary: messages typed during the turn join the conversation
-	// here, after the tool results and before the model continues (#172).
-	m = m.injectSteers()
-	// Checked after every tool batch, so a long turn compacts mid-turn at a
-	// safe boundary (#174).
-	var extra []tea.Cmd
-	var compacted CompactOutcome
-	m, compacted = m.compactContext(false)
-	if compacted.StillOver {
-		var summaryCmd tea.Cmd
-		m, summaryCmd = m.startSummary("", false)
-		extra = append(extra, summaryCmd)
-	}
-
-	m.streaming = true
-	m.status = m.status.SetStreaming(true)
-	m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
-	// Reset timing for the follow-up LLM call so the displayed stats reflect
-	// only that call's latency, not the elapsed tool execution time.
-	m.streamStart = time.Now()
-	m.lastMsgInTok = 0
-	m.lastMsgOutTok = 0
-
-	toolsToSend := m.getToolsForDispatch()
-	return m, append(extra,
-		m.llmClient.SendMessage(m.chat.GetLLMMessages(), toolsToSend),
-		tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-			return TickMsg{Time: t}
-		}),
-	)
-}
-
 // SessionManager interface for session persistence (avoid circular import).
 // Uses interface{} for return types to avoid circular dependencies.
 type SessionManager interface {
@@ -3370,16 +2778,10 @@ func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 	m.config = cfg
 	if cfg == nil {
 		m.runtimeMode = config.RuntimeModeClassic
-		m.clawMaxIterations = config.DefaultClawMaxToolIterations
 		return m
 	}
 
 	m.runtimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
-	if cfg.ClawMaxToolIterations > 0 {
-		m.clawMaxIterations = cfg.ClawMaxToolIterations
-	} else {
-		m.clawMaxIterations = config.DefaultClawMaxToolIterations
-	}
 	return m
 }
 
@@ -3512,11 +2914,31 @@ func (m *AppModel) persistSession() {
 
 	// Must be []config.SessionMessage: SetMessagesRaw ignores any other type,
 	// which is how sessions used to silently stop saving history.
-	m.currentSession.SetMessagesRaw(SessionMessagesFromChat(m.chat.GetMessages()))
+	m.currentSession.SetMessagesRaw(SessionMessagesFromChat(m.savedMessages()))
 
 	// Save synchronously: Save mutates and marshals the session, and Update
 	// keeps mutating it, so a goroutine here races.
 	_ = m.sessionManager.Save(m.currentSession)
+}
+
+// savedMessages is the chat as the session saves it. A reply still being
+// typed shows its typed prefix plus glitch glyphs; the session gets the
+// whole reply received so far instead (typingContent: the loop's text once
+// the reply is done). Turn events never save while typing, the typing
+// commit does, but a quit or an interrupt can land mid-typing.
+func (m AppModel) savedMessages() []ChatMessage {
+	msgs := m.chat.GetMessages()
+	if m.typingContent == "" {
+		return msgs
+	}
+	msgs = append([]ChatMessage(nil), msgs...)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" {
+			msgs[i].Content = m.typingContent
+			break
+		}
+	}
+	return msgs
 }
 
 // handleSessionAction handles session management actions.

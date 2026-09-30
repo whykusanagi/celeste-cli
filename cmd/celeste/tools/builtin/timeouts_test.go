@@ -7,8 +7,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
-// These values replace the tool-name table that used to live in main.go's
-// TUIClientAdapter.ExecuteSkill (2.0 F2).
+// These values replace the tool-name table the chat's own tool execution
+// used to keep in main.go; the chat runs its tools on loop.Loop (2.0 F2d).
 func TestLongRunningToolsCarryTheirTimeouts(t *testing.T) {
 	ws := t.TempDir()
 	cases := []struct {
