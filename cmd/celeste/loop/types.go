@@ -90,6 +90,7 @@ const (
 	StopInterrupted StopReason = "interrupted"  // ctx cancelled
 	StopInvalidArgs StopReason = "invalid_args" // Limits.MaxInvalidArgTurns
 	StopError       StopReason = "error"        // the provider failed; Run returns the error
+	StopBlocked     StopReason = "blocked"      // CheckPrompt blocked every new prompt; no request was sent
 )
 
 // Result describes one Run. The completion gate is not here: the agent layer
@@ -110,16 +111,19 @@ const (
 	// EventTurnStart (Turn) may repeat with the same Turn number after an
 	// overflow retry re-runs the turn: consumers should key on Turn, not
 	// count events.
-	EventTurnStart  EventKind = iota
-	EventTextDelta            // Text
-	EventAssistant            // Turn, Text, ToolNames, Usage, Elapsed: the model's reply
-	EventToolStart            // Call
-	EventToolResult           // Call, Text (what the model receives), IsError
-	EventCompacted            // Text
-	EventSteered              // Text
-	EventNotice               // Text: a non-fatal problem (hook error, spill failure)
-	EventTurnEnd              // Turn, History: a consistent history snapshot
-	EventDone                 // Result, Err: always the last event of a Run
+	EventTurnStart      EventKind = iota
+	EventTextDelta                // Text
+	EventAssistant                // Turn, Text, ToolNames, Usage, Elapsed: the model's reply
+	EventToolStart                // Call
+	EventToolResult               // Call, Text (what the model receives), IsError
+	EventCompacted                // Text
+	EventSteered                  // Text, Msg: a steer joined (Msg as it joined, metadata included)
+	EventNotice                   // Text: a non-fatal problem (hook error, spill failure)
+	EventTurnEnd                  // Turn, History: a consistent history snapshot
+	EventDone                     // Result, Err: always the last event of a Run
+	EventPromptBlocked            // Msg, Text (the reason): CheckPrompt blocked a prompt; it left the history
+	EventSteerBlocked             // Msg, Text (the reason): CheckPrompt blocked a steer; it was dropped
+	EventPromptsChecked           // History: CheckPrompt allowed a prompt; the checked history, before the first request
 )
 
 // Event is one step of a Run, for renderers and adopters.
@@ -131,6 +135,7 @@ type Event struct {
 	Usage     *llm.TokenUsage
 	Elapsed   time.Duration
 	Call      ToolCall
+	Msg       Message
 	IsError   bool
 	History   []Message
 	Result    Result
@@ -195,6 +200,20 @@ func PromptGate(fn tools.PromptFunc) Gate {
 	})
 }
 
+// PromptVerdict is a PromptCheck's answer.
+type PromptVerdict struct {
+	Blocked bool
+	Reason  string // for the person, never the model
+}
+
+// PromptCheck is UserPromptSubmit for the loop. Run calls it before the
+// first request for every user message not checked yet (MetaPromptHookDone
+// unset, not hidden), and for every steer when it joins. It returns the
+// message to send, with any hook context in Metadata[tui.MetaHookContext];
+// the loop marks it checked. An error (the run's ctx ended: an interrupt,
+// not a verdict) leaves the message unchecked.
+type PromptCheck func(ctx context.Context, msg Message) (Message, PromptVerdict, error)
+
 // Compactor keeps the history inside the window. The loop calls it before
 // every request, and once with force set after a context-overflow error.
 // lastUsage is the provider's count for the previous request (nil when there
@@ -227,6 +246,8 @@ type Loop struct {
 	Limits  Limits
 	Gate    Gate      // nil: an Ask is denied
 	Compact Compactor // nil: no compaction
+	// CheckPrompt is UserPromptSubmit for this run (2.0 F2d; nil: none).
+	CheckPrompt PromptCheck
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string
