@@ -76,6 +76,15 @@ func TestSearchArgs(t *testing.T) {
 		{"top_k past int32 falls back", map[string]any{"top_k": float64(1e12)}, nil},
 		{"raw limit above the cap", map[string]any{"limit": float64(5000)}, maxSearchResults},
 		{"raw limit kept", map[string]any{"limit": float64(7)}, float64(7)},
+		// A limit that is not a whole number of at least 1 is dropped, so
+		// the default applies: the builtin parses strings and truncates
+		// floats itself, and a huge or negative value reached
+		// make([]SearchResult, 0, TopK) and panicked the server.
+		{"string limit dropped", map[string]any{"limit": "1000000000000000"}, nil},
+		{"limit past int32 dropped", map[string]any{"limit": float64(1e12)}, nil},
+		{"limit of 1e15 dropped", map[string]any{"limit": float64(1e15)}, nil},
+		{"negative limit dropped", map[string]any{"limit": float64(-5)}, nil},
+		{"fractional limit dropped", map[string]any{"limit": 2.5}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := searchArgs(tc.in)
@@ -86,5 +95,14 @@ func TestSearchArgs(t *testing.T) {
 				t.Fatalf("limit = %#v, want %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A string or huge limit from a client used to panic celeste serve.
+func TestCodeSearchHugeLimitUsesDefault(t *testing.T) {
+	for _, limit := range []any{"1000000000000000", 1e15, -5} {
+		if got := searchCount(t, map[string]any{"limit": limit}); got != 10 {
+			t.Errorf("limit=%v returned %d results, want the default 10", limit, got)
+		}
 	}
 }

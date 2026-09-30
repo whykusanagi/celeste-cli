@@ -340,9 +340,11 @@ const maxSearchResults = 100
 
 // searchArgs maps the MCP contract's top_k (spec §3.1) onto the builtin
 // code_search tool's limit (#209). top_k wins over a limit sent with it. A
-// top_k that is not a whole number of at least 1 is dropped, so the tool's
-// default (10) applies. The result is capped at maxSearchResults, which also
-// bounds a raw limit a client sends. args is modified in place.
+// top_k or limit that is not a whole number of at least 1 is dropped, so the
+// tool's default (10) applies; the builtin would otherwise parse a string or
+// truncate a float itself, and a huge or negative value panics the search's
+// make([]SearchResult, 0, TopK). The result is capped at maxSearchResults.
+// args is modified in place.
 func searchArgs(args map[string]any) map[string]any {
 	if v, ok := args["top_k"]; ok {
 		delete(args, "top_k")
@@ -350,8 +352,14 @@ func searchArgs(args map[string]any) map[string]any {
 			args["limit"] = n
 		}
 	}
-	if n, ok := wholeNumber(args["limit"]); ok && n > maxSearchResults {
-		args["limit"] = maxSearchResults
+	if v, ok := args["limit"]; ok {
+		n, ok := wholeNumber(v)
+		switch {
+		case !ok || n < 1:
+			delete(args, "limit")
+		case n > maxSearchResults:
+			args["limit"] = maxSearchResults
+		}
 	}
 	return args
 }
