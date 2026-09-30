@@ -43,6 +43,22 @@ func TestSetSessionManager_VeniceGatesToolsPerModel(t *testing.T) {
 	}
 }
 
+// Review finding: WithEndpoint alone (no model chosen yet — the state a
+// brand-new AppModel is in the instant the provider is detected, before
+// SetSessionManager or EndpointChange's auto-select ever runs) must not
+// default a ToolsPerModel provider to "tools enabled". Gate on the model
+// that will actually be in effect (the provider's own default) instead of
+// the model's zero value.
+func TestWithEndpoint_VeniceDefaultModelHasNoToolsBeforeSessionRestores(t *testing.T) {
+	m := NewApp(nil).WithEndpoint("venice")
+	if m.model != "" {
+		t.Fatalf("model = %q, want \"\" (WithEndpoint alone never picks Venice's model)", m.model)
+	}
+	if m.skillsEnabled {
+		t.Error("skillsEnabled is true with no model chosen yet; Venice's own default (venice-uncensored) has no tools")
+	}
+}
+
 // Non-ToolsPerModel providers are unaffected: their gate stays at the
 // provider-level SupportsFunctionCalling regardless of model.
 func TestSetSessionManager_HostedProviderUnaffectedByModel(t *testing.T) {

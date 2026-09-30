@@ -2822,7 +2822,18 @@ func (m AppModel) WithEndpoint(endpoint string) AppModel {
 
 		// Check provider capabilities
 		if caps, ok := providers.GetProvider(m.provider); ok {
-			m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
+			// The model isn't chosen yet at this point (a fresh session's
+			// AppModel.model is still ""); gate on the model that will
+			// actually be in effect — the provider's own default — so a
+			// ToolsPerModel provider (Venice) doesn't default to "tools
+			// enabled" for a model (venice-uncensored) that has none (#151
+			// W6b review). SetSessionManager and EndpointChange correct
+			// this again once the real model is known.
+			modelForGate := m.model
+			if modelForGate == "" {
+				modelForGate = caps.DefaultModel
+			}
+			m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, modelForGate)
 			m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
 			LogInfo(fmt.Sprintf("✓ Provider '%s' function calling support: %v", m.provider, m.skillsEnabled))
 

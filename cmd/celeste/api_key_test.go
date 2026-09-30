@@ -24,6 +24,17 @@ func TestNeedsAPIKey(t *testing.T) {
 		{"named localhost endpoint needs no key", &config.Config{BaseURL: "http://localhost:11434/v1"}, false},
 		{"remote provider still needs a key even with ADC fields unset", &config.Config{BaseURL: "https://api.venice.ai/api/v1"}, true},
 		{"nil config defaults to needing a key", nil, true},
+		// Review finding: --set-url repoints a profile's provider but never
+		// clears a previously-set google_use_adc/google_credentials_file
+		// (main.go's --set-url handling touches only BaseURL). A stale ADC
+		// flag left over from an earlier Vertex/Gemini setup must not wave
+		// through a profile that --set-url has since pointed at a provider
+		// that genuinely needs its own api_key.
+		{"stale google_use_adc on a repointed non-Google profile still needs a key",
+			&config.Config{BaseURL: "https://api.openai.com/v1", GoogleUseADC: true}, true},
+		{"stale google_credentials_file on a repointed non-Google profile still needs a key",
+			&config.Config{BaseURL: "https://api.openai.com/v1", GoogleCredentialsFile: "/tmp/sa.json"}, true},
+		{"gemini ADC needs no key", &config.Config{BaseURL: "https://generativelanguage.googleapis.com/v1beta", GoogleUseADC: true}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

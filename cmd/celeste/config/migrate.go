@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 )
 
 // Config keys celeste 2.0 removed or renamed (#144, spec §6.2).
@@ -73,8 +75,54 @@ func migrateFile(path string, data []byte) []byte {
 	if info, err := os.Stat(path); err == nil {
 		perm = info.Mode().Perm()
 	}
-	if err := os.WriteFile(path, out, perm); err != nil {
+	// Migration now runs on every load of an old config, not just an
+	// explicit save, so a crash mid-write must never leave a truncated,
+	// unparseable config behind (review finding, #144 W6b). Write a temp
+	// file and rename over path, as permissions.json's save already does.
+	if err := writeMigratedConfigAtomic(path, out, perm); err != nil {
 		MigrationWarn(fmt.Sprintf("could not save the migrated config %s: %v", path, err))
 	}
 	return out
+}
+
+// writeMigratedConfigAtomic replaces path with data so a reader (another
+// celeste process starting mid-migration) sees either the old file or the
+// fully migrated one, never a half-written one: a temp file in the same
+// directory, synced, then renamed over path with retries (Windows fails a
+// rename over a file another process or goroutine has open for reading
+// until it closes it — the same race permissions.json's save handles).
+func writeMigratedConfigAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	// Close before rename: Windows cannot rename an open file.
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	for i := 0; i < 20; i++ {
+		if err = os.Rename(tmpName, path); err == nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return err
 }
