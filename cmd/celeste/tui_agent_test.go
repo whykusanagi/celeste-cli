@@ -144,6 +144,43 @@ func TestExecuteAgentCommandRequiresCredentials(t *testing.T) {
 	assert.Contains(t, err.Error(), "no API key or Google credentials configured")
 }
 
+// I2 (#144/#151 W6b review): /agent used its own inline ADC-only check
+// instead of the shared needsAPIKey helper chat startup uses, so a keyless
+// local endpoint was wrongly refused here.
+func TestExecuteAgentCommandLocalEndpointNeedsNoKey(t *testing.T) {
+	adapter := &TUIClientAdapter{
+		baseConfig: &config.Config{
+			APIKey:  "",
+			BaseURL: "http://127.0.0.1:8080/v1",
+			Model:   "local-model",
+		},
+	}
+
+	// "help" needs no runner and no checkpoint store, so this pins only the
+	// credential check, not listAgentRunsForTUI's own behavior.
+	output, err := adapter.executeAgentCommand([]string{"help"})
+	require.NoError(t, err, "a keyless local endpoint must not be refused")
+	assert.NotEmpty(t, output)
+}
+
+// I2: the inline check's "&&" also meant a stale google_use_adc left over
+// from an earlier Vertex/Gemini setup silently waved through a profile
+// --set-url had since repointed at a provider that genuinely needs a key.
+func TestExecuteAgentCommandStaleADCOnNonGoogleStillNeedsKey(t *testing.T) {
+	adapter := &TUIClientAdapter{
+		baseConfig: &config.Config{
+			APIKey:       "",
+			BaseURL:      "https://api.openai.com/v1",
+			Model:        "gpt-4o-mini",
+			GoogleUseADC: true,
+		},
+	}
+
+	_, err := adapter.executeAgentCommand([]string{"list-runs"})
+	require.Error(t, err, "a stale ADC flag on a non-Google base_url must not skip the key check")
+	assert.Contains(t, err.Error(), "no API key or Google credentials configured")
+}
+
 // runBatch executes a command, expanding a tea.BatchMsg, and returns the
 // messages produced.
 func runBatch(t *testing.T, cmd tea.Cmd) []tea.Msg {
@@ -232,6 +269,71 @@ func TestRunGoalWithProgressIsCancellableAndPromptsForApproval(t *testing.T) {
 	opts := <-gotOpts
 	assert.True(t, opts.Nested, "the TUI session already fired SessionStart; /agent runs are nested")
 	assert.NotNil(t, opts.Warn, "/agent warnings must reach the chat, not io.Discard")
+}
+
+// I2 (#144/#151 W6b review): runGoalWithProgress's own inline ADC-only check
+// wrongly refused a keyless local endpoint.
+func TestRunGoalWithProgressLocalEndpointNeedsNoKey(t *testing.T) {
+	originalFactory := newAgentRunnerForTUI
+	t.Cleanup(func() { newAgentRunnerForTUI = originalFactory })
+
+	newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
+		return &fakeAgentRunner{
+			runGoalFn: func(ctx context.Context, goal string) (*agent.RunState, error) {
+				return &agent.RunState{RunID: "run-local", Status: agent.StatusCompleted}, nil
+			},
+		}, nil
+	}
+
+	adapter := &TUIClientAdapter{
+		baseConfig: &config.Config{APIKey: "", BaseURL: "http://127.0.0.1:8080/v1", Model: "local-model"},
+	}
+
+	var gotError string
+	var gotComplete bool
+	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "a", "thing"})) {
+		if p, ok := msg.(tui.AgentProgressMsg); ok {
+			switch p.Kind {
+			case tui.AgentProgressError:
+				gotError = p.Text
+			case tui.AgentProgressComplete:
+				gotComplete = true
+			}
+		}
+	}
+	assert.Empty(t, gotError, "a keyless local endpoint must not be refused")
+	assert.True(t, gotComplete, "the run must have reached completion")
+}
+
+// I2: a stale google_use_adc left over from an earlier Vertex/Gemini setup
+// must not wave a --set-url-repointed, genuinely-key-needing profile through
+// runGoalWithProgress's check either (agent_run.go's check already caught
+// this; the inline TUI copy did not).
+func TestRunGoalWithProgressStaleADCOnNonGoogleStillNeedsKey(t *testing.T) {
+	originalFactory := newAgentRunnerForTUI
+	t.Cleanup(func() { newAgentRunnerForTUI = originalFactory })
+	builtRunner := make(chan struct{}, 1)
+	newAgentRunnerForTUI = func(cfg *config.Config, options agent.Options, out io.Writer, errOut io.Writer) (agentRunnerAPI, error) {
+		builtRunner <- struct{}{}
+		return &fakeAgentRunner{}, nil
+	}
+
+	adapter := &TUIClientAdapter{
+		baseConfig: &config.Config{APIKey: "", BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini", GoogleUseADC: true},
+	}
+
+	var gotError string
+	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "a", "thing"})) {
+		if p, ok := msg.(tui.AgentProgressMsg); ok && p.Kind == tui.AgentProgressError {
+			gotError = p.Text
+		}
+	}
+	assert.Equal(t, "no API key or credentials configured", gotError)
+	select {
+	case <-builtRunner:
+		t.Error("a stale ADC flag on a non-Google base_url must not skip the key check")
+	default:
+	}
 }
 
 // /agent warnings go to the chat through the TUI's hook-warning path.

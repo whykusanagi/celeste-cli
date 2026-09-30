@@ -125,7 +125,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 		defer close(ch)
 		defer cancel()
 		cfg := a.currentAgentConfig()
-		if cfg.APIKey == "" && !cfg.GoogleUseADC && strings.TrimSpace(cfg.GoogleCredentialsFile) == "" {
+		if cfg.APIKey == "" && needsAPIKey(cfg) {
 			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: "no API key or credentials configured"})
 			return
 		}
@@ -252,7 +252,7 @@ func (a *TUIClientAdapter) executeAgentCommand(args []string) (string, error) {
 	}
 
 	cfg := a.currentAgentConfig()
-	if cfg.APIKey == "" && !cfg.GoogleUseADC && strings.TrimSpace(cfg.GoogleCredentialsFile) == "" {
+	if cfg.APIKey == "" && needsAPIKey(cfg) {
 		return "", fmt.Errorf("no API key or Google credentials configured for agent execution")
 	}
 
