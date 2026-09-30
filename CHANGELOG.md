@@ -329,7 +329,7 @@ transport, and gains a set of TUI features around all of it.
   own timeout keep it.
 - The chat stops a turn when the tools return the same results 6 turns in a
   row, as agent runs do. The identical-call guard (3) is unchanged. The turn
-  cap (`claw_max_tool_iterations`, default 25) now counts every model turn.
+  cap (`max_tool_iterations`, default 25) now counts every model turn.
   When a turn stops on the cap or a guard, the status bar says "Stopped",
   and the cap's notice gives the number of model turns the loop ran.
 - A failed tool call reaches the model as a JSON error with `tool` and
@@ -403,6 +403,22 @@ transport, and gains a set of TUI features around all of it.
 - Prunes old tool results when a call nears the model's context window,
   like agent runs (context_limit is honoured). Pruned results can be
   restored with `recall_tool_result`. MCP chat never writes a summary.
+
+### Fixed
+- MCP `celeste_code_search` honours `top_k` (capped at 100); it was ignored and every search returned up to 10 results (#209).
+- `celeste providers` marks Venice's tool support as per model and Vertex's default model as unverified; `providers info local` shows a working `-config local` example (#151).
+- A single unknown lowercase word (`celeste models`) now errors with a suggestion instead of being sent to the model (#151).
+- The chat now offers tools on Venice exactly when the selected model supports them (checked against the live Venice catalog), instead of disabling tools for every Venice model (#151).
+- `celeste chat` and single-message mode no longer refuse to start on an empty `api_key` when the config uses Google ADC (`google_use_adc`) or a keyless local endpoint; `agent` already accepted both (#151).
+
+### Added
+- MCP `celeste_status` reports `grimoire` (loaded, sources), `project` (indexed, file/symbol/edge counts) and `session_cost` (tokens, USD, unpriced requests) (#210).
+
+### Removed
+- The `classic`/`claw` runtime mode: the `-mode` flag, `config --set-mode`, the `runtime_mode` key, and the `celeste-classic`/`celeste-claw` templates. Old configs migrate on load (#144). See MIGRATING-2.0.md.
+
+### Changed
+- `claw_max_tool_iterations` is now `max_tool_iterations` (`-max-tool-iterations`, `--set-max-tool-iterations`); the old key and flags still work with a warning (#144).
 
 ## [1.10.0] - 2026-06-03
 

@@ -142,7 +142,7 @@ celeste -config sakana chat
 Get a key from the Fugu install (`curl -fsSL https://sakana.ai/fugu/install | bash`)
 or your Sakana account. Use `--set-model fugu-ultra` for the heavier multi-agent variant.
 
-**Other providers:** `celeste config --init <name>` where name is: `openai`, `grok`, `elevenlabs`, `venice`, `sakana`, `digitalocean`, `celeste-classic`, `celeste-claw`
+**Other providers:** `celeste config --init <name>` where name is: `openai`, `grok`, `elevenlabs`, `venice`, `sakana`, `digitalocean`
 
 ### Project Setup
 

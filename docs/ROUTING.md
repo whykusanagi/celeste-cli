@@ -62,7 +62,7 @@ sequenceDiagram
 
 ## Tool Execution Loop
 
-Tools auto-loop on `loop.Loop` with a turn cap (`claw_max_tool_iterations`,
+Tools auto-loop on `loop.Loop` with a turn cap (`max_tool_iterations`,
 default 25) and the identical-call (3) and no-progress (6) guards:
 
 ```mermaid

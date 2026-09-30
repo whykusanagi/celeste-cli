@@ -104,6 +104,8 @@ func TestDocsClaimsMatchCode(t *testing.T) {
 		{"docs/PROVIDER_AUDIT_MATRIX.md", `(\d+) chat providers`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
 		{"docs/CAPABILITIES.md", `\*\*(\d+) dev-crushing tools\*\*`, all, "built-in tools"},
 		{"docs/CAPABILITIES.md", `\*\*(\d+) Chat Providers:\*\*`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
+		{"docs/ARCHITECTURE.md", `\*\*(\d+) Built-in Tools\*\*`, all, "built-in tools"},
+		{"docs/ARCHITECTURE.md", `(\d+) tools across categories`, all, "built-in tools"},
 	}
 	for _, c := range claims {
 		matches := regexp.MustCompile(c.pattern).FindAllStringSubmatch(repoFile(t, c.file), -1)
