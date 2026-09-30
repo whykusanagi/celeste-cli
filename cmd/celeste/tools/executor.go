@@ -74,10 +74,9 @@ type toolEntry struct {
 type ExecFunc func(ctx context.Context, callID string, tool Tool, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error)
 
 // StreamingToolExecutor accepts tool calls as they arrive during LLM
-// streaming and dispatches them for execution. Concurrency-safe tools
-// run in parallel goroutines; non-concurrent tools are queued and
-// executed serially. Results are buffered and returned in original
-// call order when Wait() is called.
+// streaming and dispatches them for execution. Concurrency-safe tools run in
+// parallel goroutines; the rest run one at a time, in order. Results come back
+// in call order from Wait. loop.Loop is its only user.
 type StreamingToolExecutor struct {
 	registry *Registry
 	ctx      context.Context
@@ -91,29 +90,7 @@ type StreamingToolExecutor struct {
 	done        chan struct{}   // closed when Done() is called (no more tools)
 	doneOnce    sync.Once
 
-	progressFn func(ProgressEvent)
-	progressMu sync.RWMutex
-
-	cascadeOnFailure bool // when true, a failed tool cancels all siblings
-	execFn           ExecFunc
-}
-
-// NewStreamingToolExecutor creates a new executor bound to the given registry.
-// The executor uses a background context; cancel it to abort all running tools.
-func NewStreamingToolExecutor(registry *Registry) *StreamingToolExecutor {
-	ctx, cancel := context.WithCancel(context.Background())
-	e := &StreamingToolExecutor{
-		registry:    registry,
-		ctx:         ctx,
-		cancel:      cancel,
-		entryByID:   make(map[string]*toolEntry),
-		serialQueue: make(chan *toolEntry, 256),
-		done:        make(chan struct{}),
-	}
-	// Start the serial queue consumer
-	e.wg.Add(1)
-	go e.serialWorker()
-	return e
+	execFn ExecFunc
 }
 
 // NewStreamingToolExecutorWithContext creates a new executor with a parent context.
@@ -131,23 +108,6 @@ func NewStreamingToolExecutorWithContext(ctx context.Context, registry *Registry
 	e.wg.Add(1)
 	go e.serialWorker()
 	return e
-}
-
-// OnProgress registers a callback for tool progress events.
-// Must be called before AddTool. Not safe to call concurrently with AddTool.
-func (e *StreamingToolExecutor) OnProgress(fn func(ProgressEvent)) {
-	e.progressMu.Lock()
-	defer e.progressMu.Unlock()
-	e.progressFn = fn
-}
-
-// SetCascadeOnFailure enables cascading failure mode.
-// When enabled, if any tool fails, all queued and executing sibling
-// tools are cancelled via context cancellation.
-func (e *StreamingToolExecutor) SetCascadeOnFailure(enabled bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.cascadeOnFailure = enabled
 }
 
 // SetExecFunc replaces how each call runs. Call it before AddTool.
@@ -271,17 +231,6 @@ func (e *StreamingToolExecutor) Wait() []ExecutorResult {
 	return results
 }
 
-// States returns a snapshot of current tool states.
-func (e *StreamingToolExecutor) States() map[string]ToolState {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	states := make(map[string]ToolState, len(e.entries))
-	for _, entry := range e.entries {
-		states[entry.callID] = entry.state
-	}
-	return states
-}
-
 // Cancel aborts all running and queued tools.
 func (e *StreamingToolExecutor) Cancel() {
 	e.cancel()
@@ -346,29 +295,6 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 	run := e.execFn
 	e.mu.Unlock()
 
-	// Set up progress channel
-	var progressCh chan ProgressEvent
-	e.progressMu.RLock()
-	hasFn := e.progressFn != nil
-	e.progressMu.RUnlock()
-
-	var progressDone chan struct{}
-	if hasFn {
-		progressCh = make(chan ProgressEvent, 16)
-		progressDone = make(chan struct{})
-		go func() {
-			defer close(progressDone)
-			for event := range progressCh {
-				e.progressMu.RLock()
-				fn := e.progressFn
-				e.progressMu.RUnlock()
-				if fn != nil {
-					fn(event)
-				}
-			}
-		}()
-	}
-
 	// For tools with InterruptBlock behavior, create an independent context
 	// that ignores parent cancellation, so the tool can finish its current work.
 	execCtx := e.ctx
@@ -384,15 +310,9 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 	var result ToolResult
 	var err error
 	if run != nil {
-		result, err = run(execCtx, entry.callID, tool, input, progressCh)
+		result, err = run(execCtx, entry.callID, tool, input, nil)
 	} else {
-		result, err = tool.Execute(execCtx, input, progressCh)
-	}
-
-	// Close progress channel and wait for forwarding goroutine to drain
-	if progressCh != nil {
-		close(progressCh)
-		<-progressDone
+		result, err = tool.Execute(execCtx, input, nil)
 	}
 
 	// Update state
@@ -416,27 +336,5 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 		entry.state = ToolStateCompleted
 	}
 	entry.result = result
-
-	// Cascade: if this tool failed and cascade mode is on, cancel everything
-	shouldCascade := entry.state == ToolStateFailed && e.cascadeOnFailure
 	e.mu.Unlock()
-
-	if shouldCascade {
-		// Cancel all siblings
-		e.cancel()
-
-		// Mark all queued entries as aborted
-		e.mu.Lock()
-		for _, other := range e.entries {
-			if other.callID != entry.callID && other.state == ToolStateQueued {
-				other.state = ToolStateAborted
-				other.result = ToolResult{
-					Content: fmt.Sprintf("aborted: sibling tool %q failed", entry.toolName),
-					Error:   true,
-				}
-				other.err = fmt.Errorf("aborted: sibling tool %q failed", entry.toolName)
-			}
-		}
-		e.mu.Unlock()
-	}
 }

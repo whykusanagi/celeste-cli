@@ -26,7 +26,7 @@ func TestStreamingToolExecutor_SingleTool(t *testing.T) {
 		},
 	}
 	registry := newMockRegistry(tool)
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.AddTool("call_1", "read_file", `{"path": "/tmp/test.txt"}`)
 	exec.Done()
@@ -72,7 +72,7 @@ func TestStreamingToolExecutor_ConcurrentTools(t *testing.T) {
 	}
 
 	registry := newMockRegistry(makeTool("read_a"), makeTool("read_b"), makeTool("read_c"))
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.AddTool("call_1", "read_a", `{}`)
 	exec.AddTool("call_2", "read_b", `{}`)
@@ -118,7 +118,7 @@ func TestStreamingToolExecutor_SerialTools(t *testing.T) {
 	}
 
 	registry := newMockRegistry(makeTool("write_a"), makeTool("write_b"), makeTool("write_c"))
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.AddTool("call_1", "write_a", `{}`)
 	exec.AddTool("call_2", "write_b", `{}`)
@@ -165,7 +165,7 @@ func TestStreamingToolExecutor_MixedConcurrency(t *testing.T) {
 	}
 
 	registry := newMockRegistry(readTool, writeTool)
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.AddTool("call_1", "read_file", `{}`)
 	exec.AddTool("call_2", "write_file", `{}`)
@@ -192,7 +192,7 @@ func TestStreamingToolExecutor_MixedConcurrency(t *testing.T) {
 
 func TestStreamingToolExecutor_ToolNotFound(t *testing.T) {
 	registry := newMockRegistry() // empty registry
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.AddTool("call_1", "nonexistent_tool", `{}`)
 	exec.Done()
@@ -209,83 +209,6 @@ func TestStreamingToolExecutor_ToolNotFound(t *testing.T) {
 	}
 }
 
-func TestStreamingToolExecutor_ProgressEvents(t *testing.T) {
-	tool := &mockTool{
-		name: "slow_tool", concurrencySafe: true, readOnly: true,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			if progress != nil {
-				progress <- ProgressEvent{ToolName: "slow_tool", Message: "step 1", Percent: 0.5}
-				progress <- ProgressEvent{ToolName: "slow_tool", Message: "step 2", Percent: 1.0}
-			}
-			return ToolResult{Content: "done"}, nil
-		},
-	}
-
-	registry := newMockRegistry(tool)
-	exec := NewStreamingToolExecutor(registry)
-
-	var events []ProgressEvent
-	var eventsMu sync.Mutex
-	exec.OnProgress(func(event ProgressEvent) {
-		eventsMu.Lock()
-		events = append(events, event)
-		eventsMu.Unlock()
-	})
-
-	exec.AddTool("call_1", "slow_tool", `{}`)
-	exec.Done()
-	results := exec.Wait()
-
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-
-	eventsMu.Lock()
-	defer eventsMu.Unlock()
-	if len(events) < 2 {
-		t.Errorf("expected at least 2 progress events, got %d", len(events))
-	}
-}
-
-func TestStreamingToolExecutor_ToolStates(t *testing.T) {
-	blocker := make(chan struct{})
-	tool := &mockTool{
-		name: "blocking_tool", concurrencySafe: true, readOnly: true,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			<-blocker
-			return ToolResult{Content: "done"}, nil
-		},
-	}
-
-	registry := newMockRegistry(tool)
-	exec := NewStreamingToolExecutor(registry)
-
-	exec.AddTool("call_1", "blocking_tool", `{}`)
-
-	// Give the goroutine time to start
-	time.Sleep(20 * time.Millisecond)
-
-	states := exec.States()
-	if len(states) != 1 {
-		t.Fatalf("expected 1 state entry, got %d", len(states))
-	}
-	if states["call_1"] != ToolStateExecuting {
-		t.Errorf("expected Executing state, got %v", states["call_1"])
-	}
-
-	// Unblock
-	close(blocker)
-	exec.Done()
-	results := exec.Wait()
-
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].State != ToolStateCompleted {
-		t.Errorf("expected Completed state, got %v", results[0].State)
-	}
-}
-
 func TestStreamingToolExecutor_AddToolDuringExecution(t *testing.T) {
 	// Verify tools can be added while others are running
 	tool := &mockTool{
@@ -297,7 +220,7 @@ func TestStreamingToolExecutor_AddToolDuringExecution(t *testing.T) {
 	}
 
 	registry := newMockRegistry(tool)
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.AddTool("call_1", "fast_tool", `{}`)
 	time.Sleep(5 * time.Millisecond) // Let first tool start
@@ -314,7 +237,7 @@ func TestStreamingToolExecutor_AddToolDuringExecution(t *testing.T) {
 
 func TestStreamingToolExecutor_EmptyWait(t *testing.T) {
 	registry := newMockRegistry()
-	exec := NewStreamingToolExecutor(registry)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	exec.Done()
 	results := exec.Wait()
@@ -341,108 +264,6 @@ func TestToolState_String(t *testing.T) {
 		if got := tt.state.String(); got != tt.expected {
 			t.Errorf("ToolState(%d).String() = %q, want %q", tt.state, got, tt.expected)
 		}
-	}
-}
-
-// Task 3: Cascading failure and interrupt handling tests
-
-func TestStreamingToolExecutor_CascadingFailure(t *testing.T) {
-	failTool := &mockTool{
-		name: "fail_tool", concurrencySafe: true, readOnly: true,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			time.Sleep(10 * time.Millisecond)
-			return ToolResult{}, fmt.Errorf("intentional failure")
-		},
-	}
-	slowTool := &mockTool{
-		name: "slow_tool", concurrencySafe: true, readOnly: true,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			select {
-			case <-ctx.Done():
-				return ToolResult{}, ctx.Err()
-			case <-time.After(5 * time.Second):
-				return ToolResult{Content: "should not reach"}, nil
-			}
-		},
-	}
-	queuedTool := &mockTool{
-		name: "queued_tool", concurrencySafe: false, readOnly: false,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			// Check context before doing work (simulates well-behaved tool)
-			select {
-			case <-ctx.Done():
-				return ToolResult{}, ctx.Err()
-			case <-time.After(50 * time.Millisecond):
-				return ToolResult{Content: "should not run"}, nil
-			}
-		},
-	}
-
-	registry := newMockRegistry(failTool, slowTool, queuedTool)
-	exec := NewStreamingToolExecutor(registry)
-	exec.SetCascadeOnFailure(true)
-
-	exec.AddTool("call_1", "fail_tool", `{}`)
-	exec.AddTool("call_2", "slow_tool", `{}`)
-	exec.AddTool("call_3", "queued_tool", `{}`)
-	exec.Done()
-
-	results := exec.Wait()
-
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(results))
-	}
-
-	// First tool failed
-	if results[0].State != ToolStateFailed {
-		t.Errorf("result[0] state = %v, want Failed", results[0].State)
-	}
-
-	// Remaining tools should be Aborted or Failed due to context cancellation
-	for i := 1; i < len(results); i++ {
-		if results[i].State != ToolStateAborted && results[i].State != ToolStateFailed {
-			t.Errorf("result[%d] state = %v, want Aborted or Failed", i, results[i].State)
-		}
-	}
-}
-
-func TestStreamingToolExecutor_NoCascadeByDefault(t *testing.T) {
-	failTool := &mockTool{
-		name: "fail_tool", concurrencySafe: true, readOnly: true,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			return ToolResult{}, fmt.Errorf("intentional failure")
-		},
-	}
-	successTool := &mockTool{
-		name: "success_tool", concurrencySafe: true, readOnly: true,
-		executeFunc: func(ctx context.Context, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error) {
-			time.Sleep(30 * time.Millisecond)
-			return ToolResult{Content: "success"}, nil
-		},
-	}
-
-	registry := newMockRegistry(failTool, successTool)
-	exec := NewStreamingToolExecutor(registry)
-	// cascade is OFF by default
-
-	exec.AddTool("call_1", "fail_tool", `{}`)
-	exec.AddTool("call_2", "success_tool", `{}`)
-	exec.Done()
-
-	results := exec.Wait()
-
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
-	}
-
-	// First tool failed
-	if results[0].State != ToolStateFailed {
-		t.Errorf("result[0] state = %v, want Failed", results[0].State)
-	}
-
-	// Second tool should still succeed
-	if results[1].State != ToolStateCompleted {
-		t.Errorf("result[1] state = %v, want Completed", results[1].State)
 	}
 }
 
@@ -536,8 +357,7 @@ func TestStreamingToolExecutor_AbortAllQueued(t *testing.T) {
 	}
 
 	registry := newMockRegistry(tool)
-	exec := NewStreamingToolExecutor(registry)
-	exec.SetCascadeOnFailure(true)
+	exec := NewStreamingToolExecutorWithContext(context.Background(), registry)
 
 	// Add several serial tools
 	exec.AddTool("call_1", "serial_tool", `{}`)

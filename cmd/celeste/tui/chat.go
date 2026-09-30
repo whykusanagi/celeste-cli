@@ -159,27 +159,6 @@ func (m ChatModel) findUnhookedUser(content string, ts time.Time) int {
 	return -1
 }
 
-// MarkUserHooked records that the user message with this content and
-// timestamp passed its UserPromptSubmit hooks, with any context they added.
-func (m ChatModel) MarkUserHooked(content string, ts time.Time, context string) ChatModel {
-	i := m.findUnhookedUser(content, ts)
-	if i < 0 {
-		return m
-	}
-	msgs := append([]ChatMessage(nil), m.messages...)
-	meta := make(map[string]any, len(msgs[i].Metadata)+2)
-	for k, v := range msgs[i].Metadata {
-		meta[k] = v
-	}
-	meta[MetaPromptHookDone] = true
-	if context != "" {
-		meta[MetaHookContext] = context
-	}
-	msgs[i].Metadata = meta
-	m.messages = msgs
-	return m
-}
-
 // DropUser removes the unchecked user message with this content and
 // timestamp (a prompt a hook blocked).
 func (m ChatModel) DropUser(content string, ts time.Time) ChatModel {
