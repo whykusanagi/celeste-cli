@@ -2413,7 +2413,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		resultForLLM := msg.Result
 		if msg.Err != nil {
 			m.skills = m.skills.SetError(msg.Name, msg.Err)
-			m.chat = m.chat.UpdateFunctionResult(msg.Name, fmt.Sprintf("Error: %v", msg.Err))
+			m.chat = m.chat.UpdateFunctionResult("", msg.Name, fmt.Sprintf("Error: %v", msg.Err))
 
 			// Format error as JSON for LLM to interpret
 			errorMsg := strings.ReplaceAll(msg.Err.Error(), `"`, `\"`)
@@ -2421,7 +2421,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			resultForLLM = fmt.Sprintf(`{"error": true, "message": "%s", "skill": "%s"}`, errorMsg, msg.Name)
 		} else {
 			m.skills = m.skills.SetCompleted(msg.Name)
-			m.chat = m.chat.UpdateFunctionResult(msg.Name, msg.Result)
+			m.chat = m.chat.UpdateFunctionResult("", msg.Name, msg.Result)
 
 			// Handle NSFW mode toggle
 			if msg.Name == "nsfw_mode" && strings.Contains(msg.Result, "enabled") {

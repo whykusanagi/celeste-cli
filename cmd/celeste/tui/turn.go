@@ -222,7 +222,7 @@ func (m AppModel) onToolStart(msg ToolStartMsg) (AppModel, tea.Cmd) {
 	LogSkillCall(msg.Name, msg.Args)
 	m = m.finishTyping()
 	wasActive := m.toolProgress.HasActive()
-	m.chat = m.chat.AddFunctionCall(FunctionCall{Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: time.Now()})
+	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: time.Now()})
 	m.skills = m.skills.SetExecuting(msg.Name)
 	m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{ToolCallID: msg.ID, ToolName: msg.Name, State: "executing"})
 	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", msg.Name))
@@ -251,7 +251,7 @@ func (m AppModel) onToolResult(msg ToolResultMsg) AppModel {
 		}
 	}
 	m.toolProgress, _ = m.toolProgress.Update(prog)
-	m.chat = m.chat.UpdateFunctionResult(msg.Name, msg.Content)
+	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, msg.Content)
 	if msg.IsError {
 		m.skills = m.skills.SetError(msg.Name, err)
 		return m
@@ -302,8 +302,9 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 	}
 	m.turn = nil
 	m.loopSteers = 0
-	if msg.Stop != "interrupted" {
-		// Kept after an interrupt, so a second Ctrl+C within 3s still quits.
+	if msg.Stop != "interrupted" && !m.interrupted {
+		// Kept after an interrupt, so a second Ctrl+C within 3s still quits,
+		// also when the turn finished before the cancel reached it.
 		m.interruptPending = false
 	}
 	if len(leftover) > 0 {
@@ -326,6 +327,10 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 		m.status = m.status.SetText("Interrupted")
 	case msg.Stop == "blocked":
 		m.status = m.status.SetText("Prompt blocked by a hook")
+	}
+	if m.interrupted && m.interruptPending {
+		// Ctrl+C ended this turn: keep telling the user a second one quits.
+		m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
 	}
 	applied := false
 	if m.heldSummary != nil {

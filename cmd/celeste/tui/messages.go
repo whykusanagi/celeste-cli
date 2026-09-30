@@ -35,6 +35,7 @@ type ToolCallInfo struct {
 
 // FunctionCall represents a tool/function call from the LLM.
 type FunctionCall struct {
+	ID        string         // Tool call ID; pairs the result with its call (empty on the old path)
 	Name      string         // Function name
 	Arguments map[string]any // Arguments passed to the function
 	Result    string         // Result of the function call

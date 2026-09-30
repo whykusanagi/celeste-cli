@@ -235,3 +235,43 @@ func TestHandoffFailureKeepsConversation(t *testing.T) {
 }
 
 var _ tea.Model = AppModel{}
+
+func TestSummaryStillFits(t *testing.T) {
+	snapshot := []ChatMessage{
+		{Role: "user", Content: "a"},
+		{Role: "assistant", Content: "b", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "tool_a"}}},
+		{Role: "tool", ToolCallID: "c1", Content: "full result"},
+		{Role: "user", Content: "d"},
+	}
+	with := func(i int, f func(*ChatMessage)) []ChatMessage {
+		out := make([]ChatMessage, len(snapshot))
+		copy(out, snapshot)
+		out[1].ToolCalls = append([]ToolCallInfo(nil), snapshot[1].ToolCalls...)
+		f(&out[i])
+		return out
+	}
+	cases := []struct {
+		name    string
+		current []ChatMessage
+		snap    []ChatMessage
+		cut     int
+		want    bool
+	}{
+		{"identical", snapshot, snapshot, 3, true},
+		{"longer current", append(append([]ChatMessage(nil), snapshot...), ChatMessage{Role: "assistant", Content: "e"}), snapshot, 3, true},
+		{"tool result pruned mid-turn still fits", with(2, func(m *ChatMessage) { m.Content = "[pruned]" }), snapshot, 3, true},
+		{"change after the cut", with(3, func(m *ChatMessage) { m.Content = "other" }), snapshot, 3, true},
+		{"role mismatch", with(0, func(m *ChatMessage) { m.Role = "assistant" }), snapshot, 3, false},
+		{"tool call ID mismatch", with(2, func(m *ChatMessage) { m.ToolCallID = "c2" }), snapshot, 3, false},
+		{"tool calls ID mismatch", with(1, func(m *ChatMessage) { m.ToolCalls[0].ID = "c9" }), snapshot, 3, false},
+		{"tool calls count mismatch", with(1, func(m *ChatMessage) { m.ToolCalls = nil }), snapshot, 3, false},
+		{"content mismatch", with(0, func(m *ChatMessage) { m.Content = "z" }), snapshot, 3, false},
+		{"current shorter than snapshot", snapshot[:3], snapshot, 3, false},
+		{"cut beyond snapshot", append(append([]ChatMessage(nil), snapshot...), snapshot...), snapshot, 5, false},
+		{"negative cut", snapshot, snapshot, -1, false},
+		{"empty snapshot", snapshot, nil, 0, false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, summaryStillFits(tc.current, tc.snap, tc.cut), tc.name)
+	}
+}

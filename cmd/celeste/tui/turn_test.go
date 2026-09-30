@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -286,4 +287,148 @@ func TestHistoryDuringTypingNeverSavesTheTypedPrefix(t *testing.T) {
 	last := sessions.saves[len(sessions.saves)-1]
 	require.Len(t, last, 2)
 	assert.Equal(t, reply, last[1].Content)
+}
+
+// A Ctrl+C that races a turn finishing on its own (the loop ends "done"
+// before the cancel reaches it) still quits on the second press, and the
+// status keeps saying so.
+func TestCtrlCRacingAFinishedTurnStillQuitsOnTheSecondPress(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m = startedTurn(t, m, "go")
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+	assert.Contains(t, m.status.text, "Press Ctrl+C again to exit")
+	_, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.NotNil(t, cmd)
+	_, quit := cmd().(tea.QuitMsg)
+	assert.True(t, quit, "the second Ctrl+C did not quit")
+}
+
+// After a Ctrl+C the "interrupted" end of the turn keeps the Ctrl+C hint
+// instead of overwriting it with "Interrupted".
+func TestCtrlCInterruptKeepsTheQuitHint(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m = startedTurn(t, m, "go")
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "interrupted"})
+	assert.Equal(t, "Cancelled. Press Ctrl+C again to exit", m.status.text)
+}
+
+// Esc (not Ctrl+C) still ends with "Interrupted".
+func TestEscInterruptShowsInterrupted(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m = startedTurn(t, m, "go")
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "interrupted"})
+	assert.Equal(t, "Interrupted", m.status.text)
+}
+
+// Parallel calls to the same tool: each result lands on its own call in the
+// skill log (paired by call ID; by name, the first result would take the
+// latest executing call and the two would swap).
+func TestParallelSameToolResultsPairByCallID(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m = startedTurn(t, m, "go")
+	m, _ = feed(t, m, ToolStartMsg{ID: "call_a", Name: "tool_a"})
+	m, _ = feed(t, m, ToolStartMsg{ID: "call_b", Name: "tool_a"})
+	m, _ = feed(t, m, ToolResultMsg{ID: "call_a", Name: "tool_a", Content: "result a"})
+	m, _ = feed(t, m, ToolResultMsg{ID: "call_b", Name: "tool_a", Content: "result b"})
+	calls := m.chat.functionCalls
+	require.Len(t, calls, 2)
+	assert.Equal(t, "call_a", calls[0].ID)
+	assert.Equal(t, "result a", calls[0].Result)
+	assert.Equal(t, "call_b", calls[1].ID)
+	assert.Equal(t, "result b", calls[1].Result)
+}
+
+// savedMessages substitutes the typed text into the last assistant reply
+// only; an earlier reply and the chat itself are untouched.
+func TestSavedMessagesSubstitutesOnlyTheLastReply(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m.chat = m.chat.AddUserMessage("u1").AddAssistantMessage("first reply").
+		AddUserMessage("u2").AddAssistantMessage("second re▓▒")
+	m.typingContent = "second reply, whole"
+	var got []string
+	for _, msg := range m.savedMessages() {
+		if msg.Role == "assistant" {
+			got = append(got, msg.Content)
+		}
+	}
+	assert.Equal(t, []string{"first reply", "second reply, whole"}, got)
+	msgs := m.chat.GetMessages()
+	assert.Equal(t, "second re▓▒", msgs[len(msgs)-1].Content, "savedMessages changed the chat")
+}
+
+// Esc while the UserPromptSubmit hook runs: the hook is cut short
+// (PromptBlockedMsg.Cancelled), which is not a block. The prompt stays.
+func TestEscDuringThePromptHookKeepsThePrompt(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m = startedTurn(t, m, "go")
+	prompt := m.chat.GetLLMMessages()[0]
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = feed(t, m, PromptBlockedMsg{Cancelled: true, Content: prompt.Content, Timestamp: prompt.Timestamp})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "interrupted"})
+	assert.Equal(t, []string{"user:go"}, llmRoles(m.chat))
+	assert.False(t, hasLine(m, "Prompt blocked"))
+}
+
+// A steer typed after Esc goes to the app's queue and is sent after the
+// turn, never to the cancelled loop.
+func TestSteerAfterEscIsQueuedForTheNextTurn(t *testing.T) {
+	m, client := newQueueTestApp()
+	m = startedTurn(t, m, "go")
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = step(t, m, SendMessageMsg{Content: "after esc"})
+	assert.Empty(t, client.turns[0].steers, "the steer went to the cancelled loop")
+	assert.Equal(t, []string{"after esc"}, m.steerQueue)
+	_, cmd := feed(t, m, TurnDoneMsg{Stop: "interrupted"})
+	next, sent := queuedSend(cmd)
+	require.True(t, sent)
+	assert.Equal(t, "after esc", next.Content)
+}
+
+// A turn that ends in an error or a guard stop while its reply is still
+// typing lets the typing commit, so the turn stops being active.
+func TestTurnEndingWhileTypingCommitsTheTyping(t *testing.T) {
+	for _, done := range []TurnDoneMsg{
+		{Stop: "error", Err: errors.New("boom")},
+		{Stop: "cap", Notice: "⚠️ Stopped: turn cap"},
+	} {
+		t.Run(done.Stop, func(t *testing.T) {
+			m, _ := newQueueTestApp()
+			m = startedTurn(t, m, "go")
+			m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+			m, _ = feed(t, m, StreamChunkMsg{Chunk: StreamChunk{Content: "a partial reply", IsFirst: true}})
+			m, _ = feed(t, m, done)
+			require.NotEmpty(t, m.typingContent)
+			assert.True(t, m.streamDone, "no more text is coming")
+			for i := 0; i < 100 && m.typingContent != ""; i++ {
+				m, _ = step(t, m, TickMsg{})
+			}
+			assert.Empty(t, m.typingContent, "the typing never committed")
+			assert.False(t, m.turnActive())
+		})
+	}
+}
+
+// A held summary is cleared once handled, applied or discarded, so a later
+// turn end never applies it again.
+func TestHeldSummaryIsClearedAfterTheTurn(t *testing.T) {
+	for _, fits := range []bool{true, false} {
+		m, _ := newCompactTestApp(t)
+		m.chat = m.chat.AddUserMessage("old").AddAssistantMessage("old reply")
+		snapshot := append([]ChatMessage(nil), m.chat.GetLLMMessages()...)
+		if !fits {
+			snapshot = []ChatMessage{{Role: "user", Content: "another"}, {Role: "assistant", Content: "x"}}
+		}
+		m.summarizing = true
+		m = startedTurn(t, m, "go")
+		m, _ = step(t, m, ContextSummarizedMsg{
+			Outcome:  SummaryOutcome{Cut: 2, Messages: []ChatMessage{{Role: "user", Content: "<summary>"}}, Line: "summarized"},
+			snapshot: snapshot,
+		})
+		require.NotNil(t, m.heldSummary)
+		m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+		assert.Nil(t, m.heldSummary, "fits=%v: the held summary was kept", fits)
+	}
 }
