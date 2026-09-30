@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -127,4 +128,31 @@ func TestCodeGraphToolCount(t *testing.T) {
 	RegisterCodeGraphTools(registry, nil)
 	assert.Equal(t, docsCodegraphToolCount, registry.Count(),
 		"docs advertise %d codegraph tools — update them together", docsCodegraphToolCount)
+}
+
+// The chat registers the config-backed skills on top of loop.Setup's
+// registry (2.0 F2d): RegisterAll without a loader plus RegisterConfigTools
+// must give exactly RegisterAll with one.
+func TestRegisterConfigToolsCompletesRegisterAll(t *testing.T) {
+	ws := t.TempDir()
+	names := func(r *tools.Registry) []string {
+		var out []string
+		for _, tool := range r.GetAll() {
+			out = append(out, tool.Name())
+		}
+		return out
+	}
+	all := tools.NewRegistry()
+	RegisterAll(all, ws, countingConfigLoader{}, nil, nil)
+	split := tools.NewRegistry()
+	RegisterAll(split, ws, nil, nil, nil)
+	RegisterConfigTools(split, countingConfigLoader{})
+	if got, want := names(split), names(all); !reflect.DeepEqual(got, want) {
+		t.Fatalf("split registration = %v\nwant %v", got, want)
+	}
+	none := tools.NewRegistry()
+	RegisterConfigTools(none, nil)
+	if none.Count() != 0 {
+		t.Fatalf("a nil loader registered %d tools", none.Count())
+	}
 }

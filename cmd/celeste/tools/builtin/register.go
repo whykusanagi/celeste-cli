@@ -46,14 +46,7 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	}
 
 	// Skill tools that require config — Chat and Claw only
-	if configLoader != nil {
-		registry.RegisterWithModes(NewWeatherTool(configLoader), tools.ModeChat, tools.ModeClaw)
-		registry.RegisterWithModes(NewTarotTool(configLoader), tools.ModeChat, tools.ModeClaw)
-		registry.RegisterWithModes(NewTwitchTool(configLoader), tools.ModeChat, tools.ModeClaw)
-		registry.RegisterWithModes(NewYouTubeTool(configLoader), tools.ModeChat, tools.ModeClaw)
-		registry.RegisterWithModes(NewUpscaleImageTool(configLoader), tools.ModeChat, tools.ModeClaw)
-		RegisterCryptoTools(registry, configLoader)
-	}
+	RegisterConfigTools(registry, configLoader)
 
 	// Interactive question tool — only meaningful when a TUI ask bridge exists;
 	// degrades to an error result elsewhere.
@@ -93,6 +86,22 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 	if workspace != "" {
 		registry.RegisterWithModes(NewTodoTool(workspace), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
 	}
+}
+
+// RegisterConfigTools registers the chat skills that need a config loader
+// (weather, tarot, twitch, youtube, upscale and the crypto tools), Chat and
+// Claw only. A nil loader registers nothing. RegisterAll calls it; the chat
+// calls it on top of loop.Setup's registry, which has no loader (2.0 F2d).
+func RegisterConfigTools(registry *tools.Registry, configLoader ConfigLoader) {
+	if configLoader == nil {
+		return
+	}
+	registry.RegisterWithModes(NewWeatherTool(configLoader), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewTarotTool(configLoader), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewTwitchTool(configLoader), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewYouTubeTool(configLoader), tools.ModeChat, tools.ModeClaw)
+	registry.RegisterWithModes(NewUpscaleImageTool(configLoader), tools.ModeChat, tools.ModeClaw)
+	RegisterCryptoTools(registry, configLoader)
 }
 
 // RegisterReadOnlyDevTools registers only read-only dev tools (for restricted agent mode).
