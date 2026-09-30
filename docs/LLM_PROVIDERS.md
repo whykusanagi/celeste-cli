@@ -1,6 +1,6 @@
 # LLM Providers — Who's Summoning Me Today? 💋
 
-Darlings, v1.16.0 supports **9 chat providers**: eight call tools on every model, and Venice calls them on the models that can. `celeste providers` lists 11, adding DigitalOcean (its tools run in its own cloud) and ElevenLabs (voice). All OpenAI-compatible for my 48 tools. Grok reigns with collections RAG.
+Darlings, v1.16.0 supports **9 chat providers**: eight call tools, and Venice chats without them for now (some Venice models support tools, but the chat does not use them yet). `celeste providers` lists 11, adding DigitalOcean (its tools run in its own cloud) and ElevenLabs (voice). All OpenAI-compatible for my 48 tools. Grok reigns with collections RAG.
 
 | Provider | Tools | Collections | Notes |
 |----------|-------|-------------|-------|
@@ -8,7 +8,7 @@ Darlings, v1.16.0 supports **9 chat providers**: eight call tools on every model
 | **OpenAI** | ✅ | ❌ | Gold std
 | **Anthropic** | ✅ Native | ❌ | Claude power
 | **Gemini (Google)** | ✅ | ❌ | Multi-modal; needs v1.15.0+ for agent mode (see below)
-| **Venice.ai** | ⚠️ Per model | ❌ | Uncensored opt; tools checked against the live catalogue
+| **Venice.ai** | ❌ Not in chat yet | ❌ | Uncensored opt; per-model tool support not wired into chat yet
 | **Vertex AI** | ✅ | ❌ | GCP enterprise; default `gemini-2.0-flash` unverified
 | **OpenRouter** | ✅ Model-dep | ❌ | Model bazaar
 | **Sakana AI** | ✅ | ❌ | Fugu/Fugu Ultra, 1M ctx (the default)

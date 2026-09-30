@@ -24,8 +24,9 @@ import (
 // MCP server or custom skill adds more; the docs say so in words.
 //
 // Provider counts: "registered" is every Registry entry (what `celeste
-// providers` lists); "chat providers" are those with tool calling, always
-// (SupportsFunctionCalling) or per model (ToolsPerModel).
+// providers` lists); "chat providers" are the eight with tool calling
+// (SupportsFunctionCalling) plus Venice (ToolsPerModel), which chats without
+// tools until per-model tool gating is wired into the chat (W6b).
 type docTruths struct {
 	allTools, coreTools, codegraphTools, chatTools, agentTools int
 	registered, withTools, perModel, chatProviders             int
@@ -166,5 +167,19 @@ func TestDocsDefaultProviderAndVertexModel(t *testing.T) {
 	}
 	if !strings.Contains(repoFile(t, "docs/LLM_PROVIDERS.md"), "Vertex still ships `"+vertex.DefaultModel+"`") {
 		t.Errorf("docs/LLM_PROVIDERS.md must carve Vertex out of the Gemini retirement note")
+	}
+}
+
+// Venice's per-model tool support is not wired into the chat yet (the TUI
+// disables skills for all of Venice), so no doc may promise it. W6b restores
+// the wording when it wires ToolsPerModel into the chat.
+func TestDocsDoNotPromiseVeniceTools(t *testing.T) {
+	for _, file := range []string{"README.md", "docs/LLM_PROVIDERS.md", "docs/PROVIDER_AUDIT_MATRIX.md", "docs/CAPABILITIES.md"} {
+		doc := repoFile(t, file)
+		for _, bad := range []string{"Venice per model", "Per model", "tools per model", "Venice calls them", "Tool calling depends on the model"} {
+			if strings.Contains(doc, bad) {
+				t.Errorf("%s says %q, but the chat offers Venice no tools yet", file, bad)
+			}
+		}
 	}
 }

@@ -73,11 +73,12 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 		}
 
 		// Tool support indicator
+		// A ToolsPerModel provider (Venice) shows [NO TOOLS]: the chat
+		// does not gate tools per model yet (W6b, after F2d-2), so a
+		// [PER MODEL] label would promise tools the chat never offers.
 		toolSupport := "[NO TOOLS]"
 		if caps.SupportsFunctionCalling {
 			toolSupport = "[TOOLS]"
-		} else if caps.ToolsPerModel {
-			toolSupport = "[PER MODEL]"
 		}
 
 		// Build provider line
@@ -102,6 +103,8 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 			output.WriteString(" [voice]")
 		} else if strings.Contains(name, "openrouter") {
 			output.WriteString(" [aggregator]")
+		} else if caps.ToolsPerModel {
+			output.WriteString(" [per-model tools not in chat yet]")
 		}
 
 		output.WriteString("\n")
@@ -118,8 +121,8 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 		output.WriteString("\n")
 	}
 
-	output.WriteString(fmt.Sprintf("\nTotal: %d providers: %d with tools, %d where it depends on the model\n",
-		len(allProviders), len(providers.GetToolCallingProviders()), len(providers.GetPerModelToolProviders())))
+	output.WriteString(fmt.Sprintf("\nTotal: %d providers, %d with tools\n",
+		len(allProviders), len(providers.GetToolCallingProviders())))
 	output.WriteString("\nUse: /providers info <name> for details\n")
 
 	return &CommandResult{
@@ -170,15 +173,7 @@ func listToolProviders(ctx *CommandContext) *CommandResult {
 		}
 	}
 
-	perModel := providers.GetPerModelToolProviders()
-	if len(perModel) > 0 {
-		output.WriteString("\nTools depend on the model (checked against the live catalogue):\n")
-		for _, name := range perModel {
-			output.WriteString(fmt.Sprintf("  %s\n", name))
-		}
-	}
-
-	output.WriteString(fmt.Sprintf("\nTotal: %d tool-capable providers, plus %d where it depends on the model\n", len(toolProviders), len(perModel)))
+	output.WriteString(fmt.Sprintf("\nTotal: %d tool-capable providers\n", len(toolProviders)))
 
 	return &CommandResult{
 		Success:      true,
@@ -219,10 +214,9 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 
 	// Capabilities
 	output.WriteString("\nCAPABILITIES:\n")
+	output.WriteString(fmt.Sprintf("  Function Calling:    %s\n", boolToStatus(caps.SupportsFunctionCalling)))
 	if !caps.SupportsFunctionCalling && caps.ToolsPerModel {
-		output.WriteString("  Function Calling:    ◐ Per model (checked against the live catalogue)\n")
-	} else {
-		output.WriteString(fmt.Sprintf("  Function Calling:    %s\n", boolToStatus(caps.SupportsFunctionCalling)))
+		output.WriteString("                       (some models support tools, but per-model tool support is not wired into chat yet)\n")
 	}
 	output.WriteString(fmt.Sprintf("  Model Listing:       %s\n", boolToStatus(caps.SupportsModelListing)))
 	output.WriteString(fmt.Sprintf("  Token Tracking:      %s\n", boolToStatus(caps.SupportsTokenTracking)))
@@ -299,7 +293,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "venice":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: 🔜 Ready\n")
-		output.WriteString("  Status: Model-dependent tool support\n")
+		output.WriteString("  Status: Chat works; tools are off until per-model gating lands\n")
 	case "anthropic":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: 🔜 Ready\n")
@@ -334,7 +328,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "venice":
 		output.WriteString("  • Uncensored models available\n")
 		output.WriteString("  • venice-uncensored: NO function calling\n")
-		output.WriteString("  • llama-3.3-70b: supports tools\n")
+		output.WriteString("  • llama-3.3-70b supports tools, but chat does not use them yet\n")
 		output.WriteString("  • Privacy-focused provider\n")
 	case "anthropic":
 		output.WriteString("  • 200k context window\n")
@@ -360,7 +354,6 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString("  • Cloud-hosted agents only\n")
 		output.WriteString("  • Cannot use local Celeste skills\n")
 		output.WriteString("  • Requires App Platform deployment\n")
-		output.WriteString("  • Limited to gpt-4o-mini\n")
 	case "sakana":
 		output.WriteString("  • Fugu / Fugu Ultra, 1M context\n")
 		output.WriteString("  • Plans server-side: celeste's local planner stands down\n")
@@ -394,15 +387,21 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	if !caps.RequiresAPIKey {
 		key, keyNote = "not-needed", "   # any non-empty value; the endpoint ignores it"
 	}
+	// Vertex authenticates with Application Default Credentials. Any
+	// non-empty api_key would be sent as a Gemini API key and override ADC
+	// (llm/backend_google.go), so its example sets no key.
+	adc := name == "vertex"
 	output.WriteString("\nEXAMPLE USAGE:\n")
 	if url != "" {
 		output.WriteString(fmt.Sprintf("  celeste config -config %s --set-url %s\n", name, url))
 	}
 	output.WriteString(fmt.Sprintf("  celeste config -config %s --set-model %s\n", name, model))
-	if name == "vertex" {
+	if adc {
 		output.WriteString("  gcloud auth application-default login\n")
+		output.WriteString(fmt.Sprintf("  celeste config -config %s --use-google-adc\n", name))
+	} else {
+		output.WriteString(fmt.Sprintf("  celeste config -config %s --set-key %s%s\n", name, key, keyNote))
 	}
-	output.WriteString(fmt.Sprintf("  celeste config -config %s --set-key %s%s\n", name, key, keyNote))
 	output.WriteString(fmt.Sprintf("  celeste -config %s chat\n", name))
 	output.WriteString(fmt.Sprintf("\n  # Or edit ~/.celeste/config.%s.json directly:\n", name))
 	output.WriteString("  {\n")
@@ -410,7 +409,11 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString(fmt.Sprintf("    \"base_url\": \"%s\",\n", url))
 	}
 	output.WriteString(fmt.Sprintf("    \"model\": \"%s\",\n", model))
-	output.WriteString(fmt.Sprintf("    \"api_key\": \"%s\"\n", key))
+	if adc {
+		output.WriteString("    \"google_use_adc\": true\n")
+	} else {
+		output.WriteString(fmt.Sprintf("    \"api_key\": \"%s\"\n", key))
+	}
 	output.WriteString("  }\n")
 
 	// Switching recommendation
