@@ -91,3 +91,41 @@ func TestChatHistoryMatchesLoopSnapshots(t *testing.T) {
 		t.Fatalf("chat LLM history:\n%s\n\nwant (what the loop sent, plus the reply):\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// A turn that prunes and then fails leaves the chat and the saved session
+// with the pruned results the loop sent, not the full ones.
+func TestTUIPrunedHistoryIsKeptWhenTheTurnFails(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Status: 400})
+	m, _, _ := chatAppWithContextLimit(t, srv, 20_000)
+	history := bigToolHistory()
+	m = m.(tui.AppModel).WithMessages(history[:len(history)-1])
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "next"}},
+		func(m tea.Model) bool { return len(srv.Requests()) == 1 && turnIdle(m) }, 30*time.Second)
+	sent := map[string]string{}
+	for _, x := range requestMessages(t, srv, 0) {
+		if x["role"] == "tool" {
+			sent[x["tool_call_id"].(string)], _ = x["content"].(string)
+		}
+	}
+	if len(sent["r0"]) >= 40*1024 {
+		t.Fatal("the loop did not prune r0")
+	}
+	for _, x := range m.(tui.AppModel).DebugLLMMessages() {
+		if x.Role == "tool" && x.Content != sent[x.ToolCallID] {
+			t.Fatalf("chat holds %s as %d bytes, the loop sent %d", x.ToolCallID, len(x.Content), len(sent[x.ToolCallID]))
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".celeste", "sessions", "*.json"))
+	if len(files) == 0 {
+		t.Fatal("no session saved")
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), strings.Repeat("x", 40*1024)) {
+			t.Fatalf("the saved session still holds a full result the loop pruned")
+		}
+	}
+}

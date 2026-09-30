@@ -79,8 +79,12 @@ type HistoryMsg struct{ History []ChatMessage }
 // SteeredMsg: a steer joined the conversation, as recorded.
 type SteeredMsg struct{ Message ChatMessage }
 
-// CompactedMsg: old tool results were pruned before a request.
-type CompactedMsg struct{ Line string }
+// CompactedMsg: old tool results were pruned before a request. Saved is
+// the tokens the prune freed.
+type CompactedMsg struct {
+	Line  string
+	Saved int
+}
 
 // StopContinueMsg: a Stop hook asked the chat to continue; Message is the
 // hidden instruction that joins the history.
@@ -207,6 +211,12 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 	case CompactedMsg:
 		if m.contextTracker != nil {
 			m.contextTracker.CompactionCount++
+			// As /context compact does: the next request's count replaces
+			// this, but a turn that ends first must not keep the old one.
+			if m.contextTracker.CurrentTokens > msg.Saved {
+				m.contextTracker.CurrentTokens -= msg.Saved
+			}
+			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
 		}
 		m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Line)
 		LogInfo("context compacted: " + msg.Line)
@@ -393,9 +403,14 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 	case msg.Stop == "blocked":
 		m.status = m.status.SetText("Prompt blocked by a hook")
 	}
-	if m.interrupted && m.interruptPending {
+	switch {
+	case m.interrupted && m.interruptPending:
 		// Ctrl+C ended this turn: keep telling the user a second one quits.
 		m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
+	case m.interrupted:
+		// Esc landed after the reply (the loop ended "done"), or during the
+		// Stop hook: the turn still ends interrupted, not "Interrupting…".
+		m.status = m.status.SetText("Interrupted")
 	}
 	applied := false
 	if m.heldSummary != nil {

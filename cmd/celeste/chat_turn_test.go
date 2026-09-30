@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,13 @@ func runTurnMsgs(t *testing.T, a *TUIClientAdapter, req tui.TurnRequest) []tea.M
 // drainTurn follows a turn's command chain to TurnDoneMsg.
 func drainTurn(t *testing.T, cmd tea.Cmd, req tui.TurnRequest) []tea.Msg {
 	t.Helper()
+	return drainTurnWith(t, cmd, req, nil)
+}
+
+// drainTurnWith is drainTurn calling on (when set) with each message as it
+// arrives, the way the app would see it.
+func drainTurnWith(t *testing.T, cmd tea.Cmd, req tui.TurnRequest, on func(tea.Msg)) []tea.Msg {
+	t.Helper()
 	var out []tea.Msg
 	deadline := time.After(30 * time.Second)
 	for cmd != nil {
@@ -47,6 +55,9 @@ func drainTurn(t *testing.T, cmd tea.Cmd, req tui.TurnRequest) []tea.Msg {
 				t.Fatalf("event for run %d, want %d", ev.Run, req.Run)
 			}
 			out = append(out, ev.Msg)
+			if on != nil {
+				on(ev.Msg)
+			}
 			cmd = ev.Next
 		case <-deadline:
 			t.Fatalf("turn did not finish; got %d messages", len(out))
@@ -485,5 +496,235 @@ func TestRunTurnAnnouncesTheStopHook(t *testing.T) {
 		if _, ok := m.(tui.StopHookStartMsg); ok {
 			t.Fatal("StopHookStartMsg without a Stop hook")
 		}
+	}
+}
+
+// warnings captures what reaches the chat through hookNotify.
+func captureHookNotify(t *testing.T) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var got []string
+	notify := func(s string) { mu.Lock(); got = append(got, s); mu.Unlock() }
+	hookNotify.Store(&notify)
+	t.Cleanup(func() { hookNotify.Store(nil) })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), got...)
+	}
+}
+
+// boxMsgs closes a turn's mailbox and returns what was put in it.
+func boxMsgs(b *mailbox) []tea.Msg {
+	b.close()
+	var out []tea.Msg
+	for {
+		msg, ok := b.get()
+		if !ok {
+			return out
+		}
+		out = append(out, msg)
+	}
+}
+
+// Esc while the Stop hook runs ends the turn as interrupted: the hook is
+// cut short, and that is not reported as a failed hook.
+func TestRunTurnEscDuringTheStopHookEndsQuietly(t *testing.T) {
+	warned := captureHookNotify(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "done"})
+	_, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "sleep"))
+	})
+	req := tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1}
+	h, cmd := deps.adapter.RunTurn(req)
+	start := time.Now()
+	msgs := drainTurnWith(t, cmd, req, func(msg tea.Msg) {
+		if _, ok := msg.(tui.StopHookStartMsg); ok {
+			h.Cancel()
+		}
+	})
+	if d := time.Since(start); d > 8*time.Second {
+		t.Fatalf("the turn took %v: Esc did not cut the Stop hook short", d)
+	}
+	for _, m := range msgs {
+		if w, ok := m.(tui.HookWarningMsg); ok {
+			t.Errorf("warning in the turn: %q", w.Text)
+		}
+		if _, ok := m.(tui.StopContinueMsg); ok {
+			t.Error("an interrupted turn continued")
+		}
+	}
+	if got := warned(); len(got) != 0 {
+		t.Errorf("warnings reached the chat: %q", got)
+	}
+}
+
+// A turn already interrupted when its reply is in does not run the Stop
+// hook (Stop never fires on an interrupt).
+func TestStopHookIsSkippedAfterAnInterrupt(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "stop.json")
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "record", marker))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	turn := &chatTurn{ctx: ctx, cancel: cancel, box: newMailbox()}
+	if next := deps.adapter.stopHook(turn, "the reply", false, 5); next != "" {
+		t.Fatalf("stopHook = %q, want no continuation", next)
+	}
+	if msgs := boxMsgs(turn.box); len(msgs) != 0 {
+		t.Fatalf("messages = %v, want none", turnKinds(msgs))
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the Stop hook ran after the interrupt")
+	}
+}
+
+// escAfter reports an interrupt once path exists: Esc landing after the
+// Stop hooks decided, before the chat acted on their answer.
+type escAfter struct {
+	context.Context
+	path string
+}
+
+func (c escAfter) Err() error {
+	if _, err := os.Stat(c.path); err == nil {
+		return context.Canceled
+	}
+	return nil
+}
+
+// A Stop hook's deny that races Esc does not continue the turn.
+func TestStopHookDenyRacingEscDoesNotContinue(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "decided.json")
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home),
+			hookDef(t, hooks.EventStop, "", "record", marker),
+			hookDef(t, hooks.EventStop, "", "deny", "KEEP-GOING"))
+	})
+	turn := &chatTurn{ctx: escAfter{Context: context.Background(), path: marker}, cancel: func() {}, box: newMailbox()}
+	if next := deps.adapter.stopHook(turn, "the reply", false, 5); next != "" {
+		t.Fatalf("stopHook = %q after Esc, want no continuation", next)
+	}
+}
+
+// A Stop hook that fails for its own reasons is still reported in the chat,
+// before the turn ends.
+func TestRunTurnReportsAFailedStopHook(t *testing.T) {
+	warned := captureHookNotify(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "done"})
+	_, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "exit", "1", "boom"))
+	})
+	msgs := runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1})
+	var got []string
+	for _, m := range msgs {
+		if w, ok := m.(tui.HookWarningMsg); ok {
+			got = append(got, w.Text)
+		}
+	}
+	got = append(got, warned()...)
+	if joined := strings.Join(got, "\n"); !strings.Contains(joined, "Stop hook") || !strings.Contains(joined, "boom") {
+		t.Fatalf("warnings = %q, want the failed Stop hook", got)
+	}
+}
+
+// The cap notice after a Stop continuation counts every model turn of the
+// user's turn, not only the continuation's.
+func TestRunTurnCapNoticeCountsTheWholeTurn(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "first"},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: `{"path":"a.txt"}`}}},
+	)
+	_, deps, _, ws := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "deny", "KEEP-GOING"))
+	})
+	writeFile(t, ws, "a.txt", "alpha")
+	deps.adapter.baseConfig.ClawMaxToolIterations = 2
+	msgs := runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1})
+	done := msgs[len(msgs)-1].(tui.TurnDoneMsg)
+	if done.Stop != "cap" || !strings.Contains(done.Notice, "after 2 turn(s)") {
+		t.Fatalf("done = %+v, want the cap after 2 turns", done)
+	}
+}
+
+// bigToolHistory is a history whose old tool results a 20k-token window
+// prunes.
+func bigToolHistory() []tui.ChatMessage {
+	big := strings.Repeat("x", 40*1024)
+	history := userTurn("read the files")
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: big})
+	}
+	return append(history, userTurn("next")...)
+}
+
+// A turn that prunes and then ends before the model's reply (an error, an
+// interrupt) still hands the chat the pruned history, and says how many
+// tokens the prune saved.
+func TestRunTurnSyncsTheCompactedHistoryWhenTheTurnEndsEarly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop string
+	}{{"error", "error"}, {"interrupt", "interrupted"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var baseURL string
+			if tc.stop == "error" {
+				baseURL = fakeprovider.NewOpenAI(t, fakeprovider.Turn{Status: 400}).BaseURL()
+			} else {
+				hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+				t.Cleanup(hang.Close)
+				baseURL = hang.URL
+			}
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			cfg := &config.Config{APIKey: "k", BaseURL: baseURL, Model: "fake-model", Timeout: 10}
+			_, deps, err := newChatApp(cfg, t.TempDir(), home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleanupChatDeps(t, deps)
+			history := bigToolHistory()
+			req := tui.TurnRequest{History: history, Tools: true, Window: 20_000, Used: 30_000, Run: 1}
+			h, cmd := deps.adapter.RunTurn(req)
+			msgs := drainTurnWith(t, cmd, req, func(msg tea.Msg) {
+				if _, ok := msg.(tui.CompactedMsg); ok && tc.stop == "interrupted" {
+					h.Cancel()
+				}
+			})
+			if done := msgs[len(msgs)-1].(tui.TurnDoneMsg); done.Stop != tc.stop {
+				t.Fatalf("done = %+v, want %s", done, tc.stop)
+			}
+			compacted := false
+			chat := tui.NewChatModel()
+			for _, m := range history {
+				chat = chat.AppendLLM(m)
+			}
+			for _, m := range msgs {
+				switch m := m.(type) {
+				case tui.CompactedMsg:
+					compacted = true
+					if m.Saved <= 0 {
+						t.Errorf("CompactedMsg.Saved = %d, want the tokens the prune saved", m.Saved)
+					}
+				case tui.HistoryMsg:
+					chat = chat.SyncLLM(m.History, false)
+				}
+			}
+			if !compacted {
+				t.Fatal("nothing was pruned")
+			}
+			for _, m := range chat.GetLLMMessages() {
+				if m.Role == "tool" && m.ToolCallID == "r0" && len(m.Content) >= 40*1024 {
+					t.Fatal("the chat still holds the full result the loop pruned")
+				}
+			}
+		})
 	}
 }

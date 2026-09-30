@@ -561,3 +561,50 @@ func TestStopContinuationJoinsBeforeTheNextRunsSnapshots(t *testing.T) {
 	hidden, _ := m.chat.GetLLMMessages()[2].Metadata["hidden"].(bool)
 	assert.True(t, hidden, "the continuation is shown as the user's own prompt")
 }
+
+// Esc after the reply is in, before the turn ends (while the Stop hook runs,
+// or before it starts), still settles on "Interrupted", never leaving
+// "Interrupting…" with the turn idle.
+func TestEscAfterTheReplySettlesOnInterrupted(t *testing.T) {
+	for _, stopHook := range []bool{false, true} {
+		m, _ := newQueueTestApp()
+		m = startedTurn(t, m, "go")
+		m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+		m, _ = feed(t, m, StreamDoneMsg{FullContent: "hi", FinishReason: "stop"})
+		for i := 0; i < 100 && m.typingContent != ""; i++ {
+			m, _ = step(t, m, TickMsg{})
+		}
+		if stopHook {
+			m, _ = feed(t, m, StopHookStartMsg{})
+		}
+		m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+		m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+		assert.False(t, m.turnActive())
+		assert.Equal(t, "Interrupted", m.status.text, "stop hook running: %v", stopHook)
+	}
+}
+
+// A prune during a turn lowers the token count by what it saved, and a
+// turn that then fails keeps and saves the pruned history.
+func TestCompactionDuringATurnSurvivesAFailedTurn(t *testing.T) {
+	m, _ := newCompactTestApp(t)
+	sessions := &recordingSessions{}
+	m = m.SetSessionManager(sessions, &config.Session{})
+	m = startedTurn(t, m, "go")
+	m = toolTurn(t, m, "call_a")
+	m, _ = feed(t, m, TurnStartMsg{Turn: 2})
+	m, _ = feed(t, m, CompactedMsg{Line: "pruned 1 old tool results", Saved: 20_000})
+	assert.Equal(t, 30_000, m.contextTracker.CurrentTokens, "the prune's savings come off the count")
+	pruned := append([]ChatMessage(nil), m.chat.GetLLMMessages()...)
+	pruned[2].Content = "[pruned call_a]"
+	m, _ = feed(t, m, HistoryMsg{History: pruned})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "error", Err: errors.New("boom")})
+	assert.Equal(t, "[pruned call_a]", toolContent(m, "call_a"))
+	require.NotEmpty(t, sessions.saves)
+	last := sessions.saves[len(sessions.saves)-1]
+	found := false
+	for _, msg := range last {
+		found = found || msg.Content == "[pruned call_a]"
+	}
+	assert.True(t, found, "the saved session lacks the pruned result")
+}

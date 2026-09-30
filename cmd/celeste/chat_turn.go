@@ -103,6 +103,7 @@ type chatTurn struct {
 	endpoint  string         // for the log
 	tools     int            // tool definitions offered, for the log
 	msgs      int            // pump goroutine only: the last snapshot's length, for the log
+	compacted bool           // pump goroutine only: a prune since the last snapshot
 	start     sync.Once
 }
 
@@ -177,12 +178,19 @@ func (a *TUIClientAdapter) runTurn(t *chatTurn, history []tui.ChatMessage) {
 	defer a.endRun()
 	defer t.box.close()
 	defer t.cancel()
-	turnsLeft := t.loop.Limits.MaxTurns
+	maxTurns := t.loop.Limits.MaxTurns
+	turnsLeft := maxTurns
 	continued := false
 	for {
 		t.loop.Limits.MaxTurns = turnsLeft // >= 1: stopHook stops at 0
 		msgs, res, err := a.runOnce(t, history)
 		turnsLeft -= res.Turns
+		if t.compacted {
+			// The run pruned and ended before its next snapshot (an error,
+			// an interrupt, a guard): the chat takes the pruned history.
+			t.compacted = false
+			t.box.put(tui.HistoryMsg{History: withoutEmptyReplies(msgs)})
+		}
 		if err == nil && res.StopReason == loop.StopDone {
 			if next := a.stopHook(t, res.FinalText, continued, turnsLeft); next != "" {
 				continued = true
@@ -193,6 +201,7 @@ func (a *TUIClientAdapter) runTurn(t *chatTurn, history []tui.ChatMessage) {
 				continue
 			}
 		}
+		res.Turns = maxTurns - turnsLeft // the whole user turn, Stop continuations included
 		t.box.put(a.doneMsg(t, res, err))
 		return
 	}
@@ -201,14 +210,22 @@ func (a *TUIClientAdapter) runTurn(t *chatTurn, history []tui.ChatMessage) {
 // stopHook asks Stop hooks whether a finished turn may end, and returns the
 // instruction to continue with, or "" to finish. A deny is honoured once per
 // user turn and only while turns remain (the agent and MCP chat rule);
-// later ones are reported in the chat and ignored.
+// later ones are reported in the chat and ignored. An interrupted turn ends
+// as interrupted: Stop does not fire, and Esc while it runs cuts it short
+// without a warning and ignores its answer.
 func (a *TUIClientAdapter) stopHook(t *chatTurn, final string, continued bool, turnsLeft int) string {
-	if !a.hooks.Has(hooks.EventStop) {
+	if !a.hooks.Has(hooks.EventStop) || t.ctx.Err() != nil {
 		return ""
 	}
 	t.box.put(tui.StopHookStartMsg{})
-	out := a.hooks.Stop(t.ctx, final)
-	if out.Decision != hooks.Deny {
+	ctx := hooks.WithWarn(t.ctx, func(msg string) {
+		if t.ctx.Err() == nil {
+			tui.LogInfo(msg)
+			t.box.put(tui.HookWarningMsg{Text: msg})
+		}
+	})
+	out := a.hooks.Stop(ctx, final)
+	if out.Decision != hooks.Deny || t.ctx.Err() != nil {
 		return ""
 	}
 	switch {
@@ -274,13 +291,17 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		return []tea.Msg{tui.ToolTurnMsg{Text: ev.Text, Usage: usage}}
 	case loop.EventPromptsChecked, loop.EventCallsRecorded, loop.EventTurnEnd:
 		t.msgs = len(ev.History)
+		t.compacted = false
 		return []tea.Msg{tui.HistoryMsg{History: withoutEmptyReplies(ev.History)}}
 	case loop.EventToolStart:
 		return []tea.Msg{tui.ToolStartMsg{ID: ev.Call.ID, Name: ev.Call.Name, Args: ev.Call.Input}}
 	case loop.EventToolResult:
 		return []tea.Msg{tui.ToolResultMsg{ID: ev.Call.ID, Name: ev.Call.Name, Content: ev.Text, IsError: ev.IsError, Metadata: ev.Metadata}}
 	case loop.EventCompacted:
-		return []tea.Msg{tui.CompactedMsg{Line: ev.Text}}
+		t.compacted = true
+		// Compact set saved before the loop emitted this event, and runs
+		// again only after the next one: the unbuffered channel orders both.
+		return []tea.Msg{tui.CompactedMsg{Line: ev.Text, Saved: t.compactor.saved}}
 	case loop.EventSteered:
 		return []tea.Msg{tui.SteeredMsg{Message: ev.Msg}}
 	case loop.EventPromptBlocked, loop.EventSteerBlocked:
@@ -374,6 +395,7 @@ type chatCompactor struct {
 	jev    *jev.Client // shadow scorer, resolved when the turn started; nil: off
 	window int
 	used   int // Run's goroutine only: the tracker's count, then the provider's
+	saved  int // the tokens the last prune freed, for the chat's count
 	over   atomic.Bool
 }
 
@@ -403,6 +425,7 @@ func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, la
 	if c.used > out.SavedTokens {
 		c.used -= out.SavedTokens
 	}
+	c.saved = out.SavedTokens
 	return edited, []string{out.Summary}, true
 }
 
