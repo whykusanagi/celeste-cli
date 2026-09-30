@@ -604,3 +604,119 @@ func TestPromptGateSkipsAnAskCancelledWhileItWaited(t *testing.T) {
 		t.Fatalf("prompt opened %d times, want 1: a cancelled ask opened the modal", n)
 	}
 }
+
+// The recorded tool_calls message is in the consumer's hands before any
+// call runs (events are unbuffered: receiving event N+1 means N was handled).
+func TestLoopCallsRecordedBeforeToolsRun(t *testing.T) {
+	var seen atomic.Bool
+	var sawBeforeRun bool
+	tool := &fakeTool{name: "t", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		sawBeforeRun = seen.Load()
+		return tools.ToolResult{Content: "ok"}, nil
+	}}
+	stub := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		if n == 0 {
+			callTool(cb, "c1", "t", `{}`)
+			return nil
+		}
+		sayText(cb, "done", nil)
+		return nil
+	}}
+	l := &Loop{Client: stub, Tools: newRegistry(tool), Limits: DefaultLimits()}
+	ch := l.Events()
+	var snap []Message
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range ch {
+			if ev.Kind == EventCallsRecorded {
+				snap = ev.History
+				seen.Store(true)
+			}
+			if ev.Kind == EventDone {
+				return
+			}
+		}
+	}()
+	if _, _, err := l.Run(context.Background(), userMsg("go")); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if !sawBeforeRun {
+		t.Fatal("the tool ran before EventCallsRecorded was delivered")
+	}
+	last := snap[len(snap)-1]
+	if last.Role != "assistant" || len(last.ToolCalls) != 1 || last.ToolCalls[0].ID != "c1" {
+		t.Fatalf("snapshot ends with %+v, want the assistant tool_calls message", last)
+	}
+}
+
+// With KeepToolMetadata (the chat) an image result keeps its metadata and
+// gets the marker vision models need; without it (agent, MCP) nothing
+// changes. EventToolResult carries the metadata either way.
+func TestLoopKeepToolMetadata(t *testing.T) {
+	meta := map[string]any{"type": "image", "format": "png", "filename": "a.png"}
+	img := &fakeTool{name: "img", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: "read a.png", Metadata: meta}, nil
+	}}
+	for _, keep := range []bool{true, false} {
+		l := execLoop(t, img)
+		l.Limits.KeepToolMetadata = keep
+		wait := collect(l) // collect stops at EventDone, which runCalls never emits
+		var out callsOutcome
+		go func() {
+			out = l.runCalls(context.Background(), []llm.ToolCallResult{{ID: "1", Name: "img", Arguments: `{}`}}, l.Limits.withDefaults())
+			l.emit(Event{Kind: EventDone})
+		}()
+		evs := wait() // returns after EventDone, so out is set
+		msg := out.messages[0]
+		hasMarker := strings.Contains(msg.Content, "[Image data available: format=png")
+		if keep != (msg.Metadata != nil) || keep != hasMarker {
+			t.Fatalf("keep=%v: metadata=%v content=%q", keep, msg.Metadata, msg.Content)
+		}
+		var evMeta map[string]any
+		for _, e := range evs {
+			if e.Kind == EventToolResult {
+				evMeta = e.Metadata
+			}
+		}
+		if evMeta["format"] != "png" {
+			t.Fatalf("keep=%v: EventToolResult.Metadata = %v", keep, evMeta)
+		}
+	}
+}
+
+// Loops that share a SpillCounter (the chat's turns) never reuse a spill
+// name, even for the same call ID.
+func TestLoopSpillCounterSpansLoops(t *testing.T) {
+	big := &fakeTool{name: "big", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: strings.Repeat("z", 200*1024)}, nil
+	}}
+	var n atomic.Int64
+	dir := t.TempDir()
+	for i := 0; i < 2; i++ {
+		l := execLoop(t, big)
+		l.SpillDir, l.SpillCounter = dir, &n
+		run(l, llm.ToolCallResult{ID: "c1", Name: "big", Arguments: `{}`})
+	}
+	for _, name := range []string{"c1-1.txt", "c1-2.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, "s", name)); err != nil {
+			t.Fatalf("%s: %v (the second turn overwrote the first spill)", name, err)
+		}
+	}
+}
+
+// Only image metadata rides on the tool message, as the chat did before the
+// loop: other metadata (a subagent's name) reaches renderers through
+// EventToolResult, never the provider. (Added in implementation.)
+func TestLoopKeepToolMetadataOnlyForImages(t *testing.T) {
+	other := &fakeTool{name: "other", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: "spawned", Metadata: map[string]any{"agent": "x", "is_error": true}}, nil
+	}}
+	l := execLoop(t, other)
+	l.Limits.KeepToolMetadata = true
+	out := run(l, llm.ToolCallResult{ID: "1", Name: "other", Arguments: `{}`})
+	if msg := out.messages[0]; msg.Metadata != nil || msg.Content != "spawned" {
+		t.Fatalf("tool message = %+v, want plain text", msg)
+	}
+}

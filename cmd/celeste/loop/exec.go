@@ -21,8 +21,9 @@ type pending struct {
 	call    ToolCall
 	content string
 	isError bool
-	settled bool // has its result without running (bad args, unknown tool)
-	ran     bool // went through the registry
+	meta    map[string]any // the tool's ToolResult.Metadata
+	settled bool           // has its result without running (bad args, unknown tool)
+	ran     bool           // went through the registry
 }
 
 func (p *pending) settle(content string) {
@@ -71,8 +72,8 @@ func (l *Loop) runCalls(ctx context.Context, calls []llm.ToolCallResult, lim Lim
 	for i, p := range ps {
 		sigs = append(sigs, p.call.Name+"|"+p.content)
 		content := l.spill(p.content, p.call.ID, i, lim)
-		out.messages = append(out.messages, toolMessage(p.call, content))
-		l.emit(Event{Kind: EventToolResult, Call: p.call, Text: content, IsError: p.isError})
+		out.messages = append(out.messages, toolMessage(p.call, content, p.meta, lim.KeepToolMetadata))
+		l.emit(Event{Kind: EventToolResult, Call: p.call, Text: content, IsError: p.isError, Metadata: p.meta})
 	}
 	out.resultSig = strings.Join(sigs, ",")
 	return out
@@ -120,6 +121,7 @@ func (l *Loop) runGroup(ctx context.Context, group []*pending, lim Limits) {
 		p := group[i]
 		p.ran = true
 		p.content, p.isError = formatResult(p.call.Name, r)
+		p.meta = r.Result.Metadata
 	}
 }
 
@@ -294,8 +296,7 @@ func (l *Loop) spill(content, id string, idx int, lim Limits) string {
 	if lim.SpillBytes <= 0 || len(content) <= lim.SpillBytes {
 		return content
 	}
-	l.spillSeq++
-	name := fmt.Sprintf("%s-%d", safeName(id, "call-"+strconv.Itoa(idx)), l.spillSeq)
+	name := fmt.Sprintf("%s-%d", safeName(id, "call-"+strconv.Itoa(idx)), l.nextSpill())
 	capped, _, err := ctxmgr.CapToolResult(content, lim.SpillBytes, l.sessionID(), name, l.SpillDir)
 	if err != nil {
 		l.emit(Event{Kind: EventNotice, Text: "could not spill a large tool result: " + err.Error()})
@@ -311,12 +312,31 @@ func (l *Loop) sessionID() string {
 	return "loop-" + strconv.Itoa(os.Getpid())
 }
 
+// nextSpill numbers the next spill file: from SpillCounter when the adopter
+// shares one across runs, else per Loop.
+func (l *Loop) nextSpill() int64 {
+	if l.SpillCounter != nil {
+		return l.SpillCounter.Add(1)
+	}
+	l.spillSeq++
+	return int64(l.spillSeq)
+}
+
 // toolMessage pairs a result with its call. Text-format calls ("text-tc-N")
 // have no tool_call entry to pair with, so they come back as a labelled user
-// message, as the agent always did.
-func toolMessage(c ToolCall, content string) Message {
+// message, as the agent always did. With keep, an image result's metadata
+// rides on the message with a marker the model can read (as the chat did
+// before the loop); other metadata stays off the provider's messages.
+func toolMessage(c ToolCall, content string, meta map[string]any, keep bool) Message {
 	if strings.HasPrefix(c.ID, "text-tc-") {
 		return Message{Role: "user", Content: fmt.Sprintf("[Tool Result: %s]\n%s", c.Name, content), Timestamp: time.Now()}
 	}
-	return Message{Role: "tool", ToolCallID: c.ID, Name: c.Name, Content: content, Timestamp: time.Now()}
+	msg := Message{Role: "tool", ToolCallID: c.ID, Name: c.Name, Content: content, Timestamp: time.Now()}
+	if kind, _ := meta["type"].(string); keep && kind == "image" {
+		msg.Metadata = meta
+		if format, _ := meta["format"].(string); format != "" {
+			msg.Content += fmt.Sprintf("\n\n[Image data available: format=%s. The image content has been captured and will be provided to vision-capable models.]", format)
+		}
+	}
+	return msg
 }

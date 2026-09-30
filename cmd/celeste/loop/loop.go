@@ -132,6 +132,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			return msgs, res, nil
 		}
 		msgs = append(msgs, Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: time.Now()})
+		l.emit(Event{Kind: EventCallsRecorded, Turn: turn, History: cloneHistory(msgs)})
 		out := l.runCalls(ctx, calls, lim)
 		msgs = append(msgs, out.messages...)
 		res.ToolCallsLastTurn = len(calls)

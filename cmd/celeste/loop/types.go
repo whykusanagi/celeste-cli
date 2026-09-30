@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -47,6 +48,10 @@ type Limits struct {
 	RequestTimeout     time.Duration // per-request deadline; the client's per-attempt deadline still applies
 	MaxInvalidArgTurns int           // stop after this many turns in a row with bad tool arguments
 	TextToolCalls      bool          // parse <tool_call> blocks from text when a turn has no native calls
+	// KeepToolMetadata puts an image result's ToolResult.Metadata on its
+	// tool message (read_file for vision models), with a marker in the
+	// content. The chat sets it; agent and MCP runs send text only.
+	KeepToolMetadata bool
 	// HookBudget is how long PreToolUse/PostToolUse hooks may add to a call
 	// before the watchdog abandons it (tool timeout + budget; gated runs:
 	// counted from the Gate's answer). <=0: DefaultHookBudget.
@@ -124,6 +129,7 @@ const (
 	EventPromptBlocked            // Msg, Text (the reason): CheckPrompt blocked a prompt; it left the history
 	EventSteerBlocked             // Msg, Text (the reason): CheckPrompt blocked a steer; it was dropped
 	EventPromptsChecked           // History: CheckPrompt allowed a prompt; the checked history, before the first request
+	EventCallsRecorded            // Turn, History: the snapshot with this turn's assistant tool_calls message, before any call runs
 )
 
 // Event is one step of a Run, for renderers and adopters.
@@ -136,6 +142,7 @@ type Event struct {
 	Elapsed   time.Duration
 	Call      ToolCall
 	Msg       Message
+	Metadata  map[string]any // EventToolResult: the tool's ToolResult.Metadata (images, subagent names)
 	IsError   bool
 	History   []Message
 	Result    Result
@@ -253,6 +260,10 @@ type Loop struct {
 	SessionID string
 	// SpillDir overrides the spill base directory; "" uses the default.
 	SpillDir string
+	// SpillCounter numbers spill files across Loops that share it (the chat
+	// starts one Loop per turn, 2.0 F2d), so a call ID repeated in a later
+	// run never overwrites an earlier spill. nil: counted per Loop.
+	SpillCounter *atomic.Int64
 
 	mu        sync.Mutex
 	steers    []string
