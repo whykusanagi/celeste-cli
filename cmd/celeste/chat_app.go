@@ -78,8 +78,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	registry := env.Registry
 
 	// TUI-only tools (F2a: Setup never registers them).
-	builtin.RegisterConfigTools(registry, newBuiltinConfigAdapter(config.NewConfigLoader(cfg)))
-	builtin.RegisterCollectionsTools(registry, cfg)
+	registerChatOnlyTools(registry, cfg)
 	// Subagents: chat users can delegate subtasks and parameterize their
 	// persona. The top-level chat posts to the mailbox as "parent" (#31).
 	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
@@ -301,4 +300,25 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 		}
 	}
 	return app
+}
+
+// registerChatOnlyTools adds the config-backed skills and collections search
+// to Setup's registry. Before F2d they were registered ahead of the user's
+// custom skills (~/.celeste/skills), so a custom skill with the same name
+// won; keep that. At this point only a custom skill can hold one of these
+// names (builtins never do, MCP tools are mcp__-prefixed), and custom skills
+// are registered for all modes, so putting back what was replaced restores
+// the old order exactly.
+func registerChatOnlyTools(registry *tools.Registry, cfg *config.Config) {
+	before := map[string]tools.Tool{}
+	for _, t := range registry.GetAll() {
+		before[t.Name()] = t
+	}
+	builtin.RegisterConfigTools(registry, newBuiltinConfigAdapter(config.NewConfigLoader(cfg)))
+	builtin.RegisterCollectionsTools(registry, cfg)
+	for name, t := range before {
+		if cur, _ := registry.Get(name); cur != t {
+			registry.Register(t)
+		}
+	}
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -65,6 +67,34 @@ func TestNewChatAppBuildsOnLoopSetup(t *testing.T) {
 	}
 	if want := deps.registry.Count() > loop.ToolDiscoveryThreshold; deps.registry.DiscoveryMode() != want {
 		t.Errorf("discovery = %v with %d tools, want %v", deps.registry.DiscoveryMode(), deps.registry.Count(), want)
+	}
+}
+
+// A custom skill named like a chat-only tool still wins, as before F2d.
+func TestNewChatAppCustomSkillBeatsChatOnlyTool(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	skills := filepath.Join(home, ".celeste", "skills")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	def := `{"name":"tarot_reading","description":"my own tarot","parameters":{"type":"object"},"command":"echo hi"}`
+	if err := os.WriteFile(filepath.Join(skills, "tarot.json"), []byte(def), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	got, ok := deps.registry.Get("tarot_reading")
+	if !ok || got.Description() != "my own tarot" {
+		t.Fatalf("tarot_reading = %v; the custom skill must win", got)
+	}
+	if _, ok := deps.registry.Get("get_weather"); !ok {
+		t.Error("the other config-backed tools must still register")
 	}
 }
 
