@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // PermissionConfig holds the persistent permission configuration.
@@ -173,7 +174,22 @@ func writeFileAtomic(path string, data []byte) (err error) {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return renameRetry(tmpName, path)
+}
+
+// renameRetry renames, retrying briefly: on Windows a rename over a file that
+// another process or goroutine has open for reading fails with "Access is
+// denied" until the reader closes it.
+// ponytail: fixed ~1s of retries, a real lock if saves ever contend longer.
+func renameRetry(from, to string) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		if err = os.Rename(from, to); err == nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return err
 }
 
 // convertRulesFromJSON converts JSON rule representations to Rule structs.
