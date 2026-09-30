@@ -5,20 +5,26 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 // Which components each mode wires (spec F1 setup coverage, F2 target).
-// F2a moved the agent rows to true through loop.Setup (F2a plan Task 9, an
-// intentional flip of the F1 "agent.custom_skills = false" row); F2b moved the
-// MCP rows (server TestMCPChatSetupCoverage); F2d moves the TUI rows.
+// F2a moved the agent rows through loop.Setup, F2b the MCP rows; F2d Task 7
+// (Flip 2): every row is true for the chat UI, agent runs and MCP chat.
 func TestSetupCoverage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -30,79 +36,121 @@ func TestSetupCoverage(t *testing.T) {
 		[]byte(`{"name":"hello_skill","description":"x","parameters":{"type":"object"},"command":"echo hi"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws := t.TempDir()
-	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventSessionStart, "", "context", "COVERAGE-HOOK"))
+	marker := filepath.Join(t.TempDir(), "mcp-started")
+	probeMCP := runtime.GOOS != "windows" // the probe server is `sh -c touch`
+	if probeMCP {
+		cfg := `{"mcpServers":{"probe":{"enabled":true,"command":"sh","args":["-c",` +
+			strconv.Quote("touch '"+marker+"'") + `]}}}`
+		if err := os.WriteFile(filepath.Join(home, ".celeste", "mcp.json"), []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws := coverageWorkspace(t)
+	mcpStarted := func() bool {
+		if !probeMCP {
+			return true // documented: loop TestSetupAgentStartsGlobalMCPConfig
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				_ = os.Remove(marker)
+				return true
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return false
+	}
+	got := map[string]bool{}
 
-	_, deps, err := newChatApp(cfg, ws, home)
+	// Chat UI: the real newChatApp and one real request.
+	tuiSrv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
+	app, deps, err := newChatApp(&config.Config{APIKey: "k", BaseURL: tuiSrv.BaseURL(), Model: "fake-model", Timeout: 10, ContextLimit: 1_000_000}, ws, home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cleanupChatDeps(t, deps)
-	_, tuiHasSkill := deps.registry.Get("hello_skill")
+	got["tui.mcp_clients"] = mcpStarted()
+	var m tea.Model = app
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
+	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "hi"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "ok" && turnIdle(m) }, 30*time.Second)
+	sys := systemMessage(tuiSrv.Requests()[0].Body)
+	_, got["tui.custom_skills"] = deps.registry.Get("hello_skill")
+	got["tui.hooks"] = strings.Contains(sys, "COVERAGE-HOOK")
+	got["tui.memories"] = strings.Contains(sys, "coverage-memory")
+	got["tui.code_graph_summary"] = strings.Contains(sys, "# Code Graph")
+	got["tui.grimoire"] = strings.Contains(sys, "COVERAGE-GRIMOIRE")
 
-	agentWS := t.TempDir()
-	if err := os.WriteFile(filepath.Join(agentWS, "go.mod"), []byte("module coverageprobe\n\ngo 1.26\n"), 0o644); err != nil {
+	// Agent: the real runner.
+	agentSrv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: ok"})
+	opts := agent.DefaultOptions()
+	opts.Workspace = ws
+	opts.EnablePlanning = false
+	opts.RequireVerification = false
+	opts.AutoApproveTools = true
+	opts.RequestTimeout = 10 * time.Second
+	r, err := agent.NewRunner(&config.Config{APIKey: "k", BaseURL: agentSrv.BaseURL(), Model: "fake-model", Timeout: 10}, opts, io.Discard, io.Discard)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(agentWS, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+	t.Cleanup(r.Close)
+	got["agent.mcp_clients"] = mcpStarted()
+	if _, err := r.RunGoal(context.Background(), "say ok"); err != nil {
 		t.Fatal(err)
 	}
-	absWS, _ := filepath.Abs(agentWS)
+	body := agentSrv.Requests()[0].Body
+	sys = systemMessage(body)
+	got["agent.custom_skills"] = hasString(toolNames(body), "hello_skill")
+	got["agent.hooks"] = strings.Contains(sys, "COVERAGE-HOOK")
+	got["agent.memories"] = strings.Contains(sys, "coverage-memory")
+	got["agent.code_graph_summary"] = strings.Contains(sys, "# Code Graph")
+	got["agent.grimoire"] = strings.Contains(sys, "COVERAGE-GRIMOIRE")
+
+	// MCP chat: the Env the server builds for mode:"chat" (F2b; the server
+	// package's TestMCPChatSetupCoverage probes it end to end).
+	env, err := loop.Setup(loop.ModeMCPChat, &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}, ws, loop.SetupOptions{Warn: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	got["mcp.mcp_clients"] = mcpStarted()
+	_, got["mcp.custom_skills"] = env.Registry.Get("hello_skill")
+	got["mcp.hooks"] = strings.Contains(env.SessionStartContext(context.Background(), "startup"), "COVERAGE-HOOK")
+	got["mcp.memories"] = strings.Contains(env.ProjectContext, "coverage-memory")
+	got["mcp.code_graph_summary"] = strings.Contains(env.ProjectContext, "# Code Graph")
+	got["mcp.grimoire"] = strings.Contains(env.ProjectContext, "COVERAGE-GRIMOIRE")
+
+	for _, mode := range []string{"tui", "agent", "mcp"} {
+		for _, row := range []string{"custom_skills", "hooks", "mcp_clients", "memories", "code_graph_summary", "grimoire"} {
+			if k := mode + "." + row; !got[k] {
+				t.Errorf("%s = false, want true", k)
+			}
+		}
+	}
+}
+
+// coverageWorkspace is a Go module with a grimoire and one project memory.
+func coverageWorkspace(t *testing.T) string {
+	t.Helper()
+	ws := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod":    "module coverageprobe\n\ngo 1.26\n",
+		"main.go":   "package main\n\nfunc main() {}\n",
+		".grimoire": "# Coverage\n\n## Bindings\n- COVERAGE-GRIMOIRE\n",
+	} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	absWS, _ := filepath.Abs(ws)
 	store := memories.NewStore(absWS)
 	idx, _ := memories.LoadIndex(filepath.Join(store.BaseDir(), "MEMORY.md"))
 	_ = idx.Add(memories.IndexEntry{Name: "coverage-memory", File: "c.md", Description: "probe"})
 	if err := idx.Save(); err != nil {
 		t.Fatal(err)
 	}
-
-	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: ok"})
-	opts := agent.DefaultOptions()
-	opts.Workspace = agentWS
-	opts.EnablePlanning = false
-	opts.RequireVerification = false
-	opts.AutoApproveTools = true
-	opts.RequestTimeout = 10 * time.Second
-	agentCfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
-	r, err := agent.NewRunner(agentCfg, opts, io.Discard, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(r.Close)
-	if _, err := r.RunGoal(context.Background(), "say ok"); err != nil {
-		t.Fatal(err)
-	}
-	requests := srv.Requests()
-	if len(requests) == 0 {
-		t.Fatal("agent probe made no provider requests")
-	}
-	names := toolNames(requests[0].Body)
-	if !hasString(names, "read_file") {
-		t.Fatalf("agent probe tools = %v, want builtin positive control read_file", names)
-	}
-	system := systemMessage(requests[0].Body)
-
-	want := map[string]bool{
-		"tui.custom_skills":        true,
-		"agent.custom_skills":      true, // F2a: loop.Setup
-		"agent.memories":           true, // F2a: loop.Setup
-		"agent.code_graph_summary": true, // F2a: loop.Setup
-	}
-	got := map[string]bool{
-		"tui.custom_skills":        tuiHasSkill,
-		"agent.custom_skills":      hasString(names, "hello_skill"),
-		"agent.memories":           strings.Contains(system, "coverage-memory"),
-		"agent.code_graph_summary": strings.Contains(system, "# Code Graph"),
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("%s = %v, want %v", k, got[k], v)
-		}
-	}
-	// Documented, not probed here:
-	//   agent.hooks = true (F2a Task 9; covered by agent TestAgentRunsGlobalHooks)
-	//   agent.mcp_clients = true (loop.Setup; covered by loop TestSetupAgentWiresEveryComponent)
-	//   mcp_server.* = true (F2b: MCP chat runs on loop.Setup; probed by the
-	//   server package's TestMCPChatSetupCoverage)
+	return ws
 }
 
 func systemMessage(body map[string]any) string {
