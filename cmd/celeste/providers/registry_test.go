@@ -427,3 +427,14 @@ func TestEmptyBaseURLHasExample(t *testing.T) {
 		}
 	}
 }
+
+// #151 W6b: a ToolsPerModel provider (Venice) decides tool availability from
+// the selected model, not a provider-wide flag; every other provider keeps
+// using its static SupportsFunctionCalling.
+func TestToolsEnabledForModel(t *testing.T) {
+	assert.False(t, ToolsEnabledForModel("venice", "venice-uncensored"), "the uncensored default has no tool support")
+	assert.True(t, ToolsEnabledForModel("venice", "llama-3.3-70b"), "a non-uncensored Venice model supports tools")
+	assert.True(t, ToolsEnabledForModel("openai", "gpt-4.1-nano"))
+	assert.True(t, ToolsEnabledForModel("local", ""), "local stays provider-level, unaffected by an empty model")
+	assert.False(t, ToolsEnabledForModel("not-a-real-provider", "x"))
+}

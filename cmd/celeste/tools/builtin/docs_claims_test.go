@@ -177,16 +177,23 @@ func TestDocsDefaultProviderAndVertexModel(t *testing.T) {
 	}
 }
 
-// Venice's per-model tool support is not wired into the chat yet (the TUI
-// disables skills for all of Venice), so no doc may promise it. W6b restores
-// the wording when it wires ToolsPerModel into the chat.
-func TestDocsDoNotPromiseVeniceTools(t *testing.T) {
+// #151 W6b: the chat now wires ToolsPerModel into its skills gate
+// (providers.ToolsEnabledForModel), so every doc that mentions Venice's tool
+// support must say it depends on the model, not that the chat withholds
+// tools from every Venice model.
+func TestDocsSayVeniceToolsDependOnModel(t *testing.T) {
 	for _, file := range []string{"README.md", "docs/LLM_PROVIDERS.md", "docs/PROVIDER_AUDIT_MATRIX.md", "docs/CAPABILITIES.md"} {
 		doc := repoFile(t, file)
-		for _, bad := range []string{"Venice per model", "Per model", "tools per model", "Venice calls them", "Tool calling depends on the model"} {
-			if strings.Contains(doc, bad) {
-				t.Errorf("%s says %q, but the chat offers Venice no tools yet", file, bad)
+		for _, stale := range []string{"Not in chat yet", "not wired into chat yet", "chats without tools for now", "chat only for now", "does not use them yet"} {
+			if strings.Contains(doc, stale) {
+				t.Errorf("%s says %q, which is stale: the chat gates Venice tools per model now", file, stale)
 			}
+		}
+		if !strings.Contains(strings.ToLower(doc), "venice") {
+			continue
+		}
+		if !regexp.MustCompile(`(?i)(per model|depends? on the model|model-dependent)`).MatchString(doc) {
+			t.Errorf("%s mentions Venice but never says its tool support depends on the model", file)
 		}
 	}
 }

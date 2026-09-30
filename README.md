@@ -289,12 +289,12 @@ sends none. Tools from MCP servers and custom skills come on top, in both modes.
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-flash-latest) - Simple API keys, free tier, full streaming • Token tracking ✓
 - ⚠️ **Google Vertex AI** (gemini-2.0-flash, unverified) - Enterprise, requires GCP project + billing. The default has not been checked against Vertex's own model lifecycle • Token tracking ✓
-- ⚠️ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling. Chat only for now: some Venice models support tools, but the chat does not use them yet • Token tracking ✓
+- ⚠️ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling. Tool calling depends on the model (checked against the live Venice catalog); the default venice-uncensored has none • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
 - ✅ **Sakana AI** (fugu, fugu-ultra) - **DEFAULT** - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
 - ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported. No real key: set any placeholder, since celeste requires a non-empty `api_key` • Cost tracked as $0
 
-Nine chat providers: eight with tool calling, and Venice, which chats without tools for now.
+Nine chat providers: eight with tool calling, and Venice, whose tool calling depends on the selected model.
 `celeste providers` lists 11: these nine plus DigitalOcean (its tools run in its own
 cloud) and ElevenLabs (voice).
 

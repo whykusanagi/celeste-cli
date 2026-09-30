@@ -72,13 +72,13 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 			status = "▶" // Current provider
 		}
 
-		// Tool support indicator
-		// A ToolsPerModel provider (Venice) shows [NO TOOLS]: the chat
-		// does not gate tools per model yet (W6b, after F2d-2), so a
-		// [PER MODEL] label would promise tools the chat never offers.
+		// Tool support indicator. A ToolsPerModel provider (Venice) shows
+		// [PER MODEL]: the chat gates tools per selected model (#151 W6b).
 		toolSupport := "[NO TOOLS]"
 		if caps.SupportsFunctionCalling {
 			toolSupport = "[TOOLS]"
+		} else if caps.ToolsPerModel {
+			toolSupport = "[PER MODEL]"
 		}
 
 		// Build provider line
@@ -103,8 +103,6 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 			output.WriteString(" [voice]")
 		} else if strings.Contains(name, "openrouter") {
 			output.WriteString(" [aggregator]")
-		} else if caps.ToolsPerModel {
-			output.WriteString(" [per-model tools not in chat yet]")
 		}
 
 		output.WriteString("\n")
@@ -121,8 +119,8 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 		output.WriteString("\n")
 	}
 
-	output.WriteString(fmt.Sprintf("\nTotal: %d providers, %d with tools\n",
-		len(allProviders), len(providers.GetToolCallingProviders())))
+	output.WriteString(fmt.Sprintf("\nTotal: %d providers: %d with tools, %d where it depends on the model\n",
+		len(allProviders), len(providers.GetToolCallingProviders()), len(providers.GetPerModelToolProviders())))
 	output.WriteString("\nUse: /providers info <name> for details\n")
 
 	return &CommandResult{
@@ -173,7 +171,15 @@ func listToolProviders(ctx *CommandContext) *CommandResult {
 		}
 	}
 
-	output.WriteString(fmt.Sprintf("\nTotal: %d tool-capable providers\n", len(toolProviders)))
+	perModel := providers.GetPerModelToolProviders()
+	if len(perModel) > 0 {
+		output.WriteString("\nTools depend on the model (checked against the live catalogue):\n")
+		for _, name := range perModel {
+			output.WriteString(fmt.Sprintf("  %s\n", name))
+		}
+	}
+
+	output.WriteString(fmt.Sprintf("\nTotal: %d tool-capable providers, plus %d where it depends on the model\n", len(toolProviders), len(perModel)))
 
 	return &CommandResult{
 		Success:      true,
@@ -214,9 +220,10 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 
 	// Capabilities
 	output.WriteString("\nCAPABILITIES:\n")
-	output.WriteString(fmt.Sprintf("  Function Calling:    %s\n", boolToStatus(caps.SupportsFunctionCalling)))
 	if !caps.SupportsFunctionCalling && caps.ToolsPerModel {
-		output.WriteString("                       (some models support tools, but per-model tool support is not wired into chat yet)\n")
+		output.WriteString("  Function Calling:    ◐ Per model (checked against the live catalogue)\n")
+	} else {
+		output.WriteString(fmt.Sprintf("  Function Calling:    %s\n", boolToStatus(caps.SupportsFunctionCalling)))
 	}
 	output.WriteString(fmt.Sprintf("  Model Listing:       %s\n", boolToStatus(caps.SupportsModelListing)))
 	output.WriteString(fmt.Sprintf("  Token Tracking:      %s\n", boolToStatus(caps.SupportsTokenTracking)))
@@ -293,7 +300,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "venice":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: 🔜 Ready\n")
-		output.WriteString("  Status: Chat works; tools are off until per-model gating lands\n")
+		output.WriteString("  Status: Model-dependent tool support\n")
 	case "anthropic":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: 🔜 Ready\n")
@@ -328,7 +335,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "venice":
 		output.WriteString("  • Uncensored models available\n")
 		output.WriteString("  • venice-uncensored: NO function calling\n")
-		output.WriteString("  • llama-3.3-70b supports tools, but chat does not use them yet\n")
+		output.WriteString("  • llama-3.3-70b: supports tools\n")
 		output.WriteString("  • Privacy-focused provider\n")
 	case "anthropic":
 		output.WriteString("  • 200k context window\n")

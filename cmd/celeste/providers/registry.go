@@ -269,6 +269,24 @@ func GetPerModelToolProviders() []string {
 	return providers
 }
 
+// ToolsEnabledForModel reports whether celeste should offer tool calling for
+// this provider/model pair. Most providers decide at the provider level
+// (SupportsFunctionCalling); a ToolsPerModel provider (Venice) decides per
+// model instead, since most of its models have no tool support but some do
+// (#151). The chat's skillsEnabled gate calls this instead of reading
+// SupportsFunctionCalling directly, so Venice stops being "no tools" for
+// every model.
+func ToolsEnabledForModel(provider, modelID string) bool {
+	caps, ok := GetProvider(provider)
+	if !ok {
+		return false
+	}
+	if caps.ToolsPerModel {
+		return NewModelDetection(provider).SupportsTools(modelID)
+	}
+	return caps.SupportsFunctionCalling
+}
+
 // DetectProvider attempts to detect provider from base URL.
 func DetectProvider(baseURL string) string {
 	for name, caps := range Registry {

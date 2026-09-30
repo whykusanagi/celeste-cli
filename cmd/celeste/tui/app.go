@@ -1495,8 +1495,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Update skills availability and auto-select best model
 					if caps, ok := providers.GetProvider(m.provider); ok {
-						m.skillsEnabled = caps.SupportsFunctionCalling
-
 						// AUTO-SELECT: Choose best tool-calling model for this provider
 						if caps.PreferredToolModel != "" {
 							m.model = caps.PreferredToolModel
@@ -1522,6 +1520,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 
+						// Recompute after the model is chosen: a ToolsPerModel
+						// provider (Venice) only knows tool support per model
+						// (#151 W6b).
+						m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 						LogInfo(fmt.Sprintf("Provider detected: %s, skills enabled: %v", m.provider, m.skillsEnabled))
 					}
 
@@ -1588,6 +1590,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.model = *result.StateChange.Model
 					m.header = m.header.SetModel(m.model)
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to %s", m.model))
+
+					// A ToolsPerModel provider (Venice) only knows tool
+					// support per model (#151 W6b).
+					m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
+					m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
 
 					// Actually change the model
 					if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
@@ -2321,15 +2328,17 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.model = modelName
 					m.header = m.header.SetModel(modelName)
 
-					// Check provider capabilities for the current provider
+					// Check provider capabilities for the current provider.
+					// A ToolsPerModel provider (Venice) decides per model, so
+					// this can turn skills on as well as off (#151 W6b).
 					if m.provider != "" {
-						if caps, ok := providers.GetProvider(m.provider); ok {
-							// Check if provider supports function calling
-							if !caps.SupportsFunctionCalling {
-								m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚠️ Warning: Provider '%s' does not support function calling. Skills will be unavailable.", m.provider))
-								m.skillsEnabled = false
-								m.header = m.header.SetSkillsEnabled(false)
+						if _, ok := providers.GetProvider(m.provider); ok {
+							enabled := providers.ToolsEnabledForModel(m.provider, modelName)
+							if !enabled && m.skillsEnabled {
+								m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚠️ Warning: model '%s' does not support function calling. Skills will be unavailable.", modelName))
 							}
+							m.skillsEnabled = enabled
+							m.header = m.header.SetSkillsEnabled(enabled)
 						}
 					}
 
@@ -2717,6 +2726,14 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			m.model = model
 			m.header = m.header.SetModel(model)
 
+			// A ToolsPerModel provider (Venice) only knows whether tools are
+			// available once the model is known (#151 W6b); recompute now
+			// that the session's model has replaced WithEndpoint's guess.
+			if m.provider != "" {
+				m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
+				m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
+			}
+
 			// Initialize context tracker with session and model
 			// Convert Session interface to *config.Session for ContextTracker
 			if configSession, ok := session.(*config.Session); ok {
@@ -2805,7 +2822,7 @@ func (m AppModel) WithEndpoint(endpoint string) AppModel {
 
 		// Check provider capabilities
 		if caps, ok := providers.GetProvider(m.provider); ok {
-			m.skillsEnabled = caps.SupportsFunctionCalling
+			m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 			m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
 			LogInfo(fmt.Sprintf("✓ Provider '%s' function calling support: %v", m.provider, m.skillsEnabled))
 
