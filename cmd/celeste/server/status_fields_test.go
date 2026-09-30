@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -59,7 +60,7 @@ func parseStatus(t *testing.T, raw json.RawMessage) statusFields {
 }
 
 // A fresh server on an unindexed workspace with no grimoire reports all
-// three fields, empty.
+// three fields, empty, and leaves no trace under ~/.celeste/projects.
 func TestStatusReportsEmptyGrimoireProjectAndCost(t *testing.T) {
 	cfg, _ := contractCfg(t, nil)
 	res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste_status", "arguments": map[string]any{}}})
@@ -72,6 +73,12 @@ func TestStatusReportsEmptyGrimoireProjectAndCost(t *testing.T) {
 	}
 	if st.SessionCost.Requests != 0 || st.SessionCost.TotalCostUSD != 0 {
 		t.Errorf("session_cost = %+v, want zero", st.SessionCost)
+	}
+	// contractCfg points HOME at a temp dir. A status call must not create
+	// the per-project directory for a workspace that was never indexed.
+	home, _ := os.UserHomeDir()
+	if _, err := os.Stat(filepath.Join(home, ".celeste", "projects")); !os.IsNotExist(err) {
+		t.Errorf("celeste_status created %s (stat err: %v)", filepath.Join(home, ".celeste", "projects"), err)
 	}
 }
 

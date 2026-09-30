@@ -574,7 +574,7 @@ func grimoireStatus(workspace string) map[string]any {
 
 // projectStatus reports whether the workspace has a built code graph and its
 // size. It opens an index only when one exists on disk (or is cached), so a
-// status call never builds or creates an index.
+// status call never builds an index or creates its directory.
 func (s *Server) projectStatus(workspace string) map[string]any {
 	out := map[string]any{"indexed": false}
 	if workspace == "" {
@@ -584,7 +584,7 @@ func (s *Server) projectStatus(workspace string) map[string]any {
 	idx := s.indexers[workspace]
 	s.indexerMu.Unlock()
 	if idx == nil {
-		if _, err := os.Stat(codegraph.DefaultIndexPath(workspace)); err != nil {
+		if _, err := os.Stat(codegraph.IndexPath(workspace)); err != nil {
 			return out
 		}
 		var err error
