@@ -75,7 +75,7 @@ func DefaultConfigPath() string {
 // it returns DefaultConfig() without error. If the file exists but contains
 // invalid JSON or an unrecognized mode, it returns an error.
 func LoadConfig(path string) (*PermissionConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := readFileRetry(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			cfg := DefaultConfig()
@@ -175,6 +175,22 @@ func writeFileAtomic(path string, data []byte) (err error) {
 		return err
 	}
 	return renameRetry(tmpName, path)
+}
+
+// readFileRetry reads path, retrying briefly: on Windows opening a file
+// while a save is renaming over it fails with a sharing violation. A missing
+// file returns at once. Falling back to defaults here would drop the user's
+// deny rules, so a transient failure must not surface.
+func readFileRetry(path string) ([]byte, error) {
+	var err error
+	for i := 0; i < 20; i++ {
+		var data []byte
+		if data, err = os.ReadFile(path); err == nil || errors.Is(err, os.ErrNotExist) {
+			return data, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil, err
 }
 
 // renameRetry renames, retrying briefly: on Windows a rename over a file that
