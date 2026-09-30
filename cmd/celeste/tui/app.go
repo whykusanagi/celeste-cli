@@ -168,6 +168,21 @@ type AppModel struct {
 	// Running token totals for the current agent run
 	agentInputTokens  int
 	agentOutputTokens int
+	// agentActive is set while an /agent command runs.
+	agentActive bool
+
+	// The run each modal belongs to (none: it stays until answered). When
+	// that run ends, its modal is answered (deny, cancelled) and closed, so
+	// it never stays up swallowing keys and holding the Gate's lock.
+	permissionOwner runOwner
+	askOwner        runOwner
+
+	// planning keeps /plan's "Planning..." status until the reply streams.
+	planning bool
+	// stopHookRunning is set while the Stop hook decides whether the turn
+	// may end; heldReady is the "Ready" status it shows when the turn ends.
+	stopHookRunning bool
+	heldReady       string
 
 	// Graceful Ctrl+C handling
 	cancelFunc       context.CancelFunc
@@ -763,6 +778,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.streaming = true
+				m.agentActive = true
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
@@ -989,6 +1005,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					var turnCmd tea.Cmd
 					m, turnCmd = m.startTurn()
 					m.status = m.status.SetText("Planning...")
+					m.planning = m.turn != nil
 					return m, turnCmd
 				}
 				return m, nil
@@ -1786,6 +1803,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var turnCmd tea.Cmd
 		m, turnCmd = m.startTurn()
 		cmds = append(cmds, turnCmd)
+		if m.turn != nil {
+			// The spinner animates from Enter, also while a
+			// UserPromptSubmit hook runs before the first request.
+			cmds = append(cmds, tickCmd(typingTickInterval*2))
+		}
 
 	case GenerateMediaMsg:
 		// Generate media asynchronously via Venice.ai
@@ -1978,11 +2000,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PermissionRequestMsg:
 		var cmd tea.Cmd
 		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
+		m.permissionOwner = m.currentRun()
 		cmds = append(cmds, cmd)
 
 	case AskRequestMsg:
 		var cmd tea.Cmd
 		m.askPrompt, cmd = m.askPrompt.Update(msg)
+		m.askOwner = m.currentRun()
 		cmds = append(cmds, cmd)
 
 	case GitStatusMsg:
@@ -2086,6 +2110,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case AgentProgressComplete:
+			m = m.endAgentRun()
 			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
@@ -2100,6 +2125,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.persistSession()
 
 		case AgentProgressError:
+			m = m.endAgentRun()
 			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
@@ -2219,6 +2245,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.AddAction(label)
 			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
+			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2235,6 +2262,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.persistSession()
 		case 8: // EventError
+			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2251,6 +2279,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case AgentCommandResultMsg:
+		m = m.endAgentRun()
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
 
@@ -2429,6 +2458,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.status = m.status.SetText("Ready")
 				}
+				if m.stopHookRunning {
+					// The turn is not over yet: shown when it ends.
+					m.heldReady = m.status.text
+					m.status = m.status.SetText(stopHookStatus)
+				}
 
 				// Clear completed tool progress entries now that the
 				// response is fully rendered — no need to keep them
@@ -2440,7 +2474,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else if m.streaming {
 			// Just streaming (waiting for response) - show animated status
-			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
+			if !m.planning {
+				m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
+			}
 			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
 				return TickMsg{Time: t}
 			}))

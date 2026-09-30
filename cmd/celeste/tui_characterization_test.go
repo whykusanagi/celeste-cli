@@ -204,7 +204,7 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	// So: assert layer 2's notice (what the model actually sees) and verify
 	// layer 1's disk side effect (the full, uncapped result spilled to disk)
 	// directly via its documented, deterministic path — sessionID
-	// "tui-<pid>" (the loop's spill (cmd/celeste/loop/exec.go)) and toolCallID "big" (this test's
+	// "tui-<pid>" (the loop's spill, cmd/celeste/loop/exec.go) and toolCallID "big" (this test's
 	// fakeprovider.ToolCall.ID) — rather than by parsing it out of content
 	// that no longer contains it.
 	// known bug: spec F3 deletes trimHook — flip these assertions then.

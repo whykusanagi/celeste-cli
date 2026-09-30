@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -88,6 +89,10 @@ type StopContinueMsg struct {
 	Reason  string
 }
 
+// StopHookStartMsg: the reply is in and the Stop hook is deciding whether
+// the turn may end. The turn is still running until TurnDoneMsg.
+type StopHookStartMsg struct{}
+
 // TurnDoneMsg ends the turn.
 type TurnDoneMsg struct {
 	Stop      string   // the loop's StopReason: done, cap, identical, progress, invalid_args, interrupted, error, blocked
@@ -145,12 +150,20 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		m = m.finishTyping()
 		m.toolProgress.ClearCompleted()
 		if !m.interrupted {
+			// While streaming, a tick chain is already running (Enter
+			// started it, or the reply typing): a second would double the
+			// spinner's speed.
+			ticking := m.streaming
 			m.streaming = true
 			m.streamStart = time.Now()
 			m.lastMsgInTok, m.lastMsgOutTok = 0, 0
 			m.status = m.status.SetStreaming(true)
-			m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
-			cmds = append(cmds, tickCmd(typingTickInterval*2))
+			if !m.planning {
+				m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
+			}
+			if !ticking {
+				cmds = append(cmds, tickCmd(typingTickInterval*2))
+			}
 		}
 	case StreamChunkMsg:
 		var more []tea.Cmd
@@ -161,6 +174,7 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		m, more = m.onStreamDone(msg)
 		cmds = append(cmds, more...)
 	case ToolTurnMsg:
+		m.planning = false
 		if !m.interrupted {
 			m = m.recordUsage(msg.Usage, "")
 			m = m.finishTyping()
@@ -201,8 +215,22 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		// joins after it, so it is never an empty bubble in the middle of
 		// the history when the next run's snapshots arrive.
 		m = m.finishTyping()
+		if m.stopHookRunning && !m.interrupted {
+			// The continuation's run is starting: the spinner, not the
+			// Stop hook status, until its first TurnStartMsg.
+			m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
+		}
+		m.stopHookRunning, m.heldReady = false, ""
 		m.chat = m.chat.AddSystemMessage("↻ A Stop hook asked to continue: " + msg.Reason)
 		m.chat = m.chat.AppendLLM(msg.Message)
+	case StopHookStartMsg:
+		// Input typed now waits for the turn; say why instead of "Ready".
+		// A reply still typing shows this when it commits (TickMsg).
+		m.stopHookRunning = true
+		if m.typingContent == "" {
+			m.heldReady = m.status.text
+			m.status = m.status.SetText(stopHookStatus)
+		}
 	case HookWarningMsg:
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
 	case TurnDoneMsg:
@@ -239,10 +267,30 @@ func (m AppModel) onToolStart(msg ToolStartMsg) (AppModel, tea.Cmd) {
 	return m, nil
 }
 
+// stopHookStatus is the status while the Stop hook runs.
+const stopHookStatus = "Running Stop hook…"
+
+// toolErrorText is the message of a failed call's result: the loop's JSON
+// envelope ({"error": true, "message": ...}) or, failing that, the content.
+func toolErrorText(content string) string {
+	var env struct {
+		Error   bool   `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(content), &env) == nil && env.Error && env.Message != "" {
+		return env.Message
+	}
+	return content
+}
+
 func (m AppModel) onToolResult(msg ToolResultMsg) AppModel {
 	var err error
+	card := msg.Content
 	if msg.IsError {
-		err = errors.New(msg.Content)
+		// The card says "Error: <message>", as before the loop; the model
+		// gets the envelope through the loop's history.
+		err = errors.New(toolErrorText(msg.Content))
+		card = "Error: " + err.Error()
 	}
 	LogSkillResult(msg.Name, msg.Content, err)
 	prog := ToolProgressMsg{ToolCallID: msg.ID, ToolName: msg.Name, State: "done"}
@@ -258,7 +306,7 @@ func (m AppModel) onToolResult(msg ToolResultMsg) AppModel {
 		}
 	}
 	m.toolProgress, _ = m.toolProgress.Update(prog)
-	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, msg.Content)
+	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, card)
 	if msg.IsError {
 		m.skills = m.skills.SetError(msg.Name, err)
 		return m
@@ -309,6 +357,16 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 	}
 	m.turn = nil
 	m.loopSteers = 0
+	m.planning = false
+	// A modal this turn opened would outlive it: answer it and close it.
+	m = m.closeModalsOf(runOwner{kind: ownerTurn, run: m.turnRun})
+	if m.stopHookRunning {
+		m.stopHookRunning = false
+		if m.heldReady != "" {
+			m.status = m.status.SetText(m.heldReady)
+		}
+		m.heldReady = ""
+	}
 	if msg.Stop != "interrupted" && !m.interrupted {
 		// Kept after an interrupt, so a second Ctrl+C within 3s still quits,
 		// also when the turn finished before the cancel reached it.
@@ -367,6 +425,7 @@ func (m AppModel) onStreamChunk(msg StreamChunkMsg) (AppModel, []tea.Cmd) {
 		m.typingContent += msg.Chunk.Content // the running ticker picks it up
 		return m, nil
 	}
+	m.planning = false
 	m.chat = m.chat.AddAssistantMessage("")
 	m.chat = m.chat.SetTypingActive(true) // skip Glamour for the corruption buffer
 	m.typingContent = msg.Chunk.Content
@@ -386,6 +445,7 @@ func (m AppModel) onStreamDone(msg StreamDoneMsg) (AppModel, []tea.Cmd) {
 		return m, nil // the request Esc cancelled finished anyway; its reply is dropped
 	}
 	m.interruptPending = false
+	m.planning = false
 	m.streamDone = true
 	m = m.recordUsage(msg.Usage, msg.FullContent)
 	var cmds []tea.Cmd
@@ -458,5 +518,57 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 		}
 		// Leave lastMsgInTok/lastMsgOutTok at 0 so the TickMsg inferred path runs.
 	}
+	return m
+}
+
+// Modal owners: the run a permission or ask modal was opened for.
+const (
+	ownerTurn  = "turn"
+	ownerOrch  = "orch"
+	ownerAgent = "agent"
+)
+
+type runOwner struct {
+	kind string // "" = no run: the modal stays until answered
+	run  uint64 // the turn or /orch run; 0 for /agent
+}
+
+// currentRun is the run a modal opened now belongs to. A chat turn, an /orch
+// run and an /agent run never overlap (commands wait for a running turn).
+func (m AppModel) currentRun() runOwner {
+	switch {
+	case m.turn != nil:
+		return runOwner{kind: ownerTurn, run: m.turnRun}
+	case m.orchRun != 0:
+		return runOwner{kind: ownerOrch, run: m.orchRun}
+	case m.agentActive:
+		return runOwner{kind: ownerAgent}
+	}
+	return runOwner{}
+}
+
+// closeModalsOf answers and closes the modals of a run that has ended: the
+// permission modal denies, the ask modal cancels.
+func (m AppModel) closeModalsOf(o runOwner) AppModel {
+	if o.kind == "" {
+		return m
+	}
+	if m.permissionPrompt.Active() && m.permissionOwner == o {
+		m.permissionPrompt = m.permissionPrompt.Dismiss()
+		m.permissionOwner = runOwner{}
+	}
+	if m.askPrompt.Active() && m.askOwner == o {
+		m.askPrompt = m.askPrompt.Dismiss()
+		m.askOwner = runOwner{}
+	}
+	return m
+}
+
+// endAgentRun closes the modals of the /agent run that just ended.
+func (m AppModel) endAgentRun() AppModel {
+	if m.agentActive {
+		m = m.closeModalsOf(runOwner{kind: ownerAgent})
+	}
+	m.agentActive = false
 	return m
 }

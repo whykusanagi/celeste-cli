@@ -99,7 +99,10 @@ type chatTurn struct {
 	cancel    context.CancelFunc
 	box       *mailbox
 	compactor *chatCompactor // nil without a context window
-	model     string         // for costs; read on the Update goroutine
+	model     string         // for costs and the log; set on the Update goroutine
+	endpoint  string         // for the log
+	tools     int            // tool definitions offered, for the log
+	msgs      int            // pump goroutine only: the last snapshot's length, for the log
 	start     sync.Once
 }
 
@@ -118,8 +121,10 @@ func (t *chatTurn) Leftover() []string { return t.loop.TakeSteers() }
 // cancels it.
 func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd) {
 	ctx, cancel := context.WithCancel(a.lifeContext())
-	t := &chatTurn{ctx: ctx, cancel: cancel, box: newMailbox(), model: a.client.GetConfig().Model}
+	cfg := a.client.GetConfig()
+	t := &chatTurn{ctx: ctx, cancel: cancel, box: newMailbox(), model: cfg.Model, endpoint: cfg.BaseURL, msgs: len(req.History)}
 	t.loop = a.newTurnLoop(req, t)
+	t.tools = len(t.loop.Client.GetSkills())
 	read := t.box.reader(req.Run)
 	return t, func() tea.Msg {
 		t.start.Do(func() {
@@ -201,6 +206,7 @@ func (a *TUIClientAdapter) stopHook(t *chatTurn, final string, continued bool, t
 	if !a.hooks.Has(hooks.EventStop) {
 		return ""
 	}
+	t.box.put(tui.StopHookStartMsg{})
 	out := a.hooks.Stop(t.ctx, final)
 	if out.Decision != hooks.Deny {
 		return ""
@@ -243,23 +249,31 @@ func (a *TUIClientAdapter) runOnce(t *chatTurn, history []tui.ChatMessage) ([]tu
 }
 
 // translate turns one loop event into the chat's messages, on the pump
-// goroutine: it touches only the turn and the thread-safe cost tracker.
+// goroutine: it touches only the turn, the thread-safe cost tracker and the
+// log file (requests and responses, as the chat logged them before the loop).
 func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []tea.Msg {
 	switch ev.Kind {
 	case loop.EventTurnStart:
 		*first = true
+		tui.LogInfo(fmt.Sprintf("→ Sending request to: %s (model: %s)", t.endpoint, t.model))
+		tui.LogLLMRequest(t.msgs, t.tools)
 		return []tea.Msg{tui.TurnStartMsg{Turn: ev.Turn}}
 	case loop.EventTextDelta:
 		chunk := tui.StreamChunkMsg{Chunk: tui.StreamChunk{Content: ev.Text, IsFirst: *first}}
 		*first = false
 		return []tea.Msg{chunk}
 	case loop.EventAssistant:
+		tui.LogLLMResponse(len(ev.Text), len(ev.ToolNames) > 0)
+		for _, name := range ev.ToolNames {
+			tui.LogInfo("LLM requested tool call: " + name)
+		}
 		usage := a.recordUsage(t.model, ev.Usage)
 		if len(ev.ToolNames) == 0 {
 			return []tea.Msg{tui.StreamDoneMsg{FullContent: ev.Text, FinishReason: "stop", Usage: usage}}
 		}
 		return []tea.Msg{tui.ToolTurnMsg{Text: ev.Text, Usage: usage}}
 	case loop.EventPromptsChecked, loop.EventCallsRecorded, loop.EventTurnEnd:
+		t.msgs = len(ev.History)
 		return []tea.Msg{tui.HistoryMsg{History: withoutEmptyReplies(ev.History)}}
 	case loop.EventToolStart:
 		return []tea.Msg{tui.ToolStartMsg{ID: ev.Call.ID, Name: ev.Call.Name, Args: ev.Call.Input}}
@@ -297,8 +311,12 @@ func (a *TUIClientAdapter) recordUsage(model string, u *llm.TokenUsage) *tui.Tok
 	if u == nil {
 		return nil
 	}
+	tui.LogInfo(fmt.Sprintf("  Usage: %d prompt + %d completion = %d tokens", u.PromptTokens, u.CompletionTokens, u.TotalTokens))
 	if a.costTracker != nil {
 		a.costTracker.RecordUsage(model, u.PromptTokens, u.CompletionTokens)
+		if summary := a.costTracker.GetSummary(); summary.TotalCostUSD > 0 {
+			tui.LogInfo(fmt.Sprintf("Session cost: $%.4f (%d turns)", summary.TotalCostUSD, summary.Turns))
+		}
 	}
 	return &tui.TokenUsage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 }
@@ -314,6 +332,9 @@ func (a *TUIClientAdapter) doneMsg(t *chatTurn, res loop.Result, err error) tui.
 	switch res.StopReason {
 	case loop.StopError:
 		done.Err = err
+		tui.LogInfo(fmt.Sprintf("LLM error: %v", err))
+		tui.LogInfo("  Endpoint: " + t.endpoint)
+		tui.LogInfo("  Model: " + t.model)
 	case loop.StopCap:
 		done.Notice = fmt.Sprintf("⚠️ Tool loop stopped after %d turn(s). Send another message to continue.", res.Turns)
 	case loop.StopIdentical:

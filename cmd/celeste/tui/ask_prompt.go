@@ -93,6 +93,20 @@ func (m *AskPromptModel) send(resp AskResponseMsg) {
 	m.response = nil
 }
 
+// Dismiss answers cancelled and closes the modal: its run has ended. The
+// send never blocks (the bridge's channel is buffered; nobody may read it now).
+func (m AskPromptModel) Dismiss() AskPromptModel {
+	if m.response != nil {
+		select {
+		case m.response <- AskResponseMsg{Cancelled: true}:
+		default:
+		}
+	}
+	m.active = false
+	m.response = nil
+	return m
+}
+
 func (m AskPromptModel) View() string {
 	if !m.active {
 		return ""

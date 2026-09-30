@@ -86,6 +86,20 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 	return m, nil
 }
 
+// Dismiss answers deny and closes the modal: its run has ended. The send
+// never blocks (the bridge's channel is buffered; nobody may read it now).
+func (m PermissionPromptModel) Dismiss() PermissionPromptModel {
+	if m.response != nil {
+		select {
+		case m.response <- PermissionResponse{Decision: "deny"}:
+		default:
+		}
+	}
+	m.active = false
+	m.response = nil
+	return m
+}
+
 // buildPattern constructs a rule pattern from the current tool info.
 // It returns the bare tool name so that the persisted always-allow/deny rule
 // matches ANY future invocation of the same tool, regardless of arguments.

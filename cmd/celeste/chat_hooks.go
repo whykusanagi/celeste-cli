@@ -57,9 +57,9 @@ func (s *chatWarnSink) done() []string {
 }
 
 // checkPrompt is the chat's loop.PromptCheck: UserPromptSubmit for every new
-// prompt, and for each steer when it joins (2.0 F2d; replaces
-// applyPromptHooks). Hook context rides in metadata; the loop appends it to
-// the copy it sends.
+// prompt, and for each steer when it joins (2.0 F2d). Hook context rides in
+// the message's metadata (tui.MetaHookContext); the loop appends it to the
+// copy it sends.
 func (a *TUIClientAdapter) checkPrompt(ctx context.Context, msg tui.ChatMessage) (tui.ChatMessage, loop.PromptVerdict, error) {
 	if !a.hooks.Has(hooks.EventUserPromptSubmit) { // Has is nil-safe
 		return msg, loop.PromptVerdict{}, nil

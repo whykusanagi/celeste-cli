@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
@@ -377,6 +378,112 @@ func TestRunTurnEmptyReplyInTheChatHistoryDoesNotDuplicateAPrompt(t *testing.T) 
 		m, _ := raw.(map[string]any)
 		if m["role"] == "assistant" && (m["content"] == nil || m["content"] == "") && m["tool_calls"] == nil {
 			t.Fatalf("request carried an empty assistant message: %v", sent)
+		}
+	}
+}
+
+// readTurnLog runs fn with the log file on and returns what it logged.
+func readTurnLog(t *testing.T, fn func()) string {
+	t.Helper()
+	if err := tui.InitLogging(); err != nil {
+		t.Fatal(err)
+	}
+	path := tui.GetLogPath()
+	fn()
+	tui.CloseLogging()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// The log file records each request (endpoint, model, message and tool
+// counts), each response and its usage, and the session cost, as the chat
+// did before it ran on the loop. Nothing of it reaches the chat.
+func TestRunTurnLogsRequestsResponsesAndCost(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: `{"path":"a.txt"}`}}},
+		fakeprovider.Turn{Text: "it says alpha"},
+	)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	writeFile(t, ws, "a.txt", "alpha")
+	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "gpt-4.1", Timeout: 10}
+	_, deps, err := newChatApp(cfg, ws, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	var msgs []tea.Msg
+	log := readTurnLog(t, func() {
+		msgs = runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("read a.txt"), Tools: true, Run: 1})
+	})
+	for _, want := range []string{
+		"→ Sending request to: " + srv.BaseURL() + " (model: gpt-4.1)",
+		"LLM_REQUEST: 1 messages,",
+		"LLM_RESPONSE: 0 chars, HAS TOOL CALLS",
+		"LLM requested tool call: read_file",
+		"LLM_REQUEST: 3 messages,",
+		"LLM_RESPONSE: 13 chars, no tool calls",
+		"Usage: 100 prompt + 10 completion = 110 tokens",
+		"Session cost: $",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q:\n%s", want, log)
+		}
+	}
+	if n := strings.Count(log, "→ Sending request to:"); n != 2 {
+		t.Errorf("logged %d requests, want 2", n)
+	}
+	if strings.Contains(log, "LLM_REQUEST: 1 messages, 0 tools") {
+		t.Errorf("no tools counted:\n%s", log)
+	}
+	for _, m := range msgs {
+		if w, ok := m.(tui.HookWarningMsg); ok {
+			t.Errorf("the log reached the chat: %q", w.Text)
+		}
+	}
+}
+
+// A failed request logs the error with the endpoint and model.
+func TestRunTurnLogsTheErrorWithEndpointAndModel(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Status: 400})
+	_, deps, _ := chatApp(t, srv)
+	var msgs []tea.Msg
+	log := readTurnLog(t, func() {
+		msgs = runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1})
+	})
+	if done := msgs[len(msgs)-1].(tui.TurnDoneMsg); done.Stop != "error" {
+		t.Fatalf("done = %+v, want an error", done)
+	}
+	for _, want := range []string{"LLM error: ", "  Endpoint: " + srv.BaseURL(), "  Model: fake-model"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q:\n%s", want, log)
+		}
+	}
+}
+
+// The chat hears when the Stop hook starts, after the reply and before the
+// turn ends, and only when a Stop hook is configured.
+func TestRunTurnAnnouncesTheStopHook(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "done"})
+	_, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
+		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "allow"))
+	})
+	msgs := runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1})
+	want := []string{"tui.HistoryMsg", "tui.TurnStartMsg", "tui.StreamDoneMsg", "tui.HistoryMsg", "tui.StopHookStartMsg", "tui.TurnDoneMsg"}
+	if got := turnKinds(msgs); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("messages = %v\nwant %v", got, want)
+	}
+
+	srv2 := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "done"})
+	_, deps2, _ := chatApp(t, srv2)
+	for _, m := range runTurnMsgs(t, deps2.adapter, tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1}) {
+		if _, ok := m.(tui.StopHookStartMsg); ok {
+			t.Fatal("StopHookStartMsg without a Stop hook")
 		}
 	}
 }
