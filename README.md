@@ -1041,9 +1041,9 @@ celeste message "What is the meaning of life?"
 celeste "Hello, Celeste!"
 ```
 
-A single lowercase word that is not a command (`celeste models`) is taken as a
-mistyped command: it errors with a suggestion instead of reaching the model. Send
-one word with `celeste message <word>`.
+`celeste models`, `celeste model` and `celeste status` are not commands: on their
+own they print a hint instead of reaching the model. Send one of those words with
+`celeste message <word>`. Any other text, one word included, is a message.
 
 ### Session Management
 
