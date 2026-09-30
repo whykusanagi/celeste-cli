@@ -44,6 +44,16 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		fmt.Fprintf(os.Stderr, "Warning: failed to init logging: %v\n", err)
 	}
 
+	// Kick off Venice's live tool-catalog fetch now, in the background, so
+	// the rest of this function's setup work (loop.Setup, tool
+	// registration) gives it a head start before the TUI's synchronous
+	// per-model tool gate (WithEndpoint, below) needs the answer (#151 W6b
+	// review: that gate previously could block on a cold network fetch from
+	// inside a UI update handler).
+	if providers.DetectProvider(cfg.BaseURL) == "venice" {
+		go providers.WarmVeniceToolCatalog()
+	}
+
 	// The session comes before Setup: its ID is the hooks' session_id.
 	// A fresh session per chat unless `celeste resume <id>` asked for one
 	// (auto-resume leaked agent markers into chat).

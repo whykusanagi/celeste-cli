@@ -70,3 +70,12 @@ func loadVeniceToolSupport() map[string]bool {
 func VeniceToolSupport(modelID string) (supported, known bool) {
 	return lookupToolSupport(loadVeniceToolSupport(), modelID)
 }
+
+// WarmVeniceToolCatalog fetches and caches the live Venice catalog (the same
+// sync.Once-guarded fetch VeniceToolSupport uses) without blocking on the
+// result. Callers that know they're about to need it — the chat starting up
+// on a Venice profile — run this in a goroutine as early as possible so the
+// later synchronous call in the TUI's per-model tool gate (#151 W6b) is more
+// likely to find the catalog already cached instead of blocking on a cold
+// network fetch (up to 4s) from inside a UI update handler.
+func WarmVeniceToolCatalog() { loadVeniceToolSupport() }
