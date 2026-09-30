@@ -612,3 +612,53 @@ func formatArgs(args map[string]any) string {
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
 }
+
+// SyncLLM makes the chat's LLM messages match history, a snapshot of a
+// running turn's loop history (2.0 F2d). The loop only appends messages and
+// rewrites tool results in place (pruning), and its input was this chat's
+// GetLLMMessages, so the chat's LLM messages line up with history position
+// by position: each takes its history version (content, tool calls,
+// metadata) and the rest of history is appended. System lines and
+// summarized messages are not LLM messages and keep their places. With
+// keepLive, the last LLM message keeps its content if it is an assistant
+// reply still being typed out.
+func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
+	last := -1
+	for i, msg := range m.messages {
+		if msg.Role != "system" && !isCompacted(msg) {
+			last = i
+		}
+	}
+	msgs := make([]ChatMessage, 0, len(m.messages)+len(history))
+	j := 0
+	for i, msg := range m.messages {
+		if msg.Role == "system" || isCompacted(msg) || j >= len(history) {
+			msgs = append(msgs, msg)
+			continue
+		}
+		h := history[j]
+		j++
+		if keepLive && i == last && msg.Role == "assistant" && h.Role == "assistant" {
+			h.Content = msg.Content
+		}
+		msgs = append(msgs, h)
+	}
+	msgs = append(msgs, history[j:]...)
+	m.messages = msgs
+	m.updateContent()
+	if !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+// AppendLLM adds one message as the loop recorded it (a steer that joined,
+// a Stop hook's continuation), metadata included.
+func (m ChatModel) AppendLLM(msg ChatMessage) ChatModel {
+	m.messages = append(append([]ChatMessage(nil), m.messages...), msg)
+	m.updateContent()
+	if !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
+	return m
+}

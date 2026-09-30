@@ -107,6 +107,8 @@ type PromptBlockedMsg struct {
 	// Cancelled means the hook was cut short by an interrupt: the prompt
 	// is kept, unchecked, and nothing is reported.
 	Cancelled bool
+	// Steer marks a blocked steer: it never entered the chat.
+	Steer bool
 }
 
 // HookWarningMsg shows a hook warning in the chat.
