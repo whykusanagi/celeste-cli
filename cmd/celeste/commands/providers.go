@@ -76,6 +76,8 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 		toolSupport := "[NO TOOLS]"
 		if caps.SupportsFunctionCalling {
 			toolSupport = "[TOOLS]"
+		} else if caps.ToolsPerModel {
+			toolSupport = "[PER MODEL]"
 		}
 
 		// Build provider line
@@ -86,6 +88,9 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 			output.WriteString(fmt.Sprintf(" %s (preferred)", caps.PreferredToolModel))
 		} else if caps.DefaultModel != "" {
 			output.WriteString(fmt.Sprintf(" %s (default)", caps.DefaultModel))
+		}
+		if caps.DefaultModelUnverified {
+			output.WriteString(" (unverified)")
 		}
 
 		// Special notes
@@ -113,6 +118,8 @@ func listAllProviders(ctx *CommandContext) *CommandResult {
 		output.WriteString("\n")
 	}
 
+	output.WriteString(fmt.Sprintf("\nTotal: %d providers: %d with tools, %d where it depends on the model\n",
+		len(allProviders), len(providers.GetToolCallingProviders()), len(providers.GetPerModelToolProviders())))
 	output.WriteString("\nUse: /providers info <name> for details\n")
 
 	return &CommandResult{
@@ -155,12 +162,23 @@ func listToolProviders(ctx *CommandContext) *CommandResult {
 			} else if caps.DefaultModel != "" {
 				output.WriteString(fmt.Sprintf(" %s", caps.DefaultModel))
 			}
+			if caps.DefaultModelUnverified {
+				output.WriteString(" (unverified)")
+			}
 
 			output.WriteString("\n")
 		}
 	}
 
-	output.WriteString(fmt.Sprintf("\nTotal: %d tool-capable providers\n", len(toolProviders)))
+	perModel := providers.GetPerModelToolProviders()
+	if len(perModel) > 0 {
+		output.WriteString("\nTools depend on the model (checked against the live catalogue):\n")
+		for _, name := range perModel {
+			output.WriteString(fmt.Sprintf("  %s\n", name))
+		}
+	}
+
+	output.WriteString(fmt.Sprintf("\nTotal: %d tool-capable providers, plus %d where it depends on the model\n", len(toolProviders), len(perModel)))
 
 	return &CommandResult{
 		Success:      true,
@@ -195,22 +213,34 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	// API Endpoint
 	if caps.BaseURL != "" {
 		output.WriteString(fmt.Sprintf("API Endpoint:  %s\n", caps.BaseURL))
+	} else if caps.ExampleBaseURL != "" {
+		output.WriteString(fmt.Sprintf("API Endpoint:  your own, for example %s\n", caps.ExampleBaseURL))
 	}
 
 	// Capabilities
 	output.WriteString("\nCAPABILITIES:\n")
-	output.WriteString(fmt.Sprintf("  Function Calling:    %s\n", boolToStatus(caps.SupportsFunctionCalling)))
+	if !caps.SupportsFunctionCalling && caps.ToolsPerModel {
+		output.WriteString("  Function Calling:    ◐ Per model (checked against the live catalogue)\n")
+	} else {
+		output.WriteString(fmt.Sprintf("  Function Calling:    %s\n", boolToStatus(caps.SupportsFunctionCalling)))
+	}
 	output.WriteString(fmt.Sprintf("  Model Listing:       %s\n", boolToStatus(caps.SupportsModelListing)))
 	output.WriteString(fmt.Sprintf("  Token Tracking:      %s\n", boolToStatus(caps.SupportsTokenTracking)))
 	output.WriteString(fmt.Sprintf("  OpenAI Compatible:   %s\n", boolToStatus(caps.IsOpenAICompatible)))
 
 	// Models
 	output.WriteString("\nMODELS:\n")
+	unverified := ""
+	if caps.DefaultModelUnverified {
+		unverified = " (unverified: not checked against the live service)"
+	}
 	if caps.DefaultModel != "" {
-		output.WriteString(fmt.Sprintf("  Default:          %s\n", caps.DefaultModel))
+		output.WriteString(fmt.Sprintf("  Default:          %s%s\n", caps.DefaultModel, unverified))
+	} else {
+		output.WriteString("  Default:          none shipped; set the model your endpoint expects\n")
 	}
 	if caps.PreferredToolModel != "" {
-		output.WriteString(fmt.Sprintf("  Preferred (Tool): %s\n", caps.PreferredToolModel))
+		output.WriteString(fmt.Sprintf("  Preferred (Tool): %s%s\n", caps.PreferredToolModel, unverified))
 	}
 
 	// Authentication Requirements
@@ -233,9 +263,6 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		case "venice":
 			output.WriteString("  Get key: https://venice.ai/\n")
 			output.WriteString("  Format: Venice API key\n")
-		case "vertex":
-			output.WriteString("  Method: OAuth 2.0\n")
-			output.WriteString("  Requires: GCP project setup\n")
 		case "openrouter":
 			output.WriteString("  Get key: https://openrouter.ai/keys\n")
 			output.WriteString("  Format: sk-or-...\n")
@@ -245,6 +272,16 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		case "elevenlabs":
 			output.WriteString("  Get key: https://elevenlabs.io/\n")
 			output.WriteString("  Format: ElevenLabs API key\n")
+		case "sakana":
+			output.WriteString("  Get key: the Fugu installer (curl -fsSL https://sakana.ai/fugu/install | bash) or your Sakana account\n")
+		}
+	} else {
+		switch name {
+		case "vertex":
+			output.WriteString("  Method: Application Default Credentials or a service-account JSON file\n")
+			output.WriteString("  Requires: GCP project with billing\n")
+		default:
+			output.WriteString("  Required: none (celeste still needs a non-empty api_key; any placeholder works)\n")
 		}
 	}
 
@@ -271,6 +308,14 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: ❓ Needs API key\n")
 		output.WriteString("  Status: Configured, pending live validation\n")
+	case "sakana":
+		output.WriteString("  Unit Tests: ✅ PASS\n")
+		output.WriteString("  Integration: 🔜 Ready\n")
+		output.WriteString("  Status: Default provider (fugu)\n")
+	case "local":
+		output.WriteString("  Unit Tests: ✅ PASS\n")
+		output.WriteString("  Integration: run against your own server\n")
+		output.WriteString("  Status: Any OpenAI-compatible server on localhost, any port\n")
 	}
 
 	// Known limitations and features
@@ -316,6 +361,15 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString("  • Cannot use local Celeste skills\n")
 		output.WriteString("  • Requires App Platform deployment\n")
 		output.WriteString("  • Limited to gpt-4o-mini\n")
+	case "sakana":
+		output.WriteString("  • Fugu / Fugu Ultra, 1M context\n")
+		output.WriteString("  • Plans server-side: celeste's local planner stands down\n")
+		output.WriteString("  • Reasoning effort is fixed server-side\n")
+	case "local":
+		output.WriteString("  • mlx-vlm, Ollama, LM Studio, llama.cpp\n")
+		output.WriteString("  • Set the model your server expects (mlx-vlm wants the full path)\n")
+		output.WriteString("  • Set context_limit: the window is unknown (8192 fallback)\n")
+		output.WriteString("  • Cost shows $0: local models have no pricing\n")
 	case "elevenlabs":
 		output.WriteString("  • Voice synthesis API\n")
 		output.WriteString("  • Different use case (not chat)\n")
@@ -325,25 +379,38 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString("  • See provider documentation for details\n")
 	}
 
-	// Example Usage
+	// Example Usage. Named profiles (-config <name>) keep each provider's
+	// key and model apart; without -config these commands would edit the
+	// default profile instead (#151).
+	url := caps.BaseURL
+	if url == "" {
+		url = caps.ExampleBaseURL
+	}
+	model := caps.DefaultModel
+	if model == "" {
+		model = "<model your endpoint expects>"
+	}
+	key, keyNote := "YOUR_API_KEY", ""
+	if !caps.RequiresAPIKey {
+		key, keyNote = "not-needed", "   # any non-empty value; the endpoint ignores it"
+	}
 	output.WriteString("\nEXAMPLE USAGE:\n")
-	if caps.BaseURL != "" {
-		output.WriteString("  # Configure via commands:\n")
-		output.WriteString(fmt.Sprintf("  ./celeste config --set-url %s\n", caps.BaseURL))
+	if url != "" {
+		output.WriteString(fmt.Sprintf("  celeste config -config %s --set-url %s\n", name, url))
 	}
-	if caps.DefaultModel != "" {
-		output.WriteString(fmt.Sprintf("  ./celeste config --set-model %s\n", caps.DefaultModel))
+	output.WriteString(fmt.Sprintf("  celeste config -config %s --set-model %s\n", name, model))
+	if name == "vertex" {
+		output.WriteString("  gcloud auth application-default login\n")
 	}
-	output.WriteString("  ./celeste config --set-key YOUR_API_KEY\n")
-	output.WriteString("\n  # Or edit ~/.celeste/config.json directly:\n")
+	output.WriteString(fmt.Sprintf("  celeste config -config %s --set-key %s%s\n", name, key, keyNote))
+	output.WriteString(fmt.Sprintf("  celeste -config %s chat\n", name))
+	output.WriteString(fmt.Sprintf("\n  # Or edit ~/.celeste/config.%s.json directly:\n", name))
 	output.WriteString("  {\n")
-	if caps.BaseURL != "" {
-		output.WriteString(fmt.Sprintf("    \"base_url\": \"%s\",\n", caps.BaseURL))
+	if url != "" {
+		output.WriteString(fmt.Sprintf("    \"base_url\": \"%s\",\n", url))
 	}
-	if caps.DefaultModel != "" {
-		output.WriteString(fmt.Sprintf("    \"model\": \"%s\",\n", caps.DefaultModel))
-	}
-	output.WriteString("    \"api_key\": \"YOUR_API_KEY\"\n")
+	output.WriteString(fmt.Sprintf("    \"model\": \"%s\",\n", model))
+	output.WriteString(fmt.Sprintf("    \"api_key\": \"%s\"\n", key))
 	output.WriteString("  }\n")
 
 	// Switching recommendation
