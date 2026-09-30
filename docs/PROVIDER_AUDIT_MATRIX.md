@@ -1,6 +1,9 @@
 # Provider Audit Matrix v1.16.0
 
-9 providers validated. All production-ready.
+9 chat providers. Eight call tools on every model; Venice calls them only on models
+its live catalogue marks tool-capable. Vertex's default model (`gemini-2.0-flash`)
+is unverified. `celeste providers` also lists DigitalOcean and ElevenLabs, which
+this matrix leaves out.
 
 **Updated**: 2026-06-22 | **Tests**: Unit 100% + Integration ✅
 
@@ -8,17 +11,17 @@
 |----------|------------|--------|--------|-----------|---------------|--------|
 | OpenAI | ✅ | ✅ Dynamic | ✅ | ✅ | ✅ Native | ⭐ Gold |
 | Grok/xAI | ✅ | ✅ Dynamic | ✅ | ✅ | ✅ Full | ⭐ Gold |
-| Venice | ✅ (llama) | ⚠️ Static | ✅ | ✅ | ⚠️ Partial | ✅ Working |
+| Venice | ⚠️ Per model | ⚠️ Static | ✅ | ✅ | ⚠️ Partial | ✅ Working |
 | Anthropic | ✅ Compat | ⚠️ Static | ✅ | ✅ | ⚠️ Limited | ✅ Working |
 | Gemini | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ✅ Tested |
-| Vertex AI | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ✅ Tested |
+| Vertex AI | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ⚠️ Default unverified |
 | OpenRouter | ✅ Model-dep | ✅ Dynamic | ✅ | ✅ | ✅ Full | ✅ Tested |
 | Sakana AI | ✅ | ✅ Dynamic | ✅ | ✅ | ✅ Full | ✅ Tested |
 | Local (OpenAI-compat) | ✅ | ❌ Manual | ✅ | ✅ | ✅ Full | ✅ Tested |
 
 ## Details
 
-All support streaming/tool calls/tokens in v1.16.0.
+All support streaming and token tracking in v1.16.0; tool calls as in the table.
 Local: any OpenAI-compatible server on 127.0.0.1/localhost/0.0.0.0/[::1], any port.
 Its model list is manual. A local server's /v1/models may not advertise the
 loaded chat model, so celeste does not auto-select one.
