@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -155,10 +156,11 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
 		}
 	default:
-		// A lone lowercase word is almost always a mistyped or guessed
-		// command (`celeste models`), not a question: say so instead of
-		// sending it to the model (#151). Anything longer is a message.
-		if len(args) == 1 && looksLikeCommand(command) {
+		// A lone lowercase word that is a guessed command (`celeste
+		// models`) or a near-miss of one (`celeste confg`) errors with a
+		// suggestion instead of reaching the model (#151). Any other lone
+		// word (`celeste hello`), and anything longer, is a message.
+		if len(args) == 1 && looksLikeCommand(command) && closestCommand(command) != "" {
 			fmt.Fprint(stderr, unknownCommandMessage(command))
 			return 1
 		}
@@ -177,7 +179,8 @@ var knownCommands = []string{
 	"session", "sessions", "skill", "skills", "stats", "version", "wallet-monitor",
 }
 
-// commandHints answer words people guess that are not commands.
+// commandHints answer words people guess that are not commands. They and
+// their near-misses error like a mistyped command.
 var commandHints = map[string]string{
 	"models": "celeste providers    (each provider's default model; /set-model lists models inside chat)",
 	"model":  "celeste providers    (each provider's default model; /set-model lists models inside chat)",
@@ -196,15 +199,15 @@ func looksLikeCommand(word string) bool {
 	return true
 }
 
-// unknownCommandMessage is the error for a lone unknown word: the closest
-// command (or a hint), how to send the word as a message, and where the
-// command list is.
+// unknownCommandMessage is the error for a lone word closestCommand
+// matched: the closest command (or a guessed word's hint), how to send the
+// word as a message, and where the command list is.
 func unknownCommandMessage(word string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Unknown command %q.\n", word)
-	if hint, ok := commandHints[word]; ok {
-		fmt.Fprintf(&b, "Did you mean: %s\n", hint)
-	} else if best := closestCommand(word); best != "" {
+	if best := closestCommand(word); commandHints[best] != "" {
+		fmt.Fprintf(&b, "Did you mean: %s\n", commandHints[best])
+	} else if best != "" {
 		fmt.Fprintf(&b, "Did you mean: celeste %s\n", best)
 	}
 	fmt.Fprintf(&b, "To send it to Celeste as a message: celeste message %s\n", word)
@@ -212,21 +215,33 @@ func unknownCommandMessage(word string) string {
 	return b.String()
 }
 
-// closestCommand returns the known command nearest to word, or "" when none
-// is close: at most 1 edit for words of up to 5 letters, 2 for longer ones
-// ("hello" must not become "help"). Ties go to the first in knownCommands.
+// closestCommand returns the guessed word (a commandHints key) or known
+// command nearest to word, or "" when none is close: at most 1 edit for words
+// of up to 5 letters, 2 for longer ones ("hello" must not become "help").
+// Ties go to a guessed word ("stauts" is status, not stats), then to the
+// first in knownCommands.
 func closestCommand(word string) string {
 	limit := 1
 	if len(word) > 5 {
 		limit = 2
 	}
 	best, bestDist := "", limit+1
-	for _, c := range knownCommands {
+	for _, c := range append(hintWords(), knownCommands...) {
 		if d := editDistance(word, c); d < bestDist {
 			best, bestDist = c, d
 		}
 	}
 	return best
+}
+
+// hintWords is commandHints' keys, sorted, so closestCommand is deterministic.
+func hintWords() []string {
+	words := make([]string, 0, len(commandHints))
+	for w := range commandHints {
+		words = append(words, w)
+	}
+	sort.Strings(words)
+	return words
 }
 
 // editDistance is the optimal-string-alignment distance between a and b:
