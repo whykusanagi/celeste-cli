@@ -42,26 +42,43 @@ func (r *Runner) liveHooks() *hooks.Runner {
 	return r.hooks
 }
 
-// stopHook asks Stop hooks whether a finished top-level run may end. It
-// returns the instruction to continue with, or "" to finish. A deny is
-// honoured once per run (*continued records it) and only while turns
-// remain; later ones are reported and ignored, so a hook cannot keep the
-// run going to the turn cap. Nested runners skip Stop (SubagentStop is F2c).
+// stopHook asks Stop hooks (top-level runs) or SubagentStop hooks (a nested
+// runner with an AgentID) whether a finished run may end. It returns the
+// instruction to continue with, or "" to finish. A deny is honoured once per
+// run (*continued records it) and only while turns remain; later ones are
+// reported and ignored, so a hook cannot keep the run going to the turn cap.
+// Other nested runners (orchestrator lanes, /agent) fire neither.
 func (r *Runner) stopHook(ctx context.Context, state *RunState, continued *bool) string {
 	h := r.liveHooks()
-	if h == nil || r.options.Nested || !h.Has(hooks.EventStop) {
+	if h == nil {
 		return ""
 	}
-	out := h.Stop(ctx, state.LastAssistantResponse)
+	var out hooks.Outcome
+	event := "Stop"
+	switch {
+	case !r.options.Nested:
+		if !h.Has(hooks.EventStop) {
+			return ""
+		}
+		out = h.Stop(ctx, state.LastAssistantResponse)
+	case r.options.AgentID != "":
+		if !h.Has(hooks.EventSubagentStop) {
+			return ""
+		}
+		event = "SubagentStop"
+		out = h.SubagentStop(ctx, r.options.AgentID, state.LastAssistantResponse)
+	default:
+		return ""
+	}
 	if out.Decision != hooks.Deny {
 		return ""
 	}
 	switch {
 	case *continued:
-		r.warning("a Stop hook asked the agent to continue again; ignored (one continuation per run)")
+		r.warning(fmt.Sprintf("a %s hook asked the agent to continue again; ignored (one continuation per run)", event))
 		return ""
 	case state.Turn >= state.Options.MaxTurns:
-		r.warning("a Stop hook asked the agent to continue, but the run has no turns left")
+		r.warning(fmt.Sprintf("a %s hook asked the agent to continue, but the run has no turns left", event))
 		return ""
 	}
 	*continued = true

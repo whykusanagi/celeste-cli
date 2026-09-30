@@ -68,6 +68,24 @@ type Env struct {
 	indexing    sync.WaitGroup     // a code-graph update that outlived its timeout
 	indexCancel context.CancelFunc // stops that update; nil until setupCodeGraph runs
 	closeOnce   sync.Once
+
+	home string // the user's home: children load skills, permissions and hooks from it
+	// shared counts the Envs (a Setup Env and its Nested children) using one
+	// set of MCP clients and one code graph; the last Close frees them.
+	shared    *sharedRes
+	nested    bool // built by Nested; a child never nests further
+	ownsIndex bool // a child in another workspace closes its own code graph
+	// indexOwner is the Env whose code graph this one uses (itself when it
+	// built one); indexCtx is that update context, cancelled by Close.
+	// indexSem (capacity 1) is held while an update of this Env's code
+	// graph runs, so updates never overlap (the indexer's parsers are not
+	// concurrency-safe); a channel, so a child can wait for it with a
+	// deadline.
+	indexOwner *Env
+	indexCtx   context.Context
+	indexSem   chan struct{}
+	lifeMu     sync.Mutex // guards closed against a concurrent Nested
+	closed     bool
 }
 
 // SetupOptions carries what only the adopter knows.
@@ -103,7 +121,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	if opts.SessionID == "" {
 		opts.SessionID = fmt.Sprintf("%s-%d", mode, os.Getpid())
 	}
-	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, skipPersona: cfg.SkipPersonaPrompt}
+	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, skipPersona: cfg.SkipPersonaPrompt, home: home}
 	if mode == ModeAgent {
 		env.ToolMode = tools.ModeAgent
 	}
@@ -121,6 +139,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		env.Registry.SetDiscoveryMode(true)
 	}
 	env.setupContext(ws)
+	env.shared = newShared(env.closeAll)
 	return env, nil
 }
 
@@ -148,7 +167,7 @@ func (e *Env) setupPermissions(home string) {
 	e.permConfig = *pc
 	e.Checker = permissions.NewChecker(*pc)
 	if e.Mode == ModeChat {
-		e.Checker.SetConfigPath(path) // "always allow" from the modal persists
+		e.PersistRules() // "always allow" from the modal persists
 	}
 	e.Registry.SetPermissionChecker(e.Checker)
 }
@@ -203,6 +222,17 @@ func withSessionContext(project, session string) string {
 		return project
 	}
 	return strings.TrimSpace(project + "\n\n# Session Start Hook Context\n\n" + session)
+}
+
+// PersistRules makes the checker save "always allow" and "always deny"
+// answers to permissions.json, as the chat's does. An adopter calls it only
+// when the answers come from the user's interactive prompt (the TUI modal
+// behind /agent and /orchestrate lanes); headless runs never write.
+// A rule that can't be saved (a damaged permissions.json is never
+// overwritten) still applies for this run, and the failure is warned.
+func (e *Env) PersistRules() {
+	e.Checker.SetConfigPath(filepath.Join(e.home, ".celeste", "permissions.json"))
+	e.Checker.SetPersistWarn(func(err error) { e.warn("%v", err) })
 }
 
 // Trust switches the checker to trust mode, keeping the deny rules. An
@@ -309,11 +339,14 @@ func (e *Env) setupCodeGraph(ws string) string {
 	// Cancellable so a Close that arrives after this update outlives its 10s
 	// wait can stop it instead of blocking indexing.Wait() unbounded.
 	ctx, cancel := context.WithCancel(context.Background())
-	e.indexCancel = cancel
+	e.indexCtx, e.indexCancel, e.indexOwner = ctx, cancel, e
 	done := make(chan error, 1)
 	e.indexing.Add(1)
+	e.indexSem = make(chan struct{}, 1)
+	e.indexSem <- struct{}{} // the update releases it: a child's refresh never overlaps it
 	go func() {
 		defer e.indexing.Done()
+		defer func() { <-e.indexSem }()
 		done <- updateCodeGraph(ctx, idx)
 	}()
 	select {
@@ -357,21 +390,48 @@ func (e *Env) compose(projectContext, contract string, sliders *config.SliderCon
 	})
 }
 
-// Close stops MCP clients and closes the code graph, cancelling a code-graph
-// update still running past its 10s Setup wait so this returns promptly
-// instead of blocking on it. Safe to call more than once (and concurrently);
-// only the first call runs.
+// Close releases this Env. A Setup Env and its Nested children share MCP
+// clients and a code graph, which stop when the last of them closes, so a
+// child still running keeps them open after its parent closes. A child in
+// another workspace also closes its own code graph. A code-graph update
+// still running is cancelled before it is waited on, so this returns
+// promptly. Safe to call more than once (and concurrently).
 func (e *Env) Close() {
 	e.closeOnce.Do(func() {
-		if e.indexCancel != nil {
-			e.indexCancel()
+		e.lifeMu.Lock()
+		e.closed = true
+		e.lifeMu.Unlock()
+		if e.shared == nil { // built by hand in tests
+			e.closeAll()
+			return
 		}
-		if e.MCP != nil {
-			_ = e.MCP.Stop()
+		if e.ownsIndex {
+			e.closeIndex()
 		}
-		e.indexing.Wait()
-		if e.Indexer != nil {
-			_ = e.Indexer.Close()
-		}
+		e.shared.release()
 	})
+}
+
+// closeAll stops the MCP clients and closes the code graph, cancelling a
+// running update first (F2a Task 7 fix).
+func (e *Env) closeAll() {
+	if e.indexCancel != nil {
+		e.indexCancel()
+	}
+	if e.MCP != nil {
+		_ = e.MCP.Stop()
+	}
+	e.closeIndex()
+}
+
+// closeIndex cancels and waits for this Env's code-graph updates (its own
+// and its children's refreshes) and closes the code graph it built.
+func (e *Env) closeIndex() {
+	if e.indexCancel != nil {
+		e.indexCancel()
+	}
+	e.indexing.Wait()
+	if e.Indexer != nil {
+		_ = e.Indexer.Close()
+	}
 }

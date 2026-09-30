@@ -90,6 +90,7 @@ func (m AppModel) interrupt() AppModel {
 		m.cancelFunc()
 		m.cancelFunc = nil
 	}
+	m.orchRun = 0 // a cancelled /orch run's later events are ignored
 	if m.typingContent != "" {
 		m.chat = m.chat.SetTypingActive(false)
 		m.chat = m.chat.SetLastAssistantContent(m.typingContent)

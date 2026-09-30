@@ -330,7 +330,15 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		options.OnTurnStats = func(st TurnStats) { gate.do(func() { f(st) }) }
 	}
 	firstRunID := generateRunID(time.Now())
-	env, err := loop.Setup(loop.ModeAgent, cfg, options.Workspace, loop.SetupOptions{SessionID: firstRunID, Warn: warn})
+	var env *loop.Env
+	if options.ParentEnv != nil {
+		// Part of the parent's run: no SessionStart or Stop, and the
+		// parent's MCP clients, hooks and code graph instead of new ones.
+		options.Nested = true
+		env, err = options.ParentEnv.Nested(loop.NestedOptions{Workspace: options.Workspace, Warn: warn})
+	} else {
+		env, err = loop.Setup(loop.ModeAgent, cfg, options.Workspace, loop.SetupOptions{SessionID: firstRunID, Warn: warn})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -338,6 +346,10 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// IS the approval, so run in trust mode. Deny rules still apply.
 	if options.AutoApproveTools {
 		env.Trust()
+	} else if options.PromptFunc != nil {
+		// The user's own prompt (the TUI modal behind /agent and
+		// /orchestrate lanes): "always allow/deny" persists, as in the chat.
+		env.PersistRules()
 	}
 	registry := env.Registry
 	checker := env.Checker
@@ -509,6 +521,11 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 	if state == nil {
 		return nil, fmt.Errorf("run state is nil")
 	}
+	// Hook warnings raised under this run (tool hooks, Stop, compaction) go
+	// to this runner's gated sink, even from a hooks runner shared with
+	// other runners (a ParentEnv's), so they stop at Close like every
+	// callback.
+	ctx = hooks.WithWarn(ctx, r.warn)
 	normalizeStateOptions(state, r.options)
 	defer r.persistArtifacts(state)
 

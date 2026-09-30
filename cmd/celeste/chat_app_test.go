@@ -14,6 +14,9 @@ func cleanupChatDeps(t *testing.T, deps *chatDeps) {
 		if deps.adapter != nil && deps.adapter.lifeCancel != nil {
 			deps.adapter.lifeCancel()
 		}
+		if deps.adapter != nil && deps.adapter.subMgr != nil {
+			deps.adapter.subMgr.Close()
+		}
 		tui.CloseLogging()
 		if deps.indexer != nil {
 			deps.indexer.Close()

@@ -5,20 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 )
 
 const (
 	// maxChatEnvs bounds the cache. The workspace argument can vary per call.
 	maxChatEnvs = 4
-	// chatEnvTTL replaces an Env this old, for inputs chatEnvStamp can't
+	// chatEnvTTL replaces an Env this old, for inputs loop.ConfigStamp can't
 	// see (ancestor-directory grimoires and hooks, git state, the code-graph
 	// summary).
 	chatEnvTTL = 10 * time.Minute
@@ -63,7 +60,7 @@ func newChatEnvs() *chatEnvs {
 			return loop.Setup(loop.ModeMCPChat, cfg, ws, opts)
 		},
 		closeEnv: func(e *loop.Env) { e.Close() },
-		stamp:    chatEnvStamp,
+		stamp:    loop.ConfigStamp,
 		now:      time.Now,
 		ttl:      chatEnvTTL,
 		max:      maxChatEnvs,
@@ -234,39 +231,6 @@ func (c *chatEnvs) closeAll(es []*chatEnv) {
 			c.closeEnv(e.env)
 		}
 	}
-}
-
-// chatEnvStamp fingerprints (path, mtime, size) the config files Setup bakes
-// into an Env, so a cached Env is replaced as soon as one changes: a new deny
-// rule, hook, trust approval, skill, MCP server or grimoire edit applies from
-// the next call. A directory's mtime covers files added to or
-// removed from it; an edit inside one waits for chatEnvTTL.
-func chatEnvStamp(ws string) string {
-	home, _ := os.UserHomeDir()
-	paths := []string{
-		filepath.Join(home, ".celeste", "permissions.json"),
-		filepath.Join(home, ".celeste", "hooks.json"),
-		hooks.TrustPath(home),
-		filepath.Join(home, ".celeste", "grimoire.md"),
-		filepath.Join(home, ".celeste", "skills"),
-		filepath.Join(ws, ".grimoire"),
-		filepath.Join(ws, ".grimoire.local"),
-		filepath.Join(ws, ".celeste", "grimoire"),
-		filepath.Join(ws, ".celeste", "hooks.json"),
-		// Not the memory index: save_memory writes it on every call, and a
-		// full rebuild per save costs more than a summary a few minutes
-		// stale (the TTL refreshes it; the memory tools read live).
-	}
-	paths = append(paths, mcp.GlobalConfigPaths(home)...)
-	var b strings.Builder
-	for _, p := range paths {
-		if fi, err := os.Stat(p); err == nil {
-			fmt.Fprintf(&b, "%s|%d|%d\n", p, fi.ModTime().UnixNano(), fi.Size())
-		} else {
-			fmt.Fprintf(&b, "%s|-\n", p)
-		}
-	}
-	return b.String()
 }
 
 // warnRouter is a shared Env's own warn sink. It delivers Setup's warnings to

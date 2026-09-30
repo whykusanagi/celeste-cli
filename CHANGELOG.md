@@ -230,8 +230,11 @@ transport, and gains a set of TUI features around all of it.
 - A Stop hook's `deny` is now acted on in `celeste agent`, MCP agent mode
   and MCP chat: the run continues once with the hook's `reason` as the next
   instruction, and only while turns remain. Subagents, `/orchestrate` lanes
-  and `/agent` in the chat skip SessionStart and Stop. SubagentStop is not
-  fired yet.
+  and `/agent` in the chat skip SessionStart and Stop.
+- A subagent started with `spawn_agent` fires SubagentStop when it finishes
+  (`agent_id` is the ID `spawn_agent` returned, kept when it is resumed). A
+  `deny` continues it once, like Stop. `/orchestrate` lanes and `/agent`
+  fire neither.
 - MCP chat (`celeste` tool, `mode: "chat"`) now loads hooks like agent
   runs: your global hooks run, and untrusted repo hooks are skipped with a
   warning returned in the result. Each call fires SessionStart (`startup`),
@@ -272,6 +275,50 @@ transport, and gains a set of TUI features around all of it.
   other tools for the rest of the session (#221).
 - MCP agent mode now returns setup and hook warnings in the tool result,
   under a `## Warnings` heading.
+- Subagents share one set of MCP servers, hooks and code graph per chat
+  session instead of each starting its own (up to 15 s per subagent). The
+  shared setup is rebuilt for the next subagent after you change
+  permissions, hooks, hook trust, MCP configs or the home or workspace
+  grimoire, or add or remove a skill; subagents already running finish on
+  the old one. Each subagent also reloads your permissions, captures the
+  git state, and brings the code graph up to date with files changed
+  since the last update, waiting at most 2 s for it. The code-graph summary
+  in its system prompt is from when the shared setup was built. A subagent
+  in its own worktree still loads hooks, project context and the code
+  graph for that worktree. Subagent setup and hook warnings now show in
+  the chat, and subagent hooks get the chat session's `session_id`.
+- `/orchestrate` asks before running tools your permission policy doesn't
+  allow outright (writes, edits, shell commands), through the same prompt
+  as the chat, shown over the orchestrator view. Before, every such call
+  was silently denied. An orchestrator run without a prompt still denies
+  them, and now says so.
+- Esc and Ctrl+C now dismiss the permission prompt as a denial (and cancel
+  the `ask` tool's question), so a run waiting on it, such as an
+  `/orchestrate` lane or `/agent`, carries on. Esc on an empty input and
+  Ctrl+C now also cancel a running `/orchestrate`, as they do `/agent`.
+- `/orchestrate` lanes (primary, reviewer and each debate round) share one
+  set of MCP servers, hooks and code graph per run instead of each starting
+  its own. Their hooks see one `session_id` for the run,
+  `orchestrator-<n>`, instead of one per lane.
+- When the reviewer debate in `/orchestrate` fails, the run now shows
+  "debate skipped" as a notice and carries on to the primary agent's
+  result. Before, the chat treated it as the end of the run and never
+  showed the result.
+- In an `/orchestrate` lane configured with its own `primary_base_url` or
+  `primary_api_key`, the primary's answers to the reviewer (the debate's
+  defense turns) now go to that endpoint too. Before, they went to the main
+  config's provider.
+- "Always allow" and "Always deny" in the permission prompt of `/agent` and
+  `/orchestrate` now save to `~/.celeste/permissions.json`, as in the chat:
+  later lanes of the same run and later runs don't ask again. Before, the
+  answer only applied to that one lane or run. Runs without a prompt
+  (`celeste agent`, MCP, subagents) never write the file. A save now adds
+  the rule to the file as it is on disk, so rules saved from the chat and
+  from these runs no longer overwrite each other. A `permissions.json` that
+  can't be read or parsed is never rewritten: the save fails with a warning
+  and the file keeps your rules. Saves replace the file atomically (temp
+  file and rename, keeping its mode; a new file is 0600), so a lane or
+  another celeste starting mid-save never reads a half-written file.
 
 ### MCP chat (`celeste` tool, `mode: "chat"`)
 

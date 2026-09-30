@@ -15,6 +15,7 @@ type realAgentRunner struct {
 	cfg     *config.Config
 	model   string
 	onEvent func(OrchestratorEvent)
+	lane    laneInheritance
 }
 
 func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, error) {
@@ -33,6 +34,15 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 	if cwd, err := os.Getwd(); err == nil {
 		opts.Workspace = cwd
 	}
+	// The caller's approval (spec §4 F2: the orchestrator inherits its
+	// caller's Gate) and the run's shared environment.
+	switch r.lane.Approval {
+	case ApprovalPrompt:
+		opts.PromptFunc = r.lane.Prompt
+	case ApprovalTrust:
+		opts.AutoApproveTools = true
+	}
+	opts.ParentEnv = r.lane.Env
 
 	// Forward agent progress events into the orchestrator event stream.
 	if r.onEvent != nil {
@@ -116,10 +126,10 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 	return "", err
 }
 
-// defaultRunnerFactory creates a RunnerFactory that forwards agent progress
-// events to the orchestrator via the provided onEvent callback.
-func defaultRunnerFactory(cfg *config.Config, onEvent func(OrchestratorEvent)) RunnerFactory {
+// defaultRunnerFactory creates a RunnerFactory whose lanes forward agent
+// progress to onEvent and inherit the run's approval and environment.
+func defaultRunnerFactory(cfg *config.Config, onEvent func(OrchestratorEvent), lane laneInheritance) RunnerFactory {
 	return func(model string) AgentRunner {
-		return &realAgentRunner{cfg: cfg, model: model, onEvent: onEvent}
+		return &realAgentRunner{cfg: cfg, model: model, onEvent: onEvent, lane: lane}
 	}
 }

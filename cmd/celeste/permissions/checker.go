@@ -30,8 +30,9 @@ type Checker struct {
 	alwaysAllow  []Rule
 	patternRules []Rule
 	mode         PermissionMode
-	configPath   string   // path to persist rule additions; empty = no persistence
-	protected    []string // spellings of hook/trust files tools may not modify (protected.go)
+	configPath   string      // path to persist rule additions; empty = no persistence
+	persistWarn  func(error) // told when a rule could not be saved; nil = ignore
+	protected    []string    // spellings of hook/trust files tools may not modify (protected.go)
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -61,48 +62,77 @@ func (c *Checker) SetConfigPath(path string) {
 	c.configPath = path
 }
 
+// SetPersistWarn sets a function told when an always-allow or always-deny
+// rule could not be saved to disk (the rule still applies in memory).
+func (c *Checker) SetPersistWarn(warn func(error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.persistWarn = warn
+}
+
 // AddPersistentAllow appends an always-allow rule and, if a config path is
-// set, saves the updated config to disk.
+// set, adds it to the config on disk (see persistRule).
 // The in-memory mutation happens under the lock; disk I/O happens after
 // releasing it so that concurrent Check() calls are not blocked.
 func (c *Checker) AddPersistentAllow(rule Rule) error {
-	c.mu.Lock()
-	rule.Decision = Allow
-	c.alwaysAllow = append(c.alwaysAllow, rule)
-	cfg, path := c.snapshotConfigLocked()
-	c.mu.Unlock()
-	if path == "" {
-		return nil
-	}
-	return SaveConfig(path, &cfg)
+	return c.addPersistent(rule, Allow)
 }
 
 // AddPersistentDeny appends an always-deny rule and, if a config path is
-// set, saves the updated config to disk.
-// The in-memory mutation happens under the lock; disk I/O happens after
-// releasing it so that concurrent Check() calls are not blocked.
+// set, adds it to the config on disk (see persistRule).
 func (c *Checker) AddPersistentDeny(rule Rule) error {
+	return c.addPersistent(rule, Deny)
+}
+
+func (c *Checker) addPersistent(rule Rule, d Decision) error {
 	c.mu.Lock()
-	rule.Decision = Deny
-	c.alwaysDeny = append(c.alwaysDeny, rule)
-	cfg, path := c.snapshotConfigLocked()
+	rule.Decision = d
+	if d == Deny {
+		c.alwaysDeny = append(c.alwaysDeny, rule)
+	} else {
+		c.alwaysAllow = append(c.alwaysAllow, rule)
+	}
+	path, warn := c.configPath, c.persistWarn
 	c.mu.Unlock()
 	if path == "" {
 		return nil
 	}
-	return SaveConfig(path, &cfg)
+	err := persistRule(path, rule)
+	if err != nil && warn != nil {
+		warn(err)
+	}
+	return err
 }
 
-// snapshotConfigLocked returns a copy of the current PermissionConfig and the
-// configPath. Must be called with mu held.
-func (c *Checker) snapshotConfigLocked() (PermissionConfig, string) {
-	cfg := PermissionConfig{
-		Mode:         c.mode,
-		AlwaysAllow:  append([]Rule(nil), c.alwaysAllow...),
-		AlwaysDeny:   append([]Rule(nil), c.alwaysDeny...),
-		PatternRules: append([]Rule(nil), c.patternRules...),
+// persistMu serializes the load-modify-save in persistRule within the
+// process.
+var persistMu sync.Mutex
+
+// persistRule adds rule to the config at path. Several checkers persist to
+// one file (the chat's, each /agent run's and /orchestrate lane's), so it
+// re-reads the file and adds the rule there, keeping rules the others saved
+// since this checker loaded it, rather than writing this checker's snapshot
+// over them. Only a missing file is created fresh: a file it cannot read or
+// parse is left untouched and the error returned, so a damaged
+// permissions.json never loses the user's deny rules to a rewrite.
+func persistRule(path string, rule Rule) error {
+	persistMu.Lock()
+	defer persistMu.Unlock()
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return fmt.Errorf("not saving permission rule %q: %w", rule.ToolPattern, err)
 	}
-	return cfg, c.configPath
+	list := &cfg.AlwaysAllow
+	if rule.Decision == Deny {
+		list = &cfg.AlwaysDeny
+	}
+	for _, r := range *list {
+		if r.ToolPattern == rule.ToolPattern && r.InputPattern == rule.InputPattern {
+			return nil
+		}
+	}
+	*list = append(*list, rule)
+	return SaveConfig(path, cfg)
 }
 
 // Check evaluates whether the given tool invocation is permitted.

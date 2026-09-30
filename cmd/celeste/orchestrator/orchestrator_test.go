@@ -2,6 +2,8 @@ package orchestrator_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,4 +55,38 @@ func TestOrchestratorClassifiesAndRoutesGoal(t *testing.T) {
 		}
 	}
 	assert.True(t, completed)
+}
+
+// A failed debate is non-fatal: "debate skipped" is a notice (EventAction),
+// not EventError, which callers such as the TUI treat as the end of the run.
+// The run still ends with EventComplete and the primary's output.
+func TestOrchestratorSkippedDebateIsNotTerminal(t *testing.T) {
+	cfg := &config.Config{Model: "p", Orchestrator: &config.OrchestratorConfig{Lanes: map[string]config.LaneConfig{
+		"code": {Primary: "p", Reviewer: "r"},
+	}}}
+	o := orchestrator.New(cfg, orchestrator.WithTrust(), orchestrator.WithRunnerFactory(func(model string) orchestrator.AgentRunner {
+		if model == "r" {
+			return &fakeRunner{err: errors.New("reviewer down")}
+		}
+		return &fakeRunner{response: "TASK_COMPLETE: fixed"}
+	}))
+	var events []orchestrator.OrchestratorEvent
+	o.OnEvent(func(e orchestrator.OrchestratorEvent) { events = append(events, e) })
+
+	res, err := o.Run(context.Background(), "fix the bug in main.go")
+	require.NoError(t, err)
+	assert.Nil(t, res.Verdict)
+	skipped := false
+	for _, e := range events {
+		assert.NotEqual(t, orchestrator.EventError, e.Kind, "event %q", e.Text)
+		if strings.Contains(e.Text, "debate skipped") && strings.Contains(e.Text, "reviewer down") {
+			skipped = true
+			assert.Equal(t, orchestrator.EventAction, e.Kind)
+		}
+	}
+	assert.True(t, skipped, "no debate-skipped notice in %v", events)
+	require.NotEmpty(t, events)
+	last := events[len(events)-1]
+	assert.Equal(t, orchestrator.EventComplete, last.Kind)
+	assert.Equal(t, "TASK_COMPLETE: fixed", last.Text)
 }

@@ -24,14 +24,18 @@ type tuiTestDriver struct {
 	queue   []tea.Msg
 	results chan tea.Msg
 	pending int
+	// external carries messages from outside the driven commands, the way
+	// p.Send does for a tea.Program (the permission prompt's bridge).
+	external chan tea.Msg
 }
 
 func newTUIDriver(t *testing.T, m tea.Model) *tuiTestDriver {
 	t.Helper()
 	return &tuiTestDriver{
-		t:       t,
-		m:       m,
-		results: make(chan tea.Msg, 256),
+		t:        t,
+		m:        m,
+		results:  make(chan tea.Msg, 256),
+		external: make(chan tea.Msg, 16),
 	}
 }
 
@@ -82,6 +86,8 @@ func (d *tuiTestDriver) RunUntil(until func(tea.Model) bool, timeout time.Durati
 			if msg != nil && !isTestDriverTick(msg) {
 				d.queue = append(d.queue, msg)
 			}
+		case msg := <-d.external:
+			d.queue = append(d.queue, msg)
 		case <-time.After(remaining):
 		}
 	}

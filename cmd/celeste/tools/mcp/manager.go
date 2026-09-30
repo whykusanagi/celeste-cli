@@ -171,6 +171,29 @@ func (m *Manager) Disconnect(name string) error {
 	return client.Close()
 }
 
+// RegisterInto registers every connected server's tools in dst, hidden until
+// find_tools activates them (as DiscoverAndRegister does), and returns how
+// many it added. A nested run's registry uses it to share this manager's
+// clients instead of starting its own servers. Tools a server adds later are
+// not mirrored; the nested registry is a snapshot.
+func (m *Manager) RegisterInto(dst *tools.Registry) int {
+	m.mu.Lock()
+	var names []string
+	for _, ns := range m.toolNames {
+		names = append(names, ns...)
+	}
+	m.mu.Unlock()
+	n := 0
+	for _, name := range names {
+		if t, ok := m.registry.Get(name); ok {
+			dst.Register(t)
+			dst.SetHidden(name, true)
+			n++
+		}
+	}
+	return n
+}
+
 // createTransport creates the appropriate Transport based on server configuration.
 func (m *Manager) createTransport(cfg ServerConfig) (Transport, error) {
 	switch cfg.Transport {
