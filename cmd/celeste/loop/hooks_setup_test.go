@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -150,5 +151,34 @@ func TestSessionStartContextLeavesTheEnvAlone(t *testing.T) {
 	}
 	if strings.Contains(env.SystemPrompt("", nil), "per-call-marker") {
 		t.Fatal("SystemPrompt carries a call's session context")
+	}
+}
+
+// The chat passes its own approver for repo hooks; non-interactive modes
+// ignore one, so an untrusted repo hook never runs there (F0).
+func TestSetupApproverIsUsedOnlyInChatMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode Mode
+		want bool
+	}{{ModeChat, true}, {ModeAgent, false}, {ModeMCPChat, false}} {
+		t.Run(tc.mode.String(), func(t *testing.T) {
+			setupHome(t)
+			ws := t.TempDir()
+			write(t, filepath.Join(ws, ".celeste", "hooks.json"), hooksJSON(t,
+				hookDef("PreToolUse", "write_file", hooktest.Command(t, "deny", "repo hook ran")),
+			))
+			asked := false
+			env, err := Setup(tc.mode, testCfg(), ws, SetupOptions{
+				Warn:    func(string) {},
+				Approve: func(hooks.Source, hooks.TrustStatus) bool { asked = true; return true },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(env.Close)
+			if asked != tc.want || env.Hooks.Has(hooks.EventPreToolUse) != tc.want {
+				t.Fatalf("asked=%v has=%v, want %v", asked, env.Hooks.Has(hooks.EventPreToolUse), tc.want)
+			}
+		})
 	}
 }

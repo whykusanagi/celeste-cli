@@ -114,7 +114,7 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	if e.MCP != nil {
 		e.MCP.RegisterInto(c.Registry)
 	}
-	if c.Registry.Count() > toolDiscoveryThreshold {
+	if c.Registry.Count() > ToolDiscoveryThreshold {
 		c.Registry.SetDiscoveryMode(true)
 	}
 	if !same {
