@@ -181,6 +181,13 @@ Examples:
 
 // runChatTUI launches the interactive Bubble Tea TUI.
 func runChatTUI() {
+	// Migrate every profile once, before the alt screen opens: a later
+	// /endpoint or SwitchEndpoint load of a different profile, while the TUI
+	// is already running, then finds nothing left to migrate instead of
+	// printing notes into the alt screen on every switch (#144 W6b review,
+	// I1(a)).
+	config.MigrateConfigDir()
+
 	// Load configuration (named or default)
 	cfg, err := config.LoadNamed(configName)
 	if err != nil {

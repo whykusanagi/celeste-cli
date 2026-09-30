@@ -31,6 +31,12 @@ type chatDeps struct {
 	registry *tools.Registry
 	adapter  *TUIClientAdapter
 	hooks    *hooks.Runner
+
+	// restoreMigrationWarn undoes newChatApp's routing of config.MigrationWarn
+	// to the tui log (#144 W6b review, I1(b)). runChatTUI's caller doesn't
+	// need to call it — the process is exiting — but tests that build several
+	// chat apps in one process do, via cleanupChatDeps.
+	restoreMigrationWarn func()
 }
 
 // newChatApp builds the chat TUI model up to (not including) tea.NewProgram.
@@ -43,6 +49,17 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	if err := tui.InitLogging(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to init logging: %v\n", err)
 	}
+
+	// From here on, a migration note (config/migrate.go's MigrationWarn) must
+	// reach the log instead of stderr: the alt screen is about to take over
+	// the terminal, and /endpoint or SwitchEndpoint can still load a
+	// different, not-yet-migrated profile while it's up (#144 W6b review,
+	// I1(b)). The chat startup path itself migrates every profile once,
+	// before this point, via MigrateConfigDir in runChatTUI — notes from
+	// that one call are still fine on stderr.
+	prevMigrationWarn := config.MigrationWarn
+	config.MigrationWarn = func(msg string) { tui.LogInfo("celeste: " + msg) }
+	restoreMigrationWarn := func() { config.MigrationWarn = prevMigrationWarn }
 
 	// Kick off Venice's live tool-catalog fetch now, in the background, so
 	// the rest of this function's setup work (loop.Setup, tool
@@ -83,6 +100,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		Approve:   chatHookApprover,
 	})
 	if err != nil {
+		restoreMigrationWarn()
 		return tui.AppModel{}, nil, err
 	}
 	registry := env.Registry
@@ -178,7 +196,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 	app = app.SetMCPManager(env.MCP, mcpConfigs)
 
-	return app, &chatDeps{env: env, registry: registry, adapter: tuiClient, hooks: env.Hooks}, nil
+	return app, &chatDeps{env: env, registry: registry, adapter: tuiClient, hooks: env.Hooks, restoreMigrationWarn: restoreMigrationWarn}, nil
 }
 
 // autoInitGrimoire creates a .grimoire (and the project's first-visit

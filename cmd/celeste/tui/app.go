@@ -1334,6 +1334,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if saveErr := config.Save(cfg); saveErr != nil {
 					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save config: %v", saveErr))
 				} else {
+					// View() renders m.config's cached ConfirmActions instead
+					// of reloading from disk (#144 W6b review, I1); keep it
+					// current so the toggle takes effect immediately.
+					m.config = cfg
 					if refresher, ok := m.llmClient.(PromptRefresher); ok {
 						refresher.RefreshSystemPrompt()
 					}
@@ -2630,8 +2634,10 @@ func (m AppModel) View() string {
 	}
 
 	m.skills = m.skills.SetConfig(m.endpoint, m.model, m.skillsEnabled, m.nsfwMode, skillsCount, disabledReason)
-	if cfg, err := config.Load(); err == nil {
-		m.skills.confirmMode = cfg.ConfirmActions
+	// The model already caches the active config (m.config); reading it here
+	// avoids a config.Load() disk read on every render (#144 W6b review, I1).
+	if m.config != nil {
+		m.skills.confirmMode = m.config.ConfirmActions
 	}
 	// Collapsed skills panel renders only active-skill signal; skip when empty
 	// so the chat area reclaims the row.
