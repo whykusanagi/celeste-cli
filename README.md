@@ -292,7 +292,7 @@ sends none. Tools from MCP servers and custom skills come on top, in both modes.
 - ⚠️ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling. Tool calling depends on the model (checked against the live Venice catalog); the default venice-uncensored has none • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
 - ✅ **Sakana AI** (fugu, fugu-ultra) - **DEFAULT** - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
-- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported. No real key: set any placeholder, since celeste requires a non-empty `api_key` • Cost tracked as $0
+- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported. No `api_key` needed at all • Cost tracked as $0
 
 Nine chat providers: eight with tool calling, and Venice, whose tool calling depends on the selected model.
 `celeste providers` lists 11: these nine plus DigitalOcean (its tools run in its own

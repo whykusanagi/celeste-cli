@@ -4,7 +4,16 @@ import (
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
+
+// veniceStubCatalog is the fixed Venice tool-support map every test in this
+// file stubs in, so none of them hit the live api.venice.ai (#151 W6b
+// review, M4).
+var veniceStubCatalog = map[string]bool{
+	"venice-uncensored": false,
+	"llama-3.3-70b":     true,
+}
 
 // fakeSessions is a minimal SessionManager whose Load/NewSession return a
 // fixed session, so SetSessionManager's model-restore path runs in a test.
@@ -22,6 +31,8 @@ func (f *fakeSessions) MergeSessions(a, _ interface{}) interface{} { return a }
 // tools exactly when the selected model supports them, not "never" for every
 // Venice model.
 func TestSetSessionManager_VeniceGatesToolsPerModel(t *testing.T) {
+	defer providers.StubVeniceToolCatalogForTest(veniceStubCatalog)()
+
 	uncensored := &config.Session{}
 	uncensored.SetEndpoint("venice")
 	uncensored.SetModel("venice-uncensored")
@@ -50,6 +61,8 @@ func TestSetSessionManager_VeniceGatesToolsPerModel(t *testing.T) {
 // that will actually be in effect (the provider's own default) instead of
 // the model's zero value.
 func TestWithEndpoint_VeniceDefaultModelHasNoToolsBeforeSessionRestores(t *testing.T) {
+	defer providers.StubVeniceToolCatalogForTest(veniceStubCatalog)()
+
 	m := NewApp(nil).WithEndpoint("venice")
 	if m.model != "" {
 		t.Fatalf("model = %q, want \"\" (WithEndpoint alone never picks Venice's model)", m.model)

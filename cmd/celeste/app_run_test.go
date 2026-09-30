@@ -239,9 +239,16 @@ func TestRun_ConfigFlagParsing(t *testing.T) {
 	}
 }
 
-// #144, spec §6.2: -mode errors and points to the migration guide.
+// #144, spec §6.2: -mode errors and points to the migration guide. M9:
+// --mode (double dash) gets the same error, not a silent pass-through that
+// ends up sent to the model as a chat message.
 func TestRun_ModeFlagIsRemoved(t *testing.T) {
-	for _, args := range [][]string{{"-mode", "claw", "chat"}, {"-mode=classic", "chat"}} {
+	for _, args := range [][]string{
+		{"-mode", "claw", "chat"},
+		{"-mode=classic", "chat"},
+		{"--mode", "claw", "chat"},
+		{"--mode=classic", "chat"},
+	} {
 		r := &fakeRunner{}
 		var out, errBuf bytes.Buffer
 		code := run(args, r, &out, &errBuf)

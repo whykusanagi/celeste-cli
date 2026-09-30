@@ -69,7 +69,9 @@ Usage:
 
 Global Flags:
   -config <name>          Use named config (loads ~/.celeste/config.<name>.json)
-  -max-tool-iterations N  Override the chat's tool-loop turn cap for this invocation
+  -max-tool-iterations N  Override the tool-loop turn cap for chat's starting
+                           profile only; not carried across /endpoint or a
+                           resumed session, and ignored by agent/message
 
 Commands:
   chat                    Launch interactive TUI mode

@@ -191,11 +191,47 @@ func TestDocsSayVeniceToolsDependOnModel(t *testing.T) {
 				t.Errorf("%s says %q, which is stale: the chat gates Venice tools per model now", file, stale)
 			}
 		}
-		if !strings.Contains(strings.ToLower(doc), "venice") {
+		if !mentionsVenice(doc) {
 			continue
 		}
-		if !regexp.MustCompile(`(?i)(per model|depends? on the model|model-dependent)`).MatchString(doc) {
-			t.Errorf("%s mentions Venice but never says its tool support depends on the model", file)
+		if !veniceLineSaysToolsPerModel(doc) {
+			t.Errorf("%s mentions Venice but no line about it says its tool support depends on the model", file)
 		}
+	}
+}
+
+// veniceLineSaysToolsPerModelRe matches a Venice line that says its tool
+// support is model-dependent.
+var veniceLineSaysToolsPerModelRe = regexp.MustCompile(`(?i)(per model|depends? on the model|model-dependent)`)
+
+func mentionsVenice(doc string) bool {
+	return strings.Contains(strings.ToLower(doc), "venice")
+}
+
+// veniceLineSaysToolsPerModel reports whether at least one line in doc that
+// mentions Venice also says its tool support depends on the model. Scoped to
+// the line, not the whole file (M8): matching anywhere in the doc let an
+// unrelated "per model" elsewhere paper over a missing or stale Venice
+// caveat.
+func veniceLineSaysToolsPerModel(doc string) bool {
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(strings.ToLower(line), "venice") && veniceLineSaysToolsPerModelRe.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// M8: a decoy "per model" line unrelated to Venice must not satisfy the
+// caveat check; it must be on a line that actually mentions Venice.
+func TestVeniceLineSaysToolsPerModelIsLineScoped(t *testing.T) {
+	decoy := "Some unrelated feature varies per model.\nVenice.ai tool calling: unspecified.\n"
+	if veniceLineSaysToolsPerModel(decoy) {
+		t.Error("an unrelated per-model line must not satisfy the Venice caveat")
+	}
+
+	together := "Venice.ai tool calling depends on the model.\n"
+	if !veniceLineSaysToolsPerModel(together) {
+		t.Error("a line naming both Venice and the per-model caveat must satisfy it")
 	}
 }

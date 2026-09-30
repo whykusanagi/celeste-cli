@@ -409,7 +409,7 @@ transport, and gains a set of TUI features around all of it.
 - `celeste providers` marks Venice's tool support as per model and Vertex's default model as unverified; `providers info local` shows a working `-config local` example (#151).
 - A single unknown lowercase word (`celeste models`) now errors with a suggestion instead of being sent to the model (#151).
 - The chat now offers tools on Venice exactly when the selected model supports them (checked against the live Venice catalog), instead of disabling tools for every Venice model (#151).
-- `celeste chat` and single-message mode no longer refuse to start on an empty `api_key` when the config uses Google ADC (`google_use_adc`) or a keyless local endpoint; `agent` already accepted both (#151).
+- `celeste chat`, single-message mode and `celeste agent` no longer refuse to start on an empty `api_key` when the config uses Google ADC (`google_use_adc`), a service-account file, or a keyless local endpoint; all three also now refuse a stale ADC/service-account flag left over from an earlier Vertex/Gemini setup once `--set-url` has repointed the profile at a different provider (#151).
 
 ### Added
 - MCP `celeste_status` reports `grimoire` (loaded, sources), `project` (indexed, file/symbol/edge counts) and `session_cost` (tokens, USD, unpriced requests) (#210).

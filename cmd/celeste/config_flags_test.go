@@ -44,6 +44,35 @@ func TestResolveMaxIterFlags(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// M5: the error must name the flag the user actually typed, not always
+// --set-max-tool-iterations.
+func TestResolveMaxIterFlagsNamesTheFlagTheUserTyped(t *testing.T) {
+	var warn bytes.Buffer
+
+	_, err := resolveMaxIterFlags(0, -1, &warn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--set-max-tool-iterations must be greater than zero")
+
+	_, err = resolveMaxIterFlags(-1, 0, &warn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--set-claw-max-iterations must be greater than zero")
+}
+
+// M5: a negative value (typed by the user; -1 alone means "not given") must
+// be rejected with an error, not silently treated as "not given" and
+// ignored — that let --set-max-tool-iterations -5 do nothing at all.
+func TestResolveMaxIterFlagsRejectsNegativeValues(t *testing.T) {
+	var warn bytes.Buffer
+
+	_, err := resolveMaxIterFlags(-5, -1, &warn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--set-max-tool-iterations must be greater than zero")
+
+	_, err = resolveMaxIterFlags(-1, -5, &warn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--set-claw-max-iterations must be greater than zero")
+}
+
 func TestRemovedTemplatesError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

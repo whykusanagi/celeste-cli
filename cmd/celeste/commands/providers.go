@@ -282,7 +282,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 			output.WriteString("  Method: Application Default Credentials or a service-account JSON file\n")
 			output.WriteString("  Requires: GCP project with billing\n")
 		default:
-			output.WriteString("  Required: none (celeste still needs a non-empty api_key; any placeholder works)\n")
+			output.WriteString("  Required: none\n")
 		}
 	}
 
@@ -390,10 +390,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	if model == "" {
 		model = "<model your endpoint expects>"
 	}
-	key, keyNote := "YOUR_API_KEY", ""
-	if !caps.RequiresAPIKey {
-		key, keyNote = "not-needed", "   # any non-empty value; the endpoint ignores it"
-	}
+	key := "YOUR_API_KEY"
 	// Vertex authenticates with Application Default Credentials. Any
 	// non-empty api_key would be sent as a Gemini API key and override ADC
 	// (llm/backend_google.go), so its example sets no key.
@@ -403,11 +400,15 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString(fmt.Sprintf("  celeste config -config %s --set-url %s\n", name, url))
 	}
 	output.WriteString(fmt.Sprintf("  celeste config -config %s --set-model %s\n", name, model))
-	if adc {
+	switch {
+	case adc:
 		output.WriteString("  gcloud auth application-default login\n")
 		output.WriteString(fmt.Sprintf("  celeste config -config %s --use-google-adc\n", name))
-	} else {
-		output.WriteString(fmt.Sprintf("  celeste config -config %s --set-key %s%s\n", name, key, keyNote))
+	case !caps.RequiresAPIKey:
+		// No key needed at all here (needsAPIKey, #151 W6b review I4) —
+		// nothing to set, so there is no --set-key line.
+	default:
+		output.WriteString(fmt.Sprintf("  celeste config -config %s --set-key %s\n", name, key))
 	}
 	output.WriteString(fmt.Sprintf("  celeste -config %s chat\n", name))
 	output.WriteString(fmt.Sprintf("\n  # Or edit ~/.celeste/config.%s.json directly:\n", name))
@@ -416,9 +417,12 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString(fmt.Sprintf("    \"base_url\": \"%s\",\n", url))
 	}
 	output.WriteString(fmt.Sprintf("    \"model\": \"%s\",\n", model))
-	if adc {
+	switch {
+	case adc:
 		output.WriteString("    \"google_use_adc\": true\n")
-	} else {
+	case !caps.RequiresAPIKey:
+		output.WriteString("    \"api_key\": \"\"\n")
+	default:
 		output.WriteString(fmt.Sprintf("    \"api_key\": \"%s\"\n", key))
 	}
 	output.WriteString("  }\n")

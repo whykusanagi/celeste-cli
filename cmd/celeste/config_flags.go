@@ -16,9 +16,16 @@ func setModeError(value string) error {
 
 // resolveMaxIterFlags merges --set-max-tool-iterations (newVal) and the
 // deprecated --set-claw-max-iterations (legacyVal). -1 means the flag was not
-// given. The new flag wins when both are given; the legacy one warns.
+// given; any other value <= 0 was typed by the user and is invalid, so the
+// error names whichever flag carried it (M5) instead of always blaming
+// --set-max-tool-iterations, and a negative value is rejected rather than
+// silently treated as "not given" and ignored (M5). The new flag wins when
+// both are given; the legacy one warns.
 func resolveMaxIterFlags(newVal, legacyVal int, warn io.Writer) (int, error) {
-	if newVal == 0 || legacyVal == 0 {
+	if legacyVal != -1 && legacyVal <= 0 {
+		return 0, errors.New("--set-claw-max-iterations must be greater than zero")
+	}
+	if newVal != -1 && newVal <= 0 {
 		return 0, errors.New("--set-max-tool-iterations must be greater than zero")
 	}
 	if legacyVal > 0 {

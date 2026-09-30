@@ -236,7 +236,7 @@ func extractGlobalFlags(args []string, stderr io.Writer) ([]string, error) {
 		case strings.HasPrefix(a, "-config="):
 			configName = strings.TrimPrefix(a, "-config=")
 			continue
-		case a == "-mode" || strings.HasPrefix(a, "-mode="):
+		case a == "-mode" || a == "--mode" || strings.HasPrefix(a, "-mode=") || strings.HasPrefix(a, "--mode="):
 			return nil, errModeFlagRemoved
 		}
 		if n, extra, legacy, ok := iterFlag(args, i); ok {

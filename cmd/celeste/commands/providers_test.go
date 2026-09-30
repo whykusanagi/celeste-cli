@@ -45,19 +45,34 @@ func TestProviderInfoHasNoEmptySection(t *testing.T) {
 	}
 }
 
-// #151: the local example uses a named profile and no real key.
+// #151, I4 (#144 W6b review): the local example uses a named profile and no
+// key at all — needsAPIKey (#151) means celeste never asks for one here,
+// so the example must not tell the user to set a placeholder.
 func TestProviderInfoLocalExample(t *testing.T) {
 	out := providersOutput(t, "info", "local")
 	assert.Contains(t, out, "API Endpoint:  your own, for example http://127.0.0.1:8080/v1")
 	assert.Contains(t, out, "celeste config -config local --set-url http://127.0.0.1:8080/v1")
-	assert.Contains(t, out, "celeste config -config local --set-key not-needed")
 	assert.Contains(t, out, "celeste -config local chat")
 	assert.NotContains(t, out, "YOUR_API_KEY")
+	assert.NotContains(t, out, "--set-key", "no key is needed at all, so there is nothing to set")
+	assert.NotContains(t, out, "not-needed")
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, "celeste config ") {
 			assert.Contains(t, l, "-config local", "example edits the default profile: %q", l)
 		}
 	}
+}
+
+// I4: the AUTHENTICATION section must not claim celeste still needs a
+// non-empty api_key for a provider whose registry entry needs no key at
+// all (needsAPIKey, #151).
+func TestProviderInfoLocalAuthenticationSaysNoKeyNeeded(t *testing.T) {
+	out := providersOutput(t, "info", "local")
+	section := section(out, "AUTHENTICATION:")
+	joined := strings.Join(section, "\n")
+	assert.Contains(t, joined, "Required: none")
+	assert.NotContains(t, joined, "api_key")
+	assert.NotContains(t, joined, "placeholder")
 }
 
 // Every example names its profile, so none writes the default profile.

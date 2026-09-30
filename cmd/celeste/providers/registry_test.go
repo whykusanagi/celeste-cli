@@ -431,9 +431,21 @@ func TestEmptyBaseURLHasExample(t *testing.T) {
 // #151 W6b: a ToolsPerModel provider (Venice) decides tool availability from
 // the selected model, not a provider-wide flag; every other provider keeps
 // using its static SupportsFunctionCalling.
+// M4: hermetic — stubs the live Venice catalog fetch instead of hitting
+// api.venice.ai. "weird-uncensored-but-tool-capable" deliberately contradicts
+// the "uncensored = no tools" name heuristic (its stubbed catalog entry is
+// true): if the stub weren't actually wired in, SupportsTools would fall
+// back to that heuristic and get this one wrong.
 func TestToolsEnabledForModel(t *testing.T) {
+	defer StubVeniceToolCatalogForTest(map[string]bool{
+		"venice-uncensored":                 false,
+		"llama-3.3-70b":                     true,
+		"weird-uncensored-but-tool-capable": true,
+	})()
+
 	assert.False(t, ToolsEnabledForModel("venice", "venice-uncensored"), "the uncensored default has no tool support")
 	assert.True(t, ToolsEnabledForModel("venice", "llama-3.3-70b"), "a non-uncensored Venice model supports tools")
+	assert.True(t, ToolsEnabledForModel("venice", "weird-uncensored-but-tool-capable"), "the live catalog overrides the uncensored-name heuristic")
 	assert.True(t, ToolsEnabledForModel("openai", "gpt-4.1-nano"))
 	assert.True(t, ToolsEnabledForModel("local", ""), "local stays provider-level, unaffected by an empty model")
 	assert.False(t, ToolsEnabledForModel("not-a-real-provider", "x"))
