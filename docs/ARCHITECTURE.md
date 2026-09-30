@@ -103,19 +103,22 @@ If the LLM requests a tool call, it is executed and the result is shown inline, 
 
 ### 2. Claw Mode (`-mode claw`)
 
-Classic chat extended with an automatic tool-call loop, implemented entirely inside the TUI layer (`tui/app.go`). The agent package is not involved.
+Chat's tool calls run on `loop.Loop` (`cmd/celeste/loop`), the same loop
+agent runs and MCP chat use. The TUI renders its events; it never executes
+a tool itself.
 
 ```
 User types message
-  → LLM responds with tool call(s) (SkillCallBatchMsg)
-  → TUI executes each tool (SkillResultMsg)
-  → TUI resets streamStart, sends results back to LLM ──┐
-  → LLM responds again — more tool calls? ──────────────┘
-  → Eventually: final text response
-  → Status bar: timing + tokens for the final LLM call only
+  → AppModel.startTurn → TUIClientAdapter.RunTurn (one loop.Loop run, own goroutine)
+  → loop: UserPromptSubmit → prune → request → tool calls (parallel when safe)
+  → loop events → mailbox → TurnEventMsg chain → AppModel renders
+  → Enter during the turn: Loop.Steer (joins at the next tool step)
+  → Esc: cancels the run's context
+  → TurnDoneMsg: guards, caps, leftover steers
 ```
 
-A safety cap (`ClawMaxToolIterations`, default 10) stops runaway loops. The loop counter resets with each new user message.
+The turn cap is `claw_max_tool_iterations` (default 25). The identical-call
+(3) and progress (6) guards stop runaway loops.
 
 **What it is not**: Claw mode has no planning step, no checkpoints, no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
 
@@ -223,17 +226,21 @@ Both panels are scrollable (`PgUp`/`PgDn`).
    ↓
 3. streamStart = time.Now()  ← timing starts here
    ↓
-4. Build request: system prompt + conversation history + skill definitions
+4. startTurn → TUIClientAdapter.RunTurn: one loop.Loop run on its own
+   goroutine (system prompt + conversation history + skill definitions)
    ↓
-5. Send to LLM client (llm/client.go) — streaming
+5. The loop streams the request (llm/client.go); its events reach the TUI
+   as a TurnEventMsg chain
    ↓
 6. StreamChunkMsg arrives → append to last assistant message
    ↓
-7. StreamDoneMsg arrives → token counts captured (lastMsgInTok/Out)
+7. The reply is complete
    ├─ Tool calls requested?
-   │   └─ execute tools → streamStart reset →
-   │     send results back to LLM → repeat from step 6 (auto-loop, 50 turn cap)
-   └─ No tool calls → typing animation with corruption at cursor
+   │   └─ the loop runs the tools (ToolStartMsg/ToolResultMsg) →
+   │     streamStart reset → next request → repeat from step 6
+   │     (turn cap claw_max_tool_iterations, default 25)
+   └─ No tool calls → StreamDoneMsg: token counts captured
+      (lastMsgInTok/Out), typing animation with corruption at cursor
    ↓
 8. Typing complete → status: "Ready (2.1s · ↑1.2k ↓483)"
    ↓
@@ -568,10 +575,12 @@ During `/orchestrate` the chat area is replaced by a split panel:
 
 | Message | Source | What it does |
 |---------|--------|-------------|
-| `StreamChunkMsg` | LLM stream | Appends delta to last assistant message |
-| `StreamDoneMsg` | LLM stream end | Captures token counts, starts typing animation |
-| `SkillCallBatchMsg` | LLM tool request | Executes skills; in claw mode schedules follow-up |
-| `SkillResultMsg` | Skill executor | Appends tool result; if last in batch, sends to LLM |
+| `StreamChunkMsg` | loop text delta | Appends delta to last assistant message |
+| `StreamDoneMsg` | loop reply without tools | Captures token counts, starts typing animation |
+| `TurnEventMsg` | chat turn (loop events) | Wraps one event of the running turn; its `Next` reads the one after |
+| `HistoryMsg` | loop snapshot | Syncs the chat's history to the loop's, position by position |
+| `ToolStartMsg` / `ToolResultMsg` | loop tool calls | Tool cards, skill log, NSFW toggle |
+| `TurnDoneMsg` | end of a turn | Guard or cap notice, leftover steers, automatic summary |
 | `AgentProgressMsg` | agent.Runner | Turn separators, tool logs, per-turn stats, complete summary |
 | `OrchestratorEventMsg` | orchestrator | Action feed entries, file diffs, debate rounds, verdicts |
 | `TickMsg` | timer | Typing animation; on completion writes `(Xs · ↑Nk ↓Nk)` to status |
