@@ -299,9 +299,7 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		return []tea.Msg{tui.ToolResultMsg{ID: ev.Call.ID, Name: ev.Call.Name, Content: ev.Text, IsError: ev.IsError, Metadata: ev.Metadata}}
 	case loop.EventCompacted:
 		t.compacted = true
-		// Compact set saved before the loop emitted this event, and runs
-		// again only after the next one: the unbuffered channel orders both.
-		return []tea.Msg{tui.CompactedMsg{Line: ev.Text, Saved: t.compactor.saved}}
+		return []tea.Msg{tui.CompactedMsg{Line: ev.Text, Saved: int(t.compactor.saved.Load())}}
 	case loop.EventSteered:
 		return []tea.Msg{tui.SteeredMsg{Message: ev.Msg}}
 	case loop.EventPromptBlocked, loop.EventSteerBlocked:
@@ -394,8 +392,8 @@ type chatCompactor struct {
 	a      *TUIClientAdapter
 	jev    *jev.Client // shadow scorer, resolved when the turn started; nil: off
 	window int
-	used   int // Run's goroutine only: the tracker's count, then the provider's
-	saved  int // the tokens the last prune freed, for the chat's count
+	used   int          // Run's goroutine only: the tracker's count, then the provider's
+	saved  atomic.Int64 // the tokens the last prune freed, for the chat's count (read by the pump)
 	over   atomic.Bool
 }
 
@@ -425,7 +423,7 @@ func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, la
 	if c.used > out.SavedTokens {
 		c.used -= out.SavedTokens
 	}
-	c.saved = out.SavedTokens
+	c.saved.Store(int64(out.SavedTokens))
 	return edited, []string{out.Summary}, true
 }
 
