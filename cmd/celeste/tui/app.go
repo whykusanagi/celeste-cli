@@ -61,7 +61,6 @@ type AppModel struct {
 	build            string // Build identifier (e.g., "bubbletea-tui")
 	grimoireContent  string // Resolved .grimoire content for /grimoire command
 	codeGraphSummary string // Code graph stats for /index command
-	runtimeMode      string // Runtime orchestration mode (classic or claw)
 
 	// Simulated typing state
 	typingContent string // Full content to type
@@ -344,7 +343,6 @@ func NewApp(llmClient LLMClient) AppModel {
 		mcpPanel:         NewMCPPanelModel(),
 		llmClient:        llmClient,
 		viewMode:         "chat",
-		runtimeMode:      config.RuntimeModeClassic,
 	}
 }
 
@@ -2776,12 +2774,6 @@ func (m AppModel) WithCodeGraphIndexer(indexer *codegraph.Indexer) AppModel {
 
 func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 	m.config = cfg
-	if cfg == nil {
-		m.runtimeMode = config.RuntimeModeClassic
-		return m
-	}
-
-	m.runtimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
 	return m
 }
 

@@ -339,9 +339,8 @@ func (a *TUIClientAdapter) currentAgentConfig() *config.Config {
 		}
 	}
 
-	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
-	if cfg.ClawMaxToolIterations <= 0 {
-		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
+	if cfg.MaxToolIterations <= 0 {
+		cfg.MaxToolIterations = config.DefaultMaxToolIterations
 	}
 
 	return &cfg

@@ -193,15 +193,11 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 
-	if runtimeModeOverride != "" {
-		cfg.RuntimeMode = config.NormalizeRuntimeMode(runtimeModeOverride)
-	}
 	if clawMaxToolIterationsOverride > 0 {
-		cfg.ClawMaxToolIterations = clawMaxToolIterationsOverride
+		cfg.MaxToolIterations = clawMaxToolIterationsOverride
 	}
-	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
-	if cfg.ClawMaxToolIterations <= 0 {
-		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
+	if cfg.MaxToolIterations <= 0 {
+		cfg.MaxToolIterations = config.DefaultMaxToolIterations
 	}
 
 	// Show which config is being used
@@ -859,9 +855,8 @@ func runConfigCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
-	if cfg.ClawMaxToolIterations <= 0 {
-		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
+	if cfg.MaxToolIterations <= 0 {
+		cfg.MaxToolIterations = config.DefaultMaxToolIterations
 	}
 
 	changed := false
@@ -882,23 +877,19 @@ func runConfigCommand(args []string) {
 		fmt.Printf("Model set to: %s\n", *setModel)
 	}
 	if *setMode != "" {
-		mode := strings.ToLower(strings.TrimSpace(*setMode))
-		if !config.IsValidRuntimeMode(mode) {
-			fmt.Fprintf(os.Stderr, "Error: invalid mode '%s' (valid: classic, claw)\n", *setMode)
-			os.Exit(1)
-		}
-		cfg.RuntimeMode = mode
-		changed = true
-		fmt.Printf("Runtime mode set to: %s\n", cfg.RuntimeMode)
+		// Task 11 replaces this with the extracted setModeError helper and
+		// its test; the message stays the same.
+		fmt.Fprintln(os.Stderr, "Error: --set-mode was removed in celeste 2.0: chat always runs tools in a loop, so there is no mode to set. See MIGRATING-2.0.md")
+		os.Exit(1)
 	}
 	if *setClawMaxIterations == 0 {
 		fmt.Fprintf(os.Stderr, "Error: --set-claw-max-iterations must be greater than zero\n")
 		os.Exit(1)
 	}
 	if *setClawMaxIterations > 0 {
-		cfg.ClawMaxToolIterations = *setClawMaxIterations
+		cfg.MaxToolIterations = *setClawMaxIterations
 		changed = true
-		fmt.Printf("Claw max iterations set to: %d\n", cfg.ClawMaxToolIterations)
+		fmt.Printf("Claw max iterations set to: %d\n", cfg.MaxToolIterations)
 	}
 	if *setContextLimit == 0 {
 		cfg.ContextLimit = 0
@@ -1046,13 +1037,12 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  Skip Persona:      %v\n", cfg.SkipPersonaPrompt)
 		fmt.Printf("  Simulate Typing:   %v\n", cfg.SimulateTyping)
 		fmt.Printf("  Typing Speed:      %d chars/sec\n", cfg.TypingSpeed)
-		fmt.Printf("  Runtime Mode:      %s\n", cfg.RuntimeMode)
 		if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), cfg.Model) {
 			fmt.Printf("  Planning:          %s (server-side)\n", cfg.Model)
 		} else {
 			fmt.Printf("  Planning:          local\n")
 		}
-		fmt.Printf("  Claw Max Iter:     %d\n", cfg.ClawMaxToolIterations)
+		fmt.Printf("  Max Tool Iter:     %d\n", cfg.MaxToolIterations)
 		if cfg.ContextLimit > 0 {
 			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
 		} else {
@@ -1108,17 +1098,16 @@ func createConfigTemplate(name string) error {
 		model       string
 		timeout     int
 		skipPersona bool
-		runtimeMode string
 	}
 	templates := map[string]override{
-		"openai":          {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"grok":            {provider: "grok", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"venice":          {provider: "venice", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"sakana":          {provider: "sakana", timeout: 300, runtimeMode: config.RuntimeModeClassic}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
-		"elevenlabs":      {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"digitalocean":    {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true, runtimeMode: config.RuntimeModeClassic}, // DO agents have built-in persona
-		"celeste-classic": {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"celeste-claw":    {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClaw},
+		"openai":          {provider: "openai", timeout: 60},
+		"grok":            {provider: "grok", timeout: 60},
+		"venice":          {provider: "venice", timeout: 60},
+		"sakana":          {provider: "sakana", timeout: 300}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
+		"elevenlabs":      {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60},
+		"digitalocean":    {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true}, // DO agents have built-in persona
+		"celeste-classic": {provider: "openai", timeout: 60},
+		"celeste-claw":    {provider: "openai", timeout: 60},
 	}
 
 	o, ok := templates[strings.ToLower(name)]
@@ -1135,14 +1124,13 @@ func createConfigTemplate(name string) error {
 		model = o.model
 	}
 	tmpl := &config.Config{
-		BaseURL:               baseURL,
-		Model:                 model,
-		Timeout:               o.timeout,
-		SkipPersonaPrompt:     o.skipPersona,
-		SimulateTyping:        true,
-		TypingSpeed:           25,
-		RuntimeMode:           o.runtimeMode,
-		ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
+		BaseURL:           baseURL,
+		Model:             model,
+		Timeout:           o.timeout,
+		SkipPersonaPrompt: o.skipPersona,
+		SimulateTyping:    true,
+		TypingSpeed:       25,
+		MaxToolIterations: config.DefaultMaxToolIterations,
 	}
 
 	configPath := config.NamedConfigPath(name)

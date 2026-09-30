@@ -136,3 +136,77 @@ func TestMigrateFileReadOnlyStillLoads(t *testing.T) {
 	assert.Equal(t, "7", compactValues(t, got)["max_tool_iterations"])
 	assert.True(t, strings.Contains(strings.Join(warned, "\n"), "could not save"), warned)
 }
+
+// Load -> save through the real loader: a named profile with the legacy keys
+// loads with the renamed value, is rewritten on disk, and a later SaveNamed
+// never brings the removed keys back.
+func TestLoadNamedMigratesLegacyProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	orig := MigrationWarn
+	MigrationWarn = func(string) {}
+	t.Cleanup(func() { MigrationWarn = orig })
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste"), 0o700))
+	path := NamedConfigPath("legacy")
+	require.NoError(t, os.WriteFile(path, fixture(t, "legacy.json"), 0o600))
+
+	cfg, err := LoadNamed("legacy")
+	require.NoError(t, err)
+	assert.Equal(t, 7, cfg.MaxToolIterations)
+	assert.Equal(t, "gpt-4.1", cfg.Model)
+
+	onDisk, _ := os.ReadFile(path)
+	before, after := compactValues(t, fixture(t, "legacy.json")), compactValues(t, onDisk)
+	for k, v := range before {
+		if k == "runtime_mode" || k == "claw_max_tool_iterations" {
+			continue
+		}
+		assert.Equal(t, v, after[k], "value of %q changed on disk", k)
+	}
+
+	require.NoError(t, SaveNamed("legacy", cfg))
+	saved, _ := os.ReadFile(path)
+	assert.NotContains(t, string(saved), "runtime_mode")
+	assert.NotContains(t, string(saved), "claw_max_tool_iterations")
+	assert.Contains(t, string(saved), `"max_tool_iterations": 7`)
+}
+
+// The default config.json path (Load) migrates too.
+func TestLoadMigratesDefaultConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	orig := MigrationWarn
+	MigrationWarn = func(string) {}
+	t.Cleanup(func() { MigrationWarn = orig })
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste"), 0o755))
+	_, configFile, _, _ := Paths()
+	require.NoError(t, os.WriteFile(configFile, fixture(t, "legacy.json"), 0o644))
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 7, cfg.MaxToolIterations)
+	onDisk, _ := os.ReadFile(configFile)
+	assert.NotContains(t, string(onDisk), "runtime_mode")
+}
+
+// Review focus 5: permissions.json has its own "mode" key and is never a
+// config file; loading a profile leaves it byte-identical.
+func TestLoadNamedLeavesPermissionsJSONAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := filepath.Join(home, ".celeste")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	perms := []byte(`{"mode":"default","rules":[]}`)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "permissions.json"), perms, 0o600))
+	require.NoError(t, os.WriteFile(NamedConfigPath("p"), fixture(t, "legacy.json"), 0o600))
+	orig := MigrationWarn
+	MigrationWarn = func(string) {}
+	t.Cleanup(func() { MigrationWarn = orig })
+	_, err := LoadNamed("p")
+	require.NoError(t, err)
+	got, _ := os.ReadFile(filepath.Join(dir, "permissions.json"))
+	assert.Equal(t, perms, got)
+}

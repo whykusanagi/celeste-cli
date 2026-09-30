@@ -642,7 +642,7 @@ func TestRunTurnCapNoticeCountsTheWholeTurn(t *testing.T) {
 		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "deny", "KEEP-GOING"))
 	})
 	writeFile(t, ws, "a.txt", "alpha")
-	deps.adapter.baseConfig.ClawMaxToolIterations = 2
+	deps.adapter.baseConfig.MaxToolIterations = 2
 	msgs := runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("hi"), Tools: true, Run: 1})
 	done := msgs[len(msgs)-1].(tui.TurnDoneMsg)
 	if done.Stop != "cap" || !strings.Contains(done.Notice, "after 2 turn(s)") {

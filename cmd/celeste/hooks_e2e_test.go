@@ -654,7 +654,7 @@ func TestTUIStopHookDenyWithoutTurnsLeftEndsTheTurn(t *testing.T) {
 	m, deps, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {
 		writeHooksFile(t, globalHooks(home), hookDef(t, hooks.EventStop, "", "deny", "KEEP-GOING"))
 	})
-	deps.adapter.baseConfig.ClawMaxToolIterations = 1 // no turn is running yet
+	deps.adapter.baseConfig.MaxToolIterations = 1 // no turn is running yet
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "finish"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "first" && turnIdle(m) }, 30*time.Second)
 	if n := len(srv.Requests()); n != 1 {
