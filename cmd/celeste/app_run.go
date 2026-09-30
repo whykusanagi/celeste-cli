@@ -155,11 +155,105 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Celeste CLI %s (%s)\n", Version, Build)
 		}
 	default:
-		// Treat unknown command as a message.
+		// A lone lowercase word is almost always a mistyped or guessed
+		// command (`celeste models`), not a question: say so instead of
+		// sending it to the model (#151). Anything longer is a message.
+		if len(args) == 1 && looksLikeCommand(command) {
+			fmt.Fprint(stderr, unknownCommandMessage(command))
+			return 1
+		}
 		runner.RunSingleMessage(strings.Join(args, " "))
 	}
 
 	return 0
+}
+
+// knownCommands are the words run dispatches, for suggestions. Keep it in
+// step with run's switch (TestKnownCommandsDispatch checks it).
+var knownCommands = []string{
+	"agent", "chat", "collections", "config", "context", "costs", "export",
+	"forget", "grimoire", "help", "hooks", "index", "init", "mcp", "memories",
+	"message", "plan", "providers", "remember", "resume", "revert", "serve",
+	"session", "sessions", "skill", "skills", "stats", "version", "wallet-monitor",
+}
+
+// commandHints answer words people guess that are not commands.
+var commandHints = map[string]string{
+	"models": "celeste providers    (each provider's default model; /set-model lists models inside chat)",
+	"model":  "celeste providers    (each provider's default model; /set-model lists models inside chat)",
+	"status": "celeste config       (the active profile, provider and model)",
+}
+
+func looksLikeCommand(word string) bool {
+	if word == "" || word[0] < 'a' || word[0] > 'z' {
+		return false
+	}
+	for _, r := range word {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// unknownCommandMessage is the error for a lone unknown word: the closest
+// command (or a hint), how to send the word as a message, and where the
+// command list is.
+func unknownCommandMessage(word string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Unknown command %q.\n", word)
+	if hint, ok := commandHints[word]; ok {
+		fmt.Fprintf(&b, "Did you mean: %s\n", hint)
+	} else if best := closestCommand(word); best != "" {
+		fmt.Fprintf(&b, "Did you mean: celeste %s\n", best)
+	}
+	fmt.Fprintf(&b, "To send it to Celeste as a message: celeste message %s\n", word)
+	b.WriteString("Run celeste help for the command list.\n")
+	return b.String()
+}
+
+// closestCommand returns the known command nearest to word, or "" when none
+// is close: at most 1 edit for words of up to 5 letters, 2 for longer ones
+// ("hello" must not become "help"). Ties go to the first in knownCommands.
+func closestCommand(word string) string {
+	limit := 1
+	if len(word) > 5 {
+		limit = 2
+	}
+	best, bestDist := "", limit+1
+	for _, c := range knownCommands {
+		if d := editDistance(word, c); d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	return best
+}
+
+// editDistance is the optimal-string-alignment distance between a and b:
+// insertions, deletions, substitutions and adjacent swaps each cost 1
+// ("agnet" is 1 from "agent"). By bytes: looksLikeCommand admits only ASCII.
+func editDistance(a, b string) int {
+	d := make([][]int, len(a)+1)
+	for i := range d {
+		d[i] = make([]int, len(b)+1)
+		d[i][0] = i
+	}
+	for j := range d[0] {
+		d[0][j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			d[i][j] = min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+cost)
+			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
+				d[i][j] = min(d[i][j], d[i-2][j-2]+1)
+			}
+		}
+	}
+	return d[len(a)][len(b)]
 }
 
 func resetGlobalFlags() {
