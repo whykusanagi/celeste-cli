@@ -485,6 +485,8 @@ func TestCelesteStatusNoArgsUnchanged(t *testing.T) {
 	want := map[string]bool{
 		"server": true, "version": true, "commit": true,
 		"uptime": true, "health": true, "workspace": true, "transport": true,
+		// #210: additive fields the plugin's celeste-context skill reads.
+		"grimoire": true, "project": true, "session_cost": true,
 	}
 	for k := range payload {
 		if !want[k] {

@@ -69,7 +69,8 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	system := env.SystemPromptWithSession(session, "", nil)
 	sessionID := fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano())
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
-	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add)
+	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
+	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
@@ -171,7 +172,8 @@ func (c *chatCompactor) Compact(_ context.Context, history []loop.Message, usage
 // When a run finishes as done, Stop hooks may continue it once with turns
 // left out of the 25 (chatStopHook). Guard and cap stops never reach Stop.
 // The claim flags span the whole call, as the pre-loop session flags did.
-func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, warn func(string)) (string, error) {
+// record gets each model reply's token usage (nil when the provider sent none).
+func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, warn func(string), record func(*llm.TokenUsage)) (string, error) {
 	lim := l.Limits
 	history := []loop.Message{{Role: "user", Content: prompt, Timestamp: time.Now()}}
 	var claims chatClaims
@@ -181,7 +183,7 @@ func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, 
 		l.Limits.MaxTurns = turnsLeft // >= 1: chatStopHook stops at 0
 		var res loop.Result
 		var err error
-		history, res, err = runObserved(ctx, l, history, &claims)
+		history, res, err = runObserved(ctx, l, history, &claims, record)
 		if err != nil {
 			return "", err
 		}
@@ -201,13 +203,16 @@ func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, 
 // runObserved runs l once and feeds its events to claims. The event channel
 // is unbuffered, so the consumer reads until EventDone. Only the consumer
 // touches claims while Run executes, and <-done orders that before return.
-func runObserved(ctx context.Context, l *loop.Loop, history []loop.Message, claims *chatClaims) ([]loop.Message, loop.Result, error) {
+func runObserved(ctx context.Context, l *loop.Loop, history []loop.Message, claims *chatClaims, record func(*llm.TokenUsage)) ([]loop.Message, loop.Result, error) {
 	events := l.Events()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for ev := range events {
 			claims.observe(ev)
+			if ev.Kind == loop.EventAssistant && record != nil {
+				record(ev.Usage)
+			}
 			if ev.Kind == loop.EventDone {
 				return
 			}

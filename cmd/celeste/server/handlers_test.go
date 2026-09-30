@@ -105,6 +105,12 @@ func TestCelesteContentHandlerRejectsEmptyPrompt(t *testing.T) {
 }
 
 func TestCelesteStatusHandler(t *testing.T) {
+	// celeste_status looks for the workspace's code graph under
+	// ~/.celeste/projects; keep that out of the real home.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
 	cfg := DefaultConfig()
 	cfg.CelesteConfig = &config.Config{
 		APIKey:  "test-key",
