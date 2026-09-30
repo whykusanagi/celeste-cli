@@ -237,7 +237,7 @@ func TestSummaryStillFits(t *testing.T) {
 // The turn carries the window the loop's compactor prunes against.
 func TestTurnRequestCarriesTheWindow(t *testing.T) {
 	m, client := newCompactTestApp(t)
-	m, _ = step(t, m, SendMessageMsg{Content: "go"})
+	step(t, m, SendMessageMsg{Content: "go"})
 	require.Len(t, client.turns, 1)
 	assert.Equal(t, 100_000, client.turns[0].req.Window)
 	assert.Equal(t, 50_000, client.turns[0].req.Used)

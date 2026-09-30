@@ -56,6 +56,11 @@ func InitLogging() error {
 		return err
 	}
 	logMu.Lock()
+	if logFile != nil {
+		// A second init must not leak the first handle: Windows cannot
+		// remove a file that is still open.
+		logFile.Close()
+	}
 	logFile = f
 	logMu.Unlock()
 
