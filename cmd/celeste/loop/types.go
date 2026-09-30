@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -47,9 +48,13 @@ type Limits struct {
 	RequestTimeout     time.Duration // per-request deadline; the client's per-attempt deadline still applies
 	MaxInvalidArgTurns int           // stop after this many turns in a row with bad tool arguments
 	TextToolCalls      bool          // parse <tool_call> blocks from text when a turn has no native calls
+	// KeepToolMetadata puts an image result's ToolResult.Metadata on its
+	// tool message (read_file for vision models), with a marker in the
+	// content. The chat sets it; agent and MCP runs send text only.
+	KeepToolMetadata bool
 	// HookBudget is how long PreToolUse/PostToolUse hooks may add to a call
-	// before an ungated run abandons it (tool timeout + budget). <=0:
-	// DefaultHookBudget.
+	// before the watchdog abandons it (tool timeout + budget; gated runs:
+	// counted from the Gate's answer). <=0: DefaultHookBudget.
 	HookBudget time.Duration
 }
 
@@ -90,6 +95,7 @@ const (
 	StopInterrupted StopReason = "interrupted"  // ctx cancelled
 	StopInvalidArgs StopReason = "invalid_args" // Limits.MaxInvalidArgTurns
 	StopError       StopReason = "error"        // the provider failed; Run returns the error
+	StopBlocked     StopReason = "blocked"      // CheckPrompt blocked every new prompt; no request was sent
 )
 
 // Result describes one Run. The completion gate is not here: the agent layer
@@ -110,16 +116,20 @@ const (
 	// EventTurnStart (Turn) may repeat with the same Turn number after an
 	// overflow retry re-runs the turn: consumers should key on Turn, not
 	// count events.
-	EventTurnStart  EventKind = iota
-	EventTextDelta            // Text
-	EventAssistant            // Turn, Text, ToolNames, Usage, Elapsed: the model's reply
-	EventToolStart            // Call
-	EventToolResult           // Call, Text (what the model receives), IsError
-	EventCompacted            // Text
-	EventSteered              // Text
-	EventNotice               // Text: a non-fatal problem (hook error, spill failure)
-	EventTurnEnd              // Turn, History: a consistent history snapshot
-	EventDone                 // Result, Err: always the last event of a Run
+	EventTurnStart      EventKind = iota
+	EventTextDelta                // Text
+	EventAssistant                // Turn, Text, ToolNames, Usage, Elapsed: the model's reply
+	EventToolStart                // Call
+	EventToolResult               // Call, Text (what the model receives), IsError
+	EventCompacted                // Text
+	EventSteered                  // Text, Msg: a steer joined (Msg as it joined, metadata included)
+	EventNotice                   // Text: a non-fatal problem (hook error, spill failure)
+	EventTurnEnd                  // Turn, History: a consistent history snapshot
+	EventDone                     // Result, Err: always the last event of a Run
+	EventPromptBlocked            // Msg, Text (the reason): CheckPrompt blocked a prompt; it left the history
+	EventSteerBlocked             // Msg, Text (the reason): CheckPrompt blocked a steer; it was dropped
+	EventPromptsChecked           // History: CheckPrompt allowed a prompt; the checked history, before the first request
+	EventCallsRecorded            // Turn, History: the snapshot with this turn's assistant tool_calls message, before any call runs
 )
 
 // Event is one step of a Run, for renderers and adopters.
@@ -131,6 +141,8 @@ type Event struct {
 	Usage     *llm.TokenUsage
 	Elapsed   time.Duration
 	Call      ToolCall
+	Msg       Message
+	Metadata  map[string]any // EventToolResult: the tool's ToolResult.Metadata (images, subagent names)
 	IsError   bool
 	History   []Message
 	Result    Result
@@ -162,18 +174,52 @@ func (f GateFunc) Ask(ctx context.Context, req tools.PermissionRequest) tools.Pe
 
 // PromptGate adapts a blocking tools.PromptFunc (the TUI modal) to a Gate.
 // A nil fn gives a nil Gate. Asks are serialized: parallel calls in one
-// batch must not open two modals at once.
+// batch must not open two modals at once. When ctx ends first (the call
+// was abandoned, Esc, or the chat quitting) the ask answers deny at once;
+// the prompt's own goroutine keeps the lock until the prompt returns, so a
+// later ask never opens a second modal over one still showing. An ask whose
+// ctx ended while it waited for the lock never calls fn.
 func PromptGate(fn tools.PromptFunc) Gate {
 	if fn == nil {
 		return nil
 	}
 	var mu sync.Mutex
-	return GateFunc(func(_ context.Context, req tools.PermissionRequest) tools.PermissionResponse {
-		mu.Lock()
-		defer mu.Unlock()
-		return fn(req)
+	return GateFunc(func(ctx context.Context, req tools.PermissionRequest) tools.PermissionResponse {
+		if ctx.Err() != nil {
+			return tools.PermissionResponse{Decision: "deny"}
+		}
+		answer := make(chan tools.PermissionResponse, 1)
+		go func() {
+			mu.Lock()
+			defer mu.Unlock()
+			if ctx.Err() != nil {
+				answer <- tools.PermissionResponse{Decision: "deny"}
+				return
+			}
+			answer <- fn(req)
+		}()
+		select {
+		case r := <-answer:
+			return r
+		case <-ctx.Done():
+			return tools.PermissionResponse{Decision: "deny"}
+		}
 	})
 }
+
+// PromptVerdict is a PromptCheck's answer.
+type PromptVerdict struct {
+	Blocked bool
+	Reason  string // for the person, never the model
+}
+
+// PromptCheck is UserPromptSubmit for the loop. Run calls it before the
+// first request for every user message not checked yet (MetaPromptHookDone
+// unset, not hidden), and for every steer when it joins. It returns the
+// message to send, with any hook context in Metadata[tui.MetaHookContext];
+// the loop marks it checked. An error (the run's ctx ended: an interrupt,
+// not a verdict) leaves the message unchecked.
+type PromptCheck func(ctx context.Context, msg Message) (Message, PromptVerdict, error)
 
 // Compactor keeps the history inside the window. The loop calls it before
 // every request, and once with force set after a context-overflow error.
@@ -207,11 +253,17 @@ type Loop struct {
 	Limits  Limits
 	Gate    Gate      // nil: an Ask is denied
 	Compact Compactor // nil: no compaction
+	// CheckPrompt is UserPromptSubmit for this run (2.0 F2d; nil: none).
+	CheckPrompt PromptCheck
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string
 	// SpillDir overrides the spill base directory; "" uses the default.
 	SpillDir string
+	// SpillCounter numbers spill files across Loops that share it (the chat
+	// starts one Loop per turn, 2.0 F2d), so a call ID repeated in a later
+	// run never overwrites an earlier spill. nil: counted per Loop.
+	SpillCounter *atomic.Int64
 
 	mu        sync.Mutex
 	steers    []string

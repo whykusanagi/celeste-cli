@@ -43,24 +43,26 @@ func (m Mode) String() string {
 	}
 }
 
-// toolDiscoveryThreshold turns on discovery mode (MCP tools hidden until
+// ToolDiscoveryThreshold turns on discovery mode (MCP tools hidden until
 // find_tools activates them) once the registry is this big.
-const toolDiscoveryThreshold = 40
+const ToolDiscoveryThreshold = 40
 
 // Env is everything a mode needs around the loop.
 type Env struct {
-	Mode           Mode
-	Workspace      string
-	Registry       *tools.Registry
-	Checker        *permissions.Checker
-	ToolMode       tools.RuntimeMode
-	MCP            *mcp.Manager
-	Indexer        *codegraph.Indexer
-	Hooks          *hooks.Runner // tool hooks run in Registry; nil when loading failed
-	Files          *checkpoints.FileTracker
-	Snapshots      *checkpoints.SnapshotManager
-	ProjectContext string // grimoire, project memories, code-graph summary
-	GitSnapshot    string
+	Mode             Mode
+	Workspace        string
+	Registry         *tools.Registry
+	Checker          *permissions.Checker
+	ToolMode         tools.RuntimeMode
+	MCP              *mcp.Manager
+	Indexer          *codegraph.Indexer
+	Hooks            *hooks.Runner // tool hooks run in Registry; nil when loading failed
+	Files            *checkpoints.FileTracker
+	Snapshots        *checkpoints.SnapshotManager
+	ProjectContext   string // grimoire, project memories, code-graph summary
+	GitSnapshot      string
+	GrimoireContext  string // grimoire and "# Project Memories" (the /grimoire view)
+	CodeGraphSummary string // the code graph's project summary (the /index view)
 
 	opts        SetupOptions
 	skipPersona bool
@@ -96,6 +98,10 @@ type SetupOptions struct {
 	// ran out of time). They depend on the machine, not the configuration.
 	// nil = Warn.
 	Notice func(string)
+	// Approve asks the person to trust a repo hook. Only ModeChat uses it
+	// (non-interactive modes never approve, F0); nil there means a terminal
+	// prompt when stdin and stderr are terminals.
+	Approve hooks.ApproveFunc
 }
 
 // Setup builds the registry, MCP clients, custom skills, permission checker,
@@ -135,7 +141,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	env.setupPermissions(home)
 	env.setupHooks(home)
 	env.setupMCP(ws, home)
-	if env.Registry.Count() > toolDiscoveryThreshold {
+	if env.Registry.Count() > ToolDiscoveryThreshold {
 		env.Registry.SetDiscoveryMode(true)
 	}
 	env.setupContext(ws)
@@ -178,8 +184,11 @@ func (e *Env) setupPermissions(home string) {
 // never auto-approved.
 func (e *Env) setupHooks(home string) {
 	var approve hooks.ApproveFunc
-	if e.Mode == ModeChat && hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
-		approve = hooks.PromptApprover(os.Stdin, os.Stderr)
+	if e.Mode == ModeChat {
+		approve = e.opts.Approve
+		if approve == nil && hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
+			approve = hooks.PromptApprover(os.Stdin, os.Stderr)
+		}
 	}
 	runner, err := hooks.Load(hooks.Options{
 		Workspace: e.Workspace,
@@ -244,6 +253,15 @@ func (e *Env) Trust() {
 	e.Registry.SetPermissionChecker(e.Checker)
 }
 
+// RefreshDiscovery turns tool discovery on when tools added after Setup
+// (the chat's config-backed skills, collections, spawn_agent, post_message)
+// take the registry past ToolDiscoveryThreshold. It never turns it off.
+func (e *Env) RefreshDiscovery() {
+	if e.Registry.Count() > ToolDiscoveryThreshold {
+		e.Registry.SetDiscoveryMode(true)
+	}
+}
+
 // setupMCP starts the configured MCP servers. Only the TUI loads workspace
 // configs (<ws>/.mcp.json, <ws>/.celeste/mcp.json): every other mode runs
 // without an interactive user, and a repo's config would otherwise run an
@@ -298,8 +316,10 @@ func (e *Env) setupContext(ws string) {
 		}
 		text += "# Project Memories\n\n" + idx.Render()
 	}
+	e.GrimoireContext = text
 	e.GitSnapshot = e.captureGit(ws)
 	if summary := e.setupCodeGraph(ws); summary != "" {
+		e.CodeGraphSummary = summary
 		if text != "" {
 			text += "\n\n"
 		}

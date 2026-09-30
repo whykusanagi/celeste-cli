@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -311,5 +312,38 @@ func TestSetupTimingNoticesGoToNotice(t *testing.T) {
 	}
 	if strings.Contains(warns.all(), "timed out") {
 		t.Fatalf("a timing notice reached Warn: %q", warns.all())
+	}
+}
+
+// /grimoire and /index show the grimoire (with memories) and the code-graph
+// summary on their own; ProjectContext is their join.
+func TestSetupExposesGrimoireAndCodeGraphText(t *testing.T) {
+	setupHome(t)
+	ws := t.TempDir()
+	write(t, filepath.Join(ws, ".grimoire"), "## Bindings\n- GRIMOIRE-MARKER\n")
+	write(t, filepath.Join(ws, "go.mod"), "module probe\n\ngo 1.26\n")
+	write(t, filepath.Join(ws, "main.go"), "package main\n\nfunc main() {}\n")
+	env, _ := mustSetup(t, ModeChat, ws)
+	if !strings.Contains(env.GrimoireContext, "GRIMOIRE-MARKER") || strings.Contains(env.GrimoireContext, "# Code Graph") {
+		t.Fatalf("GrimoireContext = %q", env.GrimoireContext)
+	}
+	if env.CodeGraphSummary == "" || !strings.Contains(env.ProjectContext, env.CodeGraphSummary) {
+		t.Fatalf("CodeGraphSummary = %q, ProjectContext = %q", env.CodeGraphSummary, env.ProjectContext)
+	}
+}
+
+// Tools an adopter adds after Setup (the chat's) count toward discovery.
+func TestEnvRefreshDiscoveryCountsLateTools(t *testing.T) {
+	setupHome(t)
+	env, _ := mustSetup(t, ModeChat, t.TempDir())
+	if env.Registry.DiscoveryMode() {
+		t.Skip("discovery is already on for a bare Setup; nothing to test")
+	}
+	for i := env.Registry.Count(); i <= ToolDiscoveryThreshold; i++ {
+		env.Registry.Register(&fakeTool{name: fmt.Sprintf("late_%d", i)})
+	}
+	env.RefreshDiscovery()
+	if !env.Registry.DiscoveryMode() {
+		t.Fatalf("%d tools and discovery still off", env.Registry.Count())
 	}
 }

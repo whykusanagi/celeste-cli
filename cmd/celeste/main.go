@@ -220,26 +220,20 @@ func runChatTUI() {
 
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
-	// Repo hooks are approved on the terminal before the TUI takes it over.
-	// Both ends must be a terminal; piped consoles are non-interactive and
-	// never approve (use `celeste hooks trust`).
-	chatHookApprover = nil
-	if hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
-		chatHookApprover = hooks.PromptApprover(os.Stdin, os.Stderr)
-	}
+	// Repo hooks are approved on the terminal before the TUI takes it over:
+	// with chatHookApprover nil, loop.Setup prompts only when stdin and
+	// stderr are both terminals (piped consoles never approve; use
+	// `celeste hooks trust`).
 	app, deps, err := newChatApp(cfg, cwd, homeDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 	registry, tuiClient := deps.registry, deps.adapter
+	defer deps.env.Close() // last: MCP clients and the code graph
 	defer tuiClient.subMgr.Close()
-	defer func() { _ = deps.mcpManager.Stop() }()
-	if deps.indexer != nil {
-		defer deps.indexer.Close()
-	}
 	defer tui.CloseLogging()
-	defer deps.adapter.lifeCancel()
+	defer tuiClient.lifeCancel()
 
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.

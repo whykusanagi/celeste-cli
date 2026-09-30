@@ -9,73 +9,51 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-// chatHookApprover asks the person at the terminal to trust repo hooks
-// before the TUI starts. nil (tests, piped stdin or stderr) is
-// non-interactive: untrusted hooks are skipped with a warning.
+// chatHookApprover asks the person to trust repo hooks before the TUI
+// starts; newChatApp passes it to loop.Setup. nil lets Setup prompt on the
+// terminal when stdin and stderr are both terminals; otherwise (tests, piped
+// consoles) untrusted hooks are skipped with a warning.
 var chatHookApprover hooks.ApproveFunc
 
-// hookNotify shows hook warnings in the chat once the Bubble Tea program
-// exists; runChatTUI sets it. F2 moves this into Setup's Env.
+// hookNotify shows warnings in the chat once the Bubble Tea program exists; runChatTUI sets it.
 var hookNotify atomic.Pointer[func(string)]
 
-func formatHookLoadWarning(err error) string {
-	return hooks.DisabledWarning(err)
+// chatWarnSink routes loop.Setup's warnings for the chat. While newChatApp
+// runs they are collected, and printed to stderr, so the chat can show them
+// once it starts (the alt screen hides stderr). After done, warnings go to
+// the log and, through hookNotify, to the chat.
+type chatWarnSink struct {
+	mu       sync.Mutex
+	loading  bool
+	warnings []string
 }
 
-// loadChatHooks loads the session's hooks, wires the tool hooks into
-// registry and runs SessionStart. It returns the runner (nil if loading
-// failed), SessionStart's additionalContext, and the warnings raised while
-// loading (including a Load error, which disables hooks). The TUI hasn't
-// started yet, so the caller shows those warnings in the chat; they also go
-// to stderr and the log. Warnings after loading go to the log and, via
-// hookNotify, to the chat.
-func loadChatHooks(cwd, homeDir, sessionID string, resumed bool, registry *tools.Registry) (*hooks.Runner, string, []string) {
-	var (
-		mu       sync.Mutex
-		loading  = true
-		warnings []string
-	)
-	warn := func(s string) {
-		tui.LogInfo(s)
-		mu.Lock()
-		if loading {
-			warnings = append(warnings, s)
-			mu.Unlock()
-			fmt.Fprintln(os.Stderr, s)
-			return
-		}
-		mu.Unlock()
-		if f := hookNotify.Load(); f != nil {
-			(*f)(s)
-		}
+func newChatWarnSink() *chatWarnSink { return &chatWarnSink{loading: true} }
+
+func (s *chatWarnSink) warn(msg string) {
+	tui.LogInfo(msg)
+	s.mu.Lock()
+	if s.loading {
+		s.warnings = append(s.warnings, msg)
+		s.mu.Unlock()
+		fmt.Fprintln(os.Stderr, msg)
+		return
 	}
-	done := func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		loading = false
-		return warnings
+	s.mu.Unlock()
+	if f := hookNotify.Load(); f != nil {
+		(*f)(msg)
 	}
-	runner, err := hooks.Load(hooks.Options{
-		Workspace: cwd, Home: homeDir, SessionID: sessionID,
-		Approve: chatHookApprover, Warn: warn,
-	})
-	if err != nil {
-		warn(formatHookLoadWarning(err))
-		return nil, "", done()
-	}
-	if th := runner.ToolHooks(); th != nil {
-		registry.SetHookRunner(th)
-	}
-	source := "startup"
-	if resumed {
-		source = "resume"
-	}
-	start := runner.SessionStart(context.Background(), source)
-	return runner, start.AdditionalContext, done()
+}
+
+// done ends loading and returns the warnings collected so far.
+func (s *chatWarnSink) done() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loading = false
+	return s.warnings
 }
 
 // applyPromptHooks runs UserPromptSubmit, in order, for every user message

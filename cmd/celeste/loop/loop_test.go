@@ -82,7 +82,7 @@ func TestLoopEventsInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	evs := wait()
-	want := []EventKind{EventTurnStart, EventAssistant, EventToolStart, EventToolResult, EventTurnEnd,
+	want := []EventKind{EventTurnStart, EventAssistant, EventCallsRecorded, EventToolStart, EventToolResult, EventTurnEnd,
 		EventTurnStart, EventAssistant, EventTurnEnd, EventDone}
 	if got := kinds(evs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("event kinds = %v\nwant %v", got, want)

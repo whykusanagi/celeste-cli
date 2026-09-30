@@ -20,6 +20,23 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 	defer func() {
 		l.emit(Event{Kind: EventDone, Result: res, Err: err})
 	}()
+	if l.CheckPrompt != nil {
+		checked, allowed, blocked, cerr := l.checkPrompts(ctx, msgs)
+		if cerr != nil {
+			res.StopReason = StopInterrupted
+			return msgs, res, cerr
+		}
+		msgs = checked
+		if blocked > 0 && allowed == 0 {
+			res.StopReason = StopBlocked
+			return msgs, res, nil
+		}
+		if allowed > 0 {
+			// The consumer marks its copy now: an interrupt during the
+			// first request must not leave a checked prompt unmarked.
+			l.emit(Event{Kind: EventPromptsChecked, History: cloneHistory(msgs)})
+		}
+	}
 
 	turn := 0
 	ident := guard{limit: lim.IdenticalCalls}
@@ -37,7 +54,19 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		}
 		turn++
 		res.Turns = turn
-		msgs = l.joinSteers(msgs)
+		msgs, _ = l.joinSteers(ctx, msgs)
+		if l.CheckPrompt != nil && ctx.Err() != nil {
+			// A steer check cut short: the steer whose check errored and
+			// the ones after it went back in the queue (steers checked and
+			// joined before it stay in the history), and no request is sent.
+			// A CheckPrompt error that is not an interrupt requeues the
+			// same way but the turn still sends; in the final-reply branch
+			// below it ends the run StopDone, leaving them for TakeSteers.
+			turn--
+			res.Turns = turn
+			res.StopReason = StopInterrupted
+			return msgs, res, ctx.Err()
+		}
 		l.emit(Event{Kind: EventTurnStart, Turn: turn})
 		if l.Compact != nil {
 			msgs, _ = l.compact(ctx, msgs, false)
@@ -79,8 +108,22 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			res.ToolCallsLastTurn = 0
 			res.NoToolTurns++
 			l.emit(Event{Kind: EventTurnEnd, Turn: turn, History: cloneHistory(msgs)})
-			if l.hasSteers() {
+			if l.hasSteers() && l.CheckPrompt == nil {
 				continue // a steer arrived during the final reply: answer it
+			}
+			// With CheckPrompt, a steer that arrived during the final reply
+			// is answered unless every one of them was blocked or no turn
+			// is left (TakeSteers hands those back).
+			if l.hasSteers() && turn < lim.MaxTurns {
+				var joined int
+				msgs, joined = l.joinSteers(ctx, msgs)
+				if ctx.Err() != nil {
+					res.StopReason = StopInterrupted
+					return msgs, res, ctx.Err()
+				}
+				if joined > 0 {
+					continue
+				}
 			}
 			res.StopReason = StopDone
 			return msgs, res, nil
@@ -93,6 +136,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			return msgs, res, nil
 		}
 		msgs = append(msgs, Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: time.Now()})
+		l.emit(Event{Kind: EventCallsRecorded, Turn: turn, History: cloneHistory(msgs)})
 		out := l.runCalls(ctx, calls, lim)
 		msgs = append(msgs, out.messages...)
 		res.ToolCallsLastTurn = len(calls)
@@ -137,16 +181,53 @@ func (l *Loop) hasSteers() bool {
 	return len(l.steers) > 0
 }
 
-func (l *Loop) joinSteers(msgs []Message) []Message {
+// joinSteers adds queued steers to msgs as user messages and returns how
+// many joined. With CheckPrompt, each is checked first: a blocked one is
+// dropped (EventSteerBlocked); an interrupted check puts it and the ones
+// after it back in the queue.
+func (l *Loop) joinSteers(ctx context.Context, msgs []Message) ([]Message, int) {
 	l.mu.Lock()
 	pending := l.steers
 	l.steers = nil
 	l.mu.Unlock()
-	for _, s := range pending {
-		msgs = append(msgs, Message{Role: "user", Content: s, Timestamp: time.Now()})
-		l.emit(Event{Kind: EventSteered, Text: s})
+	joined := 0
+	for i, s := range pending {
+		msg := Message{Role: "user", Content: s, Timestamp: time.Now()}
+		if l.CheckPrompt != nil {
+			out, v, err := l.CheckPrompt(ctx, msg)
+			if err != nil {
+				l.requeue(pending[i:])
+				break
+			}
+			if v.Blocked {
+				l.emit(Event{Kind: EventSteerBlocked, Msg: msg, Text: v.Reason})
+				continue
+			}
+			msg = markChecked(out)
+		}
+		msgs = append(msgs, msg)
+		joined++
+		l.emit(Event{Kind: EventSteered, Text: s, Msg: msg})
 	}
-	return msgs
+	return msgs, joined
+}
+
+// requeue puts steers back at the front of the queue.
+func (l *Loop) requeue(steers []string) {
+	l.mu.Lock()
+	l.steers = append(append([]string(nil), steers...), l.steers...)
+	l.mu.Unlock()
+}
+
+// TakeSteers removes and returns the steers no run has joined: typed after
+// the last tool boundary of a run that then ended (an interrupt, a guard, a
+// cap). The caller decides what to do with them; the chat sends them next.
+func (l *Loop) TakeSteers() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	s := l.steers
+	l.steers = nil
+	return s
 }
 
 // compact runs the Compactor with the previous request's usage.
@@ -180,7 +261,7 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits) (reply, 
 	var text strings.Builder
 	acc := llm.NewToolUseAccumulator()
 	start := time.Now()
-	err := l.Client.SendMessageStreamEvents(reqCtx, msgs, l.Client.GetSkills(), func(ev llm.StreamEvent) {
+	err := l.Client.SendMessageStreamEvents(reqCtx, withHookContext(msgs), l.Client.GetSkills(), func(ev llm.StreamEvent) {
 		switch ev.Type {
 		case llm.EventContentDelta:
 			text.WriteString(ev.ContentDelta)

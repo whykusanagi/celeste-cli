@@ -420,27 +420,10 @@ func TestHookLoadWarningSystemMessageHelper(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	warning := formatHookLoadWarning(fmt.Errorf("discover failed"))
+	warning := hooks.DisabledWarning(fmt.Errorf("discover failed"))
 	app := tui.NewApp(nil).WithSystemMessage(warning)
 	if !hasSystemLine(app, "hooks disabled: discover failed") {
 		t.Fatalf("warning system message missing")
-	}
-}
-
-// A Load error (here: a relative home, as when os.UserHomeDir fails in
-// runChatTUI) disables hooks and returns a warning for the chat, so the
-// person sees that global guards are not running.
-func TestLoadChatHooksErrorReturnsWarning(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	registry := tools.NewRegistry()
-	runner, start, warnings := loadChatHooks(t.TempDir(), "relative-home", "s1", false, registry)
-	if runner != nil || start != "" {
-		t.Fatalf("runner = %v, start = %q; want nil and empty on a Load error", runner, start)
-	}
-	if !strings.Contains(strings.Join(warnings, "\n"), "hooks disabled") {
-		t.Fatalf("warnings = %q", warnings)
 	}
 }
 

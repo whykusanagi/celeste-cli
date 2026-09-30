@@ -205,6 +205,13 @@ func (r *Registry) SetDiscoveryMode(on bool) {
 	r.discoveryMode = on
 }
 
+// DiscoveryMode reports whether dynamic tool discovery is on.
+func (r *Registry) DiscoveryMode() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.discoveryMode
+}
+
 // SetHidden marks a tool as hidden-until-activated. Only takes effect while
 // discovery mode is on. find_tools itself must never be hidden.
 func (r *Registry) SetHidden(name string, hidden bool) {
@@ -519,6 +526,15 @@ func (r *Registry) SetPromptFunc(fn PromptFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.promptFn = fn
+}
+
+// Prompt returns the prompt SetPromptFunc installed, or nil. The chat's
+// loop Gate reads it at ask time (2.0 F2d), so a prompt installed after the
+// Gate was built (runChatTUI, tests) still answers.
+func (r *Registry) Prompt() PromptFunc {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.promptFn
 }
 
 // SetAskFunc installs the interactive ask callback (TUI-only).
