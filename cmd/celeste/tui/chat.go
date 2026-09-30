@@ -621,7 +621,11 @@ func formatArgs(args map[string]any) string {
 // metadata) and the rest of history is appended. System lines and
 // summarized messages are not LLM messages and keep their places. With
 // keepLive, the last LLM message keeps its content if it is an assistant
-// reply still being typed out.
+// reply still being typed out. An empty text-only assistant reply before
+// the last LLM message (a resumed session, a turn from before the loop) is
+// dropped: the adapter removes those from the loop's input and from every
+// snapshot, so keeping it would shift every later position by one. The
+// last one is the live typing bubble, which starts empty.
 func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 	last := -1
 	for i, msg := range m.messages {
@@ -634,6 +638,9 @@ func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 	for i, msg := range m.messages {
 		if msg.Role == "system" || isCompacted(msg) || j >= len(history) {
 			msgs = append(msgs, msg)
+			continue
+		}
+		if i != last && msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
 			continue
 		}
 		h := history[j]

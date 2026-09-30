@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -139,6 +140,36 @@ func (a *TUIClientAdapter) applyPromptHooks(ctx context.Context, messages []tui.
 		}
 	}
 	return sent, false
+}
+
+// checkPrompt is the chat's loop.PromptCheck: UserPromptSubmit for every new
+// prompt, and for each steer when it joins (2.0 F2d; replaces
+// applyPromptHooks). Hook context rides in metadata; the loop appends it to
+// the copy it sends.
+func (a *TUIClientAdapter) checkPrompt(ctx context.Context, msg tui.ChatMessage) (tui.ChatMessage, loop.PromptVerdict, error) {
+	if !a.hooks.Has(hooks.EventUserPromptSubmit) { // Has is nil-safe
+		return msg, loop.PromptVerdict{}, nil
+	}
+	out := a.hooks.UserPromptSubmit(ctx, msg.Content)
+	if err := ctx.Err(); err != nil {
+		return msg, loop.PromptVerdict{}, err // an interrupt, not a verdict
+	}
+	if out.Decision != hooks.Allow {
+		reason := out.Reason
+		if reason == "" {
+			reason = "no reason given"
+		}
+		return msg, loop.PromptVerdict{Blocked: true, Reason: reason}, nil
+	}
+	if out.AdditionalContext != "" {
+		meta := make(map[string]any, len(msg.Metadata)+1)
+		for k, v := range msg.Metadata {
+			meta[k] = v
+		}
+		meta[tui.MetaHookContext] = out.AdditionalContext
+		msg.Metadata = meta
+	}
+	return msg, loop.PromptVerdict{}, nil
 }
 
 // lifeContext is cancelled when the chat app shuts down.

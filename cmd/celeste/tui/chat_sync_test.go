@@ -77,3 +77,26 @@ func TestAppendLLMKeepsMetadata(t *testing.T) {
 	require.Len(t, c.GetMessages(), 1)
 	assert.Equal(t, true, c.GetMessages()[0].Metadata[MetaPromptHookDone])
 }
+
+// An empty text-only reply the adapter dropped from the loop's input and
+// snapshots is dropped from the chat too, so later positions line up.
+func TestSyncLLMDropsAnEarlierEmptyReply(t *testing.T) {
+	c := NewChatModel().AddUserMessage("u1").AddAssistantMessage("").AddUserMessage("u2")
+	checked := []ChatMessage{
+		{Role: "user", Content: "u1"},
+		{Role: "user", Content: "u2", Metadata: map[string]any{MetaPromptHookDone: true}},
+	}
+	c = c.SyncLLM(checked, false) // the prompts-checked snapshot
+	assert.Equal(t, []string{"user:u1", "user:u2"}, llmRoles(c))
+	c = c.SyncLLM(append(checked, ChatMessage{Role: "assistant", Content: "ok"}), false)
+	assert.Equal(t, []string{"user:u1", "user:u2", "assistant:ok"}, llmRoles(c))
+}
+
+// The last LLM message is the live typing bubble, which starts empty: it is
+// a position, not a dropped reply.
+func TestSyncLLMKeepsAnEmptyLiveBubble(t *testing.T) {
+	c := NewChatModel().AddUserMessage("go").AddAssistantMessage("")
+	history := []ChatMessage{{Role: "user", Content: "go"}, {Role: "assistant", Content: "Hello"}}
+	assert.Equal(t, []string{"user:go", "assistant:"}, llmRoles(c.SyncLLM(history, true)))
+	assert.Equal(t, []string{"user:go", "assistant:Hello"}, llmRoles(c.SyncLLM(history, false)))
+}

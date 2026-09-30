@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
@@ -233,7 +236,7 @@ func runChatTUI() {
 	defer deps.env.Close() // last: MCP clients and the code graph
 	defer tuiClient.subMgr.Close()
 	defer tui.CloseLogging()
-	defer tuiClient.lifeCancel()
+	defer tuiClient.shutdown(3 * time.Second) // cancel running turns and wait for them
 
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
@@ -354,6 +357,22 @@ type TUIClientAdapter struct {
 	// are cancelled on exit rather than outliving the program.
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
+
+	// gate answers the chat loop's permission asks with the modal
+	// (chatGate); nil denies (tests that build an adapter by hand).
+	gate loop.Gate
+	// compactMu serializes CompactContext: the loop's compactor calls it on
+	// a run goroutine, /context compact on the Update goroutine.
+	compactMu sync.Mutex
+	// Running turns, so shutdown can wait for them before the Env closes.
+	runsMu  sync.Mutex
+	running int
+	closing bool
+	idle    chan struct{}
+	// spillSeq numbers spill files across the session's turns
+	// (loop.Loop.SpillCounter), so a call ID repeated in a later turn
+	// never overwrites an earlier spill.
+	spillSeq atomic.Int64
 }
 
 // systemPrompt composes the chat system prompt for the current config,
@@ -805,6 +824,8 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 // when the history is over the compaction threshold (or always, with force)
 // and returns the replacement for each pruned result (#174).
 func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
+	a.compactMu.Lock()
+	defer a.compactMu.Unlock()
 	if est := compact.Estimate(msgs); est > used {
 		used = est
 	}

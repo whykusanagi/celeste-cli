@@ -118,6 +118,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		hooks:          env.Hooks,
 	}
 	tuiClient.lifeCtx, tuiClient.lifeCancel = context.WithCancel(context.Background())
+	tuiClient.gate = chatGate(registry)
 
 	// Subagents share one environment per chat session: their hooks see this
 	// session's ID, and their warnings reach the chat like /agent's.
