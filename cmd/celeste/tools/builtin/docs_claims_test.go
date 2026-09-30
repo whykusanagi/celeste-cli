@@ -1,6 +1,8 @@
 package builtin
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,6 +62,11 @@ func computeTruths(t *testing.T) docTruths {
 func repoFile(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", filepath.FromSlash(rel)))
+	if errors.Is(err, fs.ErrNotExist) {
+		// ponytail: the Docker job runs a prebuilt test binary with no repo
+		// checkout; the docs check runs in the regular test job instead.
+		t.Skipf("docs not reachable from here (%s); run from a repo checkout", rel)
+	}
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}
