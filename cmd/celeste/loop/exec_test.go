@@ -445,3 +445,162 @@ func TestRunCallsTextToolCallResultIsUserMessage(t *testing.T) {
 		t.Fatalf("got %+v", m)
 	}
 }
+
+// F2a's known limitation, fixed in F2d: a gated run abandons a tool that
+// ignores its context, and the clock starts after approval, so the ask
+// (longer than the whole budget here) never counts against the tool.
+func TestLoopGatedRunAbandonsUncooperativeToolAfterApproval(t *testing.T) {
+	hermetic(t) // permissions.NewChecker reads $HOME
+	release := make(chan struct{})
+	defer close(release)
+	var started atomic.Bool
+	stuck := &fakeTool{name: "w", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		started.Store(true)
+		<-release
+		return tools.ToolResult{}, nil
+	}}
+	l := execLoop(t, stuck)
+	l.Tools.SetPermissionChecker(permissions.NewChecker(permissions.DefaultConfig()))
+	l.Limits.ToolTimeout = 200 * time.Millisecond
+	l.Limits.HookBudget = 50 * time.Millisecond
+	l.Gate = GateFunc(func(context.Context, tools.PermissionRequest) tools.PermissionResponse {
+		time.Sleep(600 * time.Millisecond) // 3× the tool timeout
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+
+	done := make(chan callsOutcome, 1)
+	go func() { done <- run(l, llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`}) }()
+	select {
+	case out := <-done:
+		if !started.Load() {
+			t.Fatal("the tool never ran: the approval wait counted against the watchdog")
+		}
+		if !strings.Contains(out.messages[0].Content, "tool execution exceeded timeout") {
+			t.Fatalf("got %s", out.messages[0].Content)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a gated run never abandoned a tool that ignores its context")
+	}
+}
+
+// The ask itself is not the tool's time: a cooperative tool approved after
+// a long wait still runs to completion.
+func TestLoopGateWaitDoesNotCountAgainstTheToolBudget(t *testing.T) {
+	l := gatedLoop(t)
+	l.Limits.ToolTimeout = 200 * time.Millisecond
+	l.Limits.HookBudget = 50 * time.Millisecond
+	l.Gate = GateFunc(func(context.Context, tools.PermissionRequest) tools.PermissionResponse {
+		time.Sleep(600 * time.Millisecond) // 3× the tool timeout
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	out := run(l, llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`})
+	if out.messages[0].Content != "ok:w" {
+		t.Fatalf("got %s", out.messages[0].Content)
+	}
+}
+
+// The Gate is asked with the call's own context, not the run's: once the
+// call returns (or is abandoned), a late ask from its goroutine sees a
+// cancelled context and PromptGate denies it without opening the modal. A
+// parallel sibling keeps the batch (and its executor context) alive after
+// the gated call returns, so only the call's own context can have ended.
+func TestLoopGateIsAskedWithTheCallsContext(t *testing.T) {
+	hermetic(t) // permissions.NewChecker reads $HOME
+	asked := make(chan context.Context, 1)
+	var endedWithTheCall atomic.Bool
+	gated := &fakeTool{name: "w", safe: true} // not read-only: the default policy asks
+	sibling := &fakeTool{name: "r", safe: true, readOnly: true, run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		var askCtx context.Context
+		select {
+		case askCtx = <-asked:
+		case <-time.After(5 * time.Second):
+			return tools.ToolResult{Content: "never asked"}, nil
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if askCtx.Err() != nil {
+				endedWithTheCall.Store(true)
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		return tools.ToolResult{Content: "ok:r"}, nil
+	}}
+	l := execLoop(t, gated, sibling)
+	l.Tools.SetPermissionChecker(permissions.NewChecker(permissions.DefaultConfig()))
+	l.Gate = GateFunc(func(ctx context.Context, _ tools.PermissionRequest) tools.PermissionResponse {
+		asked <- ctx
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	out := run(l,
+		llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`},
+		llm.ToolCallResult{ID: "2", Name: "r", Arguments: `{}`})
+	if out.messages[0].Content != "ok:w" || out.messages[1].Content != "ok:r" {
+		t.Fatalf("got %q, %q", out.messages[0].Content, out.messages[1].Content)
+	}
+	if !endedWithTheCall.Load() {
+		t.Fatal("the Gate's context outlives the call: an abandoned call could still open the modal")
+	}
+}
+
+// A cancelled run (Esc, or the chat quitting) must not wait on a modal
+// nobody will answer.
+func TestPromptGateGivesUpWhenTheRunIsCancelled(t *testing.T) {
+	block := make(chan struct{})
+	defer close(block)
+	g := PromptGate(func(tools.PermissionRequest) tools.PermissionResponse {
+		<-block
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan tools.PermissionResponse, 1)
+	go func() { got <- g.Ask(ctx, tools.PermissionRequest{ToolName: "w"}) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case r := <-got:
+		if r.Decision != "deny" {
+			t.Fatalf("decision = %q, want deny", r.Decision)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("PromptGate kept waiting after its run was cancelled")
+	}
+}
+
+// An ask cancelled while it waited behind a stale modal never opens one of
+// its own when the stale modal closes.
+func TestPromptGateSkipsAnAskCancelledWhileItWaited(t *testing.T) {
+	release := make(chan struct{})
+	var calls atomic.Int32
+	g := PromptGate(func(tools.PermissionRequest) tools.PermissionResponse {
+		if calls.Add(1) == 1 {
+			<-release // the stale modal
+		}
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	first := make(chan tools.PermissionResponse, 1)
+	go func() { first <- g.Ask(context.Background(), tools.PermissionRequest{ToolName: "a"}) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	second := make(chan tools.PermissionResponse, 1)
+	go func() { second <- g.Ask(ctx, tools.PermissionRequest{ToolName: "b"}) }()
+	time.Sleep(50 * time.Millisecond) // the second ask now waits for the lock
+	cancel()
+	select {
+	case r := <-second:
+		if r.Decision != "deny" {
+			t.Fatalf("second decision = %q, want deny", r.Decision)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancelled ask kept waiting")
+	}
+	close(release)
+	<-first
+	time.Sleep(200 * time.Millisecond) // the second ask's goroutine takes the lock
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("prompt opened %d times, want 1: a cancelled ask opened the modal", n)
+	}
+}

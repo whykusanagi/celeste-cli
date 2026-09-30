@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -129,24 +130,30 @@ func (l *Loop) runGroup(ctx context.Context, group []*pending, lim Limits) {
 // applies it to the tool alone, after the hooks and the permission prompt,
 // so a slow PreToolUse hook never eats the tool's time. A tool that ignores
 // its context is abandoned by a watchdog at tool timeout + HookBudget. With
-// a Gate the approval wait is unbounded, so gated runs get no watchdog;
-// only cancelling the run ends the wait (known limitation, fixed in F2d).
+// a Gate the watchdog is paused while the Gate is asked and restarts the
+// full budget after the answer (F2d: before, gated runs had no watchdog).
+// The Gate is asked with the call's own context, which ends when invoke
+// returns, so a call abandoned before it reached the Gate cannot open the
+// modal afterwards.
 func (l *Loop) invoke(ctx context.Context, t tools.Tool, input map[string]any, lim Limits) (tools.ToolResult, error) {
 	timeout := tools.TimeoutFor(t, lim.ToolTimeout)
 	cctx, cancel := context.WithCancel(tools.WithExecTimeout(ctx, timeout))
 	defer cancel()
-	watchdog := timeout + lim.HookBudget
+	askCtx := cctx // ends with this call, abandoned or not
+	wd := newWatchdog(timeout + lim.HookBudget)
+	defer wd.stop()
 	if l.Gate != nil {
-		watchdog = 0
 		// This run's Gate answers the registry's Ask, including one forced
 		// by a PreToolUse hook's "ask". Serialized: parallel-safe calls in
 		// one batch must not reach the Gate at once, whatever Gate the
 		// adopter supplies (PromptGate already serializes itself; this
 		// covers a raw GateFunc too).
 		cctx = tools.WithPrompt(cctx, func(req tools.PermissionRequest) tools.PermissionResponse {
+			wd.pause()
+			defer wd.resume()
 			l.gateMu.Lock()
 			defer l.gateMu.Unlock()
-			return l.Gate.Ask(ctx, req)
+			return l.Gate.Ask(askCtx, req)
 		})
 	} else {
 		// No Gate: deny an Ask outright, as headless ("no prompt is
@@ -156,18 +163,66 @@ func (l *Loop) invoke(ctx context.Context, t tools.Tool, input map[string]any, l
 		cctx = tools.WithoutPrompt(cctx)
 	}
 	name := t.Name()
-	return abandonAfter(cctx, watchdog, func() (tools.ToolResult, error) {
+	return abandonAfter(cctx, wd.expired, func() (tools.ToolResult, error) {
 		// No progress channel: an abandoned call may outlive the executor,
 		// which closes its channel when this function returns.
 		return l.Tools.ExecuteWithProgress(cctx, name, input, nil)
 	})
 }
 
-// abandonAfter returns when ctx ends, or after d (d<=0: never), even if fn
-// ignores its context (the v1.10 codegraph spin, task 349f1f14). The
-// goroutine is abandoned, not killed; the buffered channel lets it finish
-// its send and exit.
-func abandonAfter(ctx context.Context, d time.Duration, fn func() (tools.ToolResult, error)) (tools.ToolResult, error) {
+// watchdog closes expired once its budget has run while not paused. pause
+// stops the clock; resume restarts the full budget.
+type watchdog struct {
+	mu      sync.Mutex
+	d       time.Duration
+	t       *time.Timer
+	expired chan struct{}
+	once    sync.Once
+	stopped bool
+}
+
+func newWatchdog(d time.Duration) *watchdog {
+	w := &watchdog{d: d, expired: make(chan struct{})}
+	if d > 0 {
+		w.t = time.AfterFunc(d, w.fire)
+	}
+	return w
+}
+
+func (w *watchdog) fire() { w.once.Do(func() { close(w.expired) }) }
+
+func (w *watchdog) pause() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.t != nil {
+		w.t.Stop()
+	}
+}
+
+// resume is a no-op after stop: an abandoned call's prompt may return
+// after invoke did, and must not re-arm the timer.
+func (w *watchdog) resume() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.t != nil && !w.stopped {
+		w.t.Reset(w.d)
+	}
+}
+
+func (w *watchdog) stop() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
+	if w.t != nil {
+		w.t.Stop()
+	}
+}
+
+// abandonAfter returns when ctx ends or expired closes, even if fn ignores
+// its context (the v1.10 codegraph spin, task 349f1f14). The goroutine is
+// abandoned, not killed; the buffered channel lets it finish its send and
+// exit.
+func abandonAfter(ctx context.Context, expired <-chan struct{}, fn func() (tools.ToolResult, error)) (tools.ToolResult, error) {
 	type outcome struct {
 		res tools.ToolResult
 		err error
@@ -177,12 +232,6 @@ func abandonAfter(ctx context.Context, d time.Duration, fn func() (tools.ToolRes
 		res, err := fn()
 		done <- outcome{res, err}
 	}()
-	var expired <-chan time.Time
-	if d > 0 {
-		timer := time.NewTimer(d)
-		defer timer.Stop()
-		expired = timer.C
-	}
 	select {
 	case <-ctx.Done():
 		return tools.ToolResult{}, fmt.Errorf("tool execution exceeded timeout: %w", ctx.Err())

@@ -48,8 +48,8 @@ type Limits struct {
 	MaxInvalidArgTurns int           // stop after this many turns in a row with bad tool arguments
 	TextToolCalls      bool          // parse <tool_call> blocks from text when a turn has no native calls
 	// HookBudget is how long PreToolUse/PostToolUse hooks may add to a call
-	// before an ungated run abandons it (tool timeout + budget). <=0:
-	// DefaultHookBudget.
+	// before the watchdog abandons it (tool timeout + budget; gated runs:
+	// counted from the Gate's answer). <=0: DefaultHookBudget.
 	HookBudget time.Duration
 }
 
@@ -162,16 +162,36 @@ func (f GateFunc) Ask(ctx context.Context, req tools.PermissionRequest) tools.Pe
 
 // PromptGate adapts a blocking tools.PromptFunc (the TUI modal) to a Gate.
 // A nil fn gives a nil Gate. Asks are serialized: parallel calls in one
-// batch must not open two modals at once.
+// batch must not open two modals at once. When ctx ends first (the call
+// was abandoned, Esc, or the chat quitting) the ask answers deny at once;
+// the prompt's own goroutine keeps the lock until the prompt returns, so a
+// later ask never opens a second modal over one still showing. An ask whose
+// ctx ended while it waited for the lock never calls fn.
 func PromptGate(fn tools.PromptFunc) Gate {
 	if fn == nil {
 		return nil
 	}
 	var mu sync.Mutex
-	return GateFunc(func(_ context.Context, req tools.PermissionRequest) tools.PermissionResponse {
-		mu.Lock()
-		defer mu.Unlock()
-		return fn(req)
+	return GateFunc(func(ctx context.Context, req tools.PermissionRequest) tools.PermissionResponse {
+		if ctx.Err() != nil {
+			return tools.PermissionResponse{Decision: "deny"}
+		}
+		answer := make(chan tools.PermissionResponse, 1)
+		go func() {
+			mu.Lock()
+			defer mu.Unlock()
+			if ctx.Err() != nil {
+				answer <- tools.PermissionResponse{Decision: "deny"}
+				return
+			}
+			answer <- fn(req)
+		}()
+		select {
+		case r := <-answer:
+			return r
+		case <-ctx.Done():
+			return tools.PermissionResponse{Decision: "deny"}
+		}
 	})
 }
 
