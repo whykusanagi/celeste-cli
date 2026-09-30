@@ -131,9 +131,8 @@ Configuration:
   celeste config --set-key <key>         Set API key
   celeste config --set-url <url>         Set API URL
   celeste config --set-model <model>     Set model
-  celeste config --set-mode <mode>       Set runtime mode (classic/claw)
-  celeste config --set-claw-max-iterations <n>
-                                          Set claw tool-loop safety cap
+  celeste config --set-max-tool-iterations <n>
+                                          Set the chat's tool-loop turn cap
   celeste config --set-context-limit <tokens>
                                           Set the context window (0 = model default)
   celeste config --skip-persona <bool>   Skip persona prompt injection
@@ -180,7 +179,6 @@ Examples:
   celeste agent --goal "refactor this package and add tests"
   celeste config --list                  List available configs
   celeste config --init openai           Create OpenAI config template
-  celeste config --init celeste-claw     Create claw profile template
 `)
 }
 
@@ -743,12 +741,13 @@ func runConfigCommand(args []string) {
 	showConfig := fs.Bool("show", false, "Show current configuration")
 	listConfigs := fs.Bool("list", false, "List all config profiles")
 	setDefault := fs.Bool("set-default", false, "Make this profile the default loaded when no -config is given")
-	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice, celeste-classic, celeste-claw)")
+	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice, sakana, digitalocean)")
 	setKey := fs.String("set-key", "", "Set API key")
 	setURL := fs.String("set-url", "", "Set API URL")
 	setModel := fs.String("set-model", "", "Set model")
-	setMode := fs.String("set-mode", "", "Set runtime mode (classic|claw)")
-	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Set claw max tool-loop iterations")
+	setMode := fs.String("set-mode", "", "Removed in 2.0 (see MIGRATING-2.0.md)")
+	setMaxIter := fs.Int("set-max-tool-iterations", -1, "Set the chat's tool-loop turn cap")
+	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Deprecated: use --set-max-tool-iterations")
 	setContextLimit := fs.Int("set-context-limit", -1, "Set the context window in tokens (0 clears it and uses the model default). Required for local models, whose window celeste cannot know")
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
@@ -771,6 +770,11 @@ func runConfigCommand(args []string) {
 
 	// Parse flags - exits on error due to ExitOnError flag
 	_ = fs.Parse(args)
+
+	if err := setModeError(*setMode); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 
 	// Handle --list
 	if *listConfigs {
@@ -876,20 +880,13 @@ func runConfigCommand(args []string) {
 		changed = true
 		fmt.Printf("Model set to: %s\n", *setModel)
 	}
-	if *setMode != "" {
-		// Task 11 replaces this with the extracted setModeError helper and
-		// its test; the message stays the same.
-		fmt.Fprintln(os.Stderr, "Error: --set-mode was removed in celeste 2.0: chat always runs tools in a loop, so there is no mode to set. See MIGRATING-2.0.md")
+	if n, err := resolveMaxIterFlags(*setMaxIter, *setClawMaxIterations, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
-	}
-	if *setClawMaxIterations == 0 {
-		fmt.Fprintf(os.Stderr, "Error: --set-claw-max-iterations must be greater than zero\n")
-		os.Exit(1)
-	}
-	if *setClawMaxIterations > 0 {
-		cfg.MaxToolIterations = *setClawMaxIterations
+	} else if n > 0 {
+		cfg.MaxToolIterations = n
 		changed = true
-		fmt.Printf("Claw max iterations set to: %d\n", cfg.MaxToolIterations)
+		fmt.Printf("Max tool iterations set to: %d\n", n)
 	}
 	if *setContextLimit == 0 {
 		cfg.ContextLimit = 0
@@ -1100,19 +1097,21 @@ func createConfigTemplate(name string) error {
 		skipPersona bool
 	}
 	templates := map[string]override{
-		"openai":          {provider: "openai", timeout: 60},
-		"grok":            {provider: "grok", timeout: 60},
-		"venice":          {provider: "venice", timeout: 60},
-		"sakana":          {provider: "sakana", timeout: 300}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
-		"elevenlabs":      {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60},
-		"digitalocean":    {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true}, // DO agents have built-in persona
-		"celeste-classic": {provider: "openai", timeout: 60},
-		"celeste-claw":    {provider: "openai", timeout: 60},
+		"openai":       {provider: "openai", timeout: 60},
+		"grok":         {provider: "grok", timeout: 60},
+		"venice":       {provider: "venice", timeout: 60},
+		"sakana":       {provider: "sakana", timeout: 300}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
+		"elevenlabs":   {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60},
+		"digitalocean": {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true}, // DO agents have built-in persona
+	}
+
+	if alt, ok := removedTemplates[strings.ToLower(name)]; ok {
+		return fmt.Errorf("the %s template was removed in celeste 2.0 with the runtime mode; use --init %s (see MIGRATING-2.0.md)", name, alt)
 	}
 
 	o, ok := templates[strings.ToLower(name)]
 	if !ok {
-		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean, celeste-classic, celeste-claw", name)
+		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean", name)
 	}
 
 	caps, _ := providers.GetProvider(o.provider)
