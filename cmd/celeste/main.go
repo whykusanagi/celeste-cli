@@ -200,8 +200,9 @@ func runChatTUI() {
 		fmt.Fprintf(os.Stderr, "Using config: %s\n", configName)
 	}
 
-	// Validate API key
-	if cfg.APIKey == "" {
+	// Validate API key — not required for Google ADC/service-account auth or
+	// a keyless local endpoint (#151).
+	if cfg.APIKey == "" && needsAPIKey(cfg) {
 		fmt.Fprintln(os.Stderr, "No API key configured.")
 		if configName != "" {
 			fmt.Fprintf(os.Stderr, "Edit %s or set CELESTE_API_KEY\n", config.NamedConfigPath(configName))
@@ -1453,7 +1454,7 @@ func runSingleMessage(message string) {
 		os.Exit(1)
 	}
 
-	if cfg.APIKey == "" {
+	if cfg.APIKey == "" && needsAPIKey(cfg) {
 		fmt.Fprintln(os.Stderr, "No API key configured.")
 		os.Exit(1)
 	}

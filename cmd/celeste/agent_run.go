@@ -95,7 +95,7 @@ func runAgentCommand(args []string) {
 		os.Exit(1)
 	}
 
-	if cfg.APIKey == "" && !cfg.GoogleUseADC && cfg.GoogleCredentialsFile == "" {
+	if cfg.APIKey == "" && needsAPIKey(cfg) {
 		fmt.Fprintln(os.Stderr, "No API key or Google ADC credentials configured.")
 		os.Exit(1)
 	}
