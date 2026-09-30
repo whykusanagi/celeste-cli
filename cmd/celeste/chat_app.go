@@ -83,8 +83,8 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// persona. The top-level chat posts to the mailbox as "parent" (#31).
 	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
 	subMgr := subagents.NewManager(cfg, cwd, isChild)
-	registry.RegisterWithModes(subagents.NewSpawnAgentTool(subMgr), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
-	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeClaw, tools.ModeChat)
+	registry.RegisterWithModes(subagents.NewSpawnAgentTool(subMgr), tools.ModeAgent, tools.ModeChat)
+	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeChat)
 	env.RefreshDiscovery()
 
 	client := llm.NewClient(&llm.Config{

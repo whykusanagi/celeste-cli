@@ -51,8 +51,8 @@ func TestRegistryGetToolDefinitions(t *testing.T) {
 
 func TestRegistryGetTools_ModeFiltering(t *testing.T) {
 	r := NewRegistry()
-	r.RegisterWithModes(&mockTool{name: "bash"}, ModeAgent, ModeClaw, ModeChat)
-	r.RegisterWithModes(&mockTool{name: "tarot"}, ModeChat, ModeClaw)
+	r.RegisterWithModes(&mockTool{name: "bash"}, ModeAgent, ModeChat)
+	r.RegisterWithModes(&mockTool{name: "tarot"}, ModeChat)
 	agentTools := r.GetTools(ModeAgent)
 	assert.Len(t, agentTools, 1)
 	assert.Equal(t, "bash", agentTools[0].Name())
