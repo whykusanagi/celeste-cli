@@ -257,6 +257,48 @@ func TestChatCompactorRunsJevShadow(t *testing.T) {
 	}
 }
 
+// The turn's compactor uses the Jev client resolved when RunTurn was called,
+// on the Update goroutine; the run never reads the adapter's config, which
+// an endpoint or profile switch replaces (Task 9 review ruling).
+func TestRunTurnResolvesJevOnceForTheTurn(t *testing.T) {
+	var hits atomic.Int32
+	jevSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "test", http.StatusTeapot)
+	}))
+	defer jevSrv.Close()
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	a.baseConfig.JevPrune = "shadow"
+	a.jev, a.jevFor = &jev.Client{Key: "k", URL: jevSrv.URL}, a.baseConfig
+
+	big := strings.Repeat("x", 40*1024)
+	history := userTurn("read the files")
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: big})
+	}
+	history = append(history, userTurn("next")...)
+	req := tui.TurnRequest{History: history, Tools: true, Window: 20_000, Run: 1}
+	_, cmd := a.RunTurn(req)
+	// A profile switch after the turn started: jev_prune is off in the new
+	// config. The running turn keeps the client it started with.
+	switched := *a.baseConfig
+	switched.JevPrune = ""
+	a.baseConfig = &switched
+	drainTurn(t, cmd, req)
+	deadline := time.Now().Add(5 * time.Second)
+	for hits.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if hits.Load() == 0 {
+		t.Fatal("the turn's compactor re-read the adapter's config instead of the Jev client resolved at RunTurn")
+	}
+}
+
 func TestMailboxKeepsOrderAndNeverBlocks(t *testing.T) {
 	b := newMailbox()
 	for i := 0; i < 10000; i++ {

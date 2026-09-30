@@ -454,22 +454,18 @@ func TestTUIHookLoadWarningsShownInChat(t *testing.T) {
 	}
 }
 
-// Fix round 1: a UserPromptSubmit hook cut short by an interrupt (a
-// cancelled context) is not a block: the adapter marks it Cancelled and the
-// TUI keeps the prompt without reporting a block.
+// Fix round 1: a UserPromptSubmit hook cut short by an interrupt is not a
+// block (loop.PromptCheck returns an error, F2d): the chat marks it
+// Cancelled and the TUI keeps the prompt without reporting a block.
 func TestPromptHookInterruptKeepsPrompt(t *testing.T) {
 	a := adapterWithHooks(t, hookDef(t, hooks.EventUserPromptSubmit, "", "allow"))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	ch := make(chan tea.Msg, 4)
-	_, stop := a.applyPromptHooks(ctx, []tui.ChatMessage{{Role: "user", Content: "keep me"}}, ch)
-	if !stop {
-		t.Fatal("a failed gating hook did not stop the send")
+	msg, verdict, err := a.checkPrompt(ctx, tui.ChatMessage{Role: "user", Content: "keep me"})
+	if err == nil || verdict.Blocked || msg.Content != "keep me" {
+		t.Fatalf("checkPrompt = %+v, %+v, %v; want an interrupt error, not a verdict", msg, verdict, err)
 	}
-	blocked, ok := (<-ch).(tui.PromptBlockedMsg)
-	if !ok || !blocked.Cancelled {
-		t.Fatalf("message = %#v, want PromptBlockedMsg{Cancelled: true}", blocked)
-	}
+	blocked := tui.PromptBlockedMsg{Cancelled: true, Content: "keep me"}
 
 	srv := fakeprovider.NewOpenAI(t)
 	m, _, _, _ := chatAppWithHooks(t, srv, func(home, ws string) {})

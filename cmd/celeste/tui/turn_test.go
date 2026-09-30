@@ -28,8 +28,7 @@ func (t *fakeTurn) Leftover() []string {
 	return s
 }
 
-// startedTurn adds prompt to the chat and starts a turn on it directly;
-// until Task 11 a SendMessageMsg still takes the old path.
+// startedTurn adds prompt to the chat and starts a turn on it directly.
 func startedTurn(t *testing.T, m AppModel, prompt string) AppModel {
 	t.Helper()
 	m.chat = m.chat.AddUserMessage(prompt)
@@ -431,4 +430,91 @@ func TestHeldSummaryIsClearedAfterTheTurn(t *testing.T) {
 		m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
 		assert.Nil(t, m.heldSummary, "fits=%v: the held summary was kept", fits)
 	}
+}
+
+// A stale empty reply (a bubble an interrupt left empty) plus a keepLive
+// snapshot never hides the loop's reply (Task 9 review ruling): the prompt
+// is appended, or the stale reply dropped, before the turn starts.
+func TestStaleEmptyReplyNeverHidesTheLoopsReply(t *testing.T) {
+	stale := func() AppModel {
+		m, _ := newQueueTestApp()
+		m.chat = m.chat.AddUserMessage("go").AddAssistantMessage("")
+		return m
+	}
+	t.Run("prompt", func(t *testing.T) {
+		m := stale()
+		m, _ = step(t, m, SendMessageMsg{Content: "again"})
+		require.NotNil(t, m.turn)
+		var users []ChatMessage
+		for _, msg := range m.chat.GetLLMMessages() {
+			if msg.Role == "user" {
+				users = append(users, msg)
+			}
+		}
+		require.Len(t, users, 2)
+		m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+		m, _ = feed(t, m, StreamChunkMsg{Chunk: StreamChunk{Content: "Hel", IsFirst: true}})
+		m, _ = feed(t, m, HistoryMsg{History: append(users, ChatMessage{Role: "assistant", Content: "Hello"})})
+		m, _ = feed(t, m, StreamDoneMsg{FullContent: "Hello", FinishReason: "stop"})
+		m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+		for i := 0; i < 100 && m.typingContent != ""; i++ {
+			m, _ = step(t, m, TickMsg{})
+		}
+		assert.Equal(t, []string{"user:go", "user:again", "assistant:Hello"}, llmRoles(m.chat))
+	})
+	t.Run("no prompt", func(t *testing.T) {
+		// A turn start that appends nothing (a retry), with a reply live.
+		m := stale()
+		m, _ = m.startTurn()
+		require.NotNil(t, m.turn)
+		m.typingContent = "Hel"
+		m, _ = feed(t, m, HistoryMsg{History: []ChatMessage{m.chat.GetLLMMessages()[0], {Role: "assistant", Content: "Hello"}}})
+		msgs := m.chat.GetLLMMessages()
+		assert.Equal(t, "Hello", msgs[len(msgs)-1].Content, "the stale empty reply hid the loop's reply")
+	})
+}
+
+// endpointRecorder records endpoint switches and model changes.
+type endpointRecorder struct {
+	fakeCompactClient
+	switches []string
+}
+
+func (e *endpointRecorder) SwitchEndpoint(endpoint string) error {
+	e.switches = append(e.switches, endpoint)
+	return nil
+}
+func (e *endpointRecorder) ChangeModel(string) error { return nil }
+
+// Endpoint and profile switches and /context compact wait while a turn is
+// active, like other commands (Task 9 review ruling): the loop's run must
+// not see the adapter's config or pruned store change under it.
+func TestSwitchesAndContextCompactWaitForTheTurn(t *testing.T) {
+	m, _ := newCompactTestApp(t)
+	client := &endpointRecorder{}
+	client.skills = []SkillDefinition{{Name: "tool_a"}}
+	m.llmClient = client
+	m, _ = step(t, m, SendMessageMsg{Content: "go"})
+	require.NotNil(t, m.turn)
+	for _, c := range []string{"/endpoint openai", "/config work", "/context compact"} {
+		m, _ = step(t, m, SendMessageMsg{Content: c})
+	}
+	m, _ = step(t, m, SendMessageMsg{Content: "steer this #venice"})
+	assert.Empty(t, client.switches, "an endpoint switch ran during the turn")
+	assert.Empty(t, client.calls, "/context compact pruned during the turn")
+	assert.Equal(t, []string{"/endpoint openai", "/config work", "/context compact"}, m.followUpQueue)
+
+	m, cmd := feed(t, m, TurnDoneMsg{Stop: "done", Leftover: []string{"steer this #venice"}})
+	for i := 0; i < 5; i++ {
+		next, sent := queuedSend(cmd)
+		if !sent {
+			break
+		}
+		m, cmd = step(t, m, next)
+		if m.turn != nil {
+			m, cmd = feed(t, m, TurnDoneMsg{Stop: "done"})
+		}
+	}
+	assert.Equal(t, []string{"venice", "openai", "work"}, client.switches, "the queued switches ran after the turn, in order")
+	assert.NotEmpty(t, client.calls, "/context compact ran after the turn")
 }

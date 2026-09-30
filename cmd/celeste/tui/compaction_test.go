@@ -12,8 +12,6 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
-var errFakeOverflow = errors.New("fake overflow")
-
 // fakeCompactClient records compaction calls. It prunes every tool result
 // when forced (or always, if set), and summarizes the first half of the
 // history into one message.
@@ -68,8 +66,6 @@ func (f *fakeCompactClient) HandoffContext(_ context.Context, msgs []ChatMessage
 	return "handoff notes for " + msgs[0].Content, nil
 }
 
-func (f *fakeCompactClient) IsContextOverflow(err error) bool { return errors.Is(err, errFakeOverflow) }
-
 func newCompactTestApp(t *testing.T) (AppModel, *fakeCompactClient) {
 	t.Helper()
 	client := &fakeCompactClient{fakeToolLLMClient: fakeToolLLMClient{skills: []SkillDefinition{{Name: "tool_a"}}}}
@@ -92,16 +88,14 @@ func toolContent(m AppModel, id string) string {
 func runToolTurn(t *testing.T, m AppModel) AppModel {
 	t.Helper()
 	m, _ = step(t, m, SendMessageMsg{Content: "go"})
-	m, _ = step(t, m, toolBatch("call_a"))
-	m, _ = step(t, m, SkillResultMsg{Name: "tool_a", Result: "big result", ToolCallID: "call_a"})
-	return m
+	return toolTurn(t, m, "call_a")
 }
 
 // /context compact forces a prune and replaces the tool results (#174).
 func TestContextCompactCommand(t *testing.T) {
 	m, client := newCompactTestApp(t)
 	m = runToolTurn(t, m)
-	m, _ = step(t, m, StreamDoneMsg{}) // end the turn
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
 
 	m, _ = step(t, m, SendMessageMsg{Content: "/context compact"})
 	require.NotEmpty(t, client.calls)
@@ -109,32 +103,6 @@ func TestContextCompactCommand(t *testing.T) {
 	assert.True(t, client.calls[len(client.calls)-1], "/context compact must force")
 	assert.Equal(t, "[pruned call_a]", toolContent(m, "call_a"))
 	assert.Equal(t, 1, m.contextTracker.CompactionCount)
-}
-
-// Compaction is checked at every tool boundary, before the follow-up request.
-func TestCompactionCheckedAtToolBoundary(t *testing.T) {
-	m, client := newCompactTestApp(t)
-	client.always = true
-	m = runToolTurn(t, m)
-	require.Len(t, client.sendCalls, 2, "user send + follow-up")
-	assert.Equal(t, "[pruned call_a]", toolContent(m, "call_a"),
-		"the follow-up request should go out with the pruned history")
-}
-
-// A context-overflow error prunes harder and resends once; a second overflow
-// is reported.
-func TestOverflowCompactsAndResendsOnce(t *testing.T) {
-	m, client := newCompactTestApp(t)
-	m = runToolTurn(t, m)
-	sends := len(client.sendCalls)
-
-	m, _ = step(t, m, StreamErrorMsg{Err: errFakeOverflow})
-	assert.Len(t, client.sendCalls, sends+1, "overflow should resend once after compacting")
-	assert.True(t, m.streaming)
-
-	m, _ = step(t, m, StreamErrorMsg{Err: errFakeOverflow})
-	assert.Len(t, client.sendCalls, sends+1, "a second overflow must not resend again")
-	assert.False(t, m.streaming)
 }
 
 // runCmd executes a command and feeds every message it produces back in.
@@ -158,7 +126,7 @@ func runCmd(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
 func TestCompactCommandAppliesSummary(t *testing.T) {
 	m, client := newCompactTestApp(t)
 	m = runToolTurn(t, m)
-	m, _ = step(t, m, StreamDoneMsg{})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
 	before := m.chat.GetLLMMessages()
 	shown := len(m.chat.GetMessages())
 
@@ -179,7 +147,7 @@ func TestCompactCommandAppliesSummary(t *testing.T) {
 func TestStaleSummaryIsDiscarded(t *testing.T) {
 	m, _ := newCompactTestApp(t)
 	m = runToolTurn(t, m)
-	m, _ = step(t, m, StreamDoneMsg{})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
 	m, cmd := step(t, m, SendMessageMsg{Content: "/compact"})
 
 	m.chat = m.chat.Clear() // the user cleared the chat meanwhile
@@ -191,22 +159,12 @@ func TestStaleSummaryIsDiscarded(t *testing.T) {
 	assert.Equal(t, "new topic", msgs[0].Content)
 }
 
-// When pruning leaves the history over the threshold, a summary starts
-// automatically at the tool boundary.
-func TestAutoSummaryWhenPruningIsNotEnough(t *testing.T) {
-	m, client := newCompactTestApp(t)
-	client.stillOver = true
-	m = runToolTurn(t, m)
-	assert.True(t, m.summarizing, "an automatic summary should be in flight")
-	assert.Empty(t, client.summaries, "it runs in the background, not inline")
-}
-
 // /handoff summarizes the whole conversation, starts a fresh chat and leaves
 // the notes in the input for the user to edit and send (#174).
 func TestHandoffStartsFreshChatWithNotes(t *testing.T) {
 	m, client := newCompactTestApp(t)
 	m = runToolTurn(t, m)
-	m, _ = step(t, m, StreamDoneMsg{})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
 
 	m, cmd := step(t, m, SendMessageMsg{Content: "/handoff the parser"})
 	require.True(t, m.summarizing)
@@ -224,7 +182,7 @@ func TestHandoffFailureKeepsConversation(t *testing.T) {
 	m, client := newCompactTestApp(t)
 	client.sumErr = errors.New("boom")
 	m = runToolTurn(t, m)
-	m, _ = step(t, m, StreamDoneMsg{})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
 	before := len(m.chat.GetLLMMessages())
 
 	m, cmd := step(t, m, SendMessageMsg{Content: "/handoff"})
@@ -274,4 +232,13 @@ func TestSummaryStillFits(t *testing.T) {
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, summaryStillFits(tc.current, tc.snap, tc.cut), tc.name)
 	}
+}
+
+// The turn carries the window the loop's compactor prunes against.
+func TestTurnRequestCarriesTheWindow(t *testing.T) {
+	m, client := newCompactTestApp(t)
+	m, _ = step(t, m, SendMessageMsg{Content: "go"})
+	require.Len(t, client.turns, 1)
+	assert.Equal(t, 100_000, client.turns[0].req.Window)
+	assert.Equal(t, 50_000, client.turns[0].req.Used)
 }

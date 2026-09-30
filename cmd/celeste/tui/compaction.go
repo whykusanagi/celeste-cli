@@ -27,7 +27,7 @@ type ContextSummarizedMsg struct {
 
 // compactContext prunes old tool results when the history is over the
 // compaction threshold, or unconditionally when force is set (/context
-// compact, or after a context-overflow error).
+// compact). During a turn the loop's compactor prunes instead.
 func (m AppModel) compactContext(force bool) (AppModel, CompactOutcome) {
 	c, ok := m.llmClient.(ContextCompactor)
 	if !ok || m.contextTracker == nil || m.contextTracker.MaxTokens <= 0 {

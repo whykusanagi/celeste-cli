@@ -184,7 +184,7 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	// and the wire content only shows the outer one:
 	//
 	//  1. ctxmgr.CapToolResult (cmd/celeste/context/limits.go, invoked from
-	//     ExecuteSkill in cmd/celeste/main.go right after the tool runs)
+	//     the loop's spill (cmd/celeste/loop/exec.go) right after the tool runs)
 	//     spills the full 204800-byte result to disk and returns a
 	//     131072-byte preview: [head]["...full output saved to: <path>..."][tail].
 	//     This is the layer finding 2 originally targeted.
@@ -204,7 +204,7 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	// So: assert layer 2's notice (what the model actually sees) and verify
 	// layer 1's disk side effect (the full, uncapped result spilled to disk)
 	// directly via its documented, deterministic path — sessionID
-	// "tui-<pid>" (main.go's ExecuteSkill) and toolCallID "big" (this test's
+	// "tui-<pid>" (the loop's spill (cmd/celeste/loop/exec.go)) and toolCallID "big" (this test's
 	// fakeprovider.ToolCall.ID) — rather than by parsing it out of content
 	// that no longer contains it.
 	// known bug: spec F3 deletes trimHook — flip these assertions then.
@@ -229,8 +229,8 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 
 	// Independently (and more directly) verify CapToolResult's own cap by
 	// reading the chat history's tool message via DebugMessages — that's
-	// what (AppModel) stored from ExecuteSkill's resultStr/capped value
-	// (cmd/celeste/main.go), upstream of and unaffected by trimToolResults'
+	// what (AppModel) stored from the loop's capped tool message,
+	// upstream of and unaffected by trimToolResults'
 	// wire-only, copy-on-write pass (cmd/celeste/llm/trim.go doc comment:
 	// "the caller's slice is never mutated"). It must be the capped preview
 	// itself: exactly CapToolResult's maxBytes (131072) and containing its
@@ -253,8 +253,9 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 		t.Fatalf("chat history tool result len = %d, want CapToolResult's capped preview (131072 bytes)", len(historyContent))
 	}
 
+	// flipped in F2d Task 11: the loop names spill files <id>-<n>.txt, numbered across the session, so a repeated call ID never overwrites an earlier spill (was big.txt).
 	spillPath := filepath.Join(os.Getenv("HOME"), ".celeste", "tool-results",
-		fmt.Sprintf("tui-%d", os.Getpid()), "big.txt")
+		fmt.Sprintf("tui-%d", os.Getpid()), "big-1.txt")
 	spilled, err := os.ReadFile(spillPath)
 	if err != nil {
 		t.Fatalf("read spill file %q: %v", spillPath, err)

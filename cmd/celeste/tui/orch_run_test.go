@@ -51,7 +51,7 @@ func TestOrchestratorEventsOfACancelledRunAreIgnored(t *testing.T) {
 
 	// The next turn.
 	m, _ = step(t, m, SendMessageMsg{Content: "hello"})
-	require.Len(t, client.sendCalls, 1)
+	require.Len(t, client.turns, 1)
 	newCancelled := false
 	m, _ = step(t, m, StreamStartMsg{Cancel: func() { newCancelled = true }})
 
@@ -62,6 +62,7 @@ func TestOrchestratorEventsOfACancelledRunAreIgnored(t *testing.T) {
 
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	assert.True(t, newCancelled, "Ctrl+C did not cancel the new turn")
+	assert.True(t, client.turns[0].cancelled, "Ctrl+C did not cancel the chat turn")
 }
 
 // A cancel that arrives after its run was already cancelled (Esc before the

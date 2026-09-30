@@ -102,16 +102,19 @@ type TurnDoneMsg struct {
 // request and retries a context overflow; the chat renders its events.
 // Whether tools are offered is fixed here for the whole turn.
 func (m AppModel) startTurn() (AppModel, tea.Cmd) {
-	r, ok := m.llmClient.(TurnRunner) // Task 11: LLMClient embeds TurnRunner
-	if !ok {
+	if m.llmClient == nil {
 		return m, nil
 	}
+	// Every turn start adds the prompt (SendMessageMsg, /plan) or a fresh
+	// bubble before any keepLive sync; a stale empty reply must not be the
+	// chat's last message either.
+	m.chat = m.chat.DropEmptyLastReply()
 	m.turnSeq++
 	req := TurnRequest{History: m.chat.GetLLMMessages(), Tools: m.toolsOffered(), Run: m.turnSeq}
 	if m.contextTracker != nil && m.contextTracker.MaxTokens > 0 {
 		req.Window, req.Used = m.contextTracker.MaxTokens, m.contextTracker.CurrentTokens
 	}
-	h, cmd := r.RunTurn(req)
+	h, cmd := m.llmClient.RunTurn(req)
 	m.turn, m.turnRun, m.loopSteers = h, m.turnSeq, 0
 	m.streaming = true
 	m.streamStart = time.Now()

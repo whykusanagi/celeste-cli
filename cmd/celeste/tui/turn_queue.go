@@ -17,7 +17,6 @@ func (m AppModel) turnActive() bool {
 		m.streaming ||
 		m.typingContent != "" ||
 		m.cancelFunc != nil ||
-		m.toolBatchActive ||
 		m.toolProgress.Executing()
 }
 
@@ -72,26 +71,10 @@ func (m AppModel) dispatchQueued() (AppModel, tea.Cmd) {
 	return m, SendMessage(next)
 }
 
-// injectSteers adds queued steers to the conversation as user messages. It is
-// called at a tool boundary, after the tool results and before the follow-up
-// request, which is the one point where a user message can join a running
-// turn without splitting a tool call from its result.
-func (m AppModel) injectSteers() AppModel {
-	if len(m.steerQueue) == 0 {
-		return m
-	}
-	for _, s := range m.steerQueue {
-		m.chat = m.chat.AddUserMessage(s)
-		m.recordSessionMessage("user", s)
-	}
-	m.steerQueue = nil
-	m.persistSession()
-	return m
-}
-
-// interrupt stops the running turn (Esc). A streaming request is cancelled
-// and the reply so far is kept. Tools already executing finish, but queued
-// tools are skipped and the model is not asked to continue.
+// interrupt stops the running turn (Esc): the run's context is cancelled,
+// so a streaming request stops and tools that honour their context stop
+// (every call still gets a result). The reply so far is kept. The turn ends
+// when the loop reports it (TurnDoneMsg); steers it never joined come back.
 func (m AppModel) interrupt() AppModel {
 	if m.turn != nil {
 		m.turn.Cancel()
@@ -113,34 +96,12 @@ func (m AppModel) interrupt() AppModel {
 	m.interruptPending = false
 	m.interrupted = true
 	m.status = m.status.SetStreaming(false)
-
-	if m.toolProgress.Executing() {
-		m.status = m.status.SetText("Interrupting — waiting for the running tool to finish")
+	if m.turn != nil {
+		m.status = m.status.SetText("Interrupting…")
 	} else {
-		if len(m.pendingToolCalls) > 0 {
-			m = m.skipPendingToolCalls()
-		}
-		m.toolBatchActive = false
-		m.pendingToolCallID = ""
 		m.status = m.status.SetText("Interrupted")
 	}
 	m.persistSession()
-	return m
-}
-
-// skipPendingToolCalls records an "interrupted" result for every queued tool
-// call, so each assistant tool call still has a result in the history.
-func (m AppModel) skipPendingToolCalls() AppModel {
-	for _, call := range m.pendingToolCalls {
-		m.chat = m.chat.AddToolResult(call.toolCallID, call.name,
-			`{"error": true, "message": "not run: interrupted by the user"}`)
-		m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{
-			ToolCallID: call.toolCallID,
-			ToolName:   call.name,
-			State:      "failed",
-		})
-	}
-	m.pendingToolCalls = nil
 	return m
 }
 

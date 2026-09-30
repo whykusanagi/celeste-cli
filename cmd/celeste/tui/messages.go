@@ -53,11 +53,10 @@ type StreamChunk struct {
 
 // --- Bubble Tea Messages ---
 
-// StreamChunkMsg is sent when a new stream chunk arrives from the LLM.
-// Next is the Cmd to call to get the next chunk (channel read pattern).
+// StreamChunkMsg is sent when a new stream chunk arrives from the LLM (a
+// chat turn delivers it inside TurnEventMsg).
 type StreamChunkMsg struct {
 	Chunk StreamChunk
-	Next  tea.Cmd // Cmd that reads the next chunk from the stream channel
 }
 
 // TokenUsage holds token usage information from API response
@@ -86,25 +85,14 @@ type StreamErrorMsg struct {
 	Err error
 }
 
-// PromptHookMsg carries the UserPromptSubmit result for one user message,
-// named by its Content and Timestamp. Next continues reading the response
-// stream (2.0 F0).
-type PromptHookMsg struct {
-	Context   string
-	Content   string
-	Timestamp time.Time
-	Next      tea.Cmd
-}
-
 // PromptBlockedMsg says a UserPromptSubmit hook blocked the user message
 // named by Content and Timestamp. It is removed from the chat and the
-// session. A non-nil Next means the request goes on without it (other new
-// messages are left to answer); a nil Next means the send stopped.
+// session. Cancelled: an interrupt cut the hook short. Steer: a blocked
+// steer, which never entered the chat.
 type PromptBlockedMsg struct {
 	Reason    string
 	Content   string
 	Timestamp time.Time
-	Next      tea.Cmd
 	// Cancelled means the hook was cut short by an interrupt: the prompt
 	// is kept, unchecked, and nothing is reported.
 	Cancelled bool
@@ -115,37 +103,6 @@ type PromptBlockedMsg struct {
 // HookWarningMsg shows a hook warning in the chat.
 type HookWarningMsg struct {
 	Text string
-}
-
-// SkillCallMsg is sent when the LLM wants to call a skill/function.
-type SkillCallMsg struct {
-	Call             FunctionCall
-	ToolCallID       string         // OpenAI tool call ID for sending result back
-	AssistantContent string         // The assistant message content (may be empty if only tool calls)
-	ToolCalls        []ToolCallInfo // All tool calls from the assistant message
-}
-
-// SkillCallRequest represents one tool call request in a batch.
-type SkillCallRequest struct {
-	Call       FunctionCall
-	ToolCallID string // OpenAI tool call ID for sending result back
-	ParseError string // Non-empty when arguments failed to parse
-}
-
-// SkillCallBatchMsg is sent when the LLM requests one or more skill/function calls.
-type SkillCallBatchMsg struct {
-	Calls            []SkillCallRequest
-	AssistantContent string         // Assistant message content (may be empty if only tool calls)
-	ToolCalls        []ToolCallInfo // Raw tool call payloads from assistant message
-}
-
-// SkillResultMsg is sent when a skill execution completes.
-type SkillResultMsg struct {
-	Name       string
-	Result     string
-	Err        error
-	ToolCallID string         // OpenAI tool call ID for sending result back
-	Metadata   map[string]any // Optional metadata (e.g. image base64 from read_file)
 }
 
 // AgentCommandResultMsg is sent when a TUI /agent command completes.

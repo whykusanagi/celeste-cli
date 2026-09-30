@@ -14,15 +14,9 @@ type fakeAgentLLMClient struct {
 	agentArgs [][]string
 }
 
-func (f *fakeAgentLLMClient) SendMessage(messages []ChatMessage, tools []SkillDefinition) tea.Cmd {
-	return nil
-}
+func (f *fakeAgentLLMClient) RunTurn(TurnRequest) (TurnHandle, tea.Cmd) { return nil, nil }
 
 func (f *fakeAgentLLMClient) GetSkills() []SkillDefinition {
-	return nil
-}
-
-func (f *fakeAgentLLMClient) ExecuteSkill(name string, args map[string]any, toolCallID string) tea.Cmd {
 	return nil
 }
 

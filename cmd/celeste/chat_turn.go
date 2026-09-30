@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -155,7 +156,8 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		CheckPrompt:  a.checkPrompt,
 	}
 	if req.Window > 0 {
-		t.compactor = &chatCompactor{a: a, window: req.Window, used: req.Used}
+		// Jev is resolved here, on the Update goroutine, once per turn.
+		t.compactor = &chatCompactor{a: a, window: req.Window, used: req.Used, jev: a.jevShadow()}
 		l.Compact = t.compactor
 	}
 	return l
@@ -304,6 +306,7 @@ func (c chatLLM) GetSkills() []tui.SkillDefinition {
 // summary when the turn ends.
 type chatCompactor struct {
 	a      *TUIClientAdapter
+	jev    *jev.Client // shadow scorer, resolved when the turn started; nil: off
 	window int
 	used   int // Run's goroutine only: the tracker's count, then the provider's
 	over   atomic.Bool
@@ -317,7 +320,7 @@ func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, la
 			c.used = last.PromptTokens + last.CompletionTokens
 		}
 	}
-	out := c.a.CompactContext(history, c.window, c.used, force)
+	out := c.a.compactWith(history, c.window, c.used, force, c.jev)
 	c.over.Store(out.StillOver)
 	if len(out.Edits) == 0 {
 		return history, nil, false

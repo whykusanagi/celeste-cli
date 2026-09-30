@@ -669,6 +669,27 @@ func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 	return m
 }
 
+// DropEmptyLastReply removes an empty text-only assistant reply that is the
+// last LLM message (a bubble an interrupt left empty). Every turn start
+// calls it, so such a stale reply is never the last message when a keepLive
+// snapshot arrives: SyncLLM would keep its empty content over the loop's
+// reply (Task 9 review ruling).
+func (m ChatModel) DropEmptyLastReply() ChatModel {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == "system" || isCompacted(msg) {
+			continue
+		}
+		if msg.Role != "assistant" || msg.Content != "" || len(msg.ToolCalls) != 0 {
+			return m
+		}
+		m.messages = append(append([]ChatMessage(nil), m.messages[:i]...), m.messages[i+1:]...)
+		m.updateContent()
+		return m
+	}
+	return m
+}
+
 // syncDrift describes how the chat's message and the loop's message at the
 // same position disagree, or returns "". SyncLLM takes the loop's copy
 // either way; the log is how a broken positional invariant shows up.

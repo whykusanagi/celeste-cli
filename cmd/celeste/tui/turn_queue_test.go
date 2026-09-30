@@ -58,53 +58,28 @@ func step(t *testing.T, m AppModel, msg tea.Msg) (AppModel, tea.Cmd) {
 	return model.(AppModel), cmd
 }
 
-func toolBatch(ids ...string) SkillCallBatchMsg {
-	b := SkillCallBatchMsg{AssistantContent: "working"}
-	for i, id := range ids {
-		name := []string{"tool_a", "tool_b"}[i%2]
-		b.Calls = append(b.Calls, SkillCallRequest{
-			Call:       FunctionCall{Name: name, Arguments: map[string]any{"i": id}, Status: "executing"},
-			ToolCallID: id,
-		})
-		b.ToolCalls = append(b.ToolCalls, ToolCallInfo{ID: id, Name: name, Arguments: `{"i":"` + id + `"}`})
-	}
-	return b
-}
-
-// Enter during a turn queues a steer instead of firing a concurrent request,
-// and doesn't reset the tool-iteration cap (#172).
-func TestSendDuringTurnIsQueuedNotSent(t *testing.T) {
+// Enter during a turn steers the running loop instead of starting a second
+// request (#172).
+func TestSendDuringTurnSteersTheRunningTurn(t *testing.T) {
 	m, client := newQueueTestApp()
 	m, _ = step(t, m, SendMessageMsg{Content: "first"})
-	require.Len(t, client.sendCalls, 1)
-	m.clawToolIterations = 3
-
 	m, _ = step(t, m, SendMessageMsg{Content: "also check the tests"})
-	assert.Len(t, client.sendCalls, 1, "a second request was sent during the turn")
-	assert.Equal(t, []string{"also check the tests"}, m.steerQueue)
-	assert.Equal(t, 3, m.clawToolIterations, "queuing reset the tool-iteration cap")
+	require.Len(t, client.turns, 1, "a second request was started during the turn")
+	assert.Equal(t, []string{"also check the tests"}, client.turns[0].steers)
+	assert.Equal(t, 1, m.DebugQueued())
 }
 
-// A steer joins the conversation at the next tool boundary: after the tool
-// results, before the follow-up request.
-func TestSteerInjectedAtToolBoundary(t *testing.T) {
-	m, client := newQueueTestApp()
+// The steer shows in the chat when the loop joins it.
+func TestSteerJoinsWhenTheLoopJoinsIt(t *testing.T) {
+	m, _ := newQueueTestApp()
 	m, _ = step(t, m, SendMessageMsg{Content: "first"})
-	m, _ = step(t, m, toolBatch("call_a"))
+	m = toolTurn(t, m, "call_a")
 	m, _ = step(t, m, SendMessageMsg{Content: "use the v2 API"})
-	require.Len(t, client.sendCalls, 1)
-
-	m, _ = step(t, m, SkillResultMsg{Name: "tool_a", Result: `{"ok":true}`, ToolCallID: "call_a"})
-	require.Len(t, client.sendCalls, 2, "the follow-up request was not sent")
-	assert.Empty(t, m.steerQueue)
-
+	m, _ = feed(t, m, SteeredMsg{Message: ChatMessage{Role: "user", Content: "use the v2 API", Metadata: map[string]any{MetaPromptHookDone: true}}})
 	msgs := m.chat.GetLLMMessages()
-	require.GreaterOrEqual(t, len(msgs), 2)
-	last := msgs[len(msgs)-1]
-	assert.Equal(t, "user", last.Role)
-	assert.Equal(t, "use the v2 API", last.Content)
-	assert.Equal(t, "tool", msgs[len(msgs)-2].Role, "the steer must follow the tool result")
-	assert.Equal(t, len(msgs), client.sendCalls[1].messageCount, "the follow-up request must include the steer")
+	assert.Equal(t, "use the v2 API", msgs[len(msgs)-1].Content)
+	assert.Equal(t, "tool", msgs[len(msgs)-2].Role, "the steer follows the tool result")
+	assert.Equal(t, 0, m.DebugQueued())
 }
 
 // Tab queues a follow-up that is sent once the turn finishes.
@@ -116,17 +91,12 @@ func TestFollowUpSentAfterTurnEnds(t *testing.T) {
 	_, sent := queuedSend(cmd)
 	assert.False(t, sent, "follow-up sent while the turn was running")
 
-	// Turn ends with an empty reply.
-	m, cmd = step(t, m, StreamDoneMsg{})
+	m, cmd = feed(t, m, TurnDoneMsg{Stop: "done"})
 	next, sent := queuedSend(cmd)
 	require.True(t, sent, "follow-up not dispatched when the turn ended")
 	assert.Equal(t, "then summarise", next.Content)
-	assert.Empty(t, m.followUpQueue)
-	assert.True(t, m.dispatchPending)
-
 	m, _ = step(t, m, next)
-	assert.False(t, m.dispatchPending)
-	assert.Len(t, client.sendCalls, 2)
+	assert.Len(t, client.turns, 2)
 }
 
 // Commands typed during a turn wait for it, except /agents.
@@ -140,39 +110,49 @@ func TestCommandsDuringTurn(t *testing.T) {
 	assert.False(t, runsDuringTurn("/agent do something"))
 }
 
-// Esc on an empty input interrupts the stream.
-func TestEscInterruptsStream(t *testing.T) {
-	m, _ := newQueueTestApp()
+// Esc cancels the running turn; it stays active until the loop reports the
+// end, so no second turn starts over it.
+func TestEscCancelsTheTurn(t *testing.T) {
+	m, client := newQueueTestApp()
 	m, _ = step(t, m, SendMessageMsg{Content: "first"})
-	cancelled := false
-	m.cancelFunc = func() { cancelled = true }
-
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	assert.True(t, cancelled, "Esc did not cancel the request")
+	assert.True(t, client.turns[0].cancelled, "Esc did not cancel the turn")
+	assert.True(t, m.interrupted)
+	assert.True(t, m.turnActive(), "the turn ends when the loop says so")
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "interrupted"})
 	assert.False(t, m.turnActive())
 }
 
-// Esc during serial tools: the running tool finishes, the queued one is
-// skipped with a result, and no follow-up request is sent.
-func TestEscSkipsQueuedToolsAndFollowUp(t *testing.T) {
+// Review Focus 2: a steer the loop never joined comes back and is sent next,
+// once.
+func TestEscReturnsLeftoverSteersAndSendsThemNext(t *testing.T) {
 	m, client := newQueueTestApp()
 	m, _ = step(t, m, SendMessageMsg{Content: "first"})
-	m, _ = step(t, m, toolBatch("call_a", "call_b"))
-	require.Len(t, client.executeCalls, 1)
-
+	m, _ = step(t, m, SendMessageMsg{Content: "steer text"})
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	assert.True(t, m.interrupted)
+	m, cmd := feed(t, m, TurnDoneMsg{Stop: "interrupted", Leftover: []string{"steer text"}})
+	next, sent := queuedSend(cmd)
+	require.True(t, sent)
+	assert.Equal(t, "steer text", next.Content)
+	m, _ = step(t, m, next)
+	require.Len(t, client.turns, 2)
+	assert.Equal(t, 0, m.DebugQueued(), "the steer must not be queued twice")
+}
 
-	m, _ = step(t, m, SkillResultMsg{Name: "tool_a", Result: `{"ok":true}`, ToolCallID: "call_a"})
-	assert.Len(t, client.executeCalls, 1, "a queued tool ran after Esc")
-	assert.Len(t, client.sendCalls, 1, "a follow-up request was sent after Esc")
-	assert.False(t, m.turnActive())
-
-	results := map[string]bool{}
-	for _, msg := range m.chat.GetLLMMessages() {
-		if msg.Role == "tool" {
-			results[msg.ToolCallID] = true
-		}
-	}
-	assert.True(t, results["call_a"] && results["call_b"], "every tool call needs a result, got %v", results)
+// Review Focus 6: Esc during the first request, after the loop checked the
+// prompt: the next turn sends it marked checked, so UserPromptSubmit does
+// not run on it again (loop TestLoopCheckPromptSkipsCheckedAndHidden).
+func TestEscDuringTheFirstRequestKeepsThePromptChecked(t *testing.T) {
+	m, client := newQueueTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "first"})
+	checked := append([]ChatMessage(nil), m.chat.GetLLMMessages()...)
+	checked[0].Metadata = map[string]any{MetaPromptHookDone: true}
+	m, _ = feed(t, m, HistoryMsg{History: checked}) // EventPromptsChecked
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "interrupted"})
+	m, _ = step(t, m, SendMessageMsg{Content: "again"})
+	require.Len(t, client.turns, 2)
+	first := client.turns[1].req.History[0]
+	assert.Equal(t, "first", first.Content)
+	assert.Equal(t, true, first.Metadata[MetaPromptHookDone], "the hook would run on the first prompt again")
 }
