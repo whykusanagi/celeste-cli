@@ -116,6 +116,17 @@ type AppModel struct {
 	// only one runs at a time.
 	summarizing bool
 
+	// The running chat turn (2.0 F2d): a loop.Loop run whose events arrive
+	// as TurnEventMsg tagged turnRun; nil when idle. loopSteers counts steers
+	// handed to it that it has not joined or blocked yet. heldSummary is a
+	// background summary that finished while the turn ran; onTurnDone
+	// applies it if it still fits.
+	turn        TurnHandle
+	turnRun     uint64
+	turnSeq     uint64
+	loopSteers  int
+	heldSummary *ContextSummarizedMsg
+
 	// LLM client (injected)
 	llmClient LLMClient
 
@@ -421,6 +432,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't return — let sub-views also handle the resize
 	}
 
+	// Chat turn events bypass the sub-view routing below: the turn must keep
+	// reading its events whichever view is showing.
+	if ev, ok := msg.(TurnEventMsg); ok {
+		return m.onTurnEvent(ev)
+	}
+
 	// Route to collections view if in that mode
 	if m.viewMode == "collections" {
 		switch msg := msg.(type) {
@@ -620,15 +637,19 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
-			if m.cancelFunc != nil {
-				// Active operation running — cancel it
-				m.cancelFunc()
-				m.cancelFunc = nil
-				m.orchRun = 0
-				m.streaming = false
+			if m.turn != nil || m.cancelFunc != nil {
+				// Active operation running: cancel it. Double Ctrl+C within 3s quits.
+				again := m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second
+				if m.turn != nil {
+					m = m.interrupt()
+				} else {
+					m.cancelFunc()
+					m.cancelFunc = nil
+					m.orchRun = 0
+					m.streaming = false
+				}
 				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
-				// Double Ctrl+C within 3s => quit
-				if m.interruptPending && time.Since(m.lastInterrupt) < 3*time.Second {
+				if again {
 					m.persistSession()
 					return m, tea.Quit
 				}
@@ -1930,39 +1951,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 
 	case StreamChunkMsg:
-		if m.interrupted {
-			// Late output from a request Esc cancelled: keep draining the
-			// stream so its goroutine can exit, but don't show it.
-			if msg.Next != nil {
-				cmds = append(cmds, msg.Next)
-			}
-			break
-		}
-		if msg.Chunk.IsFirst {
-			// First chunk: start the assistant message and typing animation.
-			// Reset streamDone here — the tick handler uses it to decide
-			// whether to commit when typing catches up.
-			m.chat = m.chat.AddAssistantMessage("")
-			m.chat = m.chat.SetTypingActive(true) // skip Glamour for corruption buffer
-			m.typingContent = msg.Chunk.Content
-			m.typingPos = 0
-			m.streaming = true
-			m.streamDone = false
-			m.status = m.status.SetStreaming(true)
-			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
-			cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-				return TickMsg{Time: t}
-			}))
-		} else {
-			// Subsequent chunks: extend the typing buffer. The running
-			// ticker will pick up the extension on its next fire. If the
-			// ticker happened to die right before this chunk arrived (the
-			// "O" race — see the streamDone comment on AppModel), the
-			// tick handler's new `!streamDone` guard would have kept it
-			// alive, so this append is safe to land without rescheduling.
-			m.typingContent += msg.Chunk.Content
-		}
-		// Chain the next read from the stream channel
+		var more []tea.Cmd
+		m, more = m.onStreamChunk(msg)
+		cmds = append(cmds, more...)
 		if msg.Next != nil {
 			cmds = append(cmds, msg.Next)
 		}
@@ -1981,90 +1972,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StreamDoneMsg:
-		if m.interrupted {
-			// The request Esc cancelled finished anyway; its reply is dropped.
-			m.cancelFunc = nil
-			break
-		}
-		// Clear cancel function — operation completed.
-		// Flip streamDone so the TickMsg tick-complete branch can commit
-		// the final content once the typing animation catches up.
-		m.cancelFunc = nil
-		m.interruptPending = false
-		m.streamDone = true
-		// Update token counts from API response
-		if msg.Usage != nil && (msg.Usage.PromptTokens > 0 || msg.Usage.CompletionTokens > 0) {
-			m.lastMsgInTok = msg.Usage.PromptTokens
-			m.lastMsgOutTok = msg.Usage.CompletionTokens
-			if m.contextTracker != nil {
-				m.contextTracker.UpdateTokens(
-					msg.Usage.PromptTokens,
-					msg.Usage.CompletionTokens,
-					msg.Usage.TotalTokens,
-				)
-				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-
-				// Update context bar
-				budgetMsg := ContextBudgetMsg{
-					UsedTokens:   m.contextTracker.CurrentTokens,
-					MaxTokens:    m.contextTracker.MaxTokens,
-					UsagePercent: float64(m.contextTracker.CurrentTokens) / float64(m.contextTracker.MaxTokens) * 100,
-				}
-				if m.contextTracker.Budget != nil {
-					budgetMsg.CompactCount = m.contextTracker.Budget.CompactCount
-					budgetMsg.TurnCount = m.contextTracker.Budget.TurnCount
-				}
-				m.contextBar, _ = m.contextBar.Update(budgetMsg)
-			}
-		} else if msg.FullContent != "" {
-			// API didn't return token usage — estimate from response length and
-			// update the context tracker so the header counter keeps moving.
-			estOut := config.EstimateTokens(msg.FullContent)
-			if m.contextTracker != nil && estOut > 0 {
-				cur := m.contextTracker.CurrentTokens + estOut
-				m.contextTracker.UpdateTokens(0, estOut, cur)
-				m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-			}
-			// Leave lastMsgInTok/lastMsgOutTok at 0 so the TickMsg inferred path runs.
-		}
-
-		if msg.FullContent != "" {
-			if commands.IsContentPolicyRefusal(msg.FullContent) && m.endpoint != "venice" {
-				m.chat = m.chat.AddSystemMessage(
-					"⚠️  Content policy refusal detected.\n\n" +
-						"💡 Tip: Use /nsfw to switch to Venice.ai for uncensored responses,\n" +
-						"or add 'nsfw' at the end of your message for auto-routing.",
-				)
-			}
-
-			if m.typingContent != "" {
-				// Real streaming was active — typing animation is already running.
-				// Just ensure the full content is in the buffer (in case final
-				// chunks arrived after EventMessageDone).
-				m.typingContent = msg.FullContent
-			} else {
-				// No streaming chunks arrived (non-streaming backend or empty deltas).
-				// Fall back to simulated typing on the full response.
-				m.typingContent = msg.FullContent
-				m.typingPos = 0
-				m.streaming = true
-				m.status = m.status.SetStreaming(true)
-				m.chat = m.chat.AddAssistantMessage("")
-				m.chat = m.chat.SetTypingActive(true)
-				m.status = m.status.SetText("Typing...")
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
-			}
-		} else if m.typingContent == "" {
-			// No content at all — empty response. This happens when the LLM
-			// "acknowledges" internally but produces nothing. Show feedback
-			// so the user knows to re-prompt.
-			m.streaming = false
-			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText("Ready (empty response)")
-			m.chat = m.chat.AddSystemMessage("(No response — try rephrasing or say 'go' to execute)")
-		}
+		m.cancelFunc = nil // the old streaming send is over
+		var more []tea.Cmd
+		m, more = m.onStreamDone(msg)
+		cmds = append(cmds, more...)
 
 	case StreamErrorMsg:
 		m.cancelFunc = nil
@@ -2136,7 +2047,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case ContextSummarizedMsg:
-		m = m.applySummary(msg)
+		if m.turn != nil {
+			// The loop's snapshots line up with the chat position by
+			// position; applying a summary now would shift them. It waits
+			// for the turn to end (onTurnDone re-validates it).
+			held := msg
+			m.heldSummary = &held
+			break
+		}
+		m, _ = m.applySummary(msg)
 
 	case HandoffReadyMsg:
 		m = m.applyHandoff(msg)
@@ -3512,11 +3431,31 @@ func (m *AppModel) persistSession() {
 
 	// Must be []config.SessionMessage: SetMessagesRaw ignores any other type,
 	// which is how sessions used to silently stop saving history.
-	m.currentSession.SetMessagesRaw(SessionMessagesFromChat(m.chat.GetMessages()))
+	m.currentSession.SetMessagesRaw(SessionMessagesFromChat(m.savedMessages()))
 
 	// Save synchronously: Save mutates and marshals the session, and Update
 	// keeps mutating it, so a goroutine here races.
 	_ = m.sessionManager.Save(m.currentSession)
+}
+
+// savedMessages is the chat as the session saves it. A reply still being
+// typed shows its typed prefix plus glitch glyphs; the session gets the
+// whole reply received so far instead (typingContent: the loop's text once
+// the reply is done). Turn events never save while typing, the typing
+// commit does, but a quit or an interrupt can land mid-typing.
+func (m AppModel) savedMessages() []ChatMessage {
+	msgs := m.chat.GetMessages()
+	if m.typingContent == "" {
+		return msgs
+	}
+	msgs = append([]ChatMessage(nil), msgs...)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" {
+			msgs[i].Content = m.typingContent
+			break
+		}
+	}
+	return msgs
 }
 
 // handleSessionAction handles session management actions.

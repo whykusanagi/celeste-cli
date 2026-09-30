@@ -24,6 +24,13 @@ type fakeToolLLMClient struct {
 	skills       []SkillDefinition
 	executeCalls []execCall
 	sendCalls    []sendCall
+	turns        []*fakeTurn
+}
+
+func (f *fakeToolLLMClient) RunTurn(req TurnRequest) (TurnHandle, tea.Cmd) {
+	t := &fakeTurn{req: req}
+	f.turns = append(f.turns, t)
+	return t, nil
 }
 
 func (f *fakeToolLLMClient) SendMessage(messages []ChatMessage, tools []SkillDefinition) tea.Cmd {

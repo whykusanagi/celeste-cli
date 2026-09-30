@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,4 +101,129 @@ func TestSyncLLMKeepsAnEmptyLiveBubble(t *testing.T) {
 	history := []ChatMessage{{Role: "user", Content: "go"}, {Role: "assistant", Content: "Hello"}}
 	assert.Equal(t, []string{"user:go", "assistant:"}, llmRoles(c.SyncLLM(history, true)))
 	assert.Equal(t, []string{"user:go", "assistant:Hello"}, llmRoles(c.SyncLLM(history, false)))
+}
+
+// Only the last LLM message is live: an earlier assistant reply takes the
+// loop's text even while the latest one is being typed.
+func TestSyncLLMKeepsOnlyTheLastReplyLive(t *testing.T) {
+	c := NewChatModel().AddUserMessage("a").AddAssistantMessage("first, chat copy").
+		AddUserMessage("b").AddAssistantMessage("Sec")
+	c = c.SyncLLM([]ChatMessage{
+		{Role: "user", Content: "a"},
+		{Role: "assistant", Content: "first, loop copy"},
+		{Role: "user", Content: "b"},
+		{Role: "assistant", Content: "Second"},
+	}, true)
+	assert.Equal(t, []string{"user:a", "assistant:first, loop copy", "user:b", "assistant:Sec"}, llmRoles(c))
+}
+
+// "Last" is the last LLM message: a summarized (compacted) message after it
+// is not one. Not produced by today's writers (summaries compact the head),
+// but it pins what last means for keepLive and the empty-bubble exemption.
+func TestSyncLLMLastSkipsCompactedMessages(t *testing.T) {
+	compacted := ChatMessage{Role: "user", Content: "old", Metadata: map[string]any{"compacted": true}}
+	history := []ChatMessage{{Role: "user", Content: "go"}, {Role: "assistant", Content: "Hello"}}
+
+	c := NewChatModel().AddUserMessage("go").AddAssistantMessage("Hel").AppendLLM(compacted)
+	assert.Equal(t, []string{"user:go", "assistant:Hel"}, llmRoles(c.SyncLLM(history, true)))
+
+	c = NewChatModel().AddUserMessage("go").AddAssistantMessage("").AppendLLM(compacted)
+	assert.Equal(t, []string{"user:go", "assistant:"}, llmRoles(c.SyncLLM(history, true)),
+		"the empty live bubble is a position, not a dropped reply")
+}
+
+// Only an empty text-only assistant reply is dropped. An empty tool result
+// is a position: dropping it would move a system line past it.
+func TestSyncLLMKeepsAnEmptyToolResult(t *testing.T) {
+	c := NewChatModel().AddUserMessage("go").
+		AddAssistantMessageWithToolCalls("", []ToolCallInfo{{ID: "c1", Name: "read_file"}}).
+		AddToolResult("c1", "read_file", "").
+		AddSystemMessage("note").
+		AddUserMessage("next")
+	c = c.SyncLLM([]ChatMessage{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "read_file"}}},
+		{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: ""},
+		{Role: "user", Content: "next"},
+	}, false)
+	var roles []string
+	for _, msg := range c.GetMessages() {
+		roles = append(roles, msg.Role)
+	}
+	assert.Equal(t, []string{"user", "assistant", "tool", "system", "user"}, roles)
+}
+
+// keepLive keeps a live assistant bubble's text only over the loop's
+// assistant reply at that position; any other last message takes the
+// loop's copy.
+func TestSyncLLMKeepLiveOnlyForAnAssistantOverAnAssistant(t *testing.T) {
+	cases := []struct {
+		name    string
+		chat    ChatModel
+		history []ChatMessage
+		want    []string
+	}{
+		{
+			name: "pruned tool result",
+			chat: NewChatModel().AddUserMessage("go").
+				AddAssistantMessageWithToolCalls("", []ToolCallInfo{{ID: "c1", Name: "read_file"}}).
+				AddToolResult("c1", "read_file", "big"),
+			history: []ChatMessage{
+				{Role: "user", Content: "go"},
+				{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "read_file"}}},
+				{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "[pruned]"},
+			},
+			want: []string{"user:go", "assistant:", "tool:[pruned]"},
+		},
+		{
+			name:    "user in the chat, assistant in the loop",
+			chat:    NewChatModel().AddUserMessage("go").AddUserMessage("steer"),
+			history: []ChatMessage{{Role: "user", Content: "go"}, {Role: "assistant", Content: "reply"}},
+			want:    []string{"user:go", "assistant:reply"},
+		},
+		{
+			name:    "assistant in the chat, user in the loop",
+			chat:    NewChatModel().AddUserMessage("go").AddAssistantMessage("Hel"),
+			history: []ChatMessage{{Role: "user", Content: "go"}, {Role: "user", Content: "steer"}},
+			want:    []string{"user:go", "user:steer"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, llmRoles(tc.chat.SyncLLM(tc.history, true)))
+		})
+	}
+}
+
+// A snapshot that disagrees with the chat at a position (role, tool call
+// ID, or a user prompt's content and timestamp) is logged: the positional
+// sync would otherwise hide the drift.
+func TestSyncLLMLogsDrift(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	require.NoError(t, InitLogging())
+	path := GetLogPath()
+
+	c := NewChatModel().AddUserMessage("go")
+	ts := c.GetLLMMessages()[0].Timestamp
+	aligned := []ChatMessage{{Role: "user", Content: "go", Timestamp: ts}, {Role: "assistant", Content: "ok"}}
+	c = c.SyncLLM(aligned, false)
+	c.SyncLLM([]ChatMessage{
+		{Role: "user", Content: "go", Timestamp: ts},
+		{Role: "user", Content: "something else"},
+	}, false)
+	CloseLogging()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var drift []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "history drift") {
+			drift = append(drift, line)
+		}
+	}
+	require.Len(t, drift, 1, "only the misaligned snapshot is logged:\n%s", data)
+	assert.Contains(t, drift[0], "position 1")
+	assert.Contains(t, drift[0], "role assistant")
 }

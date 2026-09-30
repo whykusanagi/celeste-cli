@@ -625,7 +625,8 @@ func formatArgs(args map[string]any) string {
 // the last LLM message (a resumed session, a turn from before the loop) is
 // dropped: the adapter removes those from the loop's input and from every
 // snapshot, so keeping it would shift every later position by one. The
-// last one is the live typing bubble, which starts empty.
+// last one is the live typing bubble, which starts empty. A position where
+// the two disagree (syncDrift) is logged; the loop's copy still wins.
 func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 	last := -1
 	for i, msg := range m.messages {
@@ -644,6 +645,9 @@ func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 			continue
 		}
 		h := history[j]
+		if drift := syncDrift(msg, h); drift != "" {
+			LogInfo(fmt.Sprintf("chat history drift at LLM position %d: %s", j, drift))
+		}
 		j++
 		if keepLive && i == last && msg.Role == "assistant" && h.Role == "assistant" {
 			h.Content = msg.Content
@@ -657,6 +661,23 @@ func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 		m.viewport.GotoBottom()
 	}
 	return m
+}
+
+// syncDrift describes how the chat's message and the loop's message at the
+// same position disagree, or returns "". SyncLLM takes the loop's copy
+// either way; the log is how a broken positional invariant shows up.
+func syncDrift(chat, loop ChatMessage) string {
+	switch {
+	case chat.Role != loop.Role:
+		return fmt.Sprintf("role %s in the chat, %s in the loop", chat.Role, loop.Role)
+	case chat.ToolCallID != loop.ToolCallID:
+		return fmt.Sprintf("tool call %q in the chat, %q in the loop", chat.ToolCallID, loop.ToolCallID)
+	case chat.Role == "user" && (chat.Content != loop.Content || !chat.Timestamp.Equal(loop.Timestamp)):
+		return fmt.Sprintf("user prompt %q (%s) in the chat, %q (%s) in the loop",
+			truncateQueued(chat.Content), chat.Timestamp.Format(time.RFC3339Nano),
+			truncateQueued(loop.Content), loop.Timestamp.Format(time.RFC3339Nano))
+	}
+	return ""
 }
 
 // AppendLLM adds one message as the loop recorded it (a steer that joined,

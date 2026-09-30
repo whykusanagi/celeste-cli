@@ -13,7 +13,8 @@ import (
 // a reply still being typed out, or tools executing. Input submitted during a
 // turn is queued rather than sent as a concurrent request (#172).
 func (m AppModel) turnActive() bool {
-	return m.streaming ||
+	return m.turn != nil ||
+		m.streaming ||
 		m.typingContent != "" ||
 		m.cancelFunc != nil ||
 		m.toolBatchActive ||
@@ -30,15 +31,21 @@ func runsDuringTurn(content string) bool {
 // enqueue queues input submitted during a turn.
 func (m AppModel) enqueue(content string, followUp bool) AppModel {
 	kind := "steer (joins at the next tool step)"
-	if followUp {
+	switch {
+	case followUp:
 		m.followUpQueue = append(m.followUpQueue, content)
 		kind = "follow-up (sent after this reply)"
-	} else {
-		m.steerQueue = append(m.steerQueue, content)
+	case m.turn != nil && !m.interrupted:
+		// The loop joins it at the next tool boundary, checked by
+		// UserPromptSubmit then (2.0 F2d: Loop.Steer replaces the queue).
+		m.turn.Steer(content)
+		m.loopSteers++
+	default:
+		m.steerQueue = append(m.steerQueue, content) // sent after the turn
 	}
 	m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⏳ Queued %s: %s", kind, truncateQueued(content)))
 	m.status = m.status.SetText(fmt.Sprintf("%d queued · Enter steers · Tab follows up · Esc interrupts",
-		len(m.steerQueue)+len(m.followUpQueue)))
+		len(m.steerQueue)+len(m.followUpQueue)+m.loopSteers))
 	return m
 }
 
@@ -86,6 +93,9 @@ func (m AppModel) injectSteers() AppModel {
 // and the reply so far is kept. Tools already executing finish, but queued
 // tools are skipped and the model is not asked to continue.
 func (m AppModel) interrupt() AppModel {
+	if m.turn != nil {
+		m.turn.Cancel()
+	}
 	if m.cancelFunc != nil {
 		m.cancelFunc()
 		m.cancelFunc = nil

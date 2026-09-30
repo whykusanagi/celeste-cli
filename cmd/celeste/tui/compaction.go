@@ -17,12 +17,12 @@ const summaryTimeout = 3 * time.Minute
 type ContextSummarizedMsg struct {
 	Outcome SummaryOutcome
 	Err     error
-	// snapshotLen and firstContent identify the history the summary was
-	// written from, so a stale summary (after /clear or a session switch)
-	// is dropped rather than applied to a different conversation.
-	snapshotLen  int
-	firstContent string
-	manual       bool
+	// snapshot is the history the summary was written from. A summary is
+	// applied only while the chat's first Outcome.Cut LLM messages are
+	// still those (summaryStillFits), so a stale one (after /clear, a
+	// session switch, or anything that rewrote the head) is dropped.
+	snapshot []ChatMessage
+	manual   bool
 }
 
 // compactContext prunes old tool results when the history is over the
@@ -83,11 +83,10 @@ func (m AppModel) startSummaryAs(focus string, manual bool, trigger string) (App
 		defer cancel()
 		out, err := c.SummarizeContext(ctx, snapshot, focus)
 		return ContextSummarizedMsg{
-			Outcome:      out,
-			Err:          err,
-			snapshotLen:  len(snapshot),
-			firstContent: snapshot[0].Content,
-			manual:       manual,
+			Outcome:  out,
+			Err:      err,
+			snapshot: snapshot,
+			manual:   manual,
 		}
 	}
 }
@@ -112,22 +111,23 @@ func CompactionTrigger(ctx context.Context) string {
 	return "auto"
 }
 
-// applySummary replaces the summarized history. Messages sent while the
-// summary was being written were only appended, and pruning only swaps
-// tool-result content in place, so the first Cut LLM messages are still the
-// ones that were summarized.
-func (m AppModel) applySummary(msg ContextSummarizedMsg) AppModel {
+// applySummary replaces the summarized history when it still fits and
+// reports whether it did. Messages sent while the summary was being written
+// were only appended, and pruning only swaps tool-result content in place,
+// so the first Cut LLM messages are normally still the ones summarized. A
+// discarded summary leaves summarizing off, so the next automatic summary
+// can try again.
+func (m AppModel) applySummary(msg ContextSummarizedMsg) (AppModel, bool) {
 	m.summarizing = false
 	if msg.Err != nil {
 		if msg.manual || !isNothingToSummarize(msg.Err) {
 			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Context summary not applied: %v", msg.Err))
 		}
-		return m
+		return m, false
 	}
-	current := m.chat.GetLLMMessages()
-	if len(current) < msg.snapshotLen || len(current) == 0 || current[0].Content != msg.firstContent {
+	if !summaryStillFits(m.chat.GetLLMMessages(), msg.snapshot, msg.Outcome.Cut) {
 		m.chat = m.chat.AddSystemMessage("Context summary discarded: the conversation changed while it was being written.")
-		return m
+		return m, false
 	}
 	m.chat = m.chat.ApplySummary(msg.Outcome.Cut, msg.Outcome.Messages)
 	if m.contextTracker != nil {
@@ -140,7 +140,32 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) AppModel {
 	m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Outcome.Line)
 	LogInfo("context summarized: " + msg.Outcome.Line)
 	m.persistSession()
-	return m
+	return m, true
+}
+
+// summaryStillFits reports whether current still starts with the first cut
+// messages of snapshot. Tool results are compared by call ID only (pruning
+// rewrites their content); every other message by role, content and tool
+// call IDs.
+func summaryStillFits(current, snapshot []ChatMessage, cut int) bool {
+	if len(snapshot) == 0 || cut < 0 || cut > len(snapshot) || len(current) < len(snapshot) {
+		return false
+	}
+	for i := 0; i < cut; i++ {
+		a, b := current[i], snapshot[i]
+		if a.Role != b.Role || a.ToolCallID != b.ToolCallID || len(a.ToolCalls) != len(b.ToolCalls) {
+			return false
+		}
+		for j := range a.ToolCalls {
+			if a.ToolCalls[j].ID != b.ToolCalls[j].ID {
+				return false
+			}
+		}
+		if a.Role != "tool" && a.Content != b.Content {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrNothingToSummarize is what SummarizeContext returns when there is no
