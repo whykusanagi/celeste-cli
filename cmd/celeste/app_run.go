@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -78,7 +79,11 @@ func main() {
 
 func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	resetGlobalFlags()
-	args = extractGlobalFlags(args)
+	args, err := extractGlobalFlags(args, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 2
+	}
 
 	if len(args) < 1 {
 		// No args = launch TUI chat (like `claude` with no args)
@@ -189,51 +194,62 @@ func unknownCommandMessage(word string) string {
 
 func resetGlobalFlags() {
 	configName = ""
-	runtimeModeOverride = ""
-	clawMaxToolIterationsOverride = 0
+	maxToolIterationsOverride = 0
 }
 
-func extractGlobalFlags(args []string) []string {
+// errModeFlagRemoved answers -mode (#144, spec §6.2).
+var errModeFlagRemoved = errors.New("the -mode flag was removed in celeste 2.0: chat always runs tools in a loop, so drop the flag. See MIGRATING-2.0.md")
+
+// iterFlag reports whether args[i] is -max-tool-iterations or the deprecated
+// -claw-max-iterations with a numeric value: the value, how many extra args
+// it consumed, and whether it was the legacy name. A non-numeric value is
+// not a match, so the args pass through as before.
+func iterFlag(args []string, i int) (n, extra int, legacy, ok bool) {
+	for _, name := range []string{"-max-tool-iterations", "-claw-max-iterations"} {
+		raw := ""
+		switch {
+		case args[i] == name && i+1 < len(args):
+			raw, extra = args[i+1], 1
+		case strings.HasPrefix(args[i], name+"="):
+			raw, extra = strings.TrimPrefix(args[i], name+"="), 0
+		default:
+			continue
+		}
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return 0, 0, false, false
+		}
+		return v, extra, name == "-claw-max-iterations", true
+	}
+	return 0, 0, false, false
+}
+
+func extractGlobalFlags(args []string, stderr io.Writer) ([]string, error) {
 	filtered := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-config" && i+1 < len(args) {
+		a := args[i]
+		switch {
+		case a == "-config" && i+1 < len(args):
 			configName = args[i+1]
 			i++
 			continue
-		}
-		if strings.HasPrefix(args[i], "-config=") {
-			configName = strings.TrimPrefix(args[i], "-config=")
+		case strings.HasPrefix(a, "-config="):
+			configName = strings.TrimPrefix(a, "-config=")
 			continue
+		case a == "-mode" || strings.HasPrefix(a, "-mode="):
+			return nil, errModeFlagRemoved
 		}
-
-		if args[i] == "-mode" && i+1 < len(args) {
-			runtimeModeOverride = strings.ToLower(strings.TrimSpace(args[i+1]))
-			i++
-			continue
-		}
-		if strings.HasPrefix(args[i], "-mode=") {
-			runtimeModeOverride = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(args[i], "-mode=")))
-			continue
-		}
-
-		if args[i] == "-claw-max-iterations" && i+1 < len(args) {
-			if n, err := strconv.Atoi(args[i+1]); err == nil {
-				clawMaxToolIterationsOverride = n
-				i++
-				continue
+		if n, extra, legacy, ok := iterFlag(args, i); ok {
+			if legacy {
+				fmt.Fprintln(stderr, "Warning: -claw-max-iterations is deprecated; use -max-tool-iterations (see MIGRATING-2.0.md)")
 			}
+			maxToolIterationsOverride = n
+			i += extra
+			continue
 		}
-		if strings.HasPrefix(args[i], "-claw-max-iterations=") {
-			raw := strings.TrimPrefix(args[i], "-claw-max-iterations=")
-			if n, err := strconv.Atoi(raw); err == nil {
-				clawMaxToolIterationsOverride = n
-				continue
-			}
-		}
-
-		filtered = append(filtered, args[i])
+		filtered = append(filtered, a)
 	}
-	return filtered
+	return filtered, nil
 }
 
 // shortCommit renders a build stamp for display. CI stamps a full 40-char git

@@ -50,8 +50,7 @@ var (
 
 // Global config name (set by -config flag)
 var configName string
-var runtimeModeOverride string
-var clawMaxToolIterationsOverride int
+var maxToolIterationsOverride int
 
 // hasDefaultConfig checks if a default configuration file exists.
 func hasDefaultConfig() bool {
@@ -70,8 +69,7 @@ Usage:
 
 Global Flags:
   -config <name>          Use named config (loads ~/.celeste/config.<name>.json)
-  -mode <classic|claw>    Override runtime mode for this invocation
-  -claw-max-iterations N  Override claw tool-loop safety cap for this invocation
+  -max-tool-iterations N  Override the chat's tool-loop turn cap for this invocation
 
 Commands:
   chat                    Launch interactive TUI mode
@@ -175,7 +173,6 @@ Examples:
   celeste chat                           Start with default config
   celeste -config openai chat            Start with OpenAI config
   celeste -config grok chat              Start with Grok/xAI config
-  celeste -mode claw chat                Start chat in claw runtime mode
   celeste agent --goal "refactor this package and add tests"
   celeste config --list                  List available configs
   celeste config --init openai           Create OpenAI config template
@@ -191,8 +188,8 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 
-	if clawMaxToolIterationsOverride > 0 {
-		cfg.MaxToolIterations = clawMaxToolIterationsOverride
+	if maxToolIterationsOverride > 0 {
+		cfg.MaxToolIterations = maxToolIterationsOverride
 	}
 	if cfg.MaxToolIterations <= 0 {
 		cfg.MaxToolIterations = config.DefaultMaxToolIterations
