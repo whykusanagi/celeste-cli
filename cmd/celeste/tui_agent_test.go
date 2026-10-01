@@ -241,7 +241,7 @@ func TestRunGoalWithProgressIsCancellableAndPromptsForApproval(t *testing.T) {
 	}
 
 	var cancel context.CancelFunc
-	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"long", "task"})) {
+	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"long", "task"}, 1)) {
 		if start, ok := msg.(tui.StreamStartMsg); ok {
 			cancel = start.Cancel
 		}
@@ -291,7 +291,7 @@ func TestRunGoalWithProgressLocalEndpointNeedsNoKey(t *testing.T) {
 
 	var gotError string
 	var gotComplete bool
-	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "a", "thing"})) {
+	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "a", "thing"}, 1)) {
 		if p, ok := msg.(tui.AgentProgressMsg); ok {
 			switch p.Kind {
 			case tui.AgentProgressError:
@@ -323,7 +323,7 @@ func TestRunGoalWithProgressStaleADCOnNonGoogleStillNeedsKey(t *testing.T) {
 	}
 
 	var gotError string
-	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "a", "thing"})) {
+	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "a", "thing"}, 1)) {
 		if p, ok := msg.(tui.AgentProgressMsg); ok && p.Kind == tui.AgentProgressError {
 			gotError = p.Text
 		}
@@ -365,5 +365,29 @@ func TestSendAgentProgressDoesNotBlock(t *testing.T) {
 func TestTUIAgentOptionsCheckTheGoal(t *testing.T) {
 	if !tuiAgentOptions(nil).CheckGoal {
 		t.Fatal("/agent runs skip UserPromptSubmit on the goal")
+	}
+}
+
+// An /agent goal run's context names the run (2.0 F2e), so the permission
+// and ask requests it raises carry the tag to the chat.
+func TestRunGoalWithProgressTagsItsContext(t *testing.T) {
+	originalFactory := newAgentRunnerForTUI
+	t.Cleanup(func() { newAgentRunnerForTUI = originalFactory })
+	got := make(chan tui.RunOwner, 1)
+	newAgentRunnerForTUI = func(*config.Config, agent.Options, io.Writer, io.Writer) (agentRunnerAPI, error) {
+		return &fakeAgentRunner{runGoalFn: func(ctx context.Context, _ string) (*agent.RunState, error) {
+			got <- tui.RunOwnerFrom(ctx)
+			return &agent.RunState{Status: agent.StatusCompleted}, nil
+		}}, nil
+	}
+	adapter := &TUIClientAdapter{baseConfig: &config.Config{APIKey: "k", BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"}}
+	runBatch(t, adapter.runGoalWithProgress([]string{"do", "it"}, 5))
+	select {
+	case o := <-got:
+		if o != (tui.RunOwner{Kind: tui.OwnerAgent, Run: 5}) {
+			t.Fatalf("run context owner = %+v", o)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the goal never ran")
 	}
 }

@@ -20,7 +20,7 @@ func (f *fakeAgentLLMClient) GetSkills() []SkillDefinition {
 	return nil
 }
 
-func (f *fakeAgentLLMClient) RunAgentCommand(args []string) tea.Cmd {
+func (f *fakeAgentLLMClient) RunAgentCommand(args []string, _ uint64) tea.Cmd {
 	copied := append([]string{}, args...)
 	f.agentArgs = append(f.agentArgs, copied)
 	return nil

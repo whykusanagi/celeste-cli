@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -380,7 +381,7 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 	m.loopSteers = 0
 	m.planning = false
 	// A modal this turn opened would outlive it: answer it and close it.
-	m = m.closeModalsOf(runOwner{kind: ownerTurn, run: m.turnRun})
+	m = m.closeModalsOf(RunOwner{Kind: OwnerTurn, Run: m.turnRun})
 	if m.stopHookRunning {
 		m.stopHookRunning = false
 		if m.heldReady != "" {
@@ -548,45 +549,96 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 	return m
 }
 
-// Modal owners: the run a permission or ask modal was opened for.
+// Run owners: the run a permission or ask request came from (2.0 F2e).
 const (
-	ownerTurn  = "turn"
-	ownerOrch  = "orch"
-	ownerAgent = "agent"
+	OwnerTurn  = "turn"
+	OwnerOrch  = "orch"
+	OwnerAgent = "agent"
 )
 
-type runOwner struct {
-	kind string // "" = no run: the modal stays until answered
-	run  uint64 // the turn or /orch run; 0 for /agent
+// RunOwner names one chat turn, /orch run or /agent run.
+type RunOwner struct {
+	Kind string // "" = no run: the modal stays until answered
+	Run  uint64 // TurnRequest.Run, the /orch run or the /agent run
+}
+
+type runOwnerKey struct{}
+
+// WithRunOwner tags ctx with the run it belongs to. The adapter tags each
+// chat turn, /orch run and /agent run; a permission or ask request made
+// under it carries the tag to the chat.
+func WithRunOwner(ctx context.Context, o RunOwner) context.Context {
+	return context.WithValue(ctx, runOwnerKey{}, o)
+}
+
+// RunOwnerFrom returns ctx's run tag; the zero RunOwner when ctx is nil or
+// untagged.
+func RunOwnerFrom(ctx context.Context) RunOwner {
+	if ctx == nil {
+		return RunOwner{}
+	}
+	o, _ := ctx.Value(runOwnerKey{}).(RunOwner)
+	return o
 }
 
 // currentRun is the run a modal opened now belongs to. A chat turn, an /orch
 // run and an /agent run never overlap (commands wait for a running turn).
-func (m AppModel) currentRun() runOwner {
+func (m AppModel) currentRun() RunOwner {
 	switch {
 	case m.turn != nil:
-		return runOwner{kind: ownerTurn, run: m.turnRun}
+		return RunOwner{Kind: OwnerTurn, Run: m.turnRun}
 	case m.orchRun != 0:
-		return runOwner{kind: ownerOrch, run: m.orchRun}
+		return RunOwner{Kind: OwnerOrch, Run: m.orchRun}
 	case m.agentActive:
-		return runOwner{kind: ownerAgent}
+		return RunOwner{Kind: OwnerAgent, Run: m.agentRun}
 	}
-	return runOwner{}
+	return RunOwner{}
+}
+
+// runActive reports whether o is still running. No run (Kind "") always is.
+func (m AppModel) runActive(o RunOwner) bool {
+	switch o.Kind {
+	case OwnerTurn:
+		return m.turn != nil && m.turnRun == o.Run
+	case OwnerOrch:
+		return m.orchRun != 0 && m.orchRun == o.Run
+	case OwnerAgent:
+		return m.agentActive && m.agentRun == o.Run
+	}
+	return true
+}
+
+// requestOwner is the run a permission or ask request belongs to: its tag,
+// else the run active now (an untagged request). live is false when that
+// run has ended (done is closed, or the chat has moved past it): the request
+// is then answered at once and never shown (2.0 F2e).
+func (m AppModel) requestOwner(tag RunOwner, done <-chan struct{}) (owner RunOwner, live bool) {
+	if done != nil {
+		select {
+		case <-done:
+			return tag, false
+		default:
+		}
+	}
+	if tag.Kind == "" {
+		return m.currentRun(), true
+	}
+	return tag, m.runActive(tag)
 }
 
 // closeModalsOf answers and closes the modals of a run that has ended: the
 // permission modal denies, the ask modal cancels.
-func (m AppModel) closeModalsOf(o runOwner) AppModel {
-	if o.kind == "" {
+func (m AppModel) closeModalsOf(o RunOwner) AppModel {
+	if o.Kind == "" {
 		return m
 	}
 	if m.permissionPrompt.Active() && m.permissionOwner == o {
 		m.permissionPrompt = m.permissionPrompt.Dismiss()
-		m.permissionOwner = runOwner{}
+		m.permissionOwner = RunOwner{}
 	}
 	if m.askPrompt.Active() && m.askOwner == o {
 		m.askPrompt = m.askPrompt.Dismiss()
-		m.askOwner = runOwner{}
+		m.askOwner = RunOwner{}
 	}
 	return m
 }
@@ -594,7 +646,7 @@ func (m AppModel) closeModalsOf(o runOwner) AppModel {
 // endAgentRun closes the modals of the /agent run that just ended.
 func (m AppModel) endAgentRun() AppModel {
 	if m.agentActive {
-		m = m.closeModalsOf(runOwner{kind: ownerAgent})
+		m = m.closeModalsOf(RunOwner{Kind: OwnerAgent, Run: m.agentRun})
 	}
 	m.agentActive = false
 	return m

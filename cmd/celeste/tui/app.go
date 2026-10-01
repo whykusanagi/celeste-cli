@@ -175,14 +175,17 @@ type AppModel struct {
 	// Running token totals for the current agent run
 	agentInputTokens  int
 	agentOutputTokens int
-	// agentActive is set while an /agent command runs.
+	// agentActive is set while an /agent command runs; agentRun numbers
+	// it (agentSeq counts them), tagging its permission and ask requests.
 	agentActive bool
+	agentRun    uint64
+	agentSeq    uint64
 
 	// The run each modal belongs to (none: it stays until answered). When
 	// that run ends, its modal is answered (deny, cancelled) and closed, so
 	// it never stays up swallowing keys and holding the Gate's lock.
-	permissionOwner runOwner
-	askOwner        runOwner
+	permissionOwner RunOwner
+	askOwner        RunOwner
 
 	// planning keeps /plan's "Planning..." status until the reply streams.
 	planning bool
@@ -241,7 +244,9 @@ type SummaryOutcome struct {
 
 // AgentCommandRunner is an optional extension for handling /agent from TUI.
 type AgentCommandRunner interface {
-	RunAgentCommand(args []string) tea.Cmd
+	// RunAgentCommand starts /agent; run tags the goal run's context
+	// (WithRunOwner), so its permission and ask requests name it.
+	RunAgentCommand(args []string, run uint64) tea.Cmd
 }
 
 // OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
@@ -806,13 +811,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.streaming = true
 				m.agentActive = true
+				m.agentSeq++
+				m.agentRun = m.agentSeq
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
 
 				agentArgs := append([]string{}, cmd.Args...)
 				tick := m.restartTick(typingTickInterval * 2)
-				return m, tea.Batch(agentRunner.RunAgentCommand(agentArgs), tick)
+				return m, tea.Batch(agentRunner.RunAgentCommand(agentArgs, m.agentRun), tick)
 
 			case "orchestrate", "orch":
 				if len(cmd.Args) == 0 {
@@ -1987,15 +1994,26 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case PermissionRequestMsg:
+		owner, live := m.requestOwner(msg.Owner, msg.Done)
+		if !live {
+			// Its run ended before the request arrived: deny, never show.
+			PermissionPromptModel{response: msg.Response}.Dismiss()
+			break
+		}
 		var cmd tea.Cmd
 		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
-		m.permissionOwner = m.currentRun()
+		m.permissionOwner = owner
 		cmds = append(cmds, cmd)
 
 	case AskRequestMsg:
+		owner, live := m.requestOwner(msg.Owner, msg.Done)
+		if !live {
+			AskPromptModel{response: msg.Response}.Dismiss()
+			break
+		}
 		var cmd tea.Cmd
 		m.askPrompt, cmd = m.askPrompt.Update(msg)
-		m.askOwner = m.currentRun()
+		m.askOwner = owner
 		cmds = append(cmds, cmd)
 
 	case GitStatusMsg:
@@ -2232,7 +2250,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.AddAction(label)
 			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
-			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
+			m = m.closeModalsOf(RunOwner{Kind: OwnerOrch, Run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2249,7 +2267,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.persistSession()
 		case 8: // EventError
-			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
+			m = m.closeModalsOf(RunOwner{Kind: OwnerOrch, Run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false

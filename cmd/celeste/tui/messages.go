@@ -282,6 +282,11 @@ type PermissionRequestMsg struct {
 	InputSummary string // short description of what the tool wants to do
 	RiskLevel    string // "read", "write", "destructive"
 	Response     chan PermissionResponse
+	// Owner is the run that asked and Done its context's Done (2.0 F2e):
+	// a request whose run has ended is answered (deny) and never shown.
+	// Zero: the run active when the request arrives; nil Done: never ends.
+	Owner RunOwner
+	Done  <-chan struct{}
 }
 
 // PermissionResponse is the user's answer to a permission request.
@@ -303,6 +308,10 @@ type AskRequestMsg struct {
 	Options     []AskOption
 	MultiSelect bool
 	Response    chan AskResponseMsg
+	// Owner and Done as on PermissionRequestMsg; an ended run's ask is
+	// answered cancelled and never shown (2.0 F2e).
+	Owner RunOwner
+	Done  <-chan struct{}
 }
 
 // AskResponseMsg is the user's answer to an AskRequestMsg.

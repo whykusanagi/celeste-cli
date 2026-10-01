@@ -80,10 +80,14 @@ func tuiAgentWarn(s string) {
 	}
 }
 
+// The chat finds /agent by a type assertion, so a signature drift would
+// only show up as "/agent is unavailable"; this makes it a compile error.
+var _ tui.AgentCommandRunner = (*TUIClientAdapter)(nil)
+
 // RunAgentCommand dispatches /agent sub-commands.
 // Info commands (help, list, resume) return a single AgentCommandResultMsg.
 // Goal commands stream incremental AgentProgressMsg via a channel.
-func (a *TUIClientAdapter) RunAgentCommand(args []string) tea.Cmd {
+func (a *TUIClientAdapter) RunAgentCommand(args []string, run uint64) tea.Cmd {
 	if len(args) == 0 {
 		return func() tea.Msg {
 			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments")}
@@ -109,14 +113,14 @@ func (a *TUIClientAdapter) RunAgentCommand(args []string) tea.Cmd {
 		}
 	default:
 		// Treat all other input as a goal — stream progress.
-		return a.runGoalWithProgress(args)
+		return a.runGoalWithProgress(args, run)
 	}
 }
 
 // runGoalWithProgress runs a goal in a goroutine and streams AgentProgressMsg
 // back to the TUI via a bidirectional channel. The read end is stored in each
 // non-terminal AgentProgressMsg so app.go can schedule the next read.
-func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
+func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cmd {
 	// ch is bidirectional so the goroutine can write and we can hand the
 	// receive end (<-chan) to AgentProgressMsg.Ch without a compile error.
 	ch := make(chan tui.AgentProgressMsg, 256)
@@ -124,6 +128,8 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 	// The run is cancellable: the TUI stores cancel via StreamStartMsg, so
 	// Esc and Ctrl+C stop it (#172).
 	ctx, cancel := context.WithCancel(context.Background())
+	// Its permission and ask requests name this /agent run (2.0 F2e).
+	ctx = tui.WithRunOwner(ctx, tui.RunOwner{Kind: tui.OwnerAgent, Run: run})
 
 	go func() {
 		defer close(ch)
