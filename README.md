@@ -285,7 +285,7 @@ sends none. Tools from MCP servers and custom skills come on top, in both modes.
 
 ### Multi-Provider Support (9 Chat Providers)
 
-celeste uses the model the provider serves now. At startup it reads the provider's model list (cached for a day under `~/.celeste/cache/models`); if your configured model has been retired, it falls back to the provider's current default and says so. Your config file is not changed. Gemini, Vertex, DigitalOcean and local servers publish no list, so their configured model is used as is. The model names below are offline fallbacks.
+celeste uses the model the provider serves now. At startup it reads the provider's model list (cached for a day under `~/.celeste/cache/models`); if your configured model has been retired, it falls back to the provider's current default and says so. A model is replaced only when celeste is sure it's gone: a model missing from the list is first checked with the provider where it can answer (Anthropic, OpenAI, xAI), so aliases keep working, and presets (`@...`), fine-tunes (`ft:...`) are never touched. Your config file is not changed. To turn this off, set `"pin_model": true` in the config or `CELESTE_PIN_MODEL=1`; in the chat, `/set-model <name> --force` pins that model until you switch endpoints. Gemini, Vertex, DigitalOcean and local servers publish no list, so their configured model is used as is. The model names below are offline fallbacks.
 
 - ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
