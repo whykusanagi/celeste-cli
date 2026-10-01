@@ -3,6 +3,8 @@ package codegraph
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -77,6 +79,33 @@ func helper() string { return "help" }
 
 	stats2, _ := idx.Stats()
 	assert.Greater(t, stats2.TotalSymbols, stats1.TotalSymbols)
+}
+
+// The TUI's /index rebuild|update call Build/Update directly, with no
+// coordination against a nested run's refreshIndex also calling Update on
+// the same Indexer; both paths lazily create the tree-sitter parsers, which
+// are not safe for concurrent use. buildMu must serialize Build/Update (and
+// so the lazy parser creation inside them) so this is race-free (2.0 F2e M6).
+func TestIndexer_ConcurrentBuildAndUpdateRaceFree(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module testproject\n\ngo 1.26\n")
+	for i := 0; i < 120; i++ {
+		n := strconv.Itoa(i)
+		writeFile(t, dir, "mod"+n+".py", "def f"+n+"():\n    pass\n")
+	}
+
+	dbPath := filepath.Join(dir, ".celeste", "codegraph.db")
+	os.MkdirAll(filepath.Dir(dbPath), 0755)
+
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _ = idx.Build() }()
+	go func() { defer wg.Done(); _ = idx.Update() }()
+	wg.Wait()
 }
 
 func TestIndexer_SemanticSearch(t *testing.T) {
