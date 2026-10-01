@@ -112,6 +112,9 @@ type HookWarningMsg struct {
 type AgentCommandResultMsg struct {
 	Output string
 	Err    error
+	// AgentRun is the /agent run it ends (2.0 F2e); 0 when unknown. A
+	// result of a run that is no longer current is dropped.
+	AgentRun uint64
 }
 
 // SendMessageMsg is sent when the user submits a message.

@@ -402,3 +402,15 @@ func TestRunGoalWithProgressTagsItsContext(t *testing.T) {
 		t.Fatal("the goal never ran")
 	}
 }
+
+// /agent's one-shot results (help, list, resume) name their run, so a late
+// one cannot end a newer /agent run (2.0 F2e).
+func TestAgentCommandResultsNameTheirRun(t *testing.T) {
+	adapter := &TUIClientAdapter{baseConfig: &config.Config{}}
+	for _, args := range [][]string{nil, {"help"}} {
+		msg, ok := adapter.RunAgentCommand(args, 4)().(tui.AgentCommandResultMsg)
+		if !ok || msg.AgentRun != 4 {
+			t.Errorf("/agent %v result = %+v, want AgentRun 4", args, msg)
+		}
+	}
+}

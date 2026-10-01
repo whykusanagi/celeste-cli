@@ -682,6 +682,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cancelFunc()
 					m.cancelFunc = nil
 					m.orchRun = 0
+					m = m.endAgentRun() // its late events are dropped (2.0 F2e)
 					m.streaming = false
 				}
 				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
@@ -2308,6 +2309,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case AgentCommandResultMsg:
+		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
+			return m, nil // an interrupted or older /agent run's result (2.0 F2e)
+		}
 		m = m.endAgentRun()
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)

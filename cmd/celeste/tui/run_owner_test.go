@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -120,5 +121,91 @@ func TestStaleAgentRunMessagesAreDropped(t *testing.T) {
 	assert.True(t, m.streaming, "the first run's completion stopped the second's spinner")
 
 	m, _ = step(t, m, AgentProgressMsg{Kind: AgentProgressComplete, AgentRun: second})
+	assert.False(t, m.agentActive)
+}
+
+// allRunsClient runs chat turns (fakeToolLLMClient), /agent and /orch.
+type allRunsClient struct{ fakeToolLLMClient }
+
+func (*allRunsClient) RunAgentCommand([]string, uint64) tea.Cmd      { return nil }
+func (*allRunsClient) RunOrchestratorCommand(string, uint64) tea.Cmd { return nil }
+
+// An /agent run interrupted with Esc or Ctrl+C has ended for the chat: its
+// late terminal message (error, completion, or an /agent resume result)
+// must not end or cancel the /orch run or chat turn started after it
+// (2.0 F2e review I1). Before, agentActive stayed set until the next
+// /agent, so the late message cleared the new run's cancel and spinner and
+// posted a bogus agent error.
+func TestLateAgentMessagesLeaveTheNextRunAlone(t *testing.T) {
+	late := map[string]func(run uint64) tea.Msg{
+		"error": func(r uint64) tea.Msg {
+			return AgentProgressMsg{Kind: AgentProgressError, Text: "context canceled", AgentRun: r}
+		},
+		"complete": func(r uint64) tea.Msg {
+			return AgentProgressMsg{Kind: AgentProgressComplete, Text: "late", AgentRun: r}
+		},
+		"result": func(r uint64) tea.Msg {
+			return AgentCommandResultMsg{Output: "late result", Err: errors.New("context canceled"), AgentRun: r}
+		},
+	}
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyCtrlC}} {
+		for _, next := range []string{"orch", "turn"} {
+			for name, msgOf := range late {
+				t.Run(key.String()+"/"+next+"/"+name, func(t *testing.T) {
+					m := NewApp(&allRunsClient{})
+					m.skillsEnabled = true
+					m, _ = step(t, m, SendMessageMsg{Content: "/agent one"})
+					agentRun := m.agentRun
+					m, _ = step(t, m, StreamStartMsg{Cancel: func() {}, AgentRun: agentRun})
+					m, _ = step(t, m, key)
+					assert.False(t, m.agentActive, "%s left the /agent run active", key)
+
+					nextCancelled := false
+					if next == "orch" {
+						m, _ = step(t, m, SendMessageMsg{Content: "/orch build"})
+						require.NotZero(t, m.orchRun)
+						m, _ = step(t, m, StreamStartMsg{Cancel: func() { nextCancelled = true }, Run: m.orchRun})
+						require.NotNil(t, m.cancelFunc)
+					} else {
+						m = startedTurn(t, m, "go")
+					}
+					before := len(m.chat.GetMessages())
+
+					m, _ = step(t, m, msgOf(agentRun))
+					assert.True(t, m.streaming, "a late /agent message stopped the %s's spinner", next)
+					assert.Len(t, m.chat.GetMessages(), before, "a late /agent message posted to the chat")
+					if next == "orch" {
+						require.NotNil(t, m.cancelFunc, "a late /agent message dropped the /orch run's cancel")
+						m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+						assert.True(t, nextCancelled, "Ctrl+C no longer cancels the /orch run")
+					} else {
+						assert.NotNil(t, m.turn, "a late /agent message ended the chat turn")
+					}
+				})
+			}
+		}
+	}
+}
+
+// /agent resume's result belongs to its run: a late one does not end a
+// newer /agent run or deny its open modal (2.0 F2e review I1).
+func TestLateAgentResultDoesNotEndANewerAgentRun(t *testing.T) {
+	m := NewApp(&allRunsClient{})
+	m, _ = step(t, m, SendMessageMsg{Content: "/agent resume abc"})
+	first := m.agentRun
+	m, _ = step(t, m, StreamStartMsg{Cancel: func() {}, AgentRun: first})
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, _ = step(t, m, SendMessageMsg{Content: "/agent two"})
+	second := m.agentRun
+	perm := make(chan PermissionResponse, 1)
+	m, _ = step(t, m, PermissionRequestMsg{ToolName: "write_file", Response: perm, Owner: RunOwner{Kind: OwnerAgent, Run: second}})
+	require.True(t, m.permissionPrompt.Active())
+
+	m, _ = step(t, m, AgentCommandResultMsg{Output: "resumed", AgentRun: first})
+	assert.True(t, m.agentActive, "a late resume result ended the newer /agent run")
+	assert.True(t, m.permissionPrompt.Active(), "a late resume result denied the newer run's modal")
+	assert.Empty(t, perm)
+
+	m, _ = step(t, m, AgentCommandResultMsg{Output: "done", AgentRun: second})
 	assert.False(t, m.agentActive)
 }

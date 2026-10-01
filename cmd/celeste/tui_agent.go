@@ -90,26 +90,26 @@ var _ tui.AgentCommandRunner = (*TUIClientAdapter)(nil)
 func (a *TUIClientAdapter) RunAgentCommand(args []string, run uint64) tea.Cmd {
 	if len(args) == 0 {
 		return func() tea.Msg {
-			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments")}
+			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments"), AgentRun: run}
 		}
 	}
 	sub := strings.ToLower(strings.TrimSpace(args[0]))
 	switch sub {
 	case "help", "--help", "-h":
 		return func() tea.Msg {
-			return tui.AgentCommandResultMsg{Output: agentUsage()}
+			return tui.AgentCommandResultMsg{Output: agentUsage(), AgentRun: run}
 		}
 	case "list", "list-runs", "--list-runs":
 		copiedArgs := append([]string(nil), args...)
 		return func() tea.Msg {
 			output, err := a.executeAgentCommand(copiedArgs)
-			return tui.AgentCommandResultMsg{Output: output, Err: err}
+			return tui.AgentCommandResultMsg{Output: output, Err: err, AgentRun: run}
 		}
 	case "resume", "--resume":
 		copiedArgs := append([]string(nil), args...)
 		return func() tea.Msg {
 			output, err := a.executeAgentCommand(copiedArgs)
-			return tui.AgentCommandResultMsg{Output: output, Err: err}
+			return tui.AgentCommandResultMsg{Output: output, Err: err, AgentRun: run}
 		}
 	default:
 		// Treat all other input as a goal — stream progress.
