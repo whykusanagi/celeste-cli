@@ -302,3 +302,62 @@ func TestOrchestratorEventSenderDropsEventsAfterTheTerminalOne(t *testing.T) {
 	close(ch)
 	send(orchestrator.OrchestratorEvent{Kind: orchestrator.EventAction, Text: "after close"}) // must not panic
 }
+
+// An /orch lane's permission request names its run (2.0 F2e): the lanes run
+// on a context tagged with the run the TUI numbered.
+func TestOrchestratorRequestsNameTheirRun(t *testing.T) {
+	srv := writeScriptTUI(t)
+	_, deps, ws := chatApp(t, srv)
+	t.Chdir(ws)
+	got := make(chan tui.RunOwner, 1)
+	deps.adapter.promptFn = func(req tools.PermissionRequest) tools.PermissionResponse {
+		select {
+		case got <- tui.RunOwnerFrom(req.Context):
+		default:
+		}
+		return tools.PermissionResponse{Decision: "deny"}
+	}
+	for range collectCmd(deps.adapter.RunOrchestratorCommand("write hi to out.txt", 9)) {
+	}
+	select {
+	case o := <-got:
+		if o != (tui.RunOwner{Kind: tui.OwnerOrch, Run: 9}) {
+			t.Fatalf("lane request owner = %+v", o)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the lane never asked for permission")
+	}
+}
+
+// collectCmd runs cmd and follows every OrchestratorEventMsg's Ch to the end.
+func collectCmd(cmd tea.Cmd) []tea.Msg {
+	var out []tea.Msg
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		msg := c()
+		switch m := msg.(type) {
+		case tea.BatchMsg:
+			queue = append(queue, m...)
+		case tui.OrchestratorEventMsg:
+			out = append(out, m)
+			if m.Ch != nil {
+				ch := m.Ch
+				queue = append(queue, func() tea.Msg {
+					next, ok := <-ch
+					if !ok {
+						return nil
+					}
+					return next
+				})
+			}
+		default:
+			out = append(out, msg)
+		}
+	}
+	return out
+}

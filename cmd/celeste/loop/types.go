@@ -196,6 +196,7 @@ func PromptGate(fn tools.PromptFunc) Gate {
 				answer <- tools.PermissionResponse{Decision: "deny"}
 				return
 			}
+			req.Context = ctx // the prompt learns which run asked (2.0 F2e)
 			answer <- fn(req)
 		}()
 		select {

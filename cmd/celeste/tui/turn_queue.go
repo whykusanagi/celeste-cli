@@ -84,6 +84,9 @@ func (m AppModel) interrupt() AppModel {
 		m.cancelFunc = nil
 	}
 	m.orchRun = 0 // a cancelled /orch run's later events are ignored
+	// So are a cancelled /agent run's: it has ended for the chat, and its
+	// late terminal event must not end the next run (2.0 F2e).
+	m = m.endAgentRun()
 	if m.typingContent != "" {
 		m.chat = m.chat.SetTypingActive(false)
 		m.chat = m.chat.SetLastAssistantContent(m.typingContent)

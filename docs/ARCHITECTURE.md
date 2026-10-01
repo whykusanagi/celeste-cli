@@ -105,6 +105,16 @@ User types message
 The turn cap is `max_tool_iterations` (default 25). The identical-call
 (3) and progress (6) guards stop runaway loops.
 
+Every run the chat starts — a turn, an `/agent` goal, an `/orchestrate`
+run — tags its context with a `tui.RunOwner`. `loop.PromptGate` passes the
+asking call's context on the `tools.PermissionRequest`, and the chat's prompt
+bridges (`chat_prompts.go`) copy the owner and the run's `Done` into the
+modal message, so `AppModel` answers a request from a run that has ended
+instead of showing it. Subagents and `/agent` nest under the chat's
+`loop.Env` (`Env.Nested`), sharing its hooks, code graph and global MCP
+servers. A nested run's copy of an MCP tool finds its server's client by
+name through `mcp.Manager` at call time, so it follows a `/mcp` reconnect.
+
 **What it is not**: Chat has no planning step, no checkpoints, no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
 
 **Configure**:

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -55,6 +56,11 @@ type MCPTool struct {
 	client     *Client
 	serverName string
 	name       string // namespaced registry name; def.Name is what the server knows
+	// resolve, when set (a Manager registered the tool), finds the server's
+	// live client by name at call time, so a copy of this tool in a nested
+	// run's registry keeps working after /mcp disconnects and reconnects
+	// the server (2.0 F2e). nil: always call client.
+	resolve func(server string) (*Client, bool)
 }
 
 // NewMCPTool creates a new MCPTool adapter for the given MCP tool definition.
@@ -113,7 +119,23 @@ func (m *MCPTool) Execute(ctx context.Context, input map[string]any, progress ch
 		}
 	}
 
-	result, err := m.client.CallTool(ctx, m.def.Name, input)
+	client := m.client
+	if m.resolve != nil {
+		c, ok := m.resolve(m.serverName)
+		if !ok {
+			return tools.ToolResult{
+				Content: fmt.Sprintf("MCP server %q is not connected", m.serverName),
+				Error:   true,
+				Metadata: map[string]any{
+					"mcp_server": m.serverName,
+					"mcp_tool":   m.def.Name,
+				},
+			}, nil
+		}
+		client = c
+	}
+
+	result, err := client.CallTool(ctx, m.def.Name, input)
 	if err != nil {
 		// Return the error as a tool result so the LLM can see it
 		return tools.ToolResult{

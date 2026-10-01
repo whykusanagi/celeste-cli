@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,8 +138,28 @@ func (m AppModel) startTurn() (AppModel, tea.Cmd) {
 // calling.
 func (m AppModel) toolsOffered() bool { return !m.nsfwMode && m.skillsEnabled }
 
-func tickCmd(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg { return TickMsg{Time: t} })
+// tick schedules the tick chain's next TickMsg after d, unless one is
+// already pending: at most one chain runs, so the spinner and the typing
+// keep their speed however many tool turns start one (2.0 F2e). A
+// TickMsg without the chain's generation (a test's, SimulateTypingMsg's)
+// never clears the pending tick.
+func (m *AppModel) tick(d time.Duration) tea.Cmd {
+	if m.tickPending {
+		return nil
+	}
+	m.tickPending = true
+	m.tickGen++
+	gen := m.tickGen
+	return tea.Tick(d, func(t time.Time) tea.Msg { return TickMsg{Time: t, gen: gen} })
+}
+
+// restartTick starts a new tick chain, superseding a pending one: its tick
+// is dropped when it arrives (update). Enter, /agent and /orchestrate call
+// it, so a chain whose tick never came back cannot freeze the spinner for
+// the next run.
+func (m *AppModel) restartTick(d time.Duration) tea.Cmd {
+	m.tickPending = false
+	return m.tick(d)
 }
 
 // onTurnEvent renders one event of the running turn and reads the next. An
@@ -154,10 +175,6 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		m = m.finishTyping()
 		m.toolProgress.ClearCompleted()
 		if !m.interrupted {
-			// While streaming, a tick chain is already running (Enter
-			// started it, or the reply typing): a second would double the
-			// spinner's speed.
-			ticking := m.streaming
 			m.streaming = true
 			m.streamStart = time.Now()
 			m.lastMsgInTok, m.lastMsgOutTok = 0, 0
@@ -165,9 +182,7 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 			if !m.planning {
 				m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
 			}
-			if !ticking {
-				cmds = append(cmds, tickCmd(typingTickInterval*2))
-			}
+			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}
 	case StreamChunkMsg:
 		var more []tea.Cmd
@@ -266,15 +281,12 @@ func (m AppModel) finishTyping() AppModel {
 func (m AppModel) onToolStart(msg ToolStartMsg) (AppModel, tea.Cmd) {
 	LogSkillCall(msg.Name, msg.Args)
 	m = m.finishTyping()
-	wasActive := m.toolProgress.HasActive()
 	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: time.Now()})
 	m.skills = m.skills.SetExecuting(msg.Name)
 	m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{ToolCallID: msg.ID, ToolName: msg.Name, State: "executing"})
 	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", msg.Name))
-	if !wasActive && m.typingContent == "" && !m.streaming {
-		return m, tickCmd(typingTickInterval * 2) // spinners; update()'s tail keeps it going
-	}
-	return m, nil
+	tick := m.tick(typingTickInterval * 2) // spinners; update()'s tail keeps it going
+	return m, tick
 }
 
 // stopHookStatus is the status while the Stop hook runs.
@@ -369,7 +381,7 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 	m.loopSteers = 0
 	m.planning = false
 	// A modal this turn opened would outlive it: answer it and close it.
-	m = m.closeModalsOf(runOwner{kind: ownerTurn, run: m.turnRun})
+	m = m.closeModalsOf(RunOwner{Kind: OwnerTurn, Run: m.turnRun})
 	if m.stopHookRunning {
 		m.stopHookRunning = false
 		if m.heldReady != "" {
@@ -449,7 +461,8 @@ func (m AppModel) onStreamChunk(msg StreamChunkMsg) (AppModel, []tea.Cmd) {
 	m.streamDone = false
 	m.status = m.status.SetStreaming(true)
 	m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
-	return m, []tea.Cmd{tickCmd(typingTickInterval)}
+	tick := m.tick(typingTickInterval)
+	return m, []tea.Cmd{tick}
 }
 
 // onStreamDone ends a reply without tool calls: the typing animation may now
@@ -484,7 +497,7 @@ func (m AppModel) onStreamDone(msg StreamDoneMsg) (AppModel, []tea.Cmd) {
 			m.chat = m.chat.AddAssistantMessage("")
 			m.chat = m.chat.SetTypingActive(true)
 			m.status = m.status.SetText("Typing...")
-			cmds = append(cmds, tickCmd(typingTickInterval))
+			cmds = append(cmds, m.tick(typingTickInterval))
 		}
 	} else if m.typingContent == "" {
 		// An empty reply: tell the user to re-prompt.
@@ -536,45 +549,101 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 	return m
 }
 
-// Modal owners: the run a permission or ask modal was opened for.
+// Run owners: the run a permission or ask request came from (2.0 F2e).
 const (
-	ownerTurn  = "turn"
-	ownerOrch  = "orch"
-	ownerAgent = "agent"
+	OwnerTurn  = "turn"
+	OwnerOrch  = "orch"
+	OwnerAgent = "agent"
 )
 
-type runOwner struct {
-	kind string // "" = no run: the modal stays until answered
-	run  uint64 // the turn or /orch run; 0 for /agent
+// RunOwner names one chat turn, /orch run or /agent run.
+type RunOwner struct {
+	Kind string // "" = no run: the modal stays until answered
+	Run  uint64 // TurnRequest.Run, the /orch run or the /agent run
+}
+
+type runOwnerKey struct{}
+
+// WithRunOwner tags ctx with the run it belongs to. The adapter tags each
+// chat turn, /orch run and /agent run; a permission or ask request made
+// under it carries the tag to the chat.
+func WithRunOwner(ctx context.Context, o RunOwner) context.Context {
+	return context.WithValue(ctx, runOwnerKey{}, o)
+}
+
+// RunOwnerFrom returns ctx's run tag; the zero RunOwner when ctx is nil or
+// untagged.
+func RunOwnerFrom(ctx context.Context) RunOwner {
+	if ctx == nil {
+		return RunOwner{}
+	}
+	o, _ := ctx.Value(runOwnerKey{}).(RunOwner)
+	return o
 }
 
 // currentRun is the run a modal opened now belongs to. A chat turn, an /orch
 // run and an /agent run never overlap (commands wait for a running turn).
-func (m AppModel) currentRun() runOwner {
+func (m AppModel) currentRun() RunOwner {
 	switch {
 	case m.turn != nil:
-		return runOwner{kind: ownerTurn, run: m.turnRun}
+		return RunOwner{Kind: OwnerTurn, Run: m.turnRun}
 	case m.orchRun != 0:
-		return runOwner{kind: ownerOrch, run: m.orchRun}
+		return RunOwner{Kind: OwnerOrch, Run: m.orchRun}
 	case m.agentActive:
-		return runOwner{kind: ownerAgent}
+		return RunOwner{Kind: OwnerAgent, Run: m.agentRun}
 	}
-	return runOwner{}
+	return RunOwner{}
+}
+
+// agentRunCurrent reports whether run is the /agent run in progress.
+func (m AppModel) agentRunCurrent(run uint64) bool {
+	return m.agentActive && m.agentRun == run
+}
+
+// runActive reports whether o is still running. No run (Kind "") always is.
+func (m AppModel) runActive(o RunOwner) bool {
+	switch o.Kind {
+	case OwnerTurn:
+		return m.turn != nil && m.turnRun == o.Run
+	case OwnerOrch:
+		return m.orchRun != 0 && m.orchRun == o.Run
+	case OwnerAgent:
+		return m.agentRunCurrent(o.Run)
+	}
+	return true
+}
+
+// requestOwner is the run a permission or ask request belongs to: its tag,
+// else the run active now (an untagged request). live is false when that
+// run has ended (done is closed, or the chat has moved past it): the request
+// is then answered at once and never shown (2.0 F2e).
+func (m AppModel) requestOwner(tag RunOwner, done <-chan struct{}) (owner RunOwner, live bool) {
+	if done != nil {
+		select {
+		case <-done:
+			return tag, false
+		default:
+		}
+	}
+	if tag.Kind == "" {
+		return m.currentRun(), true
+	}
+	return tag, m.runActive(tag)
 }
 
 // closeModalsOf answers and closes the modals of a run that has ended: the
 // permission modal denies, the ask modal cancels.
-func (m AppModel) closeModalsOf(o runOwner) AppModel {
-	if o.kind == "" {
+func (m AppModel) closeModalsOf(o RunOwner) AppModel {
+	if o.Kind == "" {
 		return m
 	}
 	if m.permissionPrompt.Active() && m.permissionOwner == o {
 		m.permissionPrompt = m.permissionPrompt.Dismiss()
-		m.permissionOwner = runOwner{}
+		m.permissionOwner = RunOwner{}
 	}
 	if m.askPrompt.Active() && m.askOwner == o {
 		m.askPrompt = m.askPrompt.Dismiss()
-		m.askOwner = runOwner{}
+		m.askOwner = RunOwner{}
 	}
 	return m
 }
@@ -582,7 +651,7 @@ func (m AppModel) closeModalsOf(o runOwner) AppModel {
 // endAgentRun closes the modals of the /agent run that just ended.
 func (m AppModel) endAgentRun() AppModel {
 	if m.agentActive {
-		m = m.closeModalsOf(runOwner{kind: ownerAgent})
+		m = m.closeModalsOf(RunOwner{Kind: OwnerAgent, Run: m.agentRun})
 	}
 	m.agentActive = false
 	return m

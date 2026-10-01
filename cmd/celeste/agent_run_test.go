@@ -58,3 +58,21 @@ func TestCLIAgentGoalCarriesUserPromptSubmitContext(t *testing.T) {
 		t.Fatalf("user messages = %q, want the goal with its hook context", users)
 	}
 }
+
+// Plain `celeste agent` runs on agent_model when one is set, as subagents
+// and MCP agent mode do (2.0 F2e); without one, on model.
+func TestCLIAgentUsesAgentModel(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  map[string]any
+		want string
+	}{
+		{map[string]any{"model": "chat-model", "agent_model": "agent-model"}, "agent-model"},
+		{map[string]any{"model": "chat-model"}, "chat-model"},
+	} {
+		srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+		runCLIAgent(t, srv, tc.cfg, "say done")
+		if got := srv.Requests()[0].Body["model"]; got != tc.want {
+			t.Errorf("config %v: request model = %v, want %s", tc.cfg, got, tc.want)
+		}
+	}
+}

@@ -70,6 +70,10 @@ type AppModel struct {
 	typingContent string // Full content to type
 	typingPos     int    // Current position in content
 	animFrame     int    // Animation frame counter
+	// tickPending is set while the tick chain's next TickMsg (tickGen) is
+	// scheduled and not yet handled: at most one chain runs (2.0 F2e).
+	tickPending bool
+	tickGen     uint64
 
 	// streamDone is true once StreamDoneMsg has been received for the
 	// currently-rendering assistant message. It coordinates the typing
@@ -171,14 +175,17 @@ type AppModel struct {
 	// Running token totals for the current agent run
 	agentInputTokens  int
 	agentOutputTokens int
-	// agentActive is set while an /agent command runs.
+	// agentActive is set while an /agent command runs; agentRun numbers
+	// it (agentSeq counts them), tagging its permission and ask requests.
 	agentActive bool
+	agentRun    uint64
+	agentSeq    uint64
 
 	// The run each modal belongs to (none: it stays until answered). When
 	// that run ends, its modal is answered (deny, cancelled) and closed, so
 	// it never stays up swallowing keys and holding the Gate's lock.
-	permissionOwner runOwner
-	askOwner        runOwner
+	permissionOwner RunOwner
+	askOwner        RunOwner
 
 	// planning keeps /plan's "Planning..." status until the reply streams.
 	planning bool
@@ -237,7 +244,9 @@ type SummaryOutcome struct {
 
 // AgentCommandRunner is an optional extension for handling /agent from TUI.
 type AgentCommandRunner interface {
-	RunAgentCommand(args []string) tea.Cmd
+	// RunAgentCommand starts /agent; run tags the goal run's context
+	// (WithRunOwner), so its permission and ask requests name it.
+	RunAgentCommand(args []string, run uint64) tea.Cmd
 }
 
 // OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
@@ -433,6 +442,26 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input = m.input.SetWidth(m.width)
 		m.status = m.status.SetWidth(m.width)
 		// Don't return — let sub-views also handle the resize
+	}
+
+	// The tick chain's bookkeeping runs before a sub-view can eat the tick
+	// (2.0 F2e): a superseded chain's tick is dropped, and the live chain's
+	// arrival lets the next one be scheduled.
+	if tk, ok := msg.(TickMsg); ok && tk.gen != 0 {
+		if tk.gen != m.tickGen {
+			return m, nil
+		}
+		m.tickPending = false
+		if m.viewMode != "chat" {
+			// A sub-view would eat the tick. While a reply streams, types
+			// or tools run, keep the chain alive without animating, so the
+			// reply types out and commits once the view closes (2.0 F2e).
+			var tick tea.Cmd
+			if m.streaming || m.typingContent != "" || m.toolProgress.HasActive() {
+				tick = m.tick(typingTickInterval * 2)
+			}
+			return m, tick
+		}
 	}
 
 	// Chat turn events bypass the sub-view routing below: the turn must keep
@@ -653,6 +682,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cancelFunc()
 					m.cancelFunc = nil
 					m.orchRun = 0
+					m = m.endAgentRun() // its late events are dropped (2.0 F2e)
 					m.streaming = false
 				}
 				m.status = m.status.SetText("Cancelled. Press Ctrl+C again to exit")
@@ -792,17 +822,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.streaming = true
 				m.agentActive = true
+				m.agentSeq++
+				m.agentRun = m.agentSeq
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
 
 				agentArgs := append([]string{}, cmd.Args...)
-				return m, tea.Batch(
-					agentRunner.RunAgentCommand(agentArgs),
-					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-						return TickMsg{Time: t}
-					}),
-				)
+				tick := m.restartTick(typingTickInterval * 2)
+				return m, tea.Batch(agentRunner.RunAgentCommand(agentArgs, m.agentRun), tick)
 
 			case "orchestrate", "orch":
 				if len(cmd.Args) == 0 {
@@ -823,12 +851,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.orchOutputTokens = 0
 				m.orchSeq++
 				m.orchRun = m.orchSeq
-				return m, tea.Batch(
-					orchRunner.RunOrchestratorCommand(goal, m.orchRun),
-					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-						return TickMsg{Time: t}
-					}),
-				)
+				tick := m.restartTick(typingTickInterval * 2)
+				return m, tea.Batch(orchRunner.RunOrchestratorCommand(goal, m.orchRun), tick)
 
 			case "stats":
 				// Pass animation frame for flickering corruption effects
@@ -1792,7 +1816,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.turn != nil {
 			// The spinner animates from Enter, also while a
 			// UserPromptSubmit hook runs before the first request.
-			cmds = append(cmds, tickCmd(typingTickInterval*2))
+			cmds = append(cmds, m.restartTick(typingTickInterval*2))
 		}
 
 	case GenerateMediaMsg:
@@ -1927,6 +1951,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, more...)
 
 	case StreamStartMsg:
+		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
+			// A cancelled /agent run's late start: stop it, and leave the
+			// current run's cancel alone (2.0 F2e).
+			if msg.Cancel != nil {
+				msg.Cancel()
+			}
+			return m, nil
+		}
 		if msg.Run != 0 && msg.Run != m.orchRun {
 			// An /orch run cancelled (Esc, Ctrl+C) before its cancel
 			// arrived: stop it, and leave the current turn's cancel alone.
@@ -1981,15 +2013,26 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case PermissionRequestMsg:
+		owner, live := m.requestOwner(msg.Owner, msg.Done)
+		if !live {
+			// Its run ended before the request arrived: deny, never show.
+			PermissionPromptModel{response: msg.Response}.Dismiss()
+			break
+		}
 		var cmd tea.Cmd
 		m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
-		m.permissionOwner = m.currentRun()
+		m.permissionOwner = owner
 		cmds = append(cmds, cmd)
 
 	case AskRequestMsg:
+		owner, live := m.requestOwner(msg.Owner, msg.Done)
+		if !live {
+			AskPromptModel{response: msg.Response}.Dismiss()
+			break
+		}
 		var cmd tea.Cmd
 		m.askPrompt, cmd = m.askPrompt.Update(msg)
-		m.askOwner = m.currentRun()
+		m.askOwner = owner
 		cmds = append(cmds, cmd)
 
 	case GitStatusMsg:
@@ -2014,6 +2057,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case AgentProgressMsg:
+		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
+			// A cancelled /agent run still winding down: its events belong
+			// to no run on screen. Its sender never blocks, so its chain is
+			// simply not read further (2.0 F2e).
+			return m, nil
+		}
 		var cmds []tea.Cmd
 
 		switch msg.Kind {
@@ -2087,9 +2136,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streamDone = true
 				m.chat = m.chat.AddAssistantMessage("")
 				m.status = m.status.SetText("Agent: typing response...")
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
+				cmds = append(cmds, m.tick(typingTickInterval))
 			}
 
 		case AgentProgressComplete:
@@ -2228,7 +2275,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splitPanel.AddAction(label)
 			m.splitPanel.SetOutput("=== REVIEWING: " + reviewer + " ===\n\n")
 		case 7: // EventComplete
-			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
+			m = m.closeModalsOf(RunOwner{Kind: OwnerOrch, Run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2245,7 +2292,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.persistSession()
 		case 8: // EventError
-			m = m.closeModalsOf(runOwner{kind: ownerOrch, run: msg.Run})
+			m = m.closeModalsOf(RunOwner{Kind: OwnerOrch, Run: msg.Run})
 			m.orchRun = 0
 			m.cancelFunc = nil
 			m.streaming = false
@@ -2262,6 +2309,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case AgentCommandResultMsg:
+		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
+			return m, nil // an interrupted or older /agent run's result (2.0 F2e)
+		}
 		m = m.endAgentRun()
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
@@ -2381,9 +2431,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.typingPos < len(m.typingContent) {
 				// More content to display — reschedule the typing tick.
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
+				cmds = append(cmds, m.tick(typingTickInterval))
 			} else if !m.streamDone {
 				// Typing caught up to the end of the current buffer, but the
 				// network stream is still in flight — a late chunk may extend
@@ -2392,9 +2440,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// commit the content to session history yet; that's what
 				// caused the v1.9.0 "O" truncation bug. See the streamDone
 				// field doc on AppModel for the full story.
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
+				cmds = append(cmds, m.tick(typingTickInterval))
 			} else {
 				// Typing complete and stream is done — show final content
 				// without corruption and commit to session history.
@@ -2463,10 +2509,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.planning {
 				m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
 			}
-			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-				return TickMsg{Time: t}
-			}))
+			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}
+
+	case ProfileResolvedMsg:
+		m = m.applyProfile(msg)
 
 	case NSFWToggleMsg:
 		m.nsfwMode = msg.Enabled
@@ -2477,17 +2524,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 	}
 
-	// Keep ticks alive while tool progress entries are active so
-	// spinners animate and elapsed timers update without keypress.
-	// Guard: only schedule when the typing animation and streaming-wait
-	// loops are NOT already scheduling their own ticks. Without this
-	// guard, every TickMsg during a typing animation produces TWO new
-	// ticks (one from the typing branch + one here), causing exponential
-	// growth that floods the event loop and freezes the TUI.
-	if m.toolProgress.HasActive() && m.typingContent == "" && !m.streaming {
-		cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-			return TickMsg{Time: t}
-		}))
+	// Keep ticks alive while tool progress entries are active so spinners
+	// animate and elapsed timers update without a keypress. m.tick schedules
+	// nothing while the chain's next tick is pending, so this never starts
+	// a second chain (2.0 F2e).
+	if m.toolProgress.HasActive() {
+		cmds = append(cmds, m.tick(typingTickInterval*2))
 	}
 
 	return m, tea.Batch(cmds...)

@@ -112,7 +112,7 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 		client.Close()
 		return fmt.Errorf("initialize %q: %w", name, err)
 	}
-	names, err := DiscoverAndRegister(ctx, client, m.registry, name)
+	names, err := discoverAndRegister(ctx, client, m.registry, name, m.liveClient)
 	if err != nil {
 		client.Close()
 		return err
@@ -148,6 +148,16 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) er
 	m.origins[name] = cfg.Origin
 	m.mu.Unlock()
 	return nil
+}
+
+// liveClient is the server's current client, if it is connected. A tool
+// the manager registered calls through it, so a copy of the tool held by a
+// nested run's registry follows a reconnect (2.0 F2e).
+func (m *Manager) liveClient(name string) (*Client, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.clients[name]
+	return c, ok
 }
 
 // IsConnected reports whether a server currently has a live client.

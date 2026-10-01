@@ -544,3 +544,39 @@ func TestClient_StdioCallToolHonoursContext(t *testing.T) {
 		require.Equal(t, "answer to "+name, text)
 	}
 }
+
+// A call waiting for the client while another is in flight gives up when
+// its context ends, instead of queueing behind the hung call (2.0 F2e).
+// Before, it blocked on the client's mutex until the first call returned.
+func TestClient_WaitingCallHonoursContext(t *testing.T) {
+	c, tr := newStallClient(t)
+	first := callAsync(c, "slow")
+	req := awaitSent(t, tr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	waited := make(chan error, 1)
+	go func() {
+		_, err := c.CallTool(ctx, "waiting", nil)
+		waited <- err
+	}()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("waiting call err = %v, want its context's", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a waiting call ignored its context while another call was in flight")
+	}
+	select {
+	case r := <-tr.sent:
+		t.Fatalf("the cancelled waiter still sent %s", r.Method)
+	default:
+	}
+
+	tr.replies <- textReply(req.ID, "slow answer")
+	awaitCall(t, first, "slow answer")
+	next := callAsync(c, "next")
+	tr.replies <- textReply(awaitSent(t, tr).ID, "next answer")
+	awaitCall(t, next, "next answer")
+}

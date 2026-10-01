@@ -71,6 +71,9 @@ type TokenUsage struct {
 type StreamStartMsg struct {
 	Cancel context.CancelFunc
 	Run    uint64 // the /orch run it belongs to; 0 for other requests
+	// AgentRun is the /agent goal run it belongs to; 0 for other requests.
+	// A cancelled run's late start is cancelled and dropped (2.0 F2e).
+	AgentRun uint64
 }
 
 // StreamDoneMsg is sent when streaming is complete.
@@ -109,6 +112,9 @@ type HookWarningMsg struct {
 type AgentCommandResultMsg struct {
 	Output string
 	Err    error
+	// AgentRun is the /agent run it ends (2.0 F2e); 0 when unknown. A
+	// result of a run that is no longer current is dropped.
+	AgentRun uint64
 }
 
 // SendMessageMsg is sent when the user submits a message.
@@ -122,6 +128,7 @@ type SendMessageMsg struct {
 // TickMsg is sent for timer-based updates (animations, etc).
 type TickMsg struct {
 	Time time.Time
+	gen  uint64 // the tick chain's generation (AppModel.tick); 0: not the chain's
 }
 
 // SimulateTypingMsg is sent to simulate typing effect.
@@ -201,6 +208,10 @@ const (
 // AgentProgressMsg is sent incrementally during an agent run.
 // Ch is a channel of further progress messages; nil on terminal kinds (Complete/Error).
 type AgentProgressMsg struct {
+	// AgentRun is the /agent goal run that sent it (2.0 F2e); 0 for other
+	// senders. A message of a run that is no longer the current one (it was
+	// cancelled and another /agent started) is dropped.
+	AgentRun uint64
 	RunID    string
 	Kind     AgentProgressKind
 	Text     string
@@ -281,6 +292,11 @@ type PermissionRequestMsg struct {
 	InputSummary string // short description of what the tool wants to do
 	RiskLevel    string // "read", "write", "destructive"
 	Response     chan PermissionResponse
+	// Owner is the run that asked and Done its context's Done (2.0 F2e):
+	// a request whose run has ended is answered (deny) and never shown.
+	// Zero: the run active when the request arrives; nil Done: never ends.
+	Owner RunOwner
+	Done  <-chan struct{}
 }
 
 // PermissionResponse is the user's answer to a permission request.
@@ -302,6 +318,10 @@ type AskRequestMsg struct {
 	Options     []AskOption
 	MultiSelect bool
 	Response    chan AskResponseMsg
+	// Owner and Done as on PermissionRequestMsg; an ended run's ask is
+	// answered cancelled and never shown (2.0 F2e).
+	Owner RunOwner
+	Done  <-chan struct{}
 }
 
 // AskResponseMsg is the user's answer to an AskRequestMsg.

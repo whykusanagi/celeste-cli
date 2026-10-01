@@ -80,43 +80,47 @@ func tuiAgentWarn(s string) {
 	}
 }
 
+// The chat finds /agent by a type assertion, so a signature drift would
+// only show up as "/agent is unavailable"; this makes it a compile error.
+var _ tui.AgentCommandRunner = (*TUIClientAdapter)(nil)
+
 // RunAgentCommand dispatches /agent sub-commands.
 // Info commands (help, list, resume) return a single AgentCommandResultMsg.
 // Goal commands stream incremental AgentProgressMsg via a channel.
-func (a *TUIClientAdapter) RunAgentCommand(args []string) tea.Cmd {
+func (a *TUIClientAdapter) RunAgentCommand(args []string, run uint64) tea.Cmd {
 	if len(args) == 0 {
 		return func() tea.Msg {
-			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments")}
+			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments"), AgentRun: run}
 		}
 	}
 	sub := strings.ToLower(strings.TrimSpace(args[0]))
 	switch sub {
 	case "help", "--help", "-h":
 		return func() tea.Msg {
-			return tui.AgentCommandResultMsg{Output: agentUsage()}
+			return tui.AgentCommandResultMsg{Output: agentUsage(), AgentRun: run}
 		}
 	case "list", "list-runs", "--list-runs":
 		copiedArgs := append([]string(nil), args...)
 		return func() tea.Msg {
 			output, err := a.executeAgentCommand(copiedArgs)
-			return tui.AgentCommandResultMsg{Output: output, Err: err}
+			return tui.AgentCommandResultMsg{Output: output, Err: err, AgentRun: run}
 		}
 	case "resume", "--resume":
 		copiedArgs := append([]string(nil), args...)
 		return func() tea.Msg {
 			output, err := a.executeAgentCommand(copiedArgs)
-			return tui.AgentCommandResultMsg{Output: output, Err: err}
+			return tui.AgentCommandResultMsg{Output: output, Err: err, AgentRun: run}
 		}
 	default:
 		// Treat all other input as a goal — stream progress.
-		return a.runGoalWithProgress(args)
+		return a.runGoalWithProgress(args, run)
 	}
 }
 
 // runGoalWithProgress runs a goal in a goroutine and streams AgentProgressMsg
 // back to the TUI via a bidirectional channel. The read end is stored in each
 // non-terminal AgentProgressMsg so app.go can schedule the next read.
-func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
+func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cmd {
 	// ch is bidirectional so the goroutine can write and we can hand the
 	// receive end (<-chan) to AgentProgressMsg.Ch without a compile error.
 	ch := make(chan tui.AgentProgressMsg, 256)
@@ -124,13 +128,15 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 	// The run is cancellable: the TUI stores cancel via StreamStartMsg, so
 	// Esc and Ctrl+C stop it (#172).
 	ctx, cancel := context.WithCancel(context.Background())
+	// Its permission and ask requests name this /agent run (2.0 F2e).
+	ctx = tui.WithRunOwner(ctx, tui.RunOwner{Kind: tui.OwnerAgent, Run: run})
 
 	go func() {
 		defer close(ch)
 		defer cancel()
 		cfg := a.currentAgentConfig()
 		if cfg.APIKey == "" && needsAPIKey(cfg) {
-			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: "no API key or credentials configured"})
+			sendAgentProgress(ch, tui.AgentProgressMsg{AgentRun: run, Kind: tui.AgentProgressError, Text: "no API key or credentials configured"})
 			return
 		}
 
@@ -161,6 +167,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 				msgCh = recvCh
 			}
 			msg := tui.AgentProgressMsg{
+				AgentRun: run,
 				Kind:     tuiKind,
 				Text:     text,
 				Turn:     turn,
@@ -194,7 +201,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 
 		runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
 		if err != nil {
-			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: err.Error()})
+			sendAgentProgress(ch, tui.AgentProgressMsg{AgentRun: run, Kind: tui.AgentProgressError, Text: err.Error()})
 			return
 		}
 		defer runner.Close()
@@ -213,11 +220,11 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 		if state != nil {
 			lastResponse = state.LastAssistantResponse
 		}
-		sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressComplete, Text: lastResponse})
+		sendAgentProgress(ch, tui.AgentProgressMsg{AgentRun: run, Kind: tui.AgentProgressComplete, Text: lastResponse})
 	}()
 
 	return tea.Batch(
-		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel, AgentRun: run} },
 		func() tea.Msg {
 			msg, ok := <-ch
 			if !ok {

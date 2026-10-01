@@ -122,6 +122,8 @@ func (t *chatTurn) Leftover() []string { return t.loop.TakeSteers() }
 // cancels it.
 func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd) {
 	ctx, cancel := context.WithCancel(a.lifeContext())
+	// Its permission and ask requests name this turn (2.0 F2e).
+	ctx = tui.WithRunOwner(ctx, tui.RunOwner{Kind: tui.OwnerTurn, Run: req.Run})
 	cfg := a.client.GetConfig()
 	t := &chatTurn{ctx: ctx, cancel: cancel, box: newMailbox(), model: cfg.Model, endpoint: cfg.BaseURL, msgs: len(req.History)}
 	t.loop = a.newTurnLoop(req, t)
