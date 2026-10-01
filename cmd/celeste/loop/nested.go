@@ -49,11 +49,14 @@ var nestedCodeGraphTimeout = 2 * time.Second
 // its own registry (builtins, custom skills; never spawn_agent), its own
 // permission checker reloaded from permissions.json (never a parent's
 // Trust()), and its own file tracker and snapshots. The shared parts stay
-// open until the parent and every child have closed. Only agent-mode Envs
-// built by Setup can nest.
+// open until the parent and every child have closed. Agent-mode and chat
+// Envs built by Setup can nest; a child is always agent mode. A chat parent
+// (subagents and /agent in the chat, 2.0 F2e) shares only its global MCP
+// servers: a child is a non-interactive run, and those never run a repo's
+// MCP servers.
 func (e *Env) Nested(opts NestedOptions) (*Env, error) {
-	if e.Mode != ModeAgent || e.shared == nil || e.nested {
-		return nil, errors.New("loop: Nested needs an agent-mode Env built by Setup")
+	if (e.Mode != ModeAgent && e.Mode != ModeChat) || e.shared == nil || e.nested {
+		return nil, errors.New("loop: Nested needs an agent-mode or chat Env built by Setup")
 	}
 	ws := e.Workspace
 	if opts.Workspace != "" {
@@ -112,7 +115,11 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 		c.setupHooks(c.home)
 	}
 	if e.MCP != nil {
-		e.MCP.RegisterInto(c.Registry)
+		if e.Mode == ModeChat {
+			e.MCP.RegisterGlobalInto(c.Registry, c.home)
+		} else {
+			e.MCP.RegisterInto(c.Registry)
+		}
 	}
 	if c.Registry.Count() > ToolDiscoveryThreshold {
 		c.Registry.SetDiscoveryMode(true)
