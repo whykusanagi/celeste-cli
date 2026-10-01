@@ -14,6 +14,12 @@ import (
 // creates an MCPTool adapter for each, and registers them in the registry.
 // The serverName is recorded in each tool's metadata for debugging and display.
 func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Registry, serverName string) ([]string, error) {
+	return discoverAndRegister(ctx, client, registry, serverName, nil)
+}
+
+// discoverAndRegister is DiscoverAndRegister; a non-nil resolve makes each
+// tool look its server's client up at call time (MCPTool.resolve).
+func discoverAndRegister(ctx context.Context, client *Client, registry *tools.Registry, serverName string, resolve func(string) (*Client, bool)) ([]string, error) {
 	defs, err := client.ListTools(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("discover tools from %s: %w", serverName, err)
@@ -26,6 +32,7 @@ func DiscoverAndRegister(ctx context.Context, client *Client, registry *tools.Re
 	names := make([]string, 0, len(defs))
 	for _, def := range defs {
 		tool := NewMCPTool(def, client, serverName)
+		tool.resolve = resolve
 		name := tool.Name()
 		registry.Register(tool)
 		names = append(names, name)
