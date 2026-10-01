@@ -206,6 +206,9 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 		// MCP agent tool IS the approval (task a035f219).
 		AutoApproveTools: true,
 		Verbose:          false,
+		// The prompt is the caller's goal: UserPromptSubmit sees it once,
+		// before any model call (2.0 F2e).
+		CheckGoal: true,
 	}
 
 	if tally := costFrom(ctx); tally != nil {

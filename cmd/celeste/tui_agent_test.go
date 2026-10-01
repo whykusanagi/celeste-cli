@@ -360,3 +360,10 @@ func TestSendAgentProgressDoesNotBlock(t *testing.T) {
 		t.Fatal("an intermediate progress send blocked")
 	}
 }
+
+// /agent's goal is the user's: UserPromptSubmit sees it once (2.0 F2e).
+func TestTUIAgentOptionsCheckTheGoal(t *testing.T) {
+	if !tuiAgentOptions(nil).CheckGoal {
+		t.Fatal("/agent runs skip UserPromptSubmit on the goal")
+	}
+}

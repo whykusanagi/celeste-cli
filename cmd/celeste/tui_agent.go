@@ -67,6 +67,7 @@ func tuiAgentOptions(parent loop.Nester) agent.Options {
 	}
 	opts.Verbose = false
 	opts.Nested = true
+	opts.CheckGoal = true // the goal is the user's (2.0 F2e)
 	opts.ParentEnv = parent
 	opts.Warn = tuiAgentWarn
 	return opts
