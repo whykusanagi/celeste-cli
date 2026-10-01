@@ -308,7 +308,12 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 		// (e.g. Orchestrator lanes). WithEndpoint only updates the UI; it does not
 		// update TUIClientAdapter.baseConfig.
 		if namedCfg, loadErr := config.LoadNamed(sessionEndpoint); loadErr == nil {
-			a.baseConfig = namedCfg
+			// Its agent and small models drive /agent, /orchestrate and
+			// the summarizer: resolve them (we're not in the TUI yet).
+			if !namedCfg.ModelPinned() {
+				providers.PrepareModels(context.Background(), providers.DetectProvider(namedCfg.BaseURL), namedCfg.BaseURL, namedCfg.APIKey, namedCfg.AgentModel, namedCfg.SmallModel)
+			}
+			a.baseConfig = servedAgentModels(namedCfg)
 			tui.LogInfo(fmt.Sprintf("✓ Loaded named config for restored endpoint: %s", sessionEndpoint))
 		} else {
 			tui.LogInfo(fmt.Sprintf("⚠ Could not load named config for %s: %v", sessionEndpoint, loadErr))

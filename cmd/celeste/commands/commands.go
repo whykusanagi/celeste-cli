@@ -59,6 +59,7 @@ type StateChange struct {
 	EndpointChange *string
 	NSFWMode       *bool
 	Model          *string
+	PinModel       bool // with Model: --force, so live resolution must not replace it
 	ImageModel     *string
 	ClearHistory   bool
 	NewSession     bool           // signals the TUI to create a new session after clearing chat
@@ -396,7 +397,8 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 				Message:      fmt.Sprintf("🤖 Model changed to: %s\n⚠️  Model validation unavailable", modelName),
 				ShouldRender: true,
 				StateChange: &StateChange{
-					Model: &modelName,
+					Model:    &modelName,
+					PinModel: true,
 				},
 			}
 		}
@@ -424,7 +426,8 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 			Message:      fmt.Sprintf("🤖 Model changed to: %s\n⚠️  Skills disabled - model does not support function calling\n\n%s", modelName, modelInfo.Description),
 			ShouldRender: true,
 			StateChange: &StateChange{
-				Model: &modelName,
+				Model:    &modelName,
+				PinModel: true,
 			},
 		}
 	}
@@ -440,7 +443,8 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 		Message:      fmt.Sprintf("🤖 Model changed to: %s%s\n\n%s", modelName, checkmark, modelInfo.Description),
 		ShouldRender: true,
 		StateChange: &StateChange{
-			Model: &modelName,
+			Model:    &modelName,
+			PinModel: forceModel,
 		},
 	}
 }

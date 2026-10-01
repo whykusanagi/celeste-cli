@@ -135,7 +135,8 @@ func TestCatalogReady_StaleEndpointIgnored(t *testing.T) {
 	client := &endpointClient{ep: ActiveEndpoint{Provider: "sakana", BaseURL: "https://api.sakana.ai/v1", Model: "fugu"}}
 	m := NewApp(client).WithEndpoint("sakana")
 	m.model = "fugu"
-	m2, _ := step(t, m, catalogReadyMsg{provider: "venice", baseURL: "https://api.venice.ai/api/v1", models: []providers.CatalogModel{{ID: "x", Default: true}}, ok: true})
+	defer providers.SetCatalogForTest("sakana", []providers.CatalogModel{{ID: "other", Default: true}})()
+	m2, _ := step(t, m, catalogReadyMsg{endpoint: providers.EndpointID("venice", "https://api.venice.ai/api/v1", "")})
 	if m2.model != "fugu" || len(client.models) != 0 {
 		t.Errorf("a stale catalog changed the model to %q", m2.model)
 	}
@@ -201,5 +202,39 @@ func TestEndpointSwitch_DiskCacheLoadsInACmd(t *testing.T) {
 	m2, _ := step(t, m, cmd())
 	if m2.model != "venice-uncensored-1-2" {
 		t.Errorf("model = %q", m2.model)
+	}
+}
+
+// /set-model X --force pins X: a catalog that loads later must not replace
+// it, until the endpoint changes.
+func TestSetModelForcePinsAgainstLateCatalog(t *testing.T) {
+	yes := true
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "venice", BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored-1-2"}}
+	m := NewApp(client).WithEndpoint("venice")
+	m.model = "venice-uncensored-1-2"
+	m, _ = step(t, m, SendMessageMsg{Content: "/set-model my-private-model --force"})
+	if m.model != "my-private-model" || !m.modelPinned {
+		t.Fatalf("model=%q pinned=%v", m.model, m.modelPinned)
+	}
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true, Tools: &yes}})()
+	m, _ = step(t, m, catalogReadyMsg{endpoint: endpointID(client.ep)})
+	if m.model != "my-private-model" {
+		t.Errorf("a late catalog replaced the pinned model with %q", m.model)
+	}
+	m, _ = m.switchEndpoint("venice")
+	if m.modelPinned {
+		t.Error("an endpoint switch must clear the pin")
+	}
+}
+
+// pin_model / CELESTE_PIN_MODEL reach the TUI through the endpoint.
+func TestPinnedEndpointIsNotResolved(t *testing.T) {
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
+	client := &endpointClient{onSwitch: func(string) ActiveEndpoint {
+		return ActiveEndpoint{Provider: "venice", BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored", Pinned: true}
+	}}
+	m, cmd := NewApp(client).switchEndpoint("venice")
+	if m.model != "venice-uncensored" || cmd != nil {
+		t.Errorf("model=%q cmd=%v", m.model, cmd != nil)
 	}
 }

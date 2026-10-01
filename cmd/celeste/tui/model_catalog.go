@@ -15,6 +15,11 @@ type ActiveEndpoint struct {
 	BaseURL  string
 	APIKey   string // only ever handed to the catalog fetch; never shown or logged
 	Model    string
+	// AgentModel and SmallModel are checked with Model in the same fetch.
+	AgentModel string
+	SmallModel string
+	// Pinned turns resolution off (pin_model / CELESTE_PIN_MODEL=1).
+	Pinned bool
 }
 
 // ActiveEndpointer is implemented by LLM clients that can say which endpoint
@@ -23,76 +28,79 @@ type ActiveEndpointer interface {
 	ActiveEndpoint() ActiveEndpoint
 }
 
-// catalogReadyMsg carries a catalog fetched off the Update goroutine.
-type catalogReadyMsg struct {
-	provider string
-	baseURL  string
-	models   []providers.CatalogModel
-	ok       bool
+// ServedModelsRefresher is implemented by clients that keep other models
+// (agent, small) for the endpoint; the chat calls it after a catalog loads
+// so they are re-resolved from memory too.
+type ServedModelsRefresher interface {
+	RefreshServedModels()
 }
 
-// fetchCatalogCmd fetches an endpoint's catalog in a tea.Cmd, so Update
-// never waits on the network.
-// It reads the disk cache first and fetches only when that is missing or
-// stale; a failed fetch falls back to the stale cache.
-func fetchCatalogCmd(ep ActiveEndpoint) tea.Cmd {
+// catalogReadyMsg says an endpoint's catalog (and checks of its unlisted
+// models) has been loaded into memory, off the Update goroutine.
+type catalogReadyMsg struct {
+	endpoint string // providers.EndpointID
+}
+
+func endpointID(ep ActiveEndpoint) string {
+	return providers.EndpointID(ep.Provider, ep.BaseURL, ep.APIKey)
+}
+
+// prepareModelsCmd loads an endpoint's catalog and checks its unlisted
+// models in a tea.Cmd, so Update never waits on disk or the network.
+func prepareModelsCmd(ep ActiveEndpoint, models ...string) tea.Cmd {
 	return func() tea.Msg {
-		cached, stale, ok := providers.CachedCatalog(ep.Provider, ep.BaseURL, ep.APIKey)
-		if ok && !stale {
-			return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: cached, ok: true}
-		}
-		models, err := providers.RefreshCatalog(context.Background(), ep.Provider, ep.BaseURL, ep.APIKey)
-		if err != nil {
-			LogInfo(fmt.Sprintf("Model catalog for %s unavailable: %v", ep.Provider, err))
-			return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: cached, ok: ok}
-		}
-		return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: models, ok: true}
+		providers.PrepareModels(context.Background(), ep.Provider, ep.BaseURL, ep.APIKey, models...)
+		return catalogReadyMsg{endpoint: endpointID(ep)}
 	}
 }
 
-// resolveServedModel re-resolves m.model against the active endpoint's
-// catalog as loaded in memory. With none in memory (or a stale one) it also
-// returns a Cmd that reads the disk cache or fetches; the model stays as is
-// until catalogReadyMsg arrives. No disk or network I/O happens here.
+// resolveServedModel re-resolves m.model from what this process knows the
+// active endpoint serves. When more could be known (no catalog in memory, a
+// stale one, an unchecked miss) it also returns a Cmd that loads it; the
+// model stays as is until catalogReadyMsg arrives. No disk or network I/O
+// happens here.
 func (m AppModel) resolveServedModel() (AppModel, tea.Cmd) {
-	src, ok := m.llmClient.(ActiveEndpointer)
-	if !ok {
+	m, pending := m.resolveFromMemory()
+	if !pending {
 		return m, nil
 	}
-	ep := src.ActiveEndpoint()
-	cat, stale, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL, ep.APIKey)
-	var cmd tea.Cmd
-	if (!cached || stale) && providers.HasCatalog(ep.Provider) {
-		cmd = fetchCatalogCmd(ep)
-	}
-	if cached {
-		m = m.applyResolvedModel(ep.Provider, cat)
-	}
-	return m, cmd
+	ep := m.llmClient.(ActiveEndpointer).ActiveEndpoint()
+	return m, prepareModelsCmd(ep, m.model, ep.AgentModel, ep.SmallModel)
 }
 
-// onCatalogReady applies a fetched catalog if the chat is still on that
-// endpoint.
-func (m AppModel) onCatalogReady(msg catalogReadyMsg) AppModel {
-	if !msg.ok {
-		return m
-	}
+// resolveFromMemory applies ResolveFromMemory to m.model unless the model
+// is pinned, and recomputes the tool gate.
+func (m AppModel) resolveFromMemory() (AppModel, bool) {
 	src, ok := m.llmClient.(ActiveEndpointer)
 	if !ok {
-		return m
+		return m, false
 	}
 	ep := src.ActiveEndpoint()
-	if ep.Provider != msg.provider || !providers.SameEndpoint(ep.Provider, ep.BaseURL, msg.baseURL) {
-		return m
+	if m.modelPinned || ep.Pinned {
+		return m.recomputeSkills(), false
 	}
-	return m.applyResolvedModel(ep.Provider, msg.models)
+	model, note, pending := providers.ResolveFromMemory(ep.Provider, ep.BaseURL, ep.APIKey, m.model)
+	return m.applyModel(model, note), pending
 }
 
-// applyResolvedModel switches to the served model when m.model is retired,
-// says so in the chat, and recomputes the tool gate.
-func (m AppModel) applyResolvedModel(provider string, cat []providers.CatalogModel) AppModel {
-	model, note := providers.ResolveModel(provider, m.model, cat, true)
-	if model != m.model {
+// onCatalogReady re-resolves once a catalog loaded, if the chat is still on
+// that endpoint.
+func (m AppModel) onCatalogReady(msg catalogReadyMsg) AppModel {
+	src, ok := m.llmClient.(ActiveEndpointer)
+	if !ok || endpointID(src.ActiveEndpoint()) != msg.endpoint {
+		return m
+	}
+	if r, ok := m.llmClient.(ServedModelsRefresher); ok {
+		r.RefreshServedModels()
+	}
+	m, _ = m.resolveFromMemory()
+	return m
+}
+
+// applyModel switches to model if it differs, says why in the chat, and
+// recomputes the tool gate.
+func (m AppModel) applyModel(model, note string) AppModel {
+	if model != "" && model != m.model {
 		m.model = model
 		m.header = m.header.SetModel(model)
 		if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
@@ -107,6 +115,10 @@ func (m AppModel) applyResolvedModel(provider string, cat []providers.CatalogMod
 		m = m.syncStatusLine()
 		m.persistSession()
 	}
+	return m.recomputeSkills()
+}
+
+func (m AppModel) recomputeSkills() AppModel {
 	if m.provider != "" {
 		m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 		m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
@@ -121,6 +133,7 @@ func (m AppModel) applyResolvedModel(provider string, cat []providers.CatalogMod
 func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 	m.endpoint = endpoint
 	m.provider = endpoint // provider names match endpoint names
+	m.modelPinned = false // a /set-model --force pin belongs to the old endpoint
 	m.status = m.status.SetText(fmt.Sprintf("Switched to %s", m.endpoint))
 
 	// Leaving Venice turns NSFW mode off.

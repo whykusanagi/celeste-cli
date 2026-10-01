@@ -57,6 +57,7 @@ type AppModel struct {
 	imageModel       string // Current image generation model (for NSFW mode)
 	provider         string // Current provider (grok, openai, venice, etc.) - detected from endpoint
 	skillsEnabled    bool   // Whether skills/function calling is available
+	modelPinned      bool   // /set-model --force: resolution leaves the model alone
 	version          string // Application version (e.g., "1.0.1")
 	build            string // Build identifier (e.g., "bubbletea-tui")
 	grimoireContent  string // Resolved .grimoire content for /grimoire command
@@ -1540,6 +1541,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if result.StateChange.Model != nil {
 					m.model = *result.StateChange.Model
+					m.modelPinned = result.StateChange.PinModel
 					m.header = m.header.SetModel(m.model)
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to %s", m.model))
 
@@ -2692,12 +2694,9 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			// resumes on the served one, from the catalog the startup
 			// loaded. Only when the client is on the session's provider:
 			// another provider's catalog would call every model retired.
-			if src, ok := m.llmClient.(ActiveEndpointer); ok {
-				ep := src.ActiveEndpoint()
-				if cat, _, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL, ep.APIKey); cached && ep.Provider == m.provider {
-					m = m.applyResolvedModel(ep.Provider, cat)
-					model = m.model
-				}
+			if src, ok := m.llmClient.(ActiveEndpointer); ok && src.ActiveEndpoint().Provider == m.provider {
+				m, _ = m.resolveFromMemory()
+				model = m.model
 			}
 
 			// Initialize context tracker with session and model

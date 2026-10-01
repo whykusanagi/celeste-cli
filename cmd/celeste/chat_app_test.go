@@ -188,3 +188,89 @@ func TestNewChatAppResolvesRetiredModel(t *testing.T) {
 		t.Errorf("the caller's config changed to %q", cfg.Model)
 	}
 }
+
+// M5: a switch to an endpoint with no named profile must not carry the old
+// provider's models (a false "no longer serves" note), nor change the
+// config the chat started with.
+func TestSwitchEndpointFallbackDropsTheOldProvidersModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cfg := &config.Config{APIKey: "k", BaseURL: "https://api.sakana.ai/v1", Model: "fugu", AgentModel: "fugu-ultra", Timeout: 10}
+	defer providers.SetCatalogForTest("sakana", []providers.CatalogModel{{ID: "fugu"}, {ID: "fugu-ultra"}})()
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	if err := deps.adapter.SwitchEndpoint("grok"); err != nil {
+		t.Fatal(err)
+	}
+	ep := deps.adapter.ActiveEndpoint()
+	if ep.Provider != "grok" || ep.Model != "" || ep.AgentModel != "" {
+		t.Errorf("after the fallback switch: %+v", ep)
+	}
+	if cfg.Model != "fugu" || cfg.BaseURL != "https://api.sakana.ai/v1" {
+		t.Errorf("the switch changed the startup config: %+v", cfg)
+	}
+}
+
+// 6: the agent and small models follow the endpoint: a switch re-resolves
+// them from memory, and RefreshServedModels does after a catalog loads.
+func TestSwitchEndpointResolvesAgentAndSmallModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeNamed(t, home, "venice", `{"api_key":"k","base_url":"https://api.venice.ai/api/v1","model":"venice-uncensored-1-2","agent_model":"gone","small_model":"gone-too"}`)
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+
+	if err := deps.adapter.SwitchEndpoint("venice"); err != nil {
+		t.Fatal(err)
+	}
+	if ep := deps.adapter.ActiveEndpoint(); ep.AgentModel != "gone" {
+		t.Fatalf("with no catalog yet the agent model is kept: %+v", ep)
+	}
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
+	deps.adapter.RefreshServedModels()
+	ac := deps.adapter.currentAgentConfig()
+	if ac.AgentModel != "venice-uncensored-1-2" || ac.SmallModel != "venice-uncensored-1-2" {
+		t.Errorf("agent=%q small=%q", ac.AgentModel, ac.SmallModel)
+	}
+}
+
+func writeNamed(t *testing.T, home, name, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config."+name+".json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 6: a resumed session's profile has its agent and small models resolved.
+func TestRestoreEndpointResolvesAgentModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeNamed(t, home, "venice", `{"api_key":"k","base_url":"https://api.venice.ai/api/v1","model":"venice-uncensored-1-2","agent_model":"gone"}`)
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	s := &config.Session{}
+	s.SetEndpoint("venice")
+	restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
+	if got := deps.adapter.baseConfig.AgentModel; got != "venice-uncensored-1-2" {
+		t.Errorf("agent model = %q", got)
+	}
+}

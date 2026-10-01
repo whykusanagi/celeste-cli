@@ -31,8 +31,8 @@ func TestSetModel_ValidatesAgainstCatalog(t *testing.T) {
 	}
 
 	r = Execute(&Command{Name: "set-model", Args: []string{"venice-uncensored", "--force"}}, ctx)
-	if !r.Success || *r.StateChange.Model != "venice-uncensored" {
-		t.Errorf("--force must still set it: %+v", r)
+	if !r.Success || *r.StateChange.Model != "venice-uncensored" || !r.StateChange.PinModel {
+		t.Errorf("--force must still set it, pinned: %+v", r)
 	}
 
 	ctx.SkillsEnabled = true
