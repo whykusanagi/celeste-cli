@@ -107,6 +107,9 @@ func runAgentCommand(args []string) {
 	// The goal is the user's: UserPromptSubmit sees it once, before any
 	// model call (2.0 F2e).
 	opts.CheckGoal = true
+	// Agent work runs on agent_model when one is set, as subagents and MCP
+	// agent mode do (2.0 F2e).
+	opts.Model = cfg.ResolveAgentModel()
 	opts.Workspace = *workspace
 	opts.RequireCompletionMarker = *requireMarker
 	opts.CompletionMarker = strings.TrimSpace(*completionMarker)
