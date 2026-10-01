@@ -452,6 +452,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.tickPending = false
+		if m.viewMode != "chat" {
+			// A sub-view would eat the tick. While a reply streams, types
+			// or tools run, keep the chain alive without animating, so the
+			// reply types out and commits once the view closes (2.0 F2e).
+			var tick tea.Cmd
+			if m.streaming || m.typingContent != "" || m.toolProgress.HasActive() {
+				tick = m.tick(typingTickInterval * 2)
+			}
+			return m, tick
+		}
 	}
 
 	// Chat turn events bypass the sub-view routing below: the turn must keep

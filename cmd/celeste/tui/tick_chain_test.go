@@ -87,21 +87,44 @@ func TestOneTickChainAcrossToolTurns(t *testing.T) {
 	assert.False(t, c.m.streaming)
 }
 
-// A sub-view that eats the chain's tick (the menu here) must not leave the
-// chain marked pending: the next schedule starts a new one.
+// A sub-view (the menu here) would eat the chain's tick. While something
+// animates, the chain stays alive without animating, so a reply that
+// finished streaming while the menu was open is typed out and committed
+// once it closes (2.0 F2e; review: an eaten tick used to freeze the typing,
+// and the turn with it, until an unrelated event started a new chain).
 func TestTickEatenBySubViewDoesNotStallTheChain(t *testing.T) {
 	m, _ := newQueueTestApp()
 	c := &tickClock{t: t, m: m}
 	c.send(SendMessageMsg{Content: "go"})
 	require.Len(t, c.pending, 1)
+	c.feed(TurnStartMsg{Turn: 1})
+	c.feed(StreamChunkMsg{Chunk: StreamChunk{Content: "hello ", IsFirst: true}})
 	menu := NewMenuModel()
 	c.m.menuModel = &menu
 	c.m.viewMode = "menu"
-	c.tick() // eaten by the menu
-	assert.False(t, c.m.tickPending, "an eaten tick left the chain pending")
+	typed := c.m.typingPos
+	c.tick() // reaches the menu
+	assert.Equal(t, typed, c.m.typingPos, "the reply typed behind the menu")
+	require.Len(t, c.pending, 1, "the menu ate the chain's tick and nothing rescheduled it")
+	c.feed(StreamChunkMsg{Chunk: StreamChunk{Content: "there, a longer reply than one tick types"}})
+	c.feed(StreamDoneMsg{FullContent: "hello there, a longer reply than one tick types"})
+	c.feed(TurnDoneMsg{Stop: "done"})
+	assert.Len(t, c.pending, 1, "a second chain started")
+
 	c.m.viewMode = "chat"
-	c.feed(StreamChunkMsg{Chunk: StreamChunk{Content: "hi", IsFirst: true}})
-	assert.Len(t, c.pending, 1, "typing started no tick after the menu ate the last one")
+	for i := 0; i < 50 && len(c.pending) > 0; i++ {
+		c.tick()
+	}
+	assert.Equal(t, 1, c.max, "more than one tick chain ran at once")
+	assert.Empty(t, c.m.typingContent, "the reply was never committed after the menu closed")
+	assert.False(t, c.m.turnActive())
+
+	// With nothing to animate, a tick a sub-view gets ends the chain.
+	c.m.viewMode = "menu"
+	c.take(c.m.tick(typingTickInterval))
+	c.tick()
+	assert.Empty(t, c.pending)
+	assert.False(t, c.m.tickPending)
 }
 
 // A run started while a chain's tick is still out (Enter, /agent, /orch)
