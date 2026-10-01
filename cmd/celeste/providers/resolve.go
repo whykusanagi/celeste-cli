@@ -28,7 +28,7 @@ func ResolveModel(provider, configured string, cat []CatalogModel, ok bool) (mod
 		}
 		return configured, ""
 	}
-	if _, served := findServed(cat, configured); served {
+	if _, served := findServed(cat, configured); served || neverReplace(provider, configured) {
 		return configured, ""
 	}
 	// A "-latest" alias is rarely listed itself; while its family is served
@@ -39,13 +39,74 @@ func ResolveModel(provider, configured string, cat []CatalogModel, ok bool) (mod
 		}
 	}
 	model = pickServed(provider, configured, cat)
+	if model == "" {
+		// Nothing safe to switch to (only cost traps listed): keep it.
+		if configured == "" {
+			return Registry[provider].DefaultModel, ""
+		}
+		return configured, ""
+	}
+	if repl, deprecated := DeprecatedModels[strings.ToLower(model)]; deprecated {
+		model = repl
+	}
 	if configured != "" {
 		note = fmt.Sprintf("%s no longer serves %s; using %s", provider, configured, model)
 	}
 	return model, note
 }
 
-func pickServed(provider, configured string, cat []CatalogModel) string {
+// neverReplace reports IDs celeste can't judge from a listing: OpenRouter
+// presets ("@preset/..."), fine-tunes ("ft:..."), and anything path-like on
+// a provider whose IDs are not vendor/model.
+func neverReplace(provider, id string) bool {
+	lower := strings.ToLower(id)
+	return strings.HasPrefix(id, "@") || strings.HasPrefix(lower, "ft:") ||
+		(provider != "openrouter" && strings.Contains(id, "/"))
+}
+
+// DeprecatedModels maps Grok models that xAI silently ROUTES to the
+// cost-prohibitive grok-4.3 (the grok-4-1-* family) to a safe replacement
+// (#51). config's reconcileModel migrates them; ResolveModel never picks
+// one.
+var DeprecatedModels = map[string]string{
+	"grok-4-1-fast":               "grok-4.20-0309-non-reasoning",
+	"grok-4-1-fast-reasoning":     "grok-4.20-0309-non-reasoning",
+	"grok-4-1-fast-non-reasoning": "grok-4.20-0309-non-reasoning",
+	"grok-4-1-reasoning":          "grok-4.20-0309-non-reasoning",
+	"grok-4-1":                    "grok-4.20-0309-non-reasoning",
+}
+
+// costTrapPrefixes are model families a fallback must never land on: xAI
+// bills grok-4.3 at a cost-prohibitive rate and routes grok-4-1-* to it
+// (#51).
+var costTrapPrefixes = []string{"grok-4.3", "grok-4-1"}
+
+// costTrap reports a model a fallback must not pick.
+func costTrap(id string) bool {
+	lower := strings.ToLower(id)
+	if _, deprecated := DeprecatedModels[lower]; deprecated {
+		return true
+	}
+	for _, p := range costTrapPrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// pickServed returns the replacement for a retired model, or "" when the
+// catalog lists nothing safe.
+func pickServed(provider, configured string, all []CatalogModel) string {
+	var cat []CatalogModel
+	for _, m := range all {
+		if !costTrap(m.ID) {
+			cat = append(cat, m)
+		}
+	}
+	if len(cat) == 0 {
+		return ""
+	}
 	var defaults []CatalogModel
 	for _, m := range cat {
 		if m.Default {
@@ -101,36 +162,47 @@ func preferTools(provider string, models []CatalogModel) []CatalogModel {
 // "-v1.1"). A sibling such as gpt-4o-mini is not a version of gpt-4o.
 var versionSuffix = regexp.MustCompile(`^[-.:]v?\d+([-._:]v?\d+)*$`)
 
-// versionsOf returns the served models that are versions of id.
+// versionsOf returns the served models that are versions of id (case
+// ignored).
 func versionsOf(cat []CatalogModel, id string) []CatalogModel {
 	var out []CatalogModel
 	for _, m := range cat {
-		if rest, found := strings.CutPrefix(m.ID, id); found && versionSuffix.MatchString(rest) {
+		if len(m.ID) > len(id) && strings.EqualFold(m.ID[:len(id)], id) && versionSuffix.MatchString(m.ID[len(id):]) {
 			out = append(out, m)
 		}
 	}
 	return out
 }
 
-// compareVersions compares two version suffixes by their numbers, so v1.10
-// is newer than v1.9.
+// compareVersions compares two version suffixes: version numbers first
+// (v1.10 is newer than v1.9), then the date, so "-4-6" beats "-1-20250805"
+// and both beat a bare "-20250514".
 func compareVersions(a, b string) int {
-	na, nb := versionNumbers(a), versionNumbers(b)
-	for i := 0; i < len(na) && i < len(nb); i++ {
-		if c := na[i].Cmp(nb[i]); c != 0 {
+	va, da := versionNumbers(a)
+	vb, db := versionNumbers(b)
+	for i := 0; i < len(va) && i < len(vb); i++ {
+		if c := va[i].Cmp(vb[i]); c != 0 {
 			return c
 		}
 	}
-	return len(na) - len(nb)
+	if len(va) != len(vb) {
+		return len(va) - len(vb)
+	}
+	return strings.Compare(da, db)
 }
 
 var digitRuns = regexp.MustCompile(`\d+`)
 
-func versionNumbers(s string) []*big.Int {
-	var out []*big.Int
+// versionNumbers splits a suffix into its version numbers and its date
+// (an 8-digit run, YYYYMMDD).
+func versionNumbers(s string) (version []*big.Int, date string) {
 	for _, part := range digitRuns.FindAllString(s, -1) {
+		if len(part) == 8 {
+			date = part
+			continue
+		}
 		n, _ := new(big.Int).SetString(part, 10)
-		out = append(out, n)
+		version = append(version, n)
 	}
-	return out
+	return version, date
 }

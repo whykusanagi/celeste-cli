@@ -113,11 +113,12 @@ func TestParseCatalog_BadJSON(t *testing.T) {
 func isolateCatalog(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	origDir, origNow, origFetch := catalogDir, catalogNow, catalogFetch
+	origDir, origNow, origFetch, origVerify := catalogDir, catalogNow, catalogFetch, catalogVerify
 	catalogDir = func() string { return dir }
+	catalogVerify = func(context.Context, string, string, string, string) (bool, bool) { return false, false }
 	resetCatalogMemory()
 	t.Cleanup(func() {
-		catalogDir, catalogNow, catalogFetch = origDir, origNow, origFetch
+		catalogDir, catalogNow, catalogFetch, catalogVerify = origDir, origNow, origFetch, origVerify
 		waitCatalogRefreshes()
 		resetCatalogMemory()
 	})
@@ -226,7 +227,7 @@ func TestLoadCatalog_FetchesOnceAndCachesToDisk(t *testing.T) {
 
 	// A new process (empty memory) reads the disk cache without fetching.
 	resetCatalogMemory()
-	cat, stale, ok := CachedCatalog("sakana", "https://api.sakana.ai/v1")
+	cat, stale, ok := CachedCatalog("sakana", "https://api.sakana.ai/v1", "secret-key")
 	if !ok || stale || cat[0].ID != "fugu" {
 		t.Errorf("CachedCatalog after restart = %+v stale=%v ok=%v", cat, stale, ok)
 	}
@@ -252,7 +253,7 @@ func TestLoadCatalog_StaleCacheIsUsedAndRefreshed(t *testing.T) {
 	if atomic.LoadInt32(calls) != 1 {
 		t.Fatalf("stale cache started %d refreshes, want 1", atomic.LoadInt32(calls))
 	}
-	cat, stale, _ := CachedCatalog("openai", "")
+	cat, stale, _ := CachedCatalog("openai", "", "k")
 	if cat[0].ID != "new" || stale {
 		t.Errorf("after the background refresh: %+v stale=%v", cat, stale)
 	}
@@ -268,7 +269,7 @@ func TestRefreshCatalog_FailureKeepsOldCache(t *testing.T) {
 		t.Fatal("want the fetch error")
 	}
 	resetCatalogMemory()
-	cat, _, ok := CachedCatalog("openai", "")
+	cat, _, ok := CachedCatalog("openai", "", "k")
 	if !ok || cat[0].ID != "good" {
 		t.Errorf("a failed fetch lost the cache: %+v %v", cat, ok)
 	}
@@ -280,14 +281,14 @@ func TestRefreshCatalog_FailureKeepsOldCache(t *testing.T) {
 
 func TestCachedCatalog_CorruptFileIgnored(t *testing.T) {
 	isolateCatalog(t)
-	path := catalogCachePath("openai", "https://api.openai.com/v1")
+	path := catalogCachePath("openai", "https://api.openai.com/v1", "k")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, ok := CachedCatalog("openai", ""); ok {
+	if _, _, ok := CachedCatalog("openai", "", "k"); ok {
 		t.Error("a corrupt cache file must read as no cache")
 	}
 }

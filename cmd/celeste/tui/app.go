@@ -2694,7 +2694,7 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			// another provider's catalog would call every model retired.
 			if src, ok := m.llmClient.(ActiveEndpointer); ok {
 				ep := src.ActiveEndpoint()
-				if cat, _, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL); cached && ep.Provider == m.provider {
+				if cat, _, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL, ep.APIKey); cached && ep.Provider == m.provider {
 					m = m.applyResolvedModel(ep.Provider, cat)
 					model = m.model
 				}

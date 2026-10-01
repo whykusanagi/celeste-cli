@@ -37,7 +37,7 @@ type catalogReadyMsg struct {
 // stale; a failed fetch falls back to the stale cache.
 func fetchCatalogCmd(ep ActiveEndpoint) tea.Cmd {
 	return func() tea.Msg {
-		cached, stale, ok := providers.CachedCatalog(ep.Provider, ep.BaseURL)
+		cached, stale, ok := providers.CachedCatalog(ep.Provider, ep.BaseURL, ep.APIKey)
 		if ok && !stale {
 			return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: cached, ok: true}
 		}
@@ -60,7 +60,7 @@ func (m AppModel) resolveServedModel() (AppModel, tea.Cmd) {
 		return m, nil
 	}
 	ep := src.ActiveEndpoint()
-	cat, stale, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL)
+	cat, stale, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL, ep.APIKey)
 	var cmd tea.Cmd
 	if (!cached || stale) && providers.HasCatalog(ep.Provider) {
 		cmd = fetchCatalogCmd(ep)

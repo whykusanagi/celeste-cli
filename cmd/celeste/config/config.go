@@ -95,6 +95,10 @@ type Config struct {
 	// SmallModel is a cheaper model for housekeeping calls such as context
 	// compaction summaries (#174). Empty falls back to Model.
 	SmallModel string `json:"small_model,omitempty"`
+	// PinModel turns live model resolution off: the configured models are
+	// sent as written even if the provider no longer lists them. Same as
+	// CELESTE_PIN_MODEL=1.
+	PinModel bool `json:"pin_model,omitempty"`
 	// JevPrune turns on TypeSafe Jev as a judge for context pruning (#175).
 	// "shadow" asks Jev in the background and only logs what it would have
 	// pruned; anything else is off. Redacted excerpts of old tool results go
@@ -754,20 +758,10 @@ func persistReconciled(path string, config *Config) error {
 	return os.WriteFile(path, out, 0600)
 }
 
-// deprecatedModels maps Grok models xAI no longer serves to their supported
-// replacement. Loading a config on one of these silently fell back to a
-// cost-prohibitive variant server-side; migrate it instead (#51).
-// deprecatedModels maps Grok models that xAI silently ROUTES to the
-// cost-prohibitive grok-4.3 (the grok-4-1-* family) to a safe replacement.
-// Using any of these burns grok-4.3 pricing + reasoning tokens without the user
-// knowing — migrate them to the non-reasoning default instead (#51).
-var deprecatedModels = map[string]string{
-	"grok-4-1-fast":               "grok-4.20-0309-non-reasoning",
-	"grok-4-1-fast-reasoning":     "grok-4.20-0309-non-reasoning",
-	"grok-4-1-fast-non-reasoning": "grok-4.20-0309-non-reasoning",
-	"grok-4-1-reasoning":          "grok-4.20-0309-non-reasoning",
-	"grok-4-1":                    "grok-4.20-0309-non-reasoning",
-}
+// deprecatedModels maps the Grok models xAI routes to the cost-prohibitive
+// grok-4.3 to a safe replacement (#51). It lives in providers so model
+// resolution never picks one either.
+var deprecatedModels = providers.DeprecatedModels
 
 // reconcileModel fills an empty model with the default and migrates a known-
 // deprecated model to its replacement. Returns whether config.Model changed,
