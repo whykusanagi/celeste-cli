@@ -95,21 +95,6 @@ func (s *Store) List() ([]*Memory, error) {
 	return memories, nil
 }
 
-// ListByType returns all memories of a given type.
-func (s *Store) ListByType(memType string) ([]*Memory, error) {
-	all, err := s.List()
-	if err != nil {
-		return nil, err
-	}
-	var filtered []*Memory
-	for _, m := range all {
-		if m.Type == memType {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered, nil
-}
-
 // sanitizeFilename converts a memory name to a safe filename.
 func sanitizeFilename(name string) string {
 	// Replace spaces and unsafe chars with hyphens, lowercase.

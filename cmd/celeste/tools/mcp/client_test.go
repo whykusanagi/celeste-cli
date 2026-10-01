@@ -87,8 +87,6 @@ func TestClient_Initialize(t *testing.T) {
 	// Verify notifications/initialized was sent
 	require.Len(t, transport.notifs, 1)
 	assert.Equal(t, "notifications/initialized", transport.notifs[0].Method)
-
-	assert.Equal(t, "test-server", client.ServerName())
 }
 
 func TestClient_Initialize_VersionMismatch(t *testing.T) {

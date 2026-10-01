@@ -4,27 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/orchestrator"
 )
-
-func TestDebateManagerDefaultsToThreeRounds(t *testing.T) {
-	dm := orchestrator.NewDebateManager(orchestrator.DebateOptions{})
-	assert.Equal(t, 3, dm.MaxRounds())
-}
-
-func TestDebateManagerCustomRounds(t *testing.T) {
-	dm := orchestrator.NewDebateManager(orchestrator.DebateOptions{MaxRounds: 5})
-	assert.Equal(t, 5, dm.MaxRounds())
-}
-
-func TestAddTurnAppendsTurn(t *testing.T) {
-	dm := orchestrator.NewDebateManager(orchestrator.DebateOptions{})
-	dm.AddTurn(orchestrator.DebateTurn{Round: 1, Role: orchestrator.RoleReviewer, Output: "issue: nil check missing"})
-	dm.AddTurn(orchestrator.DebateTurn{Round: 1, Role: orchestrator.RolePrimary, Output: "accepted"})
-	require.Len(t, dm.Turns(), 2)
-	assert.Equal(t, orchestrator.RoleReviewer, dm.Turns()[0].Role)
-}
 
 func TestVerdictApprovedWhenNoIssues(t *testing.T) {
 	dm := orchestrator.NewDebateManager(orchestrator.DebateOptions{})

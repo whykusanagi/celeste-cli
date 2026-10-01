@@ -10,8 +10,9 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
-// CodeGraphTool queries structural relationships in the code graph.
-// Supports queries like "what calls X", "what implements Y", "callers of Z".
+// CodeGraphTool queries call relationships in the code graph.
+// Supports queries like "what calls X", "callers of Z". Edges are calls
+// only — the graph does not track implements, embeds or references.
 type CodeGraphTool struct {
 	BaseTool
 	indexer *codegraph.Indexer
@@ -22,8 +23,8 @@ func NewCodeGraphTool(indexer *codegraph.Indexer) *CodeGraphTool {
 	return &CodeGraphTool{
 		BaseTool: BaseTool{
 			ToolName: "code_graph",
-			ToolDescription: "Query structural relationships in the codebase. " +
-				"Find what calls a function, what implements an interface, what a symbol references, etc. " +
+			ToolDescription: "Query call relationships in the codebase. " +
+				"Find what calls a function and what it calls (calls edges only). " +
 				"First use code_search to find the symbol name, then use code_graph to explore relationships.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",

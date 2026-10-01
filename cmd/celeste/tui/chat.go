@@ -225,19 +225,6 @@ func (m ChatModel) AddToolResult(toolCallID, name, result string, metadata ...ma
 	return m
 }
 
-// AppendToLastAssistant appends content to the last assistant message.
-func (m ChatModel) AppendToLastAssistant(content string) ChatModel {
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		if m.messages[i].Role == "assistant" {
-			m.messages[i].Content += content
-			break
-		}
-	}
-	m.updateContent()
-	m.viewport.GotoBottom()
-	return m
-}
-
 // SetTypingActive marks whether the typing animation is running.
 // When true, the last assistant message skips Glamour markdown rendering
 // so that ANSI-styled corruption glyphs at the cursor don't break the layout.

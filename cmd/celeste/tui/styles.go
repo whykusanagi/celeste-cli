@@ -21,7 +21,6 @@ var (
 	ColorCyanLight = lipgloss.Color("#67e8f9") // Light cyan
 
 	// Background colors - deep void
-	ColorBg         = lipgloss.Color("#0a0a0a") // Main background
 	ColorBgTertiary = lipgloss.Color("#1a1a2e") // Tertiary bg
 	ColorBgGlass    = lipgloss.Color("#1a1a2e") // Glassmorphic layer
 
@@ -36,49 +35,21 @@ var (
 	ColorBorderLight  = lipgloss.Color("#5a4575") // Light border
 	ColorBorderGlow   = lipgloss.Color("#d94f90") // Glowing border
 	ColorBorderPurple = lipgloss.Color("#8b5cf6") // Purple border
-	ColorBorderCyan   = lipgloss.Color("#00d4ff") // Cyan border
 
 	// Status colors
 	ColorSuccess = lipgloss.Color("#22c55e") // Green
 	ColorError   = lipgloss.Color("#ef4444") // Red
 	ColorWarning = lipgloss.Color("#eab308") // Yellow
-	ColorInfo    = lipgloss.Color("#06b6d4") // Cyan
 
 	// Corruption/glitch colors
 	ColorCorrupt1 = lipgloss.Color("#ff4757") // Red corruption
-	ColorCorrupt2 = lipgloss.Color("#ff6b9d") // Pink corruption
-	ColorCorrupt3 = lipgloss.Color("#c084fc") // Purple corruption
-	ColorCorrupt4 = lipgloss.Color("#00d4ff") // Cyan glitch
 )
 
 // Base styles - reusable building blocks
 var (
-	// Base container style
-	BaseStyle = lipgloss.NewStyle().
-			Background(ColorBg)
-
-	// Border styles
-	BorderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorBorder)
-
 	// Text styles
 	TextStyle = lipgloss.NewStyle().
-			Foreground(ColorText)
-
-	TextMutedStyle = lipgloss.NewStyle().
-			Foreground(ColorTextMuted)
-
-	TextSecondaryStyle = lipgloss.NewStyle().
-				Foreground(ColorTextSecondary)
-
-	// Accent text
-	AccentStyle = lipgloss.NewStyle().
-			Foreground(ColorAccent).
-			Bold(true)
-
-	PurpleStyle = lipgloss.NewStyle().
-			Foreground(ColorPurple)
+		Foreground(ColorText)
 )
 
 // Component-specific styles with glassmorphism
@@ -121,14 +92,6 @@ var (
 			Width(6)
 
 	// Input panel styles - glassmorphic with gradient border
-	InputPanelStyle = lipgloss.NewStyle().
-			Foreground(ColorText).
-			Background(ColorBgGlass).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderTop(true).
-			BorderForeground(ColorBorderPurple).
-			Padding(0, 1)
-
 	InputPromptStyle = lipgloss.NewStyle().
 				Foreground(ColorAccentGlow).
 				Bold(true)
@@ -152,9 +115,6 @@ var (
 	SkillNameStyle = lipgloss.NewStyle().
 			Foreground(ColorAccentGlow).
 			Bold(true)
-
-	SkillDescStyle = lipgloss.NewStyle().
-			Foreground(ColorTextSecondary)
 
 	SkillExecutingStyle = lipgloss.NewStyle().
 				Foreground(ColorWarning).
@@ -208,13 +168,6 @@ var (
 
 	FunctionResultStyle = lipgloss.NewStyle().
 				Foreground(ColorTextSecondary)
-
-	// Corruption/glitch effect styles (for streaming)
-	CorruptedStyle = lipgloss.NewStyle().
-			Foreground(ColorAccent)
-
-	GlitchStyle = lipgloss.NewStyle().
-			Foreground(ColorPurple)
 )
 
 // MessageRoleStyle returns the appropriate style for a message role.
@@ -228,19 +181,5 @@ func MessageRoleStyle(role string) lipgloss.Style {
 		return SystemMessageStyle
 	default:
 		return TextStyle
-	}
-}
-
-// SkillStatusStyle returns the appropriate style for a skill execution status.
-func SkillStatusStyle(status string) lipgloss.Style {
-	switch status {
-	case "executing":
-		return SkillExecutingStyle
-	case "completed":
-		return SkillCompletedStyle
-	case "error":
-		return SkillErrorStyle
-	default:
-		return SkillNameStyle
 	}
 }

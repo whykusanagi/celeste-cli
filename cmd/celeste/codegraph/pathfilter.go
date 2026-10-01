@@ -183,12 +183,6 @@ func ClassifyPath(path string) []PathFlag {
 	return flags
 }
 
-// IsDemotable returns true if the flag set is non-empty — i.e., at least
-// one demotion reason applies. Pure convenience helper.
-func IsDemotable(flags []PathFlag) bool {
-	return len(flags) > 0
-}
-
 // PathFlagStrings converts a []PathFlag to a []string for serialization
 // to JSON / API responses / logs.
 func PathFlagStrings(flags []PathFlag) []string {

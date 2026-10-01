@@ -68,12 +68,6 @@ func GetModelLimit(model string) int {
 	return ctxmgr.GetModelLimit(model)
 }
 
-// GetModelLimitWithOverride returns token limit with optional config override
-// (delegates to ctxmgr).
-func GetModelLimitWithOverride(model string, configOverride int) int {
-	return ctxmgr.GetModelLimitWithOverride(model, configOverride)
-}
-
 // FormatTokenCount formats token count with K/M suffix (delegates to ctxmgr).
 func FormatTokenCount(tokens int) string {
 	return ctxmgr.FormatTokenCount(tokens)

@@ -201,19 +201,3 @@ func (a *ToolUseAccumulator) CompletedCalls() []ToolCallResult {
 	copy(result, a.completed)
 	return result
 }
-
-// PendingCount returns the number of tool uses still accumulating input.
-func (a *ToolUseAccumulator) PendingCount() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return len(a.pending)
-}
-
-// Reset clears all state.
-func (a *ToolUseAccumulator) Reset() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.pending = make(map[string]*pendingToolUse)
-	a.order = nil
-	a.completed = nil
-}

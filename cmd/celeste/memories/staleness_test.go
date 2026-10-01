@@ -43,22 +43,3 @@ func TestCheckStalenessInvalidDate(t *testing.T) {
 	assert.Equal(t, 0, days)
 	assert.Empty(t, warning)
 }
-
-func TestShouldVerifyTrue(t *testing.T) {
-	m := &Memory{
-		Created: time.Now().Add(-10 * 24 * time.Hour).Format(time.RFC3339),
-	}
-	assert.True(t, ShouldVerify(m))
-}
-
-func TestShouldVerifyFalse(t *testing.T) {
-	m := &Memory{
-		Created: time.Now().Add(-3 * 24 * time.Hour).Format(time.RFC3339),
-	}
-	assert.False(t, ShouldVerify(m))
-}
-
-func TestShouldVerifyInvalidDate(t *testing.T) {
-	m := &Memory{Created: "invalid"}
-	assert.False(t, ShouldVerify(m))
-}

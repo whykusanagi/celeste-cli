@@ -69,15 +69,6 @@ func (s *StopWords) Filter(tokens []string, lang string) []string {
 	return out
 }
 
-// UniversalSize returns the number of universal stop words. Used by
-// the anchor test to assert the embedded file isn't obviously broken.
-func (s *StopWords) UniversalSize() int {
-	if s == nil {
-		return 0
-	}
-	return len(s.Universal)
-}
-
 // stopWords is the package-global lookup built at init. Callers read
 // this directly rather than passing it through every function. It may
 // be nil if the embedded file is malformed — callers must nil-check.

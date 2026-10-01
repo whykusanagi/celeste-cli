@@ -32,9 +32,3 @@ func init() {
 
 // Hex returns the hex string for a palette key (e.g. "cyan"); "" if absent.
 func Hex(key string) string { return palette.Palette[key] }
-
-// Semantic returns the hex for a semantic role (e.g. "corrupting"), resolved
-// through the palette. "" if the role or its palette key is missing.
-func Semantic(role string) string {
-	return palette.Palette[palette.SemanticUse[role]]
-}

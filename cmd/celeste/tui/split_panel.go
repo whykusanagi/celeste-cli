@@ -80,19 +80,6 @@ func (s *SplitPanel) ScrollDown(lines int) {
 	}
 }
 
-// ScrollRightUp scrolls the right artifact panel up.
-func (s *SplitPanel) ScrollRightUp(lines int) {
-	s.rightScroll += lines
-}
-
-// ScrollRightDown scrolls the right artifact panel down.
-func (s *SplitPanel) ScrollRightDown(lines int) {
-	s.rightScroll -= lines
-	if s.rightScroll < 0 {
-		s.rightScroll = 0
-	}
-}
-
 // AtBottom reports whether the left panel is auto-following the latest entry.
 func (s *SplitPanel) AtBottom() bool { return s.scrollOffset == 0 }
 

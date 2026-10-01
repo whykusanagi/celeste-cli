@@ -17,19 +17,6 @@ const (
 	VerdictContested
 )
 
-func (v VerdictKind) String() string {
-	switch v {
-	case VerdictApproved:
-		return "approved"
-	case VerdictNeedsWork:
-		return "needs_work"
-	case VerdictContested:
-		return "contested"
-	default:
-		return "unknown"
-	}
-}
-
 // Issue is a code issue raised by the reviewer.
 type Issue struct {
 	File        string
@@ -71,12 +58,6 @@ func NewDebateManager(opts DebateOptions) *DebateManager {
 	}
 	return &DebateManager{opts: opts}
 }
-
-// MaxRounds returns the configured maximum debate rounds.
-func (d *DebateManager) MaxRounds() int { return d.opts.MaxRounds }
-
-// Turns returns all turns added so far.
-func (d *DebateManager) Turns() []DebateTurn { return d.turns }
 
 // AddTurn appends a turn to the debate.
 func (d *DebateManager) AddTurn(turn DebateTurn) {

@@ -62,15 +62,6 @@ func DefaultConfig() PermissionConfig {
 	}
 }
 
-// DefaultConfigPath returns the default path for the permissions config file.
-func DefaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".celeste", "permissions.json")
-}
-
 // LoadConfig reads a PermissionConfig from disk. If the file does not exist,
 // it returns DefaultConfig() without error. If the file exists but contains
 // invalid JSON or an unrecognized mode, it returns an error.

@@ -215,11 +215,6 @@ func cachedCatalog(provider, baseURL, apiKey string, disk bool) (models []Catalo
 	return e.Models, catalogNow().Sub(e.FetchedAt) > catalogTTL, true
 }
 
-// SameEndpoint reports whether two base URLs name the same catalog.
-func SameEndpoint(provider, a, b string) bool {
-	return normalizeBaseURL(provider, a) == normalizeBaseURL(provider, b)
-}
-
 // CatalogFor returns the catalog most recently loaded in this process for a
 // provider, whatever its endpoint. It never reads disk or the network: the
 // tool gate calls it from the TUI's Update.

@@ -44,9 +44,7 @@ RUN mkdir -p /tmp/tests && \
     go test -c -o /tmp/tests/costs_test ./cmd/celeste/costs && \
     go test -c -o /tmp/tests/hooks_test ./cmd/celeste/hooks && \
     go test -c -o /tmp/tests/memories_test ./cmd/celeste/memories && \
-    go test -c -o /tmp/tests/sessions_test ./cmd/celeste/sessions && \
     go test -c -o /tmp/tests/checkpoints_test ./cmd/celeste/checkpoints && \
-    go test -c -o /tmp/tests/planning_test ./cmd/celeste/planning && \
     go test -c -o /tmp/tests/server_test ./cmd/celeste/server && \
     echo "Test binaries built successfully"
 

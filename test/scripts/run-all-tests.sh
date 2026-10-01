@@ -94,9 +94,7 @@ run_test "grimoire" "$TEST_DIR/grimoire_test"
 run_test "costs" "$TEST_DIR/costs_test"
 run_test "hooks" "$TEST_DIR/hooks_test"
 run_test "memories" "$TEST_DIR/memories_test"
-run_test "sessions" "$TEST_DIR/sessions_test"
 run_test "checkpoints" "$TEST_DIR/checkpoints_test"
-run_test "planning" "$TEST_DIR/planning_test"
 run_test "server" "$TEST_DIR/server_test"
 
 # Print summary

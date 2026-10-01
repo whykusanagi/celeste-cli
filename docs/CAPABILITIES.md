@@ -14,7 +14,7 @@ Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beas
 **Direct Codegraph MCP Tools** (v1.9.0+, no chat-LLM round-trip):
 `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim results, streaming progress notifications, explicit reindex control.
 
-**Runtime Modes:** Chat (auto-loop tools), Agent (autonomous), Orchestrator (debate).
+**Three Ways to Run:** Chat (auto-loop tools), Agent (autonomous), Orchestrator (debate).
 
 **9 Chat Providers:** Sakana AI (default), Grok/xAI, OpenAI, Anthropic (native), Google Gemini, Venice.ai (tools depend on the model), Vertex AI, OpenRouter, and any local OpenAI-compatible server (mlx-vlm, Ollama, LM Studio, llama.cpp).
 

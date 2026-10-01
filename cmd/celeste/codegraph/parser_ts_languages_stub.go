@@ -49,9 +49,6 @@ var extToLang = map[string]string{
 	".jl":    "julia",
 }
 
-// LookupLangSpec returns nil in non-CGo builds (no tree-sitter available).
-func LookupLangSpec(ext string) *langSpec { return nil }
-
 // SupportedLanguage returns the language name for a file extension.
 func SupportedLanguage(ext string) string { return extToLang[ext] }
 

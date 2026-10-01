@@ -104,13 +104,6 @@ func RegisterConfigTools(registry *tools.Registry, configLoader ConfigLoader) {
 	RegisterCryptoTools(registry, configLoader)
 }
 
-// RegisterReadOnlyDevTools registers only read-only dev tools (for restricted agent mode).
-func RegisterReadOnlyDevTools(registry *tools.Registry, workspace string) {
-	registry.RegisterWithModes(NewReadFileTool(workspace), tools.ModeAgent)
-	registry.RegisterWithModes(NewListFilesTool(workspace), tools.ModeAgent)
-	registry.RegisterWithModes(NewSearchTool(workspace), tools.ModeAgent)
-}
-
 // RegisterCodeGraphTools registers code graph tools with the given indexer.
 // Called after the indexer is initialized during startup.
 func RegisterCodeGraphTools(registry *tools.Registry, indexer *codegraph.Indexer) {

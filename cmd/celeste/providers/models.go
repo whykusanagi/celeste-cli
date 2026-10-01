@@ -2,8 +2,6 @@
 package providers
 
 import (
-	"context"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -27,24 +25,6 @@ func NewModelService(apiKey, baseURL, provider string) *ModelService {
 		provider: provider,
 		detector: NewModelDetection(provider),
 	}
-}
-
-// ListModels returns the models the provider serves, from its catalog (the
-// cache, or one fetch when there is none). A provider without a catalog gets
-// the static list; a failed fetch gets the static list and the error. It may
-// block on the network: never call it from a Bubble Tea Update.
-func (s *ModelService) ListModels(ctx context.Context) ([]ModelInfo, error) {
-	if _, ok := Registry[s.provider]; !ok {
-		return nil, fmt.Errorf("unknown provider: %s", s.provider)
-	}
-	if !HasCatalog(s.provider) {
-		return s.getStaticModels(), nil
-	}
-	cat, ok := LoadCatalog(ctx, s.provider, s.baseURL, s.apiKey)
-	if !ok {
-		return s.getStaticModels(), fmt.Errorf("could not list %s models, using static models", s.provider)
-	}
-	return ModelInfosFromCatalog(s.provider, cat), nil
 }
 
 // ModelInfosFromCatalog turns a catalog into display rows, tool-capable
@@ -73,35 +53,6 @@ func ModelInfosFromCatalog(provider string, cat []CatalogModel) []ModelInfo {
 	}
 	sortModelsByCapability(result)
 	return result
-}
-
-// GetBestToolModel returns the recommended model for function calling.
-func (s *ModelService) GetBestToolModel() string {
-	return s.detector.GetDefaultToolModel()
-}
-
-// ValidateModel checks if a model exists and returns its capabilities.
-func (s *ModelService) ValidateModel(ctx context.Context, modelID string) (ModelInfo, error) {
-	models, err := s.ListModels(ctx)
-	if err != nil {
-		// If listing fails, do basic validation
-		return ModelInfo{
-			ID:            modelID,
-			Name:          modelID,
-			Provider:      s.provider,
-			SupportsTools: s.detector.SupportsTools(modelID),
-			Description:   "Model validation unavailable",
-		}, nil
-	}
-
-	// Find model in list
-	for _, m := range models {
-		if m.ID == modelID {
-			return m, nil
-		}
-	}
-
-	return ModelInfo{}, fmt.Errorf("model %s not found for provider %s", modelID, s.provider)
 }
 
 // StaticModels is the offline model list for a provider, used when no
@@ -416,55 +367,4 @@ func sortModelsByCapability(models []ModelInfo) {
 	sort.SliceStable(models, func(i, j int) bool {
 		return models[i].SupportsTools && !models[j].SupportsTools
 	})
-}
-
-// FormatModelList returns a formatted string for display.
-func FormatModelList(models []ModelInfo, highlightToolModels bool) string {
-	var toolModels []string
-	var otherModels []string
-
-	for _, m := range models {
-		line := fmt.Sprintf("  %s", m.ID)
-		if m.Description != "" {
-			line += fmt.Sprintf(" - %s", m.Description)
-		}
-		if m.ContextWindow > 0 {
-			line += fmt.Sprintf(" (%dk context)", m.ContextWindow/1000)
-		}
-
-		if m.SupportsTools {
-			if highlightToolModels {
-				toolModels = append(toolModels, "✓ "+line)
-			} else {
-				toolModels = append(toolModels, line)
-			}
-		} else {
-			otherModels = append(otherModels, line+" (no skills)")
-		}
-	}
-
-	var result strings.Builder
-
-	if len(toolModels) > 0 {
-		if highlightToolModels {
-			result.WriteString("Function Calling Enabled (Skills Available):\n")
-		}
-		for _, m := range toolModels {
-			result.WriteString(m + "\n")
-		}
-	}
-
-	if len(otherModels) > 0 {
-		if len(toolModels) > 0 {
-			result.WriteString("\n")
-		}
-		if highlightToolModels {
-			result.WriteString("Other Models (Skills Disabled):\n")
-		}
-		for _, m := range otherModels {
-			result.WriteString(m + "\n")
-		}
-	}
-
-	return result.String()
 }

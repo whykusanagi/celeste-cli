@@ -335,18 +335,6 @@ func (s *Store) UpsertFile(f FileRecord) error {
 	return err
 }
 
-// GetFile retrieves a file record by path.
-func (s *Store) GetFile(path string) (*FileRecord, error) {
-	f := &FileRecord{}
-	err := s.db.QueryRow(
-		`SELECT path, language, size, content_hash, indexed_at FROM files WHERE path = ?`, path,
-	).Scan(&f.Path, &f.Language, &f.Size, &f.ContentHash, &f.IndexedAt)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
-
 // DeleteFile removes a file record.
 func (s *Store) DeleteFile(path string) error {
 	_, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, path)
@@ -632,46 +620,6 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 		files = append(files, f)
 	}
 	return files, rows.Err()
-}
-
-// StubResult represents a function/method with zero outgoing call edges.
-type StubResult struct {
-	Name     string
-	File     string
-	Line     int
-	Kind     string
-	OutEdges int
-	InEdges  int
-}
-
-// FindStubs returns functions/methods with zero outgoing call edges.
-// These are likely stubs, placeholders, or dead code.
-func (s *Store) FindStubs(includeTests bool) ([]StubResult, error) {
-	query := `
-		SELECT s.name, s.file, s.line, s.kind,
-		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
-		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
-		FROM symbols s
-		WHERE s.kind IN ('function', 'method')
-		AND (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) = 0
-		ORDER BY called_by ASC, s.file, s.line
-	`
-
-	rows, err := s.db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("find stubs query: %w", err)
-	}
-	defer rows.Close()
-
-	var results []StubResult
-	for rows.Next() {
-		var r StubResult
-		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.OutEdges, &r.InEdges); err != nil {
-			return nil, err
-		}
-		results = append(results, r)
-	}
-	return results, rows.Err()
 }
 
 // LazyRedirectCandidate represents a function whose name implies complex behavior

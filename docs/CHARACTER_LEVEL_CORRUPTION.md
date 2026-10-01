@@ -3,6 +3,8 @@
 **Date**: 2025-12-12
 **Issue Fixed**: Dashboard titles now use character-level Japanese mixing instead of word replacement
 
+> **Note (2.0 cleanup):** `tui.CorruptTextJapanese` was unused and has been removed. The live implementation is `corruptTextCharacterLevel` in `cmd/celeste/commands/corruption.go`; the examples below that call `tui.CorruptTextJapanese` describe the same behaviour.
+
 ---
 
 ## The Problem

@@ -462,8 +462,9 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 	// whether the system prompt itself is omitted — so we always include it here.
 	//
 	// TODO(prompt-caching): When using Anthropic via OpenAI compat, structure
-	// the system message with cache_control hints for prompt caching. The static
-	// prefix of the CacheablePrompt should include:
+	// the system message with cache_control hints for prompt caching. The
+	// static prefix of the system prompt (split on "\n\n---\n\n") should
+	// include:
 	//   {"type": "text", "text": "<static>", "cache_control": {"type": "ephemeral"}}
 	// This requires switching from a simple string content to multi-part content
 	// blocks when b.isAnthropicProvider() is true.

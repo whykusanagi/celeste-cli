@@ -165,7 +165,7 @@ func runPlanCommand(args []string) {
 	fmt.Println()
 	fmt.Println("To create and execute plans:")
 	fmt.Println("  celeste agent <goal>    Autonomous planning + execution")
-	fmt.Println("  /plan <goal>            Enter plan mode (in interactive chat)")
+	fmt.Println("  /plan <goal>            Ask Celeste to draft and write a plan (in interactive chat)")
 	fmt.Println("  celeste plan show       Show current plan")
 }
 

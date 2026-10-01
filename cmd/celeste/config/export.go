@@ -234,16 +234,3 @@ func GetExportDir() string {
 	}
 	return filepath.Join(homeDir, ".celeste", "exports")
 }
-
-// ExportSession is a helper function to export a session by ID
-func ExportSession(sessionID int64, format string) (string, error) {
-	// Load session
-	session, err := LoadSession(sessionID)
-	if err != nil {
-		return "", fmt.Errorf("failed to load session: %w", err)
-	}
-
-	// Create exporter and export
-	exporter := NewExporter(session)
-	return exporter.ExportToFile(format)
-}

@@ -8,7 +8,7 @@ The code graph provides structural understanding of codebases through three sear
 
 | Layer | Example Query | What It Finds | When To Use |
 |-------|--------------|---------------|-------------|
-| **Graph** | "what calls X", "what implements Y" | Structural relationships | You know a specific symbol |
+| **Graph** | "what calls X", "callers of Y" | Call relationships | You know a specific symbol |
 | **Semantic (MinHash)** | "code related to authentication" | Conceptually related symbols | You have a concept, not a name |
 | **Keyword** | "validateSession" | Exact name matches | You know the exact name |
 
@@ -131,7 +131,12 @@ New `lsh_bands(band_id, band_hash, symbol_id)` SQLite table. Band hashes precomp
 
 ## Supported Edge Kinds
 
-`calls`, `imports`, `implements`, `embeds`, `references`
+Only `calls` is currently emitted by any parser. `imports`, `implements`,
+`embeds` and `references` are defined as edge-kind constants for future
+use but nothing writes them yet — interface implementations, embeds and
+type references are not tracked. Edges also resolve by bare symbol name
+(not package-qualified), so same-named functions in different packages
+can collapse onto one graph node.
 
 ## Supported Languages (indexable)
 

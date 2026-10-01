@@ -3,6 +3,7 @@ package llm
 
 import (
 	"context"
+	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -79,7 +80,7 @@ func isAnthropicProvider(baseURL string) bool {
 	if baseURL == "" {
 		return false
 	}
-	return contains(baseURL, "api.anthropic.com")
+	return strings.Contains(baseURL, "api.anthropic.com")
 }
 
 // isXAIProvider checks if a base URL belongs to xAI (Grok).
@@ -87,7 +88,7 @@ func isXAIProvider(baseURL string) bool {
 	if baseURL == "" {
 		return false
 	}
-	return contains(baseURL, "api.x.ai") || contains(baseURL, "x.ai/v1")
+	return strings.Contains(baseURL, "api.x.ai") || strings.Contains(baseURL, "x.ai/v1")
 }
 
 // isGoogleProvider checks if a base URL belongs to Google Cloud.
@@ -97,31 +98,15 @@ func isGoogleProvider(baseURL string) bool {
 	}
 
 	// Check for Google AI Studio (Gemini API)
-	if contains(baseURL, "generativelanguage.googleapis.com") {
+	if strings.Contains(baseURL, "generativelanguage.googleapis.com") {
 		return true
 	}
 
 	// Check for Vertex AI
-	if contains(baseURL, "aiplatform.googleapis.com") ||
-		contains(baseURL, "vertexai") {
+	if strings.Contains(baseURL, "aiplatform.googleapis.com") ||
+		strings.Contains(baseURL, "vertexai") {
 		return true
 	}
 
 	return false
-}
-
-// contains is a simple string contains helper
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		(len(s) > len(substr) && indexOf(s, substr) >= 0))
-}
-
-// indexOf returns the index of substr in s, or -1 if not found
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }

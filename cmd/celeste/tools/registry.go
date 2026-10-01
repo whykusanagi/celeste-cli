@@ -291,12 +291,6 @@ func (r *Registry) GetToolDefinitions() []map[string]any {
 	return r.toolsToDefinitions(tools)
 }
 
-// GetToolDefinitionsForMode returns tools for the given mode in OpenAI function-calling format.
-func (r *Registry) GetToolDefinitionsForMode(mode RuntimeMode) []map[string]any {
-	tools := r.GetTools(mode)
-	return r.toolsToDefinitions(tools)
-}
-
 func (r *Registry) toolsToDefinitions(tools []Tool) []map[string]any {
 	defs := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {

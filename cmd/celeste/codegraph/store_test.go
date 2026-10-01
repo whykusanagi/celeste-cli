@@ -108,28 +108,6 @@ func TestStore_AddAndQueryEdges(t *testing.T) {
 	assert.Equal(t, callerID, edges[0].SourceID)
 }
 
-func TestStore_UpsertAndGetFile(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-
-	f := FileRecord{
-		Path:        "cmd/server/handler.go",
-		Language:    "go",
-		Size:        4096,
-		ContentHash: "abc123",
-	}
-
-	err := store.UpsertFile(f)
-	require.NoError(t, err)
-
-	got, err := store.GetFile(f.Path)
-	require.NoError(t, err)
-	assert.Equal(t, f.Language, got.Language)
-	assert.Equal(t, f.Size, got.Size)
-	assert.Equal(t, f.ContentHash, got.ContentHash)
-	assert.Greater(t, got.IndexedAt, int64(0))
-}
-
 func TestStore_DeleteFileSymbols(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
