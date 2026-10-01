@@ -58,6 +58,8 @@ type AppModel struct {
 	provider          string // Current provider (grok, openai, venice, etc.) - detected from endpoint
 	skillsEnabled     bool   // Whether skills/function calling is available
 	modelPinned       bool   // /set-model --force: resolution leaves the model alone
+	modelTrial        string // a /set-model name the provider hasn't confirmed yet
+	modelBeforeTrial  string // the model to restore if modelTrial is not found
 	modelCheckPending bool   // the restored model needs a catalog load (Init runs it)
 	version           string // Application version (e.g., "1.0.1")
 	build             string // Build identifier (e.g., "bubbletea-tui")
@@ -1554,6 +1556,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.persistSession()
 				}
 				if result.StateChange.Model != nil {
+					// A typed name is on trial until the provider confirms
+					// it: a 404 restores this model instead of swapping in
+					// another one.
+					m.modelTrial, m.modelBeforeTrial = *result.StateChange.Model, m.model
 					m.model = *result.StateChange.Model
 					m.modelPinned = result.StateChange.PinModel
 					m.header = m.header.SetModel(m.model)

@@ -293,3 +293,50 @@ func TestForcePinSurvivesResume(t *testing.T) {
 		t.Errorf("resumed: model=%q pinned=%v chat:\n%s", r.model, r.modelPinned, chatText(r))
 	}
 }
+
+// A name typed into /set-model that the provider then reports gone is not
+// swapped for another model: the chat says it wasn't found and keeps the
+// previous one.
+func TestSetModelTypedNameNotFoundKeepsPrevious(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// The test catalog is complete: an unlisted name counts as a 404.
+	defer providers.SetCatalogForTest("anthropic", []providers.CatalogModel{{ID: "claude-sonnet-4-5-20250929"}, {ID: "claude-opus-4-5-20251101"}})()
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "anthropic", BaseURL: "https://api.anthropic.com/v1", Model: "claude-sonnet-4-5-20250929"}}
+	m := NewApp(client).WithEndpoint("anthropic")
+	m.model = "claude-sonnet-4-5-20250929"
+	m, cmd := step(t, m, SendMessageMsg{Content: "/set-model claude-sonnet-9-typo"})
+	m = runCatalogCmds(t, m, cmd)
+	if m.model != "claude-sonnet-4-5-20250929" {
+		t.Errorf("model = %q, want the previous model kept", m.model)
+	}
+	if got := client.models[len(client.models)-1]; got != "claude-sonnet-4-5-20250929" {
+		t.Errorf("client model = %q", got)
+	}
+	text := chatText(m)
+	if !strings.Contains(text, "model not found: claude-sonnet-9-typo") || strings.Contains(text, "no longer serves") {
+		t.Errorf("chat:\n%s", text)
+	}
+	if cfg, err := config.Load(); err == nil && cfg.Model == "claude-sonnet-9-typo" {
+		t.Error("the config still holds the name that was not found")
+	}
+}
+
+// runCatalogCmds runs cmd (and any batch inside it) and feeds back the
+// catalogReadyMsgs it yields.
+func runCatalogCmds(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			m = runCatalogCmds(t, m, c)
+		}
+	case catalogReadyMsg:
+		m, _ = step(t, m, msg)
+	}
+	return m
+}

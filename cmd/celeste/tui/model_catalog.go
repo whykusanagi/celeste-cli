@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
@@ -80,6 +81,27 @@ func (m AppModel) resolveFromMemory() (AppModel, bool) {
 		return m.recomputeSkills(), false
 	}
 	model, note, pending := providers.ResolveFromMemory(ep.Provider, ep.BaseURL, ep.APIKey, m.model)
+	if m.modelTrial != "" && m.modelTrial == m.model {
+		if model != m.model {
+			// The name the user just typed isn't served: say so and go
+			// back, rather than pick some other model for them.
+			typed, previous := m.modelTrial, m.modelBeforeTrial
+			m.modelTrial, m.modelBeforeTrial = "", ""
+			m.chat = m.chat.AddSystemMessage("❌ model not found: " + typed)
+			if previous == "" {
+				previous = model
+			}
+			// /set-model saved the typed name to the config; undo that too.
+			if cfg, err := config.Load(); err == nil && cfg.Model == typed {
+				cfg.Model = previous
+				_ = config.Save(cfg)
+			}
+			return m.applyModel(previous, ""), false
+		}
+		if !pending {
+			m.modelTrial, m.modelBeforeTrial = "", "" // confirmed
+		}
+	}
 	return m.applyModel(model, note), pending
 }
 
@@ -134,6 +156,7 @@ func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 	m.endpoint = endpoint
 	m.provider = endpoint // provider names match endpoint names
 	m.modelPinned = false // a /set-model --force pin belongs to the old endpoint
+	m.modelTrial, m.modelBeforeTrial = "", ""
 	m.status = m.status.SetText(fmt.Sprintf("Switched to %s", m.endpoint))
 
 	// Leaving Venice turns NSFW mode off.
