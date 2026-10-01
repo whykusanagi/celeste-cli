@@ -87,6 +87,7 @@ func TestSessionCodecCapsOversizedLegacyToolResults(t *testing.T) {
 	require.Len(t, got, 3)
 	assert.LessOrEqual(t, len(got[2].Content), ctxmgr.DefaultMaxToolResultBytes)
 	assert.Contains(t, got[2].Content, "snipped")
+	assert.Contains(t, got[2].Content, "no longer available", "the model is told the middle cannot be recalled")
 	assert.Equal(t, huge, saved[2].Content, "the saved session itself is not modified")
 }
 

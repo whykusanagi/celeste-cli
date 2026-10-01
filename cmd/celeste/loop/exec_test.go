@@ -749,4 +749,8 @@ func TestLoopCapsLargeResultWhenSpillFails(t *testing.T) {
 	if !strings.Contains(got, "snipped") {
 		t.Fatalf("the cut result carries no marker: %q", got[len(got)-300:])
 	}
+	// The model is told the middle is gone for good and how to get it.
+	if !strings.Contains(got, "could not be saved") || !strings.Contains(got, "narrower output") {
+		t.Fatalf("the cut does not say the output cannot be recalled: %q", got[len(got)-600:])
+	}
 }

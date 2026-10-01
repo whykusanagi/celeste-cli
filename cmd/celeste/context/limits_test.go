@@ -177,28 +177,31 @@ func TestCapToolResult_DefaultMaxBytes(t *testing.T) {
 // fallback when the spill fails, and the cap on histories loaded from disk.
 // It never returns more than maxBytes and marks the cut.
 func TestSnipToolResult(t *testing.T) {
-	if got := SnipToolResult("short", 1024); got != "short" {
+	if got := SnipToolResult("short", 1024, ""); got != "short" {
 		t.Fatalf("under the cap the text must come back unchanged, got %q", got)
 	}
 	exact := strings.Repeat("e", 4096)
-	if got := SnipToolResult(exact, 4096); got != exact {
+	if got := SnipToolResult(exact, 4096, "note"); got != exact {
 		t.Fatal("a text exactly at the cap must come back unchanged")
 	}
-	for _, max := range []int{1024, 4096, DefaultMaxToolResultBytes} {
-		text := "HEAD" + strings.Repeat("x", 3*max) + "TAIL"
-		got := SnipToolResult(text, max)
-		if len(got) > max {
-			t.Fatalf("max %d: got %d bytes", max, len(got))
-		}
-		if !strings.HasPrefix(got, "HEAD") || !strings.HasSuffix(got, "TAIL") {
-			t.Fatalf("max %d: head and tail must both be kept", max)
-		}
-		if !strings.Contains(got, "snipped") {
-			t.Fatalf("max %d: the cut carries no marker", max)
+	note := "The full output could not be saved; re-run with narrower output."
+	for _, limit := range []int{1024, 4096, DefaultMaxToolResultBytes} {
+		text := "HEAD" + strings.Repeat("x", 3*limit) + "TAIL"
+		for _, n := range []string{"", note} {
+			got := SnipToolResult(text, limit, n)
+			if len(got) > limit {
+				t.Fatalf("limit %d, note %q: got %d bytes", limit, n, len(got))
+			}
+			if !strings.HasPrefix(got, "HEAD") || !strings.HasSuffix(got, "TAIL") {
+				t.Fatalf("limit %d: head and tail must both be kept", limit)
+			}
+			if !strings.Contains(got, "snipped") || !strings.Contains(got, n) {
+				t.Fatalf("limit %d: the cut lacks its marker or note", limit)
+			}
 		}
 	}
 	// A cut never splits a UTF-8 sequence.
-	got := SnipToolResult(strings.Repeat("é", 4096), 1024)
+	got := SnipToolResult(strings.Repeat("é", 4096), 1024, "")
 	if !utf8.ValidString(got) {
 		t.Fatal("the cut split a multi-byte character")
 	}
