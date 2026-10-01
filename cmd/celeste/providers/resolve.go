@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"fmt"
 	"strings"
 )
@@ -35,16 +34,6 @@ func ResolveModel(provider, configured string, cat []CatalogModel, ok bool) (mod
 		note = fmt.Sprintf("%s no longer serves %s; using %s", provider, configured, model)
 	}
 	return model, note
-}
-
-// ResolveEndpointModel resolves the configured model for an endpoint: it
-// loads the provider's catalog (the cache, or one fetch bounded by the fetch
-// timeout) and applies ResolveModel. It may block on the network, so the chat
-// TUI calls it only before the alt screen opens.
-func ResolveEndpointModel(ctx context.Context, baseURL, apiKey, configured string) (model, note string) {
-	provider := DetectProvider(baseURL)
-	cat, ok := LoadCatalog(ctx, provider, baseURL, apiKey)
-	return ResolveModel(provider, configured, cat, ok)
 }
 
 func pickServed(provider, configured string, cat []CatalogModel) string {

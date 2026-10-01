@@ -482,6 +482,18 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	return nil
 }
 
+// ActiveEndpoint implements tui.ActiveEndpointer: the endpoint the client is
+// on now, so the chat can resolve its model against what it serves.
+func (a *TUIClientAdapter) ActiveEndpoint() tui.ActiveEndpoint {
+	c := a.client.GetConfig()
+	return tui.ActiveEndpoint{
+		Provider: providers.DetectProvider(c.BaseURL),
+		BaseURL:  c.BaseURL,
+		APIKey:   c.APIKey,
+		Model:    c.Model,
+	}
+}
+
 // ChangeModel changes the model for the current endpoint.
 func (a *TUIClientAdapter) ChangeModel(model string) error {
 	currentConfig := a.client.GetConfig()

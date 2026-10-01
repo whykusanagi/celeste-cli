@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -147,5 +150,36 @@ func TestChatWarnSinkCollectsThenForwards(t *testing.T) {
 	s.warn("later")
 	if len(got) != 1 || got[0] != "later" {
 		t.Fatalf("hookNotify got %v, want [later]", got)
+	}
+}
+
+// The chat starts on the model the provider serves: a retired configured
+// model is replaced before the TUI starts, the chat says so, and the config
+// file is not rewritten.
+func TestNewChatAppResolvesRetiredModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	yes := true
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true, Tools: &yes}})()
+
+	cfg := &config.Config{APIKey: "k", BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored", Timeout: 10}
+	app, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	if got := deps.adapter.client.GetConfig().Model; got != "venice-uncensored-1-2" {
+		t.Errorf("client model = %q, want venice-uncensored-1-2", got)
+	}
+	if ep := deps.adapter.ActiveEndpoint(); ep.Provider != "venice" || ep.Model != "venice-uncensored-1-2" {
+		t.Errorf("ActiveEndpoint = %+v", ep)
+	}
+	sized, _ := app.Update(tea.WindowSizeMsg{Width: 300, Height: 80})
+	if view := sized.View(); !strings.Contains(view, "no longer serves venice-uncensored") {
+		t.Errorf("the chat does not show the model note:\n%s", view)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".celeste", "config.json")); err == nil {
+		t.Error("resolution wrote a config file")
 	}
 }

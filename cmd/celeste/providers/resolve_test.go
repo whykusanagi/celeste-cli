@@ -1,9 +1,6 @@
 package providers
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 func TestResolveModel(t *testing.T) {
 	yes, no := true, false
@@ -123,19 +120,5 @@ func TestResolveModel(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestResolveEndpointModel(t *testing.T) {
-	isolateCatalog(t)
-	defer SetCatalogForTest("venice", []CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
-	model, note := ResolveEndpointModel(context.Background(), "https://api.venice.ai/api/v1", "k", "venice-uncensored")
-	if model != "venice-uncensored-1-2" || note == "" {
-		t.Errorf("got %q, %q", model, note)
-	}
-	// A provider without a catalog keeps the configured model.
-	model, note = ResolveEndpointModel(context.Background(), "http://127.0.0.1:8080/v1", "", "/models/qwen")
-	if model != "/models/qwen" || note != "" {
-		t.Errorf("local: got %q, %q", model, note)
 	}
 }

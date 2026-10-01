@@ -20,3 +20,10 @@ func SetCatalogForTest(provider string, models []CatalogModel) (restore func()) 
 		}
 	}
 }
+
+// ForgetCatalogsForTest is for tests only: it drops every catalog loaded in
+// this process, so a test that fetched one doesn't leak it into the next.
+func ForgetCatalogsForTest() {
+	waitCatalogRefreshes()
+	resetCatalogMemory()
+}

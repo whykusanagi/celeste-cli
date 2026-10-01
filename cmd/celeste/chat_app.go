@@ -61,6 +61,14 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	config.MigrationWarn = func(msg string) { tui.LogInfo("celeste: " + msg) }
 	restoreMigrationWarn := func() { config.MigrationWarn = prevMigrationWarn }
 
+	// Use the model the provider serves now: a retired one is replaced for
+	// this process (the config file is untouched). This may fetch the
+	// provider's catalog (bounded by its timeout); we're not in the TUI yet.
+	modelNotes := cfg.ResolveServedModels(context.Background())
+	for _, n := range modelNotes {
+		fmt.Fprintln(os.Stderr, "⚠ "+n)
+	}
+
 	// The session comes before Setup: its ID is the hooks' session_id.
 	// A fresh session per chat unless `celeste resume <id>` asked for one
 	// (auto-resume leaked agent markers into chat).
@@ -161,6 +169,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// in the chat too.
 	for _, w := range sink.done() {
 		app = app.WithSystemMessage("⚠ " + w)
+	}
+	for _, n := range modelNotes {
+		app = app.WithSystemMessage("⚠ " + n)
 	}
 
 	app = restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)

@@ -429,6 +429,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ev, ok := msg.(TurnEventMsg); ok {
 		return m.onTurnEvent(ev)
 	}
+	// So does a fetched model catalog: it belongs to the endpoint, not a view.
+	if ready, ok := msg.(catalogReadyMsg); ok {
+		return m.onCatalogReady(ready), nil
+	}
 
 	// Route to collections view if in that mode
 	if m.viewMode == "collections" {
@@ -1490,67 +1494,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Apply state changes
 			if result.StateChange != nil {
+				var catalogCmd tea.Cmd
 				if result.StateChange.EndpointChange != nil {
-					m.endpoint = *result.StateChange.EndpointChange
-
-					// Detect provider from endpoint name
-					// Provider detection will use endpoint name mapping
-					m.provider = m.endpoint
-
-					// Update skills availability and auto-select best model
-					if caps, ok := providers.GetProvider(m.provider); ok {
-						// AUTO-SELECT: Choose best tool-calling model for this provider
-						if caps.PreferredToolModel != "" {
-							m.model = caps.PreferredToolModel
-							m.header = m.header.SetModel(m.model)
-							LogInfo(fmt.Sprintf("Auto-selected model: %s (optimized for tool calling)", m.model))
-
-							// Update LLM client model
-							if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-								if err := switcher.ChangeModel(m.model); err != nil {
-									LogInfo(fmt.Sprintf("Error changing model: %v", err))
-								}
-							}
-						} else if caps.DefaultModel != "" {
-							m.model = caps.DefaultModel
-							m.header = m.header.SetModel(m.model)
-							LogInfo(fmt.Sprintf("Using default model: %s", m.model))
-
-							// Update LLM client model
-							if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-								if err := switcher.ChangeModel(m.model); err != nil {
-									LogInfo(fmt.Sprintf("Error changing model: %v", err))
-								}
-							}
-						}
-
-						// Recompute after the model is chosen: a ToolsPerModel
-						// provider (Venice) only knows tool support per model
-						// (#151 W6b).
-						m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
-						LogInfo(fmt.Sprintf("Provider detected: %s, skills enabled: %v", m.provider, m.skillsEnabled))
-					}
-
-					m.header = m.header.SetEndpoint(m.endpoint)
-					m.header = m.header.SetSkillsEnabled(m.skillsEnabled) // Update UI indicator
-					m.status = m.status.SetText(fmt.Sprintf("Switched to %s", m.endpoint))
-
-					// FIX: When switching endpoints, disable NSFW mode unless switching TO venice
-					if m.endpoint != "venice" && m.nsfwMode {
-						m.nsfwMode = false
-						m.header = m.header.SetNSFWMode(false)
-						LogInfo("NSFW mode disabled when switching away from Venice")
-					}
-
-					// Actually switch the LLM client endpoint
-					if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-						if err := switcher.SwitchEndpoint(m.endpoint); err != nil {
-							m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
-						}
-					}
-
-					// Persist session state
-					m.persistSession()
+					m, catalogCmd = m.switchEndpoint(*result.StateChange.EndpointChange)
 				}
 				if result.StateChange.NSFWMode != nil {
 					m.nsfwMode = *result.StateChange.NSFWMode
@@ -1569,6 +1515,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.status = m.status.SetText(fmt.Sprintf("Error switching to Venice: %v", err))
 							}
 						}
+						m, catalogCmd = m.adoptActiveModel()
 					} else {
 						// When NSFW mode is disabled, restore the safe endpoint
 						if m.safeEndpoint != "" {
@@ -1585,6 +1532,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
 							}
 						}
+						m, catalogCmd = m.adoptActiveModel()
 					}
 
 					// Persist session state
@@ -1659,6 +1607,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selector = m.selector.SetWidth(m.width)
 					m.selectorActive = true
 				}
+				return m, catalogCmd
 			}
 
 			return m, nil
@@ -2738,6 +2687,16 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			if m.provider != "" {
 				m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 				m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
+			}
+			// A session saved on a model the provider has since retired
+			// resumes on the served one. Cached catalog only: this runs
+			// before the program starts, after the startup fetch.
+			if src, ok := m.llmClient.(ActiveEndpointer); ok {
+				ep := src.ActiveEndpoint()
+				if cat, _, cached := providers.CachedCatalog(ep.Provider, ep.BaseURL); cached {
+					m = m.applyResolvedModel(ep.Provider, cat)
+					model = m.model
+				}
 			}
 
 			// Initialize context tracker with session and model
