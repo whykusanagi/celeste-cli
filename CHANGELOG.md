@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **providers:** Venice's default `venice-uncensored` is no longer served and caused routing errors; its offline fallback is now `venice-uncensored-1-2`.
 * **chat:** switching endpoints, `/set-model` and the model picker no longer wait on a network request inside the UI loop.
+* **chat:** when a tool result is too large and is saved to disk, the model now sees the "full output saved to" notice and can recall the rest. A second, per-request 64 KiB trim used to cut the notice off ([#211](https://github.com/whykusanagi/celeste-cli/issues/211)).
+* **loop:** a tool result is capped once, at 128 KiB, when it is recorded, including when the spill file cannot be written. Requests and their retries send the conversation unchanged; nothing trims tool results per request any more.
 
 ### Hooks
 
