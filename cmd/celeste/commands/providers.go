@@ -304,7 +304,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "anthropic":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: 🔜 Ready\n")
-		output.WriteString("  Status: OpenAI mode limited, native API recommended\n")
+		output.WriteString("  Status: Native API implemented and recommended\n")
 	case "gemini", "vertex", "openrouter", "digitalocean", "elevenlabs":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: ❓ Needs API key\n")
@@ -339,14 +339,14 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 		output.WriteString("  • Privacy-focused provider\n")
 	case "anthropic":
 		output.WriteString("  • 200k context window\n")
-		output.WriteString("  • OpenAI compatibility mode has limitations\n")
-		output.WriteString("  • Native API recommended (not yet implemented)\n")
-		output.WriteString("  • No dynamic model listing\n")
+		output.WriteString("  • Native API implemented and recommended\n")
+		output.WriteString("  • OpenAI compatibility mode is for testing only\n")
+		output.WriteString("  • Dynamic model listing via GET /v1/models\n")
 	case "gemini":
 		output.WriteString("  • Free tier available\n")
 		output.WriteString("  • Multi-modal capabilities\n")
-		output.WriteString("  • OpenAI compatibility mode (untested)\n")
-		output.WriteString("  • May require native Google AI SDK\n")
+		output.WriteString("  • Native Google GenAI SDK (not OpenAI compatibility mode)\n")
+		output.WriteString("  • Automatic authentication via API key\n")
 	case "vertex":
 		output.WriteString("  • Enterprise GCP integration\n")
 		output.WriteString("  • Requires OAuth setup\n")

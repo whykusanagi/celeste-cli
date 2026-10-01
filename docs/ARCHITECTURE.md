@@ -17,12 +17,12 @@ Comprehensive system architecture for Celeste CLI.
 
 ## System Overview
 
-Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provider LLM support, persistent sessions, and three runtime modes: chat, agent and orchestrator — each offering a different level of autonomy and observability.
+Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provider LLM support, persistent sessions, and three ways to run: chat, agent and orchestrator — each offering a different level of autonomy and observability.
 
 ### Key Features
 
 - **Multi-Provider Support**: OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
-- **Three Runtime Modes**: Chat (tools always loop), Agent (autonomous runs), Orchestrator (multi-model debate)
+- **Three Ways to Run**: Chat (tools always loop), Agent (autonomous runs), Orchestrator (multi-model debate)
 - **48 Built-in Tools**: Function calling for weather, currency, QR codes, tarot, and more
 - **Interactive TUI**: Split-panel Bubble Tea interface with real-time event streaming
 - **Session Persistence**: Auto-save conversations, command history, and model selection across restarts
@@ -77,7 +77,7 @@ flowchart TD
 
 ---
 
-## Runtime Modes
+## Three Ways to Run
 
 There are three distinct ways to interact with the LLM. They share the same config and provider system but differ fundamentally in how much autonomy the model has and what the TUI shows.
 
@@ -212,7 +212,7 @@ Both panels are scrollable (`PgUp`/`PgDn`).
 1. User types message → input.go adds to history (↑/↓ to recall)
    ↓
 2. Check for slash command (commands/commands.go)
-   ├─ /agent  → agent mode (see Runtime Modes)
+   ├─ /agent  → agent mode (see Three Ways to Run)
    ├─ /orchestrate → orchestrator mode
    ├─ /nsfw, /endpoint, /model, etc. → config updates
    └─ plain text → continue to LLM

@@ -37,7 +37,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 🎭 **Celeste Personality** - Embedded AI personality with lore-accurate responses
 - 🔗 **Blockchain Tools** - IPFS, Alchemy, wallet security monitoring
 
-### Three Runtime Modes
+### Three Ways to Run
 
 | Mode | Command | What it does |
 |------|---------|-------------|
@@ -961,7 +961,7 @@ celeste -config grok chat
 - **DigitalOcean Gradient** (Agent API with RAG - supports stream_options.include_usage)
 
 ❌ **No Support** (Uses estimation only):
-- Anthropic Claude (Native API - different format, not yet implemented)
+- Anthropic Claude (native API implemented; its usage format differs from `stream_options.include_usage`, so automatic tracking isn't wired up)
 - ElevenLabs (Voice-focused API)
 
 **Examples:**
