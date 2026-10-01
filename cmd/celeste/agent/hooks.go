@@ -8,6 +8,8 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 // compactTrigger is PreCompact/PostCompact's trigger for the agent's own
@@ -15,6 +17,33 @@ import (
 const compactTrigger = "auto"
 
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
+
+// ErrGoalBlocked matches (errors.Is) a goal a UserPromptSubmit hook blocked:
+// a deny, or a hook that failed. The error's text adds the hook's reason.
+var ErrGoalBlocked = errors.New("goal blocked by a UserPromptSubmit hook")
+
+// submitGoal runs the user's goal through UserPromptSubmit (Options.CheckGoal)
+// and returns the text the model receives: the goal, plus the hooks' context
+// in a <hook-context> block, the bytes the chat sends. The context is part of
+// the goal message itself, so the planning request (which bypasses the loop)
+// and a resumed run's checkpoint carry it too. An interrupted hook returns
+// ctx's error.
+func (r *Runner) submitGoal(ctx context.Context, goal string) (string, error) {
+	if !r.options.CheckGoal {
+		return goal, nil
+	}
+	msg, v, err := loop.UserPromptSubmit(hooks.WithWarn(ctx, r.warning), r.liveHooks(), tui.ChatMessage{Role: "user", Content: goal})
+	if err != nil {
+		return "", err
+	}
+	if v.Blocked {
+		return "", fmt.Errorf("%w: %s", ErrGoalBlocked, v.Reason)
+	}
+	if c, _ := msg.Metadata[tui.MetaHookContext].(string); c != "" {
+		goal += loop.HookContextBlock(c)
+	}
+	return goal, nil
+}
 
 // warning sends s to the run's warning sink. r.warn is already gated by
 // NewRunner; the errOut fallback (runners built as struct literals) goes
