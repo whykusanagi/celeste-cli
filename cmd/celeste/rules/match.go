@@ -2,7 +2,7 @@ package rules
 
 import (
 	"encoding/json"
-	"strings"
+	"unicode/utf8"
 )
 
 // Facts are what the built-in guards know about the session, kept by the
@@ -37,10 +37,11 @@ type Call struct {
 	Input map[string]any
 }
 
-// scanBack is how far before the new text a text scan starts, so a match
-// split across deltas is found. A match longer than this that straddles
-// many deltas can be missed.
-const scanBack = 256
+// scanBack is how much of the reply the matcher keeps before each new
+// delta, so a match split across deltas is found. It also bounds the text
+// a scan reads (rules are RE2, linear in it) and the matcher's memory. A
+// match longer than this that straddles many deltas can be missed.
+const scanBack = 4096
 
 // Matcher runs a Set over one session. Not safe for concurrent use: the
 // caller (steer.Session) serializes it.
@@ -50,8 +51,7 @@ type Matcher struct {
 	request int            // requests started this session
 	last    map[string]int // rule → request it last fired
 	fired   map[string]bool
-	text    strings.Builder
-	scanned int
+	tail    string // the last scanBack bytes of this request's reply
 }
 
 // NewMatcher returns a matcher over set (nil: no rules).
@@ -66,8 +66,7 @@ func (m *Matcher) Facts() *Facts { return &m.facts }
 // each rule fires at most once per request.
 func (m *Matcher) StartRequest() {
 	m.request++
-	m.text.Reset()
-	m.scanned = 0
+	m.tail = ""
 	m.fired = map[string]bool{}
 }
 
@@ -76,14 +75,8 @@ func (m *Matcher) Text(delta string) []Hit {
 	if m.set.Len() == 0 || delta == "" {
 		return nil
 	}
-	m.text.WriteString(delta)
-	full := m.text.String()
-	from := m.scanned - scanBack
-	if from < 0 {
-		from = 0
-	}
-	window := full[from:]
-	m.scanned = len(full)
+	window := m.tail + delta
+	m.tail = keepTail(window, scanBack)
 	var hits []Hit
 	for _, r := range m.set.Rules {
 		for _, sc := range r.Scopes {
@@ -175,4 +168,16 @@ func fieldText(v any) (string, bool) {
 		b, err := json.Marshal(t)
 		return string(b), err == nil
 	}
+}
+
+// keepTail returns at most n trailing bytes of s, starting on a rune.
+func keepTail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := len(s) - n
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return s[i:]
 }

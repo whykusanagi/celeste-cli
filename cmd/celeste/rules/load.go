@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,7 +44,7 @@ func Load(home string, grimoire []Section, warn func(string)) *Set {
 		paths, _ := filepath.Glob(filepath.Join(home, ".celeste", "rules", "*.md"))
 		sort.Strings(paths)
 		for _, p := range paths {
-			data, err := os.ReadFile(p)
+			data, err := readCapped(p)
 			if err != nil {
 				warn(fmt.Sprintf("stream rule %s: %v", p, err))
 				continue
@@ -111,4 +112,23 @@ func grimoireSections(body string) []section {
 	}
 	flush()
 	return out
+}
+
+// maxRuleBytes caps a rule file: a rule is a regex and a short reminder.
+const maxRuleBytes = 64 << 10
+
+func readCapped(p string) ([]byte, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxRuleBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxRuleBytes {
+		return nil, fmt.Errorf("larger than %d KiB; skipped", maxRuleBytes>>10)
+	}
+	return data, nil
 }

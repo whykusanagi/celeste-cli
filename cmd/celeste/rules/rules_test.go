@@ -258,3 +258,51 @@ func TestStripUnbackedAudioClaim(t *testing.T) {
 		t.Errorf("a backed claim changed: %q", got)
 	}
 }
+
+// A match that spans many deltas and more than a few hundred bytes is still
+// found (ext-review): the matcher keeps a bounded tail of the reply.
+func TestTextMatchSpanningManyDeltas(t *testing.T) {
+	m := NewMatcher(set(t, "---\ncondition: (?s)BEGIN.{900,}END\n---\nx\n"))
+	m.StartRequest()
+	if hits := m.Text("BEGIN"); len(hits) != 0 {
+		t.Fatal("early hit")
+	}
+	for i := 0; i < 30; i++ {
+		if hits := m.Text(strings.Repeat("y", 50)); len(hits) != 0 {
+			t.Fatal("early hit")
+		}
+	}
+	if hits := m.Text("END"); len(hits) != 1 {
+		t.Fatalf("a match spanning 1.5 KB of deltas was missed: %v", hits)
+	}
+}
+
+// The matcher's retained text stays bounded however long the reply.
+func TestTextMatcherRetainsABoundedTail(t *testing.T) {
+	m := NewMatcher(set(t, "---\ncondition: never-there\n---\nx\n"))
+	m.StartRequest()
+	for i := 0; i < 100; i++ {
+		m.Text(strings.Repeat("z", 1000))
+	}
+	if n := len(m.tail); n > scanBack {
+		t.Errorf("retained %d bytes, cap %d", n, scanBack)
+	}
+}
+
+// An oversized rule file is skipped with a warning, not read whole.
+func TestLoadSkipsOversizedRuleFiles(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".celeste", "rules")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "huge.md"), []byte("---\ncondition: x\n---\n"+strings.Repeat("a", maxRuleBytes+1)), 0o644)
+	var warns []string
+	set := Load(home, nil, func(s string) { warns = append(warns, s) })
+	for _, r := range set.Rules {
+		if r.Name == "huge" {
+			t.Error("an oversized rule loaded")
+		}
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "huge.md") {
+		t.Errorf("warnings = %v", warns)
+	}
+}

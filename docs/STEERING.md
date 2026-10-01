@@ -53,6 +53,9 @@ starts.
 
 - `condition`: a Go (RE2) regular expression. Quotes around it are
   removed; backslashes are kept as written. Use `(?i)` for case-insensitive.
+  Matching takes time in proportion to the text, never more. On the
+  streamed reply a match is looked for in the last 4 KB, so a match longer
+  than that can be missed. A rule file over 64 KiB is skipped.
 - `scope`: `text` (the reply as it streams; the default), `thinking`
   (accepted, but no provider streams thinking yet, so such a rule is
   skipped with a warning), or `tool_args:<tool>.<field>` (one argument of
