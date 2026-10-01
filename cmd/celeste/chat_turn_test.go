@@ -260,7 +260,8 @@ func TestChatCompactorRunsJevShadow(t *testing.T) {
 	if !pruned {
 		t.Fatal("the loop's compactor pruned nothing (3 × 40 KiB results against a 20k-token window)")
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	// Generous: the shadow request runs in the background and -race slows it.
+	deadline := time.Now().Add(30 * time.Second)
 	for hits.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -302,7 +303,8 @@ func TestRunTurnResolvesJevOnceForTheTurn(t *testing.T) {
 	switched.JevPrune = ""
 	a.baseConfig = &switched
 	drainTurn(t, cmd, req)
-	deadline := time.Now().Add(5 * time.Second)
+	// Generous: the shadow request runs in the background and -race slows it.
+	deadline := time.Now().Add(30 * time.Second)
 	for hits.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
