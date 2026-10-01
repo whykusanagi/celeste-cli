@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,20 +59,21 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 
 	// Each MCP chat call is a session from the plugin's view: SessionStart
 	// fires per call and its context goes into this call's system prompt
-	// only, never into the shared Env. Then the prompt goes through
-	// UserPromptSubmit, in the chat UI's order. Both run under ctx, so a
-	// failed hook's warning lands on this call.
+	// only, never into the shared Env. The loop then runs the prompt through
+	// UserPromptSubmit before the first request (2.0 F2e), in the chat UI's
+	// order. Both run under ctx, so a failed hook's warning lands on this
+	// call.
 	session := env.SessionStartContext(ctx, "startup")
-	prompt, err = submitPrompt(ctx, env.Hooks, prompt)
-	if err != nil {
-		return nil, fmt.Errorf("%w%s", err, warns.section())
-	}
-
 	system := env.SystemPromptWithSession(session, "", nil)
 	sessionID := fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano())
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
 	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
+	var blocked *promptBlockedError
+	if errors.As(err, &blocked) {
+		// The pre-loop server's refusal, verbatim: no "chat error:" prefix.
+		return nil, fmt.Errorf("%w%s", err, warns.section())
+	}
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
@@ -119,6 +121,9 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 		Tools:     env.Registry,
 		Limits:    chatLimits(),
 		SessionID: sessionID, // names this call's spill directory
+		// UserPromptSubmit on the call's prompt, before the first request
+		// (2.0 F2e); nil without such hooks.
+		CheckPrompt: loop.HookPromptCheck(env.Hooks),
 	}
 	// Assigned only when non-nil: a nil *chatCompactor in the interface
 	// would be a non-nil Compactor.
@@ -188,6 +193,9 @@ func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, 
 		if err != nil {
 			return "", err
 		}
+		if res.StopReason == loop.StopBlocked {
+			return "", &promptBlockedError{reason: claims.blocked}
+		}
 		turnsLeft -= res.Turns
 		if res.StopReason != loop.StopDone {
 			return chatText(res, lim, &claims), nil
@@ -197,7 +205,10 @@ func runChat(ctx context.Context, l *loop.Loop, h *hooks.Runner, prompt string, 
 			return chatText(res, lim, &claims), nil
 		}
 		continued = true
-		history = append(history, loop.Message{Role: "user", Content: next, Timestamp: time.Now()})
+		// The Stop hook's instruction, not the caller's prompt: it skips
+		// UserPromptSubmit, as in the chat.
+		history = append(history, loop.Message{Role: "user", Content: next, Timestamp: time.Now(),
+			Metadata: map[string]any{tui.MetaPromptHookDone: true}})
 	}
 }
 
@@ -244,9 +255,18 @@ func chatText(res loop.Result, lim loop.Limits, claims *chatClaims) string {
 // (and succeeded) in this call, so a fabricated "Audio saved:" or "subagent
 // spawned (id: …)" claim in the final reply can be replaced. These are the
 // pre-loop server's ttsRan/spawnRan flags, now derived from loop events.
-type chatClaims struct{ tts, spawn bool }
+// blocked is the reason a UserPromptSubmit hook gave for blocking the
+// prompt.
+type chatClaims struct {
+	tts, spawn bool
+	blocked    string
+}
 
 func (c *chatClaims) observe(ev loop.Event) {
+	if ev.Kind == loop.EventPromptBlocked {
+		c.blocked = ev.Text
+		return
+	}
 	if ev.Kind != loop.EventToolResult || ev.IsError {
 		return
 	}

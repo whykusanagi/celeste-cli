@@ -10,6 +10,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 )
 
 func userTexts(req fakeprovider.Request) []string {
@@ -174,5 +175,56 @@ func TestMCPChatUserPromptSubmitFailureRefusesTheCall(t *testing.T) {
 	}
 	if n := len(fp.Requests()); n != 0 {
 		t.Fatalf("requests = %d, want 0", n)
+	}
+}
+
+// The refusal text is part of the tool result the plugin sees: byte for byte
+// the pre-loop server's (2.0 F2e moved the check into the loop).
+func TestMCPChatUserPromptSubmitDenyTextIsExact(t *testing.T) {
+	fp := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "never sent"})
+	cfg, ws := contractCfg(t, fp)
+	globalHooks(t, hookDef("UserPromptSubmit", "", hooktest.Command(t, "deny", "no prompts today")))
+	r := chatVia(t, cfg, ws, "hi")
+	if want := "Error: prompt blocked by a UserPromptSubmit hook: no prompts today"; !r.IsError || r.Text != want {
+		t.Fatalf("got %+v\nwant %q", r, want)
+	}
+}
+
+// MCP chat's UserPromptSubmit runs in the loop (2.0 F2e), as the chat's
+// does; without such hooks the loop takes the unchecked path.
+func TestMCPChatLoopChecksThePrompt(t *testing.T) {
+	fp := fakeprovider.NewOpenAI(t)
+	cfg, ws := contractCfg(t, fp)
+	build := func() *loop.Loop {
+		env, err := loop.Setup(loop.ModeMCPChat, cfg.CelesteConfig, ws, loop.SetupOptions{Warn: func(string) {}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(env.Close)
+		return newChatLoop(cfg.CelesteConfig, newChatClient(cfg.CelesteConfig, env.Registry, ""), env, "", "s")
+	}
+	if build().CheckPrompt != nil {
+		t.Fatal("a loop without UserPromptSubmit hooks checks prompts")
+	}
+	globalHooks(t, hookDef("UserPromptSubmit", "", hooktest.Command(t, "context", "x")))
+	if build().CheckPrompt == nil {
+		t.Fatal("MCP chat's loop does not run UserPromptSubmit")
+	}
+}
+
+// A Stop hook's continuation is the hook's instruction, not the caller's
+// prompt: UserPromptSubmit sees only the prompt, once.
+func TestMCPChatStopContinuationSkipsUserPromptSubmit(t *testing.T) {
+	fp := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "first"}, fakeprovider.Turn{Text: "second"})
+	cfg, ws := contractCfg(t, fp)
+	globalHooks(t,
+		hookDef("UserPromptSubmit", "", hooktest.Command(t, "denyif", "keep going", "continuation checked")),
+		hookDef("Stop", "", hooktest.Command(t, "deny", "keep going")))
+	r := chatVia(t, cfg, ws, "hi")
+	if r.IsError || !strings.HasPrefix(r.Text, "second") {
+		t.Fatalf("got %+v", r)
+	}
+	if n := len(fp.Requests()); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
 	}
 }
