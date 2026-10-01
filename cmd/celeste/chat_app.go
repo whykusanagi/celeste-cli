@@ -61,14 +61,15 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	config.MigrationWarn = func(msg string) { tui.LogInfo("celeste: " + msg) }
 	restoreMigrationWarn := func() { config.MigrationWarn = prevMigrationWarn }
 
-	// Kick off Venice's live tool-catalog fetch now, in the background, so
-	// the rest of this function's setup work (loop.Setup, tool
-	// registration) gives it a head start before the TUI's synchronous
-	// per-model tool gate (WithEndpoint, below) needs the answer (#151 W6b
-	// review: that gate previously could block on a cold network fetch from
-	// inside a UI update handler).
-	if providers.DetectProvider(cfg.BaseURL) == "venice" {
-		go providers.WarmVeniceToolCatalog()
+	// Use the model the provider serves now: a retired one is replaced for
+	// this process. The resolved models live on a copy: cfg itself reaches
+	// paths that save it (collections, /voice), and the config file must
+	// keep what the user wrote. This may fetch the provider's catalog
+	// (bounded by its timeout); we're not in the TUI yet.
+	served := *cfg
+	modelNotes := served.ResolveServedModels(context.Background())
+	for _, n := range modelNotes {
+		fmt.Fprintln(os.Stderr, "⚠ "+n)
 	}
 
 	// The session comes before Setup: its ID is the hooks' session_id.
@@ -93,7 +94,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	autoInitGrimoire(cwd)
 
 	sink := newChatWarnSink()
-	env, err := loop.Setup(loop.ModeChat, cfg, cwd, loop.SetupOptions{
+	env, err := loop.Setup(loop.ModeChat, &served, cwd, loop.SetupOptions{
 		SessionID: currentSession.ID,
 		Warn:      sink.warn,
 		Notice:    sink.warn,
@@ -110,7 +111,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// Subagents: chat users can delegate subtasks and parameterize their
 	// persona. The top-level chat posts to the mailbox as "parent" (#31).
 	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
-	subMgr := subagents.NewManager(cfg, cwd, isChild)
+	subMgr := subagents.NewManager(&served, cwd, isChild)
 	registry.RegisterWithModes(subagents.NewSpawnAgentTool(subMgr), tools.ModeAgent, tools.ModeChat)
 	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeChat)
 	env.RefreshDiscovery()
@@ -118,7 +119,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	client := llm.NewClient(&llm.Config{
 		APIKey:            cfg.APIKey,
 		BaseURL:           cfg.BaseURL,
-		Model:             cfg.Model,
+		Model:             served.Model,
 		Timeout:           cfg.GetTimeout(),
 		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
 		SimulateTyping:    cfg.SimulateTyping,
@@ -138,7 +139,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	tuiClient := &TUIClientAdapter{
 		client:         client,
 		registry:       registry,
-		baseConfig:     cfg,
+		baseConfig:     &served,
 		costTracker:    costs.NewSessionTracker(),
 		subMgr:         subMgr,
 		projectContext: env.ProjectContext,
@@ -172,6 +173,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	for _, w := range sink.done() {
 		app = app.WithSystemMessage("⚠ " + w)
 	}
+	for _, n := range modelNotes {
+		app = app.WithSystemMessage("⚠ " + n)
+	}
 
 	app = restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)
 
@@ -179,8 +183,8 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		app = app.WithCommandHistory(hist)
 	}
 	if currentSession.GetModel() == "" {
-		tui.LogInfo(fmt.Sprintf("Setting model from config: %s", cfg.Model))
-		currentSession.SetModel(cfg.Model)
+		tui.LogInfo(fmt.Sprintf("Setting model from config: %s", served.Model))
+		currentSession.SetModel(served.Model)
 		if err := sessionManager.Save(currentSession); err != nil {
 			log.Printf("Warning: Failed to save session with model: %v", err)
 		}
@@ -304,7 +308,12 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 		// (e.g. Orchestrator lanes). WithEndpoint only updates the UI; it does not
 		// update TUIClientAdapter.baseConfig.
 		if namedCfg, loadErr := config.LoadNamed(sessionEndpoint); loadErr == nil {
-			a.baseConfig = namedCfg
+			// Its agent and small models drive /agent, /orchestrate and
+			// the summarizer: resolve them (we're not in the TUI yet).
+			if !namedCfg.ModelPinned() {
+				providers.PrepareModels(context.Background(), providers.DetectProvider(namedCfg.BaseURL), namedCfg.BaseURL, namedCfg.APIKey, namedCfg.AgentModel, namedCfg.SmallModel)
+			}
+			a.baseConfig = servedAgentModels(namedCfg)
 			tui.LogInfo(fmt.Sprintf("✓ Loaded named config for restored endpoint: %s", sessionEndpoint))
 		} else {
 			tui.LogInfo(fmt.Sprintf("⚠ Could not load named config for %s: %v", sessionEndpoint, loadErr))

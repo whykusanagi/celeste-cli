@@ -212,9 +212,12 @@ func (o *orchRun) run(ctx context.Context, goal string, li laneInheritance) (*Re
 	}
 
 	// 2. Route
-	assignment, err := o.router.Resolve(lane)
+	assignment, err := o.router.Resolve(ctx, lane)
 	if err != nil {
 		return nil, OrchestratorEvent{Kind: EventError, Text: err.Error()}, err
+	}
+	for _, n := range assignment.Notes {
+		o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: "⚠ " + n})
 	}
 
 	// 3. Run primary agent

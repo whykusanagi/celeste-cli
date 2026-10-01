@@ -29,7 +29,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 40, config.TypingSpeed)
 	assert.Equal(t, DefaultMaxToolIterations, config.MaxToolIterations)
 	assert.Equal(t, "https://api.venice.ai/api/v1", config.VeniceBaseURL)
-	assert.Equal(t, "venice-uncensored", config.VeniceModel)
+	venice, _ := providers.GetProvider("venice")
+	assert.Equal(t, venice.DefaultModel, config.VeniceModel, "Venice's model is the registry's offline fallback")
 }
 
 // TestPaths tests config path generation

@@ -46,21 +46,25 @@ type AppModel struct {
 	mcpPanel         MCPPanelModel
 
 	// Application state
-	width            int
-	height           int
-	ready            bool
-	nsfwMode         bool
-	streaming        bool
-	endpoint         string // Current endpoint (openai, venice, grok, etc.)
-	safeEndpoint     string // Endpoint to return to when leaving NSFW mode
-	model            string // Current model name
-	imageModel       string // Current image generation model (for NSFW mode)
-	provider         string // Current provider (grok, openai, venice, etc.) - detected from endpoint
-	skillsEnabled    bool   // Whether skills/function calling is available
-	version          string // Application version (e.g., "1.0.1")
-	build            string // Build identifier (e.g., "bubbletea-tui")
-	grimoireContent  string // Resolved .grimoire content for /grimoire command
-	codeGraphSummary string // Code graph stats for /index command
+	width             int
+	height            int
+	ready             bool
+	nsfwMode          bool
+	streaming         bool
+	endpoint          string // Current endpoint (openai, venice, grok, etc.)
+	safeEndpoint      string // Endpoint to return to when leaving NSFW mode
+	model             string // Current model name
+	imageModel        string // Current image generation model (for NSFW mode)
+	provider          string // Current provider (grok, openai, venice, etc.) - detected from endpoint
+	skillsEnabled     bool   // Whether skills/function calling is available
+	modelPinned       bool   // /set-model --force: resolution leaves the model alone
+	modelTrial        string // a /set-model name the provider hasn't confirmed yet
+	modelBeforeTrial  string // the model to restore if modelTrial is not found
+	modelCheckPending bool   // the restored model needs a catalog load (Init runs it)
+	version           string // Application version (e.g., "1.0.1")
+	build             string // Build identifier (e.g., "bubbletea-tui")
+	grimoireContent   string // Resolved .grimoire content for /grimoire command
+	codeGraphSummary  string // Code graph stats for /index command
 
 	// Simulated typing state
 	typingContent string // Full content to type
@@ -348,10 +352,17 @@ func NewApp(llmClient LLMClient) AppModel {
 
 // Init implements tea.Model.
 func (m AppModel) Init() tea.Cmd {
+	var check tea.Cmd
+	if m.modelCheckPending {
+		// The restored session's model needs a catalog or a check the
+		// startup didn't do: run it off the UI loop.
+		_, check = m.resolveServedModel()
+	}
 	return tea.Batch(
 		m.input.Init(),
 		tea.EnterAltScreen,
 		gitFetchCmd(m.workDir),
+		check,
 	)
 }
 
@@ -428,6 +439,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// reading its events whichever view is showing.
 	if ev, ok := msg.(TurnEventMsg); ok {
 		return m.onTurnEvent(ev)
+	}
+	// So does a fetched model catalog: it belongs to the endpoint, not a view.
+	if ready, ok := msg.(catalogReadyMsg); ok {
+		return m.onCatalogReady(ready), nil
 	}
 
 	// Route to collections view if in that mode
@@ -1475,11 +1490,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				NSFWMode:      m.nsfwMode,
 				Provider:      m.provider,
 				CurrentModel:  m.model,
-				APIKey:        "", // Will be populated if config accessible
-				BaseURL:       "", // Will be populated if config accessible
 				SkillsEnabled: m.skillsEnabled,
 				Version:       m.version,
 				Build:         m.build,
+			}
+			// /set-model validates against the active endpoint's own
+			// catalog (memory only), not whichever this provider loaded last.
+			if src, ok := m.llmClient.(ActiveEndpointer); ok {
+				ep := src.ActiveEndpoint()
+				ctx.BaseURL, ctx.APIKey = ep.BaseURL, ep.APIKey
 			}
 			result := commands.Execute(cmd, ctx)
 
@@ -1490,67 +1509,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Apply state changes
 			if result.StateChange != nil {
+				var catalogCmd tea.Cmd
 				if result.StateChange.EndpointChange != nil {
-					m.endpoint = *result.StateChange.EndpointChange
-
-					// Detect provider from endpoint name
-					// Provider detection will use endpoint name mapping
-					m.provider = m.endpoint
-
-					// Update skills availability and auto-select best model
-					if caps, ok := providers.GetProvider(m.provider); ok {
-						// AUTO-SELECT: Choose best tool-calling model for this provider
-						if caps.PreferredToolModel != "" {
-							m.model = caps.PreferredToolModel
-							m.header = m.header.SetModel(m.model)
-							LogInfo(fmt.Sprintf("Auto-selected model: %s (optimized for tool calling)", m.model))
-
-							// Update LLM client model
-							if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-								if err := switcher.ChangeModel(m.model); err != nil {
-									LogInfo(fmt.Sprintf("Error changing model: %v", err))
-								}
-							}
-						} else if caps.DefaultModel != "" {
-							m.model = caps.DefaultModel
-							m.header = m.header.SetModel(m.model)
-							LogInfo(fmt.Sprintf("Using default model: %s", m.model))
-
-							// Update LLM client model
-							if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-								if err := switcher.ChangeModel(m.model); err != nil {
-									LogInfo(fmt.Sprintf("Error changing model: %v", err))
-								}
-							}
-						}
-
-						// Recompute after the model is chosen: a ToolsPerModel
-						// provider (Venice) only knows tool support per model
-						// (#151 W6b).
-						m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
-						LogInfo(fmt.Sprintf("Provider detected: %s, skills enabled: %v", m.provider, m.skillsEnabled))
-					}
-
-					m.header = m.header.SetEndpoint(m.endpoint)
-					m.header = m.header.SetSkillsEnabled(m.skillsEnabled) // Update UI indicator
-					m.status = m.status.SetText(fmt.Sprintf("Switched to %s", m.endpoint))
-
-					// FIX: When switching endpoints, disable NSFW mode unless switching TO venice
-					if m.endpoint != "venice" && m.nsfwMode {
-						m.nsfwMode = false
-						m.header = m.header.SetNSFWMode(false)
-						LogInfo("NSFW mode disabled when switching away from Venice")
-					}
-
-					// Actually switch the LLM client endpoint
-					if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-						if err := switcher.SwitchEndpoint(m.endpoint); err != nil {
-							m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
-						}
-					}
-
-					// Persist session state
-					m.persistSession()
+					m, catalogCmd = m.switchEndpoint(*result.StateChange.EndpointChange)
 				}
 				if result.StateChange.NSFWMode != nil {
 					m.nsfwMode = *result.StateChange.NSFWMode
@@ -1569,6 +1530,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.status = m.status.SetText(fmt.Sprintf("Error switching to Venice: %v", err))
 							}
 						}
+						m.modelPinned = false // a --force pin belongs to the old endpoint
+						m, catalogCmd = m.adoptActiveModel()
 					} else {
 						// When NSFW mode is disabled, restore the safe endpoint
 						if m.safeEndpoint != "" {
@@ -1585,13 +1548,20 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
 							}
 						}
+						m.modelPinned = false // a --force pin belongs to the old endpoint
+						m, catalogCmd = m.adoptActiveModel()
 					}
 
 					// Persist session state
 					m.persistSession()
 				}
 				if result.StateChange.Model != nil {
+					// A typed name is on trial until the provider confirms
+					// it: a 404 restores this model instead of swapping in
+					// another one.
+					m.modelTrial, m.modelBeforeTrial = *result.StateChange.Model, m.model
 					m.model = *result.StateChange.Model
+					m.modelPinned = result.StateChange.PinModel
 					m.header = m.header.SetModel(m.model)
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to %s", m.model))
 
@@ -1615,6 +1585,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Persist session state
 					m.persistSession()
+
+					// An unlisted name /set-model accepted is checked with
+					// the provider off the UI loop (unless --force pinned it).
+					var check tea.Cmd
+					m, check = m.resolveServedModel()
+					catalogCmd = tea.Batch(catalogCmd, check)
 				}
 				if result.StateChange.ImageModel != nil {
 					m.imageModel = *result.StateChange.ImageModel
@@ -1659,6 +1635,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selector = m.selector.SetWidth(m.width)
 					m.selectorActive = true
 				}
+				return m, catalogCmd
 			}
 
 			return m, nil
@@ -2346,6 +2323,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 
+					m.modelPinned = false // picked from the provider's list
 					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("🤖 Model changed to: %s", modelName))
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to: %s", modelName))
 
@@ -2696,6 +2674,8 @@ type Session interface {
 	GetModel() string
 	SetNSFWMode(enabled bool)
 	GetNSFWMode() bool
+	SetModelPinned(pinned bool)
+	GetModelPinned() bool
 	SetName(name string)
 	ClearMessages()
 	GetMessagesRaw() interface{}     // Returns []config.SessionMessage
@@ -2730,6 +2710,8 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 		}
 		if model := session.GetModel(); model != "" {
 			m.model = model
+			// A /set-model --force pin outlives the resume.
+			m.modelPinned = session.GetModelPinned()
 			m.header = m.header.SetModel(model)
 
 			// A ToolsPerModel provider (Venice) only knows whether tools are
@@ -2738,6 +2720,14 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			if m.provider != "" {
 				m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 				m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
+			}
+			// A session saved on a model the provider has since retired
+			// resumes on the served one, from the catalog the startup
+			// loaded. Only when the client is on the session's provider:
+			// another provider's catalog would call every model retired.
+			if src, ok := m.llmClient.(ActiveEndpointer); ok && src.ActiveEndpoint().Provider == m.provider {
+				m, m.modelCheckPending = m.resolveFromMemory()
+				model = m.model
 			}
 
 			// Initialize context tracker with session and model
@@ -2933,6 +2923,7 @@ func (m *AppModel) persistSession() {
 
 	m.currentSession.SetEndpoint(m.endpoint)
 	m.currentSession.SetModel(m.model)
+	m.currentSession.SetModelPinned(m.modelPinned)
 	m.currentSession.SetNSFWMode(m.nsfwMode)
 	if hist := m.input.GetHistory(); len(hist) > 0 {
 		m.currentSession.SetCommandHistory(hist)

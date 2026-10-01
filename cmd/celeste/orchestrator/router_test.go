@@ -1,12 +1,14 @@
 package orchestrator_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/orchestrator"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
 func TestRouterResolvesConfiguredLane(t *testing.T) {
@@ -19,7 +21,7 @@ func TestRouterResolvesConfiguredLane(t *testing.T) {
 		},
 	}
 	r := orchestrator.NewRouter(cfg)
-	assignment, err := r.Resolve(orchestrator.LaneCode)
+	assignment, err := r.Resolve(context.Background(), orchestrator.LaneCode)
 	require.NoError(t, err)
 	assert.Equal(t, "grok-fast", assignment.Primary)
 	assert.Equal(t, "gemini-review", assignment.Reviewer)
@@ -29,7 +31,7 @@ func TestRouterResolvesConfiguredLane(t *testing.T) {
 func TestRouterFallsBackToDefaultModel(t *testing.T) {
 	cfg := &config.Config{Model: "my-default"}
 	r := orchestrator.NewRouter(cfg)
-	assignment, err := r.Resolve(orchestrator.LaneContent)
+	assignment, err := r.Resolve(context.Background(), orchestrator.LaneContent)
 	require.NoError(t, err)
 	assert.Equal(t, "my-default", assignment.Primary)
 	assert.False(t, assignment.HasReviewer())
@@ -45,6 +47,47 @@ func TestRouterBlankReviewerMeansNoDebate(t *testing.T) {
 		},
 	}
 	r := orchestrator.NewRouter(cfg)
-	assignment, _ := r.Resolve(orchestrator.LaneCode)
+	assignment, _ := r.Resolve(context.Background(), orchestrator.LaneCode)
 	assert.False(t, assignment.HasReviewer())
+}
+
+// Each lane's models resolve against the lane's own endpoint.
+func TestRouterResolvesLaneModelsOnTheirEndpoints(t *testing.T) {
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
+	defer providers.SetCatalogForTest("sakana", []providers.CatalogModel{{ID: "fugu"}, {ID: "fugu-ultra"}})()
+	cfg := &config.Config{
+		BaseURL: "https://api.sakana.ai/v1", Model: "fugu",
+		Orchestrator: &config.OrchestratorConfig{Lanes: map[string]config.LaneConfig{
+			"code": {Primary: "venice-uncensored", PrimaryBaseURL: "https://api.venice.ai/api/v1", Reviewer: "fugu-ultra"},
+		}},
+	}
+	a, err := orchestrator.NewRouter(cfg).Resolve(context.Background(), orchestrator.LaneCode)
+	require.NoError(t, err)
+	assert.Equal(t, "venice-uncensored-1-2", a.Primary, "the primary resolves on Venice")
+	assert.Equal(t, "fugu-ultra", a.Reviewer, "the reviewer is served on the default endpoint")
+	assert.Len(t, a.Notes, 1)
+
+	cfg.PinModel = true
+	a, _ = orchestrator.NewRouter(cfg).Resolve(context.Background(), orchestrator.LaneCode)
+	assert.Equal(t, "venice-uncensored", a.Primary, "pin_model turns resolution off")
+}
+
+// Lane resolution runs under the run's context: cancelling the run
+// interrupts the bounded fetch.
+func TestRouterResolveUsesTheRunContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var sawCancelled bool
+	defer providers.SetCatalogFetchForTest(func(ctx context.Context, provider, baseURL, apiKey string) ([]providers.CatalogModel, error) {
+		sawCancelled = ctx.Err() != nil
+		return nil, ctx.Err()
+	})()
+	cfg := &config.Config{BaseURL: "https://api.venice.ai/api/v1", APIKey: "k", Model: "venice-uncensored"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a, err := orchestrator.NewRouter(cfg).Resolve(ctx, orchestrator.LaneContent)
+	require.NoError(t, err)
+	assert.True(t, sawCancelled, "the fetch must get the run's (cancelled) context")
+	assert.Equal(t, "venice-uncensored", a.Primary, "no list: the model is kept")
 }

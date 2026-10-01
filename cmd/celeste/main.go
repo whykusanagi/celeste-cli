@@ -389,11 +389,17 @@ func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
 
 // SwitchEndpoint switches to a different endpoint by loading its named config.
 func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
+	prevProvider := ""  // set when falling back to the base config
+	fallbackModel := "" // skills.json's Venice model, for that fallback
 	// Try to load named config for the endpoint
 	cfg, err := config.LoadNamed(endpoint)
 	if err != nil {
-		// If named config doesn't exist, use base config with modified base URL
-		cfg = a.baseConfig
+		// If named config doesn't exist, use a copy of the base config with
+		// a modified base URL (never the base config itself: the chat's
+		// startup config must not change under it).
+		base := *a.baseConfig
+		cfg = &base
+		prevProvider = providers.DetectProvider(cfg.BaseURL)
 
 		// For Venice, try to load from skills.json first
 		if endpoint == "venice" {
@@ -401,9 +407,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 			if err == nil && skillsConfig.VeniceAPIKey != "" {
 				cfg.APIKey = skillsConfig.VeniceAPIKey
 				cfg.BaseURL = skillsConfig.VeniceBaseURL
-				if skillsConfig.VeniceModel != "" {
-					cfg.Model = skillsConfig.VeniceModel
-				}
+				fallbackModel = skillsConfig.VeniceModel
 				tui.LogInfo("Loaded Venice configuration from skills.json")
 			} else {
 				// Fall back to environment variables
@@ -440,6 +444,19 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	} else {
 		tui.LogInfo(fmt.Sprintf("Loaded named config for endpoint: %s", endpoint))
 	}
+	if prevProvider != "" && providers.DetectProvider(cfg.BaseURL) != prevProvider {
+		// The previous provider's models mean nothing here: drop them so
+		// the new provider's default is adopted, without a false "no
+		// longer serves" note.
+		cfg.Model, cfg.AgentModel, cfg.SmallModel = "", "", ""
+	}
+	if fallbackModel != "" {
+		cfg.Model = fallbackModel
+	}
+	// The agent and small models resolve from what this process already
+	// knows (no I/O: this runs in the TUI's Update); the chat model is the
+	// TUI's to resolve, so it can say so in the chat.
+	cfg = servedAgentModels(cfg)
 
 	// Update LLM client configuration
 	llmConfig := &llm.Config{
@@ -459,6 +476,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	// Persist the full config as baseConfig so that agent/orchestrator commands
 	// pick up provider-specific settings like Orchestrator lanes.
 	a.baseConfig = cfg
+	a.summarize = nil // built for the old endpoint's small model
 
 	// Recompose the prompt for the new config, keeping the project context.
 	a.client.SetSystemPrompt(a.systemPrompt())
@@ -476,10 +494,54 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 		maskedKey = "***"
 	}
 	tui.LogInfo(fmt.Sprintf("✓ Switched endpoint to: %s", endpoint))
-	tui.LogInfo(fmt.Sprintf("  URL: %s", cfg.BaseURL))
+	tui.LogInfo(fmt.Sprintf("  URL: %s", providers.CleanBaseURL(cfg.BaseURL)))
 	tui.LogInfo(fmt.Sprintf("  Model: %s", cfg.Model))
 	tui.LogInfo(fmt.Sprintf("  API Key: %s", maskedKey))
 	return nil
+}
+
+// ActiveEndpoint implements tui.ActiveEndpointer: the endpoint the client is
+// on now, so the chat can resolve its model against what it serves.
+func (a *TUIClientAdapter) ActiveEndpoint() tui.ActiveEndpoint {
+	c := a.client.GetConfig()
+	ep := tui.ActiveEndpoint{
+		Provider: providers.DetectProvider(c.BaseURL),
+		BaseURL:  c.BaseURL,
+		APIKey:   c.APIKey,
+		Model:    c.Model,
+		Pinned:   os.Getenv("CELESTE_PIN_MODEL") == "1",
+	}
+	if b := a.baseConfig; b != nil {
+		ep.AgentModel, ep.SmallModel = b.AgentModel, b.SmallModel
+		ep.Pinned = ep.Pinned || b.ModelPinned()
+	}
+	return ep
+}
+
+// RefreshServedModels implements tui.ServedModelsRefresher: after a catalog
+// loads, the agent and small models are re-resolved from memory on a copy
+// of the base config.
+func (a *TUIClientAdapter) RefreshServedModels() {
+	if a.baseConfig == nil {
+		return
+	}
+	a.baseConfig = servedAgentModels(a.baseConfig)
+	a.summarize = nil
+}
+
+// servedAgentModels returns a copy of cfg with its agent and small models
+// resolved from what this process already knows (no I/O). The chat model is
+// left alone: the TUI resolves it and says so in the chat.
+func servedAgentModels(cfg *config.Config) *config.Config {
+	c := *cfg
+	probe := c
+	probe.Model = ""
+	notes, _ := probe.ResolveServedModelsCached()
+	for _, n := range notes {
+		tui.LogInfo(n)
+	}
+	c.AgentModel, c.SmallModel = probe.AgentModel, probe.SmallModel
+	return &c
 }
 
 // ChangeModel changes the model for the current endpoint.
@@ -1467,6 +1529,7 @@ func runSingleMessage(message string) {
 		fmt.Fprintln(os.Stderr, "No API key configured.")
 		os.Exit(1)
 	}
+	resolveServedModels(cfg, os.Stderr)
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{

@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -15,6 +16,8 @@ type ModelAssignment struct {
 	Reviewer        string
 	ReviewerBaseURL string
 	ReviewerAPIKey  string
+	// Notes say which retired models were replaced.
+	Notes []string
 }
 
 // HasReviewer returns true when a non-blank reviewer model is assigned.
@@ -34,18 +37,42 @@ func NewRouter(cfg *config.Config) *Router {
 
 // Resolve returns the ModelAssignment for the given lane.
 // Falls back to cfg.Model as primary with no reviewer when the lane is unconfigured.
-func (r *Router) Resolve(lane TaskLane) (ModelAssignment, error) {
+// Each model is resolved against its own endpoint's catalog (the lane's
+// base URL and key, else the config's), unless the config pins models; this
+// may block on a catalog fetch, bounded by its timeout and by ctx (the
+// run's: cancelling the run interrupts it).
+func (r *Router) Resolve(ctx context.Context, lane TaskLane) (ModelAssignment, error) {
+	a := ModelAssignment{Primary: r.cfg.Model}
 	if r.cfg.Orchestrator != nil && r.cfg.Orchestrator.Lanes != nil {
 		if lc, ok := r.cfg.Orchestrator.Lanes[string(lane)]; ok && strings.TrimSpace(lc.Primary) != "" {
-			return ModelAssignment{
+			a = ModelAssignment{
 				Primary:         lc.Primary,
 				PrimaryBaseURL:  lc.PrimaryBaseURL,
 				PrimaryAPIKey:   lc.PrimaryAPIKey,
 				Reviewer:        lc.Reviewer,
 				ReviewerBaseURL: lc.ReviewerBaseURL,
 				ReviewerAPIKey:  lc.ReviewerAPIKey,
-			}, nil
+			}
 		}
 	}
-	return ModelAssignment{Primary: r.cfg.Model}, nil
+	a.Primary = r.served(ctx, &a, a.Primary, a.PrimaryBaseURL, a.PrimaryAPIKey)
+	if a.HasReviewer() {
+		a.Reviewer = r.served(ctx, &a, a.Reviewer, a.ReviewerBaseURL, a.ReviewerAPIKey)
+	}
+	return a, nil
+}
+
+// served resolves one lane model on its endpoint, recording any note.
+func (r *Router) served(ctx context.Context, a *ModelAssignment, model, baseURL, apiKey string) string {
+	if baseURL == "" {
+		baseURL = r.cfg.BaseURL
+	}
+	if apiKey == "" {
+		apiKey = r.cfg.APIKey
+	}
+	resolved, note := r.cfg.ResolveServedModel(ctx, baseURL, apiKey, model)
+	if note != "" {
+		a.Notes = append(a.Notes, note)
+	}
+	return resolved
 }

@@ -7,12 +7,17 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
-// veniceStubCatalog is the fixed Venice tool-support map every test in this
-// file stubs in, so none of them hit the live api.venice.ai (#151 W6b
-// review, M4).
-var veniceStubCatalog = map[string]bool{
-	"venice-uncensored": false,
-	"llama-3.3-70b":     true,
+// veniceTestCatalog builds the fixed Venice catalog the tests in this file
+// install, so none of them reach api.venice.ai (#151 W6b review, M4). The
+// default model's tool support is a parameter: the gate must follow it.
+func veniceTestCatalog(defaultHasTools bool) []providers.CatalogModel {
+	yes, no := true, false
+	def := defaultHasTools
+	return []providers.CatalogModel{
+		{ID: "venice-uncensored-1-2", Tools: &def, Default: true},
+		{ID: "e2ee-venice-uncensored-24b-p", Tools: &no},
+		{ID: "llama-3.3-70b", Tools: &yes},
+	}
 }
 
 // fakeSessions is a minimal SessionManager whose Load/NewSession return a
@@ -31,16 +36,16 @@ func (f *fakeSessions) MergeSessions(a, _ interface{}) interface{} { return a }
 // tools exactly when the selected model supports them, not "never" for every
 // Venice model.
 func TestSetSessionManager_VeniceGatesToolsPerModel(t *testing.T) {
-	defer providers.StubVeniceToolCatalogForTest(veniceStubCatalog)()
+	defer providers.SetCatalogForTest("venice", veniceTestCatalog(true))()
 
 	uncensored := &config.Session{}
 	uncensored.SetEndpoint("venice")
-	uncensored.SetModel("venice-uncensored")
+	uncensored.SetModel("e2ee-venice-uncensored-24b-p")
 
 	m := NewApp(nil).WithEndpoint("venice")
 	m = m.SetSessionManager(&fakeSessions{session: uncensored}, uncensored)
 	if m.skillsEnabled {
-		t.Error("skillsEnabled is true for venice-uncensored, which has no tool support")
+		t.Error("skillsEnabled is true for a Venice model whose catalog entry has no tool support")
 	}
 
 	toolCapable := &config.Session{}
@@ -56,19 +61,20 @@ func TestSetSessionManager_VeniceGatesToolsPerModel(t *testing.T) {
 
 // Review finding: WithEndpoint alone (no model chosen yet — the state a
 // brand-new AppModel is in the instant the provider is detected, before
-// SetSessionManager or EndpointChange's auto-select ever runs) must not
-// default a ToolsPerModel provider to "tools enabled". Gate on the model
-// that will actually be in effect (the provider's own default) instead of
-// the model's zero value.
-func TestWithEndpoint_VeniceDefaultModelHasNoToolsBeforeSessionRestores(t *testing.T) {
-	defer providers.StubVeniceToolCatalogForTest(veniceStubCatalog)()
-
-	m := NewApp(nil).WithEndpoint("venice")
-	if m.model != "" {
-		t.Fatalf("model = %q, want \"\" (WithEndpoint alone never picks Venice's model)", m.model)
-	}
-	if m.skillsEnabled {
-		t.Error("skillsEnabled is true with no model chosen yet; Venice's own default (venice-uncensored) has no tools")
+// SetSessionManager or EndpointChange's auto-select ever runs) must gate a
+// ToolsPerModel provider on the model that will actually be in effect (the
+// provider's own default), not on the model's zero value.
+func TestWithEndpoint_VeniceGatesOnTheDefaultModelBeforeSessionRestores(t *testing.T) {
+	for _, defaultHasTools := range []bool{true, false} {
+		restore := providers.SetCatalogForTest("venice", veniceTestCatalog(defaultHasTools))
+		m := NewApp(nil).WithEndpoint("venice")
+		restore()
+		if m.model != "" {
+			t.Fatalf("model = %q, want \"\" (WithEndpoint alone never picks Venice's model)", m.model)
+		}
+		if m.skillsEnabled != defaultHasTools {
+			t.Errorf("skillsEnabled = %v, want the default model's catalog tool support %v", m.skillsEnabled, defaultHasTools)
+		}
 	}
 }
 

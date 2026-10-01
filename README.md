@@ -284,12 +284,15 @@ sends none. Tools from MCP servers and custom skills come on top, in both modes.
 - **Session Clearing** - Bulk delete sessions when needed
 
 ### Multi-Provider Support (9 Chat Providers)
+
+celeste uses the model the provider serves now. At startup it reads the provider's model list (cached for a day under `~/.celeste/cache/models`); if your configured model has been retired, it falls back to the provider's current default and says so. A model is replaced only when celeste is sure it's gone: a model missing from the list is first checked with the provider where it can answer (Anthropic, OpenAI, xAI), so aliases keep working, and presets (`@...`), fine-tunes (`ft:...`) are never touched. Your config file is not changed. To turn this off, set `"pin_model": true` in the config or `CELESTE_PIN_MODEL=1`; in the chat, `/set-model <name> --force` pins that model until you switch endpoints. Gemini, Vertex, DigitalOcean and local servers publish no list, so their configured model is used as is. The model names below are offline fallbacks.
+
 - ✅ **Grok/xAI** (grok-4.20-0309-non-reasoning) - reliable tool calling, no reasoning-token burn, never routes to the cost-prohibitive grok-4.3 • Token tracking ✓
 - ✅ **OpenAI** (gpt-4.1-mini, gpt-4.1) - Full function calling with streaming • Token tracking ✓
 - ✅ **Anthropic Claude** (claude-sonnet-4-5) - Native SDK with prompt caching and extended thinking • Token tracking ✓
 - ✅ **Google Gemini AI** (gemini-flash-latest) - Simple API keys, free tier, full streaming • Token tracking ✓
 - ⚠️ **Google Vertex AI** (gemini-2.0-flash, unverified) - Enterprise, requires GCP project + billing. The default has not been checked against Vertex's own model lifecycle • Token tracking ✓
-- ⚠️ **Venice.ai** (venice-uncensored) - NSFW mode, image generation/upscaling. Tool calling depends on the model (checked against the live Venice catalog); the default venice-uncensored has none • Token tracking ✓
+- ⚠️ **Venice.ai** (Venice's own default, currently venice-uncensored-1-2) - NSFW mode, image generation/upscaling. Tool calling depends on the model (checked against the live Venice catalog) • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
 - ✅ **Sakana AI** (fugu, fugu-ultra) - **DEFAULT** - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
 - ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported. No `api_key` needed at all • Cost tracked as $0
@@ -644,7 +647,7 @@ If your single model can't (or can't reliably) call tools, **chat looks fine but
 
 ```json
 {
-  "model": "venice-uncensored",
+  "model": "venice-uncensored-1-2",
   "agent_model": "gpt-4.1-mini"
 }
 ```
@@ -803,7 +806,7 @@ Celeste CLI uses three config files in `~/.celeste/`:
 {
   "venice_api_key": "your-venice-key",
   "venice_base_url": "https://api.venice.ai/api/v1",
-  "venice_model": "venice-uncensored",
+  "venice_model": "venice-uncensored-1-2",
   "tarot_function_url": "https://your-tarot-api",
   "tarot_auth_token": "Basic xxx",
   "weather_default_zip_code": "10001",
@@ -951,7 +954,7 @@ celeste -config grok chat
 ✅ **Full Support** (Returns usage data with automatic token tracking):
 - OpenAI (gpt-4o, gpt-4o-mini, etc.)
 - xAI/Grok (grok-4.20-0309-non-reasoning [xAI default], grok-build-0.1, etc.)
-- Venice.ai (venice-uncensored, etc.)
+- Venice.ai (venice-uncensored-1-2, etc.)
 - Google Gemini AI Studio (gemini-flash-latest — a Google-maintained alias; the 2.x line is retired)
 - Google Vertex AI (gemini models via OpenAI endpoint)
 - OpenRouter (all models)
@@ -1177,7 +1180,7 @@ Add Venice.ai API key to `~/.celeste/skills.json`:
 {
   "venice_api_key": "your-venice-api-key",
   "venice_base_url": "https://api.venice.ai/api/v1",
-  "venice_model": "venice-uncensored",
+  "venice_model": "venice-uncensored-1-2",
   "venice_image_model": "lustify-sdxl",
   "downloads_dir": "~/Downloads"
 }

@@ -6,75 +6,73 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/sashabaranov/go-openai"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
 
 // ModelService handles model listing and metadata.
 type ModelService struct {
-	client   *openai.Client
+	apiKey   string
+	baseURL  string
 	provider string
 	detector *ModelDetection
 }
 
 // NewModelService creates a new model service for a provider.
 func NewModelService(apiKey, baseURL, provider string) *ModelService {
-	config := openai.DefaultConfig(apiKey)
-	if baseURL != "" {
-		config.BaseURL = baseURL
-	}
-
 	return &ModelService{
-		client:   openai.NewClientWithConfig(config),
+		apiKey:   apiKey,
+		baseURL:  baseURL,
 		provider: provider,
 		detector: NewModelDetection(provider),
 	}
 }
 
-// ListModels fetches available models from the provider API.
-// Returns error if provider doesn't support listing or API fails.
+// ListModels returns the models the provider serves, from its catalog (the
+// cache, or one fetch when there is none). A provider without a catalog gets
+// the static list; a failed fetch gets the static list and the error. It may
+// block on the network: never call it from a Bubble Tea Update.
 func (s *ModelService) ListModels(ctx context.Context) ([]ModelInfo, error) {
-	caps, ok := Registry[s.provider]
-	if !ok {
+	if _, ok := Registry[s.provider]; !ok {
 		return nil, fmt.Errorf("unknown provider: %s", s.provider)
 	}
-
-	if !caps.SupportsModelListing {
-		// Provider doesn't support dynamic listing, return static models
+	if !HasCatalog(s.provider) {
 		return s.getStaticModels(), nil
 	}
-
-	// Add timeout to context
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	// Call OpenAI-compatible /v1/models endpoint
-	models, err := s.client.ListModels(ctx)
-	if err != nil {
-		// Fallback to static models if API fails
-		return s.getStaticModels(), fmt.Errorf("API call failed, using static models: %w", err)
+	cat, ok := LoadCatalog(ctx, s.provider, s.baseURL, s.apiKey)
+	if !ok {
+		return s.getStaticModels(), fmt.Errorf("could not list %s models, using static models", s.provider)
 	}
+	return ModelInfosFromCatalog(s.provider, cat), nil
+}
 
-	// Convert to our ModelInfo structure
-	var result []ModelInfo
-	for _, m := range models.Models {
-		info := ModelInfo{
-			ID:            m.ID,
-			Name:          s.getModelDisplayName(m.ID),
-			Provider:      s.provider,
-			SupportsTools: s.detector.SupportsTools(m.ID),
-			Description:   s.getModelDescription(m.ID),
+// ModelInfosFromCatalog turns a catalog into display rows, tool-capable
+// models first. Tool support comes from the catalog when it says, else from
+// the name heuristic.
+func ModelInfosFromCatalog(provider string, cat []CatalogModel) []ModelInfo {
+	s := NewModelService("", "", provider)
+	result := make([]ModelInfo, 0, len(cat))
+	for _, m := range cat {
+		tools := s.detector.SupportsTools(m.ID)
+		if m.Tools != nil {
+			tools = *m.Tools
 		}
-		result = append(result, info)
+		desc := s.getModelDescription(m.ID)
+		if m.Default {
+			desc = "Provider default — " + desc
+		}
+		result = append(result, ModelInfo{
+			ID:                     m.ID,
+			Name:                   s.getModelDisplayName(m.ID),
+			Provider:               provider,
+			SupportsTools:          tools,
+			Description:            desc,
+			OrchestratesServerSide: OrchestratesServerSide(provider, m.ID),
+		})
 	}
-
-	// Sort: Tool-capable models first
 	sortModelsByCapability(result)
-
-	return result, nil
+	return result
 }
 
 // GetBestToolModel returns the recommended model for function calling.
@@ -104,6 +102,12 @@ func (s *ModelService) ValidateModel(ctx context.Context, modelID string) (Model
 	}
 
 	return ModelInfo{}, fmt.Errorf("model %s not found for provider %s", modelID, s.provider)
+}
+
+// StaticModels is the offline model list for a provider, used when no
+// catalog is loaded.
+func StaticModels(provider string) []ModelInfo {
+	return NewModelService("", "", provider).getStaticModels()
 }
 
 // getStaticModels returns hardcoded model list when API isn't available.
@@ -192,11 +196,11 @@ func (s *ModelService) getStaticModels() []ModelInfo {
 	case "venice":
 		models := []ModelInfo{
 			{
-				ID:            "venice-uncensored",
-				Name:          "Venice Uncensored",
+				ID:            "venice-uncensored-1-2",
+				Name:          "Venice Uncensored 1.2",
 				Provider:      "venice",
-				SupportsTools: false,
-				Description:   "NSFW uncensored chat (no function calling)",
+				SupportsTools: true,
+				Description:   "NSFW uncensored chat, Venice's default (offline fallback)",
 			},
 			{
 				ID:            "llama-3.3-70b",

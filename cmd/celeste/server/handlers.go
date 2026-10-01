@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,20 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
+
+// servedConfig returns a copy of cfg on the models its provider serves now
+// (providers.ResolveModel), so a retired configured model is never sent. The
+// catalog comes from the cache (refreshed in the background once stale), or
+// one bounded fetch the first time. Each note is logged once per process.
+func (s *Server) servedConfig(ctx context.Context, cfg *config.Config) *config.Config {
+	c := *cfg
+	for _, n := range c.ResolveServedModels(ctx) {
+		if _, seen := s.modelNotes.LoadOrStore(n, true); !seen {
+			log.Printf("[mcp-server] %s", n)
+		}
+	}
+	return &c
+}
 
 // validateWorkspace ensures the workspace path is safe.
 // Rejects paths outside the server's original workspace or the user's home directory.
@@ -307,6 +322,7 @@ func formatWarnings(warnings []string) string {
 // run outlives backgroundAfter. Mirrors subagents.Manager's BackgroundAfter
 // mechanism: race the execution against a timer, return inline if it wins.
 func (s *Server) runAgentMode(ctx context.Context, cfg *config.Config, goal, workspace string) ([]ContentBlock, error) {
+	cfg = s.servedConfig(ctx, cfg)
 	// The background goroutine must outlive this request, so it cannot inherit
 	// the request context — that is cancelled the moment we return the handle.
 	ctx = withCost(ctx, &s.cost)
@@ -416,6 +432,7 @@ func registerCelesteContentTool(s *Server) {
 		if cfg == nil {
 			return nil, fmt.Errorf("celeste config not loaded")
 		}
+		cfg = s.servedConfig(ctx, cfg)
 
 		registry := tools.NewRegistry()
 		llmConfig := &llm.Config{
