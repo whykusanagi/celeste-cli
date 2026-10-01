@@ -109,7 +109,7 @@ A value that is too large (over 120 KiB on macOS/Linux, 8 KiB on Windows) or con
 - `allow` never skips the permission prompt: a hook can force an `ask`, and hard `always_deny` rules run before any hook, but nothing a hook returns can wave a call through your own permission rules.
 - `additionalContext` reaches the model:
   - at the start of the tool result (PreToolUse, PostToolUse);
-  - with the prompt (UserPromptSubmit), in every later request of the session. It is not saved: after `celeste resume`, earlier prompts are sent without it;
+  - with the prompt (UserPromptSubmit), in every later request of the session. In the chat it is not saved: after `celeste resume`, earlier prompts are sent without it. An agent goal's context is part of the goal message, so a resumed agent run keeps it;
   - in the system prompt (SessionStart);
   - as summary instructions (PreCompact).
 
