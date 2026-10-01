@@ -18,6 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **providers:** Venice's default `venice-uncensored` is no longer served and caused routing errors; its offline fallback is now `venice-uncensored-1-2`.
 * **chat:** switching endpoints, `/set-model` and the model picker no longer wait on a network request inside the UI loop.
 
+### Hooks
+
+- UserPromptSubmit now also checks the goal of `celeste agent`, MCP
+  `mode: "agent"` and `/agent` in the chat, once, before any model call.
+  A `deny` (or a failed hook) stops the run with
+  `goal blocked by a UserPromptSubmit hook: <reason>`; `additionalContext`
+  is sent after the goal, as in the chat. Subagents and `/orchestrate`
+  lanes are not checked: their goals are written by the model.
+- MCP chat runs UserPromptSubmit through the same loop as the chat UI. The
+  error result for a blocked prompt is unchanged.
+
+### Chat
+
+- Subagents and `/agent` run inside the chat's environment: they reuse its
+  MCP servers, hooks and code graph instead of starting their own. They get
+  only your global MCP servers (`~/.celeste/mcp.json` and the other home
+  configs), never a repository's. Edits to `hooks.json` or an MCP config
+  apply to them from the next chat session, as they do to the chat itself.
+
 ## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
 
 
