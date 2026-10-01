@@ -138,10 +138,9 @@ func TestOpenAIIntegration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 		defer cancel()
 
-		service := NewModelService(apiKey, "", "openai")
-		models, err := service.ListModels(ctx)
-
-		require.NoError(t, err, "Model listing should succeed")
+		cat, ok := LoadCatalog(ctx, "openai", "", apiKey)
+		require.True(t, ok, "Model listing should succeed")
+		models := ModelInfosFromCatalog("openai", cat)
 		assert.NotEmpty(t, models, "Should return models")
 
 		// Check for expected models
@@ -236,10 +235,9 @@ func TestGrokIntegration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 		defer cancel()
 
-		service := NewModelService(apiKey, baseURL, "grok")
-		models, err := service.ListModels(ctx)
-
-		require.NoError(t, err, "Grok model listing should succeed")
+		cat, ok := LoadCatalog(ctx, "grok", baseURL, apiKey)
+		require.True(t, ok, "Grok model listing should succeed")
+		models := ModelInfosFromCatalog("grok", cat)
 		assert.NotEmpty(t, models, "Should return models")
 		t.Logf("✅ Grok model listing: found %d models", len(models))
 	})

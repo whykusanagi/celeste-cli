@@ -409,12 +409,3 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return false
 	}
 }
-
-// GetDefaultToolModel returns the best model for tool calling.
-func (d *ModelDetection) GetDefaultToolModel() string {
-	caps, ok := Registry[d.provider]
-	if !ok {
-		return ""
-	}
-	return caps.PreferredToolModel
-}

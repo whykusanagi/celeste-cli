@@ -1,9 +1,6 @@
 package providers
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,36 +85,6 @@ func TestGetStaticModels(t *testing.T) {
 	}
 }
 
-// TestGetBestToolModel verifies default tool model selection
-func TestGetBestToolModel(t *testing.T) {
-	tests := []struct {
-		provider      string
-		expectedModel string
-	}{
-		{"openai", "gpt-4.1-nano"},
-		{"grok", "grok-4.20-0309-non-reasoning"},
-		{"venice", ""}, // Venice uncensored has no tool model
-		{"anthropic", "claude-sonnet-4-5-20250929"},
-		// gemini uses Google's -latest alias so the pointer is maintained
-		// upstream; the previously asserted gemini-2.0-flash was retired and
-		// this test was locking the broken value in.
-		{"gemini", "gemini-flash-latest"},
-		{"vertex", "gemini-2.0-flash"}, // separate service, see registry.go
-		{"openrouter", "openai/gpt-4.1-nano"},
-		{"digitalocean", ""}, // No preferred tool model
-		{"unknown", ""},      // Unknown provider
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			service := NewModelService("test-key", "", tt.provider)
-			model := service.GetBestToolModel()
-			assert.Equal(t, tt.expectedModel, model,
-				"Provider %s should recommend %s", tt.provider, tt.expectedModel)
-		})
-	}
-}
-
 // TestModelDetection tests the SupportsTools heuristic
 func TestModelDetection(t *testing.T) {
 	// The name heuristic, with no catalog loaded for the providers that have one.
@@ -178,31 +145,6 @@ func TestModelDetection(t *testing.T) {
 				"Model %s on %s should have tools=%v", tt.modelID, tt.provider, tt.expectsTools)
 		})
 	}
-}
-
-// TestGetDefaultToolModel tests detector's default model retrieval
-func TestGetDefaultToolModel(t *testing.T) {
-	providers := []string{"openai", "grok", "venice", "anthropic", "gemini"}
-
-	for _, provider := range providers {
-		t.Run(provider, func(t *testing.T) {
-			detector := NewModelDetection(provider)
-			model := detector.GetDefaultToolModel()
-
-			// Should match PreferredToolModel from registry
-			caps, ok := Registry[provider]
-			assert.True(t, ok, "Provider should exist in registry")
-			assert.Equal(t, caps.PreferredToolModel, model,
-				"Default tool model should match registry")
-		})
-	}
-
-	// Test unknown provider
-	t.Run("unknown", func(t *testing.T) {
-		detector := NewModelDetection("unknown")
-		model := detector.GetDefaultToolModel()
-		assert.Empty(t, model, "Unknown provider should return empty string")
-	})
 }
 
 // TestGetModelDisplayName tests name formatting
@@ -274,40 +216,6 @@ func TestSortModelsByCapability(t *testing.T) {
 	assert.Equal(t, []string{"with-tools-1", "with-tools-2", "no-tools-1", "no-tools-2"},
 		[]string{models[0].ID, models[1].ID, models[2].ID, models[3].ID},
 		"models with same capability should preserve input order")
-}
-
-// TestFormatModelList tests model list formatting
-func TestFormatModelList(t *testing.T) {
-	models := []ModelInfo{
-		{
-			ID:            "gpt-4.1-nano",
-			SupportsTools: true,
-			Description:   "Fast and affordable",
-			ContextWindow: 128000,
-		},
-		{
-			ID:            "venice-uncensored",
-			SupportsTools: false,
-			Description:   "NSFW model",
-			ContextWindow: 0,
-		},
-	}
-
-	t.Run("with highlighting", func(t *testing.T) {
-		output := FormatModelList(models, true)
-		assert.Contains(t, output, "Function Calling Enabled", "Should show section header")
-		assert.Contains(t, output, "✓", "Should have checkmark for tool models")
-		assert.Contains(t, output, "gpt-4.1-nano", "Should include model ID")
-		assert.Contains(t, output, "128k context", "Should show context window")
-		assert.Contains(t, output, "no skills", "Should mark non-tool models")
-	})
-
-	t.Run("without highlighting", func(t *testing.T) {
-		output := FormatModelList(models, false)
-		assert.Contains(t, output, "gpt-4.1-nano", "Should include model ID")
-		assert.Contains(t, output, "venice-uncensored", "Should include all models")
-		assert.NotContains(t, output, "Function Calling Enabled", "Should not have section headers")
-	})
 }
 
 // TestStaticModelConsistency verifies all static models are properly configured
@@ -459,39 +367,4 @@ func TestDigitalOceanStaticModels(t *testing.T) {
 	assert.Equal(t, "gpt-4.1-nano", models[0].ID, "Should be gpt-4.1-nano")
 	assert.False(t, models[0].SupportsTools, "DigitalOcean should not support local skills")
 	assert.Contains(t, models[0].Description, "no local skills", "Should mention no local skills")
-}
-
-// ListModels reads the provider's catalog (one fetch, then the cache), with
-// tool support from the catalog when it says.
-func TestListModels_FromCatalog(t *testing.T) {
-	isolateCatalog(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(veniceModelsFixture))
-	}))
-	defer srv.Close()
-
-	models, err := NewModelService("k", srv.URL, "venice").ListModels(context.Background())
-	assert.NoError(t, err)
-	byID := map[string]ModelInfo{}
-	for _, m := range models {
-		byID[m.ID] = m
-	}
-	assert.True(t, byID["venice-uncensored-1-2"].SupportsTools)
-	assert.False(t, byID["e2ee-venice-uncensored-24b-p"].SupportsTools)
-	assert.Contains(t, byID["venice-uncensored-1-2"].Description, "Provider default")
-	_, image := byID["some-image-model"]
-	assert.False(t, image)
-}
-
-// A failed listing falls back to the static list and says so.
-func TestListModels_FetchFailureFallsBackToStatic(t *testing.T) {
-	isolateCatalog(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-
-	models, err := NewModelService("k", srv.URL, "openai").ListModels(context.Background())
-	assert.Error(t, err)
-	assert.NotEmpty(t, models)
 }
