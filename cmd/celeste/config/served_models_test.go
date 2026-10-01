@@ -24,9 +24,9 @@ func TestResolveServedModels(t *testing.T) {
 
 func TestResolveServedModels_RetiredAgentModel(t *testing.T) {
 	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
-	c := &Config{BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored-1-2", AgentModel: "gone"}
+	c := &Config{BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored-1-2", AgentModel: "gone", SmallModel: "also-gone"}
 	notes := c.ResolveServedModels(context.Background())
-	if c.AgentModel != "venice-uncensored-1-2" || len(notes) != 1 {
-		t.Errorf("agent=%q notes=%q", c.AgentModel, notes)
+	if c.AgentModel != "venice-uncensored-1-2" || c.SmallModel != "venice-uncensored-1-2" || len(notes) != 2 {
+		t.Errorf("agent=%q small=%q notes=%q", c.AgentModel, c.SmallModel, notes)
 	}
 }

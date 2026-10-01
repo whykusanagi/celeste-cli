@@ -33,27 +33,34 @@ type catalogReadyMsg struct {
 
 // fetchCatalogCmd fetches an endpoint's catalog in a tea.Cmd, so Update
 // never waits on the network.
+// It reads the disk cache first and fetches only when that is missing or
+// stale; a failed fetch falls back to the stale cache.
 func fetchCatalogCmd(ep ActiveEndpoint) tea.Cmd {
 	return func() tea.Msg {
+		cached, stale, ok := providers.CachedCatalog(ep.Provider, ep.BaseURL)
+		if ok && !stale {
+			return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: cached, ok: true}
+		}
 		models, err := providers.RefreshCatalog(context.Background(), ep.Provider, ep.BaseURL, ep.APIKey)
 		if err != nil {
 			LogInfo(fmt.Sprintf("Model catalog for %s unavailable: %v", ep.Provider, err))
+			return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: cached, ok: ok}
 		}
-		return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: models, ok: err == nil}
+		return catalogReadyMsg{provider: ep.Provider, baseURL: ep.BaseURL, models: models, ok: true}
 	}
 }
 
 // resolveServedModel re-resolves m.model against the active endpoint's
-// cached catalog. With no cache (or a stale one) it also returns a Cmd that
-// fetches it; the model stays as is until catalogReadyMsg arrives. No
-// network I/O happens here.
+// catalog as loaded in memory. With none in memory (or a stale one) it also
+// returns a Cmd that reads the disk cache or fetches; the model stays as is
+// until catalogReadyMsg arrives. No disk or network I/O happens here.
 func (m AppModel) resolveServedModel() (AppModel, tea.Cmd) {
 	src, ok := m.llmClient.(ActiveEndpointer)
 	if !ok {
 		return m, nil
 	}
 	ep := src.ActiveEndpoint()
-	cat, stale, cached := providers.CachedCatalog(ep.Provider, ep.BaseURL)
+	cat, stale, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL)
 	var cmd tea.Cmd
 	if (!cached || stale) && providers.HasCatalog(ep.Provider) {
 		cmd = fetchCatalogCmd(ep)
@@ -75,7 +82,7 @@ func (m AppModel) onCatalogReady(msg catalogReadyMsg) AppModel {
 		return m
 	}
 	ep := src.ActiveEndpoint()
-	if ep.Provider != msg.provider || ep.BaseURL != msg.baseURL {
+	if ep.Provider != msg.provider || !providers.SameEndpoint(ep.Provider, ep.BaseURL, msg.baseURL) {
 		return m
 	}
 	return m.applyResolvedModel(ep.Provider, msg.models)

@@ -2689,11 +2689,12 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 				m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
 			}
 			// A session saved on a model the provider has since retired
-			// resumes on the served one. Cached catalog only: this runs
-			// before the program starts, after the startup fetch.
+			// resumes on the served one, from the catalog the startup
+			// loaded. Only when the client is on the session's provider:
+			// another provider's catalog would call every model retired.
 			if src, ok := m.llmClient.(ActiveEndpointer); ok {
 				ep := src.ActiveEndpoint()
-				if cat, _, cached := providers.CachedCatalog(ep.Provider, ep.BaseURL); cached {
+				if cat, _, cached := providers.MemoryCatalog(ep.Provider, ep.BaseURL); cached && ep.Provider == m.provider {
 					m = m.applyResolvedModel(ep.Provider, cat)
 					model = m.model
 				}

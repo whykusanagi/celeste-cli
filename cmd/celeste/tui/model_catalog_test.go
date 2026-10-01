@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,5 +156,50 @@ func TestSetSessionManager_ResolvesRetiredSessionModel(t *testing.T) {
 	}
 	if !strings.Contains(chatText(m), "no longer serves venice-uncensored") {
 		t.Errorf("chat lacks the note:\n%s", chatText(m))
+	}
+}
+
+// A resumed session on another provider than the client's is not resolved
+// against the client's catalog, where every model would look retired.
+func TestSetSessionManager_OtherProviderSessionLeftAlone(t *testing.T) {
+	defer providers.SetCatalogForTest("sakana", []providers.CatalogModel{{ID: "fugu"}})()
+	s := &config.Session{}
+	s.SetEndpoint("venice")
+	s.SetModel("venice-uncensored-1-2")
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "sakana", BaseURL: "https://api.sakana.ai/v1", Model: "fugu"}}
+	m := NewApp(client).WithEndpoint("venice")
+	m = m.SetSessionManager(&fakeSessions{session: s}, s)
+	if m.model != "venice-uncensored-1-2" || len(client.models) != 0 {
+		t.Errorf("model = %q, changes = %v", m.model, client.models)
+	}
+}
+
+// Update never reads the disk cache: with only a disk cache, the switch
+// keeps the model and a Cmd loads it.
+func TestEndpointSwitch_DiskCacheLoadsInACmd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Cleanup(providers.ForgetCatalogsForTest)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(veniceCatalogJSON))
+	}))
+	defer srv.Close()
+	if _, err := providers.RefreshCatalog(context.Background(), "venice", srv.URL, "k"); err != nil {
+		t.Fatal(err)
+	}
+	providers.ForgetCatalogsForTest() // a new process: only the disk cache is left
+
+	client := &endpointClient{onSwitch: func(string) ActiveEndpoint {
+		return ActiveEndpoint{Provider: "venice", BaseURL: srv.URL, APIKey: "k", Model: "venice-uncensored"}
+	}}
+	m, cmd := NewApp(client).switchEndpoint("venice")
+	if m.model != "venice-uncensored" || cmd == nil {
+		t.Fatalf("model=%q cmd=%v: the switch must defer to a Cmd", m.model, cmd != nil)
+	}
+	srv.Close() // the Cmd must be served by the disk cache
+	m2, _ := step(t, m, cmd())
+	if m2.model != "venice-uncensored-1-2" {
+		t.Errorf("model = %q", m2.model)
 	}
 }

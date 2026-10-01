@@ -62,9 +62,12 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	restoreMigrationWarn := func() { config.MigrationWarn = prevMigrationWarn }
 
 	// Use the model the provider serves now: a retired one is replaced for
-	// this process (the config file is untouched). This may fetch the
-	// provider's catalog (bounded by its timeout); we're not in the TUI yet.
-	modelNotes := cfg.ResolveServedModels(context.Background())
+	// this process. The resolved models live on a copy: cfg itself reaches
+	// paths that save it (collections, /voice), and the config file must
+	// keep what the user wrote. This may fetch the provider's catalog
+	// (bounded by its timeout); we're not in the TUI yet.
+	served := *cfg
+	modelNotes := served.ResolveServedModels(context.Background())
 	for _, n := range modelNotes {
 		fmt.Fprintln(os.Stderr, "⚠ "+n)
 	}
@@ -91,7 +94,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	autoInitGrimoire(cwd)
 
 	sink := newChatWarnSink()
-	env, err := loop.Setup(loop.ModeChat, cfg, cwd, loop.SetupOptions{
+	env, err := loop.Setup(loop.ModeChat, &served, cwd, loop.SetupOptions{
 		SessionID: currentSession.ID,
 		Warn:      sink.warn,
 		Notice:    sink.warn,
@@ -108,7 +111,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// Subagents: chat users can delegate subtasks and parameterize their
 	// persona. The top-level chat posts to the mailbox as "parent" (#31).
 	isChild := os.Getenv("CELESTE_SUBAGENT") == "1"
-	subMgr := subagents.NewManager(cfg, cwd, isChild)
+	subMgr := subagents.NewManager(&served, cwd, isChild)
 	registry.RegisterWithModes(subagents.NewSpawnAgentTool(subMgr), tools.ModeAgent, tools.ModeChat)
 	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeChat)
 	env.RefreshDiscovery()
@@ -116,7 +119,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	client := llm.NewClient(&llm.Config{
 		APIKey:            cfg.APIKey,
 		BaseURL:           cfg.BaseURL,
-		Model:             cfg.Model,
+		Model:             served.Model,
 		Timeout:           cfg.GetTimeout(),
 		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
 		SimulateTyping:    cfg.SimulateTyping,
@@ -136,7 +139,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	tuiClient := &TUIClientAdapter{
 		client:         client,
 		registry:       registry,
-		baseConfig:     cfg,
+		baseConfig:     &served,
 		costTracker:    costs.NewSessionTracker(),
 		subMgr:         subMgr,
 		projectContext: env.ProjectContext,
@@ -180,8 +183,8 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		app = app.WithCommandHistory(hist)
 	}
 	if currentSession.GetModel() == "" {
-		tui.LogInfo(fmt.Sprintf("Setting model from config: %s", cfg.Model))
-		currentSession.SetModel(cfg.Model)
+		tui.LogInfo(fmt.Sprintf("Setting model from config: %s", served.Model))
+		currentSession.SetModel(served.Model)
 		if err := sessionManager.Save(currentSession); err != nil {
 			log.Printf("Warning: Failed to save session with model: %v", err)
 		}

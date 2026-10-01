@@ -106,25 +106,53 @@ func catalogCachePath(provider, baseURL string) string {
 // the disk cache, without touching the network. stale is true when it is
 // older than the TTL; the caller decides whether to refresh it.
 func CachedCatalog(provider, baseURL string) (models []CatalogModel, stale, ok bool) {
+	return cachedCatalog(provider, baseURL, true)
+}
+
+// MemoryCatalog is CachedCatalog without the disk: it only sees catalogs
+// already loaded in this process, so the TUI's Update can call it.
+func MemoryCatalog(provider, baseURL string) (models []CatalogModel, stale, ok bool) {
+	return cachedCatalog(provider, baseURL, false)
+}
+
+func cachedCatalog(provider, baseURL string, disk bool) (models []CatalogModel, stale, ok bool) {
 	catalogMu.Lock()
-	defer catalogMu.Unlock()
 	if m, found := catalogOverride[provider]; found {
+		catalogMu.Unlock()
 		return m, false, len(m) > 0
 	}
 	if !HasCatalog(provider) {
+		catalogMu.Unlock()
 		return nil, false, false
 	}
 	key := catalogKey(provider, baseURL)
 	e, found := catalogMem[key]
+	catalogMu.Unlock()
 	if !found {
+		if !disk {
+			return nil, false, false
+		}
 		var err error
 		if e, err = readCatalogFile(catalogCachePath(provider, baseURL)); err != nil {
 			return nil, false, false
 		}
-		catalogMem[key] = e
+		catalogMu.Lock()
+		if cur, raced := catalogMem[key]; raced {
+			e = cur // a fetch landed while we read the file; it is newer
+		} else {
+			catalogMem[key] = e
+		}
+		catalogMu.Unlock()
 	}
+	catalogMu.Lock()
 	catalogLatest[provider] = key
+	catalogMu.Unlock()
 	return e.Models, catalogNow().Sub(e.FetchedAt) > catalogTTL, true
+}
+
+// SameEndpoint reports whether two base URLs name the same catalog.
+func SameEndpoint(provider, a, b string) bool {
+	return normalizeBaseURL(provider, a) == normalizeBaseURL(provider, b)
 }
 
 // CatalogFor returns the catalog most recently loaded in this process for a

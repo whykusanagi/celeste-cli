@@ -182,4 +182,9 @@ func TestNewChatAppResolvesRetiredModel(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".celeste", "config.json")); err == nil {
 		t.Error("resolution wrote a config file")
 	}
+	// cfg reaches paths that save it (collections, /voice): it must keep
+	// what the user wrote.
+	if cfg.Model != "venice-uncensored" {
+		t.Errorf("the caller's config changed to %q", cfg.Model)
+	}
 }
