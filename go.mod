@@ -30,9 +30,8 @@ require (
 	github.com/tree-sitter/tree-sitter-ruby v0.23.1
 	github.com/tree-sitter/tree-sitter-rust v0.24.2
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
-	golang.org/x/text v0.42.0
 	golang.org/x/term v0.44.0
-	golang.org/x/time v0.16.0
+	golang.org/x/text v0.42.0
 	google.golang.org/genai v1.71.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
