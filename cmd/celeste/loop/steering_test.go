@@ -217,3 +217,43 @@ func kindNames(ks []EventKind) []string {
 	}
 	return out
 }
+
+// endSteering also implements StreamEnder: its verdict comes only when the
+// stream ends (a batched matcher's last scan, W3-1 review I1).
+type endSteering struct {
+	fakeSteering
+	ends int
+}
+
+func (e *endSteering) EndStream() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ends++
+	if e.ends == 1 {
+		e.queue(BoundaryRetry, Reminder{Source: "rule:end", Text: "late"})
+		return true
+	}
+	return false
+}
+
+// A verdict at the end of the stream still drops the reply and re-runs the
+// turn, even though the provider already sent the whole reply.
+func TestSteeringEndOfStreamVerdictInterrupts(t *testing.T) {
+	llmStub := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		if n == 0 {
+			sayText(cb, "Audio saved: x", nil)
+			return nil
+		}
+		sayText(cb, "No audio.", nil)
+		return nil
+	}}
+	st := &endSteering{}
+	l := &Loop{Client: llmStub, Tools: newRegistry(), Limits: DefaultLimits(), Steering: st}
+	msgs, res, err := l.Run(context.Background(), []Message{{Role: "user", Content: "x"}})
+	if err != nil || res.FinalText != "No audio." || llmStub.calls != 2 {
+		t.Fatalf("res=%+v err=%v calls=%d", res, err, llmStub.calls)
+	}
+	if msgs[1].Metadata[MetaReminder] != "rule:end" {
+		t.Errorf("history = %+v", msgs)
+	}
+}

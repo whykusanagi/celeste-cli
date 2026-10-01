@@ -2,6 +2,7 @@ package rules
 
 import (
 	"encoding/json"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -43,6 +44,12 @@ type Call struct {
 // match longer than this that straddles many deltas can be missed.
 const scanBack = 4096
 
+// scanEvery batches text scans: the rules run once at least this many new
+// bytes have arrived, or at a newline, and Flush runs them on what is left
+// when the stream ends. A provider streaming a few bytes per delta would
+// otherwise rescan the 4 KB tail with every rule on every delta.
+const scanEvery = 256
+
 // Matcher runs a Set over one session. Not safe for concurrent use: the
 // caller (steer.Session) serializes it.
 type Matcher struct {
@@ -51,7 +58,8 @@ type Matcher struct {
 	request int            // requests started this session
 	last    map[string]int // rule → request it last fired
 	fired   map[string]bool
-	tail    string // the last scanBack bytes of this request's reply
+	tail    []byte // up to scanBack scanned bytes of this request's reply, then the unscanned ones
+	pending int    // bytes at the end of tail not scanned yet
 }
 
 // NewMatcher returns a matcher over set (nil: no rules).
@@ -66,17 +74,39 @@ func (m *Matcher) Facts() *Facts { return &m.facts }
 // each rule fires at most once per request.
 func (m *Matcher) StartRequest() {
 	m.request++
-	m.tail = ""
+	m.tail, m.pending = m.tail[:0], 0
 	m.fired = map[string]bool{}
 }
 
 // Text feeds one streamed text delta and returns the text rules it fires.
+// Scans are batched (scanEvery, or a newline); call Flush when the stream
+// ends so the last batch is scanned too.
 func (m *Matcher) Text(delta string) []Hit {
 	if m.set.Len() == 0 || delta == "" {
 		return nil
 	}
-	window := m.tail + delta
-	m.tail = keepTail(window, scanBack)
+	m.tail = append(m.tail, delta...)
+	m.pending += len(delta)
+	if m.pending < scanEvery && !strings.Contains(delta, "\n") {
+		return nil
+	}
+	return m.scan()
+}
+
+// Flush scans text the batching held back. Call it once the stream ends.
+func (m *Matcher) Flush() []Hit {
+	if m.set.Len() == 0 || m.pending == 0 {
+		return nil
+	}
+	return m.scan()
+}
+
+// scan runs the text rules over the scanned context and the pending bytes,
+// then keeps the last scanBack bytes as context for the next scan.
+func (m *Matcher) scan() []Hit {
+	window := string(m.tail)
+	kept := keepTail(window, scanBack)
+	m.tail, m.pending = append(m.tail[:0], kept...), 0
 	var hits []Hit
 	for _, r := range m.set.Rules {
 		for _, sc := range r.Scopes {

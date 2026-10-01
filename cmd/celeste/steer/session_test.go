@@ -154,7 +154,7 @@ func TestRuntimeVerifiesSilencesTaskCompleteRule(t *testing.T) {
 func TestUnhonouredInterruptReminderJoinsLater(t *testing.T) {
 	s := New(Options{Rules: builtins(), RulesMode: "on"})
 	s.Request(1, nil)
-	if !s.Observe(loop.Event{Kind: loop.EventTextDelta, Text: "Audio saved: x"}) {
+	if hit := s.Observe(loop.Event{Kind: loop.EventTextDelta, Text: "Audio saved: x"}); !hit && !s.EndStream() {
 		t.Fatal("the rule must ask to interrupt")
 	}
 	if got := s.Reminders(loop.BoundaryTools); len(got) != 1 || got[0].Source != "rule:unbacked-audio-claim" {

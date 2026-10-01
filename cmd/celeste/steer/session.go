@@ -84,6 +84,16 @@ func (s *Session) Observe(ev loop.Event) bool {
 	return false
 }
 
+var _ loop.StreamEnder = (*Session)(nil)
+
+// EndStream scans the reply text the matcher's batching held back
+// (loop.StreamEnder).
+func (s *Session) EndStream() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.act(s.matcher.Flush())
+}
+
 func (s *Session) Calls(_ int, calls []loop.ToolCall) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -53,6 +53,14 @@ type Steering interface {
 	Reminders(b Boundary) []Reminder
 }
 
+// StreamEnder is an optional Steering method. EndStream is called when a
+// request's stream has ended, before the request returns: a matcher that
+// batches its scans checks what it held back. True interrupts the request
+// (the reply is dropped even though the provider sent all of it).
+type StreamEnder interface {
+	EndStream() bool
+}
+
 // ReminderMessage is a reminder as the history holds it: a hidden user
 // message (not shown in the chat, never checked by UserPromptSubmit) in a
 // <system-reminder> block.

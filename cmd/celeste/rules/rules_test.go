@@ -59,13 +59,13 @@ func set(t *testing.T, rules ...string) *Set {
 func TestTextMatchAcrossDeltasOncePerRequest(t *testing.T) {
 	m := NewMatcher(set(t, "---\ncondition: Audio saved:\n---\nx\n"))
 	m.StartRequest()
-	if hits := m.Text("All done. Audio sa"); len(hits) != 0 {
+	if hits := scanNow(m, "All done. Audio sa"); len(hits) != 0 {
 		t.Fatalf("early hit %v", hits)
 	}
-	if hits := m.Text("ved: /tmp/x.mp3"); len(hits) != 1 || hits[0].Text != "Audio saved:" {
+	if hits := scanNow(m, "ved: /tmp/x.mp3"); len(hits) != 1 || hits[0].Text != "Audio saved:" {
 		t.Fatalf("split match: %v", hits)
 	}
-	if hits := m.Text(" Audio saved: again"); len(hits) != 0 {
+	if hits := scanNow(m, " Audio saved: again"); len(hits) != 0 {
 		t.Errorf("a rule fires at most once per request: %v", hits)
 	}
 }
@@ -78,7 +78,7 @@ func TestRepeatOnceAndGap(t *testing.T) {
 	fires := map[string]int{}
 	for i := 0; i < 5; i++ {
 		m.StartRequest()
-		for _, h := range m.Text("once gap") {
+		for _, h := range scanNow(m, "once gap") {
 			fires[h.Rule.Name]++
 		}
 	}
@@ -189,13 +189,13 @@ func TestBuiltinVoiceInFilesExemptions(t *testing.T) {
 func TestBuiltinAudioClaimNeedsNoTTS(t *testing.T) {
 	m := builtinMatcher(t)
 	m.StartRequest()
-	if names(m.Text("Audio saved: /tmp/a.mp3")) != "unbacked-audio-claim" {
+	if names(scanNow(m, "Audio saved: /tmp/a.mp3")) != "unbacked-audio-claim" {
 		t.Error("an unbacked claim must fire")
 	}
 	m = builtinMatcher(t)
 	m.ToolResult("generate_speech", false)
 	m.StartRequest()
-	if hits := m.Text("Audio saved: /tmp/a.mp3"); len(hits) != 0 {
+	if hits := scanNow(m, "Audio saved: /tmp/a.mp3"); len(hits) != 0 {
 		t.Errorf("a claim after a real TTS call fired: %v", hits)
 	}
 }
@@ -203,26 +203,26 @@ func TestBuiltinAudioClaimNeedsNoTTS(t *testing.T) {
 func TestBuiltinTaskCompleteNeedsAnUncheckedEdit(t *testing.T) {
 	m := builtinMatcher(t)
 	m.StartRequest()
-	if hits := m.Text("TASK_COMPLETE: nothing changed"); len(hits) != 0 {
+	if hits := scanNow(m, "TASK_COMPLETE: nothing changed"); len(hits) != 0 {
 		t.Errorf("no edit, fired %v", hits)
 	}
 	m = builtinMatcher(t)
 	m.ToolResult("write_file", false)
 	m.ToolResult("bash", false)
 	m.StartRequest()
-	if hits := m.Text("TASK_COMPLETE: tested"); len(hits) != 0 {
+	if hits := scanNow(m, "TASK_COMPLETE: tested"); len(hits) != 0 {
 		t.Errorf("edit then bash, fired %v", hits)
 	}
 	m.ToolResult("patch_file", false)
 	m.StartRequest()
-	if names(m.Text("TASK_COMPLETE: done")) != "task-complete-before-verify" {
+	if names(scanNow(m, "TASK_COMPLETE: done")) != "task-complete-before-verify" {
 		t.Error("an edit after the last command must fire")
 	}
 	m = builtinMatcher(t)
 	m.Facts().RuntimeVerifies = true
 	m.ToolResult("write_file", false)
 	m.StartRequest()
-	if hits := m.Text("TASK_COMPLETE: done"); len(hits) != 0 {
+	if hits := scanNow(m, "TASK_COMPLETE: done"); len(hits) != 0 {
 		t.Errorf("the runtime verifies; fired %v", hits)
 	}
 }
@@ -264,15 +264,15 @@ func TestStripUnbackedAudioClaim(t *testing.T) {
 func TestTextMatchSpanningManyDeltas(t *testing.T) {
 	m := NewMatcher(set(t, "---\ncondition: (?s)BEGIN.{900,}END\n---\nx\n"))
 	m.StartRequest()
-	if hits := m.Text("BEGIN"); len(hits) != 0 {
+	if hits := scanNow(m, "BEGIN"); len(hits) != 0 {
 		t.Fatal("early hit")
 	}
 	for i := 0; i < 30; i++ {
-		if hits := m.Text(strings.Repeat("y", 50)); len(hits) != 0 {
+		if hits := scanNow(m, strings.Repeat("y", 50)); len(hits) != 0 {
 			t.Fatal("early hit")
 		}
 	}
-	if hits := m.Text("END"); len(hits) != 1 {
+	if hits := scanNow(m, "END"); len(hits) != 1 {
 		t.Fatalf("a match spanning 1.5 KB of deltas was missed: %v", hits)
 	}
 }
@@ -305,4 +305,41 @@ func TestLoadSkipsOversizedRuleFiles(t *testing.T) {
 	if len(warns) != 1 || !strings.Contains(warns[0], "huge.md") {
 		t.Errorf("warnings = %v", warns)
 	}
+}
+
+// The matcher scans in batches (W3-1 review I1): a match that straddles a
+// batch boundary is still found, and Flush finds one the batching held
+// back at the end of the stream.
+func TestTextThrottleStillFindsEveryMatch(t *testing.T) {
+	m := NewMatcher(set(t, "---\ncondition: Audio saved:\nrepeat: after-gap:1\n---\nx\n"))
+	m.StartRequest()
+	pad := strings.Repeat("a", scanEvery-3)
+	var hits []Hit
+	for _, d := range []string{pad, "Aud", "io sa", "ved: x"} {
+		hits = append(hits, m.Text(d)...)
+	}
+	hits = append(hits, m.Flush()...)
+	if len(hits) != 1 {
+		t.Fatalf("straddling match: %v", hits)
+	}
+
+	m.StartRequest()
+	if hits := m.Text("short: Audio saved: y"); len(hits) != 0 {
+		t.Fatalf("a short delta without a newline should wait for the batch: %v", hits)
+	}
+	m2 := NewMatcher(set(t, "---\ncondition: Audio saved:\nrepeat: after-gap:1\n---\nx\n"))
+	m2.StartRequest()
+	m2.Text("short: Audio saved: y")
+	if hits := m2.Flush(); len(hits) != 1 {
+		t.Fatalf("Flush must scan what the batching held back: %v", hits)
+	}
+	m2.StartRequest()
+	if hits := m2.Text("line one Audio saved: z\n"); len(hits) != 1 {
+		t.Fatalf("a newline scans at once: %v", hits)
+	}
+}
+
+// scanNow feeds a delta and flushes, as if the stream ended after it.
+func scanNow(m *Matcher, delta string) []Hit {
+	return append(m.Text(delta), m.Flush()...)
 }

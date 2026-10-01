@@ -352,6 +352,9 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits, turn int
 			r.blocksRejected = ev.BlocksRejected
 		}
 	})
+	if se, ok := l.Steering.(StreamEnder); ok && se.EndStream() && allow {
+		intr.fire()
+	}
 	// Read before cancel(): afterwards the context reports Canceled.
 	timedOut := lim.RequestTimeout > 0 && errors.Is(reqCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 	interrupted := intr.close()
