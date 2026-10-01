@@ -274,6 +274,9 @@ func (m *Manager) Stop() error {
 	m.clients = make(map[string]*Client)
 	m.toolCounts = make(map[string]int)
 	m.transports = make(map[string]string)
+	// Closed servers' tools are no longer mirrored into nested runs.
+	m.toolNames = make(map[string][]string)
+	m.origins = make(map[string]string)
 
 	return nil
 }
