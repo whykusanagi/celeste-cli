@@ -2668,6 +2668,8 @@ type Session interface {
 	GetModel() string
 	SetNSFWMode(enabled bool)
 	GetNSFWMode() bool
+	SetModelPinned(pinned bool)
+	GetModelPinned() bool
 	SetName(name string)
 	ClearMessages()
 	GetMessagesRaw() interface{}     // Returns []config.SessionMessage
@@ -2702,6 +2704,8 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 		}
 		if model := session.GetModel(); model != "" {
 			m.model = model
+			// A /set-model --force pin outlives the resume.
+			m.modelPinned = session.GetModelPinned()
 			m.header = m.header.SetModel(model)
 
 			// A ToolsPerModel provider (Venice) only knows whether tools are
@@ -2913,6 +2917,7 @@ func (m *AppModel) persistSession() {
 
 	m.currentSession.SetEndpoint(m.endpoint)
 	m.currentSession.SetModel(m.model)
+	m.currentSession.SetModelPinned(m.modelPinned)
 	m.currentSession.SetNSFWMode(m.nsfwMode)
 	if hist := m.input.GetHistory(); len(hist) > 0 {
 		m.currentSession.SetCommandHistory(hist)

@@ -430,6 +430,25 @@ func (s *Session) GetModel() string {
 	return ""
 }
 
+// SetModelPinned records a /set-model --force pin, so a resume keeps the
+// model instead of resolving it.
+func (s *Session) SetModelPinned(pinned bool) {
+	if s.Metadata == nil {
+		s.Metadata = make(map[string]any)
+	}
+	if pinned {
+		s.Metadata["model_pinned"] = true
+	} else {
+		delete(s.Metadata, "model_pinned")
+	}
+}
+
+// GetModelPinned reports a saved /set-model --force pin.
+func (s *Session) GetModelPinned() bool {
+	pinned, _ := s.Metadata["model_pinned"].(bool)
+	return pinned
+}
+
 // SetNSFWMode stores the NSFW mode in session.
 func (s *Session) SetNSFWMode(enabled bool) {
 	s.NSFWMode = enabled

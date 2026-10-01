@@ -270,3 +270,26 @@ func TestSelectorPickClearsPin(t *testing.T) {
 		t.Errorf("model=%q pinned=%v", m.model, m.modelPinned)
 	}
 }
+
+// A --force pin is saved with the session and survives a resume: the
+// pinned model is kept, with no note.
+func TestForcePinSurvivesResume(t *testing.T) {
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
+	s := &config.Session{}
+	s.SetEndpoint("venice")
+	s.SetModel("venice-uncensored-1-2")
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "venice", BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored-1-2"}}
+	m := NewApp(client).WithEndpoint("venice")
+	m = m.SetSessionManager(&fakeSessions{session: s}, s)
+	m, _ = step(t, m, SendMessageMsg{Content: "/set-model my-private-model --force"})
+	if !s.GetModelPinned() || s.GetModel() != "my-private-model" {
+		t.Fatalf("session: model=%q pinned=%v", s.GetModel(), s.GetModelPinned())
+	}
+
+	client2 := &endpointClient{ep: ActiveEndpoint{Provider: "venice", BaseURL: "https://api.venice.ai/api/v1", Model: "my-private-model"}}
+	r := NewApp(client2).WithEndpoint("venice")
+	r = r.SetSessionManager(&fakeSessions{session: s}, s)
+	if r.model != "my-private-model" || !r.modelPinned || strings.Contains(chatText(r), "no longer serves") {
+		t.Errorf("resumed: model=%q pinned=%v chat:\n%s", r.model, r.modelPinned, chatText(r))
+	}
+}
