@@ -17,40 +17,6 @@ func TestExtToLangCoversAllSpecs(t *testing.T) {
 	}
 }
 
-func TestLookupLangSpec(t *testing.T) {
-	tests := []struct {
-		ext  string
-		lang string
-		nil_ bool
-	}{
-		{".py", "python", false},
-		{".rs", "rust", false},
-		{".ts", "typescript", false},
-		{".go", "go", false},
-		{".java", "java", false},
-		{".c", "c", false},
-		{".cpp", "cpp", false},
-		{".unknown", "", true},
-		{".md", "", true},
-	}
-	for _, tt := range tests {
-		spec := LookupLangSpec(tt.ext)
-		if tt.nil_ {
-			if spec != nil {
-				t.Errorf("LookupLangSpec(%q) should return nil for unsupported extension", tt.ext)
-			}
-			continue
-		}
-		if spec == nil {
-			t.Errorf("LookupLangSpec(%q) returned nil, want spec for %q", tt.ext, tt.lang)
-			continue
-		}
-		if len(spec.FunctionTypes) == 0 {
-			t.Errorf("LookupLangSpec(%q): FunctionTypes is empty", tt.ext)
-		}
-	}
-}
-
 func TestSupportedLanguage(t *testing.T) {
 	if got := SupportedLanguage(".py"); got != "python" {
 		t.Errorf("SupportedLanguage(.py) = %q, want python", got)

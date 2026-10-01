@@ -136,7 +136,6 @@ func TestClassifyPath_CleanPaths(t *testing.T) {
 		t.Run(p, func(t *testing.T) {
 			flags := ClassifyPath(p)
 			assert.Empty(t, flags, "path should have no flags: %s", p)
-			assert.False(t, IsDemotable(flags))
 		})
 	}
 }

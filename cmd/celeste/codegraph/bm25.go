@@ -39,14 +39,6 @@ type BM25CorpusStats struct {
 	AvgDocLength float64
 }
 
-// TokenStat is a per-token corpus statistic: document frequency (how
-// many symbols contain this token) and precomputed IDF.
-type TokenStat struct {
-	Token string
-	DF    int
-	IDF   float64
-}
-
 // bm25Idf is the standard BM25 IDF formula:
 //
 //	idf(t) = log( (N - df + 0.5) / (df + 0.5) + 1 )

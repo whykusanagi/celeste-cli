@@ -64,11 +64,6 @@ func (m *MinHasher) Seeds() []uint64 {
 	return out
 }
 
-// NumHashes returns the signature length.
-func (m *MinHasher) NumHashes() int {
-	return m.numHashes
-}
-
 // Signature computes the MinHash signature for a set of shingles.
 // Each element of the returned slice is the minimum hash value across
 // all shingles for that hash function.

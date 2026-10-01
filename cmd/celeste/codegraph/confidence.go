@@ -1,7 +1,5 @@
 package codegraph
 
-import "fmt"
-
 // Confidence warning constants. These strings are stable across
 // releases because callers (LLM tool users, UIs, scripts) may match
 // on them directly. Add new ones freely but do NOT rename or remove
@@ -122,26 +120,4 @@ func isDeclarationOnlyKind(k SymbolKind) bool {
 	default:
 		return false
 	}
-}
-
-// FormatConfidenceLine returns a human-readable one-line summary of a
-// SearchResult's confidence metadata, suitable for appending to CLI /
-// tool output. Empty string if there's nothing notable.
-//
-// Example output:
-//
-//	"  ⚠ demoted: mock path; zero edges — may be dead code or parser limitation; edges=0"
-//	"  edges=12"
-func FormatConfidenceLine(r SearchResult) string {
-	if len(r.ConfidenceWarnings) == 0 {
-		return fmt.Sprintf("edges=%d", r.EdgeCount)
-	}
-	out := ""
-	for i, w := range r.ConfidenceWarnings {
-		if i > 0 {
-			out += "; "
-		}
-		out += w
-	}
-	return fmt.Sprintf("%s; edges=%d", out, r.EdgeCount)
 }

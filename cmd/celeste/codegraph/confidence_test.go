@@ -101,29 +101,6 @@ func TestIsDeclarationOnlyKind(t *testing.T) {
 	assert.False(t, isDeclarationOnlyKind(SymbolVar))
 }
 
-func TestFormatConfidenceLine(t *testing.T) {
-	// Clean result — just the edge count.
-	r1 := SearchResult{EdgeCount: 12}
-	assert.Equal(t, "edges=12", FormatConfidenceLine(r1))
-
-	// Result with one warning.
-	r2 := SearchResult{
-		ConfidenceWarnings: []string{WarnLowConfidence},
-		EdgeCount:          3,
-	}
-	assert.Equal(t, "low confidence (jaccard < 0.10); edges=3", FormatConfidenceLine(r2))
-
-	// Result with multiple warnings — semicolon joined.
-	r3 := SearchResult{
-		ConfidenceWarnings: []string{WarnDemotedMock, WarnZeroEdge},
-		EdgeCount:          0,
-	}
-	line := FormatConfidenceLine(r3)
-	assert.Contains(t, line, "demoted: mock path")
-	assert.Contains(t, line, "zero edges")
-	assert.Contains(t, line, "edges=0")
-}
-
 // TestSemanticSearch_PopulatesConfidenceFields is the integration test
 // for the confidence metadata pipeline end-to-end: build an index,
 // run a search, verify every result has PathFlags, EdgeCount, and

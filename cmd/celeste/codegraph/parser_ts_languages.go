@@ -241,20 +241,6 @@ var extToLang = map[string]string{
 	".jl":    "julia",
 }
 
-// LookupLangSpec returns the language spec for a file extension.
-// Returns nil if the language is not supported.
-func LookupLangSpec(ext string) *langSpec {
-	lang, ok := extToLang[ext]
-	if !ok {
-		return nil
-	}
-	spec, ok := langSpecs[lang]
-	if !ok {
-		return nil
-	}
-	return &spec
-}
-
 // SupportedLanguage returns the language name for a file extension,
 // or empty string if unsupported.
 func SupportedLanguage(ext string) string {
