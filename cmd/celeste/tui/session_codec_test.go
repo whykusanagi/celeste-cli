@@ -104,3 +104,10 @@ func TestCapLoadedToolResultsLeavesCappedPreviewsAlone(t *testing.T) {
 	assert.Len(t, got[1].Content, 300*1024, "only tool results are capped")
 	assert.Same(t, &msgs[0], &got[0], "nothing to cut: the input slice comes back")
 }
+
+func TestCapLoadedToolResultsClearsBlocksOfACutMessage(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	msgs := []ChatMessage{AttachProviderBlocks(ChatMessage{Role: "tool", ToolCallID: "c1", Content: strings.Repeat("y", 300*1024)}, pb)}
+	got := CapLoadedToolResults(msgs, ctxmgr.DefaultMaxToolResultBytes)
+	assert.Nil(t, got[0].ProviderBlocks)
+}

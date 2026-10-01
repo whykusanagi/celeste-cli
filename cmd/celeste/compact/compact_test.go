@@ -1,6 +1,7 @@
 package compact
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -250,5 +251,24 @@ func TestPlanSkipsScorerWhenSupersessionSuffices(t *testing.T) {
 	}
 	if called {
 		t.Error("scorer was called although supersession already met the target")
+	}
+}
+
+// Apply is prune's edit; an edited result loses its blocks (2.0 F3).
+func TestApplyClearsProviderBlocks(t *testing.T) {
+	pb, err := tui.NewProviderBlocks("k", []json.RawMessage{json.RawMessage(`{"a":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []tui.ChatMessage{
+		tui.AttachProviderBlocks(tui.ChatMessage{Role: "tool", ToolCallID: "c1", Content: "big"}, pb),
+		tui.AttachProviderBlocks(tui.ChatMessage{Role: "tool", ToolCallID: "c2", Content: "kept"}, pb),
+	}
+	out := Apply(msgs, []Edit{{ToolCallID: "c1", Content: "[elided]"}})
+	if out[0].Content != "[elided]" || out[0].ProviderBlocks != nil {
+		t.Fatalf("edited result = %+v, want new content and no blocks", out[0])
+	}
+	if out[1].ProviderBlocks == nil {
+		t.Fatal("an untouched result lost its blocks")
 	}
 }

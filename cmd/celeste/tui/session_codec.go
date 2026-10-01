@@ -116,6 +116,7 @@ func CapLoadedToolResults(msgs []ChatMessage, maxBytes int) []ChatMessage {
 			copied = true
 		}
 		out[i].Content = ctxmgr.SnipToolResult(m.Content, maxBytes, loadedCutNote)
+		out[i].ProviderBlocks = nil
 	}
 	return out
 }

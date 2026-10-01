@@ -126,3 +126,22 @@ func TestAttachProviderBlocksCanonicalizes(t *testing.T) {
 	bad := AttachProviderBlocks(msg, &ProviderBlocks{Provider: keyA, Blocks: []json.RawMessage{json.RawMessage(`{"a":`)}})
 	assert.Nil(t, bad.ProviderBlocks, "a block that is not JSON is never attached")
 }
+
+// Prune rewrites tool results; an edited message loses its metadata and its
+// blocks in the same operation (spec F3 invariant). Others keep theirs.
+func TestEditToolResultsClearsBlocks(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	msgs := []ChatMessage{
+		AttachProviderBlocks(ChatMessage{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "read_file"}}}, pb),
+		AttachProviderBlocks(ChatMessage{Role: "tool", ToolCallID: "c1", Content: "big", Metadata: map[string]any{"type": "image"}}, pb),
+		AttachProviderBlocks(ChatMessage{Role: "tool", ToolCallID: "c2", Content: "kept"}, pb),
+	}
+	out := EditToolResults(msgs, map[string]string{"c1": "[pruned]"})
+	assert.Equal(t, "[pruned]", out[1].Content)
+	assert.Nil(t, out[1].Metadata)
+	assert.Nil(t, out[1].ProviderBlocks, "an edited message loses its blocks")
+	assert.NotNil(t, out[0].ProviderBlocks, "the calling turn is not edited")
+	assert.NotNil(t, out[2].ProviderBlocks)
+	assert.Equal(t, "big", msgs[1].Content, "copy-on-write")
+	assert.Same(t, &msgs[0], &EditToolResults(msgs, nil)[0], "no edits: the input comes back")
+}

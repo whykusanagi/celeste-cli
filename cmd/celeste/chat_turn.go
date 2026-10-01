@@ -405,16 +405,7 @@ func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, la
 	if len(out.Edits) == 0 {
 		return history, nil, false
 	}
-	edited := append([]tui.ChatMessage(nil), history...)
-	for i := range edited {
-		if edited[i].Role != "tool" {
-			continue
-		}
-		if content, ok := out.Edits[edited[i].ToolCallID]; ok {
-			edited[i].Content = content
-			edited[i].Metadata = nil
-		}
-	}
+	edited := tui.EditToolResults(history, out.Edits)
 	if c.used > out.SavedTokens {
 		c.used -= out.SavedTokens
 	}

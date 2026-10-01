@@ -227,3 +227,28 @@ func TestSyncLLMLogsDrift(t *testing.T) {
 	assert.Contains(t, drift[0], "position 1")
 	assert.Contains(t, drift[0], "role assistant")
 }
+
+// A summary cut is an edit of the cut messages: they stay in the scrollback,
+// marked compacted, without blocks. The kept tail keeps its blocks.
+func TestApplySummaryClearsBlocksOfCutMessages(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	c := NewChatModel().AddUserMessage("old")
+	c = c.AppendLLM(AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "old reply"}, pb))
+	c = c.AddUserMessage("new")
+	c = c.AppendLLM(AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "kept reply"}, pb))
+	c = c.ApplySummary(2, []ChatMessage{{Role: "user", Content: "<summary>"}})
+	all := c.GetMessages()
+	require.Len(t, all, 5) // old, old reply (compacted), summary (hidden), new, kept reply
+	assert.Equal(t, "old reply", all[1].Content)
+	assert.Nil(t, all[1].ProviderBlocks, "a message the summary replaced loses its blocks")
+	assert.Equal(t, "kept reply", all[4].Content)
+	assert.NotNil(t, all[4].ProviderBlocks, "the kept tail keeps its blocks")
+}
+
+func TestReplaceToolResultsClearsBlocks(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	c := NewChatModel().AppendLLM(AttachProviderBlocks(ChatMessage{Role: "tool", ToolCallID: "c1", Content: "big"}, pb))
+	c = c.ReplaceToolResults(map[string]string{"c1": "[pruned]"})
+	assert.Equal(t, "[pruned]", c.GetMessages()[0].Content)
+	assert.Nil(t, c.GetMessages()[0].ProviderBlocks)
+}

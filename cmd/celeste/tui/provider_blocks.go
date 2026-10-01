@@ -110,3 +110,25 @@ func StripProviderBlocks(msgs []ChatMessage) []ChatMessage {
 	}
 	return out
 }
+
+// EditToolResults returns a copy of msgs in which the tool results named in
+// edits (tool call ID → new content) are replaced: compaction's prune. An
+// edited message loses its metadata (inline image data) and its provider
+// blocks in the same operation (2.0 F3). No edits: msgs itself.
+func EditToolResults(msgs []ChatMessage, edits map[string]string) []ChatMessage {
+	if len(edits) == 0 {
+		return msgs
+	}
+	out := append([]ChatMessage(nil), msgs...)
+	for i := range out {
+		if out[i].Role != "tool" {
+			continue
+		}
+		if c, ok := edits[out[i].ToolCallID]; ok {
+			out[i].Content = c
+			out[i].Metadata = nil
+			out[i].ProviderBlocks = nil
+		}
+	}
+	return out
+}
