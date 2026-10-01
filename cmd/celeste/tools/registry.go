@@ -23,6 +23,10 @@ type PermissionRequest struct {
 	ToolName     string
 	InputSummary string // short human-readable summary of what the tool will do
 	RiskLevel    string // "read", "write", or "destructive"
+	// Context is the asking call's context (loop.PromptGate sets it): its
+	// Done and values tell an interactive prompt which run asked and
+	// whether that run has ended (2.0 F2e). nil: unknown.
+	Context context.Context
 }
 
 // PermissionResponse carries the user's decision from an interactive prompt.

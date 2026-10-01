@@ -349,3 +349,21 @@ func TestLoopNoPromptsCheckedEventWhenNothingToCheck(t *testing.T) {
 		}
 	}
 }
+
+// PromptGate hands the prompt the asking call's context, so an interactive
+// prompt knows which run asked and whether it has ended (2.0 F2e).
+func TestPromptGatePassesTheCallsContext(t *testing.T) {
+	type key struct{}
+	ctx := context.WithValue(context.Background(), key{}, "run-9")
+	var got context.Context
+	g := PromptGate(func(req tools.PermissionRequest) tools.PermissionResponse {
+		got = req.Context
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	if r := g.Ask(ctx, tools.PermissionRequest{ToolName: "write_file"}); r.Decision != "allow_once" {
+		t.Fatalf("decision = %q", r.Decision)
+	}
+	if got == nil || got.Value(key{}) != "run-9" {
+		t.Fatalf("prompt got context %v, want the call's", got)
+	}
+}

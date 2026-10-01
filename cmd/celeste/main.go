@@ -245,73 +245,12 @@ func runChatTUI() {
 	hookNotify.Store(&notify)
 	defer hookNotify.Store(nil)
 
-	// Wire the interactive permission prompt now that we have the program handle.
-	// The prompt function runs inside a tea.Cmd goroutine (off the Update loop),
-	// so the blocking channel receive is safe. It sends a PermissionRequestMsg to
-	// the TUI via p.Send, which delivers it to the Update loop asynchronously.
-	promptFn := func(req tools.PermissionRequest) tools.PermissionResponse {
-		respCh := make(chan tools.PermissionResponse, 1)
-		p.Send(tui.PermissionRequestMsg{
-			ToolName:     req.ToolName,
-			InputSummary: req.InputSummary,
-			RiskLevel:    req.RiskLevel,
-			Response: func() chan tui.PermissionResponse {
-				// Bridge: the TUI uses chan tui.PermissionResponse; we use chan tools.PermissionResponse.
-				// Create a tui-typed channel and relay the response back.
-				tuiCh := make(chan tui.PermissionResponse, 1)
-				go func() {
-					tuiResp, ok := <-tuiCh
-					if !ok {
-						respCh <- tools.PermissionResponse{Decision: "deny"}
-						return
-					}
-					respCh <- tools.PermissionResponse{
-						Decision: tuiResp.Decision,
-						Pattern:  tuiResp.Pattern,
-					}
-				}()
-				return tuiCh
-			}(),
-		})
-		return <-respCh
-	}
+	// The permission and ask modals (chat_prompts.go): they run off the
+	// Update loop and reach it through p.Send.
+	promptFn := permissionPrompt(p.Send)
 	registry.SetPromptFunc(promptFn)
 	tuiClient.promptFn = promptFn
-
-	// Wire the interactive ask tool. Same bridge shape as the permission
-	// prompt: a tools-typed reply channel, a p.Send of a tui.AskRequestMsg
-	// carrying a tui-typed channel, and a relay goroutine between them.
-	registry.SetAskFunc(func(ctx context.Context, req tools.AskRequest) (tools.AskResponse, error) {
-		respCh := make(chan tools.AskResponse, 1)
-
-		tuiCh := make(chan tui.AskResponseMsg, 1)
-		go func() {
-			tuiResp, ok := <-tuiCh
-			if !ok {
-				respCh <- tools.AskResponse{Cancelled: true}
-				return
-			}
-			respCh <- tools.AskResponse{Selected: tuiResp.Selected, Cancelled: tuiResp.Cancelled}
-		}()
-
-		opts := make([]tui.AskOption, 0, len(req.Options))
-		for _, o := range req.Options {
-			opts = append(opts, tui.AskOption{Label: o.Label, Description: o.Description})
-		}
-		p.Send(tui.AskRequestMsg{
-			Question:    req.Question,
-			Options:     opts,
-			MultiSelect: req.MultiSelect,
-			Response:    tuiCh,
-		})
-
-		select {
-		case resp := <-respCh:
-			return resp, nil
-		case <-ctx.Done():
-			return tools.AskResponse{Cancelled: true}, ctx.Err()
-		}
-	})
+	registry.SetAskFunc(askPrompt(p.Send))
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)

@@ -106,6 +106,8 @@ func (a *TUIClientAdapter) RunOrchestratorCommand(goal string, run uint64) tea.C
 	// at once after the agent run completes (what happens with a large buffer).
 	ch := make(chan tui.OrchestratorEventMsg, 1)
 	ctx, cancel := context.WithCancel(context.Background())
+	// Its lanes' permission requests name this run (2.0 F2e).
+	ctx = tui.WithRunOwner(ctx, tui.RunOwner{Kind: tui.OwnerOrch, Run: run})
 
 	go func() {
 		defer close(ch)
