@@ -477,6 +477,15 @@ func fetchCatalog(ctx context.Context, provider, baseURL, apiKey string) ([]Cata
 	return out, nil
 }
 
+// HasModelEndpoint reports whether the provider answers GET /models/{id}.
+func HasModelEndpoint(provider string) bool { return hasModelEndpoint(provider) }
+
+// FindServed looks a model up in a catalog the way resolution does (case
+// ignored, OpenRouter :variant rules).
+func FindServed(cat []CatalogModel, modelID string) (CatalogModel, bool) {
+	return findServed(cat, modelID)
+}
+
 // hasModelEndpoint reports whether the provider answers GET /models/{id},
 // so a catalog miss can be checked before a model is called retired.
 // Anthropic, OpenAI and xAI do; aliases they accept are often not listed.

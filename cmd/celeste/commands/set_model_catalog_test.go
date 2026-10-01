@@ -66,3 +66,19 @@ func TestListModels_UsesCatalog(t *testing.T) {
 		t.Errorf("items = %v", ids)
 	}
 }
+
+// IDs match case-insensitively, and on providers that answer GET
+// /models/{id} an unlisted name (an alias) is accepted for the chat to
+// check rather than refused.
+func TestSetModel_CaseAndUnlistedAliases(t *testing.T) {
+	veniceCatalogForTest(t)
+	r := Execute(&Command{Name: "set-model", Args: []string{"Venice-Uncensored-1-2"}}, &CommandContext{Provider: "venice"})
+	if !r.Success {
+		t.Errorf("case must not matter: %+v", r)
+	}
+	t.Cleanup(providers.SetCatalogForTest("anthropic", []providers.CatalogModel{{ID: "claude-sonnet-4-5-20250929"}}))
+	r = Execute(&Command{Name: "set-model", Args: []string{"claude-sonnet-4-5"}}, &CommandContext{Provider: "anthropic"})
+	if !r.Success || r.StateChange.PinModel {
+		t.Errorf("an unlisted alias on Anthropic is accepted, unpinned: %+v", r)
+	}
+}

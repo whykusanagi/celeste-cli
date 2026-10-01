@@ -462,18 +462,22 @@ func validateAgainstCatalog(provider, modelID string) (providers.ModelInfo, erro
 			Description:   "Model validation unavailable",
 		}, nil
 	}
-	for _, m := range providers.ModelInfosFromCatalog(provider, cat) {
-		if m.ID == modelID {
+	if served, ok := providers.FindServed(cat, modelID); ok {
+		for _, m := range providers.ModelInfosFromCatalog(provider, []providers.CatalogModel{served}) {
+			m.ID = modelID
 			return m, nil
 		}
 	}
-	if i := strings.IndexByte(modelID, ':'); i > 0 { // OpenRouter :variant
-		for _, m := range providers.ModelInfosFromCatalog(provider, cat) {
-			if m.ID == modelID[:i] {
-				m.ID = modelID
-				return m, nil
-			}
-		}
+	if providers.HasModelEndpoint(provider) {
+		// Aliases are often unlisted; the chat asks the provider (GET
+		// /models/{id}) off the UI loop and replaces it only on a 404.
+		return providers.ModelInfo{
+			ID:            modelID,
+			Name:          modelID,
+			Provider:      provider,
+			SupportsTools: providers.NewModelDetection(provider).SupportsTools(modelID),
+			Description:   "Not in the provider's model list; checking it with the provider",
+		}, nil
 	}
 	return providers.ModelInfo{}, fmt.Errorf("model %s not found for provider %s", modelID, provider)
 }

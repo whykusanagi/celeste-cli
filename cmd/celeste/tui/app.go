@@ -1565,6 +1565,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Persist session state
 					m.persistSession()
+
+					// An unlisted name /set-model accepted is checked with
+					// the provider off the UI loop (unless --force pinned it).
+					var check tea.Cmd
+					m, check = m.resolveServedModel()
+					catalogCmd = tea.Batch(catalogCmd, check)
 				}
 				if result.StateChange.ImageModel != nil {
 					m.imageModel = *result.StateChange.ImageModel
