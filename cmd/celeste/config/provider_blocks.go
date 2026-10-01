@@ -26,7 +26,8 @@ type ProviderBlocks struct {
 }
 
 // NewProviderBlocks canonicalizes a reply's blocks. It returns nil, nil for
-// no blocks, and an error for an empty provider or a block that is not JSON.
+// no blocks, and an error for an empty provider or a block that is not a
+// JSON object.
 func NewProviderBlocks(provider string, blocks []json.RawMessage) (*ProviderBlocks, error) {
 	if len(blocks) == 0 {
 		return nil, nil
@@ -71,6 +72,11 @@ func (p *ProviderBlocks) UnmarshalJSON(data []byte) error {
 func canonicalBlock(b []byte) (json.RawMessage, error) {
 	if !json.Valid(b) {
 		return nil, errors.New("not valid JSON")
+	}
+	// Every provider block is an object: an Anthropic content block, a
+	// Responses output item.
+	if t := bytes.TrimLeft(b, " \t\r\n"); len(t) == 0 || t[0] != '{' {
+		return nil, errors.New("not a JSON object")
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, b); err != nil {

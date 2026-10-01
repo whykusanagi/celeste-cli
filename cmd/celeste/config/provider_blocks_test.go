@@ -78,3 +78,20 @@ func TestMalformedProviderBlocksNeverFailALoad(t *testing.T) {
 		assert.Empty(t, m.ProviderBlocks.Blocks, raw)
 	}
 }
+
+// Every provider block is a JSON object (an Anthropic content block, a
+// Responses output item); anything else is rejected on creation and makes a
+// loaded value the zero value.
+func TestProviderBlocksMustBeObjects(t *testing.T) {
+	for _, raw := range []string{`null`, `5`, `"x"`, `[{}]`, ` true`} {
+		_, err := NewProviderBlocks("k", []json.RawMessage{json.RawMessage(raw)})
+		assert.Error(t, err, raw)
+	}
+	_, err := NewProviderBlocks("k", []json.RawMessage{json.RawMessage(" \n{\"a\":1}")})
+	assert.NoError(t, err, "leading whitespace before an object is fine")
+	var m SessionMessage
+	require.NoError(t, json.Unmarshal([]byte(`{"role":"assistant","provider_blocks":{"provider":"k","blocks":[{"a":1},null]}}`), &m))
+	require.NotNil(t, m.ProviderBlocks)
+	assert.Empty(t, m.ProviderBlocks.Provider)
+	assert.Empty(t, m.ProviderBlocks.Blocks)
+}

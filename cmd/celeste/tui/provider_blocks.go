@@ -42,7 +42,7 @@ func BlocksDigest(content string, calls []ToolCallInfo) string {
 
 // AttachProviderBlocks returns msg carrying a canonical copy of pb sealed
 // to msg's current Content and ToolCalls. A nil pb, an empty provider, no
-// blocks or a block that is not JSON leave msg unchanged. Set Content and
+// blocks or a block that is not a JSON object leave msg unchanged. Set Content and
 // ToolCalls before calling it. Backends should build pb with
 // NewProviderBlocks; Attach canonicalizes again so a hand-built value still
 // round-trips byte for byte (ruling 4).
