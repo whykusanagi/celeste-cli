@@ -489,10 +489,10 @@ func TestBoolToStatus(t *testing.T) {
 // is deliberate: silently turning a mistyped command into a prompt hides it.
 func TestParseDoesNotTreatPathsAsCommands(t *testing.T) {
 	paths := []string{
-		"/Users/kusanagi/Downloads/agentic_code",
+		"/Users/me/Downloads/agentic_code",
 		"/tmp/foo.mp3",
-		"/Users/kusanagi/a.mp3 /Users/kusanagi/b.mp3",
-		"/Users/kusanagi/Music/track one.mp3",
+		"/Users/me/a.mp3 /Users/me/b.mp3",
+		"/Users/me/Music/track one.mp3",
 		"~/Downloads/x.mp3",
 		"./relative/path.mp3",
 	}

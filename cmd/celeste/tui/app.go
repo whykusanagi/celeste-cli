@@ -91,7 +91,7 @@ type AppModel struct {
 	// reply, and left every subsequent chunk to pile up in a zombie buffer
 	// with no active ticker to render it. The session and the next LLM
 	// request would both see content_len=1 — the "O" truncation bug.
-	// See log /Users/kusanagi/.celeste/logs/celeste_2026-04-13.log for a
+	// See the 2026-04-13 session log (~/.celeste/logs/) for a
 	// captured reproduction.
 	streamDone bool
 
