@@ -176,65 +176,28 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 		t.Fatalf("tool messages = %d, want 1", len(toolContents))
 	}
 	content := toolContents[0]
-	if len(content) >= 128*1024 {
-		t.Fatalf("tool result sent uncapped (%d bytes)", len(content))
-	}
 
-	// Today's actual pipeline has TWO independent, stacked truncation layers,
-	// and the wire content only shows the outer one:
-	//
-	//  1. ctxmgr.CapToolResult (cmd/celeste/context/limits.go, invoked from
-	//     the loop's spill (cmd/celeste/loop/exec.go) right after the tool runs)
-	//     spills the full 204800-byte result to disk and returns a
-	//     131072-byte preview: [head]["...full output saved to: <path>..."][tail].
-	//     This is the layer finding 2 originally targeted.
-	//  2. (*llm.Client).trimHook / trimToolResults (cmd/celeste/llm/trim.go)
-	//     runs later, once per outbound send, and re-trims ANY tool message
-	//     over maxToolMsgBytes (64 KiB) down to that budget on a line
-	//     boundary, appending its OWN "truncated ... for transport" notice.
-	//     Layer 1's preview is 131072 bytes, i.e. already over the 64 KiB
-	//     wire budget, so layer 2 fires on it too — and because layer 1's
-	//     "full output saved to:" notice sits near the very end of its
-	//     131072-byte preview (just before the 512-byte tail), layer 2's
-	//     64 KiB head cut lands well before it. The text this test's first
-	//     draft looked for never reaches the model; only layer 2's generic
-	//     notice does. Verified empirically: content here is exactly 65536
-	//     bytes and contains layer 2's notice, not layer 1's.
-	//
-	// So: assert layer 2's notice (what the model actually sees) and verify
-	// layer 1's disk side effect (the full, uncapped result spilled to disk)
-	// directly via its documented, deterministic path — sessionID
-	// "tui-<pid>" (the loop's spill, cmd/celeste/loop/exec.go) and toolCallID "big" (this test's
-	// fakeprovider.ToolCall.ID) — rather than by parsing it out of content
-	// that no longer contains it.
-	// known bug: spec F3 deletes trimHook — flip these assertions then.
-	if !strings.Contains(content, "tool result truncated to ~65536 bytes for transport") {
-		t.Fatalf("tool result missing the wire-trim notice: %q", content)
+	// flipped in F3 (#211): the per-request transport trim (llm/trim.go) is
+	// gone, so the model receives exactly what the loop recorded:
+	// ctxmgr.CapToolResult's 131072-byte preview of the 204800-byte result,
+	// [head]["...full output saved to: <path>..."][512-byte tail], spill
+	// notice included, so it can recall the full output. Before F3 the 64 KiB
+	// trim cut the preview ahead of that notice ("original was 131072 bytes").
+	if len(content) != 131072 {
+		t.Fatalf("tool result on the wire = %d bytes, want CapToolResult's 131072-byte preview", len(content))
 	}
-
-	// The check above alone doesn't prove CapToolResult did any capping: if
-	// CapToolResult returned the raw 204800-byte result unchanged (bug: it
-	// still spills the file but skips building the preview), trimToolResults
-	// would trim THAT down to 65536 bytes just the same, and the assertion
-	// above would still pass — it only pins the outer (transport) trim, not
-	// the inner (history) cap this test is meant to characterize. Pin what
-	// trimToolResults says it received: trimToolResults' notice always
-	// includes "original was %d bytes" for len(s) where s is whatever it was
-	// handed (cmd/celeste/llm/trim.go, truncateWithNotice). If CapToolResult
-	// is doing its job, that's its own 131072-byte capped preview, not the
-	// raw 204800-byte tool output.
-	if !strings.Contains(content, "original was 131072 bytes") {
-		t.Fatalf("transport trim's reported input size != CapToolResult's 131072-byte cap; got: %q", content)
+	if strings.Contains(content, "for transport") {
+		t.Fatalf("the deleted transport trim still ran: %q", content[len(content)-600:])
+	}
+	if !strings.Contains(content, "full output saved to:") {
+		t.Fatal("the model never sees the spill notice, so it cannot recall the full output (#211)")
 	}
 
 	// Independently (and more directly) verify CapToolResult's own cap by
 	// reading the chat history's tool message via DebugMessages — that's
-	// what (AppModel) stored from the loop's capped tool message,
-	// upstream of and unaffected by trimToolResults'
-	// wire-only, copy-on-write pass (cmd/celeste/llm/trim.go doc comment:
-	// "the caller's slice is never mutated"). It must be the capped preview
-	// itself: exactly CapToolResult's maxBytes (131072) and containing its
-	// spill notice, not the raw 204800-byte result.
+	// what (AppModel) stored from the loop's capped tool message. It must be
+	// the capped preview itself: exactly CapToolResult's maxBytes (131072)
+	// and containing its spill notice, not the raw 204800-byte result.
 	var historyContent string
 	haveHistoryToolMsg := false
 	for _, x := range chatMessages(m) {
@@ -253,9 +216,17 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 		t.Fatalf("chat history tool result len = %d, want CapToolResult's capped preview (131072 bytes)", len(historyContent))
 	}
 
+	// Append-only (F3): the request carries the recorded message unchanged.
+	if content != historyContent {
+		t.Fatal("the request's tool result differs from the recorded history: something rewrote it for transport")
+	}
+
 	// flipped in F2d Task 11: the loop names spill files <id>-<n>.txt, numbered across the session, so a repeated call ID never overwrites an earlier spill (was big.txt).
 	spillPath := filepath.Join(os.Getenv("HOME"), ".celeste", "tool-results",
 		fmt.Sprintf("tui-%d", os.Getpid()), "big-1.txt")
+	if !strings.Contains(content, spillPath) {
+		t.Fatalf("the spill notice the model receives does not name %s", spillPath)
+	}
 	spilled, err := os.ReadFile(spillPath)
 	if err != nil {
 		t.Fatalf("read spill file %q: %v", spillPath, err)
