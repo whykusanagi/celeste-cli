@@ -578,7 +578,7 @@ func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 			msgs = append(msgs, msg)
 			continue
 		}
-		if i != last && msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
+		if i != last && IsEmptyReply(msg) {
 			continue
 		}
 		h := history[j]
@@ -611,7 +611,7 @@ func (m ChatModel) DropEmptyLastReply() ChatModel {
 		if msg.Role == "system" || isCompacted(msg) {
 			continue
 		}
-		if msg.Role != "assistant" || msg.Content != "" || len(msg.ToolCalls) != 0 {
+		if !IsEmptyReply(msg) {
 			return m
 		}
 		m.messages = append(append([]ChatMessage(nil), m.messages[:i]...), m.messages[i+1:]...)

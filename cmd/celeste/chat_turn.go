@@ -313,7 +313,7 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 func withoutEmptyReplies(history []tui.ChatMessage) []tui.ChatMessage {
 	out := make([]tui.ChatMessage, 0, len(history))
 	for _, m := range history {
-		if m.Role == "assistant" && m.Content == "" && len(m.ToolCalls) == 0 {
+		if tui.IsEmptyReply(m) {
 			continue
 		}
 		out = append(out, m)

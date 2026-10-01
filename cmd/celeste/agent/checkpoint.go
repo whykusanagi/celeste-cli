@@ -48,6 +48,7 @@ func (s *CheckpointStore) Save(state *RunState) error {
 		return fmt.Errorf("run state is nil")
 	}
 	state.UpdatedAt = time.Now()
+	state.Messages = withCurrentBlocksOnly(state.Messages)
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -119,4 +120,24 @@ func (s *CheckpointStore) List(limit int) ([]RunSummary, error) {
 		summaries = summaries[:limit]
 	}
 	return summaries, nil
+}
+
+// withCurrentBlocksOnly drops provider blocks that no longer describe their
+// message: the zero value a damaged checkpoint loads as, and blocks an edit
+// made inert. They would never replay, so they are not written (2.0 F3).
+// Copy-on-write: a history slice someone else holds is not modified.
+func withCurrentBlocksOnly(msgs []tui.ChatMessage) []tui.ChatMessage {
+	out := msgs
+	copied := false
+	for i := range msgs {
+		if msgs[i].ProviderBlocks == nil || tui.CurrentBlocks(msgs[i]) != nil {
+			continue
+		}
+		if !copied {
+			out = append([]tui.ChatMessage(nil), msgs...)
+			copied = true
+		}
+		out[i].ProviderBlocks = nil
+	}
+	return out
 }

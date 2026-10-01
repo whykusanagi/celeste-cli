@@ -252,3 +252,40 @@ func TestReplaceToolResultsClearsBlocks(t *testing.T) {
 	assert.Equal(t, "[pruned]", c.GetMessages()[0].Content)
 	assert.Nil(t, c.GetMessages()[0].ProviderBlocks)
 }
+
+// SyncLLM takes the loop's copy, blocks included, so the next request
+// (GetLLMMessages) replays them.
+func TestSyncLLMTakesTheLoopsBlocks(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"text","text":"done"}`)
+	c := NewChatModel().AddUserMessage("go").AddAssistantMessage("done")
+	c = c.SyncLLM([]ChatMessage{{Role: "user", Content: "go"}, AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "done"}, pb)}, false)
+	_, ok := ReplayBlocks(c.GetLLMMessages()[1], keyA)
+	assert.True(t, ok)
+}
+
+// While a reply is typed out its bubble shows a prefix: the blocks ride
+// along but are inert, and replay again once the text is whole
+// (append-only ruling 4).
+func TestSyncLLMKeepLiveBlocksAreInertUntilTheTextIsWhole(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"text","text":"Hello"}`)
+	c := NewChatModel().AddUserMessage("go").AddAssistantMessage("Hel")
+	c = c.SyncLLM([]ChatMessage{{Role: "user", Content: "go"}, AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "Hello"}, pb)}, true)
+	live := c.GetLLMMessages()[1]
+	assert.Equal(t, "Hel", live.Content)
+	_, ok := ReplayBlocks(live, keyA)
+	assert.False(t, ok, "a half-typed reply never replays blocks")
+	c = c.SetLastAssistantContent("Hello")
+	_, ok = ReplayBlocks(c.GetLLMMessages()[1], keyA)
+	assert.True(t, ok, "the typing commit makes them valid again")
+}
+
+// A blocks-only reply in the middle of the history is not an empty bubble:
+// SyncLLM must not skip it, or every later position shifts.
+func TestSyncLLMKeepsABlocksOnlyReply(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"compaction","content":"s"}`)
+	compaction := AttachProviderBlocks(ChatMessage{Role: "assistant"}, pb)
+	c := NewChatModel().AddUserMessage("go").AppendLLM(compaction).AddUserMessage("next")
+	c = c.SyncLLM([]ChatMessage{{Role: "user", Content: "go"}, compaction, {Role: "user", Content: "next"}, {Role: "assistant", Content: "ok"}}, false)
+	assert.Equal(t, []string{"user:go", "assistant:", "user:next", "assistant:ok"}, llmRoles(c))
+	assert.NotNil(t, c.GetLLMMessages()[1].ProviderBlocks)
+}
