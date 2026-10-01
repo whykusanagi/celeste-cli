@@ -40,8 +40,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaches the next subagent right away, and `permissions.json` and custom
   skills reload for every subagent regardless.
 * Subagents share the chat's MCP connections: disconnecting a server in
-  `/mcp` affects subagents still using it, and calls to one MCP server run
-  one at a time.
+  `/mcp` affects subagents still using it until it is connected again (they
+  then use the new connection), and calls to one MCP server run one at a
+  time. A call waiting for a busy server gives up when its run is cancelled.
+* A permission or question prompt from a turn, `/agent` or `/orchestrate`
+  run that has already ended is answered (denied or cancelled) instead of
+  appearing after the fact, and a prompt from an earlier run never shows up
+  as part of the next one.
+* The spinner and the typing keep a steady speed in long tool turns (each
+  tool step used to add another animation timer).
+* `/config <profile>` (and `/endpoint <profile>`) now uses the profile's
+  provider, model and tool support; before, it kept the previous provider's
+  tool setting.
+
+### Agent runs
+
+* `celeste agent` runs on `agent_model` when one is set, as subagents and
+  MCP agent mode already did.
 
 ## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
 
