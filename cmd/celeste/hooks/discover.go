@@ -38,7 +38,13 @@ type Source struct {
 	Root  string
 	Kind  SourceKind
 	Hooks []Definition // normalized
-	Hash  string       // Hash(Hooks)
+	Hash  string       // Hash(Hooks); for KindRepoStreamRules, the hash of Rules
+	// Rules is the "## Stream Rules" text of a KindRepoStreamRules source,
+	// shown for review before it is trusted.
+	Rules string
+	// streamRules is a repo grimoire's "## Stream Rules" body, which
+	// Discover and SourcesAt list as a KindRepoStreamRules source of its own.
+	streamRules string
 }
 
 // Global reports whether the source is the user's own file under
@@ -73,6 +79,9 @@ func Discover(workspace, home string) ([]Source, []string, error) {
 		}
 		if len(src.Hooks) > 0 {
 			sources = append(sources, src)
+		}
+		if src.streamRules != "" {
+			sources = append(sources, StreamRulesSource(path, src.streamRules))
 		}
 	}
 
@@ -136,10 +145,14 @@ func SourcesAt(target, home string) ([]Source, []string, error) {
 	if err != nil {
 		return nil, warns, err
 	}
-	if len(src.Hooks) == 0 {
-		return nil, warns, nil
+	var out []Source
+	if len(src.Hooks) > 0 {
+		out = append(out, src)
 	}
-	return []Source{src}, warns, nil
+	if src.streamRules != "" {
+		out = append(out, StreamRulesSource(abs, src.streamRules))
+	}
+	return out, warns, nil
 }
 
 func classifyFile(p, home string) (SourceKind, string, bool) {
@@ -229,6 +242,16 @@ func readSource(path, root string, kind SourceKind) (Source, []string, error) {
 				"hooks: %s uses a grimoire \"## Hooks\" section (protocol v1); move it to a hooks.json file (see docs/HOOKS.md)", strconv.Quote(path)))
 		}
 		src.Hooks = defs
+		if kind == KindRepoGrimoire {
+			// One "## Stream Rules" per file (grimoire.Parse keeps the
+			// last of a repeated heading). The global grimoire's are the
+			// user's own and need no trust.
+			var bodies []string
+			for _, r := range g.StreamRules {
+				bodies = append(bodies, r.Body)
+			}
+			src.streamRules = strings.TrimSpace(strings.Join(bodies, "\n"))
+		}
 	}
 	src.Hash = Hash(src.Hooks)
 	return src, warnings, nil

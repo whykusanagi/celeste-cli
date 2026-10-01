@@ -15,6 +15,12 @@ import (
 // approving. Every string from the file is shown Go-quoted, so control and
 // bidi characters appear as escapes instead of acting on the terminal.
 func DescribeSource(w io.Writer, src Source) {
+	if src.Kind == KindRepoStreamRules {
+		for _, line := range strings.Split(src.Rules, "\n") {
+			fmt.Fprintf(w, "    %s\n", strconv.Quote(line))
+		}
+		return
+	}
 	for _, d := range src.Hooks {
 		fmt.Fprintf(w, "  %-16s matcher=%s protocol=%s timeout=%ds\n    command: %s\n",
 			d.Event, strconv.Quote(d.Matcher), d.Protocol, d.Timeout, strconv.Quote(d.Command))
@@ -30,9 +36,15 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 		if status == Changed {
 			what = "have changed since you approved them"
 		}
-		fmt.Fprintf(out, "\nHooks in %s (%s) %s:\n", strconv.Quote(src.Path), src.Kind, what)
-		DescribeSource(out, src)
-		fmt.Fprint(out, "These commands run on this machine with your permissions.\nTrust them? [y/N]: ")
+		if src.Kind == KindRepoStreamRules {
+			fmt.Fprintf(out, "\nStream rules in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, streamRulesSuffix)), what)
+			DescribeSource(out, src)
+			fmt.Fprint(out, "These rules can stop replies, re-run turns and add instructions the model follows.\nTrust them? [y/N]: ")
+		} else {
+			fmt.Fprintf(out, "\nHooks in %s (%s) %s:\n", strconv.Quote(src.Path), src.Kind, what)
+			DescribeSource(out, src)
+			fmt.Fprint(out, "These commands run on this machine with your permissions.\nTrust them? [y/N]: ")
+		}
 		line, err := reader.ReadString('\n')
 		if err != nil && line == "" {
 			fmt.Fprintln(out)

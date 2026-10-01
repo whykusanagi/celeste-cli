@@ -84,6 +84,9 @@ func Load(opts Options) (*Runner, error) {
 	r := &Runner{workspace: ws, sessionID: opts.SessionID, warn: warn}
 	var store *TrustStore
 	for _, src := range sources {
+		if src.Kind == KindRepoStreamRules {
+			continue // runs nothing; the rules package checks its trust
+		}
 		if !src.Global() {
 			if store == nil {
 				store = LoadTrust(home)

@@ -18,6 +18,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -279,6 +280,6 @@ func (c *chatClaims) observe(ev loop.Event) {
 }
 
 func (c *chatClaims) strip(text string) string {
-	text = llm.StripUnbackedAudioClaim(text, c.tts)
+	text = rules.StripUnbackedAudioClaim(text, c.tts)
 	return llm.StripUnbackedSpawnClaim(text, c.spawn)
 }

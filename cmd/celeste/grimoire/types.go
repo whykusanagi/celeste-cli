@@ -26,7 +26,11 @@ type Grimoire struct {
 	Wards        []string          // protected areas
 	Hooks        []HookEntry       // pre/post tool execution commands
 	RawSections  map[string]string // unparsed section content by heading
-	Meta         GrimoireMetadata  // embedded metadata (last updated, git hash, etc.)
+	// StreamRules are "## Stream Rules" sections (2.0 W3), one per file, in
+	// source order. They are rules for the rules package, never rendered
+	// into the prompt: a rule costs no context until it fires.
+	StreamRules []RuleSection
+	Meta        GrimoireMetadata // embedded metadata (last updated, git hash, etc.)
 }
 
 // IncludeRef represents an @include directive with its resolved content.
@@ -35,6 +39,12 @@ type IncludeRef struct {
 	Resolved string // absolute path after resolution
 	Content  string // file content (empty if unresolved)
 	Error    string // non-empty if resolution failed
+}
+
+// RuleSection is one file's "## Stream Rules" body and the file it came from.
+type RuleSection struct {
+	Source string
+	Body   string
 }
 
 // HookEntry represents a pre/post tool execution hook.
@@ -188,6 +198,7 @@ func Merge(grimoires ...*Grimoire) *Grimoire {
 		merged.Incantations = append(merged.Incantations, g.Incantations...)
 		merged.Wards = append(merged.Wards, g.Wards...)
 		merged.Hooks = append(merged.Hooks, g.Hooks...)
+		merged.StreamRules = append(merged.StreamRules, g.StreamRules...)
 		for k, v := range g.RawSections {
 			merged.RawSections[k] = v
 		}

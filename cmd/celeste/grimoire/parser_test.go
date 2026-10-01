@@ -110,3 +110,14 @@ func TestParse_HooksMultipleTools(t *testing.T) {
 	assert.Equal(t, "write_file", g.Hooks[1].ToolName)
 	assert.Equal(t, "PostToolUse", g.Hooks[2].Phase)
 }
+
+// "## Stream Rules" is for the rules package (2.0 W3): parsed apart and
+// never rendered into the prompt.
+func TestParse_StreamRulesNotRendered(t *testing.T) {
+	g, err := Parse("## Rituals\n- test first\n\n## Stream Rules\n### no-todo\n---\ncondition: TODO\n---\nNo TODOs.\n", "")
+	assert.NoError(t, err)
+	assert.Len(t, g.StreamRules, 1)
+	assert.Contains(t, g.StreamRules[0].Body, "### no-todo")
+	assert.NotContains(t, g.Render(), "Stream Rules")
+	assert.NotContains(t, g.Render(), "No TODOs.")
+}
