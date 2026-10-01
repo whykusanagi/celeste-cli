@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -179,5 +180,61 @@ func TestWithoutEmptyRepliesKeepsBlocksOnlyReplies(t *testing.T) {
 	})
 	if len(out) != 2 || out[1].ProviderBlocks == nil {
 		t.Fatalf("out = %+v, want the user message and the blocks-only reply", out)
+	}
+}
+
+// rejectingBackend repeats one tool call with blocks; the third reply reports
+// BlocksRejected, and the identical-call guard ends the run at once.
+type rejectingBackend struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (b *rejectingBackend) SendMessageStreamEvents(_ context.Context, _ []tui.ChatMessage, _ []tui.SkillDefinition, cb llm.StreamEventCallback) error {
+	b.mu.Lock()
+	n := b.n
+	b.n++
+	b.mu.Unlock()
+	pb, err := tui.NewProviderBlocks("k", []json.RawMessage{json.RawMessage(`{"type":"tool_use","id":"c1","name":"read_file","input":{"path":"a.txt"}}`)})
+	if err != nil {
+		return err
+	}
+	cb(llm.StreamEvent{Type: llm.EventToolUseStart, ToolUseID: "c1", ToolName: "read_file"})
+	cb(llm.StreamEvent{Type: llm.EventToolUseDone, ToolUseID: "c1", ToolName: "read_file", CompleteInput: `{"path":"a.txt"}`})
+	cb(llm.StreamEvent{Type: llm.EventMessageDone, FinishReason: "tool_calls", ProviderBlocks: pb, BlocksRejected: n == 2})
+	return nil
+}
+func (b *rejectingBackend) SendMessageStream(context.Context, []tui.ChatMessage, []tui.SkillDefinition, llm.StreamCallback) error {
+	return errors.New("rejectingBackend: not used")
+}
+func (b *rejectingBackend) SendMessageSync(context.Context, []tui.ChatMessage, []tui.SkillDefinition) (*llm.ChatCompletionResult, error) {
+	return nil, errors.New("rejectingBackend: not used")
+}
+func (b *rejectingBackend) SetSystemPrompt(string)               {}
+func (b *rejectingBackend) SetThinkingConfig(llm.ThinkingConfig) {}
+func (b *rejectingBackend) Close() error                         { return nil }
+
+// A strip the run never snapshotted (BlocksRejected, then a guard stop)
+// still reaches the chat: the last history it receives has no blocks.
+func TestRunTurnSendsTheStrippedHistoryAfterAGuardStop(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, ws := chatApp(t, srv)
+	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("alpha"), 0o644)
+	a := deps.adapter
+	a.client = llm.NewClientWithBackend(&llm.Config{BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10 * time.Second}, deps.registry, &rejectingBackend{})
+	msgs := runTurnMsgs(t, a, tui.TurnRequest{History: userTurn("read a.txt"), Tools: true, Run: 1})
+	var last []tui.ChatMessage
+	for _, m := range msgs {
+		if h, ok := m.(tui.HistoryMsg); ok {
+			last = h.History
+		}
+	}
+	if len(last) == 0 {
+		t.Fatal("no history reached the chat")
+	}
+	for i, m := range last {
+		if m.ProviderBlocks != nil {
+			t.Fatalf("the chat's last history still carries rejected blocks at %d", i)
+		}
 	}
 }

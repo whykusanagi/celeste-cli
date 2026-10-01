@@ -17,7 +17,9 @@ import (
 func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res Result, err error) {
 	lim := l.Limits.withDefaults()
 	msgs = append([]Message(nil), history...)
+	l.unsynced = false
 	defer func() {
+		res.HistoryEdited = l.unsynced
 		l.emit(Event{Kind: EventDone, Result: res, Err: err})
 	}()
 	if l.CheckPrompt != nil {
@@ -99,6 +101,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			// sanctioned history edit, so later requests (and the chat,
 			// via the snapshots) send the neutral view (2.0 F3).
 			msgs = tui.StripProviderBlocks(msgs)
+			l.unsynced = true
 		}
 
 		calls := capCalls(rep.calls, lim.MaxCallsPerTurn)
@@ -255,6 +258,7 @@ func (l *Loop) compact(ctx context.Context, msgs []Message, force bool) ([]Messa
 	if !changed {
 		return msgs, false
 	}
+	l.unsynced = true
 	return out, true
 }
 

@@ -186,9 +186,10 @@ func (a *TUIClientAdapter) runTurn(t *chatTurn, history []tui.ChatMessage) {
 		t.loop.Limits.MaxTurns = turnsLeft // >= 1: stopHook stops at 0
 		msgs, res, err := a.runOnce(t, history)
 		turnsLeft -= res.Turns
-		if t.compacted {
-			// The run pruned and ended before its next snapshot (an error,
-			// an interrupt, a guard): the chat takes the pruned history.
+		if t.compacted || res.HistoryEdited {
+			// The run edited its history (a prune, rejected provider blocks
+			// stripped) and ended before its next snapshot (an error, an
+			// interrupt, a guard): the chat takes the edited history.
 			t.compacted = false
 			t.box.put(tui.HistoryMsg{History: withoutEmptyReplies(msgs)})
 		}

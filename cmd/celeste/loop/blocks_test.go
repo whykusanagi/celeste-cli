@@ -198,3 +198,41 @@ func TestLoopStripsBlocksWhenTheProviderRejectsThem(t *testing.T) {
 		t.Fatal("the turn-end snapshot (what the chat syncs) still carries the rejected blocks")
 	}
 }
+
+// When the reply that reports BlocksRejected also trips a guard that ends
+// the run before the next snapshot (here the identical-call guard), the
+// result says the returned history holds an edit no snapshot carried, so
+// the chat still takes the stripped history.
+func TestLoopReportsAnUnsnapshottedStrip(t *testing.T) {
+	hermetic(t)
+	pb := mustBlocks(t, `{"type":"tool_use","id":"c1","name":"echo","input":{}}`)
+	s := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		cb(llm.StreamEvent{Type: llm.EventToolUseStart, ToolUseID: "c1", ToolName: "echo"})
+		cb(llm.StreamEvent{Type: llm.EventToolUseDone, ToolUseID: "c1", ToolName: "echo", CompleteInput: `{}`})
+		cb(llm.StreamEvent{Type: llm.EventMessageDone, FinishReason: "tool_calls", ProviderBlocks: pb, BlocksRejected: n == 2})
+		return nil
+	}}
+	l := &Loop{Client: s, Tools: newRegistry(&fakeTool{name: "echo", safe: true, readOnly: true}), Limits: DefaultLimits(), SpillDir: t.TempDir()}
+	msgs, res, err := l.Run(context.Background(), userMsg("go"))
+	if err != nil || res.StopReason != StopIdentical {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	for i, m := range msgs {
+		if m.ProviderBlocks != nil {
+			t.Fatalf("message %d kept rejected blocks", i)
+		}
+	}
+	if !res.HistoryEdited {
+		t.Fatal("the strip reached no snapshot, and the result does not say so")
+	}
+
+	// A run whose edits all reached a snapshot reports none.
+	s2 := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		sayText(cb, "ok", nil)
+		return nil
+	}}
+	l2 := &Loop{Client: s2, Tools: newRegistry(), Limits: DefaultLimits(), SpillDir: t.TempDir()}
+	if _, res, _ := l2.Run(context.Background(), userMsg("go")); res.HistoryEdited {
+		t.Fatal("HistoryEdited without an edit")
+	}
+}
