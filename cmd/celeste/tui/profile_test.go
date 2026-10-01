@@ -118,3 +118,19 @@ func TestConfigProfileOnAnEndpointReportingClient(t *testing.T) {
 	assert.Equal(t, "odd", m.provider, "an unknown provider keeps the profile name")
 	assert.False(t, m.skillsEnabled, "the previous provider's tools stayed on")
 }
+
+// A profile named like a provider (config.openai.json) may point at another
+// provider's base URL: the reporting client's provider wins over the name
+// (2.0 F2e review M1).
+func TestProfileNamedLikeAProviderTakesTheClientsProvider(t *testing.T) {
+	yes := true
+	defer providers.SetCatalogForTest("anthropic", []providers.CatalogModel{{ID: "claude-sonnet-4-5", Default: true, Tools: &yes}})()
+	client := &endpointClient{onSwitch: func(string) ActiveEndpoint {
+		return ActiveEndpoint{Provider: "anthropic", BaseURL: "https://api.anthropic.com/v1", Model: "claude-sonnet-4-5"}
+	}}
+	m := NewApp(client).WithEndpoint("elevenlabs")
+	m, _ = m.switchEndpoint("openai")
+	assert.Equal(t, "openai", m.endpoint)
+	assert.Equal(t, "anthropic", m.provider, "the tool gate used the profile's name, not its provider")
+	assert.True(t, m.skillsEnabled)
+}

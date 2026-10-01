@@ -173,16 +173,20 @@ func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 		}
 	}
 
-	// A config profile (config.<name>.json), not a provider name, takes
-	// its provider from its base URL (2.0 F2e). A client that reports its
-	// endpoint has just loaded the profile, so it says which provider that
-	// is; for any other client the profile is read off the Update
-	// goroutine (resolveProfile), and until it arrives no tools are
-	// offered, never the previous provider's answer.
+	// The provider is the one the client now talks to (2.0 F2e): a client
+	// that reports its endpoint has just loaded the endpoint's config
+	// (config.<name>.json, whose base URL may belong to another provider
+	// than the name suggests), so when it reports a known provider, that
+	// provider gates the tools. For any other client a name that is not a
+	// provider is a profile, read off the Update goroutine
+	// (resolveProfile); until it arrives no tools are offered, never the
+	// previous provider's answer.
 	_, isProvider := providers.GetProvider(m.provider)
-	if src, ok := m.llmClient.(ActiveEndpointer); ok && !isProvider {
-		if p := src.ActiveEndpoint().Provider; p != "" && p != "unknown" {
-			m.provider = p
+	if src, ok := m.llmClient.(ActiveEndpointer); ok {
+		if p := src.ActiveEndpoint().Provider; p != "" {
+			if _, known := providers.GetProvider(p); known {
+				m.provider = p
+			}
 		}
 	}
 

@@ -9,7 +9,8 @@ import (
 )
 
 // ProfileResolvedMsg is what a config profile named as an endpoint
-// (/config <profile>, /endpoint <profile>) resolves to (2.0 F2e).
+// (/config <profile>, /endpoint <profile>) resolves to (2.0 F2e), for a
+// client that cannot report its active endpoint (see resolveProfile).
 type ProfileResolvedMsg struct {
 	Endpoint string // the profile name, as switched to
 	Provider string // the provider its base URL belongs to; "" when it could not be loaded or matches none
@@ -21,7 +22,9 @@ type ProfileResolvedMsg struct {
 var loadProfile = config.LoadNamed
 
 // resolveProfile reads the profile and works out its provider, model and
-// tool support. It is a command, not inline in Update: LoadNamed reads a
+// tool support. Only clients that cannot report their active endpoint
+// (not ActiveEndpointer) take this path; the chat's adapter reports its
+// endpoint, and switchEndpoint reads the provider from it instead. It is a command, not inline in Update: LoadNamed reads a
 // file, and ToolsEnabledForModel can fetch Venice's live model catalog.
 func resolveProfile(endpoint string) tea.Cmd {
 	return func() tea.Msg {
