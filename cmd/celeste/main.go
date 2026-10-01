@@ -32,7 +32,9 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/monitor"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/server"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/subagents"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
@@ -289,6 +291,12 @@ type TUIClientAdapter struct {
 	// resolved on first use.
 	jev    *jev.Client
 	jevFor *config.Config // the config jev was resolved for
+	// rules are the chat Env's stream rules; steer is the chat session's
+	// steering (2.0 W3), rebuilt when a profile switch replaces baseConfig.
+	rules    *rules.Set
+	steer    *steer.Session
+	steerFor *config.Config
+	steerSet bool
 
 	// Session-start project context (grimoire, memories, code graph) and git
 	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
@@ -633,6 +641,23 @@ func (a *TUIClientAdapter) jevShadow() *jev.Client {
 	tui.LogInfo("jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
 	a.jev = c
 	return c
+}
+
+// steering returns the chat session's stream rules (2.0 W3), one session
+// across turns so a rule's repeat policy spans the chat. Resolved again
+// after a profile switch replaces baseConfig. Update goroutine only
+// (RunTurn), like jevShadow. Nil when stream_rules is off.
+func (a *TUIClientAdapter) steering() *steer.Session {
+	if a.steerSet && a.steerFor == a.baseConfig {
+		return a.steer
+	}
+	a.steerSet, a.steerFor = true, a.baseConfig
+	mode := config.ModeShadow
+	if a.baseConfig != nil {
+		mode = a.baseConfig.StreamRulesMode()
+	}
+	a.steer = steer.New(steer.Options{Rules: a.rules, RulesMode: mode, Logf: tui.LogInfo})
+	return a.steer
 }
 
 // summarizer returns the small-model summarizer, built on first use.

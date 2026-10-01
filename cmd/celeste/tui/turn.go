@@ -98,6 +98,17 @@ type StopContinueMsg struct {
 // the turn may end. The turn is still running until TurnDoneMsg.
 type StopHookStartMsg struct{}
 
+// RuleInterruptMsg: steering cut the reply short (2.0 W3). The partial
+// reply is dropped; the turn re-runs with a reminder.
+type RuleInterruptMsg struct{}
+
+// RuleReminderMsg: a steering reminder joined the history as a hidden
+// message (2.0 W3). Source is "rule:<name>" or "watchdog".
+type RuleReminderMsg struct {
+	Source  string
+	Message ChatMessage
+}
+
 // TurnDoneMsg ends the turn.
 type TurnDoneMsg struct {
 	Stop      string   // the loop's StopReason: done, cap, identical, progress, invalid_args, interrupted, error, blocked
@@ -258,6 +269,21 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 	case HookWarningMsg:
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
+	case RuleInterruptMsg:
+		if !m.interrupted {
+			if m.typingContent != "" {
+				// The streamed part of the reply is the live bubble: drop it.
+				m.typingContent, m.typingPos, m.streamDone = "", 0, false
+				m.chat = m.chat.SetTypingActive(false)
+				m.chat = m.chat.SetLastAssistantContent("")
+				m.chat = m.chat.DropEmptyLastReply()
+			}
+			m.chat = m.chat.AddSystemMessage("↺ A stream rule stopped the reply; retrying with a reminder.")
+		}
+	case RuleReminderMsg:
+		// Hidden, at the loop's position, so later snapshots line up.
+		m.chat = m.chat.AppendLLM(msg.Message)
+		LogInfo("steering reminder: " + msg.Source)
 	case TurnDoneMsg:
 		return m.onTurnDone(msg)
 	}

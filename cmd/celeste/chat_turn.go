@@ -163,6 +163,7 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		SessionID:    fmt.Sprintf("tui-%d", os.Getpid()), // spill directory, as before
 		SpillCounter: &a.spillSeq,
 		CheckPrompt:  a.checkPrompt,
+		Steering:     a.steering().Steering(),
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
@@ -302,6 +303,10 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		return []tea.Msg{tui.PromptBlockedMsg{Reason: ev.Text, Content: ev.Msg.Content, Timestamp: ev.Msg.Timestamp, Steer: ev.Kind == loop.EventSteerBlocked}}
 	case loop.EventNotice:
 		return []tea.Msg{tui.HookWarningMsg{Text: ev.Text}}
+	case loop.EventRuleInterrupt:
+		return []tea.Msg{tui.RuleInterruptMsg{}}
+	case loop.EventRule:
+		return []tea.Msg{tui.RuleReminderMsg{Source: ev.Text, Message: ev.Msg}}
 	}
 	return nil
 }
