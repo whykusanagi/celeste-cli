@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"unicode/utf8"
 )
 
 const (
@@ -108,4 +109,36 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 
 	capped = head + notice + tail
 	return capped, true, nil
+}
+
+// snipNotice marks where SnipToolResult cut a result.
+const snipNotice = "\n[...snipped %d bytes...]\n"
+
+// SnipToolResult cuts result to at most maxBytes in memory, keeping its head
+// and tail around a "[...snipped N bytes...]" marker, without the spill file
+// CapToolResult writes (2.0 F3). The loop uses it when the spill file cannot
+// be written; sessions and checkpoints use it on tool results loaded from
+// disk. Results at or under maxBytes come back unchanged. Cuts fall on UTF-8
+// character boundaries. The result is at most maxBytes for any maxBytes of
+// 64 or more.
+func SnipToolResult(result string, maxBytes int) string {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxToolResultBytes
+	}
+	if len(result) <= maxBytes {
+		return result
+	}
+	// The snipped count is at most len(result), so this reserves enough for
+	// the notice whatever the boundaries below turn out to be.
+	reserve := len(fmt.Sprintf(snipNotice, len(result)))
+	tailLen := min(256, maxBytes/4)
+	headLen := max(maxBytes-reserve-tailLen, 0)
+	for headLen > 0 && !utf8.RuneStart(result[headLen]) {
+		headLen--
+	}
+	tailStart := len(result) - tailLen
+	for tailStart < len(result) && !utf8.RuneStart(result[tailStart]) {
+		tailStart++
+	}
+	return result[:headLen] + fmt.Sprintf(snipNotice, tailStart-headLen) + result[tailStart:]
 }

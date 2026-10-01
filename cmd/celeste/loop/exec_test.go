@@ -726,3 +726,27 @@ func TestLoopKeepToolMetadataOnlyForImages(t *testing.T) {
 		t.Fatalf("tool message = %+v, want plain text", msg)
 	}
 }
+
+// The cap applies even when the spill file cannot be written (a read-only or
+// full home directory): with no transport trim behind it (2.0 F3), sending
+// the whole result would put 200 KiB on the wire. A regular file where the
+// spill directory's parent should be makes MkdirAll fail on every OS.
+func TestLoopCapsLargeResultWhenSpillFails(t *testing.T) {
+	big := &fakeTool{name: "big", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: strings.Repeat("x", 200*1024)}, nil
+	}}
+	l := execLoop(t, big)
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.SpillDir = filepath.Join(blocker, "spill")
+	out := run(l, llm.ToolCallResult{ID: "c1", Name: "big", Arguments: `{}`})
+	got := out.messages[0].Content
+	if len(got) > l.Limits.SpillBytes {
+		t.Fatalf("result sent uncapped after a spill failure: %d bytes, cap %d", len(got), l.Limits.SpillBytes)
+	}
+	if !strings.Contains(got, "snipped") {
+		t.Fatalf("the cut result carries no marker: %q", got[len(got)-300:])
+	}
+}

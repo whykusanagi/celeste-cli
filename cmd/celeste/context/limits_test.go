@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestCapToolResult_UnderLimit(t *testing.T) {
@@ -169,5 +170,36 @@ func TestCapToolResult_DefaultMaxBytes(t *testing.T) {
 	}
 	if !wasCapped {
 		t.Error("should cap when using default and result exceeds it")
+	}
+}
+
+// SnipToolResult is CapToolResult without the spill file (2.0 F3): the loop's
+// fallback when the spill fails, and the cap on histories loaded from disk.
+// It never returns more than maxBytes and marks the cut.
+func TestSnipToolResult(t *testing.T) {
+	if got := SnipToolResult("short", 1024); got != "short" {
+		t.Fatalf("under the cap the text must come back unchanged, got %q", got)
+	}
+	exact := strings.Repeat("e", 4096)
+	if got := SnipToolResult(exact, 4096); got != exact {
+		t.Fatal("a text exactly at the cap must come back unchanged")
+	}
+	for _, max := range []int{1024, 4096, DefaultMaxToolResultBytes} {
+		text := "HEAD" + strings.Repeat("x", 3*max) + "TAIL"
+		got := SnipToolResult(text, max)
+		if len(got) > max {
+			t.Fatalf("max %d: got %d bytes", max, len(got))
+		}
+		if !strings.HasPrefix(got, "HEAD") || !strings.HasSuffix(got, "TAIL") {
+			t.Fatalf("max %d: head and tail must both be kept", max)
+		}
+		if !strings.Contains(got, "snipped") {
+			t.Fatalf("max %d: the cut carries no marker", max)
+		}
+	}
+	// A cut never splits a UTF-8 sequence.
+	got := SnipToolResult(strings.Repeat("é", 4096), 1024)
+	if !utf8.ValidString(got) {
+		t.Fatal("the cut split a multi-byte character")
 	}
 }
