@@ -1,6 +1,9 @@
 package providers
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,7 +27,7 @@ func TestNewModelService(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			service := NewModelService(tt.apiKey, tt.baseURL, tt.provider)
 			assert.NotNil(t, service, "Service should not be nil")
-			assert.NotNil(t, service.client, "Client should be initialized")
+			assert.Equal(t, tt.baseURL, service.baseURL, "Base URL should match")
 			assert.Equal(t, tt.provider, service.provider, "Provider should match")
 			assert.NotNil(t, service.detector, "Detector should be initialized")
 		})
@@ -117,6 +120,9 @@ func TestGetBestToolModel(t *testing.T) {
 
 // TestModelDetection tests the SupportsTools heuristic
 func TestModelDetection(t *testing.T) {
+	// The name heuristic, with no catalog loaded for the providers that have one.
+	defer SetCatalogForTest("venice", nil)()
+	defer SetCatalogForTest("openrouter", nil)()
 	tests := []struct {
 		provider     string
 		modelID      string
@@ -235,7 +241,7 @@ func TestGetModelDescription(t *testing.T) {
 		{"grok", "grok-4.20-0309-non-reasoning", "tool calling"},
 		{"anthropic", "claude-opus-4-5-20251101", "Most capable"},
 		{"anthropic", "claude-sonnet-4-5-20250929", "advanced tool use"},
-		{"venice", "venice-uncensored", "NSFW uncensored"},
+		{"venice", "venice-uncensored-1-2", "NSFW uncensored"},
 		{"unknown", "random-model", "Available model"}, // Fallback
 	}
 
@@ -416,17 +422,17 @@ func TestVeniceStaticModels(t *testing.T) {
 	service := NewModelService("test-key", "", "venice")
 	models := service.getStaticModels()
 
-	// Find venice-uncensored
+	// The offline fallback is Venice's current default, which supports tools.
 	var uncensored *ModelInfo
 	for i := range models {
-		if models[i].ID == "venice-uncensored" {
+		if models[i].ID == "venice-uncensored-1-2" {
 			uncensored = &models[i]
 			break
 		}
 	}
 
-	assert.NotNil(t, uncensored, "Should have venice-uncensored model")
-	assert.False(t, uncensored.SupportsTools, "venice-uncensored should NOT support tools")
+	assert.NotNil(t, uncensored, "Should have venice-uncensored-1-2")
+	assert.True(t, uncensored.SupportsTools, "venice-uncensored-1-2 supports tools per Venice's catalog")
 	assert.Contains(t, uncensored.Description, "NSFW", "Should mention NSFW")
 }
 
@@ -453,4 +459,39 @@ func TestDigitalOceanStaticModels(t *testing.T) {
 	assert.Equal(t, "gpt-4.1-nano", models[0].ID, "Should be gpt-4.1-nano")
 	assert.False(t, models[0].SupportsTools, "DigitalOcean should not support local skills")
 	assert.Contains(t, models[0].Description, "no local skills", "Should mention no local skills")
+}
+
+// ListModels reads the provider's catalog (one fetch, then the cache), with
+// tool support from the catalog when it says.
+func TestListModels_FromCatalog(t *testing.T) {
+	isolateCatalog(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(veniceModelsFixture))
+	}))
+	defer srv.Close()
+
+	models, err := NewModelService("k", srv.URL, "venice").ListModels(context.Background())
+	assert.NoError(t, err)
+	byID := map[string]ModelInfo{}
+	for _, m := range models {
+		byID[m.ID] = m
+	}
+	assert.True(t, byID["venice-uncensored-1-2"].SupportsTools)
+	assert.False(t, byID["e2ee-venice-uncensored-24b-p"].SupportsTools)
+	assert.Contains(t, byID["venice-uncensored-1-2"].Description, "Provider default")
+	_, image := byID["some-image-model"]
+	assert.False(t, image)
+}
+
+// A failed listing falls back to the static list and says so.
+func TestListModels_FetchFailureFallsBackToStatic(t *testing.T) {
+	isolateCatalog(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	models, err := NewModelService("k", srv.URL, "openai").ListModels(context.Background())
+	assert.Error(t, err)
+	assert.NotEmpty(t, models)
 }

@@ -906,7 +906,8 @@ func (l *ConfigLoader) GetVeniceConfig() (VeniceConfig, error) {
 
 	model := l.config.VeniceModel
 	if model == "" {
-		model = "venice-uncensored"
+		venice, _ := providers.GetProvider("venice")
+		model = venice.DefaultModel
 	}
 
 	imageModel := l.config.VeniceImageModel

@@ -76,15 +76,17 @@ var Registry = map[string]ProviderCapabilities{
 	"venice": {
 		Name:                    "Venice.ai",
 		BaseURL:                 "https://api.venice.ai/api/v1",
-		SupportsFunctionCalling: false, // venice-uncensored doesn't support it
+		SupportsFunctionCalling: false, // decided per model from the catalog (ToolsPerModel)
 		SupportsModelListing:    true,
 		SupportsTokenTracking:   true, // Returns usage data
-		DefaultModel:            "venice-uncensored",
-		PreferredToolModel:      "", // No tool calling support in uncensored mode
-		RequiresAPIKey:          true,
-		IsOpenAICompatible:      true,
-		ToolsPerModel:           true, // live catalogue: some models have tools (#151)
-		Notes:                   "NSFW mode uses Venice. No function calling in uncensored mode. Image generation available.",
+		// Offline fallback only: the session uses the model Venice flags as
+		// its default in GET /models (ResolveModel).
+		DefaultModel:       "venice-uncensored-1-2",
+		PreferredToolModel: "",
+		RequiresAPIKey:     true,
+		IsOpenAICompatible: true,
+		ToolsPerModel:      true, // live catalogue: some models have tools (#151)
+		Notes:              "NSFW mode uses Venice. No function calling in uncensored mode. Image generation available.",
 	},
 
 	// --- Tier 2: OpenAI-Compatible (Needs Testing) ---
@@ -93,7 +95,7 @@ var Registry = map[string]ProviderCapabilities{
 		Name:                    "Anthropic Claude",
 		BaseURL:                 "https://api.anthropic.com/v1",
 		SupportsFunctionCalling: true,
-		SupportsModelListing:    false, // Anthropic has fixed model list
+		SupportsModelListing:    true,  // GET /v1/models with x-api-key
 		SupportsTokenTracking:   false, // Uses native API with different usage format
 		DefaultModel:            "claude-sonnet-4-5-20250929",
 		PreferredToolModel:      "claude-sonnet-4-5-20250929",
@@ -366,10 +368,10 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return contains(modelID, "grok-build") || contains(modelID, "grok-4") || contains(modelID, "grok-beta")
 
 	case "venice":
-		// Prefer Venice's live catalog (model_spec.capabilities.supportsFunctionCalling).
+		// Prefer Venice's catalog (model_spec.capabilities.supportsFunctionCalling).
 		// The old name heuristic was wrong both ways (some *-uncensored models DO
-		// support tools; some do not). Fall back to it only if the catalog is down.
-		if supported, known := VeniceToolSupport(modelID); known {
+		// support tools; some do not). Fall back to it only with no catalog loaded.
+		if supported, known := CatalogToolSupport(d.provider, modelID); known {
 			return supported
 		}
 		return !contains(modelID, "uncensored")
@@ -395,10 +397,10 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		return true
 
 	case "openrouter":
-		// Prefer OpenRouter's live catalog (authoritative per-model capability:
+		// Prefer OpenRouter's catalog (authoritative per-model capability:
 		// supported_parameters includes "tools"). Falls through to a name
-		// heuristic only when the catalog is unreachable.
-		if supported, known := OpenRouterToolSupport(modelID); known {
+		// heuristic only with no catalog loaded.
+		if supported, known := CatalogToolSupport(d.provider, modelID); known {
 			return supported
 		}
 		return contains(modelID, "gpt-") || contains(modelID, "claude-") || contains(modelID, "gemini-")

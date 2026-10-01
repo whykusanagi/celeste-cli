@@ -280,7 +280,7 @@ func TestAnthropicProvider(t *testing.T) {
 
 	assert.Equal(t, "Anthropic Claude", caps.Name)
 	assert.True(t, caps.SupportsFunctionCalling)
-	assert.False(t, caps.SupportsModelListing, "Anthropic has fixed model list")
+	assert.True(t, caps.SupportsModelListing, "Anthropic lists models at GET /v1/models")
 	assert.NotEmpty(t, caps.PreferredToolModel)
 }
 
@@ -437,16 +437,45 @@ func TestEmptyBaseURLHasExample(t *testing.T) {
 // true): if the stub weren't actually wired in, SupportsTools would fall
 // back to that heuristic and get this one wrong.
 func TestToolsEnabledForModel(t *testing.T) {
-	defer StubVeniceToolCatalogForTest(map[string]bool{
-		"venice-uncensored":                 false,
-		"llama-3.3-70b":                     true,
-		"weird-uncensored-but-tool-capable": true,
+	tools, noTools := true, false
+	defer SetCatalogForTest("venice", []CatalogModel{
+		{ID: "venice-uncensored", Tools: &noTools},
+		{ID: "llama-3.3-70b", Tools: &tools},
+		{ID: "weird-uncensored-but-tool-capable", Tools: &tools},
 	})()
 
-	assert.False(t, ToolsEnabledForModel("venice", "venice-uncensored"), "the uncensored default has no tool support")
+	assert.False(t, ToolsEnabledForModel("venice", "venice-uncensored"), "a model the catalog marks tool-less")
 	assert.True(t, ToolsEnabledForModel("venice", "llama-3.3-70b"), "a non-uncensored Venice model supports tools")
-	assert.True(t, ToolsEnabledForModel("venice", "weird-uncensored-but-tool-capable"), "the live catalog overrides the uncensored-name heuristic")
+	assert.True(t, ToolsEnabledForModel("venice", "weird-uncensored-but-tool-capable"), "the catalog overrides the uncensored-name heuristic")
 	assert.True(t, ToolsEnabledForModel("openai", "gpt-4.1-nano"))
 	assert.True(t, ToolsEnabledForModel("local", ""), "local stays provider-level, unaffected by an empty model")
 	assert.False(t, ToolsEnabledForModel("not-a-real-provider", "x"))
+}
+
+// With no catalog loaded the tool gate falls back to the name heuristic and
+// never fetches (it runs inside the TUI's Update).
+func TestToolsEnabledForModel_NoCatalogUsesHeuristic(t *testing.T) {
+	defer SetCatalogForTest("venice", nil)()
+	assert.False(t, ToolsEnabledForModel("venice", "venice-uncensored"))
+	assert.True(t, ToolsEnabledForModel("venice", "llama-3.3-70b"))
+}
+
+// OpenRouter's catalog decides per model, and a ":variant" suffix falls back
+// to the base id.
+func TestCatalogToolSupport_OpenRouterVariant(t *testing.T) {
+	tools, noTools := true, false
+	defer SetCatalogForTest("openrouter", []CatalogModel{
+		{ID: "x/base", Tools: &tools},
+		{ID: "meta-llama/llama-3-8b-instruct", Tools: &noTools},
+	})()
+	if s, known := CatalogToolSupport("openrouter", "x/base:nitro"); !known || !s {
+		t.Errorf("variant: got (%v,%v), want (true,true)", s, known)
+	}
+	if s, known := CatalogToolSupport("openrouter", "meta-llama/llama-3-8b-instruct"); !known || s {
+		t.Errorf("no tools: got (%v,%v), want (false,true)", s, known)
+	}
+	if _, known := CatalogToolSupport("openrouter", "who/dis"); known {
+		t.Error("an unlisted model must be known=false")
+	}
+	assert.False(t, NewModelDetection("openrouter").SupportsTools("meta-llama/llama-3-8b-instruct"))
 }
