@@ -13,7 +13,7 @@ func TestExecutorUsesExecFunc(t *testing.T) {
 	ex := NewStreamingToolExecutorWithContext(context.Background(), r)
 	var mu sync.Mutex
 	var seen []string
-	ex.SetExecFunc(func(_ context.Context, callID string, tool Tool, input map[string]any, _ chan<- ProgressEvent) (ToolResult, error) {
+	ex.SetExecFunc(func(_ context.Context, callID string, tool Tool, input map[string]any) (ToolResult, error) {
 		mu.Lock()
 		seen = append(seen, callID+":"+tool.Name())
 		mu.Unlock()

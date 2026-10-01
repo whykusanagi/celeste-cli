@@ -53,7 +53,7 @@ type toolEntry struct {
 // ExecFunc runs one call for the executor. The default calls tool.Execute
 // directly; loop.Loop installs one that goes through the registry so the
 // permission checker, timeouts and hooks apply.
-type ExecFunc func(ctx context.Context, callID string, tool Tool, input map[string]any, progress chan<- ProgressEvent) (ToolResult, error)
+type ExecFunc func(ctx context.Context, callID string, tool Tool, input map[string]any) (ToolResult, error)
 
 // StreamingToolExecutor accepts tool calls as they arrive during LLM
 // streaming and dispatches them for execution. Concurrency-safe tools run in
@@ -292,7 +292,7 @@ func (e *StreamingToolExecutor) executeTool(entry *toolEntry, tool Tool, input m
 	var result ToolResult
 	var err error
 	if run != nil {
-		result, err = run(execCtx, entry.callID, tool, input, nil)
+		result, err = run(execCtx, entry.callID, tool, input)
 	} else {
 		result, err = tool.Execute(execCtx, input, nil)
 	}

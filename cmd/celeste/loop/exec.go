@@ -109,7 +109,7 @@ func (l *Loop) runGroup(ctx context.Context, group []*pending, lim Limits) {
 	ex := tools.NewStreamingToolExecutorWithContext(ctx, l.Tools)
 	defer ex.Cancel()
 	// Executor call IDs are group indexes: model IDs may repeat or be empty.
-	ex.SetExecFunc(func(ectx context.Context, _ string, t tools.Tool, input map[string]any, _ chan<- tools.ProgressEvent) (tools.ToolResult, error) {
+	ex.SetExecFunc(func(ectx context.Context, _ string, t tools.Tool, input map[string]any) (tools.ToolResult, error) {
 		return l.invoke(ectx, t, input, lim)
 	})
 	for i, p := range group {
