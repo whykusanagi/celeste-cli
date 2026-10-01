@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **providers:** celeste uses the model the provider serves now. A configured or default model the provider has retired falls back to the provider's current default (for Venice, the model it flags as default) and celeste says so. Model lists are cached for 24h in `~/.celeste/cache/models`; the config file is not rewritten. Applies to the chat, `/endpoint`, `/set-model`, `celeste agent`, `celeste message` and `celeste serve`.
 * **providers:** Anthropic's model list is read from `GET /v1/models`.
 * **config:** `"pin_model": true` (or `CELESTE_PIN_MODEL=1`) turns model resolution off; `/set-model <name> --force` pins a model for the session.
+* **sessions:** messages can carry a provider's own reply format (`provider_blocks` in session files and agent checkpoints), kept byte for byte across save and resume. Nothing fills it yet; Anthropic thinking replay and the OpenAI Responses backend build on it. Older session files load unchanged.
 
 ### Bug Fixes
 
