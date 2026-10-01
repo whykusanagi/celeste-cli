@@ -819,8 +819,10 @@ func Save(config *Config) error {
 	}
 
 	// Atomic, so a crash or a concurrent reader never sees half a config. An
-	// existing file keeps its mode (as os.WriteFile did); a new one is 0644.
-	return atomicfile.WriteKeepMode(configFile, data, 0644)
+	// existing file keeps its mode (as os.WriteFile did). A new one is 0600:
+	// the temp file's mode is set exactly, not through the umask, and the
+	// config can hold an API key.
+	return atomicfile.WriteKeepMode(configFile, data, 0600)
 }
 
 // SaveNamed writes the config to a named profile file (config.<name>.json).

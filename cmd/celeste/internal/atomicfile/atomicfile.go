@@ -20,7 +20,8 @@ var (
 	rename     = os.Rename // test seam
 )
 
-// Write replaces path with data and gives the file mode perm. It writes a
+// Write replaces path with data and gives the file mode perm, exactly: the
+// umask does not apply, unlike os.WriteFile on a new file. It writes a
 // temp file in the target's directory, syncs it, closes it and renames it
 // over the target, retrying the rename briefly (see renameAttempts).
 //
