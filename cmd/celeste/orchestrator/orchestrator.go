@@ -216,6 +216,9 @@ func (o *orchRun) run(ctx context.Context, goal string, li laneInheritance) (*Re
 	if err != nil {
 		return nil, OrchestratorEvent{Kind: EventError, Text: err.Error()}, err
 	}
+	for _, n := range assignment.Notes {
+		o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: "⚠ " + n})
+	}
 
 	// 3. Run primary agent
 	o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Model: assignment.Primary, Text: fmt.Sprintf("[%s] primary agent", assignment.Primary)})
