@@ -104,6 +104,12 @@ func (s *ModelService) ValidateModel(ctx context.Context, modelID string) (Model
 	return ModelInfo{}, fmt.Errorf("model %s not found for provider %s", modelID, s.provider)
 }
 
+// StaticModels is the offline model list for a provider, used when no
+// catalog is loaded.
+func StaticModels(provider string) []ModelInfo {
+	return NewModelService("", "", provider).getStaticModels()
+}
+
 // getStaticModels returns hardcoded model list when API isn't available.
 func (s *ModelService) getStaticModels() []ModelInfo {
 	switch s.provider {

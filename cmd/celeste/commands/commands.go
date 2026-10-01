@@ -3,7 +3,6 @@
 package commands
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -385,10 +384,10 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 		forceModel = true
 	}
 
-	// Create model service to validate
-	modelService := providers.NewModelService(ctx.APIKey, ctx.BaseURL, ctx.Provider)
-	modelInfo, err := modelService.ValidateModel(context.Background(), modelName)
-
+	// Validate against the catalog already loaded for this provider. This
+	// runs inside the TUI's Update, so it never fetches; with no catalog the
+	// model is accepted unvalidated.
+	modelInfo, err := validateAgainstCatalog(ctx.Provider, modelName)
 	if err != nil {
 		// Model not found, but allow if --force
 		if forceModel {
@@ -446,16 +445,49 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 	}
 }
 
+// validateAgainstCatalog looks a model up in the provider's loaded catalog.
+// No catalog: accepted, with tool support from the name heuristic.
+func validateAgainstCatalog(provider, modelID string) (providers.ModelInfo, error) {
+	cat, ok := providers.CatalogFor(provider)
+	if !ok {
+		return providers.ModelInfo{
+			ID:            modelID,
+			Name:          modelID,
+			Provider:      provider,
+			SupportsTools: providers.NewModelDetection(provider).SupportsTools(modelID),
+			Description:   "Model validation unavailable",
+		}, nil
+	}
+	for _, m := range providers.ModelInfosFromCatalog(provider, cat) {
+		if m.ID == modelID {
+			return m, nil
+		}
+	}
+	if i := strings.IndexByte(modelID, ':'); i > 0 { // OpenRouter :variant
+		for _, m := range providers.ModelInfosFromCatalog(provider, cat) {
+			if m.ID == modelID[:i] {
+				m.ID = modelID
+				return m, nil
+			}
+		}
+	}
+	return providers.ModelInfo{}, fmt.Errorf("model %s not found for provider %s", modelID, provider)
+}
+
 // listAvailableModels fetches and displays available models for current provider.
 func listAvailableModels(ctx *CommandContext, caps providers.ProviderCapabilities) *CommandResult {
-	modelService := providers.NewModelService(ctx.APIKey, ctx.BaseURL, ctx.Provider)
-
-	models, err := modelService.ListModels(context.Background())
-	if err != nil {
-		// Fallback to common models help
+	// The loaded catalog, else the offline list. Never fetches: this runs
+	// inside the TUI's Update.
+	var models []providers.ModelInfo
+	if cat, ok := providers.CatalogFor(ctx.Provider); ok {
+		models = providers.ModelInfosFromCatalog(ctx.Provider, cat)
+	} else {
+		models = providers.StaticModels(ctx.Provider)
+	}
+	if len(models) == 0 {
 		return &CommandResult{
 			Success:      false,
-			Message:      fmt.Sprintf("Failed to fetch models from %s\n\n%s\n\nCommon models:\n%s\n\nUsage: /set-model <model-id>", caps.Name, err, getCommonModelsHelp(ctx.Provider)),
+			Message:      fmt.Sprintf("No model list for %s\n\nCommon models:\n%s\n\nUsage: /set-model <model-id>", caps.Name, getCommonModelsHelp(ctx.Provider)),
 			ShouldRender: true,
 		}
 	}
@@ -505,7 +537,7 @@ func getCommonModelsHelp(provider string) string {
 	case "openai":
 		return "  • gpt-4o-mini (recommended)\n  • gpt-4o\n  • gpt-4-turbo"
 	case "venice":
-		return "  • venice-uncensored (no skills)\n  • llama-3.3-70b\n  • qwen3-235b"
+		return "  • venice-uncensored-1-2 (default)\n  • llama-3.3-70b\n  • qwen3-235b"
 	case "anthropic":
 		return "  • claude-sonnet-4-5-20250929\n  • claude-opus-4-5-20251101"
 	case "vertex":
@@ -813,7 +845,7 @@ Chat Commands:
 
 Current Configuration:
   • Endpoint: Venice.ai (https://api.venice.ai/api/v1)
-  • Chat Model: venice-uncensored (no function calling)
+  • Chat Model: the one Venice serves as its default
   • Image Model: Use /set-model to configure
   • Downloads: ~/Downloads
   • Quality: 40 steps, CFG 12.0, PNG format
