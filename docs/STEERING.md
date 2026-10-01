@@ -60,7 +60,11 @@ starts.
   (accepted, but no provider streams thinking yet, so such a rule is
   skipped with a warning), or `tool_args:<tool>.<field>` (one argument of
   that tool's calls, checked when the call is complete and before it
-  runs). Several scopes are separated by commas.
+  runs). Several scopes are separated by commas. The reply is matched as
+  it streams, a batch at a time (every 256 bytes or so, at each newline,
+  and once more when the reply ends), so `$` (and `\z`) can match at the
+  end of a batch, not only at the end of the reply or of a line; use
+  `(?m)` and a newline in the pattern to anchor to line ends.
 - `action`:
   - `interrupt`: stop the reply, add the reminder, and run the turn again.
     For a tool-argument rule the turn's calls never run. A turn is re-run
@@ -74,16 +78,23 @@ starts.
   after N more requests.
 
 The reminder reaches the model as a hidden `<system-reminder>` message.
-The chat shows a short line when a rule stops a reply.
+The chat shows a short line when a rule stops a reply. A dropped reply
+is never kept in the conversation, but the provider billed it, so it
+counts in the session cost.
+
+What a rule knows about the session (for example that `generate_speech`
+really ran, which silences `unbacked-audio-claim`, or that `repeat: once`
+already fired) lasts for the session: the whole chat, one agent run, or
+a single MCP `celeste` call in chat mode, where each call starts fresh.
 
 ### Built-in rules
 
 | Rule | Fires on | Action |
 |---|---|---|
-| `persona-voice-in-files` | pet names, emotes or stylised spelling in `write_file` / `patch_file` content, outside fenced code and `>` quotes, in a file not under a `docs` directory or a `persona` path | append |
+| `persona-voice-in-files` | pet names, emotes or stylised spelling in `write_file` / `patch_file` content, outside fenced code and `>` quotes, in a file not under a `docs` directory or a `persona` path (a `~` is ignored in dotfiles, shell scripts and TeX) | append |
 | `unbacked-audio-claim` | "Audio saved:" in a reply when no text-to-speech call has succeeded | interrupt |
 | `task-complete-before-verify` | `TASK_COMPLETE` when a file changed after the last command ran (not in agent runs with verification commands, which check the work themselves) | interrupt |
-| `destructive-bash` | `git push --force` / `-f` (not `--force-with-lease`) or `rm -rf` in a `bash` command | interrupt |
+| `destructive-bash` | `git push --force` / `-f` (not `--force-with-lease`), or a recursive forced `rm` (`-rf`, `-r -f`, `--recursive --force`) in a `bash` command, unless every path it removes is under `build`, `dist`, `node_modules`, `target`, `.cache`, `out` or `coverage` inside the project; it fires again on later requests | interrupt |
 | `three-strikes` | a strike or warning ladder in a reply | append |
 
 MCP chat (`celeste serve`) also replaces an unbacked "Audio saved:" claim
@@ -91,5 +102,7 @@ in its result, in every mode.
 
 ## Third parties
 
-Only the Jev features (below) send anything off your machine, and only
-when you turn them on.
+Stream rules run on your machine and send nothing anywhere. The optional
+TypeSafe Jev judge (`jev_prune`, and further steering features in later
+releases) is the only part of steering that sends anything off your
+machine, and only when you turn it on.
