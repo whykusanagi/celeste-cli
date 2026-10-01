@@ -288,10 +288,9 @@ Build applications that work across Ethereum and Layer 2 networks.
 ## Technical Details
 
 ### Rate Limiting
-The Alchemy skill includes built-in rate limiting:
-- Default: 5 requests per second
-- Uses `golang.org/x/time/rate` for token bucket algorithm
-- Prevents API throttling errors
+The Alchemy skill does not throttle its own requests. Alchemy enforces your
+plan's compute-unit limits on its side; if you hit them, the API returns a
+rate-limit error that the skill reports. Space out bulk queries accordingly.
 
 ### Address Validation
 All Ethereum addresses are validated using go-ethereum:

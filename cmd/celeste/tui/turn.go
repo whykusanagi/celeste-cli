@@ -141,8 +141,8 @@ func (m AppModel) toolsOffered() bool { return !m.nsfwMode && m.skillsEnabled }
 // tick schedules the tick chain's next TickMsg after d, unless one is
 // already pending: at most one chain runs, so the spinner and the typing
 // keep their speed however many tool turns start one (2.0 F2e). A
-// TickMsg without the chain's generation (a test's, SimulateTypingMsg's)
-// never clears the pending tick.
+// TickMsg without the chain's generation (a test's) never clears the
+// pending tick.
 func (m *AppModel) tick(d time.Duration) tea.Cmd {
 	if m.tickPending {
 		return nil

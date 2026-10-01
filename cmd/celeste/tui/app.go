@@ -2119,7 +2119,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// time since turn start (which includes tool execution time).
 				m.streamStart = time.Now().Add(-msg.Duration)
 			}
-			// Feed the response through SimulatedTyping — same path as regular chat.
+			// Feed the response through the typing animation — same path as regular chat.
 			// Agent responses are not streamed (the whole text arrives in one
 			// msg.Text), so mark streamDone=true up front: the TickMsg
 			// tick-complete branch will commit as soon as typing catches up

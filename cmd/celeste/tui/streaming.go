@@ -159,7 +159,6 @@ func GetFixedWidthCorruption(width int) string {
 
 // CorruptText adds block character corruption effects to a string.
 // Used for loading states and other animated text.
-// For character-level Japanese mixing, use CorruptTextJapanese instead.
 func CorruptText(text string, intensity float64) string {
 	if intensity <= 0 {
 		return text
