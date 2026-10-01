@@ -38,18 +38,34 @@ func TestFailedToolCardShowsTheErrorMessage(t *testing.T) {
 
 // Enter starts the spinner at once, so it animates while a
 // UserPromptSubmit hook runs, before the loop's first TurnStartMsg.
+// Later requests never start a second tick chain while one is pending
+// (the spinner would run at double speed); once the chain has ended (its
+// tick found nothing to animate), the next request starts one again
+// (2.0 F2e: one tick chain).
 func TestEnterStartsTheSpinner(t *testing.T) {
 	m, _ := newQueueTestApp()
 	m, cmd := step(t, m, SendMessageMsg{Content: "go"})
 	require.NotNil(t, m.turn)
-	assert.True(t, hasTick(cmd), "Enter scheduled no TickMsg: the spinner is frozen until the first request")
+	var chain []tea.Msg
+	for _, msg := range collectMsgs(cmd) {
+		if _, ok := msg.(TickMsg); ok {
+			chain = append(chain, msg)
+		}
+	}
+	require.Len(t, chain, 1, "Enter scheduled no TickMsg: the spinner is frozen until the first request")
 
-	// The first request does not start a second tick chain (the spinner
-	// would run at double speed); a later request after tools does start one.
 	m, cmd = feed(t, m, TurnStartMsg{Turn: 1})
 	assert.False(t, hasTick(cmd), "the first TurnStartMsg started a second tick chain")
 	m, _ = feed(t, m, ToolTurnMsg{Text: ""})
 	m, cmd = feed(t, m, TurnStartMsg{Turn: 2})
+	assert.False(t, hasTick(cmd), "a request started a second chain while the first one's tick was pending")
+
+	// The pending tick arrives between requests with nothing to animate:
+	// the chain ends, and the next request starts a new one.
+	m, _ = feed(t, m, ToolTurnMsg{Text: ""})
+	m, cmd = step(t, m, chain[0])
+	assert.False(t, hasTick(cmd), "an idle tick rescheduled itself")
+	m, cmd = feed(t, m, TurnStartMsg{Turn: 3})
 	assert.True(t, hasTick(cmd), "the next request after tools has no spinner")
 }
 

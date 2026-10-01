@@ -70,6 +70,10 @@ type AppModel struct {
 	typingContent string // Full content to type
 	typingPos     int    // Current position in content
 	animFrame     int    // Animation frame counter
+	// tickPending is set while the tick chain's next TickMsg (tickGen) is
+	// scheduled and not yet handled: at most one chain runs (2.0 F2e).
+	tickPending bool
+	tickGen     uint64
 
 	// streamDone is true once StreamDoneMsg has been received for the
 	// currently-rendering assistant message. It coordinates the typing
@@ -435,6 +439,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't return — let sub-views also handle the resize
 	}
 
+	// The tick chain's bookkeeping runs before a sub-view can eat the tick
+	// (2.0 F2e): a superseded chain's tick is dropped, and the live chain's
+	// arrival lets the next one be scheduled.
+	if tk, ok := msg.(TickMsg); ok && tk.gen != 0 {
+		if tk.gen != m.tickGen {
+			return m, nil
+		}
+		m.tickPending = false
+	}
+
 	// Chat turn events bypass the sub-view routing below: the turn must keep
 	// reading its events whichever view is showing.
 	if ev, ok := msg.(TurnEventMsg); ok {
@@ -797,12 +811,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
 
 				agentArgs := append([]string{}, cmd.Args...)
-				return m, tea.Batch(
-					agentRunner.RunAgentCommand(agentArgs),
-					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-						return TickMsg{Time: t}
-					}),
-				)
+				tick := m.restartTick(typingTickInterval * 2)
+				return m, tea.Batch(agentRunner.RunAgentCommand(agentArgs), tick)
 
 			case "orchestrate", "orch":
 				if len(cmd.Args) == 0 {
@@ -823,12 +833,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.orchOutputTokens = 0
 				m.orchSeq++
 				m.orchRun = m.orchSeq
-				return m, tea.Batch(
-					orchRunner.RunOrchestratorCommand(goal, m.orchRun),
-					tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-						return TickMsg{Time: t}
-					}),
-				)
+				tick := m.restartTick(typingTickInterval * 2)
+				return m, tea.Batch(orchRunner.RunOrchestratorCommand(goal, m.orchRun), tick)
 
 			case "stats":
 				// Pass animation frame for flickering corruption effects
@@ -1792,7 +1798,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.turn != nil {
 			// The spinner animates from Enter, also while a
 			// UserPromptSubmit hook runs before the first request.
-			cmds = append(cmds, tickCmd(typingTickInterval*2))
+			cmds = append(cmds, m.restartTick(typingTickInterval*2))
 		}
 
 	case GenerateMediaMsg:
@@ -2087,9 +2093,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streamDone = true
 				m.chat = m.chat.AddAssistantMessage("")
 				m.status = m.status.SetText("Agent: typing response...")
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
+				cmds = append(cmds, m.tick(typingTickInterval))
 			}
 
 		case AgentProgressComplete:
@@ -2381,9 +2385,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.typingPos < len(m.typingContent) {
 				// More content to display — reschedule the typing tick.
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
+				cmds = append(cmds, m.tick(typingTickInterval))
 			} else if !m.streamDone {
 				// Typing caught up to the end of the current buffer, but the
 				// network stream is still in flight — a late chunk may extend
@@ -2392,9 +2394,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// commit the content to session history yet; that's what
 				// caused the v1.9.0 "O" truncation bug. See the streamDone
 				// field doc on AppModel for the full story.
-				cmds = append(cmds, tea.Tick(typingTickInterval, func(t time.Time) tea.Msg {
-					return TickMsg{Time: t}
-				}))
+				cmds = append(cmds, m.tick(typingTickInterval))
 			} else {
 				// Typing complete and stream is done — show final content
 				// without corruption and commit to session history.
@@ -2463,9 +2463,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.planning {
 				m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
 			}
-			cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-				return TickMsg{Time: t}
-			}))
+			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}
 
 	case NSFWToggleMsg:
@@ -2477,17 +2475,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
 	}
 
-	// Keep ticks alive while tool progress entries are active so
-	// spinners animate and elapsed timers update without keypress.
-	// Guard: only schedule when the typing animation and streaming-wait
-	// loops are NOT already scheduling their own ticks. Without this
-	// guard, every TickMsg during a typing animation produces TWO new
-	// ticks (one from the typing branch + one here), causing exponential
-	// growth that floods the event loop and freezes the TUI.
-	if m.toolProgress.HasActive() && m.typingContent == "" && !m.streaming {
-		cmds = append(cmds, tea.Tick(typingTickInterval*2, func(t time.Time) tea.Msg {
-			return TickMsg{Time: t}
-		}))
+	// Keep ticks alive while tool progress entries are active so spinners
+	// animate and elapsed timers update without a keypress. m.tick schedules
+	// nothing while the chain's next tick is pending, so this never starts
+	// a second chain (2.0 F2e).
+	if m.toolProgress.HasActive() {
+		cmds = append(cmds, m.tick(typingTickInterval*2))
 	}
 
 	return m, tea.Batch(cmds...)

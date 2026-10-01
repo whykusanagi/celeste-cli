@@ -122,6 +122,7 @@ type SendMessageMsg struct {
 // TickMsg is sent for timer-based updates (animations, etc).
 type TickMsg struct {
 	Time time.Time
+	gen  uint64 // the tick chain's generation (AppModel.tick); 0: not the chain's
 }
 
 // SimulateTypingMsg is sent to simulate typing effect.

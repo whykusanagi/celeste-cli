@@ -137,8 +137,28 @@ func (m AppModel) startTurn() (AppModel, tea.Cmd) {
 // calling.
 func (m AppModel) toolsOffered() bool { return !m.nsfwMode && m.skillsEnabled }
 
-func tickCmd(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg { return TickMsg{Time: t} })
+// tick schedules the tick chain's next TickMsg after d, unless one is
+// already pending: at most one chain runs, so the spinner and the typing
+// keep their speed however many tool turns start one (2.0 F2e). A
+// TickMsg without the chain's generation (a test's, SimulateTypingMsg's)
+// never clears the pending tick.
+func (m *AppModel) tick(d time.Duration) tea.Cmd {
+	if m.tickPending {
+		return nil
+	}
+	m.tickPending = true
+	m.tickGen++
+	gen := m.tickGen
+	return tea.Tick(d, func(t time.Time) tea.Msg { return TickMsg{Time: t, gen: gen} })
+}
+
+// restartTick starts a new tick chain, superseding a pending one: its tick
+// is dropped when it arrives (update). Enter, /agent and /orchestrate call
+// it, so a chain whose tick never came back cannot freeze the spinner for
+// the next run.
+func (m *AppModel) restartTick(d time.Duration) tea.Cmd {
+	m.tickPending = false
+	return m.tick(d)
 }
 
 // onTurnEvent renders one event of the running turn and reads the next. An
@@ -154,10 +174,6 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		m = m.finishTyping()
 		m.toolProgress.ClearCompleted()
 		if !m.interrupted {
-			// While streaming, a tick chain is already running (Enter
-			// started it, or the reply typing): a second would double the
-			// spinner's speed.
-			ticking := m.streaming
 			m.streaming = true
 			m.streamStart = time.Now()
 			m.lastMsgInTok, m.lastMsgOutTok = 0, 0
@@ -165,9 +181,7 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 			if !m.planning {
 				m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
 			}
-			if !ticking {
-				cmds = append(cmds, tickCmd(typingTickInterval*2))
-			}
+			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}
 	case StreamChunkMsg:
 		var more []tea.Cmd
@@ -266,15 +280,12 @@ func (m AppModel) finishTyping() AppModel {
 func (m AppModel) onToolStart(msg ToolStartMsg) (AppModel, tea.Cmd) {
 	LogSkillCall(msg.Name, msg.Args)
 	m = m.finishTyping()
-	wasActive := m.toolProgress.HasActive()
 	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: time.Now()})
 	m.skills = m.skills.SetExecuting(msg.Name)
 	m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{ToolCallID: msg.ID, ToolName: msg.Name, State: "executing"})
 	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", msg.Name))
-	if !wasActive && m.typingContent == "" && !m.streaming {
-		return m, tickCmd(typingTickInterval * 2) // spinners; update()'s tail keeps it going
-	}
-	return m, nil
+	tick := m.tick(typingTickInterval * 2) // spinners; update()'s tail keeps it going
+	return m, tick
 }
 
 // stopHookStatus is the status while the Stop hook runs.
@@ -449,7 +460,8 @@ func (m AppModel) onStreamChunk(msg StreamChunkMsg) (AppModel, []tea.Cmd) {
 	m.streamDone = false
 	m.status = m.status.SetStreaming(true)
 	m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
-	return m, []tea.Cmd{tickCmd(typingTickInterval)}
+	tick := m.tick(typingTickInterval)
+	return m, []tea.Cmd{tick}
 }
 
 // onStreamDone ends a reply without tool calls: the typing animation may now
@@ -484,7 +496,7 @@ func (m AppModel) onStreamDone(msg StreamDoneMsg) (AppModel, []tea.Cmd) {
 			m.chat = m.chat.AddAssistantMessage("")
 			m.chat = m.chat.SetTypingActive(true)
 			m.status = m.status.SetText("Typing...")
-			cmds = append(cmds, tickCmd(typingTickInterval))
+			cmds = append(cmds, m.tick(typingTickInterval))
 		}
 	} else if m.typingContent == "" {
 		// An empty reply: tell the user to re-prompt.
