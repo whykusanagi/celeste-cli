@@ -410,17 +410,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	cfg = servedAgentModels(cfg)
 
 	// Update LLM client configuration
-	llmConfig := &llm.Config{
-		APIKey:            cfg.APIKey,
-		BaseURL:           cfg.BaseURL,
-		Model:             cfg.Model,
-		Timeout:           cfg.GetTimeout(),
-		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
-		SimulateTyping:    cfg.SimulateTyping,
-		TypingSpeed:       cfg.TypingSpeed,
-		Collections:       cfg.Collections,
-		XAIFeatures:       cfg.XAIFeatures,
-	}
+	llmConfig := llm.ConfigFrom(cfg)
 
 	a.client.UpdateConfig(llmConfig)
 
@@ -498,17 +488,11 @@ func servedAgentModels(cfg *config.Config) *config.Config {
 // ChangeModel changes the model for the current endpoint.
 func (a *TUIClientAdapter) ChangeModel(model string) error {
 	currentConfig := a.client.GetConfig()
-	newConfig := &llm.Config{
-		APIKey:            currentConfig.APIKey,
-		BaseURL:           currentConfig.BaseURL,
-		Model:             model,
-		Timeout:           currentConfig.Timeout,
-		SkipPersonaPrompt: currentConfig.SkipPersonaPrompt,
-		SimulateTyping:    currentConfig.SimulateTyping,
-		TypingSpeed:       currentConfig.TypingSpeed,
-		Collections:       currentConfig.Collections,
-		XAIFeatures:       currentConfig.XAIFeatures,
-	}
+	// A copy of the live config with the model replaced: nothing else the
+	// client carries (credentials, typing, collections) can be lost.
+	newConfig := new(llm.Config)
+	*newConfig = *currentConfig
+	newConfig.Model = model
 
 	a.client.UpdateConfig(newConfig)
 	tui.LogInfo(fmt.Sprintf("Changed model to: %s", model))
@@ -667,13 +651,10 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 		if cfg == nil {
 			return nil, errors.New("no configuration loaded")
 		}
-		a.summarize = agent.SmallModelSummarizer(&llm.Config{
-			APIKey:                cfg.APIKey,
-			BaseURL:               cfg.BaseURL,
-			Timeout:               cfg.GetTimeout(),
-			GoogleCredentialsFile: cfg.GoogleCredentialsFile,
-			GoogleUseADC:          cfg.GoogleUseADC,
-		}, cfg.ResolveSmallModel())
+		// A summary is a plain completion: no xAI collections or features.
+		sumCfg := llm.ConfigFrom(cfg)
+		sumCfg.Collections, sumCfg.XAIFeatures = nil, nil
+		a.summarize = agent.SmallModelSummarizer(sumCfg, cfg.ResolveSmallModel())
 	}
 	return a.summarize, nil
 }
@@ -1485,16 +1466,7 @@ func runSingleMessage(message string) {
 	resolveServedModels(cfg, os.Stderr)
 
 	// Initialize LLM client
-	llmConfig := &llm.Config{
-		APIKey:            cfg.APIKey,
-		BaseURL:           cfg.BaseURL,
-		Model:             cfg.Model,
-		Timeout:           cfg.GetTimeout(),
-		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
-		Collections:       cfg.Collections,
-		XAIFeatures:       cfg.XAIFeatures,
-	}
-	client := llm.NewClient(llmConfig, nil)
+	client := llm.NewClient(llm.ConfigFrom(cfg), nil)
 
 	if !cfg.SkipPersonaPrompt {
 		client.SetSystemPrompt(prompts.GetSystemPrompt(false))

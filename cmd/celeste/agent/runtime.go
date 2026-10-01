@@ -389,19 +389,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		}
 	}
 
-	llmConfig := &llm.Config{
-		APIKey:                cfg.APIKey,
-		BaseURL:               cfg.BaseURL,
-		Model:                 model,
-		Timeout:               maxDuration(cfg.GetTimeout(), clientTimeoutFloor),
-		SkipPersonaPrompt:     cfg.SkipPersonaPrompt,
-		SimulateTyping:        cfg.SimulateTyping,
-		TypingSpeed:           cfg.TypingSpeed,
-		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
-		GoogleUseADC:          cfg.GoogleUseADC,
-		Collections:           cfg.Collections,
-		XAIFeatures:           cfg.XAIFeatures,
-	}
+	llmConfig := llm.ConfigFrom(cfg)
+	llmConfig.Model = model
+	llmConfig.Timeout = maxDuration(cfg.GetTimeout(), clientTimeoutFloor)
 	var client *llm.Client
 	if options.Client != nil {
 		client = options.Client

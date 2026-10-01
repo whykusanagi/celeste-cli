@@ -49,6 +49,26 @@ type Config struct {
 	XAIFeatures *config.XAIFeaturesConfig
 }
 
+// ConfigFrom is the one place a client Config is built from the user's
+// configuration, so every path (chat, endpoint switch, single message, MCP,
+// agent, summarizer) carries the same fields. A path that needs something
+// different overrides it on the result at its call site.
+func ConfigFrom(cfg *config.Config) *Config {
+	return &Config{
+		APIKey:                cfg.APIKey,
+		BaseURL:               cfg.BaseURL,
+		Model:                 cfg.Model,
+		Timeout:               cfg.GetTimeout(),
+		SkipPersonaPrompt:     cfg.SkipPersonaPrompt,
+		SimulateTyping:        cfg.SimulateTyping,
+		TypingSpeed:           cfg.TypingSpeed,
+		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
+		GoogleUseADC:          cfg.GoogleUseADC,
+		Collections:           cfg.Collections,
+		XAIFeatures:           cfg.XAIFeatures,
+	}
+}
+
 // NewClientWithBackend builds a Client around an existing backend, skipping
 // backend detection. Tests use it to drive the agent loop with a fake.
 func NewClientWithBackend(config *Config, registry *tools.Registry, backend LLMBackend) *Client {

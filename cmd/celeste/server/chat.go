@@ -112,12 +112,7 @@ func initGrimoire(workspace string) {
 // newChatClient is the pre-loop server's client (same config fields) on the
 // Env's registry. The tool mode stays tools.ModeChat.
 func newChatClient(cfg *config.Config, reg *tools.Registry, system string) *llm.Client {
-	client := llm.NewClient(&llm.Config{
-		APIKey:  cfg.APIKey,
-		BaseURL: cfg.BaseURL,
-		Model:   cfg.Model,
-		Timeout: cfg.GetTimeout(),
-	}, reg)
+	client := llm.NewClient(llm.ConfigFrom(cfg), reg)
 	client.SetSystemPrompt(system)
 	return client
 }

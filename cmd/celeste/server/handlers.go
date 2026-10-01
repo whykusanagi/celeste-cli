@@ -438,13 +438,7 @@ func registerCelesteContentTool(s *Server) {
 		cfg = s.servedConfig(ctx, cfg)
 
 		registry := tools.NewRegistry()
-		llmConfig := &llm.Config{
-			APIKey:  cfg.APIKey,
-			BaseURL: cfg.BaseURL,
-			Model:   cfg.Model,
-			Timeout: cfg.GetTimeout(),
-		}
-		client := llm.NewClient(llmConfig, registry)
+		client := llm.NewClient(llm.ConfigFrom(cfg), registry)
 
 		// Use the content-specific prompt variant
 		contentPrompt := prompts.GetContentPrompt("", format, "", "")

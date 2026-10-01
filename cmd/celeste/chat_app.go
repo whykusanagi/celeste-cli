@@ -116,17 +116,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeChat)
 	env.RefreshDiscovery()
 
-	client := llm.NewClient(&llm.Config{
-		APIKey:            cfg.APIKey,
-		BaseURL:           cfg.BaseURL,
-		Model:             served.Model,
-		Timeout:           cfg.GetTimeout(),
-		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
-		SimulateTyping:    cfg.SimulateTyping,
-		TypingSpeed:       cfg.TypingSpeed,
-		Collections:       cfg.Collections,
-		XAIFeatures:       cfg.XAIFeatures,
-	}, registry)
+	chatCfg := llm.ConfigFrom(cfg)
+	chatCfg.Model = served.Model
+	client := llm.NewClient(chatCfg, registry)
 	source := "startup"
 	if resumed {
 		source = "resume"
