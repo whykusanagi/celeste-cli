@@ -28,24 +28,6 @@ const (
 	ToolStateAborted
 )
 
-// String returns a human-readable name for the tool state.
-func (s ToolState) String() string {
-	switch s {
-	case ToolStateQueued:
-		return "Queued"
-	case ToolStateExecuting:
-		return "Executing"
-	case ToolStateCompleted:
-		return "Completed"
-	case ToolStateFailed:
-		return "Failed"
-	case ToolStateAborted:
-		return "Aborted"
-	default:
-		return fmt.Sprintf("Unknown(%d)", s)
-	}
-}
-
 // ExecutorResult holds the result of a single tool execution,
 // including the call metadata and final state.
 type ExecutorResult struct {

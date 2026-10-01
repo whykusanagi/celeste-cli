@@ -64,18 +64,6 @@ func TestRegisterAll_NoWorkspace(t *testing.T) {
 	assert.True(t, ok, "generate_uuid should be registered without workspace")
 }
 
-func TestRegisterReadOnlyDevTools(t *testing.T) {
-	registry := tools.NewRegistry()
-	RegisterReadOnlyDevTools(registry, t.TempDir())
-	assert.Equal(t, 3, registry.Count(), "should have 3 read-only dev tools")
-	_, ok := registry.Get("read_file")
-	assert.True(t, ok)
-	_, ok = registry.Get("list_files")
-	assert.True(t, ok)
-	_, ok = registry.Get("search")
-	assert.True(t, ok)
-}
-
 func TestToolCount(t *testing.T) {
 	registry := tools.NewRegistry()
 	RegisterAll(registry, t.TempDir(), nil, nil, nil)
@@ -105,9 +93,7 @@ func (countingConfigLoader) GetWalletSecurityConfig() (WalletSecuritySettingsCon
 // The counts the README and docs/ advertise. RegisterAll is the always-on set;
 // codegraph registers only once a project is indexed (main.go:398) and
 // collections only when active collections exist. 41 + 6 + 1 = the 48 the docs
-// quote as the full surface. RegisterReadOnlyDevTools is deliberately excluded:
-// it is a separate entry point that re-registers three tools RegisterAll
-// already provides, so it contributes no distinct tools.
+// quote as the full surface.
 //
 // These had drifted to a documented 45 against a real 40/47 because nothing
 // asserted them.

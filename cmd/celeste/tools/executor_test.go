@@ -247,26 +247,6 @@ func TestStreamingToolExecutor_EmptyWait(t *testing.T) {
 	}
 }
 
-func TestToolState_String(t *testing.T) {
-	tests := []struct {
-		state    ToolState
-		expected string
-	}{
-		{ToolStateQueued, "Queued"},
-		{ToolStateExecuting, "Executing"},
-		{ToolStateCompleted, "Completed"},
-		{ToolStateFailed, "Failed"},
-		{ToolStateAborted, "Aborted"},
-		{ToolState(99), "Unknown(99)"},
-	}
-
-	for _, tt := range tests {
-		if got := tt.state.String(); got != tt.expected {
-			t.Errorf("ToolState(%d).String() = %q, want %q", tt.state, got, tt.expected)
-		}
-	}
-}
-
 func TestStreamingToolExecutor_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 

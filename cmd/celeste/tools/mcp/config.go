@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 // MCPConfig is the top-level configuration for MCP servers.
@@ -43,15 +42,6 @@ type ServerConfig struct {
 	// from. Set by the discovery/merge layer, never parsed from JSON. Used by
 	// the /mcp panel to show provenance.
 	Origin string `json:"-"`
-}
-
-// DefaultConfigPath returns the default path for the MCP configuration file.
-func DefaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".celeste", "mcp.json")
 }
 
 // LoadConfig reads and parses the MCP configuration from a JSON file.

@@ -155,12 +155,6 @@ func TestLoadConfig_DefaultTransport(t *testing.T) {
 	assert.Equal(t, "stdio", server.Transport)
 }
 
-func TestDefaultConfigPath(t *testing.T) {
-	path := DefaultConfigPath()
-	assert.Contains(t, path, ".celeste")
-	assert.Contains(t, path, "mcp.json")
-}
-
 func TestSetServerEnabled(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "mcp.json")

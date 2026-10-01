@@ -218,13 +218,6 @@ func (c *Client) abandon(id string) {
 	c.abandoned[id] = struct{}{}
 }
 
-// ServerName returns the server's name after initialization.
-func (c *Client) ServerName() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.serverName
-}
-
 // ProtocolVersion returns the MCP protocol version negotiated with the server
 // during Initialize. Empty until Initialize succeeds.
 func (c *Client) ProtocolVersion() string {
