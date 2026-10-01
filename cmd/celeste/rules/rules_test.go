@@ -175,6 +175,16 @@ func TestBuiltinVoiceInFilesExemptions(t *testing.T) {
 		{"docs/PERSONALITY.md", "She says darling.\n", false},
 		{"prompts/persona/core.md", "darling\n", false},
 		{"main.go", "func main() {}\n", false},
+		// Normal work that is not persona voice (W3-1 review I2).
+		{".gitignore", "*~\n", false},
+		{"deploy.sh", "cd ~\n", false},
+		{"paper.tex", "as Fig.~\\ref{x} shows\n", false},
+		{"main.go", "x := 1 // ~\n", false},
+		{"README.md", "Made with \u2665\n", false},
+		{".gitignore", "notes.txt~\n", false},
+		{"build.sh", "cp a b~\n", false},
+		{"notes.txt", "all done~\n", true},
+		{"setup.sh", "echo done, darling\n", true},
 	}
 	for _, c := range cases {
 		m := builtinMatcher(t)

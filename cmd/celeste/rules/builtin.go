@@ -53,12 +53,18 @@ func voiceInFileGuard(_ *Facts, h Hit) bool {
 	if h.Call == nil {
 		return false
 	}
-	if p, _ := h.Call.Input["path"].(string); exemptPath(p) {
+	p, _ := h.Call.Input["path"].(string)
+	if exemptPath(p) {
 		return false
 	}
 	content, _ := fieldText(h.Call.Input[h.Scope.Field])
 	content = fencedBlock.ReplaceAllString(content, "")
 	content = quoteLine.ReplaceAllString(content, "")
+	if tildeIsSyntax(p) {
+		// A trailing ~ is a backup pattern, a home directory or a LaTeX
+		// tie there, never a sung word.
+		content = strings.ReplaceAll(content, "~", "")
+	}
 	return h.Rule.Condition.MatchString(content)
 }
 
@@ -74,6 +80,20 @@ func exemptPath(p string) bool {
 		if i < len(segs)-1 && (s == "doc" || s == "docs") {
 			return true
 		}
+	}
+	return false
+}
+
+// tildeIsSyntax: dotfiles (.gitignore), shell scripts and TeX use ~ as
+// syntax.
+func tildeIsSyntax(p string) bool {
+	base := strings.ToLower(path.Base(strings.ReplaceAll(p, "\\", "/")))
+	if strings.HasPrefix(base, ".") {
+		return true
+	}
+	switch path.Ext(base) {
+	case ".sh", ".bash", ".zsh", ".fish", ".tex", ".sty", ".cls", ".bib":
+		return true
 	}
 	return false
 }
