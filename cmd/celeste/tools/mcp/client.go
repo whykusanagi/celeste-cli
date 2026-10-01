@@ -76,18 +76,49 @@ type Client struct {
 	serverName  string
 	serverProto string
 	initialized bool
-	mu          sync.Mutex
+	mu          sync.Mutex // guards serverName, serverProto, initialized
+
+	// turn is a 1-slot semaphore: the request/response exchange in
+	// progress holds it. A call waiting for it gives up when its context
+	// ends (2.0 F2e), which a mutex could not do. Made on first use, so a
+	// zero Client works.
+	turn     chan struct{}
+	turnOnce sync.Once
 
 	// inflight is a Receive still running for a call that was cancelled; the
 	// next call takes it over, so at most one Receive per client is ever
-	// outstanding. Guarded by mu.
+	// outstanding. Guarded by turn.
 	inflight chan received
 
 	// abandoned holds the IDs of calls that gave up (cancelled, or failed on
 	// a Receive error) and whose answer hasn't arrived yet. While any are
 	// outstanding, a response with no ID can't be told apart from their late
-	// answer and is dropped. Guarded by mu.
+	// answer and is dropped. Guarded by turn.
 	abandoned map[string]struct{}
+}
+
+// acquire takes the client's turn for one exchange with the server, or
+// returns ctx's error if ctx ends first. release gives it back.
+func (c *Client) acquire(ctx context.Context) error {
+	c.turnOnce.Do(func() { c.turn = make(chan struct{}, 1) })
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case c.turn <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) release() { <-c.turn }
+
+// isInitialized reports whether Initialize has succeeded.
+func (c *Client) isInitialized() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.initialized
 }
 
 // NewClient creates a new MCP client over the given transport.
@@ -141,7 +172,7 @@ func (c *Client) sendNotification(ctx context.Context, notif *Notification) erro
 // request's ID) is returned to the current call only while no abandoned call
 // is still unanswered; otherwise it may belong to one of those and is
 // dropped, and the current call waits on its ctx instead.
-// The caller holds c.mu.
+// The caller holds the client's turn (acquire).
 func (c *Client) recv(ctx context.Context, id int64) (*Response, error) {
 	want := strconv.FormatInt(id, 10)
 	for {
@@ -206,8 +237,10 @@ func (c *Client) ProtocolVersion() string {
 // Sends initialize request, validates the server's protocol version,
 // then sends notifications/initialized.
 func (c *Client) Initialize(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.acquire(ctx); err != nil {
+		return fmt.Errorf("initialize: %w", err)
+	}
+	defer c.release()
 
 	params := map[string]any{
 		"protocolVersion": preferredProtocolVersion,
@@ -246,9 +279,11 @@ func (c *Client) Initialize(ctx context.Context) error {
 			result.ProtocolVersion, strings.Join(supportedProtocolVersions, ", "))
 	}
 
+	c.mu.Lock()
 	c.serverName = result.ServerInfo.Name
 	c.serverProto = result.ProtocolVersion
 	c.initialized = true
+	c.mu.Unlock()
 
 	// Send notifications/initialized
 	notif := NewNotification("notifications/initialized")
@@ -261,10 +296,12 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 // ListTools discovers available tools from the MCP server.
 func (c *Client) ListTools(ctx context.Context) ([]MCPToolDef, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.acquire(ctx); err != nil {
+		return nil, fmt.Errorf("tools/list: %w", err)
+	}
+	defer c.release()
 
-	if !c.initialized {
+	if !c.isInitialized() {
 		return nil, fmt.Errorf("client not initialized")
 	}
 
@@ -297,10 +334,12 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPToolDef, error) {
 // CallTool executes a tool on the MCP server and returns the text result.
 // Multiple text content blocks are joined with newlines.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.acquire(ctx); err != nil {
+		return "", fmt.Errorf("tools/call: %w", err)
+	}
+	defer c.release()
 
-	if !c.initialized {
+	if !c.isInitialized() {
 		return "", fmt.Errorf("client not initialized")
 	}
 
