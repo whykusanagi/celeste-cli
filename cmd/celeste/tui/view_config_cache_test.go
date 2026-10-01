@@ -35,7 +35,7 @@ func TestViewUsesCachedConfigForConfirmModeWithoutReloadingFromDisk(t *testing.T
 	app := NewApp(nil).WithEndpoint("openai")
 	sized, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	app = sized.(AppModel)
-	app.skills = app.skills.SetExpanded(true)
+	app.skills.expanded = true
 	app = app.SetConfig(&config.Config{ConfirmActions: true})
 
 	view := app.View()
@@ -64,7 +64,7 @@ func TestConfirmCommandUpdatesTheModelsCachedConfig(t *testing.T) {
 	app := NewApp(nil).WithEndpoint("openai")
 	sized, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	app = sized.(AppModel)
-	app.skills = app.skills.SetExpanded(true)
+	app.skills.expanded = true
 	app = app.SetConfig(&config.Config{ConfirmActions: false})
 
 	updated, _ := app.Update(SendMessageMsg{Content: "/confirm"})

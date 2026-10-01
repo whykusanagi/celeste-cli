@@ -27,18 +27,6 @@ func TestNewTokenBudget_ZeroLimit(t *testing.T) {
 	}
 }
 
-func TestNewTokenBudgetForModel(t *testing.T) {
-	tb := NewTokenBudgetForModel("grok-4-1-fast", 1000, 500)
-	if tb.ModelLimit != 2000000 {
-		t.Errorf("ModelLimit = %d, want 2000000", tb.ModelLimit)
-	}
-
-	tb2 := NewTokenBudgetForModel("unknown-model", 100, 50)
-	if tb2.ModelLimit != ModelLimits["default"] {
-		t.Errorf("ModelLimit for unknown = %d, want default %d", tb2.ModelLimit, ModelLimits["default"])
-	}
-}
-
 func TestAddTurn(t *testing.T) {
 	tb := NewTokenBudget(128000, 2000, 500)
 	tb.AddTurn(5000, 1000)

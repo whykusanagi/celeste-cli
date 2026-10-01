@@ -41,17 +41,12 @@ const (
 	ApprovalDeny Approval = iota
 	// ApprovalPrompt asks the caller's prompt (the TUI's permission modal).
 	ApprovalPrompt
-	// ApprovalTrust makes invoking the orchestrator the approval: lanes run
-	// in trust mode, and the user's deny rules still apply.
-	ApprovalTrust
 )
 
 func (a Approval) String() string {
 	switch a {
 	case ApprovalPrompt:
 		return "prompt"
-	case ApprovalTrust:
-		return "trust"
 	default:
 		return "deny"
 	}
@@ -70,13 +65,6 @@ func WithPrompt(fn tools.PromptFunc) Option {
 		}
 		o.approval, o.prompt = ApprovalPrompt, fn
 	}
-}
-
-// WithTrust makes invoking the orchestrator the approval: lanes run in trust
-// mode (deny rules still apply). For headless callers acting on the user's
-// explicit go-ahead.
-func WithTrust() Option {
-	return func(o *Orchestrator) { o.approval, o.prompt = ApprovalTrust, nil }
 }
 
 // newLanes builds one Run's shared lane environment. A var so tests can

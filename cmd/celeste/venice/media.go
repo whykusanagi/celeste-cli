@@ -23,13 +23,6 @@ type Config struct {
 	Model   string // For image generation: fluently-xl, pixart-a, etc.
 }
 
-// MediaRequest represents a media generation request.
-type MediaRequest struct {
-	Type   string // "image", "video", "image-to-video"
-	Prompt string
-	Params map[string]interface{}
-}
-
 // MediaResponse represents the response from media generation.
 type MediaResponse struct {
 	Success   bool   `json:"success"`

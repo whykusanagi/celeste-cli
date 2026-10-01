@@ -200,11 +200,6 @@ func NewTodoTool(workspace string) *TodoTool {
 	}
 }
 
-// GetStore returns the underlying store (for TUI access).
-func (t *TodoTool) GetStore() *TodoStore {
-	return t.store
-}
-
 // Execute runs the todo action.
 func (t *TodoTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
 	action := getStringArg(input, "action", "")

@@ -368,11 +368,6 @@ func (s *Session) GetEndpoint() string {
 	return ""
 }
 
-// SetProvider stores the provider name in the session.
-func (s *Session) SetProvider(provider string) {
-	s.Provider = provider
-}
-
 // GetProvider retrieves the provider name from the session.
 func (s *Session) GetProvider() string {
 	return s.Provider
@@ -459,18 +454,6 @@ func (s *Session) GetNSFWMode() bool {
 	return s.NSFWMode
 }
 
-// GetMessagesForLLM converts session messages to a format suitable for LLM.
-func GetMessagesForLLM(session *Session) []map[string]string {
-	var result []map[string]string
-	for _, msg := range session.Messages {
-		result = append(result, map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		})
-	}
-	return result
-}
-
 // SessionSummary provides a brief overview of a session.
 type SessionSummary struct {
 	ID           string         `json:"id"`
@@ -511,11 +494,6 @@ func (s *Session) Summarize() SessionSummary {
 	}
 
 	return summary
-}
-
-// GetMessagesWithLimit returns messages with token limit applied.
-func (s *Session) GetMessagesWithLimit(systemPromptTokens int) []SessionMessage {
-	return TruncateToLimit(s.Messages, s.Model, systemPromptTokens)
 }
 
 // SetName updates the session name.

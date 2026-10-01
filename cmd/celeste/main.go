@@ -732,21 +732,6 @@ func (a *TUIClientAdapter) RefreshSystemPrompt() {
 	tui.LogInfo("✓ System prompt refreshed (confirm/user/persona change)")
 }
 
-func parseArgs(argsJSON string) (map[string]any, error) {
-	var args map[string]any
-	if strings.TrimSpace(argsJSON) == "" {
-		return make(map[string]any), nil
-	}
-
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return make(map[string]any), err
-	}
-	if args == nil {
-		args = make(map[string]any)
-	}
-	return args, nil
-}
-
 // runConfigCommand handles configuration commands.
 func runConfigCommand(args []string) {
 	fs := flag.NewFlagSet("config", flag.ExitOnError)

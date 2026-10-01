@@ -328,47 +328,6 @@ func TestClearSessions(t *testing.T) {
 	assert.Empty(t, sessions)
 }
 
-// TestGetMessagesForLLM tests message conversion for LLM
-func TestGetMessagesForLLM(t *testing.T) {
-	session := &Session{
-		ID:        "test",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Messages: []SessionMessage{
-			{
-				Role:      "user",
-				Content:   "Hello",
-				Timestamp: time.Now(),
-			},
-			{
-				Role:      "assistant",
-				Content:   "Hi!",
-				Timestamp: time.Now(),
-			},
-			{
-				Role:      "user",
-				Content:   "How are you?",
-				Timestamp: time.Now(),
-			},
-		},
-	}
-
-	messages := GetMessagesForLLM(session)
-	require.Len(t, messages, 3)
-
-	assert.Equal(t, "user", messages[0]["role"])
-	assert.Equal(t, "Hello", messages[0]["content"])
-
-	assert.Equal(t, "assistant", messages[1]["role"])
-	assert.Equal(t, "Hi!", messages[1]["content"])
-
-	assert.Equal(t, "user", messages[2]["role"])
-	assert.Equal(t, "How are you?", messages[2]["content"])
-
-	// Verify timestamps are not included
-	assert.NotContains(t, messages[0], "timestamp")
-}
-
 // TestSessionSummarize tests session summary generation
 func TestSessionSummarize(t *testing.T) {
 	now := time.Now()

@@ -304,23 +304,6 @@ func TestConfigStructure(t *testing.T) {
 	assert.Equal(t, "test-model", config.Model)
 }
 
-// TestMediaRequestStructure tests MediaRequest struct
-func TestMediaRequestStructure(t *testing.T) {
-	req := MediaRequest{
-		Type:   "image",
-		Prompt: "test prompt",
-		Params: map[string]interface{}{
-			"width":  1024,
-			"height": 1024,
-		},
-	}
-
-	assert.Equal(t, "image", req.Type)
-	assert.Equal(t, "test prompt", req.Prompt)
-	assert.Equal(t, 1024, req.Params["width"])
-	assert.Equal(t, 1024, req.Params["height"])
-}
-
 // TestMediaResponseStructure tests MediaResponse struct
 func TestMediaResponseStructure(t *testing.T) {
 	resp := MediaResponse{

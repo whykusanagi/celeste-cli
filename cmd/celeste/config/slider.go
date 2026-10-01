@@ -108,20 +108,6 @@ func (s *SliderConfig) Save() error {
 	return os.WriteFile(SliderPath(), data, 0644)
 }
 
-// SavePreset snapshots the current slider values under a name.
-func (s *SliderConfig) SavePreset(name string) {
-	if s.Presets == nil {
-		s.Presets = map[string]SliderPreset{}
-	}
-	s.Presets[name] = SliderPreset{
-		Flirt:      s.Flirt,
-		Warmth:     s.Warmth,
-		Register:   s.Register,
-		Lewdness:   s.Lewdness,
-		R18Enabled: s.R18Enabled,
-	}
-}
-
 // LoadPreset restores slider values from a named preset.
 func (s *SliderConfig) LoadPreset(name string) bool {
 	p, ok := s.Presets[name]

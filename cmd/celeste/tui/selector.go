@@ -251,16 +251,3 @@ func (m SelectorModel) SetWidth(width int) SelectorModel {
 	m.width = width
 	return m
 }
-
-// IsActive returns whether the selector is currently active.
-func (m SelectorModel) IsActive() bool {
-	return m.active
-}
-
-// GetSelected returns the currently selected item (nil if none).
-func (m SelectorModel) GetSelected() *SelectorItem {
-	if m.selected >= 0 && m.selected < len(m.items) {
-		return &m.items[m.selected]
-	}
-	return nil
-}

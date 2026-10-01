@@ -1007,19 +1007,6 @@ func (idx *Indexer) ProjectSummary() string {
 	return b.String()
 }
 
-// LazyRedirectResult is a scored candidate for lazy redirect detection.
-type LazyRedirectResult struct {
-	Name      string  `json:"name"`
-	File      string  `json:"file"`
-	Line      int     `json:"line"`
-	Kind      string  `json:"kind"`
-	OutEdges  int     `json:"outgoing_edges"`
-	InEdges   int     `json:"incoming_edges"`
-	Score     float64 `json:"divergence_score"`
-	Reason    string  `json:"reason"`
-	Signature string  `json:"signature"`
-}
-
 // actionVerbs are name components that imply a function should DO work beyond
 // just building/formatting strings. Builder/formatter functions are excluded
 // because being string-heavy IS their purpose.
@@ -1040,81 +1027,6 @@ var builderPrefixes = []string{
 	"build", "format", "render", "create", "generate", "compose",
 	"compute", "calculate", "transform", "convert", "parse", "marshal",
 	"encode", "decode", "serialize", "template", "compile", "assemble",
-}
-
-// FindLazyRedirects uses structural analysis to detect functions whose names
-// imply complex behavior but whose graph structure shows they're trivially simple.
-// This goes beyond grep-based detection by measuring the divergence between a
-// function's semantic vocabulary (shingles) and its actual call graph connectivity.
-//
-// Scoring factors:
-//   - Name complexity: action verbs in name suggest the function should DO work
-//   - Edge poverty: fewer outgoing edges = less actual work done
-//   - Shingle richness: domain-specific vocabulary in body that doesn't connect to edges
-//
-// Returns results sorted by divergence score (highest = most suspicious).
-func (idx *Indexer) FindLazyRedirects(maxResults int, includeTests bool) ([]LazyRedirectResult, error) {
-	candidates, err := idx.store.FindLazyRedirectCandidates(includeTests)
-	if err != nil {
-		return nil, err
-	}
-
-	var results []LazyRedirectResult
-
-	for _, c := range candidates {
-		if !includeTests && isTestFilePath(c.File) {
-			continue
-		}
-		if isExpectedLeaf(c.Name) {
-			continue
-		}
-
-		absFile := c.File
-		if !filepath.IsAbs(absFile) {
-			absFile = filepath.Join(idx.workspace, absFile)
-		}
-		sourceData, _ := os.ReadFile(absFile)
-		sym := Symbol{Name: c.Name, Line: c.Line}
-		body := ""
-		lowerBody := ""
-		if sourceData != nil {
-			body = findSymbolBody(sourceData, sym)
-			lowerBody = strings.ToLower(body)
-		}
-
-		info := FunctionEdgeInfo{
-			Name: c.Name, File: c.File, Line: c.Line,
-			Kind: c.Kind, Signature: c.Signature,
-			OutEdges: c.OutEdges, InEdges: c.InEdges,
-		}
-		smell, ok := detectLazyRedirect(info, body, lowerBody, sourceData)
-		if !ok {
-			continue
-		}
-
-		results = append(results, LazyRedirectResult{
-			Name:      smell.Name,
-			File:      smell.File,
-			Line:      smell.Line,
-			Kind:      smell.FuncKind,
-			OutEdges:  smell.OutEdges,
-			InEdges:   smell.InEdges,
-			Score:     smell.Score,
-			Reason:    smell.Reason,
-			Signature: smell.Signature,
-		})
-	}
-
-	// Sort by score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	if len(results) > maxResults {
-		results = results[:maxResults]
-	}
-
-	return results, nil
 }
 
 // isTestFilePath returns true if the file path looks like a test file.

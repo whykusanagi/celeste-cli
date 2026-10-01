@@ -19,11 +19,11 @@ func TestSkillsModel_CollapsedIsQuietWhenIdle(t *testing.T) {
 }
 
 func TestSkillsModel_ExpandedShowsFullPanel(t *testing.T) {
-	view := NewSkillsModel().
+	m := NewSkillsModel().
 		SetSize(120, 10).
-		SetConfig("openai", "gpt-4o-mini", true, false, 5, "").
-		SetExpanded(true).
-		View()
+		SetConfig("openai", "gpt-4o-mini", true, false, 5, "")
+	m.expanded = true
+	view := m.View()
 	assert.Contains(t, view, "Skills: enabled (5 loaded)")
 	assert.Contains(t, view, "Backend: openai")
 	assert.Contains(t, view, "Model: gpt-4o-mini")

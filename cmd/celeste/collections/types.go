@@ -15,15 +15,6 @@ type Collection struct {
 	TotalFileSize string    `json:"total_file_size,omitempty"`
 }
 
-// Document represents a document in a collection
-type Document struct {
-	FileID      string    `json:"file_id"`
-	Name        string    `json:"name"`
-	ContentType string    `json:"content_type"`
-	Size        int64     `json:"size"`
-	UploadedAt  time.Time `json:"uploaded_at"`
-}
-
 // CollectionsError represents an API error
 type CollectionsError struct {
 	StatusCode int

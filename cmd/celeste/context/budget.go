@@ -110,13 +110,6 @@ func NewTokenBudget(modelLimit, systemPromptTokens, toolDefTokens int) *TokenBud
 	}
 }
 
-// NewTokenBudgetForModel creates a TokenBudget by looking up the model name
-// in ModelLimits. If the model is not found, the "default" limit is used.
-func NewTokenBudgetForModel(model string, systemPromptTokens, toolDefTokens int) *TokenBudget {
-	limit := GetModelLimit(model)
-	return NewTokenBudget(limit, systemPromptTokens, toolDefTokens)
-}
-
 // AddTurn records token usage from an API response and increments the turn counter.
 // promptTokens and completionTokens come from the API's usage field.
 // If the API does not return usage, callers should pass estimates.
@@ -209,13 +202,6 @@ func (tb *TokenBudget) RecordCompaction(historyTokens int) {
 	defer tb.mu.Unlock()
 	tb.HistoryTokens = historyTokens
 	tb.LastPromptTokens = 0
-	tb.CompactCount++
-}
-
-// IncrementCompactCount records that a compaction occurred.
-func (tb *TokenBudget) IncrementCompactCount() {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
 	tb.CompactCount++
 }
 

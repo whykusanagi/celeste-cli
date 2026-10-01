@@ -83,11 +83,6 @@ func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, 
 	return s
 }
 
-// SetExpanded toggles the full panel. Collapsed (default) renders only active
-// signal in chat — the skill count + model/mode moved to the status line and
-// the nav keys to the single hints row.
-func (s SkillsModel) SetExpanded(e bool) SkillsModel { s.expanded = e; return s }
-
 // Count reports the loaded-skill count (surfaced in the status line).
 func (s SkillsModel) Count() int { return s.skillsCount }
 
