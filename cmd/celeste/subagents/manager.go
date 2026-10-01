@@ -128,7 +128,16 @@ type Manager struct {
 	warnMu     sync.Mutex
 	warnFn     func(string)
 	warnClosed bool
+
+	// activeRuns counts executions currently inside execFn (every path runs
+	// through runExec), so Close can wait for them to release their nested
+	// Env instead of returning while one is still holding it open.
+	activeRuns sync.WaitGroup
 }
+
+// closeRunWait bounds how long Manager.Close waits for cancelled in-flight
+// runs to finish and release their nested Env. A var so tests can shorten it.
+var closeRunWait = 3 * time.Second
 
 // NewManager creates a subagent manager. Pass isChild=true when the manager
 // itself is running inside a subagent to block recursive spawning.
@@ -197,13 +206,31 @@ func (m *Manager) parentEnv() (loop.Nester, error) {
 
 // Close releases the subagents' shared environment (one UseParent supplied
 // stays open: its owner closes it). Warnings stop first, so none reaches the
-// sink after Close, even from the environment's own shutdown; subagents
-// still running keep it open until they finish, and a spawn after Close
-// fails cleanly.
+// sink after Close, even from the environment's own shutdown. Every
+// in-flight run — running, background, or waiting in the DAG queue — is
+// cancelled next: a background run is detached (context.Background(), so
+// only /agents kill or Close stops it) and otherwise keeps a reference on
+// the shared Env forever, so the owner's own Close (MCP.Stop, code graph
+// Close) never runs (F2e M1). Close waits up to closeRunWait for cancelled
+// runs to finish and release that reference before returning, so a caller
+// that closes its own Env right after Close sees the shared resources
+// actually freed. A spawn after Close fails cleanly.
 func (m *Manager) Close() {
 	m.warnMu.Lock()
 	m.warnClosed = true
 	m.warnMu.Unlock()
+
+	m.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(m.cancels))
+	for _, c := range m.cancels {
+		cancels = append(cancels, c)
+	}
+	m.mu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
+	m.waitForRuns(closeRunWait)
+
 	m.envMu.Lock()
 	m.envClosed = true
 	p := m.parent
@@ -211,6 +238,21 @@ func (m *Manager) Close() {
 	m.envMu.Unlock()
 	if p != nil {
 		p.Close()
+	}
+}
+
+// waitForRuns waits up to d for every execution currently tracked by
+// activeRuns to finish, returning as soon as they all have. It never blocks
+// past d, even if a run ignores cancellation.
+func (m *Manager) waitForRuns(d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		m.activeRuns.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
 	}
 }
 
@@ -763,8 +805,12 @@ func incompleteRunError(state *agent.RunState) string {
 
 // runExec runs execFn and then drains the DAG queue, since this run finishing
 // (or failing) may unblock or fail waiting entries. Every execution path goes
-// through here, so the DAG advances whichever backend execFn is.
+// through here, so the DAG advances whichever backend execFn is, and
+// activeRuns tracks exactly the runs holding a reference on the shared Env
+// (Close waits on it).
 func (m *Manager) runExec(ctx context.Context, run *SubagentRun, goal, workspace string, turnCb TurnCallback, maxTurns int, isolate bool) (*SubagentRun, error) {
+	m.activeRuns.Add(1)
+	defer m.activeRuns.Done()
 	result, err := m.execFn(ctx, run, goal, workspace, turnCb, maxTurns, isolate)
 	m.drainDAGQueue()
 	return result, err

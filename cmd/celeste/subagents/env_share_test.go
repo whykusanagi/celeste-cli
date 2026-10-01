@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
@@ -154,6 +155,81 @@ func TestSubagentsNestUnderTheSuppliedParent(t *testing.T) {
 	child.Close()
 	if _, err := m.Spawn(context.Background(), "three", ws); err == nil {
 		t.Fatal("a spawn after Close must fail")
+	}
+}
+
+// M1: a background subagent blocked in a tool must not keep the chat's
+// shared Env open forever. Close cancels it and waits (bounded) for it to
+// release its nested Env, so that when the owner closes its own Env right
+// after (exactly as main.go's defer order does), the shared refcount
+// actually reaches zero and closeAll (MCP.Stop, code graph Close) runs.
+// Before the fix, Close never cancelled in-flight runs, so a detached
+// background run (context.Background()) held its reference forever and
+// closeAll never ran.
+func TestManagerClose_CancelsBackgroundRunAndFreesTheEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	chat, err := loop.Setup(loop.ModeChat, cfg, ws, loop.SetupOptions{Warn: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Indexer == nil {
+		t.Fatal("chat Env has no code graph to check closeAll against")
+	}
+
+	m := NewManager(cfg, ws, false)
+	m.UseParent(chat, func(string) {})
+
+	started := make(chan struct{})
+	m.execFn = func(ctx context.Context, run *SubagentRun, _, workspace string, _ TurnCallback, _ int, _ bool) (*SubagentRun, error) {
+		// Mirrors executeSubagent + runner.Close(): nest under the shared
+		// parent (acquiring a reference), block as if stuck in a tool call,
+		// then release the reference once cancelled.
+		parent, perr := m.parentEnv()
+		if perr != nil {
+			return run, perr
+		}
+		nested, nerr := parent.Nested(loop.NestedOptions{Workspace: workspace})
+		if nerr != nil {
+			return run, nerr
+		}
+		close(started)
+		<-ctx.Done()
+		nested.Close()
+		run.Status = "failed"
+		run.Error = "cancelled"
+		run.EndedAt = time.Now()
+		return run, ctx.Err()
+	}
+
+	if _, err := m.SpawnWithOptions(context.Background(), "stuck task", ws, SpawnOptions{
+		BackgroundAfter: time.Millisecond,
+	}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	<-started // the background run is nested and blocked, holding a reference
+
+	done := make(chan struct{})
+	go func() {
+		m.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager.Close did not return: it must cancel the background run instead of waiting on it forever")
+	}
+
+	// The owner closes its own Env last, exactly as main.go's defer order.
+	chat.Close()
+
+	// Stats() swallows query errors, so use a store method that surfaces
+	// them: a closed sqlite handle returns "sql: database is closed".
+	if _, err := chat.Indexer.Store().SearchSymbolsByName("x"); err == nil {
+		t.Fatal("chat Env's code graph is still open after Close: the background run's reference on the shared Env was never released")
 	}
 }
 
