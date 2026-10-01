@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 func TestCheckpointLoadRejectsPathTraversal(t *testing.T) {
@@ -49,4 +52,22 @@ func TestCheckpointSaveLoadAndList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, summaries, 2)
 	assert.Equal(t, state2.RunID, summaries[0].RunID)
+}
+
+// An agent run checkpointed before 2.0 may hold an uncapped tool result;
+// resuming it must not send the whole thing (2.0 F3, ruling 9).
+func TestCheckpointLoadCapsOversizedToolResults(t *testing.T) {
+	store, err := NewCheckpointStore(t.TempDir())
+	require.NoError(t, err)
+	huge := strings.Repeat("y", 300*1024)
+	require.NoError(t, store.Save(&RunState{RunID: "legacy", Messages: []tui.ChatMessage{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "c1", Name: "bash"}}},
+		{Role: "tool", ToolCallID: "c1", Name: "bash", Content: huge},
+	}}))
+	got, err := store.Load("legacy")
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 3)
+	assert.LessOrEqual(t, len(got.Messages[2].Content), ctxmgr.DefaultMaxToolResultBytes)
+	assert.Equal(t, "go", got.Messages[0].Content)
 }

@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 )
 
 // Sessions keep tool calls, tool results and the hidden/compacted flags, so
@@ -70,4 +72,34 @@ func TestRestoreMessagesMarksAnsweredPromptsHooked(t *testing.T) {
 	assert.True(t, done(got[0]), "answered prompt should be marked")
 	assert.False(t, done(got[2]), "trailing prompt must stay unchecked")
 	assert.Nil(t, in[0].Metadata, "caller's slice must not be modified")
+}
+
+// A session written before 2.0 may hold a tool result nothing ever capped;
+// with no transport trim (2.0 F3) it is cut once, on load (ruling 9).
+func TestSessionCodecCapsOversizedLegacyToolResults(t *testing.T) {
+	huge := strings.Repeat("y", 300*1024)
+	saved := []config.SessionMessage{
+		{Role: "user", Content: "read it"},
+		{Role: "assistant", ToolCalls: []config.SessionToolCall{{ID: "c1", Name: "read_file"}}},
+		{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: huge},
+	}
+	got := ChatMessagesFromSession(saved)
+	require.Len(t, got, 3)
+	assert.LessOrEqual(t, len(got[2].Content), ctxmgr.DefaultMaxToolResultBytes)
+	assert.Contains(t, got[2].Content, "snipped")
+	assert.Equal(t, huge, saved[2].Content, "the saved session itself is not modified")
+}
+
+// CapToolResult's own previews are exactly the cap long and stay whole; only
+// tool messages are cut; with nothing to cut the input comes back.
+func TestCapLoadedToolResultsLeavesCappedPreviewsAlone(t *testing.T) {
+	preview := strings.Repeat("z", ctxmgr.DefaultMaxToolResultBytes)
+	msgs := []ChatMessage{
+		{Role: "tool", ToolCallID: "c1", Content: preview},
+		{Role: "user", Content: strings.Repeat("u", 300*1024)},
+	}
+	got := CapLoadedToolResults(msgs, ctxmgr.DefaultMaxToolResultBytes)
+	assert.Equal(t, preview, got[0].Content)
+	assert.Len(t, got[1].Content, 300*1024, "only tool results are capped")
+	assert.Same(t, &msgs[0], &got[0], "nothing to cut: the input slice comes back")
 }

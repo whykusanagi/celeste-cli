@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+import (
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+)
 
 // SessionMessagesFromChat converts the chat history into the form sessions
 // store (#174). UI-only system messages are dropped; tool calls, tool
@@ -86,6 +89,28 @@ func ChatMessagesFromSession(msgs []config.SessionMessage) []ChatMessage {
 			}
 		}
 		out = append(out, msg)
+	}
+	return CapLoadedToolResults(out, ctxmgr.DefaultMaxToolResultBytes)
+}
+
+// CapLoadedToolResults cuts tool results longer than max in a history loaded
+// from disk (2.0 F3, ruling 9). A history written before 2.0 may hold
+// results that were never capped when recorded, and no transport trim cuts
+// them any more. There is no spill on load (the full text is still in the
+// old file), so the cut (ctxmgr.SnipToolResult) keeps the head and tail with a marker. Copy-on-write;
+// returns msgs itself when nothing is cut.
+func CapLoadedToolResults(msgs []ChatMessage, max int) []ChatMessage {
+	out := msgs
+	copied := false
+	for i, m := range msgs {
+		if m.Role != "tool" || len(m.Content) <= max {
+			continue
+		}
+		if !copied {
+			out = append([]ChatMessage(nil), msgs...)
+			copied = true
+		}
+		out[i].Content = ctxmgr.SnipToolResult(m.Content, max)
 	}
 	return out
 }

@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 type CheckpointStore struct {
@@ -77,6 +80,8 @@ func (s *CheckpointStore) Load(runID string) (*RunState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("parse checkpoint: %w", err)
 	}
+	// Runs checkpointed before 2.0 may hold uncapped tool results (F3).
+	state.Messages = tui.CapLoadedToolResults(state.Messages, ctxmgr.DefaultMaxToolResultBytes)
 	return &state, nil
 }
 
