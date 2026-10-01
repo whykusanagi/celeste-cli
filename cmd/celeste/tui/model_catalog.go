@@ -173,9 +173,25 @@ func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 		}
 	}
 
+	// A config profile (config.<name>.json), not a provider name, takes
+	// its provider from its base URL (2.0 F2e). A client that reports its
+	// endpoint has just loaded the profile, so it says which provider that
+	// is; for any other client the profile is read off the Update
+	// goroutine (resolveProfile), and until it arrives no tools are
+	// offered, never the previous provider's answer.
+	_, isProvider := providers.GetProvider(m.provider)
+	if src, ok := m.llmClient.(ActiveEndpointer); ok && !isProvider {
+		if p := src.ActiveEndpoint().Provider; p != "" && p != "unknown" {
+			m.provider = p
+		}
+	}
+
 	var cmd tea.Cmd
 	if _, ok := m.llmClient.(ActiveEndpointer); ok {
-		m, cmd = m.adoptActiveModel()
+		m, cmd = m.adoptActiveModel() // an unknown provider offers no tools
+	} else if !isProvider {
+		m.skillsEnabled = false
+		cmd = resolveProfile(m.endpoint)
 	} else if caps, ok := providers.GetProvider(m.provider); ok {
 		// A client that can't say its endpoint gets the registry's model.
 		if model := caps.PreferredToolModel; model != "" || caps.DefaultModel != "" {

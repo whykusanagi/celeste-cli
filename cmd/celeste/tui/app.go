@@ -2466,6 +2466,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}
 
+	case ProfileResolvedMsg:
+		m = m.applyProfile(msg)
+
 	case NSFWToggleMsg:
 		m.nsfwMode = msg.Enabled
 		m.header = m.header.SetNSFWMode(msg.Enabled)
