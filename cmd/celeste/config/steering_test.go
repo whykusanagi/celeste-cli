@@ -11,3 +11,11 @@ func TestOracleModeDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamRulesModeDefaultsToShadow(t *testing.T) {
+	for in, want := range map[string]string{"": "shadow", "on": "on", "off": "off", "yes": "shadow"} {
+		if got := (&Config{StreamRules: in}).StreamRulesMode(); got != want {
+			t.Errorf("stream_rules %q = %q, want %q", in, got, want)
+		}
+	}
+}

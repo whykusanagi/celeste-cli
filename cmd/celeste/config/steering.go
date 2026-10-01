@@ -21,3 +21,9 @@ func mode(v, def string, allowed ...string) string {
 func (c *Config) OracleMode() string {
 	return mode(c.Oracle, "heuristic", "heuristic", "llm", "jev")
 }
+
+// StreamRulesMode is stream_rules: "shadow" (default) matches and logs,
+// "on" acts, "off" skips matching.
+func (c *Config) StreamRulesMode() string {
+	return mode(c.StreamRules, ModeShadow, ModeOff, ModeShadow, ModeOn)
+}

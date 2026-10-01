@@ -107,7 +107,10 @@ type Config struct {
 	JevPrune string `json:"jev_prune,omitempty"`
 	// Oracle answers the watchdog's ballot (2.0 W3): "heuristic" (default),
 	// "llm" (the small model) or "jev".
-	Oracle       string `json:"oracle,omitempty"`
+	Oracle string `json:"oracle,omitempty"`
+	// StreamRules: "shadow" (default) matches stream rules and logs, "on"
+	// acts, "off" skips them (2.0 W3).
+	StreamRules  string `json:"stream_rules,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 
