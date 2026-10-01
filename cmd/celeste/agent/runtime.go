@@ -766,6 +766,11 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
 	case loop.EventCompacted:
 		r.reportCompaction(state, ev.Text)
+	case loop.EventRuleInterrupt:
+		if r.options.OnTurnStats != nil && ev.Usage != nil {
+			r.options.OnTurnStats(TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: ev.Elapsed,
+				InputTokens: ev.Usage.PromptTokens, OutputTokens: ev.Usage.CompletionTokens, Dropped: true})
+		}
 	case loop.EventAssistant:
 		text := strings.TrimSpace(ev.Text)
 		if r.options.OnTurnStats != nil {

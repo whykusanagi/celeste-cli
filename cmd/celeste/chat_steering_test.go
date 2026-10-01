@@ -3,6 +3,9 @@ package main
 import (
 	"testing"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -27,5 +30,22 @@ func TestChatTurnsShareOneSteeringSession(t *testing.T) {
 	a.baseConfig = &switched
 	if l := a.newTurnLoop(tui.TurnRequest{}, &chatTurn{}); l.Steering != nil {
 		t.Error("stream_rules off after a profile switch must give no steering")
+	}
+}
+
+// A dropped reply's usage still reaches the chat's cost tracker (the
+// provider billed it); it shows nothing in the chat but the retry line.
+func TestChatRecordsDroppedReplyUsage(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	before := a.costTracker.GetSummary().Turns
+	first := false
+	msgs := a.translate(&chatTurn{model: "gpt-4.1"}, loop.Event{Kind: loop.EventRuleInterrupt, Usage: &llm.TokenUsage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110}}, &first)
+	if len(msgs) != 1 {
+		t.Fatalf("msgs = %v", msgs)
+	}
+	if got := a.costTracker.GetSummary().Turns; got != before+1 {
+		t.Errorf("cost tracker turns = %d, want %d", got, before+1)
 	}
 }

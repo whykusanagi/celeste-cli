@@ -234,7 +234,8 @@ func runObserved(ctx context.Context, l *loop.Loop, history []loop.Message, clai
 		defer close(done)
 		for ev := range events {
 			claims.observe(ev)
-			if ev.Kind == loop.EventAssistant && record != nil {
+			// A reply a stream rule dropped was billed too.
+			if (ev.Kind == loop.EventAssistant || ev.Kind == loop.EventRuleInterrupt) && record != nil {
 				record(ev.Usage)
 			}
 			if ev.Kind == loop.EventDone {

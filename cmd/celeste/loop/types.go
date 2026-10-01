@@ -142,7 +142,7 @@ const (
 	EventPromptsChecked           // History: CheckPrompt allowed a prompt; the checked history, before the first request
 	EventCallsRecorded            // Turn, History: the snapshot with this turn's assistant tool_calls message, before any call runs
 	EventRule                     // Text (the Reminder's Source), Msg: a steering reminder joined the history (W3)
-	EventRuleInterrupt            // Turn: steering cut the turn's reply short; it is dropped and the turn re-runs (W3)
+	EventRuleInterrupt            // Turn, Usage, Elapsed: steering cut the turn's reply short; it is dropped and the turn re-runs (W3)
 )
 
 // Event is one step of a Run, for renderers and adopters.

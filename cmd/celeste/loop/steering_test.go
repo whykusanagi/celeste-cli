@@ -257,3 +257,32 @@ func TestSteeringEndOfStreamVerdictInterrupts(t *testing.T) {
 		t.Errorf("history = %+v", msgs)
 	}
 }
+
+// The dropped reply's usage rides on EventRuleInterrupt: the provider
+// billed it, so adopters count it in the session cost.
+func TestSteeringInterruptCarriesUsage(t *testing.T) {
+	usage := &llm.TokenUsage{PromptTokens: 7, CompletionTokens: 3, TotalTokens: 10}
+	llmStub := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		if n == 0 {
+			callTool(cb, "c1", "bash", `{"command":"x"}`)
+			cb(llm.StreamEvent{Type: llm.EventMessageDone, Usage: usage})
+			return nil
+		}
+		sayText(cb, "done", nil)
+		return nil
+	}}
+	l := &Loop{Client: llmStub, Tools: newRegistry(&fakeTool{name: "bash"}), Limits: DefaultLimits(), Steering: &fakeSteering{onCall: "bash"}}
+	wait := collect(l)
+	if _, _, err := l.Run(context.Background(), []Message{{Role: "user", Content: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range wait() {
+		if ev.Kind == EventRuleInterrupt {
+			if ev.Usage != usage {
+				t.Errorf("interrupt usage = %+v", ev.Usage)
+			}
+			return
+		}
+	}
+	t.Fatal("no EventRuleInterrupt")
+}

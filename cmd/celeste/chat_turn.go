@@ -304,6 +304,8 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 	case loop.EventNotice:
 		return []tea.Msg{tui.HookWarningMsg{Text: ev.Text}}
 	case loop.EventRuleInterrupt:
+		// The provider billed the dropped reply: it counts in the cost.
+		a.recordUsage(t.model, ev.Usage)
 		return []tea.Msg{tui.RuleInterruptMsg{}}
 	case loop.EventRule:
 		return []tea.Msg{tui.RuleReminderMsg{Source: ev.Text, Message: ev.Msg}}

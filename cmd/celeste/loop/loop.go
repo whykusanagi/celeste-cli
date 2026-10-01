@@ -88,7 +88,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 				return msgs, res, ctx.Err()
 			}
 			if errors.Is(rerr, ErrRuleInterrupt) {
-				msgs = l.rerun(msgs, turn)
+				msgs = l.rerun(msgs, turn, rep)
 				interrupts++
 				turn--
 				res.Turns = turn
@@ -126,7 +126,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		// Rules on tool arguments see the calls before they are recorded
 		// or run; past the turn's re-runs their interrupt is dropped.
 		if l.Steering != nil && len(calls) > 0 && l.Steering.Calls(turn, steeringCalls(calls)) && allow {
-			msgs = l.rerun(msgs, turn)
+			msgs = l.rerun(msgs, turn, rep)
 			interrupts++
 			turn--
 			res.Turns = turn
@@ -296,10 +296,10 @@ type reply struct {
 	blocksRejected bool
 }
 
-// rerun drops an interrupted turn's reply (EventRuleInterrupt) and joins
-// the reminders for its re-run.
-func (l *Loop) rerun(msgs []Message, turn int) []Message {
-	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn})
+// rerun drops an interrupted turn's reply (EventRuleInterrupt, with the
+// usage the provider billed for it) and joins the reminders for its re-run.
+func (l *Loop) rerun(msgs []Message, turn int, rep reply) []Message {
+	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn, Usage: rep.usage, Elapsed: rep.elapsed})
 	return l.joinReminders(msgs, BoundaryRetry)
 }
 

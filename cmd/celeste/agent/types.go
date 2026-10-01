@@ -146,6 +146,9 @@ type TurnStats struct {
 	OutputTokens int
 	Response     string   // full assistant content for this turn (may be empty for pure tool-call turns)
 	ToolCalls    []string // names of tools called this turn
+	// Dropped: a stream rule cut this reply short and the turn re-runs
+	// (2.0 W3). The provider billed it; nothing else about it is kept.
+	Dropped bool
 }
 
 func DefaultOptions() Options {
