@@ -70,7 +70,7 @@ func TestResolveModel(t *testing.T) {
 		{
 			name: "retired: the prefix match accepts . and : separators", provider: "sakana",
 			configured: "fugu-ultra-v1", ok: true,
-			cat:  []CatalogModel{{ID: "fugu"}, {ID: "fugu-ultra-v1.1"}},
+			cat:  []CatalogModel{{ID: "fugu-x"}, {ID: "fugu-ultra-v1.1"}},
 			want: "fugu-ultra-v1.1", wantNote: true,
 		},
 		{
@@ -78,6 +78,36 @@ func TestResolveModel(t *testing.T) {
 			configured: "m", ok: true,
 			cat:  []CatalogModel{{ID: "m-1", Tools: &yes}, {ID: "m-2", Tools: &no}},
 			want: "m-1", wantNote: true,
+		},
+		{
+			name: "retired: a sibling model is not a version of it", provider: "openai",
+			configured: "gpt-4o", ok: true,
+			cat:  []CatalogModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o-audio-preview"}, {ID: "gpt-4.1-nano"}},
+			want: "gpt-4.1-nano", wantNote: true,
+		},
+		{
+			name: "retired: a dated snapshot is a version of an alias", provider: "anthropic",
+			configured: "claude-sonnet-4-5", ok: true,
+			cat:  []CatalogModel{{ID: "claude-opus-4-5-20251101"}, {ID: "claude-sonnet-4-5-20250929"}},
+			want: "claude-sonnet-4-5-20250929", wantNote: true,
+		},
+		{
+			name: "retired: versions compare numerically, not as strings", provider: "sakana",
+			configured: "fugu-ultra", ok: true,
+			cat:  []CatalogModel{{ID: "fugu-ultra-v1.9"}, {ID: "fugu-ultra-v1.10"}, {ID: "fugu-ultra-v1.2"}},
+			want: "fugu-ultra-v1.10", wantNote: true,
+		},
+		{
+			name: "a -latest alias of a served family is kept", provider: "grok",
+			configured: "grok-4-latest", ok: true,
+			cat:  []CatalogModel{{ID: "grok-4-0709"}, {ID: "grok-4.20-0309-non-reasoning"}},
+			want: "grok-4-latest",
+		},
+		{
+			name: "retired: the last resort skips models that can't chat", provider: "openai",
+			configured: "gone", ok: true,
+			cat:  []CatalogModel{{ID: "text-embedding-3-small"}, {ID: "dall-e-3"}, {ID: "gpt-4.1"}},
+			want: "gpt-4.1", wantNote: true,
 		},
 		{
 			name: "retired: the registry default when it is served", provider: "sakana",
