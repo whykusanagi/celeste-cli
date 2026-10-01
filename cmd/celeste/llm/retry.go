@@ -40,6 +40,11 @@ type errorClass struct {
 	Kind      errKind
 }
 
+// ErrRuleInterrupt marks a stream a steering rule or the watchdog cut short
+// (2.0 W3). withRetry never retries it: the loop re-runs the turn itself,
+// with the rule's reminder.
+var ErrRuleInterrupt = errors.New("stream interrupted by a steering rule")
+
 // nonRetryable wraps an error so classifyError treats it as fatal regardless of
 // message content (used when output already streamed and a retry would duplicate).
 type nonRetryable struct{ err error }
@@ -138,6 +143,11 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 			return nil
 		}
 		lastErr = err
+
+		// A steering rule cut the stream short: never replay it.
+		if errors.Is(err, ErrRuleInterrupt) || errors.Is(context.Cause(base), ErrRuleInterrupt) {
+			return fmt.Errorf("%w: %w", ErrRuleInterrupt, err)
+		}
 
 		// The caller cancelled (Ctrl+C / shutdown), not a transient failure —
 		// stop rather than replaying the request against a dead parent.

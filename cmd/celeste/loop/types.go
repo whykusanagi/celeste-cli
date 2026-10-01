@@ -52,6 +52,9 @@ type Limits struct {
 	// tool message (read_file for vision models), with a marker in the
 	// content. The chat sets it; agent and MCP runs send text only.
 	KeepToolMetadata bool
+	// MaxRuleInterrupts bounds re-runs of one turn by steering (W3);
+	// <=0: DefaultMaxRuleInterrupts.
+	MaxRuleInterrupts int
 	// HookBudget is how long PreToolUse/PostToolUse hooks may add to a call
 	// before the watchdog abandons it (tool timeout + budget; gated runs:
 	// counted from the Gate's answer). <=0: DefaultHookBudget.
@@ -80,6 +83,9 @@ func (lim Limits) withDefaults() Limits {
 	}
 	if lim.HookBudget <= 0 {
 		lim.HookBudget = DefaultHookBudget
+	}
+	if lim.MaxRuleInterrupts <= 0 {
+		lim.MaxRuleInterrupts = DefaultMaxRuleInterrupts
 	}
 	return lim
 }
@@ -135,6 +141,8 @@ const (
 	EventSteerBlocked             // Msg, Text (the reason): CheckPrompt blocked a steer; it was dropped
 	EventPromptsChecked           // History: CheckPrompt allowed a prompt; the checked history, before the first request
 	EventCallsRecorded            // Turn, History: the snapshot with this turn's assistant tool_calls message, before any call runs
+	EventRule                     // Text (the Reminder's Source), Msg: a steering reminder joined the history (W3)
+	EventRuleInterrupt            // Turn: steering cut the turn's reply short; it is dropped and the turn re-runs (W3)
 )
 
 // Event is one step of a Run, for renderers and adopters.
@@ -261,6 +269,8 @@ type Loop struct {
 	Compact Compactor // nil: no compaction
 	// CheckPrompt is UserPromptSubmit for this run (2.0 F2d; nil: none).
 	CheckPrompt PromptCheck
+	// Steering is stream rules and the watchdog (2.0 W3; nil: none).
+	Steering Steering
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string
@@ -294,9 +304,15 @@ func (l *Loop) Events() <-chan Event {
 	return l.events
 }
 
-func (l *Loop) emit(ev Event) {
+// emit shows ev to Steering, then sends it to the consumer. It returns
+// Steering's answer: true asks to interrupt the request in flight.
+func (l *Loop) emit(ev Event) bool {
 	if ev.History != nil {
 		l.unsynced = false // only Run's goroutine emits snapshots
+	}
+	hit := false
+	if l.Steering != nil {
+		hit = l.Steering.Observe(ev)
 	}
 	l.mu.Lock()
 	ch := l.events
@@ -304,4 +320,5 @@ func (l *Loop) emit(ev Event) {
 	if ch != nil {
 		ch <- ev
 	}
+	return hit
 }
