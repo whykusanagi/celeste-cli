@@ -18,6 +18,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
@@ -63,8 +64,14 @@ type Env struct {
 	GitSnapshot      string
 	GrimoireContext  string // grimoire and "# Project Memories" (the /grimoire view)
 	CodeGraphSummary string // the code graph's project summary (the /index view)
+	// Rules are the stream rules for this workspace (2.0 W3): built-ins,
+	// ~/.celeste/rules/*.md, then the grimoire's "## Stream Rules" (a repo
+	// grimoire's only once trusted, like a repo hook).
+	Rules *rules.Set
 
 	opts        SetupOptions
+	approve     hooks.ApproveFunc // resolved once by approver
+	approveSet  bool
 	skipPersona bool
 	permConfig  permissions.PermissionConfig
 	indexing    sync.WaitGroup     // a code-graph update that outlived its timeout
@@ -183,18 +190,11 @@ func (e *Env) setupPermissions(home string) {
 // passes a nil Approve, so untrusted hooks are skipped with a warning and
 // never auto-approved.
 func (e *Env) setupHooks(home string) {
-	var approve hooks.ApproveFunc
-	if e.Mode == ModeChat {
-		approve = e.opts.Approve
-		if approve == nil && hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
-			approve = hooks.PromptApprover(os.Stdin, os.Stderr)
-		}
-	}
 	runner, err := hooks.Load(hooks.Options{
 		Workspace: e.Workspace,
 		Home:      home,
 		SessionID: e.opts.SessionID,
-		Approve:   approve,
+		Approve:   e.approver(),
 		Warn:      e.opts.Warn,
 	})
 	if err != nil {
@@ -206,6 +206,24 @@ func (e *Env) setupHooks(home string) {
 		e.Registry.SetHookRunner(th)
 	}
 	e.Hooks = runner
+}
+
+// approver is who may trust repo hooks and repo stream rules: the
+// interactive TUI's approver (or a terminal prompt when stdin and stderr are
+// terminals), nil in every other mode. Resolved once, so one terminal
+// prompt reads stdin for both.
+func (e *Env) approver() hooks.ApproveFunc {
+	if e.approveSet {
+		return e.approve
+	}
+	e.approveSet = true
+	if e.Mode == ModeChat {
+		e.approve = e.opts.Approve
+		if e.approve == nil && hooks.IsTerminal(os.Stdin) && hooks.IsTerminal(os.Stderr) {
+			e.approve = hooks.PromptApprover(os.Stdin, os.Stderr)
+		}
+	}
+	return e.approve
 }
 
 // StartSession fires SessionStart for a top-level run and adds its context
@@ -304,11 +322,19 @@ func (e *Env) globalMCPConfigs(paths []string, home string) []string {
 // "# Project Memories", then "# Code Graph".
 func (e *Env) setupContext(ws string) {
 	var text string
+	var ruleSections []rules.Section
 	if g, err := grimoire.LoadAll(ws); err != nil {
 		e.warn("failed to load .grimoire: %v", err)
-	} else if g != nil && !g.IsEmpty() {
-		text = g.Render()
+	} else if g != nil {
+		if !g.IsEmpty() {
+			text = g.Render()
+		}
+		for _, sec := range g.StreamRules {
+			ruleSections = append(ruleSections, rules.Section{Source: sec.Source, Body: sec.Body})
+		}
 	}
+	warn := func(s string) { e.warn("%s", s) }
+	e.Rules = rules.Load(e.home, rules.Trusted(e.home, ruleSections, e.approver(), warn), warn)
 	store := memories.NewStore(ws)
 	if idx, err := memories.LoadIndex(filepath.Join(store.BaseDir(), "MEMORY.md")); err == nil && len(idx.Entries()) > 0 {
 		if text != "" {

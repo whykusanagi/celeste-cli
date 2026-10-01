@@ -130,6 +130,7 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 		return c, nil
 	}
 	c.ProjectContext = e.ProjectContext
+	c.Rules = e.Rules
 	c.GitSnapshot = c.captureGit(ws)
 	if e.Indexer != nil {
 		builtin.RegisterCodeGraphTools(c.Registry, e.Indexer)
