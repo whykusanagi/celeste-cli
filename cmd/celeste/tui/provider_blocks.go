@@ -40,17 +40,22 @@ func BlocksDigest(content string, calls []ToolCallInfo) string {
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
-// AttachProviderBlocks returns msg carrying a copy of pb sealed to msg's
-// current Content and ToolCalls. A nil pb, an empty provider or no blocks
-// leave msg unchanged. Set Content and ToolCalls before calling it.
+// AttachProviderBlocks returns msg carrying a canonical copy of pb sealed
+// to msg's current Content and ToolCalls. A nil pb, an empty provider, no
+// blocks or a block that is not JSON leave msg unchanged. Set Content and
+// ToolCalls before calling it. Backends should build pb with
+// NewProviderBlocks; Attach canonicalizes again so a hand-built value still
+// round-trips byte for byte (ruling 4).
 func AttachProviderBlocks(msg ChatMessage, pb *ProviderBlocks) ChatMessage {
-	if pb == nil || pb.Provider == "" || len(pb.Blocks) == 0 {
+	if pb == nil {
 		return msg
 	}
-	sealed := *pb
-	sealed.Blocks = append([]json.RawMessage(nil), pb.Blocks...)
+	sealed, err := config.NewProviderBlocks(pb.Provider, pb.Blocks)
+	if err != nil || sealed == nil {
+		return msg
+	}
 	sealed.Digest = BlocksDigest(msg.Content, msg.ToolCalls)
-	msg.ProviderBlocks = &sealed
+	msg.ProviderBlocks = sealed
 	return msg
 }
 
@@ -69,13 +74,15 @@ func CurrentBlocks(msg ChatMessage) *ProviderBlocks {
 // provider and still match the message, the backend sends them, in order,
 // as the message's authoritative content instead of rebuilding it from
 // Content and ToolCalls. Otherwise (another provider, an edit, no blocks)
-// it returns false and the blocks stay on the message untouched.
+// it returns false and the blocks stay on the message untouched. The slice
+// is a copy; the block bytes are shared and read-only (a backend that needs
+// to change a block, e.g. to add cache_control, replaces that element).
 func ReplayBlocks(msg ChatMessage, provider string) ([]json.RawMessage, bool) {
 	pb := CurrentBlocks(msg)
 	if pb == nil || provider == "" || pb.Provider != provider {
 		return nil, false
 	}
-	return pb.Blocks, true
+	return append([]json.RawMessage(nil), pb.Blocks...), true
 }
 
 // IsEmptyReply reports an assistant message that says nothing to any

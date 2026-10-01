@@ -28,19 +28,22 @@ func TestProviderKey(t *testing.T) {
 }
 
 // blocksBackend answers every path with the same ProviderBlocks.
-type blocksBackend struct{ pb *tui.ProviderBlocks }
+type blocksBackend struct {
+	pb       *tui.ProviderBlocks
+	rejected bool
+}
 
 func (b blocksBackend) SendMessageStream(_ context.Context, _ []tui.ChatMessage, _ []tui.SkillDefinition, cb StreamCallback) error {
-	cb(StreamChunk{Content: "hi", IsFirst: true, IsFinal: true, FinishReason: "stop", ProviderBlocks: b.pb})
+	cb(StreamChunk{Content: "hi", IsFirst: true, IsFinal: true, FinishReason: "stop", ProviderBlocks: b.pb, BlocksRejected: b.rejected})
 	return nil
 }
 func (b blocksBackend) SendMessageStreamEvents(_ context.Context, _ []tui.ChatMessage, _ []tui.SkillDefinition, cb StreamEventCallback) error {
 	cb(StreamEvent{Type: EventContentDelta, ContentDelta: "hi"})
-	cb(StreamEvent{Type: EventMessageDone, FinishReason: "stop", ProviderBlocks: b.pb})
+	cb(StreamEvent{Type: EventMessageDone, FinishReason: "stop", ProviderBlocks: b.pb, BlocksRejected: b.rejected})
 	return nil
 }
 func (b blocksBackend) SendMessageSync(context.Context, []tui.ChatMessage, []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	return &ChatCompletionResult{Content: "hi", ProviderBlocks: b.pb}, nil
+	return &ChatCompletionResult{Content: "hi", ProviderBlocks: b.pb, BlocksRejected: b.rejected}, nil
 }
 func (b blocksBackend) SetSystemPrompt(string)           {}
 func (b blocksBackend) SetThinkingConfig(ThinkingConfig) {}
@@ -75,5 +78,33 @@ func TestClientForwardsProviderBlocks(t *testing.T) {
 	}
 	if fromEvents != pb || fromChunks != pb || res.ProviderBlocks != pb {
 		t.Fatalf("blocks lost: events %p, chunks %p, sync %p, want %p", fromEvents, fromChunks, res.ProviderBlocks, pb)
+	}
+}
+
+// A backend that had to drop replayed blocks reports it on every path, so
+// the loop can strip them from its history (2.0 F3).
+func TestClientForwardsBlocksRejected(t *testing.T) {
+	c := NewClientWithBackend(&Config{Model: "m"}, nil, blocksBackend{rejected: true})
+	var fromEvents, fromChunks bool
+	if err := c.SendMessageStreamEvents(context.Background(), nil, nil, func(ev StreamEvent) {
+		if ev.Type == EventMessageDone {
+			fromEvents = ev.BlocksRejected
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SendMessageStream(context.Background(), nil, nil, func(ch StreamChunk) {
+		if ch.IsFinal {
+			fromChunks = ch.BlocksRejected
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.SendMessageSync(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fromEvents || !fromChunks || !res.BlocksRejected {
+		t.Fatalf("BlocksRejected lost: events %v, chunks %v, sync %v", fromEvents, fromChunks, res.BlocksRejected)
 	}
 }

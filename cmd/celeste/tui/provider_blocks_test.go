@@ -101,3 +101,28 @@ func TestStripProviderBlocks(t *testing.T) {
 	plain := []ChatMessage{{Role: "user", Content: "q"}}
 	assert.Same(t, &plain[0], &StripProviderBlocks(plain)[0], "nothing to strip: the input comes back")
 }
+
+// ReplayBlocks hands out a copy of the slice: a backend that rewrites what it
+// sends (W8's ids for store=false, W2's cache_control) works on the copy and
+// never changes the recorded message (ruling 14).
+func TestReplayBlocksReturnsACopy(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`, `{"b":2}`)
+	msg := AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "x"}, pb)
+	got, ok := ReplayBlocks(msg, keyA)
+	require.True(t, ok)
+	got[0] = json.RawMessage(`{"a":9}`)
+	again, _ := ReplayBlocks(msg, keyA)
+	assert.Equal(t, `{"a":1}`, string(again[0]), "the recorded blocks are unchanged")
+}
+
+// Blocks reach a message canonical even when a backend builds the struct
+// itself instead of calling NewProviderBlocks: AttachProviderBlocks
+// canonicalizes, and attaches nothing when a block is not JSON (ruling 4).
+func TestAttachProviderBlocksCanonicalizes(t *testing.T) {
+	msg := ChatMessage{Role: "assistant", Content: "x"}
+	got := AttachProviderBlocks(msg, &ProviderBlocks{Provider: keyA, Blocks: []json.RawMessage{json.RawMessage("{ \"a\" :\n 1 }")}})
+	require.NotNil(t, got.ProviderBlocks)
+	assert.Equal(t, `{"a":1}`, string(got.ProviderBlocks.Blocks[0]))
+	bad := AttachProviderBlocks(msg, &ProviderBlocks{Provider: keyA, Blocks: []json.RawMessage{json.RawMessage(`{"a":`)}})
+	assert.Nil(t, bad.ProviderBlocks, "a block that is not JSON is never attached")
+}

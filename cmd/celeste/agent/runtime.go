@@ -825,6 +825,7 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 			result.Content += event.ContentDelta
 		case llm.EventMessageDone:
 			result.Usage = event.Usage
+			result.ProviderBlocks = event.ProviderBlocks
 		}
 	})
 	planTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
@@ -843,11 +844,13 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	}
 
 	planResponse := strings.TrimSpace(result.Content)
-	state.Messages = append(state.Messages, tui.ChatMessage{
-		Role:      "assistant",
-		Content:   planResponse,
-		Timestamp: time.Now(),
-	})
+	planMsg := tui.ChatMessage{Role: "assistant", Content: planResponse, Timestamp: time.Now()}
+	if planResponse == result.Content {
+		// Trimmed text is an edit: the blocks would no longer match it
+		// (2.0 F3).
+		planMsg = tui.AttachProviderBlocks(planMsg, result.ProviderBlocks)
+	}
+	state.Messages = append(state.Messages, planMsg)
 	state.Steps = append(state.Steps, Step{
 		Turn:      state.Turn,
 		Type:      "plan",
