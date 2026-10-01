@@ -63,38 +63,9 @@ func LookupModelLimit(model string) (int, bool) {
 	return ctxmgr.LookupModelLimit(model)
 }
 
-// GetModelLimit returns token limit for a model (delegates to ctxmgr).
-func GetModelLimit(model string) int {
-	return ctxmgr.GetModelLimit(model)
-}
-
 // FormatTokenCount formats token count with K/M suffix (delegates to ctxmgr).
 func FormatTokenCount(tokens int) string {
 	return ctxmgr.FormatTokenCount(tokens)
-}
-
-// TruncateToLimit removes oldest messages to fit within token limit.
-// This is a legacy helper used by session.go; new code should use the
-// compaction engine from ctxmgr instead.
-func TruncateToLimit(messages []SessionMessage, model string, systemPromptTokens int) []SessionMessage {
-	limit := GetModelLimit(model)
-	targetLimit := int(float64(limit) * 0.85) // Keep 85% buffer
-
-	available := targetLimit - systemPromptTokens
-
-	kept := []SessionMessage{}
-	cumulative := 0
-
-	for i := len(messages) - 1; i >= 0; i-- {
-		msgTokens := EstimateMessageTokens(messages[i])
-		if cumulative+msgTokens > available {
-			break
-		}
-		cumulative += msgTokens
-		kept = append([]SessionMessage{messages[i]}, kept...)
-	}
-
-	return kept
 }
 
 // ResolveContextLimit returns the effective context window and whether that
