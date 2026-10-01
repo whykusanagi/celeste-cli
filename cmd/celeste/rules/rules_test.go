@@ -242,10 +242,10 @@ func TestBuiltinDestructiveBash(t *testing.T) {
 		"git push --force origin main":            true,
 		"git push -f":                             true,
 		"git push --force-with-lease origin main": false,
-		"rm -rf build":                            true,
+		"rm -rf src":                              true,
 		"rm -fr /tmp/x":                           true,
-		"rm -Rf node_modules":                     true,
-		"rm --recursive --force dist":             true,
+		"rm -Rf vendor":                           true,
+		"rm --recursive --force lib":              true,
 		"rm -r build":                             false,
 		"rm notes.txt":                            false,
 		"echo farm -rf":                           false,
@@ -352,4 +352,39 @@ func TestTextThrottleStillFindsEveryMatch(t *testing.T) {
 // scanNow feeds a delta and flushes, as if the stream ended after it.
 func scanNow(m *Matcher, delta string) []Hit {
 	return append(m.Text(delta), m.Flush()...)
+}
+
+// destructive-bash repeats (after-gap:1), exempts common build output
+// directories under the workspace, and catches split flags (review I3).
+func TestBuiltinDestructiveBashRepeatsAndExemptsBuildDirs(t *testing.T) {
+	for cmd, fire := range map[string]bool{
+		"rm -rf build":                  false,
+		"rm -rf ./build":                false,
+		"rm -rf node_modules dist":      false,
+		"rm -rf target/ .cache out":     false,
+		"rm -rf coverage":               false,
+		"rm -rf build src":              true,
+		"rm -rf /build":                 true,
+		"rm -rf ../build":               true,
+		"rm -rf ~/build":                true,
+		"rm -r -f docs":                 true,
+		"rm -f -r docs":                 true,
+		"rm -rf build && rm -rf src":    true,
+		"rm -rf $HOME":                  true,
+		"cd sub && rm -rf node_modules": false,
+	} {
+		m := builtinMatcher(t)
+		m.StartRequest()
+		got := names(m.Calls([]Call{{Name: "bash", Input: map[string]any{"command": cmd}}})) == "destructive-bash"
+		if got != fire {
+			t.Errorf("%q: fired=%v, want %v", cmd, got, fire)
+		}
+	}
+	m := builtinMatcher(t)
+	for i := 0; i < 3; i++ {
+		m.StartRequest()
+		if names(m.Calls([]Call{{Name: "bash", Input: map[string]any{"command": "rm -rf src"}}})) != "destructive-bash" {
+			t.Fatalf("request %d: an earlier fire must not disable the rule", i+1)
+		}
+	}
 }
