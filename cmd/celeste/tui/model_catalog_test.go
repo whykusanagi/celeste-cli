@@ -281,7 +281,7 @@ func TestForcePinSurvivesResume(t *testing.T) {
 	client := &endpointClient{ep: ActiveEndpoint{Provider: "venice", BaseURL: "https://api.venice.ai/api/v1", Model: "venice-uncensored-1-2"}}
 	m := NewApp(client).WithEndpoint("venice")
 	m = m.SetSessionManager(&fakeSessions{session: s}, s)
-	m, _ = step(t, m, SendMessageMsg{Content: "/set-model my-private-model --force"})
+	step(t, m, SendMessageMsg{Content: "/set-model my-private-model --force"})
 	if !s.GetModelPinned() || s.GetModel() != "my-private-model" {
 		t.Fatalf("session: model=%q pinned=%v", s.GetModel(), s.GetModelPinned())
 	}
