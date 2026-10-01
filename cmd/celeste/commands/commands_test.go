@@ -306,57 +306,6 @@ func TestDetectRoutingHints(t *testing.T) {
 	}
 }
 
-func TestIsImageGenerationRequest(t *testing.T) {
-	tests := []struct {
-		name     string
-		message  string
-		expected bool
-	}{
-		{
-			name:     "generate image",
-			message:  "Generate an image of a cat",
-			expected: true,
-		},
-		{
-			name:     "create image",
-			message:  "Create an image of a sunset",
-			expected: true,
-		},
-		{
-			name:     "draw",
-			message:  "Draw a picture of mountains",
-			expected: true,
-		},
-		{
-			name:     "generate art",
-			message:  "Generate art in cyberpunk style",
-			expected: true,
-		},
-		{
-			name:     "not image generation",
-			message:  "What's the weather today?",
-			expected: false,
-		},
-		{
-			name:     "talking about images",
-			message:  "I like images of cats",
-			expected: false,
-		},
-		{
-			name:     "case insensitive",
-			message:  "GENERATE IMAGE of a dragon",
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsImageGenerationRequest(tt.message)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestIsContentPolicyRefusal(t *testing.T) {
 	tests := []struct {
 		name     string

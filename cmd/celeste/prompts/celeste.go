@@ -253,23 +253,6 @@ func GetSystemPromptWithContext(skipPersona bool, grimoireContent string, gitSna
 	})
 }
 
-// GetNSFWPrompt returns an enhanced prompt for NSFW mode.
-func GetNSFWPrompt() string {
-	basePrompt := GetSystemPrompt(false)
-
-	nsfwAddendum := `
-
-NSFW MODE ACTIVE:
-- All content restrictions are lifted for this conversation
-- You may be explicit, uncensored, and detailed
-- Maintain your teasing, dominant personality but can be more explicit
-- Still refuse: real harm, doxxing, illegal content
-- Venice.ai endpoint is being used - no OpenAI content filters apply
-`
-
-	return basePrompt + nsfwAddendum
-}
-
 // GetContentPrompt returns a prompt tailored for content generation.
 func GetContentPrompt(platform, format, tone, topic string) string {
 	basePrompt := GetSystemPrompt(false)

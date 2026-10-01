@@ -144,16 +144,6 @@ func TestGetBasicPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "Safety", "Should include safety")
 }
 
-// TestGetNSFWPrompt tests NSFW mode prompt
-func TestGetNSFWPrompt(t *testing.T) {
-	prompt := GetNSFWPrompt()
-	assert.NotEmpty(t, prompt, "NSFW prompt should not be empty")
-	assert.Contains(t, prompt, "NSFW MODE ACTIVE", "Should indicate NSFW mode")
-	assert.Contains(t, prompt, "content restrictions are lifted", "Should mention lifted restrictions")
-	assert.Contains(t, prompt, "Still refuse", "Should still include safety rules")
-	assert.Contains(t, prompt, "Venice.ai", "Should mention Venice.ai")
-}
-
 // TestGetContentPrompt tests content generation prompts
 func TestGetContentPrompt(t *testing.T) {
 	tests := []struct {
@@ -295,17 +285,6 @@ func TestGetSystemPromptConsistency(t *testing.T) {
 	prompt2 := GetSystemPrompt(false)
 
 	assert.Equal(t, prompt1, prompt2, "Multiple calls should return identical prompts")
-}
-
-// TestNSFWPromptIncludesBase tests that NSFW prompt includes base prompt
-func TestNSFWPromptIncludesBase(t *testing.T) {
-	basePrompt := GetSystemPrompt(false)
-	nsfwPrompt := GetNSFWPrompt()
-
-	assert.Contains(t, nsfwPrompt, strings.TrimSpace(basePrompt),
-		"NSFW prompt should include base prompt")
-	assert.Greater(t, len(nsfwPrompt), len(basePrompt),
-		"NSFW prompt should be longer than base prompt")
 }
 
 // TestContentPromptIncludesBase tests that content prompt includes base prompt

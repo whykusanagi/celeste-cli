@@ -993,33 +993,6 @@ func DetectRoutingHints(message string) string {
 	return ""
 }
 
-// IsImageGenerationRequest checks if the message is requesting image generation.
-func IsImageGenerationRequest(message string) bool {
-	lower := strings.ToLower(message)
-
-	imageKeywords := []string{
-		"generate an image",
-		"generate image",
-		"create an image",
-		"create image",
-		"make an image",
-		"make image",
-		"draw",
-		"generate a picture",
-		"create a picture",
-		"generate art",
-		"create art",
-	}
-
-	for _, keyword := range imageKeywords {
-		if strings.Contains(lower, keyword) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // IsContentPolicyRefusal checks if the LLM response is a content policy refusal.
 func IsContentPolicyRefusal(response string) bool {
 	lower := strings.ToLower(response)

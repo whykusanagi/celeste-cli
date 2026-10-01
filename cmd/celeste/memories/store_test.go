@@ -72,26 +72,6 @@ func TestStoreListEmpty(t *testing.T) {
 	assert.Empty(t, memories)
 }
 
-func TestStoreListByType(t *testing.T) {
-	store := NewStoreWithBase(t.TempDir())
-
-	store.Save(NewMemory("a", "A", "feedback", "", "x"))
-	store.Save(NewMemory("b", "B", "user", "", "y"))
-	store.Save(NewMemory("c", "C", "feedback", "", "z"))
-
-	feedback, err := store.ListByType("feedback")
-	require.NoError(t, err)
-	assert.Len(t, feedback, 2)
-
-	users, err := store.ListByType("user")
-	require.NoError(t, err)
-	assert.Len(t, users, 1)
-
-	empty, err := store.ListByType("project")
-	require.NoError(t, err)
-	assert.Empty(t, empty)
-}
-
 func TestSanitizeFilename(t *testing.T) {
 	assert.Equal(t, "hello-world", sanitizeFilename("Hello World"))
 	assert.Equal(t, "test-123", sanitizeFilename("test 123"))

@@ -28,13 +28,6 @@ func TestGrimoire_Render(t *testing.T) {
 	assert.Contains(t, rendered, "Always run tests before committing")
 }
 
-func TestGrimoire_TotalSize(t *testing.T) {
-	g := &Grimoire{
-		Bindings: []string{"short"},
-	}
-	assert.Greater(t, g.TotalSize(), 0)
-}
-
 func TestGrimoire_IsEmpty(t *testing.T) {
 	g := &Grimoire{}
 	assert.True(t, g.IsEmpty())

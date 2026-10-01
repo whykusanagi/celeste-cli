@@ -67,14 +67,6 @@ func (m *Manager) DisableCollection(collectionID string) error {
 	return nil
 }
 
-// GetActiveCollections returns the list of active collection IDs
-func (m *Manager) GetActiveCollections() []string {
-	if m.config.Collections == nil {
-		return []string{}
-	}
-	return m.config.Collections.ActiveCollections
-}
-
 // GetActiveCollectionIDs returns a map of active collection IDs for quick lookup
 func (m *Manager) GetActiveCollectionIDs() map[string]bool {
 	activeIDs := make(map[string]bool)

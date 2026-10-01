@@ -25,12 +25,3 @@ func CheckStaleness(memory *Memory) (int, string) {
 
 	return days, fmt.Sprintf("memory '%s' is %d days old and may be outdated, consider refreshing or deleting it", memory.Name, days)
 }
-
-// ShouldVerify returns true if a memory is older than 7 days.
-func ShouldVerify(memory *Memory) bool {
-	created, err := time.Parse(time.RFC3339, memory.Created)
-	if err != nil {
-		return false
-	}
-	return time.Since(created).Hours() > 7*24
-}

@@ -162,11 +162,6 @@ func (g *Grimoire) Render() string {
 	return sb.String()
 }
 
-// TotalSize returns the total byte size of the rendered grimoire.
-func (g *Grimoire) TotalSize() int {
-	return len(g.Render())
-}
-
 // IsEmpty returns true if the grimoire has no content.
 func (g *Grimoire) IsEmpty() bool {
 	return len(g.Bindings) == 0 && len(g.Rituals) == 0 &&
