@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -13,9 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The fixtures are embedded so the prebuilt test binary also runs them in
+// the Docker job, which has no repo checkout next to it.
+//
+//go:embed testdata/migrate/*.json
+var migrateFixtures embed.FS
+
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "migrate", name))
+	b, err := migrateFixtures.ReadFile("testdata/migrate/" + name)
 	require.NoError(t, err)
 	return b
 }
