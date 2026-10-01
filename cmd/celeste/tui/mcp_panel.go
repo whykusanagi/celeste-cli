@@ -150,9 +150,6 @@ func (m MCPPanelModel) toggleEnabledCmd(name string, enabled bool) tea.Cmd {
 // Update handles messages for the MCP panel.
 func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case MCPStatusMsg:
-		m.servers = msg.Servers
-
 	case tea.KeyMsg:
 		if !m.active {
 			break

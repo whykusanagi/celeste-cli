@@ -2051,11 +2051,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mcpPanel = m.mcpPanel.RefreshServers()
 		return m, nil
 
-	case MCPStatusMsg:
-		var cmd tea.Cmd
-		m.mcpPanel, cmd = m.mcpPanel.Update(msg)
-		cmds = append(cmds, cmd)
-
 	case AgentProgressMsg:
 		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
 			// A cancelled /agent run still winding down: its events belong
@@ -2331,13 +2326,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.persistSession()
 
-	case ShowSelectorMsg:
-		// Activate the selector
-		m.selector = NewSelectorModel(msg.Title, msg.Items)
-		m.selector = m.selector.SetHeight(m.height - 4) // Leave room for borders/footer
-		m.selector = m.selector.SetWidth(m.width)
-		m.selectorActive = true
-
 	case SelectorResultMsg:
 		// Handle selector result
 		m.selectorActive = false
@@ -2387,18 +2375,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.persistSession()
 				}
 			}
-		}
-
-	case SimulateTypingMsg:
-		// For simulated streaming (when endpoint dumps all at once)
-		displayed := msg.Content[:msg.CharsToShow]
-		m.chat = m.chat.SetLastAssistantContent(displayed)
-		if msg.CharsToShow < len(msg.Content) {
-			// Schedule next typing tick
-			cmds = append(cmds, Tick(typingDelay))
-		} else {
-			m.streaming = false
-			m.status = m.status.SetStreaming(false)
 		}
 
 	case TickMsg:
@@ -2514,11 +2490,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ProfileResolvedMsg:
 		m = m.applyProfile(msg)
-
-	case NSFWToggleMsg:
-		m.nsfwMode = msg.Enabled
-		m.header = m.header.SetNSFWMode(msg.Enabled)
-		m.persistSession()
 
 	case ErrorMsg:
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
@@ -2679,14 +2650,6 @@ func (m AppModel) View() string {
 	sections = append(sections, m.status.View())
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
-}
-
-// SetLLMClient sets the LLM client.
-func (m AppModel) SetLLMClient(client LLMClient) AppModel {
-	m.llmClient = client
-	// Reset skills panel runtime state when swapping clients.
-	m.skills = NewSkillsModel()
-	return m
 }
 
 func (m AppModel) getAvailableSkills() []SkillDefinition {
@@ -3370,17 +3333,6 @@ func (m HeaderModel) SetContextUsage(current, max int) HeaderModel {
 	return m
 }
 
-// SetShowContext controls whether context usage is displayed.
-func (m HeaderModel) SetShowContext(show bool) HeaderModel {
-	m.showContext = show
-	return m
-}
-
-// GetContextWarningLevel returns the current context warning level.
-func (m HeaderModel) GetContextWarningLevel() string {
-	return m.contextIndicator.GetWarningLevel()
-}
-
 // View renders the header.
 func (m HeaderModel) View() string {
 	title := HeaderTitleStyle.Render("✨ Celeste CLI")
@@ -3488,22 +3440,6 @@ func (m StatusModel) SetStreaming(streaming bool) StatusModel {
 	return m
 }
 
-// ShowContextWarning displays a context warning message.
-func (m StatusModel) ShowContextWarning(level string, message string) StatusModel {
-	m.warningLevel = level
-	m.warningMessage = message
-	m.showWarning = true
-	return m
-}
-
-// ClearContextWarning clears the context warning.
-func (m StatusModel) ClearContextWarning() StatusModel {
-	m.showWarning = false
-	m.warningMessage = ""
-	m.warningLevel = ""
-	return m
-}
-
 // Update handles tick messages for animation.
 func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 	if _, ok := msg.(TickMsg); ok {
@@ -3582,22 +3518,6 @@ func humanizeTime(t time.Time) string {
 		return t.Format("Jan 2, 2006")
 	}
 }
-
-// Run starts the TUI application.
-func Run(llmClient LLMClient) error {
-	p := tea.NewProgram(
-		NewApp(llmClient),
-		tea.WithAltScreen(),
-		// Mouse capture disabled — allows terminal-native text selection and copy.
-		// Scroll via PgUp/PgDown, Shift+Up/Down, Home/End instead.
-	)
-
-	_, err := p.Run()
-	return err
-}
-
-// Typing delay for simulated streaming (40 chars/sec = 25ms per char)
-const typingDelay = 25 * 1000000 // 25ms in nanoseconds
 
 func truncateText(s string, max int) string {
 	if len(s) <= max {

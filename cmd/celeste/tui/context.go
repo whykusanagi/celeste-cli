@@ -17,16 +17,6 @@ type ContextIndicator struct {
 	showProgressBar bool
 }
 
-// NewContextIndicator creates a new context indicator
-func NewContextIndicator() ContextIndicator {
-	return ContextIndicator{
-		width:           30,
-		showPercentage:  true,
-		showProgressBar: true,
-		warningLevel:    "ok",
-	}
-}
-
 // SetWidth sets the indicator width
 func (ci ContextIndicator) SetWidth(width int) ContextIndicator {
 	ci.width = width
@@ -38,24 +28,6 @@ func (ci ContextIndicator) SetUsage(current, max int) ContextIndicator {
 	ci.currentTokens = current
 	ci.maxTokens = max
 	ci.warningLevel = ci.calculateWarningLevel()
-	return ci
-}
-
-// SetWarningLevel explicitly sets the warning level
-func (ci ContextIndicator) SetWarningLevel(level string) ContextIndicator {
-	ci.warningLevel = level
-	return ci
-}
-
-// SetShowPercentage controls percentage display
-func (ci ContextIndicator) SetShowPercentage(show bool) ContextIndicator {
-	ci.showPercentage = show
-	return ci
-}
-
-// SetShowProgressBar controls progress bar display
-func (ci ContextIndicator) SetShowProgressBar(show bool) ContextIndicator {
-	ci.showProgressBar = show
 	return ci
 }
 
@@ -219,25 +191,7 @@ func (ci ContextIndicator) GetWarningMessage() string {
 	}
 }
 
-// ShouldShowWarning returns true if a warning should be displayed
-func (ci ContextIndicator) ShouldShowWarning() bool {
-	return ci.warningLevel != "ok"
-}
-
 // GetWarningLevel returns the current warning level
 func (ci ContextIndicator) GetWarningLevel() string {
 	return ci.warningLevel
-}
-
-// GetUsageInfo returns formatted usage information
-func (ci ContextIndicator) GetUsageInfo() string {
-	percentage := ci.getUsagePercentage() * 100
-	current := ci.formatTokenCount(ci.currentTokens)
-	max := ci.formatTokenCount(ci.maxTokens)
-	remaining := ci.formatTokenCount(ci.maxTokens - ci.currentTokens)
-
-	return fmt.Sprintf(
-		"Token Usage: %s / %s (%.1f%%) • Remaining: %s",
-		current, max, percentage, remaining,
-	)
 }

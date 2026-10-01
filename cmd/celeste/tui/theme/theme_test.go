@@ -18,16 +18,6 @@ func TestPaletteCanonicalColors(t *testing.T) {
 	}
 }
 
-// Semantic roles resolve through the palette.
-func TestSemanticResolution(t *testing.T) {
-	if got := Semantic("decoded"); got != "#00ffff" {
-		t.Errorf("Semantic(decoded) = %q, want #00ffff", got)
-	}
-	if got := Semantic("critical"); got != "#ff0000" {
-		t.Errorf("Semantic(critical) = %q, want #ff0000", got)
-	}
-}
-
 // Unknown keys return empty, not a panic.
 func TestUnknownKey(t *testing.T) {
 	if got := Hex("nope"); got != "" {

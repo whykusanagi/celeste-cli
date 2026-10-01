@@ -131,20 +131,9 @@ type TickMsg struct {
 	gen  uint64 // the tick chain's generation (AppModel.tick); 0: not the chain's
 }
 
-// SimulateTypingMsg is sent to simulate typing effect.
-type SimulateTypingMsg struct {
-	Content     string // Full content to simulate typing
-	CharsToShow int    // How many characters to show now
-}
-
 // ErrorMsg is sent when an error occurs.
 type ErrorMsg struct {
 	Err error
-}
-
-// NSFWToggleMsg is sent when NSFW mode is toggled.
-type NSFWToggleMsg struct {
-	Enabled bool
 }
 
 // GenerateMediaMsg is sent to generate media (image/video/etc) via Venice.ai.
@@ -164,20 +153,7 @@ type MediaResultMsg struct {
 	MediaType string
 }
 
-// ShowSelectorMsg triggers the interactive selector.
-type ShowSelectorMsg struct {
-	Title string
-	Items []SelectorItem
-}
-
 // --- Commands ---
-
-// Tick returns a command that sends a tick message after a delay.
-func Tick(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg {
-		return TickMsg{Time: t}
-	})
-}
 
 // SendMessage returns a command that sends a message to the LLM.
 func SendMessage(content string) tea.Cmd {
@@ -337,11 +313,6 @@ type ContextBudgetMsg struct {
 	UsagePercent float64
 	CompactCount int
 	TurnCount    int
-}
-
-// MCPStatusMsg updates the MCP server status display.
-type MCPStatusMsg struct {
-	Servers []MCPServerInfo
 }
 
 // MCPServerInfo describes the status of a single MCP server.
