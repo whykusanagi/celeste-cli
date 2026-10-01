@@ -115,10 +115,6 @@ type retryOpts struct {
 	// actually run. It does NOT raise the configured timeout — each attempt still
 	// gets exactly `timeout`.
 	timeout time.Duration
-	// beforeTry runs before each attempt (attempt is 0-based). Callers use it to
-	// trim the outbound payload — progressively more on later attempts — so a
-	// retry doesn't replay an identical oversized request.
-	beforeTry func(attempt int)
 }
 
 // withRetry runs fn, retrying transient errors per policy. Each attempt gets a
@@ -127,10 +123,6 @@ type retryOpts struct {
 func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context) error, sleep func(time.Duration)) error {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		if opts.beforeTry != nil {
-			opts.beforeTry(attempt)
-		}
-
 		ctx := base
 		cancel := context.CancelFunc(func() {})
 		if opts.timeout > 0 {
@@ -157,8 +149,8 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 		// time than we allowed — not a transient transport fault, even though the
 		// error text ("context deadline exceeded") matches the network pattern in
 		// classifyError. Retrying cannot help: each attempt gets the same
-		// allowance, and beforeTry trims the request, which shortens the input,
-		// not the generation. So every attempt dies at the same wall.
+		// allowance and sends the same request, so every attempt dies at the
+		// same wall.
 		//
 		// Issue #113: this burned 3x90s + backoff = 273s on sakana/fugu before
 		// failing with a bare, uninformative error. Fail on the first attempt and

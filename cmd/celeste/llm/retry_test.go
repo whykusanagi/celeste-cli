@@ -118,24 +118,6 @@ func TestWithRetry_StopsOnParentCancel(t *testing.T) {
 	}
 }
 
-// TestWithRetry_BeforeTryPerAttempt: beforeTry fires before each attempt with an
-// incrementing 0-based counter (used to progressively trim the payload).
-func TestWithRetry_BeforeTryPerAttempt(t *testing.T) {
-	var attempts []int
-	_ = withRetry(context.Background(), retryOpts{
-		beforeTry: func(a int) { attempts = append(attempts, a) },
-	}, func(context.Context) error { return errors.New("status code 503") }, func(time.Duration) {})
-	want := []int{0, 1, 2} // initial + 2 retries
-	if len(attempts) != len(want) {
-		t.Fatalf("beforeTry attempts=%v want %v", attempts, want)
-	}
-	for i := range want {
-		if attempts[i] != want[i] {
-			t.Fatalf("beforeTry attempts=%v want %v", attempts, want)
-		}
-	}
-}
-
 func TestNonRetryableWrapper(t *testing.T) {
 	if classifyError(fatalErr(errors.New("status code 503"))).Retryable {
 		t.Fatal("wrapped fatalErr must be non-retryable even if message looks transient")
@@ -143,9 +125,8 @@ func TestNonRetryableWrapper(t *testing.T) {
 }
 
 // A per-attempt deadline that WE set expiring means the model needed more time
-// than we allowed. Retrying against the same allowance cannot succeed, and the
-// input trim does not shorten generation time — so all attempts hit the same
-// wall. Issue #113: this burned 3x90s + backoff = 273s before failing with a
+// than we allowed. Retrying against the same allowance cannot succeed: every
+// attempt sends the same request, so all attempts hit the same wall. Issue #113: this burned 3x90s + backoff = 273s before failing with a
 // bare "context deadline exceeded".
 func TestWithRetryDoesNotRetrySelfInflictedDeadline(t *testing.T) {
 	attempts := 0

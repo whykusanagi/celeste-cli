@@ -123,10 +123,10 @@ func TestReadFile_SmallFileNotTruncated(t *testing.T) {
 	assert.Equal(t, "a\nb\nc", d["content"])
 }
 
-// The full read_file result MESSAGE (content + JSON wrapper) must stay under the
-// llm per-message trim budget (llm.maxToolMsgBytes = 64 KiB), or the pre-flight
-// trim re-truncates read_file's own JSON and mangles its metadata. This guards
-// the #1/#2 budget relationship; keep the 64*1024 in sync with llm/trim.go.
+// The full read_file result MESSAGE (content + JSON wrapper) stays under 64 KiB,
+// read_file's own ceiling (48 KiB of content plus the wrapper), far below the
+// loop's 128 KiB record-time cap, so a worst-case read is never spilled and its
+// metadata JSON is never cut.
 func TestReadFile_ResultMessageStaysUnderTrimBudget(t *testing.T) {
 	dir := t.TempDir()
 	// A 420 KB single-line minified file: worst case (no newlines, full content budget).
@@ -134,9 +134,9 @@ func TestReadFile_ResultMessageStaysUnderTrimBudget(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.min.css"), []byte(payload), 0644))
 	res, err := NewReadFileTool(dir).Execute(context.Background(), map[string]any{"path": "big.min.css"}, nil)
 	require.NoError(t, err)
-	const llmTrimBudget = 64 * 1024 // must match llm.maxToolMsgBytes
-	if len(res.Content) >= llmTrimBudget {
-		t.Fatalf("read_file message = %d bytes; must stay under the llm trim budget %d to avoid double-truncation", len(res.Content), llmTrimBudget)
+	const readFileCeiling = 64 * 1024
+	if len(res.Content) >= readFileCeiling {
+		t.Fatalf("read_file message = %d bytes; must stay under %d", len(res.Content), readFileCeiling)
 	}
 	// And the metadata must be intact (total_bytes reflects the real file size).
 	var d map[string]any

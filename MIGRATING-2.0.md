@@ -16,3 +16,10 @@ Chat always runs tools in a loop, so `classic` and `claw` were the same program.
 
 Every other key in your config file keeps its value. The MCP `celeste` tool's
 `mode` argument (`chat` / `agent`) is unrelated and unchanged.
+
+## Sessions and agent checkpoints
+
+| 1.x | 2.0 |
+|---|---|
+| A saved session or agent run (`celeste resume`, `celeste agent --resume`) | Loads unchanged, except that a tool result over 128 KiB is cut to 128 KiB (start and end kept) when it loads, and the next save stores the cut version. If you need the full text of such a result, copy the session file (under `~/.celeste/sessions`) or the run checkpoint (under `~/.celeste/agent/runs`) before resuming it in 2.0. |
+| Tool results between 64 KiB and 128 KiB | Sent whole. 1.x cut every tool result to 64 KiB on each request. |

@@ -224,16 +224,13 @@ type ToolCallResult struct {
 }
 
 // SendMessageSync sends a message synchronously and returns the result.
-// This delegates to the appropriate backend (OpenAI or Google).
+// This delegates to the appropriate backend (OpenAI or Google). Every
+// attempt sends messages unchanged (2.0 F3: the history is append-only).
 func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	var res *ChatCompletionResult
-	msgs := messages
-	err := withRetry(ctx, retryOpts{
-		timeout:   c.perAttemptTimeout(),
-		beforeTry: c.trimHook(&msgs),
-	}, func(reqCtx context.Context) error {
+	err := withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
 		var e error
-		res, e = c.backend.SendMessageSync(reqCtx, msgs, tools)
+		res, e = c.backend.SendMessageSync(reqCtx, messages, tools)
 		return e
 	}, func(d time.Duration) { time.Sleep(d) })
 	return res, err
@@ -246,20 +243,6 @@ func (c *Client) perAttemptTimeout() time.Duration {
 		return c.config.Timeout
 	}
 	return 60 * time.Second
-}
-
-// trimHook returns a beforeTry callback that trims oversized tool results in the
-// captured message slice — a pre-flight guard on attempt 0, then progressively
-// tighter budgets on each retry so a timeout retry never replays an identical
-// oversized payload. It rebinds *msgs copy-on-write; the caller's history is
-// never mutated.
-func (c *Client) trimHook(msgs *[]tui.ChatMessage) func(int) {
-	return func(attempt int) {
-		budget := maxToolMsgBytes >> attempt // 48K, 24K, 12K, ...
-		if trimmed, ok := trimToolResults(*msgs, budget); ok {
-			*msgs = trimmed
-		}
-	}
 }
 
 // StreamCallback is called for each chunk during streaming.
@@ -289,14 +272,10 @@ type StreamChunk struct {
 // SendMessageStream sends a message with streaming callback.
 // This delegates to the appropriate backend (OpenAI or Google).
 func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	msgs := messages
-	return withRetry(ctx, retryOpts{
-		timeout:   c.perAttemptTimeout(),
-		beforeTry: c.trimHook(&msgs),
-	}, func(reqCtx context.Context) error {
+	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
 		started := false
 		wrapped := func(chunk StreamChunk) { started = true; callback(chunk) }
-		err := c.backend.SendMessageStream(reqCtx, msgs, tools, wrapped)
+		err := c.backend.SendMessageStream(reqCtx, messages, tools, wrapped)
 		if err != nil && started {
 			return fatalErr(err)
 		}
@@ -307,14 +286,10 @@ func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessa
 // SendMessageStreamEvents sends a message with granular streaming events.
 // This delegates to the appropriate backend.
 func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
-	msgs := messages
-	return withRetry(ctx, retryOpts{
-		timeout:   c.perAttemptTimeout(),
-		beforeTry: c.trimHook(&msgs),
-	}, func(reqCtx context.Context) error {
+	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
 		started := false
 		wrapped := func(ev StreamEvent) { started = true; callback(ev) }
-		err := c.backend.SendMessageStreamEvents(reqCtx, msgs, tools, wrapped)
+		err := c.backend.SendMessageStreamEvents(reqCtx, messages, tools, wrapped)
 		if err != nil && started {
 			return fatalErr(err)
 		}

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -85,9 +88,14 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	totalBytes := len(result)
 
 	// Reserve space for the notice and tail in the budget
+	recall := ""
+	if id := sessionID + "/" + toolCallID; spillIDPattern.MatchString(id) {
+		// #211: the id recall_tool_result takes to page through the file.
+		recall = fmt.Sprintf("; recall_tool_result with id %q returns it", id)
+	}
 	notice := fmt.Sprintf(
-		"\n\n--- TRUNCATED (%d bytes total, full output saved to: %s) ---\n\n",
-		totalBytes, spillPath,
+		"\n\n--- TRUNCATED (%d bytes total, full output saved to: %s%s) ---\n\n",
+		totalBytes, spillPath, recall,
 	)
 	noticeLen := len(notice)
 	tailLen := previewTailBytes
@@ -108,4 +116,71 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 
 	capped = head + notice + tail
 	return capped, true, nil
+}
+
+// spillIDPattern is a spill file's recall id: <sessionID>/<toolCallID>, both
+// plain names (the loop's are), so the id can never leave the spill base.
+var spillIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}/[A-Za-z0-9_-]{1,128}$`)
+
+// LoadSpilled returns the full tool result CapToolResult spilled under
+// baseDir ("" is ToolResultsBaseDir) for a recall id <sessionID>/<toolCallID>,
+// the id its notice names.
+func LoadSpilled(baseDir, id string) (string, error) {
+	if !spillIDPattern.MatchString(id) {
+		return "", fmt.Errorf("invalid spilled tool result id %q", id)
+	}
+	if baseDir == "" {
+		var err error
+		if baseDir, err = ToolResultsBaseDir(); err != nil {
+			return "", err
+		}
+	}
+	session, name, _ := strings.Cut(id, "/")
+	b, err := os.ReadFile(filepath.Join(baseDir, session, name+".txt"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no spilled tool result with id %q", id)
+		}
+		return "", err
+	}
+	return string(b), nil
+}
+
+// snipMarker marks where SnipToolResult cut a result; the note, when there
+// is one, follows the count.
+func snipMarker(snipped int, note string) string {
+	if note == "" {
+		return fmt.Sprintf("\n[...snipped %d bytes...]\n", snipped)
+	}
+	return fmt.Sprintf("\n[...snipped %d bytes. %s]\n", snipped, note)
+}
+
+// SnipToolResult cuts result to at most maxBytes in memory, keeping its head
+// and tail around a "[...snipped N bytes...]" marker, without the spill file
+// CapToolResult writes (2.0 F3). note, if not empty, goes into the marker:
+// callers say there why the middle cannot be recalled and what to do instead.
+// The loop uses it when the spill file cannot be written; sessions and
+// checkpoints use it on tool results loaded from disk. Results at or under
+// maxBytes come back unchanged. Cuts fall on UTF-8 character boundaries. The
+// result is at most maxBytes whenever maxBytes is at least 64 plus the note.
+func SnipToolResult(result string, maxBytes int, note string) string {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxToolResultBytes
+	}
+	if len(result) <= maxBytes {
+		return result
+	}
+	// The snipped count is at most len(result), so this reserves enough for
+	// the marker whatever the boundaries below turn out to be.
+	reserve := len(snipMarker(len(result), note))
+	tailLen := min(256, maxBytes/4)
+	headLen := max(maxBytes-reserve-tailLen, 0)
+	for headLen > 0 && !utf8.RuneStart(result[headLen]) {
+		headLen--
+	}
+	tailStart := len(result) - tailLen
+	for tailStart < len(result) && !utf8.RuneStart(result[tailStart]) {
+		tailStart++
+	}
+	return result[:headLen] + snipMarker(tailStart-headLen, note) + result[tailStart:]
 }

@@ -295,6 +295,11 @@ func safeName(id string, fallback string) string {
 	return name
 }
 
+// spillFailedNote goes in the cut marker when the spill file could not be
+// written: the middle of the output is gone, so recall cannot bring it back.
+const spillFailedNote = "The full output could not be saved, so it cannot be recalled. " +
+	"If you need the missing part, re-run with narrower output (a line range, grep, head or tail)."
+
 func (l *Loop) spill(content, id string, idx int, lim Limits) string {
 	if lim.SpillBytes <= 0 || len(content) <= lim.SpillBytes {
 		return content
@@ -302,8 +307,11 @@ func (l *Loop) spill(content, id string, idx int, lim Limits) string {
 	name := fmt.Sprintf("%s-%d", safeName(id, "call-"+strconv.Itoa(idx)), l.nextSpill())
 	capped, _, err := ctxmgr.CapToolResult(content, lim.SpillBytes, l.sessionID(), name, l.SpillDir)
 	if err != nil {
-		l.emit(Event{Kind: EventNotice, Text: "could not spill a large tool result: " + err.Error()})
-		return content
+		// The cap still applies (2.0 F3: nothing trims a result after it
+		// is recorded). Without the spill file there is no recall path, so
+		// the model gets the head and tail with a cut marker.
+		l.emit(Event{Kind: EventNotice, Text: "could not spill a large tool result, so only its start and end were kept: " + err.Error()})
+		return ctxmgr.SnipToolResult(content, lim.SpillBytes, spillFailedNote)
 	}
 	return capped
 }

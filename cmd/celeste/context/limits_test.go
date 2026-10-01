@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestCapToolResult_UnderLimit(t *testing.T) {
@@ -169,5 +170,69 @@ func TestCapToolResult_DefaultMaxBytes(t *testing.T) {
 	}
 	if !wasCapped {
 		t.Error("should cap when using default and result exceeds it")
+	}
+}
+
+// SnipToolResult is CapToolResult without the spill file (2.0 F3): the loop's
+// fallback when the spill fails, and the cap on histories loaded from disk.
+// It never returns more than maxBytes and marks the cut.
+func TestSnipToolResult(t *testing.T) {
+	if got := SnipToolResult("short", 1024, ""); got != "short" {
+		t.Fatalf("under the cap the text must come back unchanged, got %q", got)
+	}
+	exact := strings.Repeat("e", 4096)
+	if got := SnipToolResult(exact, 4096, "note"); got != exact {
+		t.Fatal("a text exactly at the cap must come back unchanged")
+	}
+	note := "The full output could not be saved; re-run with narrower output."
+	for _, limit := range []int{1024, 4096, DefaultMaxToolResultBytes} {
+		text := "HEAD" + strings.Repeat("x", 3*limit) + "TAIL"
+		for _, n := range []string{"", note} {
+			got := SnipToolResult(text, limit, n)
+			if len(got) > limit {
+				t.Fatalf("limit %d, note %q: got %d bytes", limit, n, len(got))
+			}
+			if !strings.HasPrefix(got, "HEAD") || !strings.HasSuffix(got, "TAIL") {
+				t.Fatalf("limit %d: head and tail must both be kept", limit)
+			}
+			if !strings.Contains(got, "snipped") || !strings.Contains(got, n) {
+				t.Fatalf("limit %d: the cut lacks its marker or note", limit)
+			}
+		}
+	}
+	// A cut never splits a UTF-8 sequence.
+	got := SnipToolResult(strings.Repeat("é", 4096), 1024, "")
+	if !utf8.ValidString(got) {
+		t.Fatal("the cut split a multi-byte character")
+	}
+}
+
+// #211: the spill notice names the id recall_tool_result takes, and that id
+// finds the spilled file again; ids that are not <session>/<name> of safe
+// names are refused.
+func TestSpillNoticeNamesRecallID(t *testing.T) {
+	base := t.TempDir()
+	full := strings.Repeat("r", 4096)
+	capped, wasCapped, err := CapToolResult(full, 1024, "sess-1", "call_2-1", base)
+	if err != nil || !wasCapped {
+		t.Fatalf("cap: %v %v", wasCapped, err)
+	}
+	if !strings.Contains(capped, `recall_tool_result with id "sess-1/call_2-1"`) {
+		t.Fatalf("the notice does not name the recall id: %q", capped)
+	}
+	if !strings.Contains(capped, "full output saved to: "+filepath.Join(base, "sess-1", "call_2-1.txt")) {
+		t.Fatal("the notice lost its spill path")
+	}
+	got, err := LoadSpilled(base, "sess-1/call_2-1")
+	if err != nil || got != full {
+		t.Fatalf("LoadSpilled = %d bytes, %v; want the full %d", len(got), err, len(full))
+	}
+	for _, bad := range []string{"", "sess-1", "../x", "a/../b", "a/b/c", "a/b.txt", "./b", `a\b`} {
+		if _, err := LoadSpilled(base, bad); err == nil {
+			t.Errorf("LoadSpilled(%q) succeeded", bad)
+		}
+	}
+	if _, err := LoadSpilled(base, "sess-1/missing"); err == nil {
+		t.Error("a missing spill file must be an error")
 	}
 }
