@@ -124,8 +124,9 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			calls = capCalls(parseTextToolCalls(rep.text), lim.MaxCallsPerTurn)
 		}
 		// Rules on tool arguments see the calls before they are recorded
-		// or run; past the turn's re-runs their interrupt is dropped.
-		if l.Steering != nil && len(calls) > 0 && l.Steering.Calls(turn, steeringCalls(calls)) && allow {
+		// or run. Past the turn's re-runs they are not asked: the calls run,
+		// and a reminder must never say "do not run it" after it ran.
+		if l.Steering != nil && allow && len(calls) > 0 && l.Steering.Calls(turn, steeringCalls(calls)) {
 			msgs = l.rerun(msgs, turn, rep)
 			interrupts++
 			turn--

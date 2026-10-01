@@ -20,6 +20,7 @@ type fakeSteering struct {
 	requests  []bool // per request: was an interrupt function given
 	observed  []EventKind
 	interrupt func()
+	callChecks int
 }
 
 func (f *fakeSteering) Request(_ int, interrupt func()) {
@@ -43,6 +44,7 @@ func (f *fakeSteering) Observe(ev Event) bool {
 func (f *fakeSteering) Calls(_ int, calls []ToolCall) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.callChecks++
 	for _, c := range calls {
 		if c.Name == f.onCall {
 			f.queue(BoundaryRetry, Reminder{Source: "rule:call", Text: "not " + c.Name + " " + toJSON(c.Input)})
@@ -285,4 +287,33 @@ func TestSteeringInterruptCarriesUsage(t *testing.T) {
 		}
 	}
 	t.Fatal("no EventRuleInterrupt")
+}
+
+// Past the turn's re-runs the calls run, so Steering is not asked about
+// them: a reminder never says "do not run it" after it ran (review M1).
+func TestSteeringCallsNotAskedPastTheCap(t *testing.T) {
+	ran := 0
+	bash := &fakeTool{name: "bash", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		ran++
+		return tools.ToolResult{Content: "ok"}, nil
+	}}
+	llmStub := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		if n <= DefaultMaxRuleInterrupts {
+			callTool(cb, "c1", "bash", `{"command":"rm -rf x"}`)
+			return nil
+		}
+		sayText(cb, "done", nil)
+		return nil
+	}}
+	st := &fakeSteering{onCall: "bash"}
+	l := &Loop{Client: llmStub, Tools: newRegistry(bash), Limits: DefaultLimits(), Steering: st}
+	if _, _, err := l.Run(context.Background(), []Message{{Role: "user", Content: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if ran != 1 || st.callChecks != DefaultMaxRuleInterrupts {
+		t.Errorf("ran=%d checks=%d, want 1 and %d", ran, st.callChecks, DefaultMaxRuleInterrupts)
+	}
+	if len(st.due[BoundaryRetry]) != 0 {
+		t.Errorf("a reminder was queued for calls that ran: %+v", st.due)
+	}
 }
