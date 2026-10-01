@@ -12,6 +12,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 )
 
 type warnSink struct {
@@ -62,28 +63,39 @@ func readPayload(t *testing.T, record string) map[string]any {
 	return p
 }
 
-// fakeManager is a manager on a fake provider with a hermetic HOME, as the
-// chat wires it (session ID and warning sink set).
-func fakeManager(t *testing.T, srv *fakeprovider.Server) (m *Manager, home, ws string, w *warnSink) {
+// fakeManager is a manager on a fake provider with a hermetic HOME, wired
+// as the chat wires it (2.0 F2e): its subagents nest under a chat Env with
+// the chat's session ID, and their warnings go to w. before runs ahead of
+// the chat's Setup, to write config the chat loads.
+func fakeManager(t *testing.T, srv *fakeprovider.Server, before ...func(home, ws string)) (m *Manager, home, ws string, w *warnSink) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	ws = t.TempDir()
+	for _, f := range before {
+		f(home, ws)
+	}
 	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
-	m = NewManager(cfg, ws, false)
 	w = &warnSink{}
-	m.SetEnvOptions("chat-session-1", w.add)
+	chat, err := loop.Setup(loop.ModeChat, cfg, ws, loop.SetupOptions{SessionID: "chat-session-1", Warn: w.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(chat.Close)
+	m = NewManager(cfg, ws, false)
+	m.UseParent(chat, w.add)
 	t.Cleanup(m.Close)
 	return m, home, ws, w
 }
 
-// Two subagents, one environment: repo hooks are loaded (and reported as
-// untrusted) once, and the report reaches the manager's sink.
+// Two subagents, one environment: the chat's. Repo hooks are loaded (and
+// reported as untrusted) once, when the chat starts, never per subagent.
 func TestSubagentsShareOneEnvironment(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "first done"}, fakeprovider.Turn{Text: "second done"})
-	m, _, ws, w := fakeManager(t, srv)
-	writeJSON(t, filepath.Join(ws, ".celeste", "hooks.json"), `{"hooks":[{"event":"Stop","command":"x"}]}`) // untrusted
+	m, _, ws, w := fakeManager(t, srv, func(_, ws string) {
+		writeJSON(t, filepath.Join(ws, ".celeste", "hooks.json"), `{"hooks":[{"event":"Stop","command":"x"}]}`) // untrusted
+	})
 	for _, goal := range []string{"one", "two"} {
 		run, err := m.Spawn(context.Background(), goal, ws)
 		if err != nil || run.Status != "completed" {
@@ -91,13 +103,63 @@ func TestSubagentsShareOneEnvironment(t *testing.T) {
 		}
 	}
 	if n := strings.Count(w.all(), "skipping"); n != 1 {
-		t.Fatalf("hooks loaded %d times, want once for the manager's shared environment:\n%s", n, w.all())
+		t.Fatalf("hooks loaded %d times, want once, by the chat's environment:\n%s", n, w.all())
+	}
+}
+
+// countingNester counts the children nested under a parent.
+type countingNester struct {
+	inner loop.Nester
+	mu    sync.Mutex
+	n     int
+}
+
+func (c *countingNester) Nested(o loop.NestedOptions) (*loop.Env, error) {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+	return c.inner.Nested(o)
+}
+
+// Every subagent nests under the parent UseParent supplied, and closing the
+// manager leaves that parent open: the chat owns it.
+func TestSubagentsNestUnderTheSuppliedParent(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "first done"}, fakeprovider.Turn{Text: "second done"})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
+	chat, err := loop.Setup(loop.ModeChat, cfg, ws, loop.SetupOptions{Warn: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(chat.Close)
+	parent := &countingNester{inner: chat}
+	m := NewManager(cfg, ws, false)
+	m.UseParent(parent, func(string) {})
+	for _, goal := range []string{"one", "two"} {
+		if _, err := m.Spawn(context.Background(), goal, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if parent.n != 2 {
+		t.Fatalf("subagents nested under the supplied parent %d times, want 2", parent.n)
+	}
+	m.Close()
+	child, err := chat.Nested(loop.NestedOptions{})
+	if err != nil {
+		t.Fatalf("closing the manager closed the chat's Env: %v", err)
+	}
+	child.Close()
+	if _, err := m.Spawn(context.Background(), "three", ws); err == nil {
+		t.Fatal("a spawn after Close must fail")
 	}
 }
 
 // Review Focus 2 end to end: a permissions change applies to the next
-// subagent (the shared environment is rebuilt, and each subagent reloads
-// permissions.json).
+// subagent (each subagent reloads permissions.json, also under the chat's
+// Env).
 func TestSubagentsPickUpPermissionChanges(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t,
 		fakeprovider.Turn{Text: "first done"},
@@ -120,9 +182,10 @@ func TestSubagentsPickUpPermissionChanges(t *testing.T) {
 // A subagent fires SubagentStop with its run ID, under the chat's session.
 func TestSubagentStopFiresForSpawnedSubagent(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "sub finished"})
-	m, home, ws, _ := fakeManager(t, srv)
 	record := filepath.Join(t.TempDir(), "substop.json")
-	writeJSON(t, filepath.Join(home, ".celeste", "hooks.json"), substopHooks(t, record))
+	m, _, ws, _ := fakeManager(t, srv, func(home, _ string) {
+		writeJSON(t, filepath.Join(home, ".celeste", "hooks.json"), substopHooks(t, record))
+	})
 	run, err := m.Spawn(context.Background(), "do it", ws)
 	if err != nil {
 		t.Fatal(err)
@@ -140,9 +203,10 @@ func TestSubagentStopKeepsTheAgentIDOnResume(t *testing.T) {
 		fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"fake bad request","type":"invalid_request_error"}}`},
 		fakeprovider.Turn{Text: "resumed and finished"},
 	)
-	m, home, ws, _ := fakeManager(t, srv)
 	record := filepath.Join(t.TempDir(), "substop.json")
-	writeJSON(t, filepath.Join(home, ".celeste", "hooks.json"), substopHooks(t, record))
+	m, _, ws, _ := fakeManager(t, srv, func(home, _ string) {
+		writeJSON(t, filepath.Join(home, ".celeste", "hooks.json"), substopHooks(t, record))
+	})
 	run, err := m.Spawn(context.Background(), "do it", ws)
 	if err == nil || run.CheckpointID == "" || run.CheckpointID == run.ID {
 		t.Fatalf("want a failed first run with its own checkpoint: run=%+v err=%v", run, err)

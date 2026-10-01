@@ -149,9 +149,12 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	tuiClient.lifeCtx, tuiClient.lifeCancel = context.WithCancel(context.Background())
 	tuiClient.gate = chatGate(registry)
 
-	// Subagents share one environment per chat session: their hooks see this
-	// session's ID, and their warnings reach the chat like /agent's.
-	subMgr.SetEnvOptions(currentSession.ID, tuiAgentWarn)
+	// Subagents and /agent nest under the chat's Env (2.0 F2e): they share
+	// its MCP clients (global servers only), hooks (this session's ID) and
+	// code graph instead of starting their own, and their warnings reach
+	// the chat.
+	subMgr.UseParent(env, tuiAgentWarn)
+	tuiClient.parentEnv = env
 
 	app := tui.NewApp(tuiClient)
 	app = app.SetVersion(Version, Build)

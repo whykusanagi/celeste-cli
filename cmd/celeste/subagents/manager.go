@@ -114,13 +114,14 @@ type Manager struct {
 	// nil = no notification (default; non-TUI callers are unaffected).
 	OnBackgroundComplete func(*SubagentRun)
 
-	// parent is the environment every subagent nests under (MCP clients,
-	// hooks, code graph): built by the first spawn and rebuilt when the
-	// configuration changes (loop.Parent). sessionID configures it.
+	// external is the environment every subagent nests under when the
+	// owner supplies one (the chat's Env, UseParent, 2.0 F2e); the manager
+	// never closes it. Without one, parent is built by the first spawn and
+	// rebuilt when the configuration changes (loop.Parent).
 	envMu     sync.Mutex
+	external  loop.Nester
 	parent    *loop.Parent
 	envClosed bool
-	sessionID string
 	// warnMu guards warnFn and warnClosed. warn holds it while warnFn runs,
 	// so warnings arrive one at a time and none starts after Close; warnFn
 	// must not call back into the Manager.
@@ -144,13 +145,14 @@ func NewManager(cfg *config.Config, workspace string, isChild bool) *Manager {
 	return m
 }
 
-// SetEnvOptions sets the hooks' session_id and the warning sink for the
-// subagents' shared environment. The chat passes its session ID and its
-// chat-visible sink. Call it before the first spawn: the session ID is read
-// when the environment is first created.
-func (m *Manager) SetEnvOptions(sessionID string, warn func(string)) {
+// UseParent makes every subagent nest under p and report its own setup
+// and hook warnings to warn. The chat passes its Env (2.0 F2e): subagents
+// share its MCP clients, hooks (and its session_id) and code graph instead
+// of starting their own. The manager never closes p; its owner does. Call
+// it before the first spawn.
+func (m *Manager) UseParent(p loop.Nester, warn func(string)) {
 	m.envMu.Lock()
-	m.sessionID = sessionID
+	m.external = p
 	m.envMu.Unlock()
 	m.warnMu.Lock()
 	m.warnFn = warn
@@ -172,30 +174,32 @@ func (m *Manager) warn(s string) {
 	m.warnFn(s)
 }
 
-// parentEnv returns the environment every subagent nests under, creating
-// the loop.Parent on first use. It builds its Env on the first Nested call
-// and rebuilds it when the configuration changes, so MCP servers start and
-// hooks load once per chat session, not once per subagent.
+// parentEnv returns the environment every subagent nests under: the one
+// UseParent supplied, or else a loop.Parent created on first use, which
+// builds its Env on the first Nested call and rebuilds it when the
+// configuration changes. Either way MCP servers start and hooks load once,
+// not once per subagent.
 func (m *Manager) parentEnv() (loop.Nester, error) {
 	m.envMu.Lock()
 	defer m.envMu.Unlock()
 	if m.envClosed {
 		return nil, errors.New("subagent manager is closed")
 	}
+	if m.external != nil {
+		return m.external, nil
+	}
 	if m.parent == nil {
-		sid := m.sessionID
-		if sid == "" {
-			sid = fmt.Sprintf("subagents-%d", os.Getpid())
-		}
+		sid := fmt.Sprintf("subagents-%d", os.Getpid())
 		m.parent = loop.NewParent(m.cfg, m.workspace, loop.SetupOptions{SessionID: sid, Warn: m.warn})
 	}
 	return m.parent, nil
 }
 
-// Close releases the subagents' shared environment. Warnings stop first, so
-// none reaches the sink after Close, even from the environment's own
-// shutdown; subagents still running keep it open until they finish, and a
-// spawn after Close fails cleanly.
+// Close releases the subagents' shared environment (one UseParent supplied
+// stays open: its owner closes it). Warnings stop first, so none reaches the
+// sink after Close, even from the environment's own shutdown; subagents
+// still running keep it open until they finish, and a spawn after Close
+// fails cleanly.
 func (m *Manager) Close() {
 	m.warnMu.Lock()
 	m.warnClosed = true

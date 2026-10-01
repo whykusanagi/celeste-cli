@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -56,15 +57,17 @@ var listAgentRunsForTUI = func(limit int) ([]agent.RunSummary, error) {
 }
 
 // tuiAgentOptions are the options every /agent runner shares. The TUI
-// session already fired SessionStart, so the run is nested; setup and hook
+// session already fired SessionStart, so the run is nested, under parent
+// (the chat's Env, 2.0 F2e; nil builds the runner its own); setup and hook
 // warnings go to the log and the chat, like the session's own hook warnings.
-func tuiAgentOptions() agent.Options {
+func tuiAgentOptions(parent loop.Nester) agent.Options {
 	opts := agent.DefaultOptions()
 	if cwd, err := os.Getwd(); err == nil {
 		opts.Workspace = cwd
 	}
 	opts.Verbose = false
 	opts.Nested = true
+	opts.ParentEnv = parent
 	opts.Warn = tuiAgentWarn
 	return opts
 }
@@ -130,7 +133,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string) tea.Cmd {
 			return
 		}
 
-		opts := tuiAgentOptions()
+		opts := tuiAgentOptions(a.parentEnv)
 		// Tools the permission policy resolves to Ask go through the TUI's
 		// permission modal; without this every mutating tool was denied (#172).
 		opts.PromptFunc = a.promptFn
@@ -269,7 +272,7 @@ func (a *TUIClientAdapter) executeAgentCommand(args []string) (string, error) {
 	}
 	// Resume runs the agent again, so it needs a full runner (model client,
 	// tools, MCP, hooks), as does a goal.
-	runner, err := newAgentRunnerForTUI(cfg, tuiAgentOptions(), io.Discard, io.Discard)
+	runner, err := newAgentRunnerForTUI(cfg, tuiAgentOptions(a.parentEnv), io.Discard, io.Discard)
 	if err != nil {
 		return "", fmt.Errorf("create agent runner: %w", err)
 	}

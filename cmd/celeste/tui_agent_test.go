@@ -342,7 +342,7 @@ func TestTUIAgentWarnReachesChat(t *testing.T) {
 	notify := func(s string) { got = append(got, s) }
 	hookNotify.Store(&notify)
 	t.Cleanup(func() { hookNotify.Store(nil) })
-	tuiAgentOptions().Warn("hooks: something failed")
+	tuiAgentOptions(nil).Warn("hooks: something failed")
 	assert.Equal(t, []string{"hooks: something failed"}, got)
 }
 
