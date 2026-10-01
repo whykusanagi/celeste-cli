@@ -1479,6 +1479,7 @@ func runSingleMessage(message string) {
 		fmt.Fprintln(os.Stderr, "No API key configured.")
 		os.Exit(1)
 	}
+	resolveServedModels(cfg, os.Stderr)
 
 	// Initialize LLM client
 	llmConfig := &llm.Config{

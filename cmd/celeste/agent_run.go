@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -99,6 +100,8 @@ func runAgentCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "No API key or Google ADC credentials configured.")
 		os.Exit(1)
 	}
+
+	resolveServedModels(cfg, os.Stderr)
 
 	opts := agent.DefaultOptions()
 	opts.Workspace = *workspace
@@ -306,5 +309,14 @@ func printRunSummary(state *agent.RunState) {
 	}
 	if state.Error != "" {
 		fmt.Printf("\nError: %s\n", state.Error)
+	}
+}
+
+// resolveServedModels puts cfg on the models its provider serves now, for
+// this process only (the config file is untouched), and writes each note to
+// w. It may fetch the provider's catalog, bounded by the fetch timeout.
+func resolveServedModels(cfg *config.Config, w io.Writer) {
+	for _, n := range cfg.ResolveServedModels(context.Background()) {
+		fmt.Fprintln(w, "celeste: "+n)
 	}
 }

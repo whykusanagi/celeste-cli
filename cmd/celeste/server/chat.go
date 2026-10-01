@@ -43,6 +43,7 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("chat error: %w", err)
 	}
+	cfg = s.servedConfig(ctx, cfg)
 	initGrimoire(workspace)
 	var warns warnSink
 	ce, err := s.chatEnvs.acquire(cfg, workspace, &warns)

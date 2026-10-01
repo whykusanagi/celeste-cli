@@ -83,6 +83,9 @@ type Server struct {
 
 	// cost adds up this process's LLM usage for celeste_status (#210).
 	cost sessionCost
+
+	// modelNotes holds the model-resolution notes already logged.
+	modelNotes sync.Map
 }
 
 // New creates a new MCP server with the given configuration.
