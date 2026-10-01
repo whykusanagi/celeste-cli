@@ -24,6 +24,11 @@ func overridden(provider string) bool {
 // ResolveFromMemory. It may block on the network: never call it from a
 // Bubble Tea Update.
 func PrepareModels(ctx context.Context, provider, baseURL, apiKey string, models ...string) {
+	// A stale list can't prove a model gone: refresh it now (bounded), and
+	// keep the stale one if that fails.
+	if _, stale, cached := CachedCatalog(provider, baseURL, apiKey); cached && stale && !fetchBlocked(catalogKey(provider, baseURL, apiKey)) {
+		_, _ = RefreshCatalog(ctx, provider, baseURL, apiKey)
+	}
 	cat, ok := LoadCatalog(ctx, provider, baseURL, apiKey)
 	if !ok || !hasModelEndpoint(provider) || overridden(provider) {
 		return
@@ -62,7 +67,8 @@ func PrepareModels(ctx context.Context, provider, baseURL, apiKey string, models
 // sure it's gone: the catalog doesn't list it and, where the provider can
 // say, GET /models/{id} answered 404. pending is true when PrepareModels
 // would know more (no catalog loaded yet, a stale one, or an unchecked
-// miss); until then the configured model is kept.
+// miss); until then the configured model is kept. A miss in a list older
+// than the TTL is not proof either.
 func ResolveFromMemory(provider, baseURL, apiKey, configured string) (model, note string, pending bool) {
 	key := catalogKey(provider, baseURL, apiKey)
 	cat, stale, ok := MemoryCatalog(provider, baseURL, apiKey)
@@ -92,6 +98,10 @@ func ResolveFromMemory(provider, baseURL, apiKey, configured string) (model, not
 		// The provider said 404: gone, whatever the listing suggests.
 		model, note = replaceModel(provider, configured, cat)
 		return model, note, pending
+	}
+	if stale {
+		// A miss in a stale list is not proof the model is gone.
+		return configured, "", pending
 	}
 	model, note = ResolveModel(provider, configured, cat, true)
 	return model, note, pending

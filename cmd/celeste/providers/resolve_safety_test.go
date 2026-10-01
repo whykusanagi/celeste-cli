@@ -296,3 +296,31 @@ func TestCleanBaseURL(t *testing.T) {
 		t.Errorf("CleanBaseURL = %q", got)
 	}
 }
+
+// A miss in a stale list is not proof: the model may be newer than the
+// list. Prepare refreshes a stale list first; if that fails, the model is
+// kept.
+func TestResolve_StaleListMissKeepsTheModel(t *testing.T) {
+	isolateCatalog(t)
+	start := time.Now()
+	catalogNow = func() time.Time { return start }
+	stubFetch(t, []CatalogModel{{ID: "venice-uncensored-1-2", Default: true}}, nil)
+	LoadCatalog(context.Background(), "venice", "", "k")
+
+	catalogNow = func() time.Time { return start.Add(25 * time.Hour) }
+	stubFetch(t, nil, errors.New("offline"))
+	PrepareModels(context.Background(), "venice", "", "k", "brand-new-model")
+	if got, note, _ := ResolveFromMemory("venice", "", "k", "brand-new-model"); got != "brand-new-model" || note != "" {
+		t.Errorf("a stale list replaced %q with %q", "brand-new-model", got)
+	}
+
+	calls := stubFetch(t, []CatalogModel{{ID: "venice-uncensored-1-2", Default: true}, {ID: "brand-new-model"}}, nil)
+	catalogNow = func() time.Time { return start.Add(31 * time.Hour) } // past the negative window
+	PrepareModels(context.Background(), "venice", "", "k", "brand-new-model")
+	if atomic.LoadInt32(calls) != 1 {
+		t.Errorf("Prepare must refresh a stale list synchronously (fetches=%d)", atomic.LoadInt32(calls))
+	}
+	if got, _, _ := ResolveFromMemory("venice", "", "k", "brand-new-model"); got != "brand-new-model" {
+		t.Errorf("got %q", got)
+	}
+}
