@@ -58,12 +58,12 @@ type ProgressEvent struct {
 	Percent  float64 `json:"percent"` // -1 for indeterminate
 }
 
-// RuntimeMode represents the execution mode of the CLI.
+// RuntimeMode selects which registered tools a run is offered. Only chat and
+// agent exist: the other two historical values were never queried and went
+// with the runtime mode in 2.0 (#144).
 type RuntimeMode int
 
 const (
 	ModeChat RuntimeMode = iota
-	ModeClaw
 	ModeAgent
-	ModeOrchestrator
 )

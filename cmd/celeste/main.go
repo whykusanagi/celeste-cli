@@ -50,8 +50,7 @@ var (
 
 // Global config name (set by -config flag)
 var configName string
-var runtimeModeOverride string
-var clawMaxToolIterationsOverride int
+var maxToolIterationsOverride int
 
 // hasDefaultConfig checks if a default configuration file exists.
 func hasDefaultConfig() bool {
@@ -70,8 +69,9 @@ Usage:
 
 Global Flags:
   -config <name>          Use named config (loads ~/.celeste/config.<name>.json)
-  -mode <classic|claw>    Override runtime mode for this invocation
-  -claw-max-iterations N  Override claw tool-loop safety cap for this invocation
+  -max-tool-iterations N  Override the tool-loop turn cap for chat's starting
+                           profile only; not carried across /endpoint or a
+                           resumed session, and ignored by agent/message
 
 Commands:
   chat                    Launch interactive TUI mode
@@ -131,9 +131,8 @@ Configuration:
   celeste config --set-key <key>         Set API key
   celeste config --set-url <url>         Set API URL
   celeste config --set-model <model>     Set model
-  celeste config --set-mode <mode>       Set runtime mode (classic/claw)
-  celeste config --set-claw-max-iterations <n>
-                                          Set claw tool-loop safety cap
+  celeste config --set-max-tool-iterations <n>
+                                          Set the chat's tool-loop turn cap
   celeste config --set-context-limit <tokens>
                                           Set the context window (0 = model default)
   celeste config --skip-persona <bool>   Skip persona prompt injection
@@ -176,16 +175,21 @@ Examples:
   celeste chat                           Start with default config
   celeste -config openai chat            Start with OpenAI config
   celeste -config grok chat              Start with Grok/xAI config
-  celeste -mode claw chat                Start chat in claw runtime mode
   celeste agent --goal "refactor this package and add tests"
   celeste config --list                  List available configs
   celeste config --init openai           Create OpenAI config template
-  celeste config --init celeste-claw     Create claw profile template
 `)
 }
 
 // runChatTUI launches the interactive Bubble Tea TUI.
 func runChatTUI() {
+	// Migrate every profile once, before the alt screen opens: a later
+	// /endpoint or SwitchEndpoint load of a different profile, while the TUI
+	// is already running, then finds nothing left to migrate instead of
+	// printing notes into the alt screen on every switch (#144 W6b review,
+	// I1(a)).
+	config.MigrateConfigDir()
+
 	// Load configuration (named or default)
 	cfg, err := config.LoadNamed(configName)
 	if err != nil {
@@ -193,15 +197,11 @@ func runChatTUI() {
 		os.Exit(1)
 	}
 
-	if runtimeModeOverride != "" {
-		cfg.RuntimeMode = config.NormalizeRuntimeMode(runtimeModeOverride)
+	if maxToolIterationsOverride > 0 {
+		cfg.MaxToolIterations = maxToolIterationsOverride
 	}
-	if clawMaxToolIterationsOverride > 0 {
-		cfg.ClawMaxToolIterations = clawMaxToolIterationsOverride
-	}
-	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
-	if cfg.ClawMaxToolIterations <= 0 {
-		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
+	if cfg.MaxToolIterations <= 0 {
+		cfg.MaxToolIterations = config.DefaultMaxToolIterations
 	}
 
 	// Show which config is being used
@@ -209,8 +209,9 @@ func runChatTUI() {
 		fmt.Fprintf(os.Stderr, "Using config: %s\n", configName)
 	}
 
-	// Validate API key
-	if cfg.APIKey == "" {
+	// Validate API key — not required for Google ADC/service-account auth or
+	// a keyless local endpoint (#151).
+	if cfg.APIKey == "" && needsAPIKey(cfg) {
 		fmt.Fprintln(os.Stderr, "No API key configured.")
 		if configName != "" {
 			fmt.Fprintf(os.Stderr, "Edit %s or set CELESTE_API_KEY\n", config.NamedConfigPath(configName))
@@ -747,12 +748,13 @@ func runConfigCommand(args []string) {
 	showConfig := fs.Bool("show", false, "Show current configuration")
 	listConfigs := fs.Bool("list", false, "List all config profiles")
 	setDefault := fs.Bool("set-default", false, "Make this profile the default loaded when no -config is given")
-	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice, celeste-classic, celeste-claw)")
+	initConfig := fs.String("init", "", "Create a new config profile (openai, grok, elevenlabs, venice, sakana, digitalocean)")
 	setKey := fs.String("set-key", "", "Set API key")
 	setURL := fs.String("set-url", "", "Set API URL")
 	setModel := fs.String("set-model", "", "Set model")
-	setMode := fs.String("set-mode", "", "Set runtime mode (classic|claw)")
-	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Set claw max tool-loop iterations")
+	setMode := fs.String("set-mode", "", "Removed in 2.0 (see MIGRATING-2.0.md)")
+	setMaxIter := fs.Int("set-max-tool-iterations", -1, "Set the chat's tool-loop turn cap")
+	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Deprecated: use --set-max-tool-iterations")
 	setContextLimit := fs.Int("set-context-limit", -1, "Set the context window in tokens (0 clears it and uses the model default). Required for local models, whose window celeste cannot know")
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
@@ -775,6 +777,11 @@ func runConfigCommand(args []string) {
 
 	// Parse flags - exits on error due to ExitOnError flag
 	_ = fs.Parse(args)
+
+	if err := setModeError(*setMode); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 
 	// Handle --list
 	if *listConfigs {
@@ -859,9 +866,8 @@ func runConfigCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-	cfg.RuntimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
-	if cfg.ClawMaxToolIterations <= 0 {
-		cfg.ClawMaxToolIterations = config.DefaultClawMaxToolIterations
+	if cfg.MaxToolIterations <= 0 {
+		cfg.MaxToolIterations = config.DefaultMaxToolIterations
 	}
 
 	changed := false
@@ -881,24 +887,13 @@ func runConfigCommand(args []string) {
 		changed = true
 		fmt.Printf("Model set to: %s\n", *setModel)
 	}
-	if *setMode != "" {
-		mode := strings.ToLower(strings.TrimSpace(*setMode))
-		if !config.IsValidRuntimeMode(mode) {
-			fmt.Fprintf(os.Stderr, "Error: invalid mode '%s' (valid: classic, claw)\n", *setMode)
-			os.Exit(1)
-		}
-		cfg.RuntimeMode = mode
-		changed = true
-		fmt.Printf("Runtime mode set to: %s\n", cfg.RuntimeMode)
-	}
-	if *setClawMaxIterations == 0 {
-		fmt.Fprintf(os.Stderr, "Error: --set-claw-max-iterations must be greater than zero\n")
+	if n, err := resolveMaxIterFlags(*setMaxIter, *setClawMaxIterations, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
-	}
-	if *setClawMaxIterations > 0 {
-		cfg.ClawMaxToolIterations = *setClawMaxIterations
+	} else if n > 0 {
+		cfg.MaxToolIterations = n
 		changed = true
-		fmt.Printf("Claw max iterations set to: %d\n", cfg.ClawMaxToolIterations)
+		fmt.Printf("Max tool iterations set to: %d\n", n)
 	}
 	if *setContextLimit == 0 {
 		cfg.ContextLimit = 0
@@ -1046,13 +1041,12 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  Skip Persona:      %v\n", cfg.SkipPersonaPrompt)
 		fmt.Printf("  Simulate Typing:   %v\n", cfg.SimulateTyping)
 		fmt.Printf("  Typing Speed:      %d chars/sec\n", cfg.TypingSpeed)
-		fmt.Printf("  Runtime Mode:      %s\n", cfg.RuntimeMode)
 		if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), cfg.Model) {
 			fmt.Printf("  Planning:          %s (server-side)\n", cfg.Model)
 		} else {
 			fmt.Printf("  Planning:          local\n")
 		}
-		fmt.Printf("  Claw Max Iter:     %d\n", cfg.ClawMaxToolIterations)
+		fmt.Printf("  Max Tool Iter:     %d\n", cfg.MaxToolIterations)
 		if cfg.ContextLimit > 0 {
 			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
 		} else {
@@ -1108,22 +1102,23 @@ func createConfigTemplate(name string) error {
 		model       string
 		timeout     int
 		skipPersona bool
-		runtimeMode string
 	}
 	templates := map[string]override{
-		"openai":          {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"grok":            {provider: "grok", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"venice":          {provider: "venice", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"sakana":          {provider: "sakana", timeout: 300, runtimeMode: config.RuntimeModeClassic}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
-		"elevenlabs":      {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"digitalocean":    {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true, runtimeMode: config.RuntimeModeClassic}, // DO agents have built-in persona
-		"celeste-classic": {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClassic},
-		"celeste-claw":    {provider: "openai", timeout: 60, runtimeMode: config.RuntimeModeClaw},
+		"openai":       {provider: "openai", timeout: 60},
+		"grok":         {provider: "grok", timeout: 60},
+		"venice":       {provider: "venice", timeout: 60},
+		"sakana":       {provider: "sakana", timeout: 300}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
+		"elevenlabs":   {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60},
+		"digitalocean": {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true}, // DO agents have built-in persona
+	}
+
+	if alt, ok := removedTemplates[strings.ToLower(name)]; ok {
+		return fmt.Errorf("the %s template was removed in celeste 2.0 with the runtime mode; use --init %s (see MIGRATING-2.0.md)", name, alt)
 	}
 
 	o, ok := templates[strings.ToLower(name)]
 	if !ok {
-		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean, celeste-classic, celeste-claw", name)
+		return fmt.Errorf("unknown config template '%s'. Available: openai, grok, elevenlabs, venice, sakana, digitalocean", name)
 	}
 
 	caps, _ := providers.GetProvider(o.provider)
@@ -1135,14 +1130,13 @@ func createConfigTemplate(name string) error {
 		model = o.model
 	}
 	tmpl := &config.Config{
-		BaseURL:               baseURL,
-		Model:                 model,
-		Timeout:               o.timeout,
-		SkipPersonaPrompt:     o.skipPersona,
-		SimulateTyping:        true,
-		TypingSpeed:           25,
-		RuntimeMode:           o.runtimeMode,
-		ClawMaxToolIterations: config.DefaultClawMaxToolIterations,
+		BaseURL:           baseURL,
+		Model:             model,
+		Timeout:           o.timeout,
+		SkipPersonaPrompt: o.skipPersona,
+		SimulateTyping:    true,
+		TypingSpeed:       25,
+		MaxToolIterations: config.DefaultMaxToolIterations,
 	}
 
 	configPath := config.NamedConfigPath(name)
@@ -1469,7 +1463,7 @@ func runSingleMessage(message string) {
 		os.Exit(1)
 	}
 
-	if cfg.APIKey == "" {
+	if cfg.APIKey == "" && needsAPIKey(cfg) {
 		fmt.Fprintln(os.Stderr, "No API key configured.")
 		os.Exit(1)
 	}

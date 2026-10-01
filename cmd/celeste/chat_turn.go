@@ -145,13 +145,13 @@ func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd
 }
 
 // newTurnLoop configures one turn's loop: the chat's limits (the turn cap
-// is claw_max_tool_iterations), the modal as Gate, UserPromptSubmit, the
+// is max_tool_iterations), the modal as Gate, UserPromptSubmit, the
 // adapter's pruning (with Jev shadow scoring) when the window is known, and
 // tool metadata for vision models.
 func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.Loop {
 	lim := loop.DefaultLimits()
-	if a.baseConfig != nil && a.baseConfig.ClawMaxToolIterations > 0 {
-		lim.MaxTurns = a.baseConfig.ClawMaxToolIterations
+	if a.baseConfig != nil && a.baseConfig.MaxToolIterations > 0 {
+		lim.MaxTurns = a.baseConfig.MaxToolIterations
 	}
 	lim.KeepToolMetadata = true
 	l := &loop.Loop{

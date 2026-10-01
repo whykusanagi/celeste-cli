@@ -209,84 +209,66 @@ func TestRun_ConfigFlagParsing(t *testing.T) {
 		name       string
 		args       []string
 		wantConfig string
-		wantMode   string
-		wantClaw   int
-		wantCall   string
+		wantIter   int
+		wantWarn   string
 	}{
-		{
-			name:       "spaced flag",
-			args:       []string{"-config", "openai", "chat"},
-			wantConfig: "openai",
-			wantMode:   "",
-			wantClaw:   0,
-			wantCall:   "chat",
-		},
-		{
-			name:       "equals flag",
-			args:       []string{"-config=grok", "chat"},
-			wantConfig: "grok",
-			wantMode:   "",
-			wantClaw:   0,
-			wantCall:   "chat",
-		},
-		{
-			name:       "mode and claw flags",
-			args:       []string{"-mode", "claw", "-claw-max-iterations", "6", "chat"},
-			wantConfig: "",
-			wantMode:   "claw",
-			wantClaw:   6,
-			wantCall:   "chat",
-		},
-		{
-			name:       "equals mode and claw flags",
-			args:       []string{"-mode=claw", "-claw-max-iterations=3", "chat"},
-			wantConfig: "",
-			wantMode:   "claw",
-			wantClaw:   3,
-			wantCall:   "chat",
-		},
+		{name: "spaced flag", args: []string{"-config", "openai", "chat"}, wantConfig: "openai"},
+		{name: "equals flag", args: []string{"-config=grok", "chat"}, wantConfig: "grok"},
+		{name: "new iteration flag", args: []string{"-max-tool-iterations", "6", "chat"}, wantIter: 6},
+		{name: "new iteration flag, equals", args: []string{"-max-tool-iterations=3", "chat"}, wantIter: 3},
+		{name: "legacy iteration flag warns", args: []string{"-claw-max-iterations", "6", "chat"}, wantIter: 6,
+			wantWarn: "-claw-max-iterations is deprecated; use -max-tool-iterations"},
+		{name: "legacy iteration flag, equals", args: []string{"-claw-max-iterations=3", "chat"}, wantIter: 3,
+			wantWarn: "-claw-max-iterations is deprecated"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &fakeRunner{}
-			var out bytes.Buffer
-			var errBuf bytes.Buffer
-
+			var out, errBuf bytes.Buffer
 			code := run(tt.args, r, &out, &errBuf)
 			assert.Equal(t, 0, code)
-			assert.Equal(t, tt.wantCall, r.lastCall)
+			assert.Equal(t, "chat", r.lastCall)
 			assert.Equal(t, tt.wantConfig, configName)
-			assert.Equal(t, tt.wantMode, runtimeModeOverride)
-			assert.Equal(t, tt.wantClaw, clawMaxToolIterationsOverride)
+			assert.Equal(t, tt.wantIter, maxToolIterationsOverride)
+			if tt.wantWarn == "" {
+				assert.Empty(t, errBuf.String())
+			} else {
+				assert.Contains(t, errBuf.String(), tt.wantWarn)
+			}
 		})
+	}
+}
+
+// #144, spec §6.2: -mode errors and points to the migration guide. M9:
+// --mode (double dash) gets the same error, not a silent pass-through that
+// ends up sent to the model as a chat message.
+func TestRun_ModeFlagIsRemoved(t *testing.T) {
+	for _, args := range [][]string{
+		{"-mode", "claw", "chat"},
+		{"-mode=classic", "chat"},
+		{"--mode", "claw", "chat"},
+		{"--mode=classic", "chat"},
+	} {
+		r := &fakeRunner{}
+		var out, errBuf bytes.Buffer
+		code := run(args, r, &out, &errBuf)
+		assert.Equal(t, 2, code, args)
+		assert.Empty(t, r.lastCall, "nothing may run for %v", args)
+		assert.Contains(t, errBuf.String(), "the -mode flag was removed in celeste 2.0")
+		assert.Contains(t, errBuf.String(), "MIGRATING-2.0.md")
 	}
 }
 
 func TestRun_ConfigNameResetsPerInvocation(t *testing.T) {
 	r := &fakeRunner{}
-	var out bytes.Buffer
-	var errBuf bytes.Buffer
-
-	code := run([]string{"-config", "openai", "chat"}, r, &out, &errBuf)
-	assert.Equal(t, 0, code)
+	var out, errBuf bytes.Buffer
+	assert.Equal(t, 0, run([]string{"-config", "openai", "-max-tool-iterations", "5", "chat"}, r, &out, &errBuf))
 	assert.Equal(t, "openai", configName)
-	assert.Empty(t, runtimeModeOverride)
-	assert.Equal(t, 0, clawMaxToolIterationsOverride)
+	assert.Equal(t, 5, maxToolIterationsOverride)
 
-	r = &fakeRunner{}
-	code = run([]string{"-mode", "claw", "-claw-max-iterations", "5", "chat"}, r, &out, &errBuf)
-	assert.Equal(t, 0, code)
+	assert.Equal(t, 0, run([]string{"chat"}, &fakeRunner{}, &out, &errBuf))
 	assert.Empty(t, configName)
-	assert.Equal(t, "claw", runtimeModeOverride)
-	assert.Equal(t, 5, clawMaxToolIterationsOverride)
-
-	r = &fakeRunner{}
-	code = run([]string{"chat"}, r, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.Empty(t, configName)
-	assert.Empty(t, runtimeModeOverride)
-	assert.Equal(t, 0, clawMaxToolIterationsOverride)
+	assert.Equal(t, 0, maxToolIterationsOverride)
 }
 
 // CommitSHA[:8] panicked on any stamp shorter than 8 characters and silently

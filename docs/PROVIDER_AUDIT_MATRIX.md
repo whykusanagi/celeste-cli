@@ -1,7 +1,7 @@
 # Provider Audit Matrix v1.16.0
 
-9 chat providers. Eight call tools; Venice chats without them for now (some of its
-models support tools, but the chat does not use them yet). Vertex's default model (`gemini-2.0-flash`)
+9 chat providers. Eight call tools; Venice's tool calling depends on the model
+(checked against the live Venice catalog). Vertex's default model (`gemini-2.0-flash`)
 is unverified. `celeste providers` also lists DigitalOcean and ElevenLabs, which
 this matrix leaves out.
 
@@ -11,7 +11,7 @@ this matrix leaves out.
 |----------|------------|--------|--------|-----------|---------------|--------|
 | OpenAI | ✅ | ✅ Dynamic | ✅ | ✅ | ✅ Native | ⭐ Gold |
 | Grok/xAI | ✅ | ✅ Dynamic | ✅ | ✅ | ✅ Full | ⭐ Gold |
-| Venice | ❌ Not in chat yet | ⚠️ Static | ✅ | ✅ | ⚠️ Partial | ✅ Working |
+| Venice | ⚠️ Per model | ⚠️ Static | ✅ | ✅ | ⚠️ Partial | ✅ Working |
 | Anthropic | ✅ Compat | ⚠️ Static | ✅ | ✅ | ⚠️ Limited | ✅ Working |
 | Gemini | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ✅ Tested |
 | Vertex AI | ✅ Compat | ✅ | ✅ | ✅ | ✅ Compat | ⚠️ Default unverified |

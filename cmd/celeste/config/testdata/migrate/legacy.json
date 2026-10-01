@@ -1,0 +1,17 @@
+{
+  "api_key": "sk-test-<&>-key",
+  "base_url": "https://api.openai.com/v1?a=1&b=<2>",
+  "model": "gpt-4.1",
+  "agent_model": "gpt-4.1-mini",
+  "timeout": 90,
+  "context_limit": 65536,
+  "skip_persona_prompt": false,
+  "simulate_typing": true,
+  "typing_speed": 40,
+  "runtime_mode": "claw",
+  "claw_max_tool_iterations": 7,
+  "venice_api_key": "venice-é",
+  "collections": {"enabled": true, "active_collections": ["c1", "c2"], "auto_enable": false},
+  "orchestrator": {"lanes": {"code": {"primary": "gpt-4.1", "reviewer": "claude-sonnet-4-6"}}, "debate_rounds": 2},
+  "x_future_key": {"nested": [1, 2.50, 1e3, null]}
+}

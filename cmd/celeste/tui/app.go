@@ -61,7 +61,6 @@ type AppModel struct {
 	build            string // Build identifier (e.g., "bubbletea-tui")
 	grimoireContent  string // Resolved .grimoire content for /grimoire command
 	codeGraphSummary string // Code graph stats for /index command
-	runtimeMode      string // Runtime orchestration mode (classic or claw)
 
 	// Simulated typing state
 	typingContent string // Full content to type
@@ -344,7 +343,6 @@ func NewApp(llmClient LLMClient) AppModel {
 		mcpPanel:         NewMCPPanelModel(),
 		llmClient:        llmClient,
 		viewMode:         "chat",
-		runtimeMode:      config.RuntimeModeClassic,
 	}
 }
 
@@ -1336,6 +1334,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if saveErr := config.Save(cfg); saveErr != nil {
 					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save config: %v", saveErr))
 				} else {
+					// View() renders m.config's cached ConfirmActions instead
+					// of reloading from disk (#144 W6b review, I1); keep it
+					// current so the toggle takes effect immediately.
+					m.config = cfg
 					if refresher, ok := m.llmClient.(PromptRefresher); ok {
 						refresher.RefreshSystemPrompt()
 					}
@@ -1497,8 +1499,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Update skills availability and auto-select best model
 					if caps, ok := providers.GetProvider(m.provider); ok {
-						m.skillsEnabled = caps.SupportsFunctionCalling
-
 						// AUTO-SELECT: Choose best tool-calling model for this provider
 						if caps.PreferredToolModel != "" {
 							m.model = caps.PreferredToolModel
@@ -1524,6 +1524,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 
+						// Recompute after the model is chosen: a ToolsPerModel
+						// provider (Venice) only knows tool support per model
+						// (#151 W6b).
+						m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 						LogInfo(fmt.Sprintf("Provider detected: %s, skills enabled: %v", m.provider, m.skillsEnabled))
 					}
 
@@ -1590,6 +1594,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.model = *result.StateChange.Model
 					m.header = m.header.SetModel(m.model)
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to %s", m.model))
+
+					// A ToolsPerModel provider (Venice) only knows tool
+					// support per model (#151 W6b).
+					m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
+					m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
 
 					// Actually change the model
 					if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
@@ -2323,15 +2332,17 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.model = modelName
 					m.header = m.header.SetModel(modelName)
 
-					// Check provider capabilities for the current provider
+					// Check provider capabilities for the current provider.
+					// A ToolsPerModel provider (Venice) decides per model, so
+					// this can turn skills on as well as off (#151 W6b).
 					if m.provider != "" {
-						if caps, ok := providers.GetProvider(m.provider); ok {
-							// Check if provider supports function calling
-							if !caps.SupportsFunctionCalling {
-								m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚠️ Warning: Provider '%s' does not support function calling. Skills will be unavailable.", m.provider))
-								m.skillsEnabled = false
-								m.header = m.header.SetSkillsEnabled(false)
+						if _, ok := providers.GetProvider(m.provider); ok {
+							enabled := providers.ToolsEnabledForModel(m.provider, modelName)
+							if !enabled && m.skillsEnabled {
+								m.chat = m.chat.AddSystemMessage(fmt.Sprintf("⚠️ Warning: model '%s' does not support function calling. Skills will be unavailable.", modelName))
 							}
+							m.skillsEnabled = enabled
+							m.header = m.header.SetSkillsEnabled(enabled)
 						}
 					}
 
@@ -2623,8 +2634,10 @@ func (m AppModel) View() string {
 	}
 
 	m.skills = m.skills.SetConfig(m.endpoint, m.model, m.skillsEnabled, m.nsfwMode, skillsCount, disabledReason)
-	if cfg, err := config.Load(); err == nil {
-		m.skills.confirmMode = cfg.ConfirmActions
+	// The model already caches the active config (m.config); reading it here
+	// avoids a config.Load() disk read on every render (#144 W6b review, I1).
+	if m.config != nil {
+		m.skills.confirmMode = m.config.ConfirmActions
 	}
 	// Collapsed skills panel renders only active-skill signal; skip when empty
 	// so the chat area reclaims the row.
@@ -2719,6 +2732,14 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			m.model = model
 			m.header = m.header.SetModel(model)
 
+			// A ToolsPerModel provider (Venice) only knows whether tools are
+			// available once the model is known (#151 W6b); recompute now
+			// that the session's model has replaced WithEndpoint's guess.
+			if m.provider != "" {
+				m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
+				m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
+			}
+
 			// Initialize context tracker with session and model
 			// Convert Session interface to *config.Session for ContextTracker
 			if configSession, ok := session.(*config.Session); ok {
@@ -2776,12 +2797,6 @@ func (m AppModel) WithCodeGraphIndexer(indexer *codegraph.Indexer) AppModel {
 
 func (m AppModel) SetConfig(cfg *config.Config) AppModel {
 	m.config = cfg
-	if cfg == nil {
-		m.runtimeMode = config.RuntimeModeClassic
-		return m
-	}
-
-	m.runtimeMode = config.NormalizeRuntimeMode(cfg.RuntimeMode)
 	return m
 }
 
@@ -2813,7 +2828,18 @@ func (m AppModel) WithEndpoint(endpoint string) AppModel {
 
 		// Check provider capabilities
 		if caps, ok := providers.GetProvider(m.provider); ok {
-			m.skillsEnabled = caps.SupportsFunctionCalling
+			// The model isn't chosen yet at this point (a fresh session's
+			// AppModel.model is still ""); gate on the model that will
+			// actually be in effect — the provider's own default — so a
+			// ToolsPerModel provider (Venice) doesn't default to "tools
+			// enabled" for a model (venice-uncensored) that has none (#151
+			// W6b review). SetSessionManager and EndpointChange correct
+			// this again once the real model is known.
+			modelForGate := m.model
+			if modelForGate == "" {
+				modelForGate = caps.DefaultModel
+			}
+			m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, modelForGate)
 			m.header = m.header.SetSkillsEnabled(m.skillsEnabled)
 			LogInfo(fmt.Sprintf("✓ Provider '%s' function calling support: %v", m.provider, m.skillsEnabled))
 

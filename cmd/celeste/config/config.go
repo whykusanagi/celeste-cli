@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
@@ -78,11 +77,9 @@ type WalletSecuritySettingsConfig struct {
 	AlertLevel   string // minimum severity to alert on
 }
 
-const (
-	RuntimeModeClassic           = "classic" // deprecated — tools always auto-loop now
-	RuntimeModeClaw              = "claw"    // deprecated — tools always auto-loop now
-	DefaultClawMaxToolIterations = 25        // safety cap for tool loop turns
-)
+// DefaultMaxToolIterations is the chat's turn cap (#144 renamed it from
+// claw_max_tool_iterations; migrate.go maps the old key).
+const DefaultMaxToolIterations = 25
 
 // Config holds all configuration for Celeste CLI.
 type Config struct {
@@ -132,9 +129,8 @@ type Config struct {
 	SimulateTyping bool `json:"simulate_typing"`
 	TypingSpeed    int  `json:"typing_speed"` // chars per second
 
-	// Runtime mode settings
-	RuntimeMode           string `json:"runtime_mode,omitempty"`             // "classic" or "claw"
-	ClawMaxToolIterations int    `json:"claw_max_tool_iterations,omitempty"` // Safety cap for repeated tool loops in claw mode
+	// MaxToolIterations caps the model turns in one chat turn's tool loop.
+	MaxToolIterations int `json:"max_tool_iterations,omitempty"`
 
 	// Venice.ai settings (for NSFW mode)
 	VeniceAPIKey     string `json:"venice_api_key,omitempty"`
@@ -243,16 +239,15 @@ func DefaultConfig() *Config {
 	seed, _ := providers.GetProvider(DefaultProvider)
 	venice, _ := providers.GetProvider("venice")
 	return &Config{
-		BaseURL:               seed.BaseURL,
-		Model:                 seed.DefaultModel,
-		Timeout:               60,
-		SkipPersonaPrompt:     false,
-		SimulateTyping:        true,
-		TypingSpeed:           40,
-		RuntimeMode:           RuntimeModeClassic,
-		ClawMaxToolIterations: DefaultClawMaxToolIterations,
-		VeniceBaseURL:         venice.BaseURL,
-		VeniceModel:           venice.DefaultModel,
+		BaseURL:           seed.BaseURL,
+		Model:             seed.DefaultModel,
+		Timeout:           60,
+		SkipPersonaPrompt: false,
+		SimulateTyping:    true,
+		TypingSpeed:       40,
+		MaxToolIterations: DefaultMaxToolIterations,
+		VeniceBaseURL:     venice.BaseURL,
+		VeniceModel:       venice.DefaultModel,
 	}
 }
 
@@ -266,24 +261,6 @@ func DefaultModelForBaseURL(baseURL string) string {
 	}
 	seed, _ := providers.GetProvider(DefaultProvider)
 	return seed.DefaultModel
-}
-
-func IsValidRuntimeMode(mode string) bool {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case RuntimeModeClassic, RuntimeModeClaw:
-		return true
-	default:
-		return false
-	}
-}
-
-func NormalizeRuntimeMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case RuntimeModeClaw:
-		return RuntimeModeClaw
-	default:
-		return RuntimeModeClassic
-	}
 }
 
 // Paths returns the configuration directory and file paths.
@@ -388,6 +365,7 @@ func LoadNamed(name string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config '%s' not found at %s: %w", name, configPath, err)
 	}
+	data = migrateFile(configPath, data)
 
 	if err := json.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("failed to parse config '%s': %w", name, err)
@@ -600,6 +578,7 @@ func Load() (*Config, error) {
 
 	// Load main config file
 	if data, err := os.ReadFile(configFile); err == nil {
+		data = migrateFile(configFile, data)
 		if err := json.Unmarshal(data, config); err != nil {
 			return nil, fmt.Errorf("failed to parse config: %w", err)
 		}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 )
 
@@ -148,5 +149,30 @@ func TestCelesteStatusHandler(t *testing.T) {
 	}
 	if !strings.Contains(text, "test-model") {
 		t.Fatal("status should contain model")
+	}
+}
+
+// #144 removed the CLI runtime mode, not the MCP celeste tool's mode
+// argument: the schema keeps chat|agent, and a legacy "claw" or "classic"
+// value still routes to chat (the handler's default arm), never an error.
+func TestCelesteToolModeArgumentSurvivesRuntimeModeRemoval(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(celesteToolDef().InputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if got := schema.Properties["mode"].Enum; len(got) != 2 || got[0] != "chat" || got[1] != "agent" {
+		t.Fatalf("mode enum = %v, want [chat agent]", got)
+	}
+	for _, mode := range []string{"chat", "claw", "classic"} {
+		llm := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok from " + mode})
+		cfg, ws := contractCfg(t, llm)
+		res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "hi", "mode": mode, "workspace": ws}}})
+		if !strings.Contains(string(res[1]), "ok from "+mode) || strings.Contains(string(res[1]), `"isError":true`) {
+			t.Fatalf("mode %q did not run chat: %s", mode, res[1])
+		}
 	}
 }

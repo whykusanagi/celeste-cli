@@ -17,13 +17,13 @@ Comprehensive system architecture for Celeste CLI.
 
 ## System Overview
 
-Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provider LLM support, persistent sessions, and four distinct runtime modes — each offering a different level of autonomy and observability.
+Celeste CLI is a terminal-based AI assistant with a Bubble Tea TUI, multi-provider LLM support, persistent sessions, and three runtime modes: chat, agent and orchestrator — each offering a different level of autonomy and observability.
 
 ### Key Features
 
 - **Multi-Provider Support**: OpenAI, Grok/xAI, Venice.ai, Anthropic, Gemini, Vertex AI
-- **Four Runtime Modes**: Classic chat, Claw (agentic chat), Agent (autonomous runs), Orchestrator (multi-model debate)
-- **41 Built-in Tools**: Function calling for weather, currency, QR codes, tarot, and more
+- **Three Runtime Modes**: Chat (tools always loop), Agent (autonomous runs), Orchestrator (multi-model debate)
+- **48 Built-in Tools**: Function calling for weather, currency, QR codes, tarot, and more
 - **Interactive TUI**: Split-panel Bubble Tea interface with real-time event streaming
 - **Session Persistence**: Auto-save conversations, command history, and model selection across restarts
 - **Per-Turn Observability**: Timing and token stats (`3.2s · ↑1.2k ↓483`) visible in all modes
@@ -79,33 +79,18 @@ flowchart TD
 
 ## Runtime Modes
 
-There are four distinct ways to interact with the LLM. They share the same config and provider system but differ fundamentally in where the tool-call loop lives, how much autonomy the model has, and what the TUI shows.
+There are three distinct ways to interact with the LLM. They share the same config and provider system but differ fundamentally in how much autonomy the model has and what the TUI shows.
 
 ---
 
-### 1. Classic Chat (`-mode classic`, default)
-
-The simplest mode. One request, one response.
-
-```
-User types message
-  → LLM client streams response chunks (StreamChunkMsg)
-  → Response complete (StreamDoneMsg) → token stats captured
-  → Simulated typing animation plays out
-  → Status bar: "Ready (2.1s · ↑1.2k ↓483)"
-```
-
-Tool calls run on the same `loop.Loop` as claw mode (below): the result is shown inline and sent back to the model, which continues until it answers without tools or the turn cap stops it.
-
-**When to use**: Conversational questions, code review, content generation — anything where a single exchange is sufficient.
-
----
-
-### 2. Claw Mode (`-mode claw`)
+### 1. Chat (default)
 
 Chat's tool calls run on `loop.Loop` (`cmd/celeste/loop`), the same loop
 agent runs and MCP chat use. The TUI renders its events; it never executes
-a tool itself.
+a tool itself. There is no separate "no tools" mode — 1.x's `classic` and
+`claw` runtime modes were the same program with a cosmetic flag, so 2.0
+dropped the flag (#144); every chat turn loops until the model answers
+without tools or the turn cap stops it.
 
 ```
 User types message
@@ -117,23 +102,21 @@ User types message
   → TurnDoneMsg: guards, caps, leftover steers
 ```
 
-The turn cap is `claw_max_tool_iterations` (default 25). The identical-call
+The turn cap is `max_tool_iterations` (default 25). The identical-call
 (3) and progress (6) guards stop runaway loops.
 
-**What it is not**: Claw mode has no planning step, no checkpoints, no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
+**What it is not**: Chat has no planning step, no checkpoints, no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
 
 **Configure**:
 ```bash
-celeste config --set-mode claw               # persist as default
-celeste config --set-claw-max-iterations 15  # raise the safety cap
-celeste -mode claw chat                      # one-session override
+celeste config --set-max-tool-iterations 15  # raise the safety cap
 ```
 
-**When to use**: Multi-step tasks where you want the model to call tools (search, calculate, look up data) and synthesise the results in a single conversational turn. E.g. "research the latest Rust releases and summarise the breaking changes."
+**When to use**: Anything from a single conversational exchange to a multi-step task where you want the model to call tools (search, calculate, look up data) and synthesise the results. E.g. "research the latest Rust releases and summarise the breaking changes."
 
 ---
 
-### 3. Agent Mode (`/agent <goal>`)
+### 2. Agent Mode (`/agent <goal>`)
 
 A fully autonomous, multi-turn agent implemented in `cmd/celeste/agent/`. The tool-call loop lives in `agent/runtime.go`, completely separate from the TUI. The TUI receives only event notifications.
 
@@ -158,9 +141,9 @@ Agent runs are checkpointed to disk (`~/.celeste/agent-runs/`). A crashed or int
 /agent list-runs
 ```
 
-**Key differences from claw mode**:
+**Key differences from chat**:
 
-| | Claw mode | Agent mode |
+| | Chat | Agent mode |
 |---|---|---|
 | Loop lives in | TUI (`app.go`) | `agent/runtime.go` |
 | Planning step | No | Yes (dedicated planning turn) |
@@ -174,7 +157,7 @@ Agent runs are checkpointed to disk (`~/.celeste/agent-runs/`). A crashed or int
 
 ---
 
-### 4. Orchestrator Mode (`/orchestrate <goal>`)
+### 3. Orchestrator Mode (`/orchestrate <goal>`)
 
 Wraps the agent runner in a multi-model debate loop. The primary model executes the goal; a separate reviewer model critiques the output; the primary defends; the reviewer issues a verdict. Multiple debate rounds are possible.
 
@@ -213,7 +196,7 @@ Both panels are scrollable (`PgUp`/`PgDn`).
 
 ## Data Flow
 
-### Classic Chat Flow
+### Chat Flow
 
 ```
 1. User types message → input.go adds to history (↑/↓ to recall)
@@ -238,7 +221,7 @@ Both panels are scrollable (`PgUp`/`PgDn`).
    ├─ Tool calls requested?
    │   └─ the loop runs the tools (ToolStartMsg/ToolResultMsg) →
    │     streamStart reset → next request → repeat from step 6
-   │     (turn cap claw_max_tool_iterations, default 25)
+   │     (turn cap max_tool_iterations, default 25)
    └─ No tool calls → StreamDoneMsg: token counts captured
       (lastMsgInTok/Out), typing animation with corruption at cursor
    ↓
@@ -402,7 +385,7 @@ type Registry struct {
 
 **2. Built-in Tools** (`builtin/`):
 
-23 tools across categories, each in its own file under `tools/builtin/`:
+48 tools across categories, each in its own file under `tools/builtin/`:
 - **Utilities**: UUID, password generation, base64, hashing
 - **APIs**: Weather, currency, Twitch, YouTube
 - **Media**: QR codes, image generation
@@ -596,7 +579,7 @@ During `/orchestrate` the chat area is replaced by a split panel:
 
 Every mode surfaces timing and token information consistently:
 
-- **Regular chat / claw**: status bar shows `(Xs · ↑Nk ↓Nk)` after each response
+- **Chat**: status bar shows `(Xs · ↑Nk ↓Nk)` after each response
 - **Agent mode**: inline `── turn N/M ──` separators; per-turn stats on each response; run total on completion
 - **Orchestrator**: per-action stats in the split panel action feed; running total in the status bar
 - **Context usage**: colour-coded header indicator — 🟢 OK / 🟡 75% / 🟠 85% / 🔴 95%
@@ -903,7 +886,6 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 - [Provider Documentation](./LLM_PROVIDERS.md)
 - [Testing Guide](./TESTING.md)
 - [Contributing Guide](./CONTRIBUTING.md)
-- [Claw Mode Build Plan](./plans/2026-03-01-celeste-claw-feature-buildout.md)
 - [Agent Mode Build Plan](./plans/2026-03-02-autonomous-agent-mode-buildout.md)
 - [Orchestrator Design](./superpowers/specs/2026-03-15-orchestrator-design.md)
 - [Bubble Tea Docs](https://github.com/charmbracelet/bubbletea)

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,39 @@ func cleanupChatDeps(t *testing.T, deps *chatDeps) {
 		if deps.env != nil {
 			deps.env.Close()
 		}
+		if deps.restoreMigrationWarn != nil {
+			deps.restoreMigrationWarn()
+		}
 	})
+}
+
+// #144 W6b review, I1(b): once the chat is running, a migration note (from a
+// later /endpoint or SwitchEndpoint load of a different profile) must reach
+// the log, not stderr — stderr is inside the alt screen by then.
+func TestNewChatAppRoutesMigrationWarnToLog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cfg := &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+
+	config.MigrationWarn("a migration note while the chat is running")
+
+	logPath := tui.GetLogPath()
+	if logPath == "" {
+		t.Fatal("no log path after newChatApp")
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "a migration note while the chat is running") {
+		t.Error("MigrationWarn must reach the tui log once the chat is running, not stderr")
+	}
 }
 
 func TestNewChatAppBuildsWithoutProgram(t *testing.T) {

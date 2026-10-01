@@ -96,7 +96,7 @@ func TestDocsClaimsMatchCode(t *testing.T) {
 		{"README.md", `Multi-Provider Support \((\d+) Chat Providers\)`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
 		{"README.md", `\| \*\*Providers\*\* \| (\d+) `, func(d docTruths) int { return d.chatProviders }, "comparison table providers"},
 		{"README.md", "`celeste providers` lists (\\d+)", func(d docTruths) int { return d.registered }, "registered providers"},
-		{"README.md", `\((\d+)-turn safety cap\)`, func(docTruths) int { return config.DefaultClawMaxToolIterations }, "chat turn cap"},
+		{"README.md", `\((\d+)-turn safety cap\)`, func(docTruths) int { return config.DefaultMaxToolIterations }, "chat turn cap"},
 		{"docs/LLM_PROVIDERS.md", `supports \*\*(\d+) chat providers\*\*`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
 		{"docs/LLM_PROVIDERS.md", `my (\d+) tools`, all, "built-in tools"},
 		{"docs/LLM_PROVIDERS.md", "`celeste chat` \\(TUI\\) \\| (\\d+) built-in", func(d docTruths) int { return d.chatTools }, "chat-mode tools"},
@@ -104,6 +104,8 @@ func TestDocsClaimsMatchCode(t *testing.T) {
 		{"docs/PROVIDER_AUDIT_MATRIX.md", `(\d+) chat providers`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
 		{"docs/CAPABILITIES.md", `\*\*(\d+) dev-crushing tools\*\*`, all, "built-in tools"},
 		{"docs/CAPABILITIES.md", `\*\*(\d+) Chat Providers:\*\*`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
+		{"docs/ARCHITECTURE.md", `\*\*(\d+) Built-in Tools\*\*`, all, "built-in tools"},
+		{"docs/ARCHITECTURE.md", `(\d+) tools across categories`, all, "built-in tools"},
 	}
 	for _, c := range claims {
 		matches := regexp.MustCompile(c.pattern).FindAllStringSubmatch(repoFile(t, c.file), -1)
@@ -177,16 +179,59 @@ func TestDocsDefaultProviderAndVertexModel(t *testing.T) {
 	}
 }
 
-// Venice's per-model tool support is not wired into the chat yet (the TUI
-// disables skills for all of Venice), so no doc may promise it. W6b restores
-// the wording when it wires ToolsPerModel into the chat.
-func TestDocsDoNotPromiseVeniceTools(t *testing.T) {
+// #151 W6b: the chat now wires ToolsPerModel into its skills gate
+// (providers.ToolsEnabledForModel), so every doc that mentions Venice's tool
+// support must say it depends on the model, not that the chat withholds
+// tools from every Venice model.
+func TestDocsSayVeniceToolsDependOnModel(t *testing.T) {
 	for _, file := range []string{"README.md", "docs/LLM_PROVIDERS.md", "docs/PROVIDER_AUDIT_MATRIX.md", "docs/CAPABILITIES.md"} {
 		doc := repoFile(t, file)
-		for _, bad := range []string{"Venice per model", "Per model", "tools per model", "Venice calls them", "Tool calling depends on the model"} {
-			if strings.Contains(doc, bad) {
-				t.Errorf("%s says %q, but the chat offers Venice no tools yet", file, bad)
+		for _, stale := range []string{"Not in chat yet", "not wired into chat yet", "chats without tools for now", "chat only for now", "does not use them yet"} {
+			if strings.Contains(doc, stale) {
+				t.Errorf("%s says %q, which is stale: the chat gates Venice tools per model now", file, stale)
 			}
 		}
+		if !mentionsVenice(doc) {
+			continue
+		}
+		if !veniceLineSaysToolsPerModel(doc) {
+			t.Errorf("%s mentions Venice but no line about it says its tool support depends on the model", file)
+		}
+	}
+}
+
+// veniceLineSaysToolsPerModelRe matches a Venice line that says its tool
+// support is model-dependent.
+var veniceLineSaysToolsPerModelRe = regexp.MustCompile(`(?i)(per model|depends? on the model|model-dependent)`)
+
+func mentionsVenice(doc string) bool {
+	return strings.Contains(strings.ToLower(doc), "venice")
+}
+
+// veniceLineSaysToolsPerModel reports whether at least one line in doc that
+// mentions Venice also says its tool support depends on the model. Scoped to
+// the line, not the whole file (M8): matching anywhere in the doc let an
+// unrelated "per model" elsewhere paper over a missing or stale Venice
+// caveat.
+func veniceLineSaysToolsPerModel(doc string) bool {
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(strings.ToLower(line), "venice") && veniceLineSaysToolsPerModelRe.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// M8: a decoy "per model" line unrelated to Venice must not satisfy the
+// caveat check; it must be on a line that actually mentions Venice.
+func TestVeniceLineSaysToolsPerModelIsLineScoped(t *testing.T) {
+	decoy := "Some unrelated feature varies per model.\nVenice.ai tool calling: unspecified.\n"
+	if veniceLineSaysToolsPerModel(decoy) {
+		t.Error("an unrelated per-model line must not satisfy the Venice caveat")
+	}
+
+	together := "Venice.ai tool calling depends on the model.\n"
+	if !veniceLineSaysToolsPerModel(together) {
+		t.Error("a line naming both Venice and the per-model caveat must satisfy it")
 	}
 }

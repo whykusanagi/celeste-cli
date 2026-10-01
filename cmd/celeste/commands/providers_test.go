@@ -45,19 +45,34 @@ func TestProviderInfoHasNoEmptySection(t *testing.T) {
 	}
 }
 
-// #151: the local example uses a named profile and no real key.
+// #151, I4 (#144 W6b review): the local example uses a named profile and no
+// key at all — needsAPIKey (#151) means celeste never asks for one here,
+// so the example must not tell the user to set a placeholder.
 func TestProviderInfoLocalExample(t *testing.T) {
 	out := providersOutput(t, "info", "local")
 	assert.Contains(t, out, "API Endpoint:  your own, for example http://127.0.0.1:8080/v1")
 	assert.Contains(t, out, "celeste config -config local --set-url http://127.0.0.1:8080/v1")
-	assert.Contains(t, out, "celeste config -config local --set-key not-needed")
 	assert.Contains(t, out, "celeste -config local chat")
 	assert.NotContains(t, out, "YOUR_API_KEY")
+	assert.NotContains(t, out, "--set-key", "no key is needed at all, so there is nothing to set")
+	assert.NotContains(t, out, "not-needed")
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, "celeste config ") {
 			assert.Contains(t, l, "-config local", "example edits the default profile: %q", l)
 		}
 	}
+}
+
+// I4: the AUTHENTICATION section must not claim celeste still needs a
+// non-empty api_key for a provider whose registry entry needs no key at
+// all (needsAPIKey, #151).
+func TestProviderInfoLocalAuthenticationSaysNoKeyNeeded(t *testing.T) {
+	out := providersOutput(t, "info", "local")
+	section := section(out, "AUTHENTICATION:")
+	joined := strings.Join(section, "\n")
+	assert.Contains(t, joined, "Required: none")
+	assert.NotContains(t, joined, "api_key")
+	assert.NotContains(t, joined, "placeholder")
 }
 
 // Every example names its profile, so none writes the default profile.
@@ -71,8 +86,9 @@ func TestProviderInfoExamplesUseNamedProfile(t *testing.T) {
 	}
 }
 
-// #151: Vertex's default is labelled. Venice shows no tools: its per-model
-// tool support is not wired into the chat yet (W6b), so no [PER MODEL] label.
+// #151, W6b: Vertex's default is labelled. Venice is [PER MODEL]: the chat
+// gates tools per selected model now, so it is no longer a blanket
+// [NO TOOLS].
 func TestProvidersListLabels(t *testing.T) {
 	out := providersOutput(t)
 	line := func(name string) string {
@@ -84,30 +100,24 @@ func TestProvidersListLabels(t *testing.T) {
 		t.Fatalf("no line for %s in:\n%s", name, out)
 		return ""
 	}
-	assert.Contains(t, line("venice"), "[NO TOOLS]")
-	assert.Contains(t, line("venice"), "per-model tools not in chat yet")
+	assert.Contains(t, line("venice"), "[PER MODEL]")
+	assert.NotContains(t, line("venice"), "[NO TOOLS]")
 	assert.Contains(t, line("vertex"), "gemini-2.0-flash (preferred) (unverified)")
 	assert.NotContains(t, line("gemini"), "unverified")
-	assert.Contains(t, out, "Total: 11 providers, 8 with tools\n")
+	assert.Contains(t, out, "Total: 11 providers: 8 with tools, 1 where it depends on the model\n")
 
 	tools := providersOutput(t, "--tools")
-	assert.Contains(t, tools, "Total: 8 tool-capable providers\n")
+	assert.Contains(t, tools, "Total: 8 tool-capable providers, plus 1 where it depends on the model\n")
+	assert.Contains(t, tools, "Tools depend on the model (checked against the live catalogue):\n  venice\n")
 	assert.Contains(t, tools, "gemini-2.0-flash (unverified)")
 
 	info := providersOutput(t, "info", "venice")
-	assert.Contains(t, info, "Function Calling:    ✗ No")
-	assert.Contains(t, info, "per-model tool support is not wired into chat yet")
-	assert.NotContains(t, info, "Model-dependent tool support")
-	assert.NotContains(t, info, "llama-3.3-70b: supports tools")
+	assert.Contains(t, info, "Function Calling:    ◐ Per model (checked against the live catalogue)")
+	assert.Contains(t, info, "Model-dependent tool support")
+	assert.Contains(t, info, "llama-3.3-70b: supports tools")
 	vertex := providersOutput(t, "info", "vertex")
 	assert.Contains(t, vertex, "Default:          gemini-2.0-flash (unverified")
 	assert.Contains(t, vertex, "Application Default Credentials")
-
-	for _, o := range []string{out, tools, info} {
-		assert.NotContains(t, o, "PER MODEL")
-		assert.NotContains(t, o, "Per model")
-		assert.NotContains(t, o, "depends on the model")
-	}
 }
 
 // Vertex authenticates with ADC. Any non-empty api_key would be sent as a
