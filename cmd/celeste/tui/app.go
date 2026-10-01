@@ -1940,6 +1940,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, more...)
 
 	case StreamStartMsg:
+		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
+			// A cancelled /agent run's late start: stop it, and leave the
+			// current run's cancel alone (2.0 F2e).
+			if msg.Cancel != nil {
+				msg.Cancel()
+			}
+			return m, nil
+		}
 		if msg.Run != 0 && msg.Run != m.orchRun {
 			// An /orch run cancelled (Esc, Ctrl+C) before its cancel
 			// arrived: stop it, and leave the current turn's cancel alone.
@@ -2038,6 +2046,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case AgentProgressMsg:
+		if msg.AgentRun != 0 && !m.agentRunCurrent(msg.AgentRun) {
+			// A cancelled /agent run still winding down: its events belong
+			// to no run on screen. Its sender never blocks, so its chain is
+			// simply not read further (2.0 F2e).
+			return m, nil
+		}
 		var cmds []tea.Cmd
 
 		switch msg.Kind {

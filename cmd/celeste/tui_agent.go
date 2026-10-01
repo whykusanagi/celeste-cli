@@ -136,7 +136,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cm
 		defer cancel()
 		cfg := a.currentAgentConfig()
 		if cfg.APIKey == "" && needsAPIKey(cfg) {
-			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: "no API key or credentials configured"})
+			sendAgentProgress(ch, tui.AgentProgressMsg{AgentRun: run, Kind: tui.AgentProgressError, Text: "no API key or credentials configured"})
 			return
 		}
 
@@ -167,6 +167,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cm
 				msgCh = recvCh
 			}
 			msg := tui.AgentProgressMsg{
+				AgentRun: run,
 				Kind:     tuiKind,
 				Text:     text,
 				Turn:     turn,
@@ -200,7 +201,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cm
 
 		runner, err := newAgentRunnerForTUI(cfg, opts, io.Discard, io.Discard)
 		if err != nil {
-			sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressError, Text: err.Error()})
+			sendAgentProgress(ch, tui.AgentProgressMsg{AgentRun: run, Kind: tui.AgentProgressError, Text: err.Error()})
 			return
 		}
 		defer runner.Close()
@@ -219,11 +220,11 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cm
 		if state != nil {
 			lastResponse = state.LastAssistantResponse
 		}
-		sendAgentProgress(ch, tui.AgentProgressMsg{Kind: tui.AgentProgressComplete, Text: lastResponse})
+		sendAgentProgress(ch, tui.AgentProgressMsg{AgentRun: run, Kind: tui.AgentProgressComplete, Text: lastResponse})
 	}()
 
 	return tea.Batch(
-		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel} },
+		func() tea.Msg { return tui.StreamStartMsg{Cancel: cancel, AgentRun: run} },
 		func() tea.Msg {
 			msg, ok := <-ch
 			if !ok {

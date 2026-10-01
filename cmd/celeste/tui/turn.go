@@ -595,6 +595,11 @@ func (m AppModel) currentRun() RunOwner {
 	return RunOwner{}
 }
 
+// agentRunCurrent reports whether run is the /agent run in progress.
+func (m AppModel) agentRunCurrent(run uint64) bool {
+	return m.agentActive && m.agentRun == run
+}
+
 // runActive reports whether o is still running. No run (Kind "") always is.
 func (m AppModel) runActive(o RunOwner) bool {
 	switch o.Kind {
@@ -603,7 +608,7 @@ func (m AppModel) runActive(o RunOwner) bool {
 	case OwnerOrch:
 		return m.orchRun != 0 && m.orchRun == o.Run
 	case OwnerAgent:
-		return m.agentActive && m.agentRun == o.Run
+		return m.agentRunCurrent(o.Run)
 	}
 	return true
 }

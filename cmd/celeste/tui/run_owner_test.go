@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,4 +91,34 @@ func TestRunOwnerRoundTripsThroughContext(t *testing.T) {
 	assert.Equal(t, o, RunOwnerFrom(WithRunOwner(context.Background(), o)))
 	assert.Equal(t, RunOwner{}, RunOwnerFrom(context.Background()))
 	assert.Equal(t, RunOwner{}, RunOwnerFrom(nil)) //nolint:staticcheck // nil is part of the contract
+}
+
+// An /agent run cancelled with Ctrl+C keeps sending until its goroutine
+// notices; a second /agent may start first. The first run's late messages
+// must not end or steer the second (2.0 F2e review): they carry their run.
+func TestStaleAgentRunMessagesAreDropped(t *testing.T) {
+	m := NewApp(&fakeAgentLLMClient{})
+	m, _ = step(t, m, SendMessageMsg{Content: "/agent one"})
+	first := m.agentRun
+	_, cancelFirst := context.WithCancel(context.Background())
+	m, _ = step(t, m, StreamStartMsg{Cancel: cancelFirst, AgentRun: first})
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.False(t, m.turnActive(), "Ctrl+C left the /agent run blocking input")
+
+	m, _ = step(t, m, SendMessageMsg{Content: "/agent two"})
+	second := m.agentRun
+	require.NotEqual(t, first, second)
+
+	staleCancelled := false
+	m, _ = step(t, m, StreamStartMsg{Cancel: func() { staleCancelled = true }, AgentRun: first})
+	assert.True(t, staleCancelled, "a stale /agent run's cancel was not called")
+	assert.Nil(t, m.cancelFunc, "a stale /agent run's cancel replaced the current one")
+
+	m, _ = step(t, m, AgentProgressMsg{Kind: AgentProgressComplete, AgentRun: first})
+	assert.True(t, m.agentActive, "the first run's completion ended the second")
+	assert.Equal(t, RunOwner{Kind: OwnerAgent, Run: second}, m.currentRun())
+	assert.True(t, m.streaming, "the first run's completion stopped the second's spinner")
+
+	m, _ = step(t, m, AgentProgressMsg{Kind: AgentProgressComplete, AgentRun: second})
+	assert.False(t, m.agentActive)
 }

@@ -381,7 +381,18 @@ func TestRunGoalWithProgressTagsItsContext(t *testing.T) {
 		}}, nil
 	}
 	adapter := &TUIClientAdapter{baseConfig: &config.Config{APIKey: "k", BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"}}
-	runBatch(t, adapter.runGoalWithProgress([]string{"do", "it"}, 5))
+	for _, msg := range runBatch(t, adapter.runGoalWithProgress([]string{"do", "it"}, 5)) {
+		switch m := msg.(type) {
+		case tui.StreamStartMsg:
+			if m.AgentRun != 5 {
+				t.Errorf("StreamStartMsg.AgentRun = %d, want 5", m.AgentRun)
+			}
+		case tui.AgentProgressMsg:
+			if m.AgentRun != 5 {
+				t.Errorf("AgentProgressMsg(%v).AgentRun = %d, want 5", m.Kind, m.AgentRun)
+			}
+		}
+	}
 	select {
 	case o := <-got:
 		if o != (tui.RunOwner{Kind: tui.OwnerAgent, Run: 5}) {

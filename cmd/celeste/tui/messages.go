@@ -71,6 +71,9 @@ type TokenUsage struct {
 type StreamStartMsg struct {
 	Cancel context.CancelFunc
 	Run    uint64 // the /orch run it belongs to; 0 for other requests
+	// AgentRun is the /agent goal run it belongs to; 0 for other requests.
+	// A cancelled run's late start is cancelled and dropped (2.0 F2e).
+	AgentRun uint64
 }
 
 // StreamDoneMsg is sent when streaming is complete.
@@ -202,6 +205,10 @@ const (
 // AgentProgressMsg is sent incrementally during an agent run.
 // Ch is a channel of further progress messages; nil on terminal kinds (Complete/Error).
 type AgentProgressMsg struct {
+	// AgentRun is the /agent goal run that sent it (2.0 F2e); 0 for other
+	// senders. A message of a run that is no longer the current one (it was
+	// cancelled and another /agent started) is dropped.
+	AgentRun uint64
 	RunID    string
 	Kind     AgentProgressKind
 	Text     string
