@@ -20,22 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Hooks
 
-- UserPromptSubmit now also checks the goal of `celeste agent`, MCP
+* UserPromptSubmit now also checks the goal of `celeste agent`, MCP
   `mode: "agent"` and `/agent` in the chat, once, before any model call.
   A `deny` (or a failed hook) stops the run with
   `goal blocked by a UserPromptSubmit hook: <reason>`; `additionalContext`
   is sent after the goal, as in the chat. Subagents and `/orchestrate`
   lanes are not checked: their goals are written by the model.
-- MCP chat runs UserPromptSubmit through the same loop as the chat UI. The
+* MCP chat runs UserPromptSubmit through the same loop as the chat UI. The
   error result for a blocked prompt is unchanged.
 
 ### Chat
 
-- Subagents and `/agent` run inside the chat's environment: they reuse its
-  MCP servers, hooks and code graph instead of starting their own. They get
-  only your global MCP servers (`~/.celeste/mcp.json` and the other home
-  configs), never a repository's. Edits to `hooks.json` or an MCP config
-  apply to them from the next chat session, as they do to the chat itself.
+* Subagents and `/agent` run inside the chat's environment: they reuse its
+  MCP servers, hooks and code graph instead of starting their own, sharing
+  only the global MCP servers the chat is running (`~/.celeste/mcp.json`
+  and the other home configs), never a repository's. Editing `hooks.json`
+  or a global MCP config file on disk applies to them from the next chat
+  session; a server connected or disconnected through the `/mcp` panel
+  reaches the next subagent right away, and `permissions.json` and custom
+  skills reload for every subagent regardless.
+* Subagents share the chat's MCP connections: disconnecting a server in
+  `/mcp` affects subagents still using it, and calls to one MCP server run
+  one at a time.
 
 ## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
 
