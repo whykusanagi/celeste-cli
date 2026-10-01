@@ -26,18 +26,3 @@ func (tc ThinkingConfig) LevelToBudget() int {
 		return tc.BudgetTokens
 	}
 }
-
-// ValidLevels returns the accepted level strings for user-facing validation.
-func ValidThinkingLevels() []string {
-	return []string{"off", "low", "medium", "high", "max"}
-}
-
-// IsValidLevel reports whether level is a recognised thinking level.
-func IsValidThinkingLevel(level string) bool {
-	for _, l := range ValidThinkingLevels() {
-		if l == level {
-			return true
-		}
-	}
-	return false
-}

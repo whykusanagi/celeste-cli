@@ -160,7 +160,7 @@ func applyCacheBreakpoints(params *anthropic.MessageNewParams) {
 // Anthropic's prompt caching, so the static persona/grimoire stays cached
 // across turns.
 func (b *AnthropicBackend) buildSystemBlocks(prompt string) []anthropic.TextBlockParam {
-	// Try to split on the separator used by CacheablePrompt.FullPrompt().
+	// Try to split on the static/dynamic system-prompt separator convention.
 	separator := "\n\n---\n\n"
 	if idx := strings.Index(prompt, separator); idx > 0 {
 		staticPrefix := prompt[:idx]

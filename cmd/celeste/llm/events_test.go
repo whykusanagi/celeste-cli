@@ -231,24 +231,6 @@ func TestToolUseAccumulator_MultipleTools(t *testing.T) {
 	}
 }
 
-func TestToolUseAccumulator_PendingCount(t *testing.T) {
-	acc := NewToolUseAccumulator()
-
-	if acc.PendingCount() != 0 {
-		t.Errorf("expected 0 pending, got %d", acc.PendingCount())
-	}
-
-	acc.HandleEvent(StreamEvent{Type: EventToolUseStart, ToolUseID: "call_1", ToolName: "dev_read_file"})
-	if acc.PendingCount() != 1 {
-		t.Errorf("expected 1 pending, got %d", acc.PendingCount())
-	}
-
-	acc.HandleEvent(StreamEvent{Type: EventToolUseDone, ToolUseID: "call_1", ToolName: "dev_read_file", CompleteInput: `{}`})
-	if acc.PendingCount() != 0 {
-		t.Errorf("expected 0 pending after done, got %d", acc.PendingCount())
-	}
-}
-
 // The streaming path rebuilds ToolCallResult from events alone, so a signature
 // left on the backend's own struct is silently dropped here and Gemini rejects
 // the following turn. Shipping the field on ToolCallResult was not enough —
