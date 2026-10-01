@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func TestFindServed_VariantFallback(t *testing.T) {
 	}
 }
 
-// isolateEndpoints is isolateCatalog plus stubbed verification.
+// stubVerify replaces the per-model check (GET /models/{id}) and counts calls.
 func stubVerify(t *testing.T, fn func(id string) (served, known bool)) *int32 {
 	t.Helper()
 	var calls int32
@@ -322,5 +323,70 @@ func TestResolve_StaleListMissKeepsTheModel(t *testing.T) {
 	}
 	if got, _, _ := ResolveFromMemory("venice", "", "k", "brand-new-model"); got != "brand-new-model" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A per-model answer lasts until the list is refreshed: a model the
+// provider answered 200 for is asked again after a refresh, so a long-lived
+// serve notices it was retired.
+func TestRefreshCatalog_ForgetsVerifiedAnswers(t *testing.T) {
+	isolateCatalog(t)
+	stubFetch(t, []CatalogModel{{ID: "gpt-4.1-nano"}}, nil)
+	calls := stubVerify(t, func(string) (bool, bool) { return true, true })
+	PrepareModels(context.Background(), "openai", "", "k", "gpt-alias")
+	PrepareModels(context.Background(), "openai", "", "k", "gpt-alias")
+	if atomic.LoadInt32(calls) != 1 {
+		t.Fatalf("checks = %d, want 1 before a refresh", atomic.LoadInt32(calls))
+	}
+	if _, err := RefreshCatalog(context.Background(), "openai", "", "k"); err != nil {
+		t.Fatal(err)
+	}
+	PrepareModels(context.Background(), "openai", "", "k", "gpt-alias")
+	if atomic.LoadInt32(calls) != 2 {
+		t.Errorf("checks = %d, want the answer re-asked after a refresh", atomic.LoadInt32(calls))
+	}
+}
+
+// Concurrent requests on one endpoint share a single fetch.
+func TestPrepareModels_SingleFlight(t *testing.T) {
+	isolateCatalog(t)
+	release := make(chan struct{})
+	var calls int32
+	catalogFetch = func(ctx context.Context, provider, baseURL, apiKey string) ([]CatalogModel, error) {
+		atomic.AddInt32(&calls, 1)
+		<-release
+		return []CatalogModel{{ID: "venice-uncensored-1-2"}}, nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			PrepareModels(context.Background(), "venice", "", "k", "venice-uncensored-1-2")
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("fetches = %d, want 1", n)
+	}
+	// Stale: concurrent refreshes share one fetch too.
+	catalogNow = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	release = make(chan struct{})
+	atomic.StoreInt32(&calls, 0)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			PrepareModels(context.Background(), "venice", "", "k", "venice-uncensored-1-2")
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	waitCatalogRefreshes()
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("stale refreshes = %d, want 1", n)
 	}
 }

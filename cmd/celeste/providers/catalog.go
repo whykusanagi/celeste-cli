@@ -75,8 +75,9 @@ type endpointState struct {
 var (
 	catalogMu         sync.Mutex
 	catalogStates     = map[string]*endpointState{}
-	catalogLatest     = map[string]string{} // provider -> key last loaded
-	catalogRefreshing = map[string]bool{}   // keys with a background refresh running
+	catalogLatest     = map[string]string{}        // provider -> key last loaded
+	catalogRefreshing = map[string]bool{}          // keys with a background refresh running
+	catalogInflight   = map[string]chan struct{}{} // keys with a fetch running; others wait
 	catalogRefreshWG  sync.WaitGroup
 	// catalogOverride holds SetCatalogForTest catalogs. A provider listed
 	// here never reaches the disk cache or the network, and its list is
@@ -277,6 +278,33 @@ func RefreshCatalog(ctx context.Context, provider, baseURL, apiKey string) ([]Ca
 	catalogMu.Unlock()
 
 	key := catalogKey(provider, baseURL, apiKey)
+	// One fetch per endpoint at a time: concurrent callers (serve requests)
+	// wait for it and share its answer.
+	catalogMu.Lock()
+	if ch, busy := catalogInflight[key]; busy {
+		catalogMu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		catalogMu.Lock()
+		defer catalogMu.Unlock()
+		if st := catalogStates[key]; st != nil && st.entry != nil && st.failedAt.IsZero() {
+			return st.entry.Models, nil
+		}
+		return nil, fmt.Errorf("%s models: fetch failed", provider)
+	}
+	done := make(chan struct{})
+	catalogInflight[key] = done
+	catalogMu.Unlock()
+	defer func() {
+		catalogMu.Lock()
+		delete(catalogInflight, key)
+		catalogMu.Unlock()
+		close(done)
+	}()
+
 	models, err := catalogFetch(ctx, provider, normalizeBaseURL(provider, baseURL), apiKey)
 	if err != nil {
 		catalogMu.Lock()
@@ -288,6 +316,10 @@ func RefreshCatalog(ctx context.Context, provider, baseURL, apiKey string) ([]Ca
 	catalogMu.Lock()
 	st := stateLocked(key)
 	st.entry, st.failedAt = &e, time.Time{}
+	// Per-model answers last as long as the list they were asked against:
+	// a long-lived serve re-asks after each refresh, so a model retired
+	// since its 200 is noticed.
+	st.verified, st.verifyFailedAt = map[string]bool{}, map[string]time.Time{}
 	catalogLatest[provider] = key
 	catalogMu.Unlock()
 	// Best effort: an unwritable cache only costs a fetch next start.
