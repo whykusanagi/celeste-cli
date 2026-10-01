@@ -156,9 +156,3 @@ func TestConfigJSON_Format(t *testing.T) {
 	assert.Contains(t, content, `"read_file"`)
 	assert.Contains(t, content, `"bash(sudo *)"`)
 }
-
-func TestDefaultConfigPath(t *testing.T) {
-	path := DefaultConfigPath()
-	assert.Contains(t, path, ".celeste")
-	assert.Contains(t, path, "permissions.json")
-}

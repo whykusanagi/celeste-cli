@@ -269,15 +269,6 @@ func LookupModelLimit(model string) (int, bool) {
 	return ModelLimits["default"], false
 }
 
-// GetModelLimitWithOverride returns the token limit for a model, using the
-// config override if it is positive.
-func GetModelLimitWithOverride(model string, configOverride int) int {
-	if configOverride > 0 {
-		return configOverride
-	}
-	return GetModelLimit(model)
-}
-
 // EstimateTokens approximates token count from text length.
 // Uses the rough heuristic of 4 characters per token.
 func EstimateTokens(text string) int {
