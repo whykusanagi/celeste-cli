@@ -14,6 +14,8 @@ Darlings, v1.16.0 supports **9 chat providers**: eight call tools, and Venice's 
 | **Sakana AI** | ✅ | ❌ | Fugu/Fugu Ultra, 1M ctx (the default)
 | **Local** | ✅ | ❌ | mlx-vlm, Ollama, LM Studio, llama.cpp (see below)
 
+**Which model runs:** celeste uses the model the provider serves now. It reads the provider's `/models` list at startup (OpenAI, Grok, Anthropic, OpenRouter, Sakana, Venice), caches it for 24 hours in `~/.celeste/cache/models`, and if your configured model has been retired it falls back to the provider's current default and says so (in the chat, or on stderr for `celeste agent`, `celeste message` and the `serve` log). The config file is not rewritten. Providers without a list (Gemini, Vertex, DigitalOcean, local) use the configured model as is. Registry defaults are offline fallbacks only.
+
 **Setup:** `celeste config --set-url https://api.x.ai/v1 --set-key xai-...`
 
 **Sakana/Fugu:** `celeste config --init sakana` then `celeste -config sakana config --set-url https://api.sakana.ai/v1 --set-key <key> --set-model fugu` (or `fugu-ultra`), then `celeste -config sakana chat`. OpenAI-compatible chat completions; reasoning effort is fixed server-side (default high).

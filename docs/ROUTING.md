@@ -116,16 +116,19 @@ flowchart TD
   (`buildAgentOptions`) and MCP `runAgentMode` set it to `ResolveAgentModel()`.
 - **Capability guardrail** (`agent/runtime.go`): on runner start, if the resolved
   model fails `providers.NewModelDetection(provider).SupportsTools(model)`, a loud
-  warning is printed. This is **provider-agnostic** — it catches Venice
-  `venice-uncensored`, tool-less OpenRouter models, older OpenAI/instruct models,
+  warning is printed. This is **provider-agnostic** — it catches tool-less Venice
+  models (e.g. `e2ee-venice-uncensored-24b-p`), tool-less OpenRouter models, older OpenAI/instruct models,
   etc., not just grok.
 - **Live catalogs are authoritative** for providers that publish capability:
   - **OpenRouter** — `https://openrouter.ai/api/v1/models`, per-model
     `supported_parameters` includes `"tools"`.
   - **Venice** — `https://api.venice.ai/api/v1/models`, per-model
     `model_spec.capabilities.supportsFunctionCalling`.
-  Both are fetched best-effort (cached), and `SupportsTools` falls back to a name
-  heuristic only if the catalog is unreachable. This is far more accurate than
+  Both come from the one per-provider model catalog (`providers/catalog.go`,
+  cached in memory and on disk for 24h), and `SupportsTools` falls back to a name
+  heuristic only when no catalog is loaded. The same catalog decides which model
+  runs: a retired configured model is replaced by the provider's current one
+  (`providers.ResolveModel`). This is far more accurate than
   guessing from the name (e.g. Venice `venice-uncensored-1-2` *does* support tools
   while some `e2ee-*-uncensored` models don't). A future task adds an interactive
   picker that surfaces capability + cost from these same catalogs.
