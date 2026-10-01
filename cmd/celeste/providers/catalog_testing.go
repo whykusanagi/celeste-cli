@@ -1,5 +1,7 @@
 package providers
 
+import "context"
+
 // SetCatalogForTest is for tests only. It makes provider's catalog the given
 // models in every lookup (CachedCatalog, CatalogFor, LoadCatalog,
 // RefreshCatalog), so no test reaches the network or the disk cache. A nil or
@@ -26,4 +28,20 @@ func SetCatalogForTest(provider string, models []CatalogModel) (restore func()) 
 func ForgetCatalogsForTest() {
 	waitCatalogRefreshes()
 	resetCatalogMemory()
+}
+
+// SetCatalogFetchForTest is for tests only: it replaces the /models fetch,
+// so tests in other packages can see what a fetch was asked (its context,
+// endpoint) without the network. Call the returned func to restore.
+func SetCatalogFetchForTest(fetch func(ctx context.Context, provider, baseURL, apiKey string) ([]CatalogModel, error)) (restore func()) {
+	catalogMu.Lock()
+	orig := catalogFetch
+	catalogFetch = fetch
+	catalogMu.Unlock()
+	return func() {
+		catalogMu.Lock()
+		catalogFetch = orig
+		catalogMu.Unlock()
+		ForgetCatalogsForTest()
+	}
 }
