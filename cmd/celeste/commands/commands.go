@@ -745,30 +745,13 @@ func listAvailableConfigs() *CommandResult {
 		providerKey := providers.DetectProvider(baseURL)
 		providerCaps, found := providers.GetProvider(providerKey)
 
-		// Get display name
+		// Get display name. No fallback substring match here: DetectProvider
+		// already matches on these same substrings, and every provider it can
+		// return is in Registry, so found is already true whenever a manual
+		// match would have been.
 		provider := "unknown"
 		if found {
 			provider = providerCaps.Name
-		} else {
-			// Fallback to manual detection if not in registry
-			switch {
-			case strings.Contains(baseURL, "openai.com"):
-				provider = "OpenAI"
-			case strings.Contains(baseURL, "x.ai"):
-				provider = "xAI Grok"
-			case strings.Contains(baseURL, "venice.ai"):
-				provider = "Venice.ai"
-			case strings.Contains(baseURL, "anthropic.com"):
-				provider = "Anthropic"
-			case strings.Contains(baseURL, "generativelanguage.googleapis.com"):
-				provider = "Google Gemini AI"
-			case strings.Contains(baseURL, "aiplatform.googleapis.com"):
-				provider = "Google Vertex AI"
-			case strings.Contains(baseURL, "openrouter.ai"):
-				provider = "OpenRouter"
-			case strings.Contains(baseURL, "digitalocean"):
-				provider = "DigitalOcean"
-			}
 		}
 
 		// Check if provider supports function calling

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,9 +16,7 @@ import (
 // mockMCPSSEServer simulates an MCP server over SSE.
 // POST requests enqueue a response; the SSE stream delivers them as events.
 type mockMCPSSEServer struct {
-	mu        sync.Mutex
-	responses []Response
-	eventCh   chan string
+	eventCh chan string
 }
 
 func newMockMCPSSEServer() *mockMCPSSEServer {

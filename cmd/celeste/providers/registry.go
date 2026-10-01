@@ -1,7 +1,10 @@
 // Package providers handles LLM provider capabilities and model management.
 package providers
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // ProviderCapabilities defines what a provider supports.
 type ProviderCapabilities struct {
@@ -299,48 +302,34 @@ func DetectProvider(baseURL string) string {
 
 	// Check partial matches
 	switch {
-	case contains(baseURL, "openai.com"):
+	case strings.Contains(baseURL, "openai.com"):
 		return "openai"
-	case contains(baseURL, "x.ai"):
+	case strings.Contains(baseURL, "x.ai"):
 		return "grok"
-	case contains(baseURL, "venice.ai"):
+	case strings.Contains(baseURL, "venice.ai"):
 		return "venice"
-	case contains(baseURL, "anthropic.com"):
+	case strings.Contains(baseURL, "anthropic.com"):
 		return "anthropic"
-	case contains(baseURL, "generativelanguage.googleapis.com"):
+	case strings.Contains(baseURL, "generativelanguage.googleapis.com"):
 		return "gemini"
-	case contains(baseURL, "aiplatform.googleapis.com") || contains(baseURL, "vertexai"):
+	case strings.Contains(baseURL, "aiplatform.googleapis.com") || strings.Contains(baseURL, "vertexai"):
 		return "vertex"
-	case contains(baseURL, "openrouter.ai"):
+	case strings.Contains(baseURL, "openrouter.ai"):
 		return "openrouter"
-	case contains(baseURL, "sakana.ai"):
+	case strings.Contains(baseURL, "sakana.ai"):
 		return "sakana"
-	case contains(baseURL, "digitalocean"):
+	case strings.Contains(baseURL, "digitalocean"):
 		return "digitalocean"
-	case contains(baseURL, "elevenlabs.io"):
+	case strings.Contains(baseURL, "elevenlabs.io"):
 		return "elevenlabs"
 	// Local servers, checked LAST so a hosted provider can never be shadowed.
 	// Matching on host substrings only: an empty baseURL contains none of them
 	// and still falls through to "unknown".
-	case contains(baseURL, "127.0.0.1"), contains(baseURL, "localhost"), contains(baseURL, "0.0.0.0"), contains(baseURL, "[::1]"):
+	case strings.Contains(baseURL, "127.0.0.1"), strings.Contains(baseURL, "localhost"), strings.Contains(baseURL, "0.0.0.0"), strings.Contains(baseURL, "[::1]"):
 		return "local"
 	default:
 		return "unknown"
 	}
-}
-
-// contains is a helper for string matching.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || stringContains(s, substr))
-}
-
-func stringContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // ModelDetection provides heuristics for detecting model capabilities.
@@ -358,14 +347,14 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 	switch d.provider {
 	case "openai":
 		// All gpt-4* and gpt-3.5-turbo* support tools
-		return contains(modelID, "gpt-4") || contains(modelID, "gpt-3.5-turbo")
+		return strings.Contains(modelID, "gpt-4") || strings.Contains(modelID, "gpt-3.5-turbo")
 
 	case "grok":
 		// xAI text models support tools: grok-4.3, grok-4.20-* (reasoning /
 		// non-reasoning / multi-agent), grok-build-0.1, grok-beta (docs.x.ai).
 		// grok-imagine-* (image/video) and voice models do NOT — they don't match
 		// "grok-4"/"grok-build" so they correctly return false here.
-		return contains(modelID, "grok-build") || contains(modelID, "grok-4") || contains(modelID, "grok-beta")
+		return strings.Contains(modelID, "grok-build") || strings.Contains(modelID, "grok-4") || strings.Contains(modelID, "grok-beta")
 
 	case "venice":
 		// Prefer Venice's catalog (model_spec.capabilities.supportsFunctionCalling).
@@ -374,19 +363,19 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		if supported, known := CatalogToolSupport(d.provider, modelID); known {
 			return supported
 		}
-		return !contains(modelID, "uncensored")
+		return !strings.Contains(modelID, "uncensored")
 
 	case "anthropic":
 		// All Claude 3+ models support tools
-		return contains(modelID, "claude-3") || contains(modelID, "claude-4") || contains(modelID, "claude-sonnet")
+		return strings.Contains(modelID, "claude-3") || strings.Contains(modelID, "claude-4") || strings.Contains(modelID, "claude-sonnet")
 
 	case "vertex":
 		// Gemini 1.5+ supports function calling
-		return contains(modelID, "gemini")
+		return strings.Contains(modelID, "gemini")
 
 	case "sakana":
 		// Fugu models support parallel tool calls (supports_parallel_tool_calls).
-		return contains(modelID, "fugu")
+		return strings.Contains(modelID, "fugu")
 
 	case "local":
 		// A local server's model name is an arbitrary string (mlx-vlm wants a
@@ -403,7 +392,7 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 		if supported, known := CatalogToolSupport(d.provider, modelID); known {
 			return supported
 		}
-		return contains(modelID, "gpt-") || contains(modelID, "claude-") || contains(modelID, "gemini-")
+		return strings.Contains(modelID, "gpt-") || strings.Contains(modelID, "claude-") || strings.Contains(modelID, "gemini-")
 
 	default:
 		return false
