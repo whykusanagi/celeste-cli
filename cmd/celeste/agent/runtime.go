@@ -491,6 +491,14 @@ func (r *Runner) RunGoal(ctx context.Context, goal string) (*RunState, error) {
 		return nil, fmt.Errorf("goal is required")
 	}
 
+	// UserPromptSubmit, once, before any model call (2.0 F2e). A blocked or
+	// interrupted check ends the run before it has a state or a checkpoint.
+	content, err := r.submitGoal(ctx, goal)
+	if err != nil {
+		r.emitProgress(ProgressError, err.Error(), 0, r.options.MaxTurns)
+		return nil, err
+	}
+
 	state := NewRunState(goal, r.options)
 	// The first run takes the ID the hooks were loaded with (session_id).
 	if r.firstRunID != "" {
@@ -504,7 +512,7 @@ func (r *Runner) RunGoal(ctx context.Context, goal string) (*RunState, error) {
 
 	state.Messages = append(state.Messages, tui.ChatMessage{
 		Role:      "user",
-		Content:   goal,
+		Content:   content,
 		Timestamp: time.Now(),
 	})
 	state.Steps = append(state.Steps, Step{

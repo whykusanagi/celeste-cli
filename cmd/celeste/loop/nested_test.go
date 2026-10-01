@@ -488,3 +488,38 @@ func TestNestedRefreshWaitsForAnInFlightUpdate(t *testing.T) {
 		t.Fatalf("the child skipped its refresh while Setup's update ran: %v %s", err, res.Content)
 	}
 }
+
+// The chat's Env is the parent of subagents and /agent (2.0 F2e). A child is
+// an agent-mode run: it shares the chat's hooks, code graph and global MCP
+// servers, and never a repo's MCP server (non-interactive runs don't run
+// them), even though the chat itself started it.
+func TestNestedUnderTheChatDropsRepoMCPServers(t *testing.T) {
+	home := setupHome(t)
+	ws := goWorkspace(t)
+	write(t, filepath.Join(home, ".celeste", "mcp.json"), stubMCPConfig(t))
+	write(t, filepath.Join(ws, ".mcp.json"), strings.Replace(stubMCPConfig(t), `"probe"`, `"repo"`, 1))
+	chat, w := mustSetup(t, ModeChat, ws)
+	global, repo := mcp.ToolName("probe", "echo"), mcp.ToolName("repo", "echo")
+	for _, name := range []string{global, repo} {
+		if _, ok := chat.Registry.Get(name); !ok {
+			t.Fatalf("the chat did not start %s:\n%s", name, w.all())
+		}
+	}
+	child := mustNested(t, chat, NestedOptions{})
+	if child.Mode != ModeAgent || child.ToolMode != tools.ModeAgent {
+		t.Fatalf("child mode = %v/%v, want agent", child.Mode, child.ToolMode)
+	}
+	if child.Hooks != chat.Hooks || child.Indexer != chat.Indexer {
+		t.Fatal("a same-workspace child must share the chat's hooks and code graph")
+	}
+	want, _ := chat.Registry.Get(global)
+	if got, ok := child.Registry.Get(global); !ok || got != want {
+		t.Fatalf("child has %v (ok=%v), want the chat's own global MCP tool", got, ok)
+	}
+	if _, ok := child.Registry.Get(repo); ok {
+		t.Fatal("a child of the chat was given the repo's MCP server")
+	}
+	if _, ok := child.Registry.Get("spawn_agent"); ok {
+		t.Fatal("a child of the chat was given spawn_agent")
+	}
+}

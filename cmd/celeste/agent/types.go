@@ -101,6 +101,12 @@ type Options struct {
 	// SubagentStop when it finishes as completed; one without (an
 	// orchestrator lane, /agent) fires neither.
 	AgentID string `json:"-"`
+	// CheckGoal runs the goal through UserPromptSubmit once, before any
+	// model call (2.0 F2e): set where the goal is the user's own text
+	// (celeste agent, MCP mode:"agent", /agent). A blocked goal ends RunGoal
+	// with ErrGoalBlocked. Subagents and orchestrator lanes leave it false:
+	// a model wrote their goal. Resume never re-checks.
+	CheckGoal bool `json:"-"`
 	// Warn receives setup and hook warnings. Nil writes them to errOut.
 	Warn func(string) `json:"-"`
 	// ParentEnv, when set, is the environment of the run that started this

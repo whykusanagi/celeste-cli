@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -29,6 +30,7 @@ type Manager struct {
 	toolCounts  map[string]int
 	transports  map[string]string
 	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
+	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
 	mu          sync.Mutex
 }
 
@@ -43,6 +45,7 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		toolCounts: make(map[string]int),
 		transports: make(map[string]string),
 		toolNames:  make(map[string][]string),
+		origins:    make(map[string]string),
 	}
 }
 
@@ -138,7 +141,13 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) er
 	if err != nil {
 		return fmt.Errorf("create transport for %q: %w", name, err)
 	}
-	return m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport)
+	if err := m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.origins[name] = cfg.Origin
+	m.mu.Unlock()
+	return nil
 }
 
 // IsConnected reports whether a server currently has a live client.
@@ -163,6 +172,7 @@ func (m *Manager) Disconnect(name string) error {
 	delete(m.toolCounts, name)
 	delete(m.transports, name)
 	delete(m.toolNames, name)
+	delete(m.origins, name)
 	m.mu.Unlock()
 
 	for _, tn := range names {
@@ -177,10 +187,38 @@ func (m *Manager) Disconnect(name string) error {
 // clients instead of starting its own servers. Tools a server adds later are
 // not mirrored; the nested registry is a snapshot.
 func (m *Manager) RegisterInto(dst *tools.Registry) int {
+	return m.registerInto(dst, func(string) bool { return true })
+}
+
+// RegisterGlobalInto is RegisterInto for a non-interactive run nested under
+// the chat (2.0 F2e): only servers configured in one of home's global files
+// (GlobalConfigPaths) are mirrored. A server from the workspace's
+// .mcp.json or .celeste/mcp.json, or of unknown origin, stays the chat's:
+// non-interactive runs never run a repo's MCP servers.
+func (m *Manager) RegisterGlobalInto(dst *tools.Registry, home string) int {
+	global := map[string]bool{}
+	for _, p := range GlobalConfigPaths(home) {
+		global[filepath.Clean(p)] = true
+	}
+	m.mu.Lock()
+	origins := make(map[string]string, len(m.origins))
+	for name, o := range m.origins {
+		origins[name] = o
+	}
+	m.mu.Unlock()
+	return m.registerInto(dst, func(server string) bool {
+		o := origins[server]
+		return o != "" && global[filepath.Clean(o)]
+	})
+}
+
+func (m *Manager) registerInto(dst *tools.Registry, keep func(server string) bool) int {
 	m.mu.Lock()
 	var names []string
-	for _, ns := range m.toolNames {
-		names = append(names, ns...)
+	for server, ns := range m.toolNames {
+		if keep(server) {
+			names = append(names, ns...)
+		}
 	}
 	m.mu.Unlock()
 	n := 0
@@ -236,6 +274,9 @@ func (m *Manager) Stop() error {
 	m.clients = make(map[string]*Client)
 	m.toolCounts = make(map[string]int)
 	m.transports = make(map[string]string)
+	// Closed servers' tools are no longer mirrored into nested runs.
+	m.toolNames = make(map[string][]string)
+	m.origins = make(map[string]string)
 
 	return nil
 }

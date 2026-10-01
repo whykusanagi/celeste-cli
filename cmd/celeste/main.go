@@ -335,6 +335,10 @@ type TUIClientAdapter struct {
 	// promptFn shows the TUI permission modal; /agent runs use it to approve
 	// tools (#172). Set once the Bubble Tea program exists.
 	promptFn tools.PromptFunc
+	// parentEnv is the chat's Env, which /agent runners nest under (2.0
+	// F2e); nil (tests that build an adapter by hand) gives each runner its
+	// own Setup.
+	parentEnv loop.Nester
 
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.

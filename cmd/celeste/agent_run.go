@@ -104,6 +104,9 @@ func runAgentCommand(args []string) {
 	resolveServedModels(cfg, os.Stderr)
 
 	opts := agent.DefaultOptions()
+	// The goal is the user's: UserPromptSubmit sees it once, before any
+	// model call (2.0 F2e).
+	opts.CheckGoal = true
 	opts.Workspace = *workspace
 	opts.RequireCompletionMarker = *requireMarker
 	opts.CompletionMarker = strings.TrimSpace(*completionMarker)

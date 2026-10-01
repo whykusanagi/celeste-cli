@@ -6,7 +6,7 @@ Hooks run your own commands at points in a Celeste session. They can block a too
 
 Agent runs and MCP chat are **non-interactive**: they never ask you to trust a repo's hooks. Untrusted repo hooks are skipped with a warning (`hooks: skipping …`); approve them ahead of time with `celeste hooks trust`. Your global `~/.celeste/hooks.json` always runs, so a global guard now protects agent runs and MCP chat too. The MCP server returns these warnings in the tool result, under `## Warnings`.
 
-In agent runs, tool hooks fire on every tool call, and PreCompact and PostCompact fire around the agent's compaction summary (trigger `auto`, empty `custom_instructions`), never before plain pruning of old tool results. A PreCompact `deny` skips the summary and is reported as a warning. SessionStart and Stop belong to the top-level run: they fire for `celeste agent` and MCP agent mode. Subagents, `/orchestrate` lanes and `/agent` in the chat run inside a larger run, so they skip both; for `/agent`, the chat session has already fired SessionStart.
+In agent runs, tool hooks fire on every tool call, and PreCompact and PostCompact fire around the agent's compaction summary (trigger `auto`, empty `custom_instructions`), never before plain pruning of old tool results. A PreCompact `deny` skips the summary and is reported as a warning. SessionStart and Stop belong to the top-level run: they fire for `celeste agent` and MCP agent mode. Subagents, `/orchestrate` lanes and `/agent` in the chat run inside a larger run, so they skip both; for `/agent`, the chat session has already fired SessionStart. Subagents and `/agent` still carry the chat's SessionStart `additionalContext` into their own system prompt, even though neither fires the hook again. UserPromptSubmit sees the goal of `celeste agent`, MCP agent mode and `/agent`, once, before any model call: a `deny` (or a failed hook) stops the run before it starts, and `additionalContext` is sent after the goal. Subagents and `/orchestrate` lanes skip it, because the model wrote their goals. Subagents and `/agent` in the chat share the chat's hooks: they see the hooks loaded when the chat started.
 
 In MCP chat (`mode: "chat"`), tool hooks fire on every tool call. The server loads hooks once per workspace and reuses them across calls. Editing `hooks.json` or approving a hook applies from the next call, and `session_id` is shared by the calls that reuse the setup. Each call is its own session otherwise:
 - SessionStart fires once per call (source `startup`), and its `additionalContext` goes into that call's system prompt.
@@ -109,7 +109,7 @@ A value that is too large (over 120 KiB on macOS/Linux, 8 KiB on Windows) or con
 - `allow` never skips the permission prompt: a hook can force an `ask`, and hard `always_deny` rules run before any hook, but nothing a hook returns can wave a call through your own permission rules.
 - `additionalContext` reaches the model:
   - at the start of the tool result (PreToolUse, PostToolUse);
-  - with the prompt (UserPromptSubmit), in every later request of the session. It is not saved: after `celeste resume`, earlier prompts are sent without it;
+  - with the prompt (UserPromptSubmit), in every later request of the session. In the chat it is not saved: after `celeste resume`, earlier prompts are sent without it. An agent goal's context is part of the goal message, so a resumed agent run keeps it;
   - in the system prompt (SessionStart);
   - as summary instructions (PreCompact).
 

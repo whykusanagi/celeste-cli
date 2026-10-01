@@ -342,7 +342,7 @@ func TestTUIAgentWarnReachesChat(t *testing.T) {
 	notify := func(s string) { got = append(got, s) }
 	hookNotify.Store(&notify)
 	t.Cleanup(func() { hookNotify.Store(nil) })
-	tuiAgentOptions().Warn("hooks: something failed")
+	tuiAgentOptions(nil).Warn("hooks: something failed")
 	assert.Equal(t, []string{"hooks: something failed"}, got)
 }
 
@@ -358,5 +358,12 @@ func TestSendAgentProgressDoesNotBlock(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("an intermediate progress send blocked")
+	}
+}
+
+// /agent's goal is the user's: UserPromptSubmit sees it once (2.0 F2e).
+func TestTUIAgentOptionsCheckTheGoal(t *testing.T) {
+	if !tuiAgentOptions(nil).CheckGoal {
+		t.Fatal("/agent runs skip UserPromptSubmit on the goal")
 	}
 }

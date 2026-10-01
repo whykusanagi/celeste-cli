@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // SearchResult pairs a symbol with its similarity score and a set of
@@ -74,6 +75,12 @@ type Indexer struct {
 	// multiParser handles all languages with tree-sitter grammars
 	// (Python, Rust, Java, C, C++, etc). Lazily initialized.
 	multiParser *MultiLangParser
+	// buildMu serializes Build/BuildWithContext and Update/UpdateWithContext
+	// against each other (and so also the lazy tsParser/multiParser creation
+	// inside them): the TUI's /index rebuild|update calls these directly,
+	// racing a nested run's refreshIndex, and the tree-sitter parsers are
+	// not safe for concurrent use (2.0 F2e M6).
+	buildMu sync.Mutex
 }
 
 // DefaultIndexPath returns the path to the code graph database for a project.
@@ -222,6 +229,8 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	idx.buildMu.Lock()
+	defer idx.buildMu.Unlock()
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
@@ -282,6 +291,8 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	idx.buildMu.Lock()
+	defer idx.buildMu.Unlock()
 	// Get currently indexed files
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
