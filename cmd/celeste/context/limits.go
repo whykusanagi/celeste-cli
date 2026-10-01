@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -86,9 +88,14 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	totalBytes := len(result)
 
 	// Reserve space for the notice and tail in the budget
+	recall := ""
+	if id := sessionID + "/" + toolCallID; spillIDPattern.MatchString(id) {
+		// #211: the id recall_tool_result takes to page through the file.
+		recall = fmt.Sprintf("; recall_tool_result with id %q returns it", id)
+	}
 	notice := fmt.Sprintf(
-		"\n\n--- TRUNCATED (%d bytes total, full output saved to: %s) ---\n\n",
-		totalBytes, spillPath,
+		"\n\n--- TRUNCATED (%d bytes total, full output saved to: %s%s) ---\n\n",
+		totalBytes, spillPath, recall,
 	)
 	noticeLen := len(notice)
 	tailLen := previewTailBytes
@@ -109,6 +116,34 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 
 	capped = head + notice + tail
 	return capped, true, nil
+}
+
+// spillIDPattern is a spill file's recall id: <sessionID>/<toolCallID>, both
+// plain names (the loop's are), so the id can never leave the spill base.
+var spillIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}/[A-Za-z0-9_-]{1,128}$`)
+
+// LoadSpilled returns the full tool result CapToolResult spilled under
+// baseDir ("" is ToolResultsBaseDir) for a recall id <sessionID>/<toolCallID>,
+// the id its notice names.
+func LoadSpilled(baseDir, id string) (string, error) {
+	if !spillIDPattern.MatchString(id) {
+		return "", fmt.Errorf("invalid spilled tool result id %q", id)
+	}
+	if baseDir == "" {
+		var err error
+		if baseDir, err = ToolResultsBaseDir(); err != nil {
+			return "", err
+		}
+	}
+	session, name, _ := strings.Cut(id, "/")
+	b, err := os.ReadFile(filepath.Join(baseDir, session, name+".txt"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no spilled tool result with id %q", id)
+		}
+		return "", err
+	}
+	return string(b), nil
 }
 
 // snipNotice marks where SnipToolResult cut a result.

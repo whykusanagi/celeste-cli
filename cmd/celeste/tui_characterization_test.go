@@ -239,6 +239,46 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	}
 }
 
+// #211 end to end: the notice on a spilled result names the id that
+// recall_tool_result takes, and recalling it returns the full output, paged.
+func TestTUIRecallsSpilledToolResult(t *testing.T) {
+	id := fmt.Sprintf("tui-%d/big-1", os.Getpid())
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "big", Name: "big_output", Args: `{}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "rec", Name: "recall_tool_result", Args: fmt.Sprintf(`{"id":%q,"offset":49152}`, id)}}},
+		fakeprovider.Turn{Text: "ok"},
+	)
+	m, deps, _ := chatAppWithContextLimit(t, srv, 1_000_000)
+	deps.registry.Register(&bigOutputTool{BaseTool: builtin.BaseTool{
+		ToolName:        "big_output",
+		ToolDescription: "test: returns an oversized result",
+		ToolParameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+		ReadOnly:        true,
+		ConcurrencySafe: true,
+	}})
+	_ = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read big.txt"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "ok" && turnIdle(m) }, 30*time.Second)
+	toolResult := func(req int, callID string) string {
+		for _, x := range srv.Requests()[req].Body["messages"].([]any) {
+			mm := x.(map[string]any)
+			if mm["role"] == "tool" && mm["tool_call_id"] == callID {
+				c, _ := mm["content"].(string)
+				return c
+			}
+		}
+		t.Fatalf("request %d has no tool result for %s", req, callID)
+		return ""
+	}
+	if notice := toolResult(1, "big"); !strings.Contains(notice, fmt.Sprintf("recall_tool_result with id %q", id)) {
+		t.Fatalf("the spill notice the model receives does not name the recall id %s", id)
+	}
+	// The second page: bytes 49152-98304 of the 204800-byte output.
+	page := toolResult(2, "rec")
+	if want := strings.Repeat("x", 48*1024) + "\n\n[bytes 49152-98304 of 204800;"; !strings.HasPrefix(page, want) {
+		t.Fatalf("recall returned %d bytes, not the full output's second page: %q", len(page), page[len(page)-120:])
+	}
+}
+
 // Esc during a streaming turn with a queued steer: the turn stops and the
 // queued text is either sent next or discarded — never silently kept forever.
 func TestTUIInterruptWithQueuedSteer(t *testing.T) {

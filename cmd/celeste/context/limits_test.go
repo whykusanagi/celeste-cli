@@ -203,3 +203,33 @@ func TestSnipToolResult(t *testing.T) {
 		t.Fatal("the cut split a multi-byte character")
 	}
 }
+
+// #211: the spill notice names the id recall_tool_result takes, and that id
+// finds the spilled file again; ids that are not <session>/<name> of safe
+// names are refused.
+func TestSpillNoticeNamesRecallID(t *testing.T) {
+	base := t.TempDir()
+	full := strings.Repeat("r", 4096)
+	capped, wasCapped, err := CapToolResult(full, 1024, "sess-1", "call_2-1", base)
+	if err != nil || !wasCapped {
+		t.Fatalf("cap: %v %v", wasCapped, err)
+	}
+	if !strings.Contains(capped, `recall_tool_result with id "sess-1/call_2-1"`) {
+		t.Fatalf("the notice does not name the recall id: %q", capped)
+	}
+	if !strings.Contains(capped, "full output saved to: "+filepath.Join(base, "sess-1", "call_2-1.txt")) {
+		t.Fatal("the notice lost its spill path")
+	}
+	got, err := LoadSpilled(base, "sess-1/call_2-1")
+	if err != nil || got != full {
+		t.Fatalf("LoadSpilled = %d bytes, %v; want the full %d", len(got), err, len(full))
+	}
+	for _, bad := range []string{"", "sess-1", "../x", "a/../b", "a/b/c", "a/b.txt", "./b", `a\b`} {
+		if _, err := LoadSpilled(base, bad); err == nil {
+			t.Errorf("LoadSpilled(%q) succeeded", bad)
+		}
+	}
+	if _, err := LoadSpilled(base, "sess-1/missing"); err == nil {
+		t.Error("a missing spill file must be an error")
+	}
+}
