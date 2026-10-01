@@ -38,6 +38,12 @@ func ResolveModel(provider, configured string, cat []CatalogModel, ok bool) (mod
 			return configured, ""
 		}
 	}
+	return replaceModel(provider, configured, cat)
+}
+
+// replaceModel picks the replacement for a model known to be gone, with
+// the note. With nothing safe listed the configured model is kept.
+func replaceModel(provider, configured string, cat []CatalogModel) (model, note string) {
 	model = pickServed(provider, configured, cat)
 	if model == "" {
 		// Nothing safe to switch to (only cost traps listed): keep it.

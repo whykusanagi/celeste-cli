@@ -388,7 +388,7 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 	// Validate against the catalog already loaded for this provider. This
 	// runs inside the TUI's Update, so it never fetches; with no catalog the
 	// model is accepted unvalidated.
-	modelInfo, err := validateAgainstCatalog(ctx.Provider, modelName)
+	modelInfo, err := validateAgainstCatalog(ctx.Provider, ctx.BaseURL, ctx.APIKey, modelName)
 	if err != nil {
 		// Model not found, but allow if --force
 		if forceModel {
@@ -451,8 +451,11 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 
 // validateAgainstCatalog looks a model up in the provider's loaded catalog.
 // No catalog: accepted, with tool support from the name heuristic.
-func validateAgainstCatalog(provider, modelID string) (providers.ModelInfo, error) {
+func validateAgainstCatalog(provider, baseURL, apiKey, modelID string) (providers.ModelInfo, error) {
 	cat, ok := providers.CatalogFor(provider)
+	if baseURL != "" {
+		cat, _, ok = providers.MemoryCatalog(provider, baseURL, apiKey)
+	}
 	if !ok {
 		return providers.ModelInfo{
 			ID:            modelID,

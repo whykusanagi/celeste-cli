@@ -46,22 +46,23 @@ type AppModel struct {
 	mcpPanel         MCPPanelModel
 
 	// Application state
-	width            int
-	height           int
-	ready            bool
-	nsfwMode         bool
-	streaming        bool
-	endpoint         string // Current endpoint (openai, venice, grok, etc.)
-	safeEndpoint     string // Endpoint to return to when leaving NSFW mode
-	model            string // Current model name
-	imageModel       string // Current image generation model (for NSFW mode)
-	provider         string // Current provider (grok, openai, venice, etc.) - detected from endpoint
-	skillsEnabled    bool   // Whether skills/function calling is available
-	modelPinned      bool   // /set-model --force: resolution leaves the model alone
-	version          string // Application version (e.g., "1.0.1")
-	build            string // Build identifier (e.g., "bubbletea-tui")
-	grimoireContent  string // Resolved .grimoire content for /grimoire command
-	codeGraphSummary string // Code graph stats for /index command
+	width             int
+	height            int
+	ready             bool
+	nsfwMode          bool
+	streaming         bool
+	endpoint          string // Current endpoint (openai, venice, grok, etc.)
+	safeEndpoint      string // Endpoint to return to when leaving NSFW mode
+	model             string // Current model name
+	imageModel        string // Current image generation model (for NSFW mode)
+	provider          string // Current provider (grok, openai, venice, etc.) - detected from endpoint
+	skillsEnabled     bool   // Whether skills/function calling is available
+	modelPinned       bool   // /set-model --force: resolution leaves the model alone
+	modelCheckPending bool   // the restored model needs a catalog load (Init runs it)
+	version           string // Application version (e.g., "1.0.1")
+	build             string // Build identifier (e.g., "bubbletea-tui")
+	grimoireContent   string // Resolved .grimoire content for /grimoire command
+	codeGraphSummary  string // Code graph stats for /index command
 
 	// Simulated typing state
 	typingContent string // Full content to type
@@ -349,10 +350,17 @@ func NewApp(llmClient LLMClient) AppModel {
 
 // Init implements tea.Model.
 func (m AppModel) Init() tea.Cmd {
+	var check tea.Cmd
+	if m.modelCheckPending {
+		// The restored session's model needs a catalog or a check the
+		// startup didn't do: run it off the UI loop.
+		_, check = m.resolveServedModel()
+	}
 	return tea.Batch(
 		m.input.Init(),
 		tea.EnterAltScreen,
 		gitFetchCmd(m.workDir),
+		check,
 	)
 }
 
@@ -1480,11 +1488,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				NSFWMode:      m.nsfwMode,
 				Provider:      m.provider,
 				CurrentModel:  m.model,
-				APIKey:        "", // Will be populated if config accessible
-				BaseURL:       "", // Will be populated if config accessible
 				SkillsEnabled: m.skillsEnabled,
 				Version:       m.version,
 				Build:         m.build,
+			}
+			// /set-model validates against the active endpoint's own
+			// catalog (memory only), not whichever this provider loaded last.
+			if src, ok := m.llmClient.(ActiveEndpointer); ok {
+				ep := src.ActiveEndpoint()
+				ctx.BaseURL, ctx.APIKey = ep.BaseURL, ep.APIKey
 			}
 			result := commands.Execute(cmd, ctx)
 
@@ -1516,6 +1528,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.status = m.status.SetText(fmt.Sprintf("Error switching to Venice: %v", err))
 							}
 						}
+						m.modelPinned = false // a --force pin belongs to the old endpoint
 						m, catalogCmd = m.adoptActiveModel()
 					} else {
 						// When NSFW mode is disabled, restore the safe endpoint
@@ -1533,6 +1546,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
 							}
 						}
+						m.modelPinned = false // a --force pin belongs to the old endpoint
 						m, catalogCmd = m.adoptActiveModel()
 					}
 
@@ -2303,6 +2317,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 
+					m.modelPinned = false // picked from the provider's list
 					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("🤖 Model changed to: %s", modelName))
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to: %s", modelName))
 
@@ -2701,7 +2716,7 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			// loaded. Only when the client is on the session's provider:
 			// another provider's catalog would call every model retired.
 			if src, ok := m.llmClient.(ActiveEndpointer); ok && src.ActiveEndpoint().Provider == m.provider {
-				m, _ = m.resolveFromMemory()
+				m, m.modelCheckPending = m.resolveFromMemory()
 				model = m.model
 			}
 

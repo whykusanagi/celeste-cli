@@ -494,7 +494,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 		maskedKey = "***"
 	}
 	tui.LogInfo(fmt.Sprintf("✓ Switched endpoint to: %s", endpoint))
-	tui.LogInfo(fmt.Sprintf("  URL: %s", cfg.BaseURL))
+	tui.LogInfo(fmt.Sprintf("  URL: %s", providers.CleanBaseURL(cfg.BaseURL)))
 	tui.LogInfo(fmt.Sprintf("  Model: %s", cfg.Model))
 	tui.LogInfo(fmt.Sprintf("  API Key: %s", maskedKey))
 	return nil

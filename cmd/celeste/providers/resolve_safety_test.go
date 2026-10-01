@@ -278,3 +278,21 @@ func TestWriteCatalogFile_SweepsStaleTemps(t *testing.T) {
 		t.Error("a fresh temp file (a write in progress) was removed")
 	}
 }
+
+// A -latest alias the provider answered 404 for is gone, even while its
+// family is listed.
+func TestResolveFromMemory_VerifiedGoneLatestIsReplaced(t *testing.T) {
+	isolateCatalog(t)
+	stubFetch(t, []CatalogModel{{ID: "gpt-5-20260101"}, {ID: "gpt-4.1-nano"}}, nil)
+	stubVerify(t, func(string) (bool, bool) { return false, true })
+	PrepareModels(context.Background(), "openai", "", "k", "gpt-5-latest")
+	if got, note, _ := ResolveFromMemory("openai", "", "k", "gpt-5-latest"); got == "gpt-5-latest" || note == "" {
+		t.Errorf("a 404 -latest alias was kept")
+	}
+}
+
+func TestCleanBaseURL(t *testing.T) {
+	if got := CleanBaseURL("https://u:p4ss@h.example/v1?k=s3cret"); strings.Contains(got, "p4ss") || strings.Contains(got, "s3cret") {
+		t.Errorf("CleanBaseURL = %q", got)
+	}
+}

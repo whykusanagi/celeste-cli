@@ -82,3 +82,12 @@ func TestSetModel_CaseAndUnlistedAliases(t *testing.T) {
 		t.Errorf("an unlisted alias on Anthropic is accepted, unpinned: %+v", r)
 	}
 }
+
+// /set-model checks the active endpoint's own catalog, not whichever the
+// provider loaded last (another key or URL).
+func TestSetModel_UsesActiveEndpointCatalog(t *testing.T) {
+	r := Execute(&Command{Name: "set-model", Args: []string{"anything"}}, &CommandContext{Provider: "sakana", BaseURL: "https://api.sakana.ai/v1", APIKey: "fresh-key"})
+	if !r.Success || r.StateChange.Model == nil {
+		t.Errorf("no catalog for this endpoint yet: accepted unvalidated, got %+v", r)
+	}
+}

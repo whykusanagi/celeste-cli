@@ -238,3 +238,35 @@ func TestPinnedEndpointIsNotResolved(t *testing.T) {
 		t.Errorf("model=%q cmd=%v", m.model, cmd != nil)
 	}
 }
+
+// A restored session model the startup didn't check is checked from Init.
+func TestSetSessionManager_UncheckedModelSchedulesACheck(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Cleanup(providers.ForgetCatalogsForTest)
+	s := &config.Session{}
+	s.SetEndpoint("venice")
+	s.SetModel("venice-uncensored")
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "venice", BaseURL: "http://127.0.0.1:1/v1", Model: "venice-uncensored"}}
+	m := NewApp(client).WithEndpoint("venice")
+	m = m.SetSessionManager(&fakeSessions{session: s}, s)
+	if !m.modelCheckPending {
+		t.Fatal("no catalog in memory: the restored model must be checked")
+	}
+	if _, cmd := m.resolveServedModel(); cmd == nil {
+		t.Error("Init has no check to run")
+	}
+}
+
+// Picking from the model list clears a --force pin.
+func TestSelectorPickClearsPin(t *testing.T) {
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "venice", BaseURL: "https://api.venice.ai/api/v1"}}
+	m := NewApp(client).WithEndpoint("venice")
+	m.modelPinned = true
+	m.selectorActive = true
+	m, _ = step(t, m, SelectorResultMsg{Selected: &SelectorItem{ID: "venice-uncensored-1-2"}})
+	if m.modelPinned || m.model != "venice-uncensored-1-2" {
+		t.Errorf("model=%q pinned=%v", m.model, m.modelPinned)
+	}
+}

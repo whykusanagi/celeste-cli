@@ -89,6 +89,9 @@ func ResolveFromMemory(provider, baseURL, apiKey, configured string) (model, not
 		if answer {
 			return configured, "", pending
 		}
+		// The provider said 404: gone, whatever the listing suggests.
+		model, note = replaceModel(provider, configured, cat)
+		return model, note, pending
 	}
 	model, note = ResolveModel(provider, configured, cat, true)
 	return model, note, pending

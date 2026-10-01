@@ -115,6 +115,14 @@ func normalizeBaseURL(provider, baseURL string) string {
 	return strings.TrimRight(baseURL, "/")
 }
 
+// CleanBaseURL is a base URL safe to log: no userinfo, query or fragment.
+func CleanBaseURL(baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	return normalizeBaseURL("", baseURL)
+}
+
 // keyHash is a short, one-way tag of an API key: catalogs fetched with
 // different keys never mix, and the key itself is never stored.
 func keyHash(apiKey string) string {
