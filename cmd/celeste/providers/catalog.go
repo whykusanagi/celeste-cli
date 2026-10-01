@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // CatalogModel is one model a provider serves now, from its /models listing.
@@ -377,7 +379,7 @@ func readCatalogFile(path string) (catalogEntry, error) {
 // writeCatalogFile writes the entry through a temp file and a rename, so a
 // concurrent reader sees the old file or the new one. The directory is 0700
 // and the file 0600.
-func writeCatalogFile(path string, e catalogEntry) (err error) {
+func writeCatalogFile(path string, e catalogEntry) error {
 	if path == "" {
 		return errNoCatalog
 	}
@@ -391,35 +393,7 @@ func writeCatalogFile(path string, e catalogEntry) (err error) {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if _, err = tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err = tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	// Close before rename: Windows cannot rename an open file.
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	for i := 0; i < 20; i++ { // Windows: a reader holding the file blocks the rename briefly.
-		if err = os.Rename(tmpName, path); err == nil {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return err
+	return atomicfile.Write(path, data, 0o600)
 }
 
 // providerGet does one authenticated GET against the provider. Errors carry

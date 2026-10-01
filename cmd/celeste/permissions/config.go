@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // PermissionConfig holds the persistent permission configuration.
@@ -122,50 +124,12 @@ func SaveConfig(path string, config *PermissionConfig) error {
 	// Append newline for POSIX compliance
 	data = append(data, '\n')
 
-	if err := writeFileAtomic(path, data); err != nil {
+	// An existing file keeps its mode; a new one is 0600.
+	if err := atomicfile.WriteKeepMode(path, data, 0o600); err != nil {
 		return fmt.Errorf("write permissions config: %w", err)
 	}
 
 	return nil
-}
-
-// writeFileAtomic replaces path with data so that a concurrent reader (a new
-// lane's setup, another celeste process) sees either the old file or the new
-// one, never a half-written one. It writes a temp file in the same
-// directory, syncs it, and renames it over path. An existing file keeps its
-// mode; a new one is 0600.
-func writeFileAtomic(path string, data []byte) (err error) {
-	mode := os.FileMode(0600)
-	if fi, statErr := os.Stat(path); statErr == nil {
-		mode = fi.Mode().Perm()
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if _, err = tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err = tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err = tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	// Close before rename: Windows cannot rename an open file.
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	return renameRetry(tmpName, path)
 }
 
 // readFileRetry reads path, retrying briefly: on Windows opening a file
@@ -182,21 +146,6 @@ func readFileRetry(path string) ([]byte, error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return nil, err
-}
-
-// renameRetry renames, retrying briefly: on Windows a rename over a file that
-// another process or goroutine has open for reading fails with "Access is
-// denied" until the reader closes it.
-// ponytail: fixed ~1s of retries, a real lock if saves ever contend longer.
-func renameRetry(from, to string) error {
-	var err error
-	for i := 0; i < 20; i++ {
-		if err = os.Rename(from, to); err == nil {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return err
 }
 
 // convertRulesFromJSON converts JSON rule representations to Rule structs.

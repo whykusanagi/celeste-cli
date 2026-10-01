@@ -171,7 +171,7 @@ func TestMigrateFileReadOnlyStillLoads(t *testing.T) {
 }
 
 // I3: a dotfile-manager-style symlinked config must still migrate. Before
-// the fix, writeMigratedConfigAtomic renamed the temp file onto the symlink
+// the fix, the atomic write renamed the temp file onto the symlink
 // path itself, replacing the symlink with a plain file and leaving the
 // dotfile manager's real target unmigrated forever.
 func TestMigrateFileFollowsSymlink(t *testing.T) {

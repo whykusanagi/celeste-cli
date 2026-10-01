@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
-	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // Config keys celeste 2.0 removed or renamed (#144, spec §6.2).
@@ -102,15 +102,11 @@ func migrateFile(path string, data []byte) []byte {
 	for _, n := range notes {
 		MigrationWarn(n + " in " + path)
 	}
-	perm := os.FileMode(0o600)
-	if info, err := os.Stat(path); err == nil {
-		perm = info.Mode().Perm()
-	}
 	// Migration now runs on every load of an old config, not just an
 	// explicit save, so a crash mid-write must never leave a truncated,
-	// unparseable config behind (review finding, #144 W6b). Write a temp
-	// file and rename over path, as permissions.json's save already does.
-	if err := writeMigratedConfigAtomic(path, out, perm); err != nil {
+	// unparseable config behind (review finding, #144 W6b). The write keeps
+	// the file's mode and lands on a symlink's target, not the link (I3).
+	if err := atomicfile.WriteKeepMode(path, out, 0o600); err != nil {
 		MigrationWarn(fmt.Sprintf("could not save the migrated config %s: %v", path, err))
 		failedMigrationsMu.Lock()
 		failedMigrations[path] = true
@@ -144,57 +140,4 @@ func MigrateConfigDir() {
 		}
 		migrateFile(path, data)
 	}
-}
-
-// writeMigratedConfigAtomic replaces path with data so a reader (another
-// celeste process starting mid-migration) sees either the old file or the
-// fully migrated one, never a half-written one: a temp file in the same
-// directory, synced, then renamed over path with retries (Windows fails a
-// rename over a file another process or goroutine has open for reading
-// until it closes it — the same race permissions.json's save handles).
-//
-// path is resolved through any symlinks first (dotfile managers commonly
-// symlink ~/.celeste/config.json to a file they track elsewhere): the temp
-// file is created next to, and the rename lands on, the real target, so the
-// symlink itself is left alone instead of being replaced by a plain file
-// that the dotfile manager no longer sees (#144 W6b review, I3). When path
-// isn't a symlink, EvalSymlinks returns it unchanged.
-func writeMigratedConfigAtomic(path string, data []byte, perm os.FileMode) (err error) {
-	target := path
-	if resolved, evalErr := filepath.EvalSymlinks(path); evalErr == nil {
-		target = resolved
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if _, err = tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err = tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err = tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	// Close before rename: Windows cannot rename an open file.
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	for i := 0; i < 20; i++ {
-		if err = os.Rename(tmpName, target); err == nil {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return err
 }
