@@ -3,8 +3,59 @@ package loop
 import (
 	"context"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
+
+// UserPromptSubmit runs h's UserPromptSubmit hooks on msg. The chat, MCP
+// chat and agent goals share it (2.0 F2e). A deny, or a hook that failed,
+// blocks msg with the hook's reason ("no reason given" when it has none).
+// Additional context rides in msg.Metadata[tui.MetaHookContext]; the loop
+// appends it to the copy it sends (HookContextBlock). A hook cut short by
+// ctx ending returns ctx's error: an interrupt, not a verdict. With no
+// UserPromptSubmit hooks (h may be nil) msg is allowed unchanged.
+func UserPromptSubmit(ctx context.Context, h *hooks.Runner, msg Message) (Message, PromptVerdict, error) {
+	if !h.Has(hooks.EventUserPromptSubmit) { // Has is nil-safe
+		return msg, PromptVerdict{}, nil
+	}
+	out := h.UserPromptSubmit(ctx, msg.Content)
+	if err := ctx.Err(); err != nil {
+		return msg, PromptVerdict{}, err
+	}
+	if out.Decision != hooks.Allow {
+		reason := out.Reason
+		if reason == "" {
+			reason = "no reason given"
+		}
+		return msg, PromptVerdict{Blocked: true, Reason: reason}, nil
+	}
+	if out.AdditionalContext != "" {
+		meta := make(map[string]any, len(msg.Metadata)+1)
+		for k, v := range msg.Metadata {
+			meta[k] = v
+		}
+		meta[tui.MetaHookContext] = out.AdditionalContext
+		msg.Metadata = meta
+	}
+	return msg, PromptVerdict{}, nil
+}
+
+// HookPromptCheck is h's UserPromptSubmit as a Loop.CheckPrompt, or nil when
+// h has no UserPromptSubmit hooks, so such a run takes the unchecked path.
+func HookPromptCheck(h *hooks.Runner) PromptCheck {
+	if !h.Has(hooks.EventUserPromptSubmit) {
+		return nil
+	}
+	return func(ctx context.Context, msg Message) (Message, PromptVerdict, error) {
+		return UserPromptSubmit(ctx, h, msg)
+	}
+}
+
+// HookContextBlock is how UserPromptSubmit context joins the prompt the
+// model receives: after the prompt, in a <hook-context> block.
+func HookContextBlock(context string) string {
+	return "\n\n<hook-context>\n" + context + "\n</hook-context>"
+}
 
 // needsCheck reports a user prompt CheckPrompt has not seen: not marked
 // checked, and not hidden (the app's own directives and summaries).
@@ -70,7 +121,7 @@ func withHookContext(msgs []Message) []Message {
 		if out == nil {
 			out = append(make([]Message, 0, len(msgs)), msgs[:i]...)
 		}
-		m.Content += "\n\n<hook-context>\n" + c + "\n</hook-context>"
+		m.Content += HookContextBlock(c)
 		out = append(out, m)
 	}
 	if out == nil {

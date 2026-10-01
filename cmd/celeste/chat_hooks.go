@@ -57,33 +57,11 @@ func (s *chatWarnSink) done() []string {
 }
 
 // checkPrompt is the chat's loop.PromptCheck: UserPromptSubmit for every new
-// prompt, and for each steer when it joins (2.0 F2d). Hook context rides in
-// the message's metadata (tui.MetaHookContext); the loop appends it to the
-// copy it sends.
+// prompt, and for each steer when it joins (2.0 F2d). It reads a.hooks at
+// call time. Hook context rides in the message's metadata
+// (tui.MetaHookContext); the loop appends it to the copy it sends.
 func (a *TUIClientAdapter) checkPrompt(ctx context.Context, msg tui.ChatMessage) (tui.ChatMessage, loop.PromptVerdict, error) {
-	if !a.hooks.Has(hooks.EventUserPromptSubmit) { // Has is nil-safe
-		return msg, loop.PromptVerdict{}, nil
-	}
-	out := a.hooks.UserPromptSubmit(ctx, msg.Content)
-	if err := ctx.Err(); err != nil {
-		return msg, loop.PromptVerdict{}, err // an interrupt, not a verdict
-	}
-	if out.Decision != hooks.Allow {
-		reason := out.Reason
-		if reason == "" {
-			reason = "no reason given"
-		}
-		return msg, loop.PromptVerdict{Blocked: true, Reason: reason}, nil
-	}
-	if out.AdditionalContext != "" {
-		meta := make(map[string]any, len(msg.Metadata)+1)
-		for k, v := range msg.Metadata {
-			meta[k] = v
-		}
-		meta[tui.MetaHookContext] = out.AdditionalContext
-		msg.Metadata = meta
-	}
-	return msg, loop.PromptVerdict{}, nil
+	return loop.UserPromptSubmit(ctx, a.hooks, msg)
 }
 
 // lifeContext is cancelled when the chat app shuts down.
