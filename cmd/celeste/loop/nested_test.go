@@ -232,7 +232,10 @@ func TestNestedRoutesItsOwnWarningsAndNotices(t *testing.T) {
 	var calls atomic.Int32
 	updateCodeGraph = func(ctx context.Context, idx *codegraph.Indexer) error {
 		if calls.Add(1) == 1 {
-			return origUpdate(ctx, idx) // the parent's Setup update runs normally
+			// The parent's Setup update: returns at once. Running it for
+			// real let a slow Windows runner hit its 10s timeout, and the
+			// parent's own "timed out" warning failed the routing check.
+			return nil
 		}
 		<-ctx.Done() // a child's refresh only stops when the family closes
 		return ctx.Err()
