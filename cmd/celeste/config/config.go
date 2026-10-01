@@ -104,7 +104,10 @@ type Config struct {
 	// "shadow" asks Jev in the background and only logs what it would have
 	// pruned; anything else is off. Redacted excerpts of old tool results go
 	// to TypeSafe. The key comes from TYPESAFE_API_KEY or ~/.celeste/typesafe.key.
-	JevPrune     string `json:"jev_prune,omitempty"`
+	JevPrune string `json:"jev_prune,omitempty"`
+	// Oracle answers the watchdog's ballot (2.0 W3): "heuristic" (default),
+	// "llm" (the small model) or "jev".
+	Oracle       string `json:"oracle,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 
