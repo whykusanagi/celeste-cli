@@ -123,13 +123,6 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 	}
 
-	// Snapshot before patching
-	if t.snapMgr != nil {
-		if err := t.snapMgr.Snapshot(targetPath); err != nil {
-			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
-		}
-	}
-
 	data, err := os.ReadFile(targetPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
@@ -163,8 +156,18 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		patched = strings.Replace(original, oldString, newString, 1)
 	}
 
-	if err := os.WriteFile(targetPath, []byte(patched), 0644); err != nil {
-		return tools.ToolResult{Error: true, Content: err.Error()}, nil
+	// Checkpoint now that the path resolved and old_string matched,
+	// immediately before the write (2.0 F4).
+	var ckpt *checkpoints.Checkpoint
+	if t.snapMgr != nil {
+		c, err := t.snapMgr.Checkpoint(targetPath, tools.CallIDFromContext(ctx))
+		if err != nil {
+			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
+		}
+		ckpt = c
+	}
+	if err := writeFileFunc(targetPath, []byte(patched), 0644); err != nil {
+		return tools.ToolResult{Error: true, Content: rollback(err.Error(), ckpt)}, nil
 	}
 
 	// Auto-stamp .grimoire metadata when patching it

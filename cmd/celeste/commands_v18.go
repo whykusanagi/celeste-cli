@@ -186,7 +186,7 @@ func runRevertCommand(args []string) {
 
 	// Find the most recent checkpoint for this file
 	sm := checkpoints.NewSnapshotManager(fmt.Sprintf("cli-%d", os.Getpid()))
-	if err := sm.Revert(absPath); err != nil {
+	if _, err := sm.Revert(absPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintln(os.Stderr, "\nNo checkpoint found. Checkpoints are created during interactive chat sessions.")
 		fmt.Fprintln(os.Stderr, "Use `celeste chat` and edit files — checkpoints are saved automatically.")

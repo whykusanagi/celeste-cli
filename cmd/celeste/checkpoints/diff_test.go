@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ func TestComputeDiff_Insertions(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3\nline4"), 0644))
 
 	changes, err := sm.ComputeDiff()
@@ -36,7 +37,7 @@ func TestComputeDiff_Deletions(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1"), 0644))
 
 	changes, err := sm.ComputeDiff()
@@ -52,7 +53,7 @@ func TestComputeDiff_NewFile(t *testing.T) {
 	sm := newSnapshotManagerWithBase(backupDir)
 
 	srcFile := filepath.Join(dir, "new.txt")
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 
 	// Now create the file
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
@@ -73,7 +74,7 @@ func TestComputeDiff_DeletedFile(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.Remove(srcFile))
 
 	changes, err := sm.ComputeDiff()
@@ -91,9 +92,9 @@ func TestComputeDiff_MultipleSnapshots_UsesEarliest(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("original"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("modified once"), 0644))
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("modified twice"), 0644))
 
 	changes, err := sm.ComputeDiff()
@@ -110,7 +111,7 @@ func TestComputeDiff_Mixed(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	// Replace line2 with lineX and add line4
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nlineX\nline3\nline4"), 0644))
 
@@ -145,4 +146,59 @@ func TestDiffStats(t *testing.T) {
 			assert.Equal(t, tt.wantDel, del, "deletions")
 		})
 	}
+}
+
+func TestComputeDiffMarksDeletedFilesAndSorts(t *testing.T) {
+	dir := t.TempDir()
+	sm := newSnapshotManagerWithBase(filepath.Join(dir, "session"))
+	b, a := filepath.Join(dir, "b.txt"), filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(b, []byte("x\ny"), 0o644))
+	require.NoError(t, os.WriteFile(a, []byte("x"), 0o644))
+	require.NoError(t, snap(sm, b))
+	require.NoError(t, snap(sm, a))
+	require.NoError(t, os.Remove(b))
+
+	changes, err := sm.ComputeDiff()
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	assert.Equal(t, a, changes[0].Path)
+	assert.Equal(t, b, changes[1].Path)
+	assert.True(t, changes[1].Deleted)
+	assert.Equal(t, 2, changes[1].Deletions)
+}
+
+func TestFormatChanges(t *testing.T) {
+	ws := t.TempDir()
+	changes := []FileChange{
+		{Path: filepath.Join(ws, "a.txt"), Insertions: 3, Deletions: 1},
+		{Path: filepath.Join(ws, "sub", "new.txt"), Insertions: 2, IsNew: true},
+		{Path: filepath.Join(ws, "gone.txt"), Deletions: 2, Deleted: true},
+	}
+	outside := filepath.Join(t.TempDir(), "elsewhere.txt")
+	changes = append(changes, FileChange{Path: outside, Insertions: 1})
+
+	want := "Files changed this session:\n" +
+		"  a.txt  +3 -1\n" +
+		"  " + filepath.Join("sub", "new.txt") + "  +2 -0 (new)\n" +
+		"  gone.txt  +0 -2 (deleted)\n" +
+		"  " + outside + "  +1 -0"
+	assert.Equal(t, want, FormatChanges(changes, ws))
+	assert.Equal(t, "No files changed in this session.", FormatChanges(nil, ws))
+}
+
+// /diff reads backups only inside the session directory, whatever a
+// hand-edited index names.
+func TestComputeDiffRefusesBackupsOutsideTheSession(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "session")
+	require.NoError(t, os.MkdirAll(sdir, 0o700))
+	f := filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("now"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("s\ne\nc"), 0o600))
+	data, err := json.Marshal([]Entry{{Path: f, Version: 1, Backup: filepath.Join("..", "secret.txt")}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sdir, "index.json"), data, 0o600))
+
+	_, err = newSnapshotManagerWithBase(sdir).ComputeDiff()
+	assert.ErrorContains(t, err, "invalid backup name")
 }

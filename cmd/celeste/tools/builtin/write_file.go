@@ -103,13 +103,6 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 	}
 
-	// Snapshot before writing
-	if t.snapMgr != nil {
-		if err := t.snapMgr.Snapshot(targetPath); err != nil {
-			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
-		}
-	}
-
 	// Undo created directories (and a partial new file) on every return
 	// below unless the write fully succeeded and verify passed (fix round 6).
 	written := false
@@ -127,27 +120,44 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", protectedError(targetPath))}, nil
 	}
 
+	// Checkpoint now that the call validated (path, protected files, stale
+	// read, directories), immediately before the write (2.0 F4). A write
+	// that fails puts the file back and records nothing.
+	var ckpt *checkpoints.Checkpoint
+	if t.snapMgr != nil {
+		c, err := t.snapMgr.Checkpoint(targetPath, tools.CallIDFromContext(ctx))
+		if err != nil {
+			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
+		}
+		ckpt = c
+	}
+	fail := func(msg string) (tools.ToolResult, error) {
+		return tools.ToolResult{Error: true, Content: rollback(msg, ckpt)}, nil
+	}
+
 	var bytesWritten int
 	if appendMode {
 		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			return tools.ToolResult{Error: true, Content: err.Error()}, nil
+			return fail(err.Error())
 		}
-		defer f.Close()
 		n, err := f.WriteString(content)
+		closeErr := f.Close()
 		if err != nil {
-			return tools.ToolResult{Error: true, Content: err.Error()}, nil
+			return fail(err.Error())
+		}
+		if closeErr != nil {
+			return fail(closeErr.Error())
 		}
 		bytesWritten = n
-		f.Close()
 	} else {
-		if err := os.WriteFile(targetPath, []byte(content), 0644); err != nil {
-			return tools.ToolResult{Error: true, Content: err.Error()}, nil
+		if err := writeFileFunc(targetPath, []byte(content), 0644); err != nil {
+			return fail(err.Error())
 		}
 		bytesWritten = len(content)
 	}
 	if err := guard.verify(); err != nil {
-		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+		return fail(fmt.Sprintf("path error: %s", err))
 	}
 	written = true
 

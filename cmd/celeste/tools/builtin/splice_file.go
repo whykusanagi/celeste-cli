@@ -103,7 +103,16 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	if err != nil {
 		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
 	}
+	// One file under two spellings (case on Windows and macOS, a hard
+	// link) is one file: a "cross-file" move would write it twice.
 	sameFile := sourcePath == destPath
+	if !sameFile {
+		if si, err := os.Stat(sourcePath); err == nil {
+			if di, err := os.Stat(destPath); err == nil {
+				sameFile = os.SameFile(si, di)
+			}
+		}
+	}
 
 	if t.tracker != nil {
 		if err := t.tracker.CheckStale(sourcePath); err != nil {
@@ -150,38 +159,51 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		return errResult(err.Error()), nil
 	}
 
-	// Snapshot before writing (source first, then dest if distinct).
+	// Anchor verification, before anything is checkpointed or written: the
+	// region must be in the new dest, and a cross-file move must remove one
+	// occurrence of it from source (the text may also appear elsewhere
+	// there). Byte-exact, no model involvement.
+	if !strings.Contains(newDest, region) {
+		return errResult("verification failed: spliced region not found in dest"), nil
+	}
+	if op == "move" && !sameFile && strings.Count(sourceAfter, region) >= strings.Count(source, region) {
+		return errResult("verification failed: region still present in source after move"), nil
+	}
+
+	// Checkpoint the files this call writes, now that both regions
+	// resolved, immediately before writing (2.0 F4): the destination, and
+	// for a cross-file move the source first. Any failure below puts them
+	// back and records nothing.
+	var ckpts []*checkpoints.Checkpoint
 	if t.snapMgr != nil {
-		if err := t.snapMgr.Snapshot(sourcePath); err != nil {
-			return errResult(fmt.Sprintf("snapshot source: %s", err)), nil
+		targets := []string{destPath}
+		if op == "move" && !sameFile {
+			targets = []string{sourcePath, destPath}
 		}
-		if !sameFile {
-			if err := t.snapMgr.Snapshot(destPath); err != nil {
-				return errResult(fmt.Sprintf("snapshot dest: %s", err)), nil
+		callID := tools.CallIDFromContext(ctx)
+		for _, p := range targets {
+			c, err := t.snapMgr.Checkpoint(p, callID)
+			if err != nil {
+				return errResult(rollback(fmt.Sprintf("snapshot %s: %s", p, err), ckpts...)), nil
 			}
+			ckpts = append(ckpts, c)
 		}
+	}
+	fail := func(msg string) (tools.ToolResult, error) {
+		return errResult(rollback(msg, ckpts...)), nil
 	}
 
 	// Write. For a same-file move, dest already reflects the removal.
-	if err := os.WriteFile(destPath, []byte(newDest), 0644); err != nil {
-		return errResult(fmt.Sprintf("write dest: %s", err)), nil
+	if err := writeFileFunc(destPath, []byte(newDest), 0644); err != nil {
+		return fail(fmt.Sprintf("write dest: %s", err))
 	}
 	if err := destGuard.verify(); err != nil {
-		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
+		return fail(fmt.Sprintf("dest path error: %s", err))
 	}
 	if op == "move" && !sameFile {
-		if err := os.WriteFile(sourcePath, []byte(sourceAfter), 0644); err != nil {
-			return errResult(fmt.Sprintf("write source: %s", err)), nil
+		if err := writeFileFunc(sourcePath, []byte(sourceAfter), 0644); err != nil {
+			return fail(fmt.Sprintf("write source: %s", err))
 		}
-	}
-
-	// Anchor verification: the region must now be present in dest, and (for a
-	// cross-file move) absent from source. Byte-exact, no model involvement.
-	if !strings.Contains(newDest, region) {
-		return errResult("verification failed: spliced region not found in dest after write"), nil
-	}
-	if op == "move" && !sameFile && strings.Contains(sourceAfter, region) {
-		return errResult("verification failed: region still present in source after move"), nil
 	}
 
 	if t.tracker != nil {
