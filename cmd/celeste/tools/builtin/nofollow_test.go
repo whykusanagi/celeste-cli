@@ -68,3 +68,37 @@ func TestReadToolsReadThroughResolvedPath(t *testing.T) {
 		t.Fatalf("b.txt = %q", b)
 	}
 }
+
+// search must not read a file outside the workspace through a symlink
+// inside it.
+func TestSearchDoesNotFollowASymlinkOut(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret"), []byte("needle-outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "secret"), filepath.Join(ws, "out.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "in.txt"), []byte("needle-inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ws, "in.txt"), filepath.Join(ws, "inner-link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewSearchTool(ws).Execute(context.Background(), map[string]any{"pattern": "needle"}, nil)
+	if err != nil || res.Error {
+		t.Fatalf("search: %+v err=%v", res, err)
+	}
+	if strings.Contains(res.Content, "needle-outside") || !strings.Contains(res.Content, "needle-inside") {
+		t.Fatalf("search content = %s", res.Content)
+	}
+	// Searching the inner link itself still reads its in-workspace target.
+	res, err = NewSearchTool(ws).Execute(context.Background(), map[string]any{"pattern": "needle", "path": "inner-link.txt"}, nil)
+	if err != nil || res.Error || !strings.Contains(res.Content, "needle-inside") {
+		t.Fatalf("search of an inner link: %+v err=%v", res, err)
+	}
+}

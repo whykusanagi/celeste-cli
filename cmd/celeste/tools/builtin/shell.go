@@ -40,8 +40,9 @@ type ShellResult struct {
 // RunShell runs one model-chosen shell command (ruling 1): the denylist
 // first, then sh -c in its own process group, killed whole on timeout. A
 // background process still holding the output pipes after the shell exits
-// gets shellWaitDelay before the pipes are closed; it is not killed then
-// (only a timeout kills the group), and Err says what happened.
+// gets shellWaitDelay; then the pipes are closed, the group is killed, and
+// Err says so. A background process that redirected its output does not
+// hold the pipes and keeps running.
 func RunShell(ctx context.Context, o ShellOptions) ShellResult {
 	if reason := checkDangerousCommand(o.Command); reason != "" {
 		return ShellResult{Blocked: reason, ExitCode: -1}
@@ -78,7 +79,10 @@ func RunShell(ctx context.Context, o ShellOptions) ShellResult {
 	switch {
 	case err == nil, res.TimedOut, errors.As(err, &exitErr):
 	case errors.Is(err, exec.ErrWaitDelay):
-		res.Err = fmt.Errorf("the shell exited but a background process kept its output open, so later output was dropped (redirect it: cmd > log 2>&1 &): %w", err)
+		// Whatever still held the pipes is in the group; its output can no
+		// longer reach anyone, so it does not outlive the call unseen.
+		_ = proctree.Kill(cmd)
+		res.Err = fmt.Errorf("the shell exited but a background process kept its output open; it was stopped (redirect its output to keep it running: cmd > log 2>&1 &): %w", err)
 	default:
 		res.Err = err
 	}
