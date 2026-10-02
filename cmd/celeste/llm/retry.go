@@ -62,6 +62,14 @@ func classifyError(err error) errorClass {
 	if _, ok := err.(nonRetryable); ok {
 		return errorClass{Retryable: false, Kind: kindFatal}
 	}
+	// An error that knows its class (a Responses stream failure event)
+	// says so; others are matched on their message below.
+	var rk interface{ retryKind() (errKind, bool) }
+	if errors.As(err, &rk) {
+		if k, ok := rk.retryKind(); ok {
+			return errorClass{Retryable: k == kindRateLimit || k == kindServer || k == kindNetwork, Kind: k}
+		}
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "429") || strings.Contains(msg, "rate limit"):

@@ -24,8 +24,33 @@ type responsesEvents interface {
 	Recv() (openai.ResponseStreamEvent, error)
 }
 
-// errResponsesCut: the stream closed before a terminal event (ruling 9).
-var errResponsesCut = errors.New("openai responses: stream closed before the response finished")
+// errResponsesCut: the stream closed before a terminal event (ruling 9). It
+// wraps io.ErrUnexpectedEOF so the retry policy treats it as a network
+// failure; the Client does not retry once output reached the caller.
+var errResponsesCut = fmt.Errorf("openai responses: stream closed before the response finished: %w", io.ErrUnexpectedEOF)
+
+// responsesStreamError is a response.failed or error event. Its code tells
+// the retry policy whether it stands for a transient 5xx or 429.
+type responsesStreamError struct{ code, msg string }
+
+func (e *responsesStreamError) Error() string {
+	if e.code == "" {
+		return "openai responses: " + e.msg
+	}
+	return "openai responses: " + e.code + ": " + e.msg
+}
+
+// retryKind maps the server's code to a retry class; ok is false for codes
+// left to classifyError's message matching.
+func (e *responsesStreamError) retryKind() (errKind, bool) {
+	switch e.code {
+	case "server_error", "server_is_overloaded", "internal_error":
+		return kindServer, true
+	case "rate_limit_exceeded", "slow_down":
+		return kindRateLimit, true
+	}
+	return kindNone, false
+}
 
 // readResponses reads one reply. Text deltas and tool calls are emitted as
 // StreamEvents as they arrive (tool calls keyed by call_id); each finished
@@ -39,7 +64,7 @@ func readResponses(stream responsesEvents, emit func(StreamEvent)) (responsesTur
 	items := map[int]json.RawMessage{}
 	for {
 		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return turn, errResponsesCut
 		}
 		if err != nil {
@@ -85,16 +110,13 @@ func readResponses(stream responsesEvents, emit func(StreamEvent)) (responsesTur
 			turn.finish = responsesFinish(ev.Type, ev.Response, len(turn.calls))
 			return turn, nil
 		case openai.ResponseStreamEventFailed:
-			msg := "response failed"
+			e := &responsesStreamError{msg: "response failed"}
 			if ev.Response != nil && ev.Response.Error != nil {
-				msg = ev.Response.Error.Message
-				if ev.Response.Error.Code != "" {
-					msg = ev.Response.Error.Code + ": " + msg
-				}
+				e = &responsesStreamError{code: ev.Response.Error.Code, msg: ev.Response.Error.Message}
 			}
-			return turn, fmt.Errorf("openai responses: %s", msg)
+			return turn, e
 		case openai.ResponseStreamEventError:
-			return turn, fmt.Errorf("openai responses: %s: %s", ev.Code, ev.Message)
+			return turn, &responsesStreamError{code: ev.Code, msg: ev.Message}
 		}
 	}
 }

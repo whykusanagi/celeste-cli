@@ -217,29 +217,114 @@ func TestBlocksRejectionClassification(t *testing.T) {
 	}
 }
 
-// Review Focus 3: a reply cut off before its terminal event is an error and
-// carries no blocks.
-func TestResponsesCutStreamIsAnError(t *testing.T) {
-	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Text: "partial", Truncate: true})
-	c, _ := newResponsesTestClient(t, srv, "gpt-test")
+// eventsText runs one SendMessageStreamEvents call and returns the text it
+// streamed, whether EventMessageDone arrived, and the error.
+func eventsText(c *Client) (string, bool, error) {
+	var text string
 	sawDone := false
 	err := c.SendMessageStreamEvents(context.Background(), userMsgs("hi"), nil, func(ev StreamEvent) {
+		text += ev.ContentDelta
 		if ev.Type == EventMessageDone {
 			sawDone = true
 		}
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "closed before the response finished")
-	assert.False(t, sawDone)
+	return text, sawDone, err
 }
 
+// Review Focus 3: a reply cut off before its terminal event is an error and
+// carries no blocks. Once output reached the caller it is not retried (a
+// retry would repeat it).
+func TestResponsesCutStreamIsAnError(t *testing.T) {
+	for _, cut := range []fakeprovider.Turn{
+		{Text: "partial", Truncate: true}, // clean close, no terminal event
+		{Text: "partial", Drop: true},     // connection lost mid-event
+	} {
+		srv := fakeprovider.NewOpenAIResponses(t, cut, fakeprovider.Turn{Text: "unused"})
+		c, _ := newResponsesTestClient(t, srv, "gpt-test")
+		_, sawDone, err := eventsText(c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "closed before the response finished")
+		assert.False(t, sawDone)
+		assert.Len(t, srv.Requests(), 1, "output was already streamed: no retry")
+	}
+}
+
+// Review I1: a cut before any output is a network failure and is retried.
+func TestResponsesCutBeforeOutputIsRetried(t *testing.T) {
+	for _, cut := range []fakeprovider.Turn{{Truncate: true}, {Drop: true}} {
+		srv := fakeprovider.NewOpenAIResponses(t, cut, fakeprovider.Turn{Text: "ok"})
+		c, _ := newResponsesTestClient(t, srv, "gpt-test")
+		text, sawDone, err := eventsText(c)
+		require.NoError(t, err)
+		assert.Equal(t, "ok", text)
+		assert.True(t, sawDone)
+		assert.Len(t, srv.Requests(), 2)
+	}
+}
+
+func TestReadResponsesCutWrapsUnexpectedEOF(t *testing.T) {
+	empty := scriptedEvents{}
+	_, err := readResponses(&empty, func(StreamEvent) {})
+	assert.ErrorIs(t, err, errResponsesCut)
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.True(t, classifyError(err).Retryable)
+}
+
+// A failure the server says is not transient is returned at once.
 func TestResponsesFailedResponseIsAnError(t *testing.T) {
-	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Fail: "boom"})
+	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Fail: "bad prompt", FailCode: "invalid_prompt"})
 	c, _ := newResponsesTestClient(t, srv, "gpt-test")
 	_, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "boom")
+	assert.Contains(t, err.Error(), "invalid_prompt: bad prompt")
 	assert.Equal(t, 1, len(srv.Requests()), "a failed response is not retried")
+}
+
+// Review I2: response.failed (server_error) or an error event
+// (rate_limit_exceeded) before any output is retried like the HTTP 5xx/429
+// it stands for; after output it is not.
+func TestResponsesTransientFailuresBeforeOutputAreRetried(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Fail: "boom"}, fakeprovider.Turn{Text: "ok"})
+	c, _ := newResponsesTestClient(t, srv, "gpt-test")
+	res, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", res.Content)
+	assert.Len(t, srv.Requests(), 2)
+
+	srv = fakeprovider.NewOpenAIResponses(t,
+		fakeprovider.Turn{Error: "slow down", FailCode: "rate_limit_exceeded"}, fakeprovider.Turn{Text: "ok"})
+	c, _ = newResponsesTestClient(t, srv, "gpt-test")
+	text, _, err := eventsText(c)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", text)
+	assert.Len(t, srv.Requests(), 2)
+
+	srv = fakeprovider.NewOpenAIResponses(t,
+		fakeprovider.Turn{Text: "partial", Error: "overloaded"}, fakeprovider.Turn{Text: "unused"})
+	c, _ = newResponsesTestClient(t, srv, "gpt-test")
+	_, _, err = eventsText(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "server_error: overloaded")
+	assert.Len(t, srv.Requests(), 1, "output was already streamed: no retry")
+}
+
+func TestResponsesStreamErrorClassification(t *testing.T) {
+	cases := []struct {
+		code      string
+		retryable bool
+		kind      errKind
+	}{
+		{"server_error", true, kindServer},
+		{"server_is_overloaded", true, kindServer},
+		{"rate_limit_exceeded", true, kindRateLimit},
+		{"context_length_exceeded", false, kindContextLength},
+		{"invalid_prompt", false, kindFatal},
+		{"", false, kindFatal},
+	}
+	for _, c := range cases {
+		got := classifyError(&responsesStreamError{code: c.code, msg: "m"})
+		assert.Equal(t, errorClass{Retryable: c.retryable, Kind: c.kind}, got, c.code)
+	}
 }
 
 func TestResponsesIncompleteIsALengthStop(t *testing.T) {
