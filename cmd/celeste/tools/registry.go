@@ -1,12 +1,10 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -14,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 )
 
@@ -630,6 +629,10 @@ func (r *Registry) Count() int {
 	return len(r.tools)
 }
 
+// customToolTimeout bounds one custom tool command; the caller's context
+// may end it sooner.
+const customToolTimeout = 2 * time.Minute
+
 // customToolWrapper wraps a JSON-defined custom tool.
 type customToolWrapper struct {
 	name        string
@@ -655,15 +658,25 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 		return ToolResult{Content: fmt.Sprintf("Failed to marshal input: %v", err), Error: true}, nil
 	}
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", c.command)
-	cmd.Stdin = bytes.NewBuffer(data)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %v\nOutput:\n%s", c.command, err, string(output)), Error: true}, nil
+	// The command is user-authored (trusted, so no denylist), but the
+	// model chooses when it runs: it still gets its own process group,
+	// a timeout, a bounded pipe wait and an output cap.
+	res := shellrun.Run(ctx, shellrun.Options{Command: c.command, Stdin: data, Timeout: customToolTimeout})
+	var failure string
+	switch {
+	case res.Err != nil:
+		failure = res.Err.Error()
+	case res.TimedOut:
+		failure = fmt.Sprintf("timed out after %s; the command and everything it started were killed", customToolTimeout)
+	case ctx.Err() != nil:
+		failure = "cancelled; the command and everything it started were killed"
+	case res.ExitCode != 0:
+		failure = fmt.Sprintf("exit status %d", res.ExitCode)
 	}
-
-	return ToolResult{Content: string(output)}, nil
+	if failure != "" {
+		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %s\nOutput:\n%s", c.command, failure, res.Output), Error: true}, nil
+	}
+	return ToolResult{Content: res.Output}, nil
 }
 
 // LoadCustomTools loads JSON tool definitions from a directory.
