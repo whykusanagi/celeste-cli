@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,29 +171,74 @@ func runPlanCommand(args []string) {
 }
 
 func runRevertCommand(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: celeste revert <file-path>")
-		fmt.Fprintln(os.Stderr, "\nReverts a file to its most recent checkpoint (pre-edit snapshot).")
-		fmt.Fprintln(os.Stderr, "Checkpoints are created automatically before each write_file/patch_file.")
-		os.Exit(1)
+	if code := revertCommand(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
 	}
+}
 
-	filePath := args[0]
-	absPath, err := filepath.Abs(filePath)
+const revertUsage = `Usage: celeste revert <file> [--session <id>]
+
+Restores a file from its newest checkpoint (taken before each write_file,
+patch_file and splice_file) in the given session, or in the latest session
+that changed it, and drops that checkpoint: run it again to go back further.`
+
+// revertCommand is `celeste revert <file> [--session id]` (2.0 F4): 0 when
+// the file was restored, 1 when there is nothing to restore or it failed,
+// 2 for bad arguments.
+func revertCommand(args []string, stdout, stderr io.Writer) int {
+	usageErr := func(format string, a ...any) int {
+		fmt.Fprintf(stderr, "Error: "+format+"\n\n", a...)
+		fmt.Fprintln(stderr, revertUsage)
+		return 2
+	}
+	var file, session string
+	files := false // after "--" every argument is a file
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case !files && a == "--":
+			files = true
+		case !files && (a == "--help" || a == "-h" || a == "-help"):
+			fmt.Fprintln(stdout, revertUsage)
+			return 0
+		case !files && (a == "--session" || a == "-session"):
+			if i+1 >= len(args) {
+				return usageErr("--session needs a session ID")
+			}
+			i++
+			session = args[i]
+		case !files && (strings.HasPrefix(a, "--session=") || strings.HasPrefix(a, "-session=")):
+			session = a[strings.Index(a, "=")+1:]
+			if session == "" {
+				return usageErr("--session needs a session ID")
+			}
+		case !files && strings.HasPrefix(a, "-") && a != "-":
+			return usageErr("unknown flag %s", a)
+		case file == "":
+			file = a
+		default:
+			return usageErr("unexpected argument %q", a)
+		}
+	}
+	if file == "" {
+		return usageErr("no file given")
+	}
+	abs, err := filepath.Abs(file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Error resolving path: %v\n", err)
+		return 1
 	}
-
-	// Find the most recent checkpoint for this file
-	sm := checkpoints.NewSnapshotManager(fmt.Sprintf("cli-%d", os.Getpid()))
-	if _, err := sm.Revert(absPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "\nNo checkpoint found. Checkpoints are created during interactive chat sessions.")
-		fmt.Fprintln(os.Stderr, "Use `celeste chat` and edit files — checkpoints are saved automatically.")
-		os.Exit(1)
+	sid, e, err := checkpoints.RevertFile(checkpoints.Root(), abs, session)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
 	}
-	fmt.Printf("Reverted: %s\n", filePath)
+	if e.Backup == "" {
+		fmt.Fprintf(stdout, "Removed %s: session %s created it.\n", file, sid)
+		return 0
+	}
+	fmt.Fprintf(stdout, "Reverted %s to its state before change %d (session %s).\n", file, e.Version, sid)
+	return 0
 }
 
 func runIndexCommand(args []string) {

@@ -98,7 +98,7 @@ Commands:
   forget <name>           Delete a memory
   resume [session-id]     Resume a previous session
   plan [show]             Show current plan from .celeste/plan.md
-  revert <file>           Revert a file from checkpoint
+  revert <file> [--session id]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
   help                    Show this help message
   version                 Show version information
@@ -113,6 +113,8 @@ Interactive Commands (in chat mode):
   /memories               List project memories
   /costs                  Show session costs
   /context                Show context/token usage
+  /diff                   List the files this session changed
+  /undo                   Undo the last file change (repeat to go back)
   /grimoire               Show project grimoire
   /index                  Show code graph status
   /plan [show]            Show current plan
