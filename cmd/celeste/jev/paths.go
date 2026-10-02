@@ -12,9 +12,23 @@ import (
 
 // pathToken finds absolute and home-relative paths: /a/b, ~/a, ~user/a,
 // C:\a or C:/a, after the start of the text, a space, a quote, a bracket,
-// '=', ',' or ':'. A URL's "//host" is never one (the first segment may not
-// start with a slash), nor is a relative path (./a, a/b, and/or).
-var pathToken = regexp.MustCompile("(^|[\\s\"'`=(\\[{<,:])((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\\\][^/\\\\\\s\"'`<>|*?(){}\\[\\],;]+(?:[/\\\\]+[^/\\\\\\s\"'`<>|*?(){}\\[\\],;]*)*)")
+// a shell operator (> | ; &), '=', ',' or ':'. A URL's "//host" is never
+// one (the first segment may not start with a slash), nor is a relative
+// path (./a, a/b, and/or).
+var pathToken = regexp.MustCompile("(^|[\\s\"'`=(\\[{<>|;&,:])((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\\\][^/\\\\\\s\"'`<>|*?(){}\\[\\],;]+(?:[/\\\\]+[^/\\\\\\s\"'`<>|*?(){}\\[\\],;]*)*)")
+
+// fileURL is a file: URL's path (file:///a/b, file://localhost/a,
+// file:///C:/a).
+var fileURL = regexp.MustCompile("(?i)\\bfile://(?:localhost)?(/?(?:[A-Za-z]:)?[/\\\\][^\\s\"'`<>|]*)")
+
+// quotedPath is a whole quoted string that starts like a path: one with
+// spaces in it is redacted to its closing quote. RE2 has no
+// backreferences, so one pattern per quote character.
+var quotedPath = []*regexp.Regexp{
+	regexp.MustCompile(`"((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\][^"\n]{0,1000}?)"`),
+	regexp.MustCompile(`'((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\][^'\n]{0,1000}?)'`),
+	regexp.MustCompile("`((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\\\][^`\\n]{0,1000}?)`"),
+}
 
 // PathPlaceholder replaces a path outside the workspace.
 const PathPlaceholder = "<path>"
@@ -31,6 +45,23 @@ func RedactPaths(s, workspace string) string {
 	home := ""
 	if h, err := os.UserHomeDir(); err == nil {
 		home = normPath(h)
+	}
+	s = fileURL.ReplaceAllStringFunc(s, func(m string) string {
+		p := fileURL.FindStringSubmatch(m)[1]
+		if len(p) > 2 && p[0] == '/' && p[2] == ':' {
+			p = p[1:] // file:///C:/a
+		}
+		trimmed := strings.TrimRight(p, ".:")
+		return "file://" + relOrPlaceholder(trimmed, ws, home) + p[len(trimmed):]
+	})
+	for _, re := range quotedPath {
+		s = re.ReplaceAllStringFunc(s, func(m string) string {
+			inner := m[1 : len(m)-1]
+			if !strings.ContainsAny(inner, " \t") {
+				return m // no spaces: the token pass below handles it
+			}
+			return m[:1] + relOrPlaceholder(inner, ws, home) + m[len(m)-1:]
+		})
 	}
 	return pathToken.ReplaceAllStringFunc(s, func(m string) string {
 		g := pathToken.FindStringSubmatch(m)

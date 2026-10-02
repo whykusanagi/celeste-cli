@@ -32,6 +32,16 @@ func TestRedactPaths(t *testing.T) {
 		"(/opt/tool/bin) [" + wsSlash + "/q.go]": "(<path>) [q.go]",
 		"cmd=" + wsSlash + "/build.sh":           "cmd=build.sh",
 		"no workspace given: /home/u/x":          "no workspace given: <path>",
+		"cat a >/Users/alice/secret.txt":         "cat a ><path>",
+		"a|/Users/alice/x":                       "a|<path>",
+		"cp a;/Users/alice/x":                    "cp a;<path>",
+		"a&&/Users/alice/x":                      "a&&<path>",
+		"open file:///Users/alice/notes.md now":  "open file://<path> now",
+		"open file://" + wsSlash + "/n.md":       "open file://n.md",
+		"cat '/Users/alice/My Project/x'":        "cat '<path>'",
+		`{"path":"/Users/alice/My Project/x"}`:   `{"path":"<path>"}`,
+		`{"path":"` + wsSlash + `/My Dir/a.go"}`: `{"path":"My Dir/a.go"}`,
+		"it's /usr/bin and it's fine":            "it's <path> and it's fine",
 	}
 	for in, want := range cases {
 		w := ws
