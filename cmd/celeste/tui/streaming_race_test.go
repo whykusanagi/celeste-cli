@@ -14,7 +14,7 @@ import (
 //
 //  1. First streaming chunk arrives carrying 1 character (e.g. "O").
 //     StreamChunkMsg with IsFirst=true starts the typing animation.
-//  2. The first TickMsg fires and advances typingPos by charsPerTick=3,
+//  2. The first TickMsg fires and advances typingPos by 3 chars per tick,
 //     which immediately exceeds len("O")=1. Pre-fix, the tick-complete
 //     branch committed "O" to session history and stopped the ticker.
 //  3. Subsequent chunks ("kay, here's the answer...") append to
@@ -69,7 +69,7 @@ func TestStreamChunkThenTick_ShortFirstChunk_DoesNotCommitEarly(t *testing.T) {
 	assert.Equal(t, "Okay, here's the full answer", mm4.typingContent,
 		"FullContent should be in typingContent after StreamDoneMsg")
 
-	// Step 5: keep ticking until typing catches up. With charsPerTick=3
+	// Step 5: keep ticking until typing catches up. With 3 chars per tick
 	// and a 28-char buffer we need at most 10 ticks to drain. The
 	// tick-complete branch will fire when typingPos == len(buffer) AND
 	// streamDone == true, committing the final content.

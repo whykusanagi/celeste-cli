@@ -274,3 +274,35 @@ func TestRestoreEndpointResolvesAgentModels(t *testing.T) {
 		t.Errorf("agent model = %q", got)
 	}
 }
+
+// I1: the fallback keeps the startup config with a new base URL; the startup
+// key belongs to the old provider and must not be sent to the new one.
+func TestSwitchEndpointFallbackDoesNotSendTheOldKeyToAnotherProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("VENICE_API_KEY", "")
+	cfg := &config.Config{APIKey: "xai-secret", BaseURL: "https://api.x.ai/v1", Model: "grok-x", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	if err := deps.adapter.SwitchEndpoint("openai"); err != nil {
+		t.Fatal(err)
+	}
+	if got := deps.adapter.client.GetConfig().APIKey; got != "" {
+		t.Errorf("the xAI key was carried to OpenAI: %q", got)
+	}
+	if ep := deps.adapter.ActiveEndpoint(); ep.APIKey != "" {
+		t.Errorf("active endpoint holds the old key: %q", ep.APIKey)
+	}
+	// A provider-specific key found for the target is kept.
+	t.Setenv("VENICE_API_KEY", "venice-key")
+	if err := deps.adapter.SwitchEndpoint("venice"); err != nil {
+		t.Fatal(err)
+	}
+	if got := deps.adapter.client.GetConfig().APIKey; got != "venice-key" {
+		t.Errorf("venice key = %q", got)
+	}
+}

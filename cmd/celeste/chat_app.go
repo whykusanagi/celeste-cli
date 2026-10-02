@@ -116,17 +116,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeChat)
 	env.RefreshDiscovery()
 
-	client := llm.NewClient(&llm.Config{
-		APIKey:            cfg.APIKey,
-		BaseURL:           cfg.BaseURL,
-		Model:             served.Model,
-		Timeout:           cfg.GetTimeout(),
-		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
-		SimulateTyping:    cfg.SimulateTyping,
-		TypingSpeed:       cfg.TypingSpeed,
-		Collections:       cfg.Collections,
-		XAIFeatures:       cfg.XAIFeatures,
-	}, registry)
+	chatCfg := llm.ConfigFrom(cfg)
+	chatCfg.Model = served.Model
+	client := llm.NewClient(chatCfg, registry)
 	source := "startup"
 	if resumed {
 		source = "resume"
@@ -302,7 +294,7 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 	// Restore endpoint/provider from session, or detect from config
 	sessionEndpoint := s.GetEndpoint()
 	tui.LogInfo(fmt.Sprintf("Session endpoint from file: '%s'", sessionEndpoint))
-	tui.LogInfo(fmt.Sprintf("Config BaseURL: '%s'", cfg.BaseURL))
+	tui.LogInfo(fmt.Sprintf("Config BaseURL: '%s'", providers.CleanBaseURL(cfg.BaseURL)))
 
 	if sessionEndpoint != "" && sessionEndpoint != "default" {
 		// Use endpoint from session if it's valid

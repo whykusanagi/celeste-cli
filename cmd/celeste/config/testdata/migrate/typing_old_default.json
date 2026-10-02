@@ -1,0 +1,6 @@
+{
+  "api_key": "k",
+  "base_url": "https://api.example.com/v1",
+  "simulate_typing": true,
+  "typing_speed": 40
+}

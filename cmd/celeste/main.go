@@ -168,10 +168,10 @@ Agent:
                                           Enable plan->execute->verify gating
 
 Environment Variables:
-  CELESTE_API_KEY         API key (overrides config)
-  CELESTE_API_ENDPOINT    API endpoint (overrides config)
-  VENICE_API_KEY          Venice.ai API key for NSFW mode
-  TAROT_AUTH_TOKEN        Tarot function auth token
+  CELESTE_API_KEY         API key (overrides the config file; a flag wins over both)
+  CELESTE_API_ENDPOINT    API endpoint (overrides the config file)
+  VENICE_API_KEY          Venice.ai API key for NSFW mode (fallback when skills.json has none)
+  TAROT_AUTH_TOKEN        Tarot function auth token (overrides the config file)
 
 Examples:
   celeste chat                           Start with default config
@@ -193,7 +193,7 @@ func runChatTUI() {
 	config.MigrateConfigDir()
 
 	// Load configuration (named or default)
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -341,6 +341,7 @@ func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
 // SwitchEndpoint switches to a different endpoint by loading its named config.
 func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	prevProvider := ""  // set when falling back to the base config
+	targetKey := false  // the fallback found a key for the target provider
 	fallbackModel := "" // skills.json's Venice model, for that fallback
 	// Try to load named config for the endpoint
 	cfg, err := config.LoadNamed(endpoint)
@@ -357,6 +358,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 			skillsConfig, err := config.LoadSkillsConfig()
 			if err == nil && skillsConfig.VeniceAPIKey != "" {
 				cfg.APIKey = skillsConfig.VeniceAPIKey
+				targetKey = true
 				cfg.BaseURL = skillsConfig.VeniceBaseURL
 				fallbackModel = skillsConfig.VeniceModel
 				tui.LogInfo("Loaded Venice configuration from skills.json")
@@ -364,6 +366,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 				// Fall back to environment variables
 				if veniceKey := os.Getenv("VENICE_API_KEY"); veniceKey != "" {
 					cfg.APIKey = veniceKey
+					targetKey = true
 					tui.LogInfo("Using VENICE_API_KEY from environment")
 				} else {
 					tui.LogInfo("Warning: No VENICE_API_KEY found, using default API key (will likely fail)")
@@ -395,6 +398,12 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	} else {
 		tui.LogInfo(fmt.Sprintf("Loaded named config for endpoint: %s", endpoint))
 	}
+	if prevProvider != "" && providers.DetectProvider(cfg.BaseURL) != prevProvider && !targetKey {
+		// The startup key (CELESTE_API_KEY included) belongs to the old
+		// provider: never send it to another. The request then fails with
+		// the normal "no API key" message.
+		cfg.APIKey = ""
+	}
 	if prevProvider != "" && providers.DetectProvider(cfg.BaseURL) != prevProvider {
 		// The previous provider's models mean nothing here: drop them so
 		// the new provider's default is adopted, without a false "no
@@ -410,17 +419,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	cfg = servedAgentModels(cfg)
 
 	// Update LLM client configuration
-	llmConfig := &llm.Config{
-		APIKey:            cfg.APIKey,
-		BaseURL:           cfg.BaseURL,
-		Model:             cfg.Model,
-		Timeout:           cfg.GetTimeout(),
-		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
-		SimulateTyping:    cfg.SimulateTyping,
-		TypingSpeed:       cfg.TypingSpeed,
-		Collections:       cfg.Collections,
-		XAIFeatures:       cfg.XAIFeatures,
-	}
+	llmConfig := llm.ConfigFrom(cfg)
 
 	a.client.UpdateConfig(llmConfig)
 
@@ -498,17 +497,11 @@ func servedAgentModels(cfg *config.Config) *config.Config {
 // ChangeModel changes the model for the current endpoint.
 func (a *TUIClientAdapter) ChangeModel(model string) error {
 	currentConfig := a.client.GetConfig()
-	newConfig := &llm.Config{
-		APIKey:            currentConfig.APIKey,
-		BaseURL:           currentConfig.BaseURL,
-		Model:             model,
-		Timeout:           currentConfig.Timeout,
-		SkipPersonaPrompt: currentConfig.SkipPersonaPrompt,
-		SimulateTyping:    currentConfig.SimulateTyping,
-		TypingSpeed:       currentConfig.TypingSpeed,
-		Collections:       currentConfig.Collections,
-		XAIFeatures:       currentConfig.XAIFeatures,
-	}
+	// A copy of the live config with the model replaced: nothing else the
+	// client carries (credentials, typing, collections) can be lost.
+	newConfig := new(llm.Config)
+	*newConfig = *currentConfig
+	newConfig.Model = model
 
 	a.client.UpdateConfig(newConfig)
 	tui.LogInfo(fmt.Sprintf("Changed model to: %s", model))
@@ -660,6 +653,16 @@ func (a *TUIClientAdapter) steering() *steer.Session {
 	return a.steer
 }
 
+// summarizerConfig is a summary's client config: a plain completion with its
+// own system prompt, so no xAI collections or features, and the persona skip
+// cleared (the Google backend drops the system prompt when it is set).
+func summarizerConfig(cfg *config.Config) *llm.Config {
+	c := llm.ConfigFrom(cfg)
+	c.Collections, c.XAIFeatures = nil, nil
+	c.SkipPersonaPrompt = false
+	return c
+}
+
 // summarizer returns the small-model summarizer, built on first use.
 func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 	if a.summarize == nil {
@@ -667,13 +670,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 		if cfg == nil {
 			return nil, errors.New("no configuration loaded")
 		}
-		a.summarize = agent.SmallModelSummarizer(&llm.Config{
-			APIKey:                cfg.APIKey,
-			BaseURL:               cfg.BaseURL,
-			Timeout:               cfg.GetTimeout(),
-			GoogleCredentialsFile: cfg.GoogleCredentialsFile,
-			GoogleUseADC:          cfg.GoogleUseADC,
-		}, cfg.ResolveSmallModel())
+		a.summarize = agent.SmallModelSummarizer(summarizerConfig(cfg), cfg.ResolveSmallModel())
 	}
 	return a.summarize, nil
 }
@@ -774,7 +771,7 @@ func runConfigCommand(args []string) {
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
 	simulateTyping := fs.String("simulate-typing", "", "Simulate typing (true/false)")
-	typingSpeed := fs.Int("typing-speed", 0, "Typing speed (chars/sec)")
+	typingSpeed := fs.Int("typing-speed", 0, "Typing speed in chars/sec (1-1000, default 60)")
 
 	// Google Cloud authentication flags
 	setGoogleCredentials := fs.String("set-google-credentials", "", "Set Google Cloud service account JSON file path")
@@ -940,7 +937,11 @@ func runConfigCommand(args []string) {
 		changed = true
 		fmt.Printf("Simulate typing: %v\n", cfg.SimulateTyping)
 	}
-	if *typingSpeed > 0 {
+	if *typingSpeed != 0 {
+		if !tui.ValidTypingSpeed(*typingSpeed) {
+			fmt.Fprintf(os.Stderr, "Invalid --typing-speed %d: use 1-%d chars/sec\n", *typingSpeed, tui.MaxTypingSpeed)
+			os.Exit(1)
+		}
 		cfg.TypingSpeed = *typingSpeed
 		changed = true
 		fmt.Printf("Typing speed: %d chars/sec\n", cfg.TypingSpeed)
@@ -1150,7 +1151,7 @@ func createConfigTemplate(name string) error {
 		Timeout:           o.timeout,
 		SkipPersonaPrompt: o.skipPersona,
 		SimulateTyping:    true,
-		TypingSpeed:       25,
+		TypingSpeed:       60,
 		MaxToolIterations: config.DefaultMaxToolIterations,
 	}
 
@@ -1256,7 +1257,7 @@ func runSkillExecuteCommand(args []string) {
 	}
 
 	// Set up registry and executor
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1472,7 +1473,7 @@ func runCollectionsCommand(args []string) {
 
 // runSingleMessage sends a single message and prints the response.
 func runSingleMessage(message string) {
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1485,16 +1486,7 @@ func runSingleMessage(message string) {
 	resolveServedModels(cfg, os.Stderr)
 
 	// Initialize LLM client
-	llmConfig := &llm.Config{
-		APIKey:            cfg.APIKey,
-		BaseURL:           cfg.BaseURL,
-		Model:             cfg.Model,
-		Timeout:           cfg.GetTimeout(),
-		SkipPersonaPrompt: cfg.SkipPersonaPrompt,
-		Collections:       cfg.Collections,
-		XAIFeatures:       cfg.XAIFeatures,
-	}
-	client := llm.NewClient(llmConfig, nil)
+	client := llm.NewClient(llm.ConfigFrom(cfg), nil)
 
 	if !cfg.SkipPersonaPrompt {
 		client.SetSystemPrompt(prompts.GetSystemPrompt(false))
@@ -1815,7 +1807,7 @@ func runServeCommand(args []string) {
 	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
 	_ = serveFlags.Parse(args)
 
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)

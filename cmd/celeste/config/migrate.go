@@ -51,6 +51,10 @@ func migrateLegacyKeys(data []byte) (out []byte, notes []string, changed bool) {
 		}
 		notes = append(notes, "renamed claw_max_tool_iterations to max_tool_iterations ("+migrationGuide+")")
 	}
+	if v, ok := raw[typingSpeedKey]; ok && isOldTypingSpeedDefault(v) {
+		delete(raw, typingSpeedKey)
+		notes = append(notes, "removed typing_speed: it is honoured now, and this value was an old default that would type slower than before; the new default is 60 chars/sec")
+	}
 	if len(notes) == 0 {
 		return data, nil, false
 	}
@@ -62,6 +66,19 @@ func migrateLegacyKeys(data []byte) (out []byte, notes []string, changed bool) {
 		return data, nil, false
 	}
 	return buf.Bytes(), notes, true
+}
+
+const typingSpeedKey = "typing_speed"
+
+// isOldTypingSpeedDefault reports whether v is a typing_speed celeste itself
+// once wrote as a default (40: DefaultConfig; 25: older defaults and --init
+// templates), as opposed to one the user chose.
+func isOldTypingSpeedDefault(v json.RawMessage) bool {
+	var f float64
+	if json.Unmarshal(v, &f) != nil {
+		return false
+	}
+	return f == 40 || f == 25
 }
 
 // isJSONNumber reports whether v decodes as a JSON number, as opposed to a

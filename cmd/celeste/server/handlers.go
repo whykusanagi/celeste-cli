@@ -18,6 +18,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -438,13 +439,7 @@ func registerCelesteContentTool(s *Server) {
 		cfg = s.servedConfig(ctx, cfg)
 
 		registry := tools.NewRegistry()
-		llmConfig := &llm.Config{
-			APIKey:  cfg.APIKey,
-			BaseURL: cfg.BaseURL,
-			Model:   cfg.Model,
-			Timeout: cfg.GetTimeout(),
-		}
-		client := llm.NewClient(llmConfig, registry)
+		client := llm.NewClient(serverClientConfig(cfg), registry)
 
 		// Use the content-specific prompt variant
 		contentPrompt := prompts.GetContentPrompt("", format, "", "")
@@ -552,7 +547,7 @@ func registerCelesteStatusTool(s *Server) {
 		}
 
 		if cfg != nil {
-			status["provider"] = cfg.BaseURL
+			status["provider"] = providers.CleanBaseURL(cfg.BaseURL)
 			status["model"] = cfg.Model
 		}
 

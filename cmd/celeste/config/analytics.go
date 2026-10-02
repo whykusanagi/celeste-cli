@@ -120,9 +120,10 @@ func (ga *GlobalAnalytics) Save() error {
 	}
 
 	// Write file
-	if err := os.WriteFile(analyticsPath, data, 0644); err != nil {
+	if err := os.WriteFile(analyticsPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write analytics file: %w", err)
 	}
+	_ = os.Chmod(analyticsPath, 0600) // WriteFile keeps an older file's 0644
 
 	return nil
 }

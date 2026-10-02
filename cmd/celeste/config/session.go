@@ -94,7 +94,8 @@ type SessionManager struct {
 func NewSessionManager() *SessionManager {
 	homeDir, _ := os.UserHomeDir()
 	sessionsDir := filepath.Join(homeDir, ".celeste", "sessions")
-	os.MkdirAll(sessionsDir, 0755)
+	os.MkdirAll(sessionsDir, 0700)
+	_ = os.Chmod(sessionsDir, 0700) // tighten a directory an older version made 0755
 
 	return &SessionManager{
 		sessionsDir: sessionsDir,
@@ -115,8 +116,21 @@ func (m *SessionManager) NewSession() *Session {
 	}
 }
 
+// validSessionID rejects an id that is not a plain file name: a user's
+// /session delete ../config must not reach outside the sessions directory.
+func validSessionID(id string) error {
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id ||
+		strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return fmt.Errorf("invalid session id %q", id)
+	}
+	return nil
+}
+
 // Save saves a session to disk.
 func (m *SessionManager) Save(session *Session) error {
+	if err := validSessionID(session.ID); err != nil {
+		return err
+	}
 	session.UpdatedAt = time.Now()
 	session.TokenCount = EstimateSessionTokens(session)
 
@@ -126,9 +140,10 @@ func (m *SessionManager) Save(session *Session) error {
 	}
 
 	path := filepath.Join(m.sessionsDir, session.ID+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return err
 	}
+	_ = os.Chmod(path, 0600) // WriteFile keeps the mode of a file an older version wrote as 0644
 
 	// Update global analytics with this session's data
 	analytics, err := LoadGlobalAnalytics()
@@ -143,6 +158,9 @@ func (m *SessionManager) Save(session *Session) error {
 
 // Load loads a session by ID.
 func (m *SessionManager) Load(id string) (*Session, error) {
+	if err := validSessionID(id); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(m.sessionsDir, id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -240,6 +258,9 @@ func (m *SessionManager) List() ([]Session, error) {
 
 // Delete deletes a session by ID.
 func (m *SessionManager) Delete(id string) error {
+	if err := validSessionID(id); err != nil {
+		return err
+	}
 	path := filepath.Join(m.sessionsDir, id+".json")
 	return os.Remove(path)
 }

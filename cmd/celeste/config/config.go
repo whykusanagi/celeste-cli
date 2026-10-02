@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
@@ -204,6 +205,10 @@ type Config struct {
 
 	// Orchestrator settings
 	Orchestrator *OrchestratorConfig `json:"orchestrator,omitempty"`
+
+	// envFile holds the values the file had for the fields ApplyEnvOverrides
+	// replaced, so a later Save writes the file's values, not the run's.
+	envFile *envFileValues
 }
 
 // CollectionsConfig holds collections settings
@@ -256,7 +261,7 @@ func DefaultConfig() *Config {
 		Timeout:           60,
 		SkipPersonaPrompt: false,
 		SimulateTyping:    true,
-		TypingSpeed:       40,
+		TypingSpeed:       60, // 3 chars per 50ms tick
 		MaxToolIterations: DefaultMaxToolIterations,
 		VeniceBaseURL:     venice.BaseURL,
 		VeniceModel:       venice.DefaultModel,
@@ -315,6 +320,7 @@ func LoadSkillsConfig() (*Config, error) {
 // SaveSkillsConfig saves skill-specific configuration to skills.json.
 func SaveSkillsConfig(skillsConfig *Config) error {
 	_, _, _, skillsFile := Paths()
+	skillsConfig = skillsConfig.forSave()
 
 	// Create skills config with only skill-related fields
 	skillsOnly := &Config{
@@ -354,6 +360,75 @@ func SaveSkillsConfig(skillsConfig *Config) error {
 	}
 
 	return os.WriteFile(skillsFile, data, 0600) // Restrictive permissions for secrets
+}
+
+// Environment overrides. Precedence is flag > environment > config file.
+// They apply to this run only: ApplyEnvOverrides is called by the entry
+// points that run a session (chat, message, agent, serve), never by the
+// loads that are saved back, so a variable's value is never written to disk.
+const (
+	EnvAPIKey      = "CELESTE_API_KEY"
+	EnvAPIEndpoint = "CELESTE_API_ENDPOINT"
+	EnvTarotToken  = "TAROT_AUTH_TOKEN"
+)
+
+// envFileValues are the loaded file's values for the overridable fields.
+type envFileValues struct {
+	apiKey, baseURL, tarotToken string // the file's value
+	envKey, envURL, envTarot    string // what replaced it ("" = not overridden)
+}
+
+// forSave is cfg with any still-unchanged env override swapped back for the
+// file's value; a field changed after the override is saved as changed.
+func (c *Config) forSave() *Config {
+	if c == nil || c.envFile == nil {
+		return c
+	}
+	f := c.envFile
+	out := *c
+	if f.envKey != "" && out.APIKey == f.envKey {
+		out.APIKey = f.apiKey
+	}
+	if f.envURL != "" && out.BaseURL == f.envURL {
+		out.BaseURL = f.baseURL
+	}
+	if f.envTarot != "" && out.TarotAuthToken == f.envTarot {
+		out.TarotAuthToken = f.tarotToken
+	}
+	return &out
+}
+
+// ApplyEnvOverrides lets CELESTE_API_KEY, CELESTE_API_ENDPOINT and
+// TAROT_AUTH_TOKEN replace the loaded api_key, base_url and
+// tarot_auth_token. An unset or blank variable changes nothing.
+func ApplyEnvOverrides(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	f := &envFileValues{apiKey: cfg.APIKey, baseURL: cfg.BaseURL, tarotToken: cfg.TarotAuthToken}
+	if v := strings.TrimSpace(os.Getenv(EnvAPIKey)); v != "" {
+		cfg.APIKey, f.envKey = v, v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvAPIEndpoint)); v != "" {
+		cfg.BaseURL, f.envURL = v, v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvTarotToken)); v != "" {
+		cfg.TarotAuthToken, f.envTarot = v, v
+	}
+	if f.envKey != "" || f.envURL != "" || f.envTarot != "" {
+		cfg.envFile = f
+	}
+}
+
+// LoadNamedWithEnv is LoadNamed plus the environment overrides, for the
+// entry points that run a session.
+func LoadNamedWithEnv(name string) (*Config, error) {
+	cfg, err := LoadNamed(name)
+	if err != nil {
+		return nil, err
+	}
+	ApplyEnvOverrides(cfg)
+	return cfg, nil
 }
 
 // LoadNamed loads configuration from a named config file.
@@ -819,6 +894,7 @@ func (c *Config) ResolveSmallModel() string {
 // Save saves configuration to file.
 func Save(config *Config) error {
 	_, configFile, _, _ := Paths()
+	config = config.forSave()
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -840,6 +916,7 @@ func SaveNamed(name string, config *Config) error {
 	if name == "" {
 		return Save(config)
 	}
+	config = config.forSave()
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -860,6 +937,7 @@ func SaveNamed(name string, config *Config) error {
 // SaveSecrets saves API key to secrets file (backward compatibility).
 func SaveSecrets(config *Config) error {
 	_, _, secretsFile, _ := Paths()
+	config = config.forSave()
 
 	secrets := &Config{
 		APIKey: config.APIKey, // Only API key in secrets.json now

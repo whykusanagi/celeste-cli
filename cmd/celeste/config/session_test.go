@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -715,4 +716,61 @@ func TestSessionMessageToolFieldsRoundTrip(t *testing.T) {
 	for _, key := range []string{"tool_calls", "tool_call_id", "hidden", "compacted"} {
 		assert.NotContains(t, string(plain), key)
 	}
+}
+
+// Sessions hold tool output now, so the files are owner-only, including
+// files an older version wrote as 0644 (#235).
+func TestSessionFilesAreOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	manager := NewSessionManager()
+	session := manager.NewSession()
+	path := filepath.Join(manager.sessionsDir, session.ID+".json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o644)) // an older file
+	require.NoError(t, manager.Save(session))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+// /session delete|merge|rename take the id from the user: it must name a
+// file in the sessions directory, never a path out of it.
+func TestSessionIDsCannotEscapeTheSessionsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	manager := NewSessionManager()
+	victim := filepath.Join(home, ".celeste", "config.json")
+	require.NoError(t, os.WriteFile(victim, []byte(`{}`), 0o600))
+	for _, id := range []string{"../config", "..", "a/b", `a\b`, "", ".", "../sessions/../config"} {
+		assert.Error(t, manager.Delete(id), "Delete(%q)", id)
+		_, err := manager.Load(id)
+		assert.Error(t, err, "Load(%q)", id)
+	}
+	_, err := os.Stat(victim)
+	assert.NoError(t, err, "config.json must survive")
+	bad := manager.NewSession()
+	bad.ID = "../config"
+	assert.Error(t, manager.Save(bad))
+}
+
+// The sessions directory and analytics hold conversation data: owner-only.
+func TestSessionsDirAndAnalyticsAreOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	manager := NewSessionManager()
+	info, err := os.Stat(manager.sessionsDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	require.NoError(t, (&GlobalAnalytics{}).Save())
+	info, err = os.Stat(GetAnalyticsPath())
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }

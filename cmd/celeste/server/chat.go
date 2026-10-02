@@ -109,15 +109,20 @@ func initGrimoire(workspace string) {
 	}
 }
 
+// serverClientConfig is the client config for the server's own prompts (MCP
+// chat, content format). skip_persona_prompt is about celeste's persona, not
+// these prompts, and the Google backend sends no system prompt at all when it
+// is set, so it is cleared here.
+func serverClientConfig(cfg *config.Config) *llm.Config {
+	c := llm.ConfigFrom(cfg)
+	c.SkipPersonaPrompt = false
+	return c
+}
+
 // newChatClient is the pre-loop server's client (same config fields) on the
 // Env's registry. The tool mode stays tools.ModeChat.
 func newChatClient(cfg *config.Config, reg *tools.Registry, system string) *llm.Client {
-	client := llm.NewClient(&llm.Config{
-		APIKey:  cfg.APIKey,
-		BaseURL: cfg.BaseURL,
-		Model:   cfg.Model,
-		Timeout: cfg.GetTimeout(),
-	}, reg)
+	client := llm.NewClient(serverClientConfig(cfg), reg)
 	client.SetSystemPrompt(system)
 	return client
 }
