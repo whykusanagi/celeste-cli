@@ -45,6 +45,12 @@ can hold secrets; the directory is created readable by you only.
 Restoring a file (`/undo`, `celeste revert`, a failed write's rollback)
 replaces it with a new file of the same mode, so other hard links to it,
 another user's ownership, extended attributes and ACLs are not kept. When
-celeste cannot create files in the file's directory, it overwrites the file
-in place instead, which keeps all of them.
+celeste is not permitted to create files in the file's directory, it
+overwrites the file in place instead, which keeps all of them but is not
+atomic: if that write fails halfway, the file is left partly written.
+
+Each checkpoint also records the file's size and SHA-256 as celeste's write
+left it. `/undo` and `celeste revert` compare the file with that before
+restoring; a file changed since (by you, a formatter, a command) is left
+alone with a warning, until you repeat `/undo` or pass `--force`.
 
