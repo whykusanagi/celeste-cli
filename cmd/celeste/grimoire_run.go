@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	iofs "io/fs"
 	"os"
 	"strings"
 
@@ -38,30 +37,11 @@ func initProject(dir string, args []string, out io.Writer) error {
 		}
 		return err
 	}
-	steps := []func(string) (string, error){grimoire.Init}
-	if *agents {
-		steps = append(steps, grimoire.InitAgents)
+	lines, err := grimoire.RunInit(dir, *agents)
+	for _, l := range lines {
+		fmt.Fprintln(out, l)
 	}
-	var wrote int
-	var skipped []string
-	for _, step := range steps {
-		path, err := step(dir)
-		switch {
-		case errors.Is(err, iofs.ErrExist):
-			skipped = append(skipped, err.Error())
-			fmt.Fprintf(out, "%v (left as it is)\n", err)
-		case err != nil:
-			return err
-		default:
-			wrote++
-			fmt.Fprintf(out, "Created %s\n", path)
-		}
-	}
-	if wrote == 0 {
-		return errors.New(strings.Join(skipped, "; "))
-	}
-	fmt.Fprintln(out, "Edit these files to describe the project; Celeste loads them into every session.")
-	return nil
+	return err
 }
 
 // runGrimoireCommand handles the "celeste grimoire" subcommand.
@@ -77,40 +57,9 @@ func runGrimoireCommand(args []string) {
 	}
 }
 
-// showGrimoire prints the merged grimoire and then the AGENTS.md /
-// CLAUDE.md section the project context carries under it (2.0 W4).
+// showGrimoire prints grimoire.Describe, the text /grimoire shows.
 func showGrimoire(dir string, out io.Writer) error {
-	g, err := grimoire.LoadAll(dir)
-	if err != nil {
-		return err
-	}
-	files, warns := grimoire.ContextFiles(dir)
-	for _, w := range warns {
-		fmt.Fprintln(out, "⚠ "+w)
-	}
-	if g.IsEmpty() && len(files) == 0 {
-		fmt.Fprintln(out, "No .grimoire, AGENTS.md or CLAUDE.md found. Run `celeste init` to create a .grimoire.")
-		return nil
-	}
-	sources := append([]string(nil), g.Sources...)
-	for _, f := range files {
-		sources = append(sources, f.Path)
-	}
-	if len(sources) > 0 {
-		fmt.Fprintln(out, "Sources:")
-		for _, s := range sources {
-			fmt.Fprintf(out, "  - %s\n", s)
-		}
-		fmt.Fprintln(out)
-	}
-	if !g.IsEmpty() {
-		fmt.Fprint(out, g.Render())
-	}
-	if section := grimoire.RenderContextFiles(files); section != "" {
-		if !g.IsEmpty() {
-			fmt.Fprintln(out)
-		}
-		fmt.Fprint(out, section)
-	}
-	return nil
+	text, _ := grimoire.Describe(dir)
+	_, err := fmt.Fprintln(out, strings.TrimRight(text, "\n"))
+	return err
 }

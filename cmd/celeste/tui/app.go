@@ -1126,36 +1126,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "grimoire":
-				// Re-read from disk so edits are reflected immediately: the
-				// grimoire, then AGENTS.md / CLAUDE.md (2.0 W4, ruling 2).
-				cwd := m.projectDir()
-				var text, notes string
-				if g, err := grimoire.LoadAll(cwd); err == nil && g != nil && !g.IsEmpty() {
-					text = g.Render()
-					if stale := g.StalenessInfo(cwd); stale != "" {
-						notes = "\n" + stale
-					}
-				}
-				files, warns := grimoire.ContextFiles(cwd)
-				if len(files) > 0 {
-					if text != "" {
-						text += "\n\n"
-					}
-					text += grimoire.RenderContextFiles(files)
-				}
-				// A cut or skipped context file is shown, as celeste grimoire does.
-				for _, w := range warns {
-					notes += "\n⚠ " + w
-				}
+				// Re-read from disk so edits are reflected immediately
+				// (2.0 W4, ruling 2); celeste grimoire shows the same text.
+				text, found := grimoire.Describe(m.projectDir())
 				switch {
-				case text != "":
+				case found:
 					m.grimoireContent = text
 				case m.grimoireContent != "":
 					text = m.grimoireContent
-				default:
-					text = "No .grimoire loaded for this project.\nRun /init to create one."
 				}
-				m.chat = m.chat.AddSystemMessage(text + notes)
+				m.chat = m.chat.AddSystemMessage(text)
 				return m, nil
 
 			case "index":
