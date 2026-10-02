@@ -49,11 +49,22 @@ type SnapshotManager struct {
 	mu       sync.Mutex
 }
 
+// startupPrune runs Prune once per process, on the first store opened:
+// every mode opens one in loop.Setup, so that is startup.
+var startupPrune = new(sync.Once)
+
 // NewSnapshotManager opens the checkpoints of sessionID under Root(),
 // with whatever an earlier process recorded for it (a resumed session).
+// The first call in a process prunes old sessions first (never this one).
 // Nothing is created on disk until the first checkpoint.
 func NewSnapshotManager(sessionID string) *SnapshotManager {
-	return newSnapshotManagerWithBase(SessionDir(Root(), sessionID))
+	root := Root()
+	startupPrune.Do(func() {
+		if err := Prune(root, sessionID, time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: pruning old checkpoints: %v\n", err)
+		}
+	})
+	return newSnapshotManagerWithBase(SessionDir(root, sessionID))
 }
 
 // newSnapshotManagerWithBase opens the session stored in dir. An index
