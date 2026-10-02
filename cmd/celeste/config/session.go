@@ -94,7 +94,8 @@ type SessionManager struct {
 func NewSessionManager() *SessionManager {
 	homeDir, _ := os.UserHomeDir()
 	sessionsDir := filepath.Join(homeDir, ".celeste", "sessions")
-	os.MkdirAll(sessionsDir, 0755)
+	os.MkdirAll(sessionsDir, 0700)
+	_ = os.Chmod(sessionsDir, 0700) // tighten a directory an older version made 0755
 
 	return &SessionManager{
 		sessionsDir: sessionsDir,

@@ -756,3 +756,21 @@ func TestSessionIDsCannotEscapeTheSessionsDir(t *testing.T) {
 	bad.ID = "../config"
 	assert.Error(t, manager.Save(bad))
 }
+
+// The sessions directory and analytics hold conversation data: owner-only.
+func TestSessionsDirAndAnalyticsAreOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	manager := NewSessionManager()
+	info, err := os.Stat(manager.sessionsDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	require.NoError(t, (&GlobalAnalytics{}).Save())
+	info, err = os.Stat(GetAnalyticsPath())
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
