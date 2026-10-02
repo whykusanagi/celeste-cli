@@ -1102,7 +1102,7 @@ In the chat:
 /diff         List the files this session changed
 ```
 
-`/rewind` cannot go back past a `/compact` summary, and does not restore files changed by shell commands.
+`/rewind` cannot go back past a `/compact` summary, and does not restore files changed by shell commands. A subagent's changes are restored only when the rewound turns changed a file themselves before it ran; `/diff` shows what is left.
 
 ### Skills Management
 

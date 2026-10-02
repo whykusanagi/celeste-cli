@@ -138,3 +138,17 @@ func TestRewindAndForkAreKnownCommands(t *testing.T) {
 		assert.Contains(t, knownCommands, name)
 	}
 }
+
+// A subagent's writes carry its own call IDs: the rewind line says to
+// check /diff.
+func TestRewindCommandWarnsAboutSubagents(t *testing.T) {
+	client := &fakeRewindClient{}
+	m := NewApp(client)
+	m.chat = m.chat.RestoreMessages([]ChatMessage{
+		prompt("delegate"),
+		{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "s1", Name: "spawn_agent"}}},
+		{Role: "tool", ToolCallID: "s1", Content: "done"},
+	})
+	m = sendCommand(m, "/rewind")
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Subagents ran in those turns; check /diff"))
+}

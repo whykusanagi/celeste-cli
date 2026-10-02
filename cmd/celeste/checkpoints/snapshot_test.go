@@ -234,6 +234,26 @@ func TestRewindToAnyIf(t *testing.T) {
 	assert.Equal(t, "v1", read(t, f))
 }
 
+// A missing backup stops a rewind before it restores anything.
+func TestRewindToAnyIfChecksBackupsFirst(t *testing.T) {
+	sm, dir := store(t)
+	a, b := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
+	write(t, a, "a0")
+	write(t, b, "b0")
+	for _, c := range []struct{ path, id, after string }{{a, "call_1", "a1"}, {b, "call_2", "b1"}} {
+		cp, err := sm.Checkpoint(c.path, c.id)
+		require.NoError(t, err)
+		write(t, c.path, c.after)
+		require.NoError(t, cp.Commit())
+	}
+	es := sm.Entries()
+	require.NoError(t, os.Remove(filepath.Join(sm.Dir(), es[0].Backup)))
+	_, err := sm.RewindToAnyIf([]string{"call_1"}, nil)
+	require.Error(t, err)
+	assert.Equal(t, "b1", read(t, b), "nothing is restored when a backup is missing")
+	assert.Len(t, sm.Entries(), 2)
+}
+
 // #200: the files-modified list.
 func TestFilesAreSortedAndUnique(t *testing.T) {
 	sm, dir := store(t)

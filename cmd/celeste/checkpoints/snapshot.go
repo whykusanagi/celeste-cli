@@ -420,6 +420,22 @@ func (sm *SnapshotManager) rewind(ids []string, check func([]Entry) error) (undo
 			return nil, true, err
 		}
 	}
+	// Every backup must be there before anything is restored, so a
+	// missing one stops the rewind before it starts rather than halfway.
+	for _, e := range sm.entries[first:] {
+		if e.Backup == "" {
+			continue
+		}
+		p, err := sm.backupPath(e)
+		if err == nil {
+			_, err = os.Stat(p)
+		}
+		if err != nil {
+			return nil, true, fmt.Errorf("cannot rewind: the backup of %s is unusable: %w", e.Path, err)
+		}
+	}
+	// A restore that fails stops here: the entries undone so far are gone,
+	// the failed one and older ones stay, so the same rewind again resumes.
 	for i := len(sm.entries) - 1; i >= first; i-- {
 		e := sm.entries[i]
 		if err := sm.undoLocked(i); err != nil {

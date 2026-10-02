@@ -133,6 +133,24 @@ func (m AppModel) rewind(args []string) AppModel {
 	} else {
 		line += fmt.Sprintf("restored %d file change(s): %s.", len(restored), strings.Join(restored, ", "))
 	}
+	if spawnedAfter(msgs, idx) {
+		// A subagent's writes are filed under its own call IDs, which
+		// the chat never sees: they are restored only when a change of
+		// the rewound turns came before them.
+		line += " Subagents ran in those turns; check /diff for changes of theirs that were not restored."
+	}
 	m.chat = m.chat.AddSystemMessage(line)
 	return m
+}
+
+// spawnedAfter reports whether a subagent was spawned after idx.
+func spawnedAfter(msgs []ChatMessage, idx int) bool {
+	for _, m := range msgs[idx+1:] {
+		for _, tc := range m.ToolCalls {
+			if tc.Name == "spawn_agent" {
+				return true
+			}
+		}
+	}
+	return false
 }
