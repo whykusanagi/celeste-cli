@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
 func writeCall(id, path string) fakeprovider.Turn {
@@ -203,5 +205,31 @@ func TestPermissionHookAskOverridesAlwaysAllow(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(ws, f)); err != nil {
 			t.Fatalf("%s not written: %v", f, err)
 		}
+	}
+}
+
+// An ask without a call ID gets a toolCallId of its own, so two such asks
+// never collide in the editor.
+func TestPermissionWithoutCallIDIsUnique(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	var mu sync.Mutex
+	var ids []any
+	c.permit = func(p map[string]any) map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		ids = append(ids, p["toolCall"].(map[string]any)["toolCallId"])
+		return selected(OptionAllowOnce)
+	}
+	s := c.agent.session(c.newSession(t.TempDir()))
+	g := s.gate(c.agent, newPromptState())
+	for range 2 {
+		if r := g.Ask(context.Background(), tools.PermissionRequest{ToolName: "bash"}); r.Decision != "allow_once" {
+			t.Fatalf("decision = %q", r.Decision)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids) != 2 || ids[0] == ids[1] || ids[0] == "" {
+		t.Fatalf("toolCallIds = %v, want two distinct", ids)
 	}
 }

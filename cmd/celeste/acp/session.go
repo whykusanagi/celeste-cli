@@ -43,6 +43,8 @@ type session struct {
 	// spillSeq numbers spilled tool results across the session's prompts
 	// (one Loop each), so a repeated call ID never overwrites a spill.
 	spillSeq atomic.Int64
+	// permSeq numbers permission asks that came without a call ID.
+	permSeq atomic.Int64
 
 	mu sync.Mutex
 	// history is the conversation; only the running prompt replaces it.
@@ -546,7 +548,8 @@ func (s *session) gate(a *Agent, st *promptState) loop.Gate {
 			}
 			wait.Stop()
 		} else {
-			tc.ToolCallID = "call_" + req.ToolName
+			// No call ID to show: one of its own, unique in the session.
+			tc.ToolCallID = fmt.Sprintf("perm_%s_%d", req.ToolName, s.permSeq.Add(1))
 		}
 		params := RequestPermissionParams{
 			SessionID: s.id,
