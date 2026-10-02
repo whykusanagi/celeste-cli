@@ -43,7 +43,7 @@ func TestExploreSubagentToolSet(t *testing.T) {
 	t.Setenv("USERPROFILE", t.TempDir())
 	reg := tools.NewRegistry()
 	builtin.RegisterAll(reg, t.TempDir(), nil, nil, nil)
-	reg.Register(stubTool{name: "submit_result", readOnly: true}) // Task 3 swaps in the real tool
+	reg.Register(NewSubmitResultTool(&resultHolder{}))
 	reg.Register(stubTool{name: "spawn_agent"})
 	reg.Register(stubTool{name: "post_message"})
 	reg.Register(stubTool{name: "mcp_repo_lookup"}) // an MCP tool: never read-only
