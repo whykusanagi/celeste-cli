@@ -220,9 +220,21 @@ func argField(args, field string) string {
 func personaHeuristic(st decide.State) (decide.Answer, bool) {
 	for _, t := range st.Turns {
 		for _, c := range t.Calls {
-			field := map[string]string{"write_file": "content", "patch_file": "new_string"}[c.Tool]
-			if field != "" && rules.VoiceLeak(argField(c.Args, "path"), argField(c.Args, field)) {
-				return yesNo(true)
+			fields := map[string][]string{"write_file": {"content"}, "patch_file": {"new_string", "edits.new_string"}}[c.Tool]
+			if len(fields) == 0 {
+				continue
+			}
+			var args map[string]any
+			if json.Unmarshal([]byte(c.Args), &args) != nil {
+				continue
+			}
+			path, _ := args["path"].(string)
+			for _, f := range fields {
+				for _, v := range rules.FieldValues(args, f) {
+					if rules.VoiceLeak(path, v) {
+						return yesNo(true)
+					}
+				}
 			}
 		}
 	}

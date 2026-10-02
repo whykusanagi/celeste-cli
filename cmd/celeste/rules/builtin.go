@@ -59,7 +59,10 @@ func voiceInFileGuard(_ *Facts, h Hit) bool {
 	if exemptPath(p) {
 		return false
 	}
-	content, _ := fieldText(h.Call.Input[h.Scope.Field])
+	content := h.Value
+	if content == "" {
+		content, _ = fieldText(h.Call.Input[h.Scope.Field])
+	}
 	content = fencedBlock.ReplaceAllString(content, "")
 	content = quoteLine.ReplaceAllString(content, "")
 	content = strike.ReplaceAllString(content, "")
