@@ -79,3 +79,36 @@ func TestAnthropicRedactedThinkingTransformationsAndHeaders(t *testing.T) {
 		t.Fatal("a turn without Transformations must not carry the field")
 	}
 }
+
+func TestAnthropicImageLimitAnswers400LikeTheRealAPI(t *testing.T) {
+	srv := NewAnthropic(t, Turn{Text: "ok"})
+	AnthropicImageLimit(srv, 5<<20)
+	post := func(data string) *http.Response {
+		body, err := json.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "content": []any{
+				map[string]any{"type": "image", "source": map[string]any{"type": "base64", "data": data}}}}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.Post(srv.BaseURL()+"/v1/messages", "application/json", strings.NewReader(string(body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	resp := post(strings.Repeat("A", 6<<20))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var e struct{ Error struct{ Message string } }
+	if err := json.NewDecoder(resp.Body).Decode(&e); err != nil || e.Error.Message != "image exceeds 5 MB maximum" {
+		t.Fatalf("error = %+v, %v", e, err)
+	}
+	if srv.Remaining() != 1 {
+		t.Fatal("a rejected request must not consume a turn")
+	}
+	if resp := post("QUJD"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("small image status = %d", resp.StatusCode)
+	}
+}

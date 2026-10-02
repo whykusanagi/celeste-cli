@@ -478,6 +478,8 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 		})
 	}
 
+	lim := openAIImageLimits(b.config.BaseURL) // #239
+
 	// Convert messages
 	for _, msg := range messages {
 		// Skip messages with empty content (except tool calls which can have empty content)
@@ -498,23 +500,30 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 			// message with the image as a data URL so vision-capable models
 			// can actually see it.  The OpenAI API only supports multipart
 			// content on user messages, not tool messages.
-			if img, ok := toolImageOf(msg.Metadata); ok {
-				result = append(result, openai.ChatCompletionMessage{
-					Role: "user",
-					MultiContent: []openai.ChatMessagePart{
-						{
-							Type: openai.ChatMessagePartTypeText,
-							Text: fmt.Sprintf("[Attached image from tool result: %s]", img.Name),
-						},
-						{
-							Type: openai.ChatMessagePartTypeImageURL,
-							ImageURL: &openai.ChatMessageImageURL{
-								URL:    img.DataURL(),
-								Detail: openai.ImageURLDetailAuto,
+			if img, note, ok := fitToolImage(msg.Metadata, lim); ok {
+				if note != "" {
+					result = append(result, openai.ChatCompletionMessage{
+						Role:         "user",
+						MultiContent: []openai.ChatMessagePart{{Type: openai.ChatMessagePartTypeText, Text: note}},
+					})
+				} else {
+					result = append(result, openai.ChatCompletionMessage{
+						Role: "user",
+						MultiContent: []openai.ChatMessagePart{
+							{
+								Type: openai.ChatMessagePartTypeText,
+								Text: fmt.Sprintf("[Attached image from tool result: %s]", img.Name),
+							},
+							{
+								Type: openai.ChatMessagePartTypeImageURL,
+								ImageURL: &openai.ChatMessageImageURL{
+									URL:    img.DataURL(),
+									Detail: openai.ImageURLDetailAuto,
+								},
 							},
 						},
-					},
-				})
+					})
+				}
 			}
 		} else if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 			// Assistant messages with tool_calls need to include ToolCalls field

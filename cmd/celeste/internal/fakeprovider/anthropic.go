@@ -12,6 +12,47 @@ func NewAnthropic(t testing.TB, turns ...Turn) *Server {
 	return newServer(t, "", writeAnthropic, turns)
 }
 
+// AnthropicImageLimit makes s answer 400 "image exceeds 5 MB maximum", as the
+// real API does, to any request carrying a base64 image whose data is longer
+// than n, wherever the image block sits (a message or a tool_result).
+func AnthropicImageLimit(s *Server, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reject = func(body map[string]any) string {
+		if !hasImageOver(body["messages"], n) {
+			return ""
+		}
+		return `{"type":"error","error":{"type":"invalid_request_error","message":"image exceeds 5 MB maximum"}}`
+	}
+}
+
+// hasImageOver walks decoded JSON for an image block with source.data
+// longer than n.
+func hasImageOver(v any, n int) bool {
+	switch v := v.(type) {
+	case []any:
+		for _, e := range v {
+			if hasImageOver(e, n) {
+				return true
+			}
+		}
+	case map[string]any:
+		if v["type"] == "image" {
+			if src, ok := v["source"].(map[string]any); ok {
+				if data, ok := src["data"].(string); ok && len(data) > n {
+					return true
+				}
+			}
+		}
+		for _, e := range v {
+			if hasImageOver(e, n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func writeAnthropic(w http.ResponseWriter, turn Turn) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	message := map[string]any{

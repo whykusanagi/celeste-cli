@@ -12,6 +12,7 @@ import (
 
 	genai "google.golang.org/genai"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -428,7 +429,9 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 
 			// If the tool result carries image metadata, inject a user
 			// message with the image as inline data so Gemini can see it.
-			if img, ok := toolImageOf(msg.Metadata); ok {
+			if img, note, ok := fitToolImage(msg.Metadata, imagefit.Gemini); ok && note != "" {
+				contents = append(contents, genai.NewContentFromParts([]*genai.Part{genai.NewPartFromText(note)}, genai.RoleUser))
+			} else if ok {
 				if imageBytes, err := base64.StdEncoding.DecodeString(img.B64); err == nil {
 					parts := []*genai.Part{
 						genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", img.Name)),
