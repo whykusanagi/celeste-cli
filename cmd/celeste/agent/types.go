@@ -96,8 +96,9 @@ type Options struct {
 	// The parent's registry is never touched. Typed subagents set it (2.0 W4e).
 	ToolFilter func(tools.Tool) bool `json:"-"`
 	// PersonaLevel is the system prompt's persona level: empty is the full
-	// persona; the explore and review subagent types set prompts.PersonaOff
-	// (identity, honesty rule and voice boundary). The agent contract stays.
+	// persona; the explore and review subagent types and orchestrator lanes
+	// set prompts.PersonaOff (identity, honesty rule and voice boundary). The
+	// agent contract stays.
 	PersonaLevel prompts.PersonaLevel `json:"-"`
 	// PromptFunc asks the user to approve a tool the permission policy
 	// resolves to Ask. The TUI's /agent sets it to its permission modal (#172);

@@ -40,51 +40,64 @@ func systemPrompt(t *testing.T, r fakeprovider.Request) string {
 }
 
 // Every request of a real code-lane run with a debate (primary, reviewer,
-// defense) carries the off level: Celeste's identity line, then the off
-// profile, and none of the full profile. Checked with the sealed test
-// persona, whose full profile is far larger than the off text.
+// defense) carries the off level: Celeste's identity line and the honesty
+// rule, then the off profile (the voice boundary). With the sealed test
+// persona, whose full profile is far larger than the off text, no request
+// carries the full profile; the keyless build runs the public persona.
 func TestOrchestratorLanesSendTheOffPersona(t *testing.T) {
-	orchWorkspace(t)
-	t.Cleanup(prompts.UsePersonaSource(personacrypttest.FS(prompts.VoiceBoundary), personacrypttest.Key))
-	full, err := prompts.LoadProfile(prompts.ProfileFull)
-	if err != nil {
-		t.Fatal(err)
-	}
-	off, err := prompts.LoadProfile(prompts.ProfileOff)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if full.Public || off.Public {
-		t.Fatal("the test persona did not decrypt")
-	}
+	const honesty = "unless a tool actually returned that result this turn"
+	for _, build := range []string{"test-key", "keyless"} {
+		t.Run(build, func(t *testing.T) {
+			orchWorkspace(t)
+			if build == "keyless" {
+				if prompts.HasPersonaKey() {
+					t.Skip("this test binary was built with a persona key")
+				}
+			} else {
+				t.Cleanup(prompts.UsePersonaSource(personacrypttest.FS(prompts.VoiceBoundary), personacrypttest.Key))
+			}
+			full, err := prompts.LoadProfile(prompts.ProfileFull)
+			if err != nil {
+				t.Fatal(err)
+			}
+			off, err := prompts.LoadProfile(prompts.ProfileOff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (build == "keyless") != off.Public || full.Public != off.Public {
+				t.Fatalf("persona: full public %v, off public %v", full.Public, off.Public)
+			}
 
-	primary := fakeprovider.NewOpenAI(t,
-		fakeprovider.Turn{Text: "1. Fix it"},
-		fakeprovider.Turn{Text: "TASK_COMPLETE: fixed"},
-		fakeprovider.Turn{Text: "1. Address the review"},
-		fakeprovider.Turn{Text: "TASK_COMPLETE: revised"},
-	)
-	main := fakeprovider.NewOpenAI(t,
-		fakeprovider.Turn{Text: "1. Review it"},
-		fakeprovider.Turn{Text: `TASK_COMPLETE: [{"file":"main.go","line":1,"severity":"high","description":"broken"}]`},
-	)
-	cfg := fakeOrchCfg(main)
-	cfg.Orchestrator = &config.OrchestratorConfig{DebateRounds: 1, Lanes: map[string]config.LaneConfig{
-		"code": {Primary: "fake-primary", PrimaryBaseURL: primary.BaseURL(), PrimaryAPIKey: "pk", Reviewer: "fake-model"},
-	}}
-	runOrch(t, New(cfg), "fix the bug in main.go")
+			primary := fakeprovider.NewOpenAI(t,
+				fakeprovider.Turn{Text: "1. Fix it"},
+				fakeprovider.Turn{Text: "TASK_COMPLETE: fixed"},
+				fakeprovider.Turn{Text: "1. Address the review"},
+				fakeprovider.Turn{Text: "TASK_COMPLETE: revised"},
+			)
+			main := fakeprovider.NewOpenAI(t,
+				fakeprovider.Turn{Text: "1. Review it"},
+				fakeprovider.Turn{Text: `TASK_COMPLETE: [{"file":"main.go","line":1,"severity":"high","description":"broken"}]`},
+			)
+			cfg := fakeOrchCfg(main)
+			cfg.Orchestrator = &config.OrchestratorConfig{DebateRounds: 1, Lanes: map[string]config.LaneConfig{
+				"code": {Primary: "fake-primary", PrimaryBaseURL: primary.BaseURL(), PrimaryAPIKey: "pk", Reviewer: "fake-model"},
+			}}
+			runOrch(t, New(cfg), "fix the bug in main.go")
 
-	reqs := append(primary.Requests(), main.Requests()...)
-	if len(reqs) != 6 {
-		t.Fatalf("got %d requests, want 6 (primary, defense, reviewer)", len(reqs))
-	}
-	for i, r := range reqs {
-		sys := systemPrompt(t, r)
-		if !strings.HasPrefix(sys, "You are Celeste") || !strings.Contains(sys, off.SystemPrompt) {
-			t.Fatalf("request %d does not carry the off level:\n%.300s", i, sys)
-		}
-		if strings.Contains(sys, full.SystemPrompt) {
-			t.Fatalf("request %d carries the full persona", i)
-		}
+			reqs := append(primary.Requests(), main.Requests()...)
+			if len(reqs) != 6 {
+				t.Fatalf("got %d requests, want 6 (primary, defense, reviewer)", len(reqs))
+			}
+			for i, r := range reqs {
+				sys := systemPrompt(t, r)
+				if !strings.HasPrefix(sys, "You are Celeste") || !strings.Contains(sys, honesty) ||
+					!strings.Contains(sys, prompts.VoiceBoundary) || !strings.Contains(sys, off.SystemPrompt) {
+					t.Fatalf("request %d does not carry identity, honesty and the voice boundary:\n%.300s", i, sys)
+				}
+				if build == "test-key" && strings.Contains(sys, full.SystemPrompt) {
+					t.Fatalf("request %d carries the full persona", i)
+				}
+			}
+		})
 	}
 }
