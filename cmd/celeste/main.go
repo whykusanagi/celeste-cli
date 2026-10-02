@@ -49,6 +49,10 @@ var (
 	Version   = "1.16.0" // x-release-please-version
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
+	// Channel is "release" only in official release binaries (release.yml
+	// sets -X main.Channel=release). celeste update uses it to tell an
+	// official binary from a local build (W5 ruling 29).
+	Channel = "source"
 )
 
 // Global config name (set by -config flag)
@@ -100,6 +104,7 @@ Commands:
   plan [show]             Show current plan from .celeste/plan.md
   revert <file> [--session id] [--force]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
+  update [--check]        Install the latest official release (go install and release builds)
   help                    Show this help message
   version                 Show version information
 
@@ -1803,6 +1808,10 @@ func runServeCommand(args []string) {
 	certFile := serveFlags.String("cert", "", "TLS certificate file for mTLS")
 	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
 	_ = serveFlags.Parse(args)
+
+	// A go install build upgrades in the background for the next launch;
+	// MCP stdio keeps stdout (W5 ruling 28).
+	newUpgradeHook().background()
 
 	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
