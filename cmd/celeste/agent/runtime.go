@@ -76,9 +76,9 @@ type Runner struct {
 // compactMessages keeps the history inside the window (#174). It prunes old
 // tool results when the history is over the compaction threshold, or
 // unconditionally when force is set (after a context-overflow error); if
-// that isn't enough it summarizes everything but the newest ~20k tokens. It
-// returns the history, progress notes for the event stream, and whether it
-// changed. It runs on the loop goroutine and must not write r.out.
+// that isn't enough it summarizes everything but the newest
+// compact.KeepFor(window) tokens. It returns the history, progress notes for
+// the event stream, and whether it changed. It runs on the loop goroutine and must not write r.out.
 func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, meter *compact.Meter, force bool) ([]tui.ChatMessage, []string, bool) {
 	// A nil prune store only disables pruning (Prune is a no-op without
 	// one); the summary rung below must still run.
@@ -111,12 +111,15 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	threshold := compact.Threshold(r.budget.ModelLimit)
 	next := compact.Estimate(msgs) + overhead
 	stillOver := next > threshold
+	// ceiling leaves the reply room: halfway from the threshold to the
+	// window, so it never takes more than half the threshold's reserve.
+	ceiling := threshold + (r.budget.ModelLimit-threshold)/2
 	if unseen := meter.Unseen(msgs); stillOver && !force && unseen > 0 && unseen <= len(msgs) &&
-		compact.Estimate(msgs[:len(msgs)-unseen])+overhead <= threshold && next <= r.budget.ModelLimit {
+		compact.Estimate(msgs[:len(msgs)-unseen])+overhead <= threshold && next <= ceiling {
 		// What keeps the history over is what the model has not seen yet:
 		// the prune left it alone and a summary cannot split a batch. Wait
 		// for the next call, after the model has seen it, unless the
-		// request would not fit the window at all (#234).
+		// request would leave the reply no room (#234).
 		stillOver = false
 	}
 	if r.summarize != nil && (stillOver || (force && !changed)) {

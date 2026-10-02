@@ -397,7 +397,8 @@ func TestAgentSummaryRungSeesTheProviderSurplus(t *testing.T) {
 // A large batch the model has not seen yet keeps the history over the
 // threshold, but the prune must leave it alone and a summary cannot split
 // it: the summary rung waits for the next call, after the model has seen
-// the batch, unless the request would not fit the window at all (#234).
+// the batch, unless the request would leave the reply no room: past the
+// midpoint between the threshold and the window (#234).
 func TestAgentSkipsTheSummaryWhileAnUnseenBatchFits(t *testing.T) {
 	runner, _ := newCompactionRunner(t, &windowBackend{}, 40_000)
 	var summaries int
@@ -426,8 +427,8 @@ func TestAgentSkipsTheSummaryWhileAnUnseenBatchFits(t *testing.T) {
 		return append(append(msgs, calls), results...)
 	}
 
-	// ~33k: over the 30k threshold, inside the 40k window.
-	msgs := batch(6_000)
+	// ~29k: over the 24k threshold, well inside the 40k window.
+	msgs := batch(5_000)
 	c := &runCompactor{r: runner, meter: compact.NewMeter(0)}
 	c.meter.Sending(seen)
 	c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(seen)}, false)
@@ -435,13 +436,23 @@ func TestAgentSkipsTheSummaryWhileAnUnseenBatchFits(t *testing.T) {
 		t.Fatalf("summarized %d times while the unseen batch still fits the window", summaries)
 	}
 
+	// ~36k: inside the window, but past the midpoint between the threshold
+	// and the window, so the reply would have no room. Summarize.
+	msgs = batch(6_400)
+	c = &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	c.meter.Sending(seen)
+	c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(seen)}, false)
+	if summaries != 1 {
+		t.Fatalf("summaries = %d, want 1 once the request leaves the reply no room", summaries)
+	}
+
 	// Past the window itself: the request cannot be sent, so summarize.
 	msgs = batch(8_000)
 	c = &runCompactor{r: runner, meter: compact.NewMeter(0)}
 	c.meter.Sending(seen)
 	c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(seen)}, false)
-	if summaries == 0 {
-		t.Fatal("no summary although the request exceeds the window")
+	if summaries != 2 {
+		t.Fatalf("summaries = %d, want 2: the request exceeds the window", summaries)
 	}
 }
 
