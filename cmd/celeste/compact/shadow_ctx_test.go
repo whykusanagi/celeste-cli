@@ -26,11 +26,11 @@ func TestSyncShadowReportStopsWithTheCallersContext(t *testing.T) {
 
 	var steps []step
 	for i := 0; i < 30; i++ {
-		steps = append(steps, step{"read_file", `{"path":"f` + string(rune('a'+i)) + `.go"}`, 40_000})
+		steps = append(steps, step{"read_file", `{"path":"f` + string(rune('a'+i)) + `.go"}`, 2_000})
 	}
 	msgs := history(steps...)
 	ctx, cancel := context.WithCancel(context.Background())
-	opts, report := WithJev(ctx, &jev.Client{Key: "k", URL: srv.URL}, "shadow", msgs, Options{Window: 200_000, Used: Estimate(msgs)}, func(string) {}, false)
+	opts, report := WithJev(ctx, &jev.Client{Key: "k", URL: srv.URL}, "shadow", msgs, Options{Window: 20_000, Used: Estimate(msgs)}, func(string) {}, false)
 	res := Plan(msgs, opts)
 	if len(res.Edits) == 0 {
 		t.Fatal("the plan elided nothing; the report would not ask Jev")
