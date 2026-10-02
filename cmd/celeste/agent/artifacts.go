@@ -3,12 +3,16 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 )
 
 func (r *Runner) persistArtifacts(state *RunState) {
@@ -155,27 +159,32 @@ func captureGitWorkspaceArtifacts(workspace string, timeout time.Duration) (stri
 		timeout = 30 * time.Second
 	}
 
-	if out, err := runShellCommand(workspace, timeout, "git rev-parse --is-inside-work-tree"); err != nil || !strings.Contains(out, "true") {
+	if out, err := runGit(workspace, timeout, "rev-parse", "--is-inside-work-tree"); err != nil || !strings.Contains(out, "true") {
 		return "", ""
 	}
 
-	statusOut, _ := runShellCommand(workspace, timeout, "git status --porcelain")
-	diffOut, _ := runShellCommand(workspace, timeout, "git diff --no-ext-diff")
+	statusOut, _ := runGit(workspace, timeout, "status", "--porcelain")
+	diffOut, _ := runGit(workspace, timeout, "diff", "--no-ext-diff")
 	return statusOut, diffOut
 }
 
-func runShellCommand(workdir string, timeout time.Duration, command string) (string, error) {
+// runGit runs git directly (no shell) in its own process group, killed
+// whole on timeout. A child of git still holding stdout after git exits
+// gets shellrun.WaitDelay before the pipe is closed and the group killed.
+func runGit(workdir string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = workdir
-	out, err := cmd.CombinedOutput()
+	proctree.Prepare(cmd)
+	cmd.WaitDelay = shellrun.WaitDelay
+	out, err := cmd.Output()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		_ = proctree.Kill(cmd)
+	}
 	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("command timed out: %s", command)
+		return string(out), fmt.Errorf("git %s timed out", strings.Join(args, " "))
 	}
-	if err != nil {
-		return string(out), err
-	}
-	return string(out), nil
+	return string(out), err
 }
