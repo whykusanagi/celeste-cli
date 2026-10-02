@@ -125,7 +125,9 @@ func initGrimoire(workspace string) {
 // serverClientConfig is the client config for the server's own prompts (MCP
 // chat, content format). skip_persona_prompt is about celeste's persona, not
 // these prompts, and the Google backend sends no system prompt at all when it
-// is set, so it is cleared here.
+// is set, so it is cleared here. Unlike llm.PlainConfigFrom it keeps xAI
+// collections and features: these prompts speak in celeste's own voice and
+// may search her collections.
 func serverClientConfig(cfg *config.Config) *llm.Config {
 	c := llm.ConfigFrom(cfg)
 	c.SkipPersonaPrompt = false

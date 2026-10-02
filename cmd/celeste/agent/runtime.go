@@ -134,11 +134,12 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 
 // SmallModelSummarizer returns a SummarizeFunc on its own client for the
 // small-model role, so summaries don't disturb the agent client's system
-// prompt or tools.
+// prompt or tools. The client is base.Plain(): a summary always sends its
+// own system prompt, whatever the run's persona and xAI settings are.
 func SmallModelSummarizer(base *llm.Config, model string) compact.SummarizeFunc {
-	cfg := *base
+	cfg := base.Plain()
 	cfg.Model = model
-	client := llm.NewClient(&cfg, nil)
+	client := llm.NewClient(cfg, nil)
 	return func(ctx context.Context, system, user string) (string, error) {
 		client.SetSystemPrompt(system)
 		res, err := client.SendMessageSync(ctx, []tui.ChatMessage{{Role: "user", Content: user, Timestamp: time.Now()}}, nil)

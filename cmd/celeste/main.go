@@ -662,16 +662,6 @@ func (a *TUIClientAdapter) steering() *steer.Session {
 	return a.steer
 }
 
-// summarizerConfig is a summary's client config: a plain completion with its
-// own system prompt, so no xAI collections or features, and the persona skip
-// cleared (the Google backend drops the system prompt when it is set).
-func summarizerConfig(cfg *config.Config) *llm.Config {
-	c := llm.ConfigFrom(cfg)
-	c.Collections, c.XAIFeatures = nil, nil
-	c.SkipPersonaPrompt = false
-	return c
-}
-
 // summarizer returns the small-model summarizer, built on first use.
 func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 	if a.summarize == nil {
@@ -679,7 +669,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 		if cfg == nil {
 			return nil, errors.New("no configuration loaded")
 		}
-		a.summarize = agent.SmallModelSummarizer(summarizerConfig(cfg), cfg.ResolveSmallModel())
+		a.summarize = agent.SmallModelSummarizer(llm.PlainConfigFrom(cfg), cfg.ResolveSmallModel())
 	}
 	return a.summarize, nil
 }
