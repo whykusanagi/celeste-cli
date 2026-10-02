@@ -65,12 +65,17 @@ var ErrNotRead = errors.New("not read in this session")
 // CheckRead is the must-read-before-edit rule (2.0 W4 ruling 6): nil for a
 // file that does not exist, or that was read (or written) in this session
 // and is unchanged since; ErrNotRead for an existing file never read; the
-// CheckStale error for one changed since its read.
+// CheckStale error for one changed since its read; the stat error for a file
+// that cannot be checked (reading it first would not help).
 func (ft *FileTracker) CheckRead(path string) error {
 	_, tracked := ft.lookup(path)
 	if !tracked {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		_, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("cannot check whether the file was read: %w", err)
 		}
 		return ErrNotRead
 	}
