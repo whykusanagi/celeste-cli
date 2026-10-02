@@ -1,6 +1,8 @@
 // Package shellparse reads a shell command line roughly as a shell would:
-// quotes, a leading backslash, operators, subshells, $( ) and backtick
-// substitutions, and the strings run by sh -c, eval and ssh. It is a pure
+// quotes (including $'...' escapes and $"..."), a leading backslash,
+// unquoted $IFS as a word break, operators, subshells, $( ) and backtick
+// substitutions, and the strings run by sh -c, eval and ssh. It does not
+// expand other variables, globs or braces. It is a pure
 // tokenizer with no dependencies, shared by the blocking bash check
 // (tools/builtin) and meant for the advisory stream rule (rules), which
 // carries its own copy until it switches over.
@@ -206,6 +208,17 @@ func Segments(s string) (segs [][]string, nested []string) {
 			nested = append(nested, body)
 			endWord()
 			i = next
+		case c == '$' && i+1 < len(s) && s[i+1] == '\'':
+			// $'...': ANSI-C quoting, backslash escapes decoded.
+			inWord = true
+			i = ansiCQuote(s, i+2, &cur)
+		case c == '$' && i+1 < len(s) && s[i+1] == '"':
+			// $"...": a locale-translated string, otherwise "...".
+			i++
+		case c == '$' && ifsAt(s, i) > 0:
+			// Unquoted $IFS / ${IFS} splits words like a space does.
+			endWord()
+			i += ifsAt(s, i)
 		case c == ';' || c == '\n' || c == '(' || c == ')':
 			endSeg()
 			i++
@@ -235,4 +248,84 @@ func Segments(s string) (segs [][]string, nested []string) {
 	}
 	endSeg()
 	return segs, nested
+}
+
+// ifsAt returns the length of an unquoted $IFS or ${IFS} at s[i] ("$IFS"
+// not followed by a name character), or 0.
+func ifsAt(s string, i int) int {
+	if strings.HasPrefix(s[i:], "${IFS}") {
+		return len("${IFS}")
+	}
+	if strings.HasPrefix(s[i:], "$IFS") {
+		j := i + len("$IFS")
+		if j < len(s) && (s[j] == '_' || s[j] >= '0' && s[j] <= '9' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= 'A' && s[j] <= 'Z') {
+			return 0
+		}
+		return len("$IFS")
+	}
+	return 0
+}
+
+// ansiCQuote decodes the body of a $'...' string starting at s[i] into cur
+// and returns the index after the closing quote. It handles the escapes
+// that can spell a path or a command name: \\ \' \" \n \t \xHH and
+// \NNN (octal); any other escaped character stands for itself.
+func ansiCQuote(s string, i int, cur *strings.Builder) int {
+	for i < len(s) {
+		c := s[i]
+		if c == '\'' {
+			return i + 1
+		}
+		if c != '\\' || i+1 >= len(s) {
+			cur.WriteByte(c)
+			i++
+			continue
+		}
+		e := s[i+1]
+		i += 2
+		switch {
+		case e == 'n':
+			cur.WriteByte('\n')
+		case e == 't':
+			cur.WriteByte('\t')
+		case e == 'x':
+			v, n := 0, 0
+			for n < 2 && i < len(s) && isHex(s[i]) {
+				v = v*16 + hexVal(s[i])
+				i++
+				n++
+			}
+			if n == 0 {
+				cur.WriteString(`\x`)
+			} else {
+				cur.WriteByte(byte(v))
+			}
+		case e >= '0' && e <= '7':
+			v, n := int(e-'0'), 1
+			for n < 3 && i < len(s) && s[i] >= '0' && s[i] <= '7' {
+				v = v*8 + int(s[i]-'0')
+				i++
+				n++
+			}
+			cur.WriteByte(byte(v))
+		default:
+			cur.WriteByte(e)
+		}
+	}
+	return i
+}
+
+func isHex(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
+func hexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	default:
+		return int(c-'A') + 10
+	}
 }

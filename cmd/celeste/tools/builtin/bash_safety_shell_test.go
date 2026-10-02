@@ -94,3 +94,23 @@ func TestCheckDangerousCommand_BenignRmAllowed(t *testing.T) {
 		}
 	}
 }
+
+// Word splitting on IFS and ANSI-C / locale quoting reach rm as the same
+// words "rm -rf /" does.
+func TestCheckDangerousCommand_RmIFSAndDollarQuotes(t *testing.T) {
+	for _, cmd := range []string{
+		`rm -rf${IFS}/`,
+		`rm${IFS}-rf${IFS}/usr`,
+		`rm -rf $IFS/`,
+		`rm -r -f${IFS}~`,
+		`rm -rf $'/usr'`,
+		`rm -rf $'\x2f'`,
+		`rm -rf $'\057'`,
+		`$'rm' -r -f /usr`,
+		`rm -rf $"/usr"`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("not blocked: %s", cmd)
+		}
+	}
+}

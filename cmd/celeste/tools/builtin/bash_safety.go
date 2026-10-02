@@ -143,7 +143,9 @@ func checkDangerousCommand(command string) string {
 // included, is a recursive forced rm of a system or home path. Every word
 // that resolves to rm starts a check of the words after it, so wrappers
 // (xargs, timeout 5, nice -n 5) do not hide it. Nesting deeper than
-// shellparse.MaxDepth counts as destructive.
+// shellparse.MaxDepth counts as destructive. Not covered: a path held in a
+// variable (X=/; rm -rf $X), brace or glob expansion, and paths that reach
+// rm through stdin (find / | xargs rm -rf) or a script.
 func destructiveRm(command string) bool {
 	return shellparse.Walk(command, func(words []string) bool {
 		for i, w := range words {

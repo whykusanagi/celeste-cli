@@ -63,3 +63,20 @@ func TestWalkStopsAtMaxDepth(t *testing.T) {
 		t.Error("shallow nesting reported true")
 	}
 }
+
+func TestSegmentsIFSAndDollarQuotes(t *testing.T) {
+	for in, want := range map[string][]string{
+		`rm -rf${IFS}/`:          {"rm", "-rf", "/"},
+		`rm$IFS-rf$IFS/x`:        {"rm", "-rf", "/x"},
+		`echo $IFSX`:             {"echo", "$IFSX"},
+		`rm -rf $'\x2fusr'`:      {"rm", "-rf", "/usr"},
+		`rm -rf $'\057' $'a\'b'`: {"rm", "-rf", "/", "a'b"},
+		`$'rm' $"-rf" x`:         {"rm", "-rf", "x"},
+		`echo "${IFS}"`:          {"echo", "${IFS}"},
+	} {
+		segs, _ := Segments(in)
+		if len(segs) != 1 || !reflect.DeepEqual(segs[0], want) {
+			t.Errorf("Segments(%q) = %q, want [%q]", in, segs, want)
+		}
+	}
+}
