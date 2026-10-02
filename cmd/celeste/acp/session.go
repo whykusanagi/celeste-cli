@@ -498,7 +498,8 @@ const shownWait = 2 * time.Second
 // gate is the prompt's permission Gate (ruling 8): it asks the editor with
 // session/request_permission about the pending call. "Always allow" adds
 // the tool to the session's allow set (never to permissions.json): later
-// asks for it are answered without a request. A reject, a cancelled
+// asks for it are answered without a request, except an ask a PreToolUse
+// hook or an AskAdvisor forced. A reject, a cancelled
 // outcome, a transport error or the prompt ending is a deny.
 func (s *session) gate(a *Agent, st *promptState) loop.Gate {
 	return loop.GateFunc(func(ctx context.Context, req tools.PermissionRequest) tools.PermissionResponse {
@@ -507,7 +508,9 @@ func (s *session) gate(a *Agent, st *promptState) loop.Gate {
 		if ctx.Err() != nil {
 			return deny
 		}
-		if s.allowed(req.ToolName) {
+		// A hook's or advisor's forced ask is always asked (the TUI re-asks
+		// too); the allow set only answers the policy's own asks.
+		if !req.Forced && s.allowed(req.ToolName) {
 			return allow
 		}
 		tc := ToolCallUpdate{Title: summaryTitle(req.ToolName, req.InputSummary), Kind: toolKind(req.ToolName), Status: ToolStatusPending}

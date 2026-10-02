@@ -23,6 +23,10 @@ type PermissionRequest struct {
 	ToolName     string
 	InputSummary string // short human-readable summary of what the tool will do
 	RiskLevel    string // "read", "write", or "destructive"
+	// Forced is set when a PreToolUse hook or an AskAdvisor forced this
+	// ask over a policy Allow: a prompt must ask the user, never answer
+	// from a remembered "always" of its own.
+	Forced bool
 	// Context is the asking call's context (loop.PromptGate sets it): its
 	// Done and values tell an interactive prompt which run asked and
 	// whether that run has ended (2.0 F2e). nil: unknown.
@@ -583,7 +587,7 @@ func (r *Registry) checkPermission(tool Tool, name string, input map[string]any,
 	}
 	// Runs in the tool-execution goroutine (off the Bubble Tea Update loop),
 	// so blocking on the answer is safe.
-	resp := prompt(PermissionRequest{ToolName: name, InputSummary: summary, RiskLevel: classifyRiskLevel(name)})
+	resp := prompt(PermissionRequest{ToolName: name, InputSummary: summary, RiskLevel: classifyRiskLevel(name), Forced: forceAsk})
 	pattern := resp.Pattern
 	if pattern == "" {
 		pattern = name

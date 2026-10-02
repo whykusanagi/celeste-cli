@@ -51,6 +51,24 @@ func TestAdvisorAskGoesToThePrompt(t *testing.T) {
 	assert.False(t, res.Error)
 	assert.True(t, executed)
 	assert.Contains(t, seen.InputSummary, "[jev_gate: destructive p=0.91]")
+	assert.True(t, seen.Forced, "an advisor's ask over a policy Allow is marked Forced")
+}
+
+// A policy's own Ask is not Forced: a prompt may answer it from a
+// remembered "always".
+func TestPolicyAskIsNotForced(t *testing.T) {
+	executed := false
+	r := NewRegistry()
+	r.Register(execTool("write_file", &executed))
+	r.SetPermissionChecker(newAskChecker())
+	seen := PermissionRequest{Forced: true}
+	ctx := WithPrompt(context.Background(), func(req PermissionRequest) PermissionResponse {
+		seen = req
+		return PermissionResponse{Decision: "allow_once"}
+	})
+	res, _ := r.Execute(ctx, "write_file", map[string]any{"path": "x"})
+	assert.False(t, res.Error)
+	assert.False(t, seen.Forced)
 }
 
 // An advisor can never allow or deny: it is not consulted on a call the

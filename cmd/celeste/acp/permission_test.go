@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
 )
 
 func writeCall(id, path string) fakeprovider.Turn {
@@ -158,5 +160,48 @@ func TestCancelRightAfterPrompt(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if res, err := c.call("session/prompt", textPrompt(sid, "go")); err != nil || stopReason(t, res) != "end_turn" {
 		t.Fatalf("prompt after a stray cancel = %s %v", res, err)
+	}
+}
+
+// A PreToolUse hook's "ask" forces the editor's prompt even after the user
+// chose "Always allow" for the tool: the hook's policy is never skipped.
+func TestPermissionHookAskOverridesAlwaysAllow(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, writeCall("w1", "a.txt"), writeCall("w2", "b.txt"), fakeprovider.Turn{Text: "done"})
+	c := newTestClient(t, testConfig(srv, 0))
+	hooksJSON, jerr := json.Marshal(map[string]any{"hooks": []any{map[string]any{
+		"event": "PreToolUse", "matcher": "write_file", "command": hooktest.Command(t, "ask", "check writes"),
+	}}})
+	if jerr != nil {
+		t.Fatal(jerr)
+	}
+	if err := os.MkdirAll(filepath.Join(c.home, ".celeste"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.home, ".celeste", "hooks.json"), hooksJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	asks := 0
+	c.permit = func(map[string]any) map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		asks++
+		return selected(OptionAllowAlways)
+	}
+	ws := t.TempDir()
+	sid := c.newSession(ws)
+	res, err := c.call("session/prompt", textPrompt(sid, "write two files"))
+	if err != nil || stopReason(t, res) != "end_turn" {
+		t.Fatalf("prompt = %s %v", res, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if asks != 2 {
+		t.Fatalf("asks = %d, want 2 (a hook's ask is asked even after allow_always)", asks)
+	}
+	for _, f := range []string{"a.txt", "b.txt"} {
+		if _, err := os.Stat(filepath.Join(ws, f)); err != nil {
+			t.Fatalf("%s not written: %v", f, err)
+		}
 	}
 }
