@@ -9,6 +9,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
+	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
@@ -171,7 +173,9 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
-		t.compactor = &chatCompactor{a: a, window: req.Window, used: req.Used, jev: a.jevShadow()}
+		// The meter counts the system prompt and tool schemas (#234).
+		overhead := ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(l.Client.GetSkills())
+		t.compactor = &chatCompactor{a: a, window: req.Window, meter: compact.NewMeter(overhead), jev: a.jevShadow()}
 		l.Compact = t.compactor
 	}
 	return l
@@ -425,29 +429,26 @@ type chatCompactor struct {
 	a      *TUIClientAdapter
 	jev    *jev.Client // shadow scorer, resolved when the turn started; nil: off
 	window int
-	used   int          // Run's goroutine only: the tracker's count, then the provider's
-	saved  atomic.Int64 // the tokens the last prune freed, for the chat's count (read by the pump)
+	meter  *compact.Meter // Run's goroutine only (#234)
+	saved  atomic.Int64   // the tokens the last prune freed, for the chat's count (read by the pump)
 	over   atomic.Bool
 }
 
 func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, last *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
+	prompt := 0
 	if last != nil {
-		if last.TotalTokens > 0 {
-			c.used = last.TotalTokens
-		} else {
-			c.used = last.PromptTokens + last.CompletionTokens
-		}
+		prompt = last.PromptTokens
 	}
-	out := c.a.compactWith(history, c.window, c.used, force, c.jev)
+	c.meter.Observe(history, prompt)
+	out := c.a.compactWith(history, c.window, c.meter.Used(history), c.meter.Unseen(history), force, c.jev)
 	c.over.Store(out.StillOver)
 	if len(out.Edits) == 0 {
+		c.meter.Sending(history)
 		return history, nil, false
 	}
 	edited := tui.EditToolResults(history, out.Edits)
-	if c.used > out.SavedTokens {
-		c.used -= out.SavedTokens
-	}
 	c.saved.Store(int64(out.SavedTokens))
+	c.meter.Sending(edited)
 	return edited, []string{out.Summary}, true
 }
 

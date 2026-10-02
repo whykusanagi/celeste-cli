@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
@@ -693,7 +694,7 @@ func TestRunTurnSyncsTheCompactedHistoryWhenTheTurnEndsEarly(t *testing.T) {
 			}
 			cleanupChatDeps(t, deps)
 			history := bigToolHistory()
-			req := tui.TurnRequest{History: history, Tools: true, Window: 20_000, Used: 30_000, Run: 1}
+			req := tui.TurnRequest{History: history, Tools: true, Window: 20_000, Run: 1}
 			h, cmd := deps.adapter.RunTurn(req)
 			msgs := drainTurnWith(t, cmd, req, func(msg tea.Msg) {
 				if _, ok := msg.(tui.CompactedMsg); ok && tc.stop == "interrupted" {
@@ -728,5 +729,26 @@ func TestRunTurnSyncsTheCompactedHistoryWhenTheTurnEndsEarly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestChatCompactorCountsSystemPromptAndTools(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	history := userTurn("read the files")
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	if est := compact.Estimate(history); est >= compact.Threshold(40_000) {
+		t.Fatalf("test setup: history alone (%d) should be under the threshold", est)
+	}
+	c := &chatCompactor{a: a, window: 40_000, meter: compact.NewMeter(12_000)}
+	_, notes, changed := c.Compact(context.Background(), history, nil, false)
+	if !changed || len(notes) == 0 {
+		t.Fatal("the compactor ignored the system prompt and tool schemas")
 	}
 }

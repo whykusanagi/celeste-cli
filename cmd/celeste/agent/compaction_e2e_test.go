@@ -204,3 +204,86 @@ func TestAgentRunSummarizesWhenPruningIsNotEnough(t *testing.T) {
 		t.Error("the history should now start with the summary")
 	}
 }
+
+// batchBackend asks for n files in one parallel batch, then checks the next
+// request: every result must reach the model un-elided once (#234 thrash).
+type batchBackend struct {
+	mu       sync.Mutex
+	n        int
+	requests int
+	elided   []string // results already elided when the model first saw them
+}
+
+func (b *batchBackend) SendMessageStreamEvents(_ context.Context, msgs []tui.ChatMessage, _ []tui.SkillDefinition, cb llm.StreamEventCallback) error {
+	b.mu.Lock()
+	b.requests++
+	req := b.requests
+	b.mu.Unlock()
+	usage := &llm.TokenUsage{PromptTokens: compact.Estimate(msgs) + 500, CompletionTokens: 20}
+	if req == 1 {
+		for i := 0; i < b.n; i++ {
+			id := fmt.Sprintf("toolu_%02d", i)
+			args, _ := json.Marshal(map[string]string{"path": fmt.Sprintf("f%02d.go", i)})
+			cb(llm.StreamEvent{Type: llm.EventToolUseStart, ToolUseID: id, ToolName: "read_file"})
+			cb(llm.StreamEvent{Type: llm.EventToolUseDone, ToolUseID: id, ToolName: "read_file", CompleteInput: string(args)})
+		}
+		cb(llm.StreamEvent{Type: llm.EventMessageDone, Usage: usage, FinishReason: "tool_calls"})
+		return nil
+	}
+	if req == 2 {
+		b.mu.Lock()
+		for _, m := range msgs {
+			if m.Role == "tool" && strings.Contains(m.Content, "recall_tool_result with id") {
+				b.elided = append(b.elided, m.ToolCallID)
+			}
+		}
+		b.mu.Unlock()
+	}
+	cb(llm.StreamEvent{Type: llm.EventContentDelta, ContentDelta: "TASK_COMPLETE: summarized"})
+	cb(llm.StreamEvent{Type: llm.EventMessageDone, Usage: usage, FinishReason: "stop"})
+	return nil
+}
+
+func (b *batchBackend) SendMessageStream(context.Context, []tui.ChatMessage, []tui.SkillDefinition, llm.StreamCallback) error {
+	return fmt.Errorf("not used")
+}
+func (b *batchBackend) SendMessageSync(context.Context, []tui.ChatMessage, []tui.SkillDefinition) (*llm.ChatCompletionResult, error) {
+	return nil, fmt.Errorf("not used")
+}
+func (b *batchBackend) SetSystemPrompt(string)               {}
+func (b *batchBackend) SetThinkingConfig(llm.ThinkingConfig) {}
+func (b *batchBackend) Close() error                         { return nil }
+
+// sizedFileTool returns size bytes for any path.
+type sizedFileTool struct {
+	bigFileTool
+	size int
+}
+
+func (s sizedFileTool) Execute(_ context.Context, input map[string]any, _ chan<- tools.ProgressEvent) (tools.ToolResult, error) {
+	path, _ := input["path"].(string)
+	return tools.ToolResult{Content: path + "\n" + strings.Repeat("x", s.size)}, nil
+}
+
+// #234 thrash, end to end: 22 results of ~1.5k tokens on a 40k window.
+func TestAgentNeverElidesAResultBeforeTheModelSawIt(t *testing.T) {
+	backend := &batchBackend{n: 22}
+	registry := tools.NewRegistry()
+	registry.Register(sizedFileTool{size: 6_000})
+	client := llm.NewClientWithBackend(&llm.Config{}, registry, backend)
+	client.SetToolMode(tools.ModeAgent)
+	runner, _ := newCompactionRunner(t, &windowBackend{}, 40_000)
+	runner.client, runner.registry = client, registry
+	runner.options.MaxToolCallsPerTurn = 30
+
+	state, err := runner.RunGoal(context.Background(), "summarize every file")
+	if err != nil || state.Status != StatusCompleted {
+		t.Fatalf("run: %v, status %q (%s)", err, state.Status, state.Error)
+	}
+	if backend.requests < 2 {
+		t.Fatalf("requests = %d, want the batch and its follow-up", backend.requests)
+	}
+	if len(backend.elided) > 0 {
+		t.Fatalf("results elided before the model saw them: %v", backend.elided)
+	}
+}

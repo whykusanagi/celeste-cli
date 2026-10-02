@@ -76,19 +76,16 @@ type Runner struct {
 // that isn't enough it summarizes everything but the newest ~20k tokens. It
 // returns the history, progress notes for the event stream, and whether it
 // changed. It runs on the loop goroutine and must not write r.out.
-func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, force bool) ([]tui.ChatMessage, []string, bool) {
+func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, meter *compact.Meter, force bool) ([]tui.ChatMessage, []string, bool) {
 	// A nil prune store only disables pruning (Prune is a no-op without
 	// one); the summary rung below must still run.
 	if r.budget == nil || (r.pruned == nil && r.summarize == nil) {
 		return msgs, nil, false
 	}
 	var notes []string
-	used := compact.Estimate(msgs) + r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
-	if last := r.budget.LastPromptTokens; last > used {
-		used = last // the API's count includes tool schemas the estimate misses
-	}
 	overhead := r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
-	opts := compact.Options{Window: r.budget.ModelLimit, Used: used, Force: force}
+	meter.Overhead = overhead
+	opts := compact.Options{Window: r.budget.ModelLimit, Used: meter.Used(msgs), Unseen: meter.Unseen(msgs), Force: force}
 	report := func(compact.Result) {}
 	if r.jev != nil {
 		opts, report = compact.Shadow(r.jev, msgs, opts, func(line string) {
@@ -110,7 +107,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{}, summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
 			// Always reported, not only in verbose output (TUI parity).
@@ -733,7 +730,7 @@ func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 		Tools:     r.registry,
 		Limits:    lim,
 		Gate:      loop.PromptGate(r.options.PromptFunc),
-		Compact:   runCompactor{r: r},
+		Compact:   &runCompactor{r: r, meter: compact.NewMeter(0)},
 		SessionID: "agent-" + state.RunID,
 		Steering:  sess.Steering(),
 	}
@@ -869,14 +866,25 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 }
 
 // runCompactor feeds the loop's usage into the token budget and runs the
-// agent's compaction ladder (#174) on the loop goroutine.
-type runCompactor struct{ r *Runner }
+// agent's compaction ladder (#174) on the loop goroutine. Its meter spans
+// the run (#234).
+type runCompactor struct {
+	r     *Runner
+	meter *compact.Meter
+}
 
-func (c runCompactor) Compact(ctx context.Context, history []tui.ChatMessage, usage *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
-	if usage != nil && c.r.budget != nil {
-		c.r.budget.AddTurn(usage.PromptTokens, usage.CompletionTokens)
+func (c *runCompactor) Compact(ctx context.Context, history []tui.ChatMessage, usage *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
+	prompt := 0
+	if usage != nil {
+		prompt = usage.PromptTokens
+		if c.r.budget != nil {
+			c.r.budget.AddTurn(usage.PromptTokens, usage.CompletionTokens)
+		}
 	}
-	return c.r.compactMessages(ctx, history, force)
+	c.meter.Observe(history, prompt)
+	out, notes, changed := c.r.compactMessages(ctx, history, c.meter, force)
+	c.meter.Sending(out)
+	return out, notes, changed
 }
 
 func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {

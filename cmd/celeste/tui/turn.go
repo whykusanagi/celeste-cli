@@ -24,7 +24,6 @@ type TurnRequest struct {
 	History []ChatMessage // the chat's LLM messages
 	Tools   bool          // offer tools (off in NSFW mode and without function calling)
 	Window  int           // context window in tokens; 0 turns compaction off
-	Used    int           // tokens the last request used, from the tracker
 	Run     uint64        // tags every TurnEventMsg of this turn
 }
 
@@ -137,7 +136,7 @@ func (m AppModel) startTurn() (AppModel, tea.Cmd) {
 	m.turnSeq++
 	req := TurnRequest{History: m.chat.GetLLMMessages(), Tools: m.toolsOffered(), Run: m.turnSeq}
 	if m.contextTracker != nil && m.contextTracker.MaxTokens > 0 {
-		req.Window, req.Used = m.contextTracker.MaxTokens, m.contextTracker.CurrentTokens
+		req.Window = m.contextTracker.MaxTokens
 	}
 	h, cmd := m.llmClient.RunTurn(req)
 	m.turn, m.turnRun, m.loopSteers = h, m.turnSeq, 0

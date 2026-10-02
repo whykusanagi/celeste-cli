@@ -240,5 +240,4 @@ func TestTurnRequestCarriesTheWindow(t *testing.T) {
 	step(t, m, SendMessageMsg{Content: "go"})
 	require.Len(t, client.turns, 1)
 	assert.Equal(t, 100_000, client.turns[0].req.Window)
-	assert.Equal(t, 50_000, client.turns[0].req.Used)
 }

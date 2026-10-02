@@ -584,26 +584,28 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 // calls it on the Update goroutine, never while a turn runs (commands wait
 // for the turn).
 func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
-	return a.compactWith(msgs, window, used, force, a.jevShadow())
+	return a.compactWith(msgs, window, used, 0, force, a.jevShadow()) // between turns: everything was seen
 }
 
 // compactWith prunes with jc as the Jev shadow scorer (nil: none). A chat
 // turn's compactor passes the client RunTurn resolved, so the run goroutine
 // never reads the adapter's config, which endpoint and profile switches
 // replace on the Update goroutine.
-func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client) tui.CompactOutcome {
+// used is the whole next request (system prompt and tools included);
+// unseen is how many trailing messages the model has not been shown (#234).
+func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used, unseen int, force bool, jc *jev.Client) tui.CompactOutcome {
 	a.compactMu.Lock()
 	defer a.compactMu.Unlock()
 	if est := compact.Estimate(msgs); est > used {
 		used = est
 	}
-	overhead := used - compact.Estimate(msgs) // system prompt and tool schemas
+	overhead := used - compact.Estimate(msgs) // system prompt and tool schemas, or the provider's surplus
 	if a.pruned == nil {
 		if store, err := compact.DefaultStore(); err == nil {
 			a.pruned = store
 		}
 	}
-	opts := compact.Options{Window: window, Used: used, Force: force}
+	opts := compact.Options{Window: window, Used: used, Unseen: unseen, Force: force}
 	report := func(compact.Result) {}
 	if jc != nil {
 		opts, report = compact.Shadow(jc, msgs, opts, tui.LogInfo, true)

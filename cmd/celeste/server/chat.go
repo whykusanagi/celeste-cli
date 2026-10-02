@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -158,9 +157,9 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 // go to the pruned-results store, where recall_tool_result restores them.
 // MCP chat has no summary rung: a call is one prompt of at most 25 turns.
 type chatCompactor struct {
-	window   int // the model's context window, in tokens
-	overhead int // system prompt and tool definitions, estimated
-	store    *compact.Store
+	window int            // the model's context window, in tokens
+	meter  *compact.Meter // the next request's size and what is unseen (#234)
+	store  *compact.Store
 }
 
 // newChatCompactor sizes the compactor for cfg's model (context_limit
@@ -172,22 +171,23 @@ func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefin
 		return nil
 	}
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
-	defs, _ := json.Marshal(skills)
 	return &chatCompactor{
-		window:   window,
-		overhead: ctxmgr.EstimateTokens(system) + len(defs)/4,
-		store:    store,
+		window: window,
+		meter:  compact.NewMeter(ctxmgr.EstimateTokens(system) + compact.DefinitionTokens(skills)),
+		store:  store,
 	}
 }
 
 // Compact implements loop.Compactor. The loop calls it before every request,
 // and once with force after a context-overflow error.
 func (c *chatCompactor) Compact(_ context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
-	used := compact.Estimate(history) + c.overhead
-	if usage != nil && usage.PromptTokens > used {
-		used = usage.PromptTokens // the provider's count includes what the estimate misses
+	prompt := 0
+	if usage != nil {
+		prompt = usage.PromptTokens
 	}
-	out, res := compact.Prune(history, compact.Options{Window: c.window, Used: used, Force: force}, c.store)
+	c.meter.Observe(history, prompt)
+	out, res := compact.Prune(history, compact.Options{Window: c.window, Used: c.meter.Used(history), Unseen: c.meter.Unseen(history), Force: force}, c.store)
+	c.meter.Sending(out)
 	if !res.Pruned() {
 		return history, nil, false
 	}
