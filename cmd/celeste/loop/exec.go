@@ -147,6 +147,9 @@ func (l *Loop) invoke(ctx context.Context, t tools.Tool, input map[string]any, l
 	timeout := tools.TimeoutFor(t, lim.ToolTimeout)
 	cctx, cancel := context.WithCancel(tools.WithExecTimeout(ctx, timeout))
 	defer cancel()
+	if l.Advisor != nil {
+		cctx = tools.WithAskAdvisor(cctx, l.Advisor)
+	}
 	askCtx := cctx // ends with this call, abandoned or not
 	wd := newWatchdog(timeout + lim.HookBudget)
 	defer wd.stop()
