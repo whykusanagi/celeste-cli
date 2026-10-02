@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -183,4 +184,21 @@ func TestFormatChanges(t *testing.T) {
 		"  " + outside + "  +1 -0"
 	assert.Equal(t, want, FormatChanges(changes, ws))
 	assert.Equal(t, "No files changed in this session.", FormatChanges(nil, ws))
+}
+
+// /diff reads backups only inside the session directory, whatever a
+// hand-edited index names.
+func TestComputeDiffRefusesBackupsOutsideTheSession(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "session")
+	require.NoError(t, os.MkdirAll(sdir, 0o700))
+	f := filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("now"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("s\ne\nc"), 0o600))
+	data, err := json.Marshal([]Entry{{Path: f, Version: 1, Backup: filepath.Join("..", "secret.txt")}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sdir, "index.json"), data, 0o600))
+
+	_, err = newSnapshotManagerWithBase(sdir).ComputeDiff()
+	assert.ErrorContains(t, err, "invalid backup name")
 }

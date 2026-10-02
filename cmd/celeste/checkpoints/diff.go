@@ -50,7 +50,11 @@ func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
 		if e.Backup == "" {
 			change.IsNew = true
 		} else {
-			data, err := os.ReadFile(filepath.Join(sm.dir, e.Backup))
+			src, err := sm.backupPath(e)
+			if err != nil {
+				return nil, err
+			}
+			data, err := os.ReadFile(src)
 			if err != nil {
 				return nil, err
 			}
