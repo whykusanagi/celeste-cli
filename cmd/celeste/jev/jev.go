@@ -42,6 +42,9 @@ type Client struct {
 	Model string
 	URL   string
 	HTTP  *http.Client
+	// Workspace makes paths inside it workspace-relative in what Ask sends;
+	// every other absolute or ~ path is sent as <path> (RedactPaths).
+	Workspace string
 }
 
 // ErrNoKey means no key is configured; Jev stays off.
@@ -96,6 +99,9 @@ func (c *Client) Ask(ctx context.Context, state any, qs map[string]Question) (ma
 	if model == "" {
 		model = DefaultModel
 	}
+	// The state goes to a third party: secrets and file paths are redacted
+	// here, whatever the caller already did (2.0 W3).
+	state = RedactValue(state, c.Workspace)
 	body, err := json.Marshal(map[string]any{"state": state, "model": model, "questions": qs})
 	if err != nil {
 		return nil, "", err

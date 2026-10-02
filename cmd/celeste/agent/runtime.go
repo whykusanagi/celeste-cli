@@ -442,7 +442,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		indexer:    env.Indexer,
 		pruned:     prunedStore,
 		summarize:  SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
-		jev:        jevShadowClient(cfg.JevPrune, errOut),
+		jev:        jevShadowClient(cfg.JevPrune, options.Workspace, errOut),
 		env:        env,
 		hooks:      env.Hooks,
 		warn:       warn,
@@ -453,8 +453,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 }
 
 // jevShadowClient returns a Jev client when shadow mode is configured, and
-// says once that excerpts will leave the machine.
-func jevShadowClient(mode string, errOut io.Writer) *jev.Client {
+// says once that excerpts will leave the machine. Paths in them are sent
+// relative to workspace, or as <path>.
+func jevShadowClient(mode, workspace string, errOut io.Writer) *jev.Client {
 	if mode != "shadow" {
 		return nil
 	}
@@ -463,6 +464,7 @@ func jevShadowClient(mode string, errOut io.Writer) *jev.Client {
 		fmt.Fprintf(errOut, "[agent] jev shadow disabled: %v\n", err)
 		return nil
 	}
+	c.Workspace = workspace
 	fmt.Fprintln(errOut, "[agent] jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
 	return c
 }
