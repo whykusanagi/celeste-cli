@@ -3,7 +3,6 @@ package shellparse
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 // A later rm word does not end an earlier rm's arguments: rm -r rm /
@@ -25,11 +24,12 @@ func TestDestructiveRmArgsRunPastAnotherRm(t *testing.T) {
 // Every word that is rm starts a check; the checks share one pass, so a
 // long line of rm words stays linear (review of cleanup-4: 40 KB took 2 s).
 func TestDestructiveRmLinearOnManyRmWords(t *testing.T) {
-	// Compare growth, not wall time, so a slow CI runner can't fail it: four
-	// times the input costs about 4x when linear and 16x when quadratic.
-	small, big := strings.Repeat("rm -r x ", 1250), strings.Repeat("rm -r x ", 5000)
-	if r := growth(func() { DestructiveRm(small) }, func() { DestructiveRm(big) }); r > 8 {
-		t.Errorf("4x the rm words took %.1fx as long; want linear (~4x, quadratic is ~16x)", r)
+	// Count the work, not the time, so a slow or shared CI runner can't fail
+	// it: eight times the input is about 8x the steps when linear and 64x
+	// when quadratic.
+	small, big := strings.Repeat("rm -r x ", 625), strings.Repeat("rm -r x ", 5000)
+	if r := workGrowth(func() { DestructiveRm(small) }, func() { DestructiveRm(big) }); r > 12 {
+		t.Errorf("8x the rm words did %.1fx the work; want linear (~8x, quadratic is ~64x)", r)
 	}
 	if DestructiveRm(big) != None {
 		t.Fatal("benign line flagged")
@@ -39,19 +39,15 @@ func TestDestructiveRmLinearOnManyRmWords(t *testing.T) {
 	}
 }
 
-// growth is how many times longer big takes than small, each timed as the
-// best of five runs.
-func growth(small, big func()) float64 {
-	best := func(f func()) time.Duration {
-		d := time.Duration(1<<63 - 1)
-		for i := 0; i < 5; i++ {
-			start := time.Now()
-			f()
-			d = min(d, time.Since(start))
-		}
-		return max(d, time.Microsecond)
+// workGrowth is how many times the work of small that big does, in Steps;
+// the counter is package-wide, so no test here may run in parallel.
+func workGrowth(small, big func()) float64 {
+	work := func(f func()) int64 {
+		before := Steps()
+		f()
+		return max(Steps()-before, 1)
 	}
-	return float64(best(big)) / float64(best(small))
+	return float64(work(big)) / float64(work(small))
 }
 
 func BenchmarkDestructiveRmManyRmWords(b *testing.B) {

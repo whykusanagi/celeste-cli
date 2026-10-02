@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
 )
 
 func TestParseRuleFile(t *testing.T) {
@@ -542,30 +543,28 @@ func TestDestructiveBashHitTextIsTheCommand(t *testing.T) {
 }
 
 // The advisory rule reads every bash call (condition \S) and the watchdog
-// reads recent ones: 40 KB of adversarial shell stays fast.
+// reads recent ones: 40 KB of adversarial shell stays linear. The work is
+// counted, not timed, so a slow or shared CI runner can't fail it: eight
+// times the input is about 8x the work when linear and 64x when quadratic
+// (the rm-restart loop cleanup-4 removed).
 func TestDestructiveLinearOnLongLines(t *testing.T) {
-	// Compare growth, not wall time, so a slow CI runner can't fail it: four
-	// times the input costs about 4x when linear and 16x when quadratic.
 	for _, unit := range []string{"rm -r x ", "env ", "bash -lc ", "sudo -u x ", "git push x ", "a=1 "} {
 		n := 40000 / len(unit)
-		small, big := strings.Repeat(unit, n/4), strings.Repeat(unit, n)
-		if r := growth(func() { Destructive(small) }, func() { Destructive(big) }); r > 8 {
-			t.Errorf("%q x4 took %.1fx as long; want linear (~4x, quadratic is ~16x)", unit, r)
+		small, big := strings.Repeat(unit, n/8), strings.Repeat(unit, n/8*8)
+		if r := workGrowth(func() { Destructive(small) }, func() { Destructive(big) }); r > 12 {
+			t.Errorf("%q x8 did %.1fx the work; want linear (~8x, quadratic is ~64x)", unit, r)
 		}
 	}
 }
 
-// growth is how many times longer big takes than small, each timed as the
-// best of five runs.
-func growth(small, big func()) float64 {
-	best := func(f func()) time.Duration {
-		d := time.Duration(1<<63 - 1)
-		for i := 0; i < 5; i++ {
-			start := time.Now()
-			f()
-			d = min(d, time.Since(start))
-		}
-		return max(d, time.Microsecond)
+// workGrowth is how many times the work of small that big does, counted in
+// shellparse's and destructiveShell's loop steps; the counters are
+// package-wide, so no test here may run in parallel.
+func workGrowth(small, big func()) float64 {
+	work := func(f func()) int64 {
+		before := shellparse.Steps() + shellSteps.Load()
+		f()
+		return max(shellparse.Steps()+shellSteps.Load()-before, 1)
 	}
-	return float64(best(big)) / float64(best(small))
+	return float64(work(big)) / float64(work(small))
 }
