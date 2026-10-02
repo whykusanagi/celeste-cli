@@ -208,3 +208,49 @@ func TestPruneSkipsALockedSession(t *testing.T) {
 	require.NoError(t, Prune(root, "", pruneNow))
 	assert.Contains(t, sessionsIn(t, root), "s20")
 }
+
+// noHome removes every directory Root can derive a location from.
+func noHome(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CACHE_HOME", "LocalAppData", "home"} {
+		t.Setenv(k, "")
+	}
+}
+
+// Without a home directory checkpoints go to the user cache directory.
+func TestRootFallsBackToTheCacheDirectory(t *testing.T) {
+	noHome(t)
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("LocalAppData", cache)
+	if _, err := os.UserCacheDir(); err != nil {
+		t.Skipf("no cache directory without HOME on this platform: %v", err)
+	}
+	assert.Equal(t, filepath.Join(cache, "celeste", "checkpoints"), Root())
+}
+
+// With neither, checkpoints are off: writes still go ahead, and nothing is
+// ever written under the working directory.
+func TestNoHomeDisablesCheckpointsAndNeverUsesTheWorkingDirectory(t *testing.T) {
+	noHome(t)
+	if _, err := os.UserCacheDir(); err == nil {
+		t.Skip("this platform still has a cache directory")
+	}
+	work := t.TempDir()
+	t.Chdir(work)
+	assert.Equal(t, "", Root())
+
+	sm := NewSnapshotManager("chat-1")
+	f := filepath.Join(work, "a.txt")
+	write(t, f, "x")
+	c, err := sm.Checkpoint(f, "call_1")
+	require.NoError(t, err, "a write is not refused")
+	require.NoError(t, c.Rollback())
+	assert.Equal(t, "x", read(t, f), "the no-op rollback leaves the file")
+	assert.Empty(t, sm.Entries())
+	_, err = sm.RevertLast()
+	assert.ErrorContains(t, err, "disabled")
+	_, _, err = RevertFile(Root(), f, "chat-1")
+	assert.ErrorContains(t, err, "disabled")
+	assert.Equal(t, []string{"a.txt"}, sessionsIn(t, work), "nothing was written under the working directory")
+}

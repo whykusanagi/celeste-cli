@@ -6,17 +6,38 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 )
 
-// Root is where every session's checkpoints live: ~/.celeste/checkpoints.
+// Root is where every session's checkpoints live: ~/.celeste/checkpoints,
+// or <user cache dir>/celeste/checkpoints when there is no home directory.
+// With neither it is "" and checkpoints are off (one warning): they are
+// never written under the working directory.
 func Root() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".celeste", "checkpoints")
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+		return filepath.Join(home, ".celeste", "checkpoints")
+	}
+	if cache, err := os.UserCacheDir(); err == nil && filepath.IsAbs(cache) {
+		return filepath.Join(cache, "celeste", "checkpoints")
+	}
+	noRootWarning.Do(func() {
+		fmt.Fprintln(os.Stderr, "Warning: no home or cache directory; file checkpoints (/undo, celeste revert) are off")
+	})
+	return ""
 }
 
-// SessionDir is sessionID's directory under root (ruling 5).
+var noRootWarning sync.Once
+
+// errDisabled: there is no directory to keep checkpoints in (see Root).
+var errDisabled = errors.New("file checkpoints are disabled: no home or cache directory")
+
+// SessionDir is sessionID's directory under root (ruling 5), or "" (no
+// checkpoints) when root is "".
 func SessionDir(root, sessionID string) string {
+	if root == "" {
+		return ""
+	}
 	return filepath.Join(root, safeName(sessionID))
 }
 
@@ -49,6 +70,9 @@ const (
 // not keep. keep (the session starting now) always survives. A missing
 // root is nothing to prune.
 func Prune(root, keep string, now time.Time) error {
+	if root == "" {
+		return nil
+	}
 	des, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -107,6 +131,9 @@ func lastChange(dir string) time.Time {
 // whose newest checkpoint of path is the most recent across all sessions
 // (celeste revert without --session). Paths match as samePath does.
 func LatestSessionFor(root, path string) (string, error) {
+	if root == "" {
+		return "", errDisabled
+	}
 	des, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -137,6 +164,9 @@ func LatestSessionFor(root, path string) (string, error) {
 // when sessionID is "", in the session that changed it last — and removes
 // that entry (celeste revert, 2.0 F4).
 func RevertFile(root, path, sessionID string) (string, Entry, error) {
+	if root == "" {
+		return sessionID, Entry{}, errDisabled
+	}
 	if sessionID == "" {
 		latest, err := LatestSessionFor(root, path)
 		if err != nil {

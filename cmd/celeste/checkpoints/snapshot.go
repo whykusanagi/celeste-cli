@@ -105,6 +105,11 @@ func (c *Checkpoint) Entry() Entry { return c.entry }
 // that does not exist yet is recorded without a backup. A path that is not
 // a regular file is refused and nothing is recorded.
 func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, error) {
+	if sm.dir == "" {
+		// Checkpoints are off (no home directory): the write goes ahead
+		// unrecorded, and rolling it back does nothing.
+		return &Checkpoint{entry: Entry{MessageID: messageID, Path: path}}, nil
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	_, dirErr := os.Stat(sm.dir)
@@ -171,6 +176,9 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint
 // reverted or evicted it does nothing.
 func (c *Checkpoint) Rollback() error {
 	sm := c.sm
+	if sm == nil {
+		return nil
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	unlock, err := lockSession(sm.dir, false)
@@ -189,6 +197,9 @@ func (c *Checkpoint) Rollback() error {
 
 // Revert restores path from its newest entry and removes that entry.
 func (sm *SnapshotManager) Revert(path string) (Entry, error) {
+	if sm.dir == "" {
+		return Entry{}, errDisabled
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	unlock, err := lockSession(sm.dir, false)
@@ -208,6 +219,9 @@ func (sm *SnapshotManager) Revert(path string) (Entry, error) {
 
 // RevertLast restores the file of the newest entry and removes it (/undo).
 func (sm *SnapshotManager) RevertLast() (Entry, error) {
+	if sm.dir == "" {
+		return Entry{}, errDisabled
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	unlock, err := lockSession(sm.dir, false)
@@ -228,6 +242,9 @@ func (sm *SnapshotManager) RevertLast() (Entry, error) {
 // for messageID to the newest (W4's /rewind) and returns them in that
 // order. On an error it stops and returns what it undid so far.
 func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
+	if sm.dir == "" {
+		return nil, errDisabled
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	unlock, err := lockSession(sm.dir, false)
@@ -487,6 +504,9 @@ func sameEntry(a, b Entry) bool {
 
 // readIndex loads dir's index; a missing index is an empty session.
 func readIndex(dir string) ([]Entry, error) {
+	if dir == "" {
+		return nil, nil // checkpoints are off
+	}
 	data, err := os.ReadFile(filepath.Join(dir, indexFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
