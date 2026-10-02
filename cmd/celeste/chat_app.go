@@ -13,6 +13,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/subagents"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -171,6 +172,12 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 	for _, n := range modelNotes {
 		app = app.WithSystemMessage("⚠ " + n)
+	}
+	// A build without the official persona says so at every startup (W5
+	// ruling 17). It is computed from state, not latched, so it shows once
+	// per chat and never reaches a turn.
+	if n := prompts.PersonaNotice(); n != "" {
+		app = app.WithSystemMessage("ℹ " + n)
 	}
 	// 2.0 W4 (ruling 6): nothing writes .grimoire implicitly any more, so a
 	// session in a project without context says how to add one.

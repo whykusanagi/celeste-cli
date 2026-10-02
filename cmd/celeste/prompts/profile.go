@@ -56,6 +56,12 @@ func (p *PersonaProfile) Tokens() int { return len(p.SystemPrompt) / 4 }
 // empty and run the public persona. Nothing may log, print or wrap it.
 var personaKey string
 
+// HasPersonaKey reports whether this binary was built with a persona key
+// (W5 ruling 25): such a build is Keyed and never replaces itself with a
+// downloaded release. It says nothing about whether the key decrypts; that
+// is VerifyPersona. The key itself never leaves this package.
+func HasPersonaKey() bool { return strings.TrimSpace(personaKey) != "" }
+
 // personaFS is the sealed persona (make sync-persona): SOURCE.json and the
 // four celeste_<profile>.enc files. persona/LICENSE is not embedded.
 //

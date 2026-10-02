@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -67,8 +68,10 @@ func hasDefaultConfig() bool {
 }
 
 // printUsage prints the CLI usage information.
-func printUsage() {
-	fmt.Print(`
+func printUsage() { fmt.Print(usageText) }
+
+// usageText is `celeste help`.
+const usageText = `
 ✨ Celeste CLI - Interactive AI Assistant
 
 Usage:
@@ -87,6 +90,7 @@ Commands:
   skills                  List and manage skills
   providers               List and query AI providers
   agent                   Run autonomous agent loops for complex tasks
+  persona verify          Check that this binary carries the official persona
   session                 Manage conversation sessions
   context                 Show context/token usage
   stats                   Show usage statistics
@@ -188,8 +192,7 @@ Examples:
   celeste agent --goal "refactor this package and add tests"
   celeste config --list                  List available configs
   celeste config --init openai           Create OpenAI config template
-`)
-}
+`
 
 // runChatTUI launches the interactive Bubble Tea TUI.
 func runChatTUI() {
@@ -1503,6 +1506,7 @@ func runSingleMessage(message string) {
 		os.Exit(1)
 	}
 	resolveServedModels(cfg, os.Stderr)
+	printPersonaNoticeOnce(os.Stderr)
 
 	// Initialize LLM client
 	client := llm.NewClient(llm.ConfigFrom(cfg), nil)
@@ -1827,6 +1831,11 @@ func runServeCommand(args []string) {
 	// A go install build upgrades in the background for the next launch;
 	// MCP stdio keeps stdout (W5 ruling 28).
 	newUpgradeHook().background()
+	// MCP stdio keeps stdout for the protocol, and MCP responses never
+	// carry the notice (W5 ruling 17): the log (stderr) gets it once.
+	if n := prompts.PersonaNotice(); n != "" {
+		log.Print("[persona] " + n)
+	}
 
 	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
