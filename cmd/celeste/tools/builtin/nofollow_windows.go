@@ -17,7 +17,7 @@ func openNoFollow(real string) (*os.File, error) {
 		return nil, err
 	}
 	if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		return nil, fmt.Errorf("%s: the file changed to a symlink while it was being opened", real)
+		return nil, fmt.Errorf("%s is a symlink or reparse point; not followed", real)
 	}
 	return os.Open(real)
 }

@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"time"
 
@@ -40,8 +41,8 @@ type ShellResult struct {
 // RunShell runs one model-chosen shell command (ruling 1): the denylist
 // first, then sh -c in its own process group, killed whole on timeout. A
 // background process still holding the output pipes after the shell exits
-// gets shellWaitDelay; then the pipes are closed, the group is killed, and
-// Err says so. A background process that redirected its output does not
+// gets shellWaitDelay, whatever the shell's exit status; then the group is
+// killed, the pipe is closed, and Err says so. A background process that redirected its output does not
 // hold the pipes and keeps running.
 func RunShell(ctx context.Context, o ShellOptions) ShellResult {
 	if reason := checkDangerousCommand(o.Command); reason != "" {
@@ -58,13 +59,42 @@ func RunShell(ctx context.Context, o ShellOptions) ShellResult {
 	if o.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(o.Stdin)
 	}
-	// One writer value for both streams: os/exec then shares a single pipe
-	// and copy goroutine, so cappedBuffer needs no lock.
+	// RunShell owns the output pipe rather than relying on Cmd.WaitDelay:
+	// Wait reports exec.ErrWaitDelay only when the shell exited zero, so a
+	// failing shell would let a background holder of the pipe escape.
+	// cappedBuffer is written only by the copy goroutine below.
 	out := &cappedBuffer{}
-	cmd.Stdout, cmd.Stderr = out, out
+	r, w, err := os.Pipe()
+	if err != nil {
+		return ShellResult{ExitCode: -1, Err: err}
+	}
+	defer r.Close()
+	cmd.Stdout, cmd.Stderr = w, w
 	proctree.Prepare(cmd)
-	cmd.WaitDelay = shellWaitDelay
-	err := cmd.Run()
+	cmd.WaitDelay = shellWaitDelay // bounds the stdin copy goroutine
+	err = cmd.Start()
+	_ = w.Close()
+	if err != nil {
+		return ShellResult{ExitCode: -1, Err: err}
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(out, r)
+		close(done)
+	}()
+	err = cmd.Wait()
+
+	heldPipe := false
+	select {
+	case <-done:
+	case <-time.After(shellWaitDelay):
+		// Whatever still holds the pipe is in the group; its output can no
+		// longer reach anyone, so it does not outlive the call unseen.
+		heldPipe = true
+		_ = proctree.Kill(cmd)
+		_ = r.Close()
+		<-done
+	}
 
 	res := ShellResult{
 		Output:    out.String(),
@@ -77,12 +107,10 @@ func RunShell(ctx context.Context, o ShellOptions) ShellResult {
 	}
 	var exitErr *exec.ExitError
 	switch {
-	case err == nil, res.TimedOut, errors.As(err, &exitErr):
-	case errors.Is(err, exec.ErrWaitDelay):
-		// Whatever still held the pipes is in the group; its output can no
-		// longer reach anyone, so it does not outlive the call unseen.
-		_ = proctree.Kill(cmd)
-		res.Err = fmt.Errorf("the shell exited but a background process kept its output open; it was stopped (redirect its output to keep it running: cmd > log 2>&1 &): %w", err)
+	case res.TimedOut:
+	case heldPipe:
+		res.Err = errors.New("the shell exited but a background process kept its output open; it was stopped (redirect its output to keep it running: cmd > log 2>&1 &)")
+	case err == nil, errors.As(err, &exitErr):
 	default:
 		res.Err = err
 	}

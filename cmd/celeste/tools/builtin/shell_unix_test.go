@@ -66,6 +66,29 @@ func TestRunShellKillsWhatHoldsThePipeAfterTheShellExits(t *testing.T) {
 	}
 }
 
+// A non-zero exit does not let a background process holding the pipe
+// escape: the shell's exit status is kept and the holder is still stopped.
+func TestRunShellKillsWhatHoldsThePipeAfterAFailingShell(t *testing.T) {
+	dir := t.TempDir()
+	res := RunShell(context.Background(), ShellOptions{Dir: dir, Command: "sleep 60 & echo $! > pid; exit 3", Timeout: 10 * time.Second})
+	if res.Err == nil || res.TimedOut || res.ExitCode != 3 {
+		t.Fatalf("result = %+v", res)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if pid <= 0 {
+		t.Fatalf("no pid recorded: %q", b)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatal("the background child holding the pipe survived a failing shell")
+	}
+}
+
 // A background process that redirected its output is left running.
 func TestRunShellLeavesADetachedBackgroundProcess(t *testing.T) {
 	dir := t.TempDir()
