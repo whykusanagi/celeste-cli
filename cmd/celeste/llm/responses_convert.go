@@ -143,14 +143,15 @@ func responsesTools(tools []tui.SkillDefinition) []openai.Tool {
 // openAIReasoningModel reports an OpenAI model that reasons, takes a
 // reasoning effort (reasoning.effort on Responses, reasoning_effort on Chat
 // Completions) and accepts include reasoning.encrypted_content: the o1, o3,
-// o4 and gpt-5 families, except gpt-5-chat, which does not reason. OpenAI
+// o4 and gpt-5 families, except their -chat variants (gpt-5-chat,
+// gpt-5.1-chat-latest), which do not reason. OpenAI
 // answers a request that asks a non-reasoning model for encrypted reasoning
 // with a 400 ("Encrypted content is not supported with this model."), so
 // this one predicate gates include and the effort on both APIs.
 func openAIReasoningModel(model string) bool {
 	m := strings.ToLower(model)
-	if strings.HasPrefix(m, "gpt-5-chat") {
-		return false
+	if strings.Contains(m, "-chat") {
+		return false // gpt-5-chat, gpt-5.1-chat-latest: chat variants do not reason
 	}
 	for _, p := range []string{"o1", "o3", "o4", "gpt-5"} {
 		if strings.HasPrefix(m, p) {

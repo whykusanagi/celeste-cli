@@ -132,7 +132,7 @@ func TestOpenAIEffort(t *testing.T) {
 func TestOpenAIReasoningModel(t *testing.T) {
 	for model, want := range map[string]bool{
 		"o1": true, "o3-mini": true, "o4-mini": true, "gpt-5": true, "GPT-5-mini": true, "gpt-5.1-codex": true,
-		"gpt-5-chat-latest": false, "gpt-5-chat": false, "gpt-4o": false, "gpt-4o-mini": false, "gpt-4.1": false, "": false,
+		"gpt-5-chat-latest": false, "gpt-5-chat": false, "gpt-5.1-chat-latest": false, "GPT-5.2-Chat": false, "o4-mini-chat": false, "gpt-4o": false, "gpt-4o-mini": false, "gpt-4.1": false, "": false,
 	} {
 		assert.Equal(t, want, openAIReasoningModel(model), model)
 	}
