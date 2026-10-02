@@ -69,3 +69,15 @@ func TestNoHandBuiltLLMConfigLiterals(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSummarizerConfigKeepsItsSystemPromptAndSkipsXAIFeatures(t *testing.T) {
+	cfg := &config.Config{APIKey: "k", BaseURL: "https://generativelanguage.googleapis.com/v1",
+		SkipPersonaPrompt: true, GoogleCredentialsFile: "sa.json", Collections: &config.CollectionsConfig{Enabled: true}}
+	got := summarizerConfig(cfg)
+	if got.SkipPersonaPrompt {
+		t.Error("the Google backend would drop the summary prompt")
+	}
+	if got.Collections != nil || got.XAIFeatures != nil || got.GoogleCredentialsFile != "sa.json" {
+		t.Errorf("summarizer config: %+v", got)
+	}
+}
