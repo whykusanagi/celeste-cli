@@ -1,6 +1,7 @@
 // Package shellrun is the one runner for every sh -c command celeste starts:
 // the bash tool (through builtin.RunShell, which checks the denylist
-// first), user-authored custom tools and the agent's --verify-cmd. Each run
+// first), user-authored custom tools and the agent's --verify-cmd; Args
+// runs a program directly (the agent's artifact git calls). Each run
 // gets its own process group, killed whole on timeout, a bounded wait for
 // whatever still holds the output pipe, and an output cap.
 package shellrun
@@ -30,7 +31,8 @@ const DefaultMaxOutput = 64_000
 // Options is one shell command for Run.
 type Options struct {
 	Dir       string
-	Command   string
+	Command   string        // run with sh -c
+	Args      []string      // non-empty: run Args[0] with Args[1:] directly, no shell; Command is ignored
 	Stdin     []byte        // nil: no stdin
 	Timeout   time.Duration // <= 0: DefaultTimeout
 	MaxOutput int           // <= 0: DefaultMaxOutput
@@ -46,7 +48,7 @@ type Result struct {
 	Err       error  // start or wait error other than a non-zero exit or the timeout
 }
 
-// Run runs command with sh -c in its own process group, killed whole on
+// Run runs Command with sh -c (or Args directly) in its own process group, killed whole on
 // timeout. It applies no denylist: callers that run model-chosen commands
 // check one first (builtin.RunShell). A background process still holding
 // the output pipes after the shell exits gets WaitDelay, whatever the
@@ -64,7 +66,12 @@ func Run(ctx context.Context, o Options) Result {
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "sh", "-c", o.Command)
+	var cmd *exec.Cmd
+	if len(o.Args) > 0 {
+		cmd = exec.CommandContext(cctx, o.Args[0], o.Args[1:]...)
+	} else {
+		cmd = exec.CommandContext(cctx, "sh", "-c", o.Command)
+	}
 	cmd.Dir = o.Dir
 	if o.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(o.Stdin)

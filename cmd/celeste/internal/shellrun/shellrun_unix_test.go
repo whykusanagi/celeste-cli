@@ -106,3 +106,32 @@ func TestRunLeavesADetachedBackgroundProcess(t *testing.T) {
 		t.Fatalf("a detached background process was killed: %v", err)
 	}
 }
+
+// Args runs a program directly, no shell, with the same held-pipe handling.
+func TestRunArgsKillsWhatHoldsThePipeAfterAFailingProgram(t *testing.T) {
+	dir := t.TempDir()
+	res := Run(context.Background(), Options{Dir: dir, Args: []string{"sh", "-c", "sleep 60 & echo $! > pid; exit 3"}, Timeout: 10 * time.Second})
+	if res.Err == nil || res.TimedOut || res.ExitCode != 3 {
+		t.Fatalf("result = %+v", res)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if pid <= 0 {
+		t.Fatalf("no pid recorded: %q", b)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatal("the background child holding the pipe survived")
+	}
+}
+
+func TestRunArgsDoesNotUseAShell(t *testing.T) {
+	res := Run(context.Background(), Options{Dir: t.TempDir(), Args: []string{"echo", "$HOME; true"}, Timeout: 5 * time.Second})
+	if res.Output != "$HOME; true\n" || res.ExitCode != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+}

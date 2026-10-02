@@ -3,15 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 )
 
@@ -168,23 +165,18 @@ func captureGitWorkspaceArtifacts(workspace string, timeout time.Duration) (stri
 	return statusOut, diffOut
 }
 
-// runGit runs git directly (no shell) in its own process group, killed
-// whole on timeout. A child of git still holding stdout after git exits
-// gets shellrun.WaitDelay before the pipe is closed and the group killed.
+// runGit runs git directly (no shell) through shellrun: its own process
+// group, killed whole on timeout, and a child of git still holding the
+// output pipe after git exits is given shellrun.WaitDelay, then killed.
 func runGit(workdir string, timeout time.Duration, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = workdir
-	proctree.Prepare(cmd)
-	cmd.WaitDelay = shellrun.WaitDelay
-	out, err := cmd.Output()
-	if errors.Is(err, exec.ErrWaitDelay) {
-		_ = proctree.Kill(cmd)
+	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, args...), Timeout: timeout})
+	switch {
+	case res.TimedOut:
+		return res.Output, fmt.Errorf("git %s timed out", strings.Join(args, " "))
+	case res.Err != nil:
+		return res.Output, res.Err
+	case res.ExitCode != 0:
+		return res.Output, fmt.Errorf("git %s: exit status %d", strings.Join(args, " "), res.ExitCode)
 	}
-	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("git %s timed out", strings.Join(args, " "))
-	}
-	return string(out), err
+	return res.Output, nil
 }

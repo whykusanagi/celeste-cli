@@ -5,7 +5,9 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,5 +50,35 @@ func TestCaptureGitWorkspaceArtifactsDoesNotWaitOnAPipeHolder(t *testing.T) {
 	}
 	if !strings.Contains(status, "M f.txt") || !strings.Contains(diff, "+b") {
 		t.Fatalf("status = %q, diff = %q", status, diff)
+	}
+}
+
+// A failing git whose child still holds stdout is bounded too, and the
+// child is killed with the group (review of cleanup-5c).
+func TestCaptureGitWorkspaceArtifactsKillsAPipeHolderAfterAFailingGit(t *testing.T) {
+	bin := t.TempDir()
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	fake := "#!/bin/sh\ncase \"$1\" in\nrev-parse) echo true ;;\nstatus) sleep 15 & echo $! > '" + pidfile + "'; exit 1 ;;\ndiff) echo '+b' ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	start := time.Now()
+	captureGitWorkspaceArtifacts(t.TempDir(), 30*time.Second)
+	if took := time.Since(start); took > 8*time.Second {
+		t.Fatalf("took %s waiting on a pipe holder", took)
+	}
+	b, _ := os.ReadFile(pidfile)
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if pid <= 0 {
+		t.Fatalf("no pid recorded: %q", b)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatal("the child holding git's pipe survived a failing git")
 	}
 }
