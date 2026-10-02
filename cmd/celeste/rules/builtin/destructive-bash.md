@@ -1,5 +1,5 @@
 ---
-condition: (?i)\bgit\s+push\b[^\n;&|]*\s(--force|-f)(\s|$)|\brm\s+(-\S+\s+)*(-[a-z]*[rf][a-z]*|--recursive|--force)(\s|$)
+condition: (?i)\brm\b|\bgit\b[\s\S]*\bpush\b
 scope: tool_args:bash.command
 action: interrupt
 repeat: after-gap:1

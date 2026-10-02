@@ -94,7 +94,7 @@ a single MCP `celeste` call in chat mode, where each call starts fresh.
 | `persona-voice-in-files` | pet names, emotes or stylised spelling in `write_file` / `patch_file` content, outside fenced code and `>` quotes, in a file not under a `docs` directory or a `persona` path (a `~` is ignored in dotfiles, shell scripts and TeX) | append |
 | `unbacked-audio-claim` | "Audio saved:" in a reply when no text-to-speech call has succeeded | interrupt |
 | `task-complete-before-verify` | `TASK_COMPLETE` when a file changed after the last command ran (not in agent runs with verification commands, which check the work themselves) | interrupt |
-| `destructive-bash` | `git push --force` / `-f` (not `--force-with-lease`), or a recursive forced `rm` (`-rf`, `-r -f`, `--recursive --force`) in a `bash` command, unless every path it removes is under `build`, `dist`, `node_modules`, `target`, `.cache`, `out` or `coverage` inside the project; it fires again on later requests | interrupt |
+| `destructive-bash` | `git push --force` / `-f` (not `--force-with-lease`), or a recursive forced `rm` (`-rf`, `-r -f`, `--recursive --force`) in a `bash` command, unless every path it removes is under `build`, `dist`, `node_modules`, `target`, `.cache`, `out` or `coverage` inside the project; it reads quoting, paths (`/bin/rm`), subshells, `sh -c`, `eval` and `ssh host '…'`, and fires again on later requests. Not covered: `find … -delete`, `xargs rm`, or scripts the command runs | interrupt |
 | `three-strikes` | a strike or warning ladder in a reply | append |
 
 MCP chat (`celeste serve`) also replaces an unbacked "Audio saved:" claim

@@ -388,3 +388,41 @@ func TestBuiltinDestructiveBashRepeatsAndExemptsBuildDirs(t *testing.T) {
 		}
 	}
 }
+
+// destructive-bash sees through quoting, paths, subshells, nested shells
+// and flags after targets; redirections are not targets (re-review item 1).
+func TestBuiltinDestructiveBashEvasions(t *testing.T) {
+	for cmd, fire := range map[string]bool{
+		"/bin/rm -rf src":                        true,
+		"/usr/bin/rm -rf src":                    true,
+		`\rm -rf src`:                            true,
+		`"rm" -rf src`:                           true,
+		"(rm -rf src)":                           true,
+		"echo $(rm -rf src)":                     true,
+		"echo `rm -rf src`":                      true,
+		`sh -c 'rm -rf src'`:                     true,
+		`bash -c "rm -rf src"`:                   true,
+		`zsh -c 'cd x && rm -rf src'`:            true,
+		`ssh host 'rm -rf /srv/app'`:             true,
+		`docker exec web sh -c 'rm -rf /data'`:   true,
+		`eval 'rm -rf src'`:                      true,
+		"rm src -rf":                             true,
+		"rm -r src -f":                           true,
+		`bash -c 'git push --force origin main'`: true,
+		"rm -rf build 2>&1":                      false,
+		"rm -rf build > /dev/null":               false,
+		"rm -rf dist >out.log 2>/dev/null":       false,
+		`sh -c 'rm -rf node_modules'`:            false,
+		"/bin/rm -rf ./build":                    false,
+		"rm build -rf":                           false,
+		`echo "rm -rf src is dangerous" > notes`: false,
+		"grep -r farm -f x":                      false,
+	} {
+		m := builtinMatcher(t)
+		m.StartRequest()
+		got := names(m.Calls([]Call{{Name: "bash", Input: map[string]any{"command": cmd}}})) == "destructive-bash"
+		if got != fire {
+			t.Errorf("%q: fired=%v, want %v", cmd, got, fire)
+		}
+	}
+}
