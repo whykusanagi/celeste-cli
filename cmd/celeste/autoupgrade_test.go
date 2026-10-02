@@ -159,7 +159,7 @@ func TestAutoUpgradeNeverDownloadsForASourceBuild(t *testing.T) {
 			r.hook.beforeRun([]string{"celeste", "chat"})
 			<-r.hook.background()
 			if n := r.server.Requests(); n != 0 {
-				t.Fatalf("%d requests from a %v build", n, r.hook.kind)
+				t.Fatalf("%d requests from a %s build", n, kindName(r.hook.kind))
 			}
 			if len(*r.execs) != 0 || r.exeBytes(t) != "go install build" || r.stderr.Len() != 0 {
 				t.Fatalf("execs %d, stderr %q", len(*r.execs), r.stderr.String())
@@ -179,7 +179,8 @@ func TestAutoUpgradeSkipsServeAndACP(t *testing.T) {
 		{"celeste", "--version"},
 		{"celeste", "version"},
 		{"celeste", "update", "--check"},
-		{"celeste", "-mode", "classic"}, // a flag error: run() reports it, no upgrade first
+		{"celeste", "persona", "verify"}, // a diagnostic reports on this binary, not its upgrade
+		{"celeste", "-mode", "classic"},  // a flag error: run() reports it, no upgrade first
 	} {
 		r := newRig(t, nil)
 		r.hook.beforeRun(argv)

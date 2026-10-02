@@ -193,8 +193,13 @@ func (orch *Orchestrator) Run(ctx context.Context, goal string) (*Result, error)
 // once the lanes' environment is closed.
 func (o *orchRun) run(ctx context.Context, goal string, li laneInheritance) (*Result, OrchestratorEvent, error) {
 	// 1. Classify
-	lane, confidence := ClassifyHeuristic(goal)
+	lane, confidence, note := Classify(ctx, goal, o.cfg.JevRouteMode(), func(s string) {
+		o.emit(OrchestratorEvent{Kind: EventAction, Text: "⚠ " + s})
+	})
 	o.emit(OrchestratorEvent{Kind: EventClassified, Lane: lane, Text: fmt.Sprintf("%.0f%% confidence", confidence*100)})
+	if note != "" {
+		o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: note})
+	}
 	if o.approval == ApprovalDeny {
 		o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: headlessDenyNotice})
 	}

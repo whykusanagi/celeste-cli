@@ -10,11 +10,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -166,16 +168,26 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		SpillCounter: &a.spillSeq,
 		CheckPrompt:  a.checkPrompt,
 	}
+	goal := lastUserText(req.History)
 	if s := a.steering(); s != nil {
 		// The watchdog judges progress against this turn's prompt.
-		s.SetGoal(lastUserText(req.History))
+		s.SetGoal(goal)
 		l.Steering = s
+	}
+	if a.baseConfig != nil {
+		// Built here, on the Update goroutine; Jev is asked on the run's.
+		ws, _ := os.Getwd()
+		l.Advisor = steer.NewToolGate(a.baseConfig.JevGateMode(), ws, func() string { return goal }, tui.LogInfo)
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
 		// The meter counts the system prompt and tool schemas (#234).
 		overhead := ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(l.Client.GetSkills())
-		t.compactor = &chatCompactor{a: a, window: req.Window, meter: compact.NewMeter(overhead), jev: a.jevShadow()}
+		jevMode := config.ModeOff
+		if a.baseConfig != nil {
+			jevMode = a.baseConfig.JevPruneMode()
+		}
+		t.compactor = &chatCompactor{a: a, window: req.Window, meter: compact.NewMeter(overhead), jev: a.jevShadow(), jevMode: jevMode}
 		l.Compact = t.compactor
 	}
 	return l
@@ -422,25 +434,26 @@ func (c chatLLM) GetSkills() []tui.SkillDefinition {
 }
 
 // chatCompactor is the chat's loop.Compactor: before every request it
-// prunes old tool results through CompactContext (Jev shadow scoring
+// prunes old tool results through compactWith (jev_prune scoring
 // included), and records when pruning was not enough, so the chat writes a
 // summary when the turn ends.
 type chatCompactor struct {
-	a      *TUIClientAdapter
-	jev    *jev.Client // shadow scorer, resolved when the turn started; nil: off
-	window int
-	meter  *compact.Meter // Run's goroutine only (#234)
-	saved  atomic.Int64   // the tokens the last prune freed, for the chat's count (read by the pump)
-	over   atomic.Bool
+	a       *TUIClientAdapter
+	jev     *jev.Client // the scorer, resolved when the turn started; nil: off
+	jevMode string      // jev_prune when the turn started: "on" scores in the loop
+	window  int
+	meter   *compact.Meter // Run's goroutine only (#234)
+	saved   atomic.Int64   // the tokens the last prune freed, for the chat's count (read by the pump)
+	over    atomic.Bool
 }
 
-func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, last *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
+func (c *chatCompactor) Compact(ctx context.Context, history []tui.ChatMessage, last *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
 	prompt := 0
 	if last != nil {
 		prompt = last.PromptTokens
 	}
 	c.meter.Observe(history, prompt)
-	out := c.a.compactWith(history, c.window, c.meter.Used(history), c.meter.Unseen(history), force, c.jev)
+	out := c.a.compactWith(ctx, history, c.window, c.meter.Used(history), c.meter.Unseen(history), force, c.jev, c.jevMode)
 	c.over.Store(out.StillOver)
 	if len(out.Edits) == 0 {
 		c.meter.Sending(history)

@@ -30,18 +30,6 @@ const (
 	Official
 )
 
-func (k Kind) String() string {
-	switch k {
-	case Module:
-		return "module"
-	case Keyed:
-		return "keyed"
-	case Official:
-		return "official"
-	}
-	return "source"
-}
-
 // ErrBadTag is a version string that is not a release tag.
 var ErrBadTag = errors.New("not a release tag")
 
@@ -53,6 +41,19 @@ var (
 // ValidTag reports whether s is a release tag celeste will put in a URL:
 // vMAJOR.MINOR.PATCH with an optional pre-release, not a Go pseudo-version.
 func ValidTag(s string) bool { return tagRE.MatchString(s) && !pseudoRE.MatchString(s) }
+
+// ModulePath is the module whose go install builds upgrade to the official
+// release; a fork's build (another path) is left alone.
+const ModulePath = "github.com/whykusanagi/celeste-cli"
+
+// upstreamModule reports this module, or a major version of it (/v2).
+func upstreamModule(path string) bool {
+	if path == ModulePath {
+		return true
+	}
+	v, ok := strings.CutPrefix(path, ModulePath+"/v")
+	return ok && v != "" && strings.Trim(v, "0123456789") == ""
+}
 
 // Classify sorts a binary into a Kind (ruling 25). official is
 // main.Channel == "release" and hasKey is prompts.HasPersonaKey(). The tag
@@ -73,7 +74,7 @@ func Classify(info *debug.BuildInfo, ok, official, hasKey bool) (Kind, string) {
 			return Source, ""
 		}
 	}
-	if v := info.Main.Version; ValidTag(v) {
+	if v := info.Main.Version; upstreamModule(info.Main.Path) && ValidTag(v) {
 		return Module, v
 	}
 	return Source, ""

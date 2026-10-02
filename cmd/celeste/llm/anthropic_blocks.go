@@ -124,9 +124,14 @@ func anthropicBadRequest(err error) (string, bool) {
 // isThinkingRejection reports a 400 about replayed thinking: the
 // prefix-mismatch rejection ("Invalid `signature` in `thinking` block …
 // bound to a different conversation"), a tampered signature, or thinking
-// blocks the request may not carry (ruling 8). body is lower-cased.
+// blocks the request may not carry (ruling 8). body is lower-cased. A
+// signature complaint counts only beside "thinking": a tool parameter
+// named signature is not one.
 func isThinkingRejection(body string) bool {
-	for _, s := range []string{"signature", "thinking block", "`thinking` block", "redacted_thinking"} {
+	if strings.Contains(body, "signature") && strings.Contains(body, "thinking") {
+		return true
+	}
+	for _, s := range []string{"thinking block", "`thinking` block", "redacted_thinking"} {
 		if strings.Contains(body, s) {
 			return true
 		}

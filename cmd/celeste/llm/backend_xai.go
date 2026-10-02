@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -24,6 +25,7 @@ type XAIBackend struct {
 	model          string
 	config         *Config
 	httpClient     *http.Client
+	mu             sync.Mutex // guards systemPrompt and thinkingConfig
 	systemPrompt   string
 	registry       *tools.Registry
 	thinkingConfig ThinkingConfig
@@ -52,13 +54,31 @@ func NewXAIBackend(config *Config, registry *tools.Registry) (*XAIBackend, error
 
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (b *XAIBackend) SetSystemPrompt(prompt string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.systemPrompt = prompt
 }
 
 // SetThinkingConfig configures extended thinking / reasoning effort for Grok models.
 // xAI supports reasoning_effort in the request body.
 func (b *XAIBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.thinkingConfig = config
+}
+
+// prompt and thinking read the settings the setters change; a request may
+// be building while the client sets them.
+func (b *XAIBackend) prompt() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.systemPrompt
+}
+
+func (b *XAIBackend) thinking() ThinkingConfig {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.thinkingConfig
 }
 
 // xAIMessage represents a message in xAI's format.
@@ -564,10 +584,10 @@ func (b *XAIBackend) convertMessages(messages []tui.ChatMessage) []xAIMessage {
 	var result []xAIMessage
 
 	// Add system prompt if set
-	if b.systemPrompt != "" {
+	if prompt := b.prompt(); prompt != "" {
 		result = append(result, xAIMessage{
 			Role:    "system",
-			Content: b.systemPrompt,
+			Content: prompt,
 		})
 	}
 
@@ -584,24 +604,14 @@ func (b *XAIBackend) convertMessages(messages []tui.ChatMessage) []xAIMessage {
 
 			// Inject a user message with image data when present,
 			// mirroring the OpenAI backend approach.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						filename, _ := msg.Metadata["filename"].(string)
-						dataURL := fmt.Sprintf("data:image/%s;base64,%s", format, b64)
-						result = append(result, xAIMessage{
-							Role: "user",
-							MultiContent: []xAIContentPart{
-								{Type: "text", Text: fmt.Sprintf("[Attached image from tool result: %s]", filename)},
-								{Type: "image_url", ImageURL: &xAIImageURL{URL: dataURL, Detail: "auto"}},
-							},
-						})
-					}
-				}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				result = append(result, xAIMessage{
+					Role: "user",
+					MultiContent: []xAIContentPart{
+						{Type: "text", Text: fmt.Sprintf("[Attached image from tool result: %s]", img.Name)},
+						{Type: "image_url", ImageURL: &xAIImageURL{URL: img.DataURL(), Detail: "auto"}},
+					},
+				})
 			}
 		} else if len(msg.ToolCalls) > 0 {
 			// Assistant message with tool calls
@@ -661,20 +671,6 @@ func (b *XAIBackend) convertTools(tools []tui.SkillDefinition) []xAITool {
 	return result
 }
 
-// SwitchEndpoint switches to a different endpoint (for config switching)
-func (b *XAIBackend) SwitchEndpoint(endpoint string) error {
-	// For xAI backend, we don't support switching to other providers
-	// This backend is xAI-specific
-	return fmt.Errorf("xAI backend cannot switch to other providers")
-}
-
-// ChangeModel changes the model
-func (b *XAIBackend) ChangeModel(model string) error {
-	b.model = model
-	tui.LogInfo(fmt.Sprintf("xAI backend model changed to: %s", model))
-	return nil
-}
-
 // GetSkills returns the chat-mode tools from the registry.
 func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 	return skillDefinitions(b.registry, tools.ModeChat)
@@ -682,16 +678,8 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 
 // applyThinkingConfig sets reasoning_effort on the request when thinking is enabled.
 func (b *XAIBackend) applyThinkingConfig(req *xAIChatCompletionRequest) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
-		return
-	}
-	switch b.thinkingConfig.Level {
-	case "low":
-		req.ReasoningEffort = "low"
-	case "medium":
-		req.ReasoningEffort = "medium"
-	case "high", "max":
-		req.ReasoningEffort = "high"
+	if effort := reasoningEffort(b.thinking()); effort != "" {
+		req.ReasoningEffort = effort
 	}
 }
 

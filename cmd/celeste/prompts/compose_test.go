@@ -22,6 +22,7 @@ func composeEnv(t *testing.T, confirm bool) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	useTestPersona(t)
 	prev := confirmActionsEnabled
 	confirmActionsEnabled = func() bool { return confirm }
 	t.Cleanup(func() { confirmActionsEnabled = prev })
@@ -68,15 +69,17 @@ func TestComposeGolden(t *testing.T) {
 	}
 }
 
-// The persona core comes first and unchanged in every persona mode, so the
-// prompt prefix stays cacheable.
+// The full profile comes first and unchanged in every persona mode, so the
+// prompt prefix stays cacheable. It already ends with the voice boundary.
 func TestComposePersonaCoreIsPrefix(t *testing.T) {
 	composeEnv(t, true)
-	core := personaCore()
+	core := mustProfile(ProfileFull).SystemPrompt
+	if mustProfile(ProfileFull).Public {
+		t.Fatal("composeEnv should install the test persona")
+	}
 	for _, mode := range []Mode{ModeChat, ModeAgent} {
-		got := Compose(ComposeOptions{Mode: mode, Contract: testContract})
-		if !strings.HasPrefix(got, core+"\n"+VoiceBoundary) {
-			t.Errorf("mode %d: prompt does not start with the persona core then the voice boundary", mode)
+		if got := Compose(ComposeOptions{Mode: mode, Contract: testContract}); !strings.HasPrefix(got, core) {
+			t.Errorf("mode %d: prompt does not start with the full profile", mode)
 		}
 	}
 }
@@ -137,4 +140,64 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// The off level (a typed explore or review subagent, 2.0 W4e) is Celeste's
+// identity line, the honesty rule and the voice boundary (the ProfileOff
+// profile), then the contract and project context: never less, and no full
+// profile, user identity, sliders or chat rules. Checked with the sealed
+// test persona and with the keyless build's public persona.
+func TestComposePersonaOff(t *testing.T) {
+	for _, build := range []string{"test-key", "keyless"} {
+		t.Run(build, func(t *testing.T) {
+			if build == "keyless" {
+				if personaKey != "" {
+					t.Skip("this test binary was built with a persona key")
+				}
+				tempHome(t)
+				prev := confirmActionsEnabled
+				confirmActionsEnabled = func() bool { return true }
+				t.Cleanup(func() { confirmActionsEnabled = prev })
+			} else {
+				composeEnv(t, true)
+			}
+			if off := mustProfile(ProfileOff); !strings.Contains(off.SystemPrompt, VoiceBoundary) || (build == "keyless") != off.Public {
+				t.Fatalf("off profile: public %v, %.80q", off.Public, off.SystemPrompt)
+			}
+			for _, mode := range []Mode{ModeAgent, ModeChat} {
+				got := Compose(ComposeOptions{Mode: mode, PersonaLevel: PersonaOff, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"})
+				want := publicIdentity + "\n\n" + publicHonesty + "\n\n" + mustProfile(ProfileOff).SystemPrompt
+				if !strings.HasPrefix(got, want) {
+					t.Fatalf("%v: off prompt does not start with identity, honesty and voice boundary:\n%s", mode, got)
+				}
+				for _, part := range []string{publicIdentity, publicHonesty, VoiceBoundary, "PROJECT", "GIT"} {
+					if !strings.Contains(got, part) {
+						t.Fatalf("%v: off prompt lacks %.40q:\n%s", mode, part, got)
+					}
+				}
+				if strings.Contains(got, taskExecutionPrompt) || strings.Contains(got, confirmModePrompt) ||
+					strings.Contains(got, ComposeSliderPrompt(config.LoadSliders())) {
+					t.Fatalf("%v: off prompt has chat rules or sliders:\n%s", mode, got)
+				}
+				// With the sealed persona the full profile is far more than
+				// the off text; the keyless build's full profile is the same
+				// three parts, so there is nothing more to leave out.
+				if build == "test-key" && strings.Contains(got, personaCore()) {
+					t.Fatalf("%v: off prompt has the full profile", mode)
+				}
+				if (mode == ModeAgent) != strings.Contains(got, testContract) {
+					t.Fatalf("%v: contract presence wrong:\n%s", mode, got)
+				}
+			}
+		})
+	}
+}
+
+// No level drops the persona: an unknown one composes the full persona.
+func TestComposeUnknownPersonaLevelIsFull(t *testing.T) {
+	composeEnv(t, false)
+	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: "none", Contract: testContract})
+	if got != Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract}) {
+		t.Fatalf("unknown level must compose the full persona:\n%s", got)
+	}
 }

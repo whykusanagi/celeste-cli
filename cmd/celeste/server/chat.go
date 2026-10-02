@@ -5,18 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
@@ -48,7 +45,6 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 		return nil, fmt.Errorf("chat error: %w", err)
 	}
 	cfg = s.servedConfig(ctx, cfg)
-	initGrimoire(workspace)
 	var warns warnSink
 	ce, err := s.chatEnvs.acquire(cfg, workspace, &warns)
 	if err != nil {
@@ -74,13 +70,18 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// The call's ballot ends with it: one in flight is cancelled.
 	defer sess.Close()
 	l.Steering = sess.Steering()
+	l.Advisor = steer.NewToolGate(cfg.JevGateMode(), workspace, func() string { return prompt }, func(line string) {
+		log.Printf("celeste chat: %s", line)
+	})
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
 	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
 	var blocked *promptBlockedError
 	if errors.As(err, &blocked) {
 		// The pre-loop server's refusal, verbatim: no "chat error:" prefix.
+		// A hook's refusal of the prompt is not a failed completion.
 		return nil, fmt.Errorf("%w%s", err, warns.section())
 	}
+	s.health.record(err)
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
@@ -102,23 +103,6 @@ func chatSteering(ctx context.Context, cfg *config.Config, env *loop.Env, prompt
 		Context:   ctx,
 		Logf:      logf,
 	})
-}
-
-// grimoireInitMu serializes the grimoire auto-init. Two first calls on one
-// workspace would otherwise both write .grimoire, and a call that stamps the
-// Env inputs between those writes sees a different .grimoire and builds a
-// second Env.
-var grimoireInitMu sync.Mutex
-
-// initGrimoire writes a .grimoire into workspace if it has none (kept until
-// W4). It returns once the file exists, so the chat Env stamp that follows
-// sees it.
-func initGrimoire(workspace string) {
-	grimoireInitMu.Lock()
-	defer grimoireInitMu.Unlock()
-	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
-		_, _ = grimoire.Init(workspace)
-	}
 }
 
 // newChatClient is the pre-loop server's client (same config fields) on the
@@ -146,7 +130,7 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 	}
 	// Assigned only when non-nil: a nil *chatCompactor in the interface
 	// would be a non-nil Compactor.
-	if c := newChatCompactor(cfg, system, client.GetSkills()); c != nil {
+	if c := newChatCompactor(cfg, system, client.GetSkills(), env.Workspace); c != nil {
 		l.Compact = c
 	}
 	return l
@@ -157,36 +141,53 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 // go to the pruned-results store, where recall_tool_result restores them.
 // MCP chat has no summary rung: a call is one prompt of at most 25 turns.
 type chatCompactor struct {
-	window int            // the model's context window, in tokens
-	meter  *compact.Meter // the next request's size and what is unseen (#234)
-	store  *compact.Store
+	window  int            // the model's context window, in tokens
+	meter   *compact.Meter // the next request's size and what is unseen (#234)
+	store   *compact.Store
+	jev     *jev.Client // jev_prune's scorer (2.0 W3); nil: off
+	jevMode string
 }
 
 // newChatCompactor sizes the compactor for cfg's model (context_limit
 // honoured, as in the TUI and agent). Without a store it returns nil:
 // compact.Prune never prunes without one.
-func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefinition) *chatCompactor {
+func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefinition, workspace string) *chatCompactor {
 	store, err := compact.DefaultStore()
 	if err != nil {
 		return nil
 	}
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
-	return &chatCompactor{
-		window: window,
-		meter:  compact.NewMeter(ctxmgr.EstimateTokens(system) + compact.DefinitionTokens(skills)),
-		store:  store,
+	c := &chatCompactor{
+		window:  window,
+		meter:   compact.NewMeter(ctxmgr.EstimateTokens(system) + compact.DefinitionTokens(skills)),
+		store:   store,
+		jevMode: cfg.JevPruneMode(),
 	}
+	if c.jevMode != config.ModeOff {
+		if jc, err := jev.NewFromEnv(); err == nil {
+			jc.Workspace = workspace // paths in excerpts are sent relative to it
+			c.jev = jc
+		} else {
+			log.Printf("celeste chat: jev prune disabled: %v", err)
+		}
+	}
+	return c
 }
 
 // Compact implements loop.Compactor. The loop calls it before every request,
 // and once with force after a context-overflow error.
-func (c *chatCompactor) Compact(_ context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
+func (c *chatCompactor) Compact(ctx context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
 	prompt := 0
 	if usage != nil {
 		prompt = usage.PromptTokens
 	}
 	c.meter.Observe(history, prompt)
-	out, res := compact.Prune(history, compact.Options{Window: c.window, Used: c.meter.Used(history), Unseen: c.meter.Unseen(history), Force: force}, c.store)
+	// Shadow reports inline: a call's log lines must not outlive it.
+	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: c.meter.Used(history), Unseen: c.meter.Unseen(history), Force: force}, func(line string) {
+		log.Printf("celeste chat: %s", line)
+	}, false)
+	out, res := compact.Prune(history, opts, c.store)
+	report(res)
 	c.meter.Sending(out)
 	if !res.Pruned() {
 		return history, nil, false
@@ -305,5 +306,5 @@ func (c *chatClaims) observe(ev loop.Event) {
 // the mode (2.0 W3).
 func (c *chatClaims) strip(text string) string {
 	text = rules.StripUnbackedAudioClaim(text, c.tts)
-	return llm.StripUnbackedSpawnClaim(text, c.spawn)
+	return rules.StripUnbackedSpawnClaim(text, c.spawn)
 }

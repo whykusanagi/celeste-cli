@@ -835,6 +835,8 @@ Model Management:
 Chat Commands:
   /safe                        Return to safe mode (OpenAI)
   /clear                       Clear conversation history
+  /diff                        List the files this session changed
+  /undo                        Undo the last file change (repeat to go back)
   /help                        Show this help message
 
 Current Configuration:
@@ -893,7 +895,8 @@ Chat:
 
 Project:
   /memories          List project memories
-  /grimoire          Show project grimoire
+  /grimoire          Show project grimoire and AGENTS.md / CLAUDE.md
+  /init [agents]     Create .grimoire (and AGENTS.md) for this project
   /index             Show code graph status
   /index rebuild     Full re-index (populates LSH + BM25)
   /index update      Incremental re-index (changed files only)
@@ -904,6 +907,8 @@ Project:
   /context           Show context/token usage
   /compact [focus]   Summarize older history to free context
   /handoff [focus]   Summarize this session into a new one
+  /diff              List the files this session changed
+  /undo              Undo the last file change (repeat to go back)
   /costs             Show session costs
 
 Agent & Orchestrator:

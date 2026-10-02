@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -17,8 +18,12 @@ import (
 // This backend supports Claude models via the Anthropic Messages API with
 // prompt caching, extended thinking, and native streaming.
 type AnthropicBackend struct {
-	client         *anthropic.Client
-	config         *Config
+	client *anthropic.Client
+	config *Config
+	// mu guards systemPrompt, thinkingConfig, bindingControls and
+	// promptChanged: the client sets the prompt and thinking config while
+	// a request may be building.
+	mu             sync.Mutex
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
 	// bindingControls: send the thinking-binding beta with drop_block on
@@ -29,6 +34,9 @@ type AnthropicBackend struct {
 	// promptChanged: the system prompt changed since the last request; the
 	// next one sends no blocks and reports BlocksRejected (ruling 10).
 	promptChanged bool
+	// promptGen counts prompt changes, so a request clears promptChanged
+	// only when no newer change arrived while it was in flight.
+	promptGen uint64
 }
 
 // NewAnthropicBackend creates a new Anthropic backend using the native SDK.
@@ -57,8 +65,11 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 // a previous prompt makes the next request drop replayed blocks: their
 // signatures cover the old prompt (2.0 W2 ruling 10).
 func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.systemPrompt != "" && prompt != b.systemPrompt {
 		b.promptChanged = true
+		b.promptGen++
 	}
 	b.systemPrompt = prompt
 }
@@ -66,6 +77,8 @@ func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
 // SetThinkingConfig configures extended thinking for Claude models.
 // Claude supports budget_tokens via ThinkingConfigParam.
 func (b *AnthropicBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.thinkingConfig = config
 }
 
@@ -168,29 +181,54 @@ func (b *AnthropicBackend) replaysThinking(messages []tui.ChatMessage) bool {
 	return false
 }
 
+// anthropicRequest is one built request: the params, the history they
+// were built from (blocks stripped when the prompt changed), whether that
+// strip happened, and the prompt generation the params carry.
+type anthropicRequest struct {
+	params   anthropic.MessageNewParams
+	messages []tui.ChatMessage
+	stripped bool
+	gen      uint64
+}
+
 // prepare builds the request and its per-request options: the binding
 // beta with drop_block when ruling 6 applies.
-func (b *AnthropicBackend) prepare(messages []tui.ChatMessage, tools []tui.SkillDefinition) (anthropic.MessageNewParams, []option.RequestOption) {
-	params := b.buildParams(messages, tools)
-	if !b.bindingControls || !b.replaysThinking(messages) {
-		return params, nil
+func (b *AnthropicBackend) prepare(messages []tui.ChatMessage, tools []tui.SkillDefinition) (anthropicRequest, []option.RequestOption) {
+	req := b.build(messages, tools)
+	params, messages := req.params, req.messages
+	b.mu.Lock()
+	binding := b.bindingControls
+	b.mu.Unlock()
+	if !binding || !b.replaysThinking(messages) {
+		return req, nil
 	}
 	if params.Thinking.OfAdaptive == nil && params.Thinking.OfEnabled == nil {
 		if anthropicThinkingFamily(b.config.Model) != familyAlwaysOn {
-			return params, nil
+			return req, nil
 		}
 		// Always-on models take adaptive explicitly; block_binding needs a
 		// thinking object to sit in.
-		params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+		req.params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
 	}
-	return params, []option.RequestOption{
+	return req, []option.RequestOption{
 		option.WithHeaderAdd("anthropic-beta", thinkingBindingBeta),
 		option.WithJSONSet("thinking.block_binding", map[string]any{"prefix_mismatch_behavior": "drop_block"}),
 	}
 }
 
-// buildParams constructs the MessageNewParams shared by sync and streaming requests.
-func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.SkillDefinition) anthropic.MessageNewParams {
+// build holds mu throughout, so one request sees one prompt, one thinking
+// config (max_tokens and the thinking budget must agree) and the strip
+// decision for that prompt: after a prompt change, replayed blocks signed
+// over the old prompt are dropped (ruling 10).
+func (b *AnthropicBackend) build(messages []tui.ChatMessage, tools []tui.SkillDefinition) anthropicRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	req := anthropicRequest{gen: b.promptGen}
+	if b.promptChanged && hasProviderBlocks(messages) {
+		messages = tui.StripProviderBlocks(messages)
+		req.stripped = true
+	}
+	req.messages = messages
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(b.config.Model),
 		MaxTokens: b.maxTokens(),
@@ -216,7 +254,8 @@ func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.S
 
 	applyCacheBreakpoints(&params)
 
-	return params
+	req.params = params
+	return req
 }
 
 // anthropicStream is a message stream whose first event may already have
@@ -249,22 +288,23 @@ func (a *anthropicStream) Close() error                               { return a
 // dropped; the caller passes it on as BlocksRejected.
 func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*anthropicStream, bool, error) {
 	rejected := false
-	if b.promptChanged && hasProviderBlocks(messages) {
-		tui.LogInfo("anthropic: the system prompt changed; replayed blocks are dropped from here on")
-		messages = tui.StripProviderBlocks(messages)
-		rejected = true
-	}
 	retriedStrip, retriedBeta := false, false
 	for {
-		params, opts := b.prepare(messages, tools)
-		s := b.client.Messages.NewStreaming(ctx, params, opts...)
+		req, opts := b.prepare(messages, tools)
+		if req.stripped {
+			tui.LogInfo("anthropic: the system prompt changed; replayed blocks are dropped from here on")
+			rejected = true
+		}
+		messages = req.messages
+		gen := req.gen
+		s := b.client.Messages.NewStreaming(ctx, req.params, opts...)
 		if s.Next() {
-			b.promptChanged = false
+			b.clearPromptChanged(gen)
 			return &anthropicStream{s: s, primed: true}, rejected, nil
 		}
 		err := s.Err()
 		if err == nil {
-			b.promptChanged = false
+			b.clearPromptChanged(gen)
 			return &anthropicStream{s: s}, rejected, nil
 		}
 		s.Close()
@@ -276,11 +316,53 @@ func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage,
 			rejected, retriedStrip = true, true
 		case bad && !retriedBeta && len(opts) > 0 && isBindingBetaRejection(body):
 			tui.LogInfo("anthropic: the endpoint does not take " + thinkingBindingBeta + "; not sending it again")
+			b.mu.Lock()
 			b.bindingControls = false
+			b.mu.Unlock()
 			retriedBeta = true
 		default:
 			return nil, rejected, err
 		}
+	}
+}
+
+// inherit carries old's state over when this backend replaces it. A
+// refused binding beta belongs to the endpoint, so it carries over on the
+// same base URL whatever the model; a pending prompt change belongs to the
+// blocks of one endpoint and model, so it carries over only when both
+// match (a timeout or credential change).
+func (b *AnthropicBackend) inherit(old *AnthropicBackend) {
+	if old.endpointKey() != b.endpointKey() {
+		return
+	}
+	sameBlocks := old.providerKey() == b.providerKey()
+	old.mu.Lock()
+	changed, binding := old.promptChanged, old.bindingControls
+	old.mu.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if sameBlocks {
+		b.promptChanged = changed
+	}
+	b.bindingControls = b.bindingControls && binding
+}
+
+// endpointKey is providerKey without the model.
+func (b *AnthropicBackend) endpointKey() string {
+	base := b.config.BaseURL
+	if base == "" {
+		base = anthropicDefaultBaseURL
+	}
+	return ProviderKey(BlocksAnthropicMessages, base, "")
+}
+
+// clearPromptChanged records that a request went out with the system
+// prompt of generation gen; a change made since then stays pending.
+func (b *AnthropicBackend) clearPromptChanged(gen uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.promptGen == gen {
+		b.promptChanged = false
 	}
 }
 
@@ -854,17 +936,8 @@ func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthrop
 			var blocks []anthropic.ContentBlockParamUnion
 
 			// Check for image metadata.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						mediaType := "image/" + format
-						blocks = append(blocks, anthropic.NewImageBlockBase64(mediaType, b64))
-					}
-				}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				blocks = append(blocks, anthropic.NewImageBlockBase64(img.MediaType(), img.B64))
 			}
 
 			if msg.Content != "" {
@@ -916,21 +989,11 @@ func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthrop
 			result = append(result, anthropic.NewUserMessage(toolResultBlock))
 
 			// If this tool result has image metadata, add it as an image block.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						mediaType := "image/" + format
-						result = append(result, anthropic.NewUserMessage(
-							anthropic.NewImageBlockBase64(mediaType, b64),
-							anthropic.NewTextBlock(fmt.Sprintf("[Image from tool result: %s]",
-								msg.Metadata["filename"])),
-						))
-					}
-				}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				result = append(result, anthropic.NewUserMessage(
+					anthropic.NewImageBlockBase64(img.MediaType(), img.B64),
+					anthropic.NewTextBlock(fmt.Sprintf("[Image from tool result: %s]", img.Name)),
+				))
 			}
 		}
 	}

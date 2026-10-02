@@ -148,7 +148,8 @@ func snipMarker(snipped int, note string) string {
 // The loop uses it when the spill file cannot be written; sessions and
 // checkpoints use it on tool results loaded from disk. Results at or under
 // maxBytes come back unchanged. Cuts fall on UTF-8 character boundaries. The
-// result is at most maxBytes whenever maxBytes is at least 64 plus the note.
+// result is never over maxBytes: a cap too small for the marker gets a plain
+// cut of the head.
 func SnipToolResult(result string, maxBytes int, note string) string {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxToolResultBytes
@@ -165,5 +166,8 @@ func SnipToolResult(result string, maxBytes int, note string) string {
 	for tailStart < len(result) && !utf8.RuneStart(result[tailStart]) {
 		tailStart++
 	}
-	return result[:headLen] + snipMarker(tailStart-headLen, note) + result[tailStart:]
+	if out := result[:headLen] + snipMarker(tailStart-headLen, note) + result[tailStart:]; len(out) <= maxBytes {
+		return out
+	}
+	return textutil.CutBytes(result, maxBytes)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -87,6 +88,17 @@ type Options struct {
 	// Sliders overrides slider.json for this run's voice modulation (a
 	// subagent's persona override). Nil uses slider.json.
 	Sliders *config.SliderConfig `json:"-"`
+	// ExtraTools are registered on the run's own registry before ToolFilter
+	// applies (a typed subagent's submit_result, 2.0 W4e).
+	ExtraTools []tools.Tool `json:"-"`
+	// ToolFilter, when set, keeps only the tools it accepts in the run's own
+	// registry (Registry.Retain); a call to any other tool fails as unknown.
+	// The parent's registry is never touched. Typed subagents set it (2.0 W4e).
+	ToolFilter func(tools.Tool) bool `json:"-"`
+	// PersonaLevel is the system prompt's persona level: empty is the full
+	// persona; the explore and review subagent types set prompts.PersonaOff
+	// (identity, honesty rule and voice boundary). The agent contract stays.
+	PersonaLevel prompts.PersonaLevel `json:"-"`
 	// PromptFunc asks the user to approve a tool the permission policy
 	// resolves to Ask. The TUI's /agent sets it to its permission modal (#172);
 	// without it, Ask means deny.

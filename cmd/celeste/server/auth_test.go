@@ -86,3 +86,28 @@ func TestLoadOrCreateTokenRegenerate(t *testing.T) {
 		t.Fatal("should have regenerated the token")
 	}
 }
+
+// A regenerated token is private even when the short token it replaces was
+// readable by others: the new file never inherits the old mode.
+func TestLoadOrCreateTokenRegeneratedIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("tooshort\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOrCreateToken(path); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("token mode = %v, want 0600", fi.Mode().Perm())
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // Trusted returns the grimoire sections whose stream rules may load (2.0
@@ -44,7 +45,7 @@ func Trusted(home string, secs []Section, approve hooks.ApproveFunc, warn func(s
 	allowed := map[string]bool{}
 	var skipped []string
 	for _, path := range order {
-		if global != "" && samePath(path, global) {
+		if global != "" && pathutil.Same(path, global) {
 			allowed[path] = true
 			continue
 		}
@@ -88,8 +89,4 @@ func Trusted(home string, secs []Section, approve hooks.ApproveFunc, warn func(s
 		}
 	}
 	return out
-}
-
-func samePath(a, b string) bool {
-	return filepath.Clean(a) == filepath.Clean(b)
 }

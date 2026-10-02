@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
 )
 
 func TestParseRuleFile(t *testing.T) {
@@ -196,6 +198,48 @@ func TestBuiltinVoiceInFilesExemptions(t *testing.T) {
 		if got := names(hits) == "persona-voice-in-files"; got != c.fire {
 			t.Errorf("%s %q: fired=%v, want %v", c.path, c.content, got, c.fire)
 		}
+	}
+}
+
+// patch_file's edits[] (2.0 W4) carries new_string per edit: the voice
+// rule reads each one.
+func TestBuiltinVoiceInFilesReadsEveryEdit(t *testing.T) {
+	m := builtinMatcher(t)
+	m.StartRequest()
+	hits := m.Calls([]Call{{Name: "patch_file", Input: map[string]any{"path": "main.go", "edits": []any{
+		map[string]any{"old_string": "a", "new_string": "b"},
+		map[string]any{"old_string": "c", "new_string": "// handled, darling~\n"},
+	}}}})
+	if names(hits) != "persona-voice-in-files" {
+		t.Fatalf("hits = %v", names(hits))
+	}
+	m = builtinMatcher(t)
+	m.StartRequest()
+	if hits := m.Calls([]Call{{Name: "patch_file", Input: map[string]any{"path": "docs/voice.md", "edits": []any{
+		map[string]any{"old_string": "c", "new_string": "darling"},
+	}}}}); len(hits) != 0 {
+		t.Fatalf("an exempt path fired: %v", names(hits))
+	}
+}
+
+func TestFieldValuesWalksArrays(t *testing.T) {
+	in := map[string]any{"a": "x", "edits": []any{map[string]any{"n": "1"}, map[string]any{"m": "2"}, map[string]any{"n": "3"}}, "arr": []any{"p"}}
+	if got := FieldValues(in, "edits.n"); strings.Join(got, ",") != "1,3" {
+		t.Errorf("edits.n = %v", got)
+	}
+	if got := FieldValues(in, "a"); strings.Join(got, ",") != "x" {
+		t.Errorf("a = %v", got)
+	}
+	if got := FieldValues(in, "arr"); strings.Join(got, ",") != `["p"]` {
+		t.Errorf("arr = %v", got)
+	}
+	// patch_file accepts edits[] sent as the JSON text of the array.
+	in["edits"] = `[{"n":"4"},{"n":"5"}]`
+	if got := FieldValues(in, "edits.n"); strings.Join(got, ",") != "4,5" {
+		t.Errorf("string-encoded edits.n = %v", got)
+	}
+	if got := FieldValues(in, "missing.x"); len(got) != 0 {
+		t.Errorf("missing = %v", got)
 	}
 }
 
@@ -441,9 +485,86 @@ func TestDetectorsMatchTheBuiltins(t *testing.T) {
 		"rm -rf build":                false,
 		"go test ./...":               false,
 		"bash -c 'git push -f'":       true,
+		// What the bash tool refuses, the rule sees (audit #7 D4).
+		"bash -lc 'rm -rf ~'":    true,
+		"rm -rf${IFS}/":          true,
+		"rm -r /":                true,
+		"rm --rec --for src":     true,
+		"r\\\nm -rf src":         true,
+		"echo # rm -rf src":      false,
+		"rm -rf build # and src": false,
 	} {
 		if got := Destructive(cmd); got != want {
 			t.Errorf("Destructive(%q) = %v, want %v", cmd, got, want)
 		}
 	}
+}
+
+// The edit and check tables are shared with the watchdog (steer).
+func TestIsEditIsCheck(t *testing.T) {
+	for _, tool := range []string{"write_file", "patch_file", "splice_file"} {
+		if !IsEdit(tool) || IsCheck(tool) {
+			t.Errorf("%s: edit", tool)
+		}
+	}
+	if !IsCheck("bash") || IsEdit("bash") || IsEdit("read_file") || IsCheck("read_file") {
+		t.Error("bash is the check; read_file is neither")
+	}
+}
+
+func TestStripUnbackedSpawnClaim(t *testing.T) {
+	fake := "Subagent spawned: subagent-sleep-task (id: task-47)"
+	// No spawn ran → fabricated claim is replaced.
+	got := StripUnbackedSpawnClaim(fake, false)
+	if got == fake || !strings.Contains(got, "no subagent was actually spawned") {
+		t.Fatalf("expected fabricated spawn claim to be stripped, got %q", got)
+	}
+	// A real spawn ran → content passes through unchanged.
+	if got := StripUnbackedSpawnClaim(fake, true); got != fake {
+		t.Fatalf("expected passthrough when spawn ran, got %q", got)
+	}
+	// Unrelated text is never touched.
+	plain := "Here is a summary of the repo."
+	if got := StripUnbackedSpawnClaim(plain, false); got != plain {
+		t.Fatalf("expected unrelated text untouched, got %q", got)
+	}
+}
+
+// destructive-bash's condition matches any command (\S), so its hit carries
+// the command itself for the log, not the first character (review of
+// cleanup-4).
+func TestDestructiveBashHitTextIsTheCommand(t *testing.T) {
+	m := builtinMatcher(t)
+	m.StartRequest()
+	hits := m.Calls([]Call{{Name: "bash", Input: map[string]any{"command": "  rm -rf src"}}})
+	if len(hits) != 1 || hits[0].Text != "  rm -rf src" {
+		t.Fatalf("hits = %+v", hits)
+	}
+}
+
+// The advisory rule reads every bash call (condition \S) and the watchdog
+// reads recent ones: 40 KB of adversarial shell stays linear. The work is
+// counted, not timed, so a slow or shared CI runner can't fail it: eight
+// times the input is about 8x the work when linear and 64x when quadratic
+// (the rm-restart loop cleanup-4 removed).
+func TestDestructiveLinearOnLongLines(t *testing.T) {
+	for _, unit := range []string{"rm -r x ", "env ", "bash -lc ", "sudo -u x ", "git push x ", "a=1 "} {
+		n := 40000 / len(unit)
+		small, big := strings.Repeat(unit, n/8), strings.Repeat(unit, n/8*8)
+		if r := workGrowth(func() { Destructive(small) }, func() { Destructive(big) }); r > 12 {
+			t.Errorf("%q x8 did %.1fx the work; want linear (~8x, quadratic is ~64x)", unit, r)
+		}
+	}
+}
+
+// workGrowth is how many times the work of small that big does, counted in
+// shellparse's and destructiveShell's loop steps; the counters are
+// package-wide, so no test here may run in parallel.
+func workGrowth(small, big func()) float64 {
+	work := func(f func()) int64 {
+		before := shellparse.Steps() + shellSteps.Load()
+		f()
+		return max(shellparse.Steps()+shellSteps.Load()-before, 1)
+	}
+	return float64(work(big)) / float64(work(small))
 }

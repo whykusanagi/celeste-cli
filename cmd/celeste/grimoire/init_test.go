@@ -3,6 +3,7 @@ package grimoire
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,4 +121,68 @@ func TestInit_AlreadyExists(t *testing.T) {
 	_, err := Init(dir)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
+}
+
+// 2.0 W4 (ruling 5): Init writes .grimoire only; .gitignore is the user's.
+func TestInitLeavesGitignoreAlone(t *testing.T) {
+	dir := t.TempDir()
+	mk(t, filepath.Join(dir, ".gitignore"), "bin/\n")
+	if _, err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(b) != "bin/\n" {
+		t.Fatalf(".gitignore changed: %q", b)
+	}
+}
+
+// Ruling 6: a project grimoire or a context file between the git root and
+// the workspace is project context; the global grimoire is not. A .grimoire
+// above the git root is loaded too, so it counts (no misleading /init hint).
+func TestHasProjectContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	mk(t, filepath.Join(home, ".celeste", "grimoire.md"), "# global\n")
+	outer := t.TempDir()
+	ws := filepath.Join(outer, "repo")
+	if err := os.MkdirAll(filepath.Join(ws, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if HasProjectContext(ws) {
+		t.Fatal("only the global grimoire: no project context")
+	}
+	mk(t, filepath.Join(outer, ".grimoire"), "# above the root\n")
+	if !HasProjectContext(ws) {
+		t.Fatal("a .grimoire above the git root is loaded, so it is project context")
+	}
+	if err := os.Remove(filepath.Join(outer, ".grimoire")); err != nil {
+		t.Fatal(err)
+	}
+	mk(t, filepath.Join(ws, "CLAUDE.md"), "x")
+	if !HasProjectContext(ws) {
+		t.Fatal("a CLAUDE.md is project context")
+	}
+	ws2 := filepath.Join(outer, "repo2")
+	if err := os.MkdirAll(filepath.Join(ws2, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mk(t, filepath.Join(ws2, ".celeste", "grimoire", "a.md"), "# frag\n")
+	if !HasProjectContext(ws2) {
+		t.Fatal("a .celeste/grimoire fragment is project context")
+	}
+}
+
+func TestInitAgentsNeverOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	mk(t, filepath.Join(dir, "go.mod"), "module x\n")
+	path, err := InitAgents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "go test") || !strings.Contains(string(b), "go build") {
+		t.Fatalf("AGENTS.md for a Go module should name its build and test commands:\n%s", b)
+	}
+	if _, err := InitAgents(dir); err == nil {
+		t.Fatal("a second /init agents must not overwrite AGENTS.md")
+	}
 }

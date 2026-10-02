@@ -99,7 +99,10 @@ they are recorded or run. The loop drops the interrupted reply
 (`EventRuleInterrupt`) and re-runs the turn with the reminder as a hidden
 `<system-reminder>` message (`EventRule`), at most twice per turn.
 `steer.Session` implements it for a chat, an agent run or an MCP call,
-with the stream rules `loop.Setup` loads into `Env.Rules`.
+with the stream rules `loop.Setup` loads into `Env.Rules`. jev_gate is a
+`tools.AskAdvisor` the loop puts on each call's context (`Loop.Advisor`):
+the registry consults it only for calls the policy allows, and it can only
+turn one into an Ask.
 
 ```
 User types message
@@ -652,7 +655,7 @@ type ProviderBlocks struct {
 
 - **Timing.** `write_file`, `patch_file` and `splice_file` call `Checkpoint(path, callID)` after their input validated, immediately before writing; a successful write calls `Commit`, which records `after` = `{size, sha256}` of the file as the call left it; any failure after the checkpoint calls `Rollback`, which restores the file and drops the entry. Undo, revert and `RewindTo` refuse while a checkpoint of this process is open (between `Checkpoint` and `Commit`/`Rollback`, up to 2 minutes). `message_id` is the tool call's ID (`tools.CallIDFromContext`, set by the loop's `runGroup` for every call).
 - **Consumers.** `/undo` (`RevertLastIf`, through `tui.Checkpointer`; under the store's lock it asks before overwriting a file whose state differs from the entry's `after`, `Changed`), `/diff` (`ComputeDiff` + `FormatChanges`; sides over 4 MiB by size, binary files marked, oversized line comparisons by line count, per-file errors listed), `celeste revert` (`RevertFile` with the same check, overridden by `--force`; latest session by default), `/rewind` (`RewindTo`, W4), the files-modified list for compaction (`Files`, W1/#200).
-- **Restore.** Atomic (temporary file, rename), so other hard links, ownership, extended attributes and ACLs are not kept; in place (not atomic) when the file's directory refuses permission to create the temporary file.
+- **Restore.** Atomic (temporary file, rename), so other hard links, ownership, extended attributes and ACLs are not kept; in place (not atomic) when the file's directory refuses permission to create the temporary file and the file's current contents can be read; a failed in-place write puts those contents back.
 - **Limits.** At most 100 entries per session (the oldest is evicted with its backup); no byte limit on a backup.
 - **Retention.** The first store a process opens prunes sessions that are neither among the 20 most recently changed nor changed in the last 30 days.
 

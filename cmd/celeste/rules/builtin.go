@@ -37,6 +37,7 @@ func Builtins() []*Rule {
 			panic("rules: built-in " + n + ": " + err.Error()) // caught by TestBuiltinsParse
 		}
 		r.guard = guards[r.Name]
+		r.wholeValue = r.Name == "destructive-bash" // condition \S: the guard decides
 		out = append(out, r)
 	}
 	return out
@@ -59,7 +60,10 @@ func voiceInFileGuard(_ *Facts, h Hit) bool {
 	if exemptPath(p) {
 		return false
 	}
-	content, _ := fieldText(h.Call.Input[h.Scope.Field])
+	content := h.Value
+	if content == "" {
+		content, _ = fieldText(h.Call.Input[h.Scope.Field])
+	}
 	content = fencedBlock.ReplaceAllString(content, "")
 	content = quoteLine.ReplaceAllString(content, "")
 	content = strike.ReplaceAllString(content, "")

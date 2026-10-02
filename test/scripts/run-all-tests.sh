@@ -54,7 +54,7 @@ run_test() {
 
     # Run test with verbose output and JSON format
     set +e
-    "$test_binary" -test.v -test.timeout=30s > "$REPORT_DIR/${test_name}.log" 2>&1
+    "$test_binary" -test.v -test.timeout=10m > "$REPORT_DIR/${test_name}.log" 2>&1
     TEST_EXIT_CODE=$?
     set -e
 

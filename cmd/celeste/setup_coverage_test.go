@@ -81,6 +81,7 @@ func TestSetupCoverage(t *testing.T) {
 	got["tui.memories"] = strings.Contains(sys, "coverage-memory")
 	got["tui.code_graph_summary"] = strings.Contains(sys, "# Code Graph")
 	got["tui.grimoire"] = strings.Contains(sys, "COVERAGE-GRIMOIRE")
+	got["tui.context_files"] = strings.Contains(sys, "COVERAGE-AGENTS")
 
 	// Agent: the real runner.
 	agentSrv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: ok"})
@@ -106,6 +107,7 @@ func TestSetupCoverage(t *testing.T) {
 	got["agent.memories"] = strings.Contains(sys, "coverage-memory")
 	got["agent.code_graph_summary"] = strings.Contains(sys, "# Code Graph")
 	got["agent.grimoire"] = strings.Contains(sys, "COVERAGE-GRIMOIRE")
+	got["agent.context_files"] = strings.Contains(sys, "COVERAGE-AGENTS")
 
 	// MCP chat: the Env the server builds for mode:"chat" (F2b; the server
 	// package's TestMCPChatSetupCoverage probes it end to end).
@@ -120,9 +122,10 @@ func TestSetupCoverage(t *testing.T) {
 	got["mcp.memories"] = strings.Contains(env.ProjectContext, "coverage-memory")
 	got["mcp.code_graph_summary"] = strings.Contains(env.ProjectContext, "# Code Graph")
 	got["mcp.grimoire"] = strings.Contains(env.ProjectContext, "COVERAGE-GRIMOIRE")
+	got["mcp.context_files"] = strings.Contains(env.ProjectContext, "COVERAGE-AGENTS")
 
 	for _, mode := range []string{"tui", "agent", "mcp"} {
-		for _, row := range []string{"custom_skills", "hooks", "mcp_clients", "memories", "code_graph_summary", "grimoire"} {
+		for _, row := range []string{"custom_skills", "hooks", "mcp_clients", "memories", "code_graph_summary", "grimoire", "context_files"} {
 			if k := mode + "." + row; !got[k] {
 				t.Errorf("%s = false, want true", k)
 			}
@@ -130,7 +133,8 @@ func TestSetupCoverage(t *testing.T) {
 	}
 }
 
-// coverageWorkspace is a Go module with a grimoire and one project memory.
+// coverageWorkspace is a Go module with a grimoire, an AGENTS.md and one
+// project memory.
 func coverageWorkspace(t *testing.T) string {
 	t.Helper()
 	ws := t.TempDir()
@@ -138,6 +142,7 @@ func coverageWorkspace(t *testing.T) string {
 		"go.mod":    "module coverageprobe\n\ngo 1.26\n",
 		"main.go":   "package main\n\nfunc main() {}\n",
 		".grimoire": "# Coverage\n\n## Bindings\n- COVERAGE-GRIMOIRE\n",
+		"AGENTS.md": "COVERAGE-AGENTS\n",
 	} {
 		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)

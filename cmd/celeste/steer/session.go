@@ -10,10 +10,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 )
@@ -126,7 +127,9 @@ func (s *Session) Steering() loop.Steering {
 
 // SetGoal sets what the ballot judges progress against (the chat: each
 // turn's prompt). A changed goal drops watchdog reminders and nits not yet
-// handed out, and the verdict of a ballot still running. Nil-safe.
+// handed out, the verdict of a ballot still running, and the turns the
+// watchdog saw (the same call under two prompts is not a loop); the request
+// cadence carries on. Nil-safe.
 func (s *Session) SetGoal(goal string) {
 	if s == nil {
 		return
@@ -140,6 +143,7 @@ func (s *Session) SetGoal(goal string) {
 	// what the user asked"): drop the ones pending and the one running.
 	s.o.Goal = goal
 	s.gen++
+	s.turns = nil
 	s.nits = nil
 	for b, rs := range s.pending {
 		kept := rs[:0]
@@ -169,7 +173,7 @@ func (s *Session) Observe(ev loop.Event) bool {
 	case loop.EventAssistant:
 		s.lastCalls = len(ev.ToolNames) > 0
 		if s.o.Watchdog != config.ModeOff {
-			s.turns = append(s.turns, decide.TurnView{Assistant: cut(ev.Text, 1500)})
+			s.turns = append(s.turns, decide.TurnView{Assistant: textutil.CutBytes(ev.Text, 1500)})
 			if len(s.turns) > keepTurns {
 				s.turns = s.turns[len(s.turns)-keepTurns:]
 			}
@@ -178,7 +182,7 @@ func (s *Session) Observe(ev loop.Event) bool {
 		s.matcher.ToolResult(ev.Call.Name, ev.IsError)
 		if n := len(s.turns); n > 0 && s.o.Watchdog != config.ModeOff {
 			s.turns[n-1].Calls = append(s.turns[n-1].Calls, decide.CallView{
-				Tool: ev.Call.Name, Args: callArgs(ev.Call.Input), Result: cut(ev.Text, 800), IsError: ev.IsError,
+				Tool: ev.Call.Name, Args: callArgs(ev.Call.Input), Result: textutil.CutBytes(ev.Text, 800), IsError: ev.IsError,
 			})
 		}
 	case loop.EventTurnEnd:
@@ -219,11 +223,17 @@ func (s *Session) act(hits []rules.Hit) bool {
 	for _, h := range hits {
 		acting := s.o.RulesMode == config.ModeOn
 		rules.Record(h.Rule.Name, acting)
+		// The log line shows at most 80 bytes of the match, secrets
+		// redacted: these lines reach log sinks.
+		matched := jev.Redact(h.Text)
+		if len(matched) > 80 {
+			matched = textutil.CutBytes(matched, 77) + "..."
+		}
 		if !acting {
-			s.o.Logf(fmt.Sprintf("stream rule %s would %s (matched %q in %s)", h.Rule.Name, h.Rule.Action, clip(h.Text), h.Scope))
+			s.o.Logf(fmt.Sprintf("stream rule %s would %s (matched %q in %s)", h.Rule.Name, h.Rule.Action, matched, h.Scope))
 			continue
 		}
-		s.o.Logf(fmt.Sprintf("stream rule %s: %s (matched %q in %s)", h.Rule.Name, h.Rule.Action, clip(h.Text), h.Scope))
+		s.o.Logf(fmt.Sprintf("stream rule %s: %s (matched %q in %s)", h.Rule.Name, h.Rule.Action, matched, h.Scope))
 		r := loop.Reminder{Source: "rule:" + h.Rule.Name, Text: h.Rule.Message}
 		switch h.Rule.Action {
 		case rules.Interrupt:
@@ -283,7 +293,7 @@ func (s *Session) stateLocked() decide.State {
 	for i, t := range s.turns {
 		turns[i] = decide.TurnView{Assistant: t.Assistant, Calls: append([]decide.CallView(nil), t.Calls...)}
 	}
-	return decide.State{Goal: cut(s.o.Goal, 2000), Turns: turns}
+	return decide.State{Goal: textutil.CutBytes(s.o.Goal, 2000), Turns: turns}
 }
 
 // startBallotLocked asks the ballot in the background: the loop never
@@ -451,29 +461,10 @@ func callArgs(input map[string]any) string {
 	short := make(map[string]any, len(input))
 	for k, v := range input {
 		if str, ok := v.(string); ok {
-			v = cut(str, 600)
+			v = textutil.CutBytes(str, 600)
 		}
 		short[k] = v
 	}
 	b, _ := json.Marshal(short)
-	return cut(string(b), 4000)
-}
-
-// clip shortens s to at most 80 bytes for a log line, on a rune boundary.
-func clip(s string) string {
-	if len(s) <= 80 {
-		return s
-	}
-	return cut(s, 77) + "..."
-}
-
-// cut keeps at most n bytes of s, on a rune boundary.
-func cut(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	return textutil.CutBytes(string(b), 4000)
 }

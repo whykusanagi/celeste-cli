@@ -2,14 +2,13 @@ package decide
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 )
 
-// Jev is the TypeSafe System One oracle. The state is redacted before it is
-// sent: it goes to a third party.
+// Jev is the TypeSafe System One oracle. The state goes to a third party:
+// the client redacts it before it is sent.
 type Jev struct{ Client *jev.Client }
 
 func (j Jev) Ask(ctx context.Context, state string, qs []Question) (map[string]Answer, error) {
@@ -17,7 +16,9 @@ func (j Jev) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 		return nil, errors.New("jev: no client")
 	}
 	wire := make(map[string]jev.Question, len(qs))
+	byID := make(map[string]Question, len(qs))
 	for _, q := range qs {
+		byID[q.ID] = q
 		w := jev.Question{Type: string(q.Kind), Instructions: q.Text}
 		switch q.Kind {
 		case YesNo:
@@ -39,7 +40,7 @@ func (j Jev) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 		}
 		wire[q.ID] = w
 	}
-	answers, _, err := j.Client.Ask(ctx, redactState(state), wire)
+	answers, _, err := j.Client.Ask(ctx, wireState(state), wire)
 	if err != nil {
 		return nil, err
 	}
@@ -51,36 +52,25 @@ func (j Jev) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 		case a.Score != nil:
 			out[id] = Answer{Score: *a.Score, Probs: a.Probabilities, Confidence: a.Confidence, Source: "jev"}
 		case a.Choice != "":
+			// A choice outside the options is no answer, as an empty one.
+			if opts := byID[id].Options; len(opts) > 0 {
+				if _, known := opts[a.Choice]; !known {
+					continue
+				}
+			}
 			out[id] = Answer{Choice: a.Choice, Probs: a.Probabilities, Confidence: a.Confidence, Source: "jev"}
 		}
 	}
 	return out, nil
 }
 
-// redactState returns the state as Jev receives it: a State with every
-// string redacted, as a JSON object, or redacted plain text.
-func redactState(state string) any {
+// wireState is the state as Jev receives it: the parsed State (sent as a
+// JSON object) or the plain text. It is not redacted here: jev.Client.Ask
+// runs jev.RedactValue (secrets and paths) over the whole value.
+func wireState(state string) any {
 	st := ParseState(state)
 	if st.Text == state && st.Goal == "" && len(st.Turns) == 0 && st.Call == nil {
-		return jev.Redact(state)
+		return state
 	}
-	st.Goal, st.Latest, st.Text = jev.Redact(st.Goal), jev.Redact(st.Latest), jev.Redact(st.Text)
-	redactCall := func(c CallView) CallView {
-		c.Args, c.Result = jev.Redact(c.Args), jev.Redact(c.Result)
-		return c
-	}
-	for i := range st.Turns {
-		st.Turns[i].Assistant = jev.Redact(st.Turns[i].Assistant)
-		for k := range st.Turns[i].Calls {
-			st.Turns[i].Calls[k] = redactCall(st.Turns[i].Calls[k])
-		}
-	}
-	if st.Call != nil {
-		c := redactCall(*st.Call)
-		st.Call = &c
-	}
-	var obj map[string]any
-	b, _ := json.Marshal(st)
-	_ = json.Unmarshal(b, &obj)
-	return obj
+	return st
 }

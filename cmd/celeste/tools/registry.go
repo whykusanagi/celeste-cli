@@ -1,12 +1,11 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 )
 
@@ -185,6 +185,29 @@ func (r *Registry) Unregister(name string) {
 	delete(r.modes, name)
 }
 
+// Retain removes every tool keep rejects and returns how many it removed.
+// A nil keep removes nothing. A typed subagent (2.0 W4e) trims its own
+// registry with it; the tools' hidden/activated marks go with them.
+func (r *Registry) Retain(keep func(Tool) bool) int {
+	if keep == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for name, t := range r.tools {
+		if keep(t) {
+			continue
+		}
+		delete(r.tools, name)
+		delete(r.modes, name)
+		delete(r.hidden, name)
+		delete(r.activated, name)
+		n++
+	}
+	return n
+}
+
 // UnregisterByPrefix removes every tool whose name starts with prefix and
 // returns the count removed. Used to drop all tools an MCP server contributed.
 func (r *Registry) UnregisterByPrefix(prefix string) int {
@@ -337,6 +360,28 @@ func WithPrompt(ctx context.Context, fn PromptFunc) context.Context {
 	return context.WithValue(ctx, promptKey{}, fn)
 }
 
+// AdvisedCall is a call the permission policy allows, shown to an
+// AskAdvisor.
+type AdvisedCall struct {
+	Name     string
+	Input    map[string]any
+	ReadOnly bool
+}
+
+// AskAdvisor may turn a call the policy allows into an Ask (jev_gate, 2.0
+// W3). It can never allow a call or deny one outright: Deny stays Deny,
+// and an Ask it adds goes to the prompt, or is denied headless. reason is
+// shown with the prompt and in a headless denial.
+type AskAdvisor func(ctx context.Context, call AdvisedCall) (ask bool, reason string)
+
+type advisorKey struct{}
+
+// WithAskAdvisor makes a consult this call's allowed decision. loop.Loop
+// sets it from Loop.Advisor.
+func WithAskAdvisor(ctx context.Context, a AskAdvisor) context.Context {
+	return context.WithValue(ctx, advisorKey{}, a)
+}
+
 // noPrompt marks a call with no one to ask (see WithoutPrompt).
 type noPrompt struct{}
 
@@ -412,7 +457,14 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 		}
 	}
 
-	if denied, blocked := r.checkPermission(tool, name, input, checker, prompt, forceAsk); blocked {
+	advice := ""
+	if a, _ := ctx.Value(advisorKey{}).(AskAdvisor); a != nil && !forceAsk && allowed(tool, input, checker) {
+		if ask, why := a(hookCtx, AdvisedCall{Name: name, Input: input, ReadOnly: tool.IsReadOnly()}); ask {
+			forceAsk, advice = true, why
+		}
+	}
+
+	if denied, blocked := r.checkPermission(tool, name, input, checker, prompt, forceAsk, advice); blocked {
 		return withHookContext(denied, hookContext), nil
 	}
 
@@ -438,10 +490,16 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	return withHookContext(result, hookContext), nil
 }
 
+// allowed reports the policy's decision for the call is Allow.
+func allowed(tool Tool, input map[string]any, checker *permissions.Checker) bool {
+	return checker == nil || checker.Check(&toolInfoAdapter{tool: tool}, input).Decision == permissions.Allow
+}
+
 // checkPermission applies the permission gate. forceAsk (a PreToolUse hook
-// said "ask") turns Allow into Ask; Deny always stays Deny. It returns the
-// denial result and true when the call must not run.
-func (r *Registry) checkPermission(tool Tool, name string, input map[string]any, checker *permissions.Checker, prompt PromptFunc, forceAsk bool) (ToolResult, bool) {
+// said "ask", or an AskAdvisor did, giving advice) turns Allow into Ask;
+// Deny always stays Deny. It returns the denial result and true when the
+// call must not run.
+func (r *Registry) checkPermission(tool Tool, name string, input map[string]any, checker *permissions.Checker, prompt PromptFunc, forceAsk bool, advice string) (ToolResult, bool) {
 	decision, reason := permissions.Allow, ""
 	if checker != nil {
 		res := checker.Check(&toolInfoAdapter{tool: tool}, input)
@@ -456,14 +514,24 @@ func (r *Registry) checkPermission(tool Tool, name string, input map[string]any,
 	// Hard gate: with no prompt configured (headless), deny so the gate
 	// can't be bypassed silently.
 	if prompt == nil {
+		if advice != "" {
+			return ToolResult{
+				Content: fmt.Sprintf("Permission denied: %s; interactive approval required for %q but no prompt is configured", advice, name),
+				Error:   true,
+			}, true
+		}
 		return ToolResult{
 			Content: fmt.Sprintf("Permission denied: interactive approval required for %q but no prompt is configured", name),
 			Error:   true,
 		}, true
 	}
+	summary := inputSummary(input)
+	if advice != "" {
+		summary = "[" + advice + "] " + summary
+	}
 	// Runs in the tool-execution goroutine (off the Bubble Tea Update loop),
 	// so blocking on the answer is safe.
-	resp := prompt(PermissionRequest{ToolName: name, InputSummary: inputSummary(input), RiskLevel: classifyRiskLevel(name)})
+	resp := prompt(PermissionRequest{ToolName: name, InputSummary: summary, RiskLevel: classifyRiskLevel(name)})
 	pattern := resp.Pattern
 	if pattern == "" {
 		pattern = name
@@ -562,6 +630,10 @@ func (r *Registry) Count() int {
 	return len(r.tools)
 }
 
+// customToolTimeout bounds one custom tool command; the caller's context
+// may end it sooner.
+const customToolTimeout = 2 * time.Minute
+
 // customToolWrapper wraps a JSON-defined custom tool.
 type customToolWrapper struct {
 	name        string
@@ -587,15 +659,31 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 		return ToolResult{Content: fmt.Sprintf("Failed to marshal input: %v", err), Error: true}, nil
 	}
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", c.command)
-	cmd.Stdin = bytes.NewBuffer(data)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %v\nOutput:\n%s", c.command, err, string(output)), Error: true}, nil
+	// The command is user-authored (trusted, so no denylist), but the
+	// model chooses when it runs: it still gets its own process group,
+	// a timeout, a bounded pipe wait and an output cap.
+	res := shellrun.Run(ctx, shellrun.Options{Command: c.command, Stdin: data, Timeout: customToolTimeout})
+	var failure string
+	switch {
+	case res.Err != nil:
+		failure = res.Err.Error()
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		failure = "the caller's deadline ended it; the command and everything it started were killed"
+	case res.TimedOut:
+		failure = fmt.Sprintf("timed out after %s; the command and everything it started were killed", customToolTimeout)
+	case ctx.Err() != nil:
+		failure = "cancelled; the command and everything it started were killed"
+	case res.ExitCode != 0:
+		failure = fmt.Sprintf("exit status %d", res.ExitCode)
 	}
-
-	return ToolResult{Content: string(output)}, nil
+	output := res.Output
+	if res.Truncated {
+		output += fmt.Sprintf("\n[output truncated at %d bytes]", shellrun.DefaultMaxOutput)
+	}
+	if failure != "" {
+		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %s\nOutput:\n%s", c.command, failure, output), Error: true}, nil
+	}
+	return ToolResult{Content: output}, nil
 }
 
 // LoadCustomTools loads JSON tool definitions from a directory.

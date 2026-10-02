@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate"
 )
 
@@ -17,17 +18,12 @@ import (
 // tries again (W5 ruling 26).
 const selfupdatedEnv = "CELESTE_SELFUPDATED"
 
-// hasPersonaKey reports whether this binary carries the persona key, which
-// makes a local build Keyed (W5 ruling 25). It is a seam until W5-A's
-// prompts.HasPersonaKey lands: at that merge, replace this with
-// prompts.HasPersonaKey. Until then no build injects a key, so false is exact.
-var hasPersonaKey = func() bool { return false }
-
 // noUpgradeCommands print and exit, or (update) upgrade on their own.
+// persona reports on the binary as it is, so it never replaces it first.
 var noUpgradeCommands = map[string]bool{
 	"help": true, "-h": true, "--help": true,
 	"version": true, "-v": true, "--version": true,
-	"update": true,
+	"update": true, "persona": true,
 }
 
 // stdioCommands own stdout for a protocol, so they upgrade in the
@@ -52,7 +48,7 @@ type upgradeHook struct {
 
 func newUpgradeHook() *upgradeHook {
 	info, ok := debug.ReadBuildInfo()
-	kind, tag := selfupdate.Classify(info, ok, Channel == "release", hasPersonaKey())
+	kind, tag := selfupdate.Classify(info, ok, Channel == "release", prompts.HasPersonaKey())
 	th, _ := selfupdate.DefaultThrottle()
 	return &upgradeHook{
 		kind: kind, tag: tag, getenv: os.Getenv, updater: selfupdate.New(), throttle: th,

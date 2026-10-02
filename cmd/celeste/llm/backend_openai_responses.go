@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/sashabaranov/go-openai"
 
@@ -21,7 +22,8 @@ const openAIDefaultBaseURL = "https://api.openai.com/v1"
 type ResponsesBackend struct {
 	client         *openai.Client
 	config         *Config
-	baseURL        string // effective: Config.BaseURL, or openAIDefaultBaseURL
+	baseURL        string     // effective: Config.BaseURL, or openAIDefaultBaseURL
+	mu             sync.Mutex // guards systemPrompt and thinkingConfig
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
 }
@@ -37,9 +39,27 @@ func NewResponsesBackend(config *Config) *ResponsesBackend {
 	return &ResponsesBackend{client: openai.NewClientWithConfig(cc), config: config, baseURL: base}
 }
 
-func (b *ResponsesBackend) SetSystemPrompt(prompt string)       { b.systemPrompt = prompt }
-func (b *ResponsesBackend) SetThinkingConfig(tc ThinkingConfig) { b.thinkingConfig = tc }
-func (b *ResponsesBackend) Close() error                        { return nil }
+func (b *ResponsesBackend) SetSystemPrompt(prompt string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.systemPrompt = prompt
+}
+
+func (b *ResponsesBackend) SetThinkingConfig(tc ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.thinkingConfig = tc
+}
+
+func (b *ResponsesBackend) Close() error { return nil }
+
+// settings reads the prompt and thinking config together; a request may
+// be building while the client sets them.
+func (b *ResponsesBackend) settings() (string, ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.systemPrompt, b.thinkingConfig
+}
 
 // providerKey names this backend's blocks: the effective base URL and the
 // model it sends (already the served model, #232).
@@ -50,6 +70,7 @@ func (b *ResponsesBackend) providerKey() string {
 // request builds the Responses request for messages; replayed reports
 // whether any message was sent as its recorded items.
 func (b *ResponsesBackend) request(messages []tui.ChatMessage, tools []tui.SkillDefinition) (openai.CreateResponseRequest, bool) {
+	prompt, thinking := b.settings()
 	input, replayed := responsesInput(messages, b.providerKey())
 	if input == nil {
 		input = []json.RawMessage{}
@@ -58,20 +79,20 @@ func (b *ResponsesBackend) request(messages []tui.ChatMessage, tools []tui.Skill
 	req := openai.CreateResponseRequest{
 		Model:        b.config.Model,
 		Input:        input,
-		Instructions: b.systemPrompt,
+		Instructions: prompt,
 		Store:        &store,
 	}
 	// store=false keeps nothing server side, so a reasoning model's items
 	// must come back encrypted to be replayed (ruling 2). Only reasoning
 	// models accept the include; others answer 400.
-	if responsesReasoningModel(b.config.Model) {
+	if openAIReasoningModel(b.config.Model) {
 		req.Include = []openai.ResponseInclude{openai.ResponseIncludeReasoningEncryptedContent}
 	}
 	if t := responsesTools(tools); len(t) > 0 {
 		req.Tools = t
 		req.ToolChoice = "auto"
 	}
-	if effort := responsesEffort(b.config.Model, b.thinkingConfig); effort != "" {
+	if effort := openAIEffort(b.config.Model, thinking); effort != "" {
 		req.Reasoning = &openai.ResponseReasoning{Effort: effort}
 	}
 	return req, replayed
@@ -172,7 +193,8 @@ func (b *ResponsesBackend) SendMessageSync(ctx context.Context, messages []tui.C
 // with this backend's prompt and thinking config.
 func (b *ResponsesBackend) fallbackBackend() *OpenAIBackend {
 	chat := NewOpenAIBackend(b.config)
-	chat.SetSystemPrompt(b.systemPrompt)
-	chat.SetThinkingConfig(b.thinkingConfig)
+	prompt, thinking := b.settings()
+	chat.SetSystemPrompt(prompt)
+	chat.SetThinkingConfig(thinking)
 	return chat
 }

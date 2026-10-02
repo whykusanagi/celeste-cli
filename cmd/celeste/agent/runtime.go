@@ -21,6 +21,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -49,9 +50,10 @@ type Runner struct {
 	// summarize writes a compaction summary with the small-model role, the
 	// rung after pruning (#174). Nil disables summaries.
 	summarize compact.SummarizeFunc
-	// jev is set when jev_prune is "shadow": pruning then logs Jev's verdict
-	// next to the rules' (#175).
-	jev *jev.Client
+	// jev is set when jev_prune is "shadow" (pruning logs Jev's verdict next
+	// to the rules', #175) or "on" (Jev orders the elisions, 2.0 W3).
+	jev     *jev.Client
+	jevMode string
 	// env is the loop.Setup environment (registry, MCP, code graph, hooks).
 	// Nil for runners built directly in tests.
 	env *loop.Env
@@ -68,6 +70,7 @@ type Runner struct {
 	watchdog string
 	oracle   decide.Oracle
 	gateMode string // completion_gate (2.0 W3)
+	jevGate  string // jev_gate (2.0 W3)
 }
 
 // compactMessages keeps the history inside the window (#174). It prunes old
@@ -89,13 +92,11 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	// prompt and tools, or more) still counts after a prune, as in the
 	// chat's compactWith.
 	overhead := used - compact.Estimate(msgs)
-	opts := compact.Options{Window: r.budget.ModelLimit, Used: used, Unseen: meter.Unseen(msgs), Force: force}
-	report := func(compact.Result) {}
-	if r.jev != nil {
-		opts, report = compact.Shadow(r.jev, msgs, opts, func(line string) {
-			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
-		}, false) // inline: errOut may be a caller's bytes.Buffer, and the run must not outlive its output
-	}
+	// Shadow reports inline: errOut may be a caller's bytes.Buffer, and the
+	// run must not outlive its output.
+	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
+		fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+	}, false)
 	pruned, res := compact.Prune(msgs, opts, r.pruned)
 	report(res)
 	changed := res.Pruned()
@@ -376,6 +377,12 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	registry := env.Registry
 	checker := env.Checker
+	// A typed subagent (2.0 W4e): its extra tools join its own registry,
+	// then the filter keeps only what its type allows.
+	for _, t := range options.ExtraTools {
+		registry.RegisterWithModes(t, tools.ModeAgent, tools.ModeChat)
+	}
+	registry.Retain(options.ToolFilter)
 
 	// Fail fast rather than no-opping. `celeste agent` never wires an
 	// interactive prompt, so every tool that resolves to Ask is denied — and the
@@ -422,7 +429,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Build the system prompt: persona (if enabled) with the voice boundary,
 	// then the agent contract, then project context. Agent mode never carries
 	// the chat task rules or confirm mode (#170).
-	systemPrompt := env.SystemPrompt(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders)
+	systemPrompt := env.SystemPromptOpts(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders, options.PersonaLevel)
 
 	client.SetSystemPrompt(systemPrompt)
 
@@ -462,7 +469,8 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		indexer:    env.Indexer,
 		pruned:     prunedStore,
 		summarize:  SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
-		jev:        jevShadowClient(cfg.JevPrune, options.Workspace, errOut),
+		jev:        jevShadowClient(cfg.JevPruneMode(), options.Workspace, errOut),
+		jevMode:    cfg.JevPruneMode(),
 		env:        env,
 		hooks:      env.Hooks,
 		warn:       warn,
@@ -471,26 +479,27 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		rulesMode:  cfg.StreamRulesMode(),
 		watchdog:   cfg.WatchdogMode(),
 		gateMode:   cfg.CompletionGateMode(),
+		jevGate:    cfg.JevGateMode(),
 		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
 			fmt.Fprintf(errOut, "[agent] %s\n", line)
 		}),
 	}, nil
 }
 
-// jevShadowClient returns a Jev client when shadow mode is configured, and
-// says once that excerpts will leave the machine. Paths in them are sent
-// relative to workspace, or as <path>.
+// jevShadowClient returns a Jev client when jev_prune is "shadow" or "on",
+// and says once that excerpts will leave the machine. Paths in them are
+// sent relative to workspace, or as <path>.
 func jevShadowClient(mode, workspace string, errOut io.Writer) *jev.Client {
-	if mode != "shadow" {
+	if mode == config.ModeOff {
 		return nil
 	}
 	c, err := jev.NewFromEnv()
 	if err != nil {
-		fmt.Fprintf(errOut, "[agent] jev shadow disabled: %v\n", err)
+		fmt.Fprintf(errOut, "[agent] jev prune disabled: %v\n", err)
 		return nil
 	}
 	c.Workspace = workspace
-	fmt.Fprintln(errOut, "[agent] jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
+	fmt.Fprintf(errOut, "[agent] jev prune %s: redacted excerpts of old tool results are sent to TypeSafe\n", mode)
 	return c
 }
 
@@ -746,6 +755,9 @@ func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 		Compact:   &runCompactor{r: r, meter: compact.NewMeter(0)},
 		SessionID: "agent-" + state.RunID,
 		Steering:  sess.Steering(),
+		Advisor: steer.NewToolGate(r.jevGate, r.options.Workspace, func() string { return state.Goal }, func(line string) {
+			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+		}),
 	}
 }
 
@@ -1068,32 +1080,24 @@ func executeVerificationCommand(parent context.Context, workspace, command strin
 		timeout = DefaultOptions().VerifyTimeout
 	}
 
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = workspace
-	output, err := cmd.CombinedOutput()
-
-	outputStr := string(output)
-	if len(outputStr) > maxCommandOutput {
-		outputStr = outputStr[:maxCommandOutput]
+	// --verify-cmd is user-authored (trusted, so no denylist); the runner
+	// still kills its whole process group on timeout, so a go test child
+	// holding the pipe cannot keep the check open.
+	res := shellrun.Run(parent, shellrun.Options{Dir: workspace, Command: command, Timeout: timeout, MaxOutput: maxCommandOutput})
+	output := res.Output
+	if res.Err != nil {
+		output += "\n" + res.Err.Error()
+		if len(output) > maxCommandOutput {
+			output = output[:maxCommandOutput]
+		}
 	}
-
-	exitCode := 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-
-	timedOut := ctx.Err() == context.DeadlineExceeded
-	passed := err == nil && !timedOut
 
 	return VerificationCheck{
 		Command:   command,
-		Passed:    passed,
-		ExitCode:  exitCode,
-		Output:    outputStr,
-		TimedOut:  timedOut,
+		Passed:    res.Err == nil && !res.TimedOut && res.ExitCode == 0,
+		ExitCode:  res.ExitCode,
+		Output:    output,
+		TimedOut:  res.TimedOut,
 		Timestamp: time.Now(),
 	}
 }

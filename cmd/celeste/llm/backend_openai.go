@@ -7,10 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/sashabaranov/go-openai"
-
-	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -20,6 +19,7 @@ import (
 type OpenAIBackend struct {
 	client         *openai.Client
 	config         *Config
+	mu             sync.Mutex // guards systemPrompt and thinkingConfig
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
 }
@@ -39,6 +39,8 @@ func NewOpenAIBackend(config *Config) *OpenAIBackend {
 
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (b *OpenAIBackend) SetSystemPrompt(prompt string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.systemPrompt = prompt
 }
 
@@ -46,7 +48,23 @@ func (b *OpenAIBackend) SetSystemPrompt(prompt string) {
 // For OpenAI o-series models this maps to reasoning_effort.
 // For Anthropic (via OpenAI compat) this is a no-op for now.
 func (b *OpenAIBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.thinkingConfig = config
+}
+
+// prompt and thinking read the settings the setters change; a request may
+// be building while the client sets them.
+func (b *OpenAIBackend) prompt() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.systemPrompt
+}
+
+func (b *OpenAIBackend) thinking() ThinkingConfig {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.thinkingConfig
 }
 
 // SendMessageSync sends a message synchronously and returns the complete result.
@@ -426,25 +444,12 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	return nil
 }
 
-// applyThinkingConfig adds reasoning_effort to the request when the model
-// supports it (OpenAI o-series) and thinking is enabled.
+// applyThinkingConfig adds reasoning_effort to the request when thinking
+// is on and the model takes it (openAIReasoningModel: the o-series and
+// gpt-5), so a Responses backend that falls back here keeps its effort.
 func (b *OpenAIBackend) applyThinkingConfig(req *openai.ChatCompletionRequest) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
-		return
-	}
-	// OpenAI o-series models support reasoning_effort ("low", "medium", "high").
-	// Map our extended levels into what the API accepts.
-	model := strings.ToLower(req.Model)
-	if !strings.HasPrefix(model, "o1") && !strings.HasPrefix(model, "o3") && !strings.HasPrefix(model, "o4") {
-		return // Not an o-series model; skip silently
-	}
-	switch b.thinkingConfig.Level {
-	case "low":
-		req.ReasoningEffort = "low"
-	case "medium":
-		req.ReasoningEffort = "medium"
-	case "high", "max":
-		req.ReasoningEffort = "high"
+	if effort := openAIEffort(req.Model, b.thinking()); effort != "" {
+		req.ReasoningEffort = effort
 	}
 }
 
@@ -466,10 +471,10 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 	//   {"type": "text", "text": "<static>", "cache_control": {"type": "ephemeral"}}
 	// This requires switching from a simple string content to multi-part content
 	// blocks when b.isAnthropicProvider() is true.
-	if b.systemPrompt != "" {
+	if prompt := b.prompt(); prompt != "" {
 		result = append(result, openai.ChatCompletionMessage{
 			Role:    "system",
-			Content: b.systemPrompt,
+			Content: prompt,
 		})
 	}
 
@@ -493,33 +498,23 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 			// message with the image as a data URL so vision-capable models
 			// can actually see it.  The OpenAI API only supports multipart
 			// content on user messages, not tool messages.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						filename, _ := msg.Metadata["filename"].(string)
-						dataURL := fmt.Sprintf("data:image/%s;base64,%s", format, b64)
-						result = append(result, openai.ChatCompletionMessage{
-							Role: "user",
-							MultiContent: []openai.ChatMessagePart{
-								{
-									Type: openai.ChatMessagePartTypeText,
-									Text: fmt.Sprintf("[Attached image from tool result: %s]", filename),
-								},
-								{
-									Type: openai.ChatMessagePartTypeImageURL,
-									ImageURL: &openai.ChatMessageImageURL{
-										URL:    dataURL,
-										Detail: openai.ImageURLDetailAuto,
-									},
-								},
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				result = append(result, openai.ChatCompletionMessage{
+					Role: "user",
+					MultiContent: []openai.ChatMessagePart{
+						{
+							Type: openai.ChatMessagePartTypeText,
+							Text: fmt.Sprintf("[Attached image from tool result: %s]", img.Name),
+						},
+						{
+							Type: openai.ChatMessagePartTypeImageURL,
+							ImageURL: &openai.ChatMessageImageURL{
+								URL:    img.DataURL(),
+								Detail: openai.ImageURLDetailAuto,
 							},
-						})
-					}
-				}
+						},
+					},
+				})
 			}
 		} else if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 			// Assistant messages with tool_calls need to include ToolCalls field

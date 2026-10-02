@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -304,5 +305,48 @@ func TestSwitchEndpointFallbackDoesNotSendTheOldKeyToAnotherProvider(t *testing.
 	}
 	if got := deps.adapter.client.GetConfig().APIKey; got != "venice-key" {
 		t.Errorf("venice key = %q", got)
+	}
+}
+
+// 2.0 W4 (ruling 5): starting the chat UI writes nothing into the project.
+func TestChatAppNoLongerCreatesAGrimoire(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, _, ws := chatApp(t, srv)
+	if _, err := os.Stat(filepath.Join(ws, ".grimoire")); !os.IsNotExist(err) {
+		t.Fatalf(".grimoire was created: %v", err)
+	}
+}
+
+// Ruling 6: a session in a project with no context hints /init once.
+func TestChatStartHintsInitWithoutProjectContext(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	m, _, _ := chatApp(t, srv)
+	n := 0
+	for _, msg := range chatMessages(m) {
+		n += strings.Count(msg.Content, "run /init")
+	}
+	if n != 1 {
+		t.Fatalf("want one /init hint at session start, got %d", n)
+	}
+}
+
+func TestChatStartNoHintWithAContextFile(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte("be terse"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app, deps, err := newChatApp(&config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}, ws, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	for _, msg := range app.DebugMessages() {
+		if strings.Contains(msg.Content, "run /init") {
+			t.Fatal("a workspace with AGENTS.md has project context: no hint")
+		}
 	}
 }

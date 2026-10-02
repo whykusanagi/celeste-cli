@@ -220,9 +220,21 @@ func argField(args, field string) string {
 func personaHeuristic(st decide.State) (decide.Answer, bool) {
 	for _, t := range st.Turns {
 		for _, c := range t.Calls {
-			field := map[string]string{"write_file": "content", "patch_file": "new_string"}[c.Tool]
-			if field != "" && rules.VoiceLeak(argField(c.Args, "path"), argField(c.Args, field)) {
-				return yesNo(true)
+			fields := map[string][]string{"write_file": {"content"}, "patch_file": {"new_string", "edits.new_string"}}[c.Tool]
+			if len(fields) == 0 {
+				continue
+			}
+			var args map[string]any
+			if json.Unmarshal([]byte(c.Args), &args) != nil {
+				continue
+			}
+			path, _ := args["path"].(string)
+			for _, f := range fields {
+				for _, v := range rules.FieldValues(args, f) {
+					if rules.VoiceLeak(path, v) {
+						return yesNo(true)
+					}
+				}
 			}
 		}
 	}
@@ -230,7 +242,8 @@ func personaHeuristic(st decide.State) (decide.Answer, bool) {
 }
 
 // unverifiedHeuristic: the latest reply claims success and a file changed
-// after the last bash call that succeeded.
+// (rules.IsEdit) after the last check that succeeded (rules.IsCheck), as
+// the task-complete-before-verify rule judges it.
 func unverifiedHeuristic(st decide.State) (decide.Answer, bool) {
 	if len(st.Turns) == 0 {
 		return decide.Answer{}, false
@@ -246,10 +259,10 @@ func unverifiedHeuristic(st decide.State) (decide.Answer, bool) {
 			if c.IsError {
 				continue
 			}
-			switch c.Tool {
-			case "write_file", "patch_file", "splice_file":
+			switch {
+			case rules.IsEdit(c.Tool):
 				edited = i
-			case "bash":
+			case rules.IsCheck(c.Tool):
 				checked = i
 			}
 		}

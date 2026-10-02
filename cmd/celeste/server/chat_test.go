@@ -297,12 +297,16 @@ func TestMCPChatRefusesStaleEdits(t *testing.T) {
 	}
 }
 
-// Staleness is per call: a file the user edits between two calls can be
-// patched by the second call without re-reading it.
+// Staleness is per call: a file the user edits between two calls is not
+// stale in the second call. The tracker resets per call, so (2.0 W4
+// must-read-before-edit) the second call reads the file before patching it;
+// a patch without that read is refused with the read hint.
 func TestMCPChatStalenessIsPerCall(t *testing.T) {
 	fp := fakeprovider.NewOpenAI(t,
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: `{"path":"a.txt"}`}}},
 		fakeprovider.Turn{Text: "read"},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p0", Name: "patch_file", Args: `{"path":"a.txt","old_string":"one","new_string":"two","replace_all":false}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r2", Name: "read_file", Args: `{"path":"a.txt"}`}}},
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "patch_file", Args: `{"path":"a.txt","old_string":"one","new_string":"two","replace_all":false}`}}},
 		fakeprovider.Turn{Text: "patched"},
 	)
@@ -321,7 +325,10 @@ func TestMCPChatStalenessIsPerCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(target); string(b) != "two\n" {
-		t.Fatalf("second call's patch refused: %q (%q)", b, toolContent(fp.Requests()[3], "p"))
+		t.Fatalf("second call's patch refused: %q (%q)", b, toolContent(fp.Requests()[5], "p"))
+	}
+	if got := toolContent(fp.Requests()[3], "p0"); !strings.Contains(got, "read_file a.txt first") {
+		t.Fatalf("an unread patch in a new call must ask for a read: %q", got)
 	}
 }
 

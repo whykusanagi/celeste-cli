@@ -4,6 +4,7 @@ on:
   push:
     branches: [ main ]   # post-merge sanity on main
   pull_request:          # every PR (incl. dev branches + Dependabot) gets CI — the gate
+    types: [opened, synchronize, reopened, labeled]   # labeled: adding `full-ci` reruns on all OSes
   workflow_dispatch:     # manual re-run for a flaky check
 
 # Cancel superseded runs for the same PR/ref so new commits don't pile up runs.
@@ -18,9 +19,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Every event runs all three OSes. PRs used to run ubuntu-only, and
-        # Windows-only failures (#218, #224-#226) then surfaced after merge.
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux on every PR and push to main. macOS and Windows minutes cost
+        # 10x and ~2x Linux, so they run only where a release is decided:
+        # the release-please PR (catches OS-only bugs like #218 and
+        # #224-#226 before the tag), a manual run, or a PR labelled
+        # `full-ci` for OS-specific changes.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
         go: ['1.26.6']
 
     steps:
@@ -91,6 +95,28 @@ jobs:
         version: latest
         install-mode: goinstall
         args: --timeout=5m
+
+  persona:
+    name: Persona ciphertext
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+      with:
+        persist-credentials: false  # no git writes here
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.26.6'
+        cache: true
+
+    # No key and no private corpus here, ever (W5 rulings 15, 19): this checks
+    # the committed ciphertext against SOURCE.json and runs the crypto,
+    # fallback and leak tests under a public test key. The keyed comparison
+    # is `make persona-check`, run locally before merging.
+    - name: Ciphertext matches SOURCE.json; crypto and fallback tests
+      run: go test ./cmd/celeste/prompts/... ./scripts/personaseal -run 'TestPersona|TestPublicPersona' -count=1 -v
 
   docker-test:
     name: Docker Integration Tests

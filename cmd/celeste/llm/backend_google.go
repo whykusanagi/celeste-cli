@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	genai "google.golang.org/genai"
 
@@ -19,6 +20,7 @@ import (
 type GoogleBackend struct {
 	client         *genai.Client
 	config         *Config
+	mu             sync.Mutex // guards systemPrompt and thinkingConfig
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
 }
@@ -95,13 +97,31 @@ func NewGoogleBackend(config *Config) (*GoogleBackend, error) {
 
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (b *GoogleBackend) SetSystemPrompt(prompt string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.systemPrompt = prompt
 }
 
 // SetThinkingConfig configures extended thinking for Gemini models.
 // Gemini supports thinkingBudget via GenerateContentConfig.ThinkingConfig.
 func (b *GoogleBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.thinkingConfig = config
+}
+
+// prompt and thinking read the settings the setters change; a request may
+// be building while the client sets them.
+func (b *GoogleBackend) prompt() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.systemPrompt
+}
+
+func (b *GoogleBackend) thinking() ThinkingConfig {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.thinkingConfig
 }
 
 // SendMessageSync sends a message synchronously and returns the complete result.
@@ -119,9 +139,9 @@ func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 	genConfig := &genai.GenerateContentConfig{}
 
 	// Add system instruction if present
-	if b.systemPrompt != "" {
+	if prompt := b.prompt(); prompt != "" {
 		// System instruction doesn't need a role - it's handled differently
-		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
+		genConfig.SystemInstruction = genai.NewContentFromText(prompt, "user")
 	}
 
 	if len(functionDeclarations) > 0 {
@@ -184,9 +204,9 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 	genConfig := &genai.GenerateContentConfig{}
 
 	// Add system instruction if present
-	if b.systemPrompt != "" {
+	if prompt := b.prompt(); prompt != "" {
 		// System instruction doesn't need a role - it's handled differently
-		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
+		genConfig.SystemInstruction = genai.NewContentFromText(prompt, "user")
 	}
 
 	if len(functionDeclarations) > 0 {
@@ -274,8 +294,8 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	genConfig := &genai.GenerateContentConfig{}
 
 	// Add system instruction if present
-	if b.systemPrompt != "" {
-		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
+	if prompt := b.prompt(); prompt != "" {
+		genConfig.SystemInstruction = genai.NewContentFromText(prompt, "user")
 	}
 
 	if len(functionDeclarations) > 0 {
@@ -356,10 +376,11 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 // applyThinkingConfig adds ThinkingConfig to the generation config when
 // thinking is enabled.
 func (b *GoogleBackend) applyThinkingConfig(genConfig *genai.GenerateContentConfig) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+	thinking := b.thinking()
+	if !thinking.Enabled || thinking.Level == "off" {
 		return
 	}
-	budget := b.thinkingConfig.LevelToBudget()
+	budget := thinking.LevelToBudget()
 	tc := &genai.ThinkingConfig{
 		IncludeThoughts: true,
 	}
@@ -407,24 +428,13 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 
 			// If the tool result carries image metadata, inject a user
 			// message with the image as inline data so Gemini can see it.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						filename, _ := msg.Metadata["filename"].(string)
-						imageBytes, decErr := base64.StdEncoding.DecodeString(b64)
-						if decErr == nil {
-							mimeType := fmt.Sprintf("image/%s", format)
-							parts := []*genai.Part{
-								genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", filename)),
-								genai.NewPartFromBytes(imageBytes, mimeType),
-							}
-							contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
-						}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				if imageBytes, err := base64.StdEncoding.DecodeString(img.B64); err == nil {
+					parts := []*genai.Part{
+						genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", img.Name)),
+						genai.NewPartFromBytes(imageBytes, img.MediaType()),
 					}
+					contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
 				}
 			}
 			continue

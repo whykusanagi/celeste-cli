@@ -14,8 +14,9 @@ import (
 // C:\a or C:/a, after the start of the text, a space, a quote, a bracket,
 // a shell operator (> | ; &), '=', ',' or ':'. A URL's "//host" is never
 // one (the first segment may not start with a slash), nor is a relative
-// path (./a, a/b, and/or).
-var pathToken = regexp.MustCompile("(^|[\\s\"'`=(\\[{<>|;&,:])((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\\\][^/\\\\\\s\"'`<>|*?(){}\\[\\],;]+(?:[/\\\\]+[^/\\\\\\s\"'`<>|*?(){}\\[\\],;]*)*)")
+// path (./a, a/b, and/or). A path may hold parentheses (build(1)/a);
+// a closing one it does not open is trimmed off (trimPath).
+var pathToken = regexp.MustCompile("(^|[\\s\"'`=(\\[{<>|;&,:])((?:~[A-Za-z0-9._-]*|[A-Za-z]:)?[/\\\\][^/\\\\\\s\"'`<>|*?{}\\[\\],;]+(?:[/\\\\]+[^/\\\\\\s\"'`<>|*?{}\\[\\],;]*)*)")
 
 // fileURL is a file: URL's path (file:///a/b, file://localhost/a,
 // file:///C:/a).
@@ -66,10 +67,26 @@ func RedactPaths(s, workspace string) string {
 	return pathToken.ReplaceAllStringFunc(s, func(m string) string {
 		g := pathToken.FindStringSubmatch(m)
 		lead, p := g[1], g[2]
-		trimmed := strings.TrimRight(p, ".:")
+		trimmed := trimPath(p)
 		tail := p[len(trimmed):]
 		return lead + relOrPlaceholder(trimmed, ws, home) + tail
 	})
+}
+
+// trimPath drops what follows a path token rather than belonging to it:
+// trailing '.' and ':' (end of a sentence, file:line) and closing
+// parentheses the path does not open ("(see /a/b)").
+func trimPath(p string) string {
+	for {
+		t := strings.TrimRight(p, ".:")
+		if strings.HasSuffix(t, ")") && strings.Count(t, "(") < strings.Count(t, ")") {
+			t = t[:len(t)-1]
+		}
+		if t == p {
+			return t
+		}
+		p = t
+	}
 }
 
 func relOrPlaceholder(p, ws, home string) string {
@@ -84,14 +101,14 @@ func relOrPlaceholder(p, ws, home string) string {
 	if ws == "" || full == "" {
 		return PathPlaceholder
 	}
-	if samePath(full, ws) {
+	if pathEqFold(full, ws) {
 		return "."
 	}
 	prefix := ws
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	if len(full) > len(prefix) && samePath(full[:len(prefix)], prefix) {
+	if len(full) > len(prefix) && pathEqFold(full[:len(prefix)], prefix) {
 		return full[len(prefix):]
 	}
 	return PathPlaceholder
@@ -105,7 +122,10 @@ func normPath(p string) string {
 	return path.Clean(strings.ReplaceAll(filepath.ToSlash(p), "\\", "/"))
 }
 
-func samePath(a, b string) bool {
+// pathEqFold compares two path strings (it does not touch the
+// filesystem), without case on the case-insensitive defaults of macOS and
+// Windows.
+func pathEqFold(a, b string) bool {
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		return strings.EqualFold(a, b)
 	}

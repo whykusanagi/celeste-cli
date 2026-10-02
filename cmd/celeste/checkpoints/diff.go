@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // FileChange represents the diff stats for a single file.
@@ -36,16 +38,54 @@ const maxDiffBytes = 4 << 20
 
 // ComputeDiff compares each changed file's oldest backup (its state before
 // the session changed it) with the file now. Sorted by path. A file that
-// cannot be compared carries its error in FileChange.Err.
+// cannot be compared carries its error in FileChange.Err. The session lock
+// is held only while the index and the backups are read, so an undo in
+// another process cannot remove a backup between the two; the current
+// files are read and diffed after it is released, so a large /diff never
+// keeps other processes waiting.
 func (sm *SnapshotManager) ComputeDiff() ([]FileChange, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.reloadLocked()
-	return sm.computeDiffLocked()
+	olds, err := sm.readOldSides()
+	if err != nil {
+		return nil, err
+	}
+	beforeDiffing()
+	return diffOldSides(olds), nil
 }
 
-// computeDiffLocked is ComputeDiff; the caller holds sm.mu.
-func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
+// beforeDiffing runs between the locked and the unlocked half of
+// ComputeDiff (a test seam).
+var beforeDiffing = func() {}
+
+// oldSide is a changed file's state before the session: its entry, and the
+// backup's bytes (unless the file is new, the backup is over maxDiffBytes,
+// or it could not be read: err).
+type oldSide struct {
+	e    Entry
+	size int64
+	data []byte
+	big  bool
+	err  error
+}
+
+// readOldSides reloads the index and reads each file's oldest backup under
+// sm.mu and the session lock.
+func (sm *SnapshotManager) readOldSides() ([]oldSide, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.dir != "" {
+		unlock, err := lockSession(sm.dir, false)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+	}
+	sm.reloadLocked()
+	return sm.oldSidesLocked(), nil
+}
+
+// oldSidesLocked reads the oldest backup of each changed file, sorted by
+// path; the caller holds sm.mu (and the session lock, for ComputeDiff).
+func (sm *SnapshotManager) oldSidesLocked() []oldSide {
 	earliest := make(map[string]Entry)
 	var paths []string
 	for _, e := range sm.entries {
@@ -55,34 +95,57 @@ func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
 		}
 	}
 	sort.Strings(paths)
-
-	changes := make([]FileChange, 0, len(paths))
+	olds := make([]oldSide, 0, len(paths))
 	for _, path := range paths {
-		change := FileChange{Path: path}
-		if err := sm.compare(earliest[path], &change); err != nil {
+		o := oldSide{e: earliest[path]}
+		if o.e.Backup != "" {
+			o.size, o.data, o.big, o.err = sm.readBackup(o.e)
+		}
+		olds = append(olds, o)
+	}
+	return olds
+}
+
+// readBackup reads e's backup, unless it is over maxDiffBytes (big).
+func (sm *SnapshotManager) readBackup(e Entry) (size int64, data []byte, big bool, err error) {
+	p, err := sm.backupPath(e)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	if info.Size() > maxDiffBytes {
+		return info.Size(), nil, true, nil
+	}
+	data, err = os.ReadFile(p)
+	return info.Size(), data, false, err
+}
+
+// diffOldSides compares each old side with its file now.
+func diffOldSides(olds []oldSide) []FileChange {
+	changes := make([]FileChange, 0, len(olds))
+	for _, o := range olds {
+		change := FileChange{Path: o.e.Path}
+		if err := compare(o, &change); err != nil {
 			change.Err = err.Error()
 		}
 		changes = append(changes, change)
 	}
-	return changes, nil
+	return changes
 }
 
-// compare fills c for entry e's file.
-func (sm *SnapshotManager) compare(e Entry, c *FileChange) error {
-	var src string
-	if e.Backup == "" {
-		c.IsNew = true
-	} else {
-		p, err := sm.backupPath(e)
-		if err != nil {
-			return err
-		}
-		info, err := os.Stat(p)
-		if err != nil {
-			return err
-		}
-		src, c.OldSize = p, info.Size()
+// compare fills c for old side o's file.
+func compare(o oldSide, c *FileChange) error {
+	if o.err != nil {
+		return o.err
 	}
+	hasOld := o.e.Backup != ""
+	if !hasOld {
+		c.IsNew = true
+	}
+	c.OldSize = o.size
 	info, err := os.Stat(c.Path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -92,16 +155,12 @@ func (sm *SnapshotManager) compare(e Entry, c *FileChange) error {
 	default:
 		c.NewSize = info.Size()
 	}
-	if c.OldSize > maxDiffBytes || c.NewSize > maxDiffBytes {
+	if o.big || c.NewSize > maxDiffBytes {
 		c.TooBig = true
 		return nil
 	}
-	var old, cur []byte
-	if src != "" {
-		if old, err = os.ReadFile(src); err != nil {
-			return err
-		}
-	}
+	old := o.data
+	var cur []byte
 	if !c.Deleted {
 		if cur, err = os.ReadFile(c.Path); err != nil {
 			return err
@@ -112,7 +171,7 @@ func (sm *SnapshotManager) compare(e Entry, c *FileChange) error {
 		return nil
 	}
 	var oldLines, newLines []string
-	if src != "" {
+	if hasOld {
 		oldLines = strings.Split(string(old), "\n")
 	}
 	if c.Deleted {
@@ -198,8 +257,10 @@ func FormatChanges(changes []FileChange, workspace string) string {
 // DisplayPath shows path relative to workspace when it is inside it, and
 // as it is otherwise.
 func DisplayPath(workspace, path string) string {
-	if rel, err := filepath.Rel(workspace, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return rel
+	if pathutil.Within(workspace, path) {
+		if rel, err := filepath.Rel(workspace, path); err == nil {
+			return rel
+		}
 	}
 	return path
 }

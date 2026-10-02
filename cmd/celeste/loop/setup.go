@@ -322,7 +322,8 @@ func (e *Env) globalMCPConfigs(paths []string, home string) []string {
 }
 
 // setupContext builds ProjectContext exactly as the TUI does: grimoire, then
-// "# Project Memories", then "# Code Graph".
+// "# Project instructions" (AGENTS.md / CLAUDE.md from the git root down to
+// the workspace, 2.0 W4), then "# Project Memories", then "# Code Graph".
 func (e *Env) setupContext(ws string) {
 	var text string
 	var ruleSections []rules.Section
@@ -335,6 +336,16 @@ func (e *Env) setupContext(ws string) {
 		for _, sec := range g.StreamRules {
 			ruleSections = append(ruleSections, rules.Section{Source: sec.Source, Body: sec.Body})
 		}
+	}
+	files, fileWarns := grimoire.ContextFiles(ws)
+	for _, w := range fileWarns {
+		e.warn("%s", w)
+	}
+	if section := grimoire.RenderContextFiles(files); section != "" {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += section
 	}
 	warn := func(s string) { e.warn("%s", s) }
 	e.Rules = rules.Load(e.home, rules.Trusted(e.home, ruleSections, e.approver(), warn), warn)
@@ -411,26 +422,33 @@ func (e *Env) setupCodeGraph(ws string) string {
 	return idx.ProjectSummary()
 }
 
-// SystemPrompt composes the mode's system prompt: persona (unless skipped),
+// SystemPrompt composes the mode's system prompt: persona,
 // contract (agent mode), sliders, project context and git state.
 func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string {
-	return e.compose(e.ProjectContext, contract, sliders)
+	return e.compose(e.ProjectContext, contract, sliders, "")
+}
+
+// SystemPromptOpts is SystemPrompt at a persona level for this one prompt
+// (a typed explore or review subagent runs prompts.PersonaOff, 2.0 W4e).
+func (e *Env) SystemPromptOpts(contract string, sliders *config.SliderConfig, level prompts.PersonaLevel) string {
+	return e.compose(e.ProjectContext, contract, sliders, level)
 }
 
 // SystemPromptWithSession is SystemPrompt with one run's SessionStart
 // context added to the project context, under the TUI's heading. The Env is
 // not changed.
 func (e *Env) SystemPromptWithSession(session, contract string, sliders *config.SliderConfig) string {
-	return e.compose(withSessionContext(e.ProjectContext, session), contract, sliders)
+	return e.compose(withSessionContext(e.ProjectContext, session), contract, sliders, "")
 }
 
-func (e *Env) compose(projectContext, contract string, sliders *config.SliderConfig) string {
+func (e *Env) compose(projectContext, contract string, sliders *config.SliderConfig, level prompts.PersonaLevel) string {
 	pm := prompts.ModeChat
 	if e.Mode == ModeAgent {
 		pm = prompts.ModeAgent
 	}
 	return prompts.Compose(prompts.ComposeOptions{
 		Mode:           pm,
+		PersonaLevel:   level,
 		Contract:       contract,
 		Sliders:        sliders,
 		ProjectContext: projectContext,
