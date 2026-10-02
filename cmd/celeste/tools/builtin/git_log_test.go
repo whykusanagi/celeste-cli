@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
 )
 
 func TestGitLogToolName(t *testing.T) {
@@ -24,14 +24,8 @@ func TestGitLogToolExecute(t *testing.T) {
 
 	// Add a second commit.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "second.txt"), []byte("two\n"), 0644))
-	cmd := exec.Command("git", "add", "second.txt")
-	cmd.Dir = dir
-	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "commit", "-m", "second commit")
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@test.com",
-		"GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@test.com")
-	require.NoError(t, cmd.Run())
+	gittest.Run(t, dir, "add", "second.txt")
+	gittest.Run(t, dir, "commit", "-m", "second commit")
 
 	tool := NewGitLogTool(dir)
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -58,11 +52,7 @@ func TestGitLogToolExecute_WithPath(t *testing.T) {
 
 	// Add a second file and commit.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "other.txt"), []byte("other\n"), 0644))
-	run := func(args ...string) {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		require.NoError(t, cmd.Run())
-	}
+	run := func(args ...string) { gittest.Run(t, dir, args[1:]...) }
 	run("git", "add", "other.txt")
 	run("git", "commit", "-m", "add other")
 
@@ -92,7 +82,7 @@ func TestGitLogToolExecute_WithAuthor(t *testing.T) {
 	dir := initGitRepo(t)
 	tool := NewGitLogTool(dir)
 	result, err := tool.Execute(context.Background(), map[string]any{
-		"author": "Test User",
+		"author": gittest.Name,
 	}, nil)
 	require.NoError(t, err)
 	assert.False(t, result.Error)

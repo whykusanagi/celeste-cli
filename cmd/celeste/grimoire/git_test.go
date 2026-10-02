@@ -2,27 +2,21 @@ package grimoire
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
 )
 
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	run := func(args ...string) {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "command %v failed: %s", args, string(out))
-	}
+	run := func(args ...string) { gittest.Run(t, dir, args[1:]...) }
 	run("git", "init")
-	run("git", "config", "user.email", "test@test.com")
-	run("git", "config", "user.name", "Test User")
 
 	// Create a file and commit so we have history.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\n"), 0644))
@@ -38,7 +32,7 @@ func TestCaptureGitSnapshot_InRepo(t *testing.T) {
 
 	// Branch should be master or main depending on git config default.
 	assert.NotEmpty(t, snap.Branch)
-	assert.Equal(t, "Test User", snap.UserName)
+	assert.Equal(t, gittest.Name, snap.UserName)
 	assert.Contains(t, snap.RecentCommits, "initial commit")
 }
 
