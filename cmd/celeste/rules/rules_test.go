@@ -231,6 +231,11 @@ func TestFieldValuesWalksArrays(t *testing.T) {
 	if got := FieldValues(in, "arr"); strings.Join(got, ",") != `["p"]` {
 		t.Errorf("arr = %v", got)
 	}
+	// patch_file accepts edits[] sent as the JSON text of the array.
+	in["edits"] = `[{"n":"4"},{"n":"5"}]`
+	if got := FieldValues(in, "edits.n"); strings.Join(got, ",") != "4,5" {
+		t.Errorf("string-encoded edits.n = %v", got)
+	}
 	if got := FieldValues(in, "missing.x"); len(got) != 0 {
 		t.Errorf("missing = %v", got)
 	}

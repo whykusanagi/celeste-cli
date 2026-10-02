@@ -178,7 +178,9 @@ func fuzzyEdit(content string, e edit, path string) (string, editOutcome, error)
 // after TrimSpace (ruling 3; blank lines must stay blank). It returns the
 // byte range of the window when exactly one matches, and how many matched.
 func fuzzyMatch(content, old string) (start, end, n int) {
-	oldLines := strings.Split(strings.TrimRight(old, "\n"), "\n")
+	// One final newline ends the last line; more are blank lines that
+	// must match blank lines.
+	oldLines := strings.Split(strings.TrimSuffix(old, "\n"), "\n")
 	lines := strings.SplitAfter(content, "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]

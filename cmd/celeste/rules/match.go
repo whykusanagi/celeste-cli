@@ -186,11 +186,21 @@ func (m *Matcher) fire(r *Rule, h Hit) (Hit, bool) {
 
 // FieldValues returns the values of a tool_args field. A dotted field walks
 // into objects, and an array along the way fans out to each element, so
-// "edits.new_string" is every patch_file edit's new_string (2.0 W4).
+// "edits.new_string" is every patch_file edit's new_string (2.0 W4). A
+// string met before the path ends is decoded as JSON.
 func FieldValues(input map[string]any, field string) []string {
 	var out []string
 	var walk func(v any, path []string)
 	walk = func(v any, path []string) {
+		if str, ok := v.(string); ok && len(path) > 0 {
+			// A nested argument sent as JSON text (patch_file accepts
+			// edits[] that way) is read as what it encodes.
+			var parsed any
+			if json.Unmarshal([]byte(str), &parsed) == nil {
+				walk(parsed, path)
+			}
+			return
+		}
 		if arr, ok := v.([]any); ok && len(path) > 0 {
 			for _, el := range arr {
 				walk(el, path)

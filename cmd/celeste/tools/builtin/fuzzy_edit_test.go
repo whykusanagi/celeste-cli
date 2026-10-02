@@ -135,6 +135,17 @@ func TestFuzzyRefusesBlankOldString(t *testing.T) {
 	}
 }
 
+// A trailing blank line in old_string is part of the window: it must match
+// a blank line in the file (review: TrimRight dropped it).
+func TestFuzzyKeepsTrailingBlankLines(t *testing.T) {
+	if _, _, n := fuzzyMatch("  a\nb\n", "a\n\n"); n != 0 {
+		t.Fatalf("a window without the blank line matched: n = %d", n)
+	}
+	if s, e, n := fuzzyMatch("x\n  a\n\nb\n", "a\n\n"); n != 1 || s != 2 || e != 7 {
+		t.Fatalf("got %d %d %d", s, e, n)
+	}
+}
+
 func TestUnifiedHunk(t *testing.T) {
 	before := "a\nb\nc\nd\ne\n"
 	after := "a\nb\nC\nd\ne\n"
