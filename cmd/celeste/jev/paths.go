@@ -84,14 +84,14 @@ func relOrPlaceholder(p, ws, home string) string {
 	if ws == "" || full == "" {
 		return PathPlaceholder
 	}
-	if samePath(full, ws) {
+	if pathEqFold(full, ws) {
 		return "."
 	}
 	prefix := ws
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	if len(full) > len(prefix) && samePath(full[:len(prefix)], prefix) {
+	if len(full) > len(prefix) && pathEqFold(full[:len(prefix)], prefix) {
 		return full[len(prefix):]
 	}
 	return PathPlaceholder
@@ -105,7 +105,10 @@ func normPath(p string) string {
 	return path.Clean(strings.ReplaceAll(filepath.ToSlash(p), "\\", "/"))
 }
 
-func samePath(a, b string) bool {
+// pathEqFold compares two path strings (it does not touch the
+// filesystem), without case on the case-insensitive defaults of macOS and
+// Windows.
+func pathEqFold(a, b string) bool {
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		return strings.EqualFold(a, b)
 	}

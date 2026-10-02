@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRuleFile(t *testing.T) {
@@ -441,9 +442,82 @@ func TestDetectorsMatchTheBuiltins(t *testing.T) {
 		"rm -rf build":                false,
 		"go test ./...":               false,
 		"bash -c 'git push -f'":       true,
+		// What the bash tool refuses, the rule sees (audit #7 D4).
+		"bash -lc 'rm -rf ~'":    true,
+		"rm -rf${IFS}/":          true,
+		"rm -r /":                true,
+		"rm --rec --for src":     true,
+		"r\\\nm -rf src":         true,
+		"echo # rm -rf src":      false,
+		"rm -rf build # and src": false,
 	} {
 		if got := Destructive(cmd); got != want {
 			t.Errorf("Destructive(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}
+
+// The edit and check tables are shared with the watchdog (steer).
+func TestIsEditIsCheck(t *testing.T) {
+	for _, tool := range []string{"write_file", "patch_file", "splice_file"} {
+		if !IsEdit(tool) || IsCheck(tool) {
+			t.Errorf("%s: edit", tool)
+		}
+	}
+	if !IsCheck("bash") || IsEdit("bash") || IsEdit("read_file") || IsCheck("read_file") {
+		t.Error("bash is the check; read_file is neither")
+	}
+}
+
+func TestStripUnbackedSpawnClaim(t *testing.T) {
+	fake := "Subagent spawned: subagent-sleep-task (id: task-47)"
+	// No spawn ran → fabricated claim is replaced.
+	got := StripUnbackedSpawnClaim(fake, false)
+	if got == fake || !strings.Contains(got, "no subagent was actually spawned") {
+		t.Fatalf("expected fabricated spawn claim to be stripped, got %q", got)
+	}
+	// A real spawn ran → content passes through unchanged.
+	if got := StripUnbackedSpawnClaim(fake, true); got != fake {
+		t.Fatalf("expected passthrough when spawn ran, got %q", got)
+	}
+	// Unrelated text is never touched.
+	plain := "Here is a summary of the repo."
+	if got := StripUnbackedSpawnClaim(plain, false); got != plain {
+		t.Fatalf("expected unrelated text untouched, got %q", got)
+	}
+}
+
+// destructive-bash's condition matches any command (\S), so its hit carries
+// the command itself for the log, not the first character (review of
+// cleanup-4).
+func TestDestructiveBashHitTextIsTheCommand(t *testing.T) {
+	m := builtinMatcher(t)
+	m.StartRequest()
+	hits := m.Calls([]Call{{Name: "bash", Input: map[string]any{"command": "  rm -rf src"}}})
+	if len(hits) != 1 || hits[0].Text != "  rm -rf src" {
+		t.Fatalf("hits = %+v", hits)
+	}
+}
+
+// The advisory rule reads every bash call (condition \S) and the watchdog
+// reads recent ones: 40 KB of adversarial shell stays fast.
+func TestDestructiveLinearOnLongLines(t *testing.T) {
+	for _, cmd := range []string{
+		strings.Repeat("rm -r x ", 5000),
+		strings.Repeat("env ", 10000),
+		strings.Repeat("bash -lc ", 4500),
+		strings.Repeat("sudo -u x ", 4000),
+		strings.Repeat("git push x ", 3600),
+		strings.Repeat("a=1 ", 10000),
+	} {
+		best := time.Hour
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			Destructive(cmd)
+			best = min(best, time.Since(start))
+		}
+		if best > 100*time.Millisecond {
+			t.Errorf("%q...: %v, want < 100ms (quadratic took seconds)", cmd[:12], best)
 		}
 	}
 }
