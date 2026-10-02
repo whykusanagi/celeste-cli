@@ -200,6 +200,48 @@ func TestBuiltinVoiceInFilesExemptions(t *testing.T) {
 	}
 }
 
+// patch_file's edits[] (2.0 W4) carries new_string per edit: the voice
+// rule reads each one.
+func TestBuiltinVoiceInFilesReadsEveryEdit(t *testing.T) {
+	m := builtinMatcher(t)
+	m.StartRequest()
+	hits := m.Calls([]Call{{Name: "patch_file", Input: map[string]any{"path": "main.go", "edits": []any{
+		map[string]any{"old_string": "a", "new_string": "b"},
+		map[string]any{"old_string": "c", "new_string": "// handled, darling~\n"},
+	}}}})
+	if names(hits) != "persona-voice-in-files" {
+		t.Fatalf("hits = %v", names(hits))
+	}
+	m = builtinMatcher(t)
+	m.StartRequest()
+	if hits := m.Calls([]Call{{Name: "patch_file", Input: map[string]any{"path": "docs/voice.md", "edits": []any{
+		map[string]any{"old_string": "c", "new_string": "darling"},
+	}}}}); len(hits) != 0 {
+		t.Fatalf("an exempt path fired: %v", names(hits))
+	}
+}
+
+func TestFieldValuesWalksArrays(t *testing.T) {
+	in := map[string]any{"a": "x", "edits": []any{map[string]any{"n": "1"}, map[string]any{"m": "2"}, map[string]any{"n": "3"}}, "arr": []any{"p"}}
+	if got := FieldValues(in, "edits.n"); strings.Join(got, ",") != "1,3" {
+		t.Errorf("edits.n = %v", got)
+	}
+	if got := FieldValues(in, "a"); strings.Join(got, ",") != "x" {
+		t.Errorf("a = %v", got)
+	}
+	if got := FieldValues(in, "arr"); strings.Join(got, ",") != `["p"]` {
+		t.Errorf("arr = %v", got)
+	}
+	// patch_file accepts edits[] sent as the JSON text of the array.
+	in["edits"] = `[{"n":"4"},{"n":"5"}]`
+	if got := FieldValues(in, "edits.n"); strings.Join(got, ",") != "4,5" {
+		t.Errorf("string-encoded edits.n = %v", got)
+	}
+	if got := FieldValues(in, "missing.x"); len(got) != 0 {
+		t.Errorf("missing = %v", got)
+	}
+}
+
 func TestBuiltinAudioClaimNeedsNoTTS(t *testing.T) {
 	m := builtinMatcher(t)
 	m.StartRequest()

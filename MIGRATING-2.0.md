@@ -73,3 +73,10 @@ alone with a warning, until you repeat `/undo` or pass `--force`.
 | The `openai` provider used Chat Completions (`/v1/chat/completions`) | It uses the Responses API (`/v1/responses`), with `store: false`; nothing is kept on OpenAI's side between requests. |
 | An endpoint configured as `openai` that has no `/v1/responses` (a proxy, a gateway) | The first request gets a 404 or "unsupported endpoint"; celeste answers it through Chat Completions and stays on Chat Completions for the session. One log line says so. No config change needed. |
 | Sessions saved before 2.0 | Load and continue unchanged; their messages are sent as plain messages. |
+
+## Editing files
+
+| 1.x | 2.0 |
+|---|---|
+| Editing a file not read in the session (`patch_file`, `write_file` over an existing file or appending to it, `splice_file`) | Refused with `read_file <path> first: celeste edits an existing file only after reading it in this session`. Read the file, then edit it. Creating a new file needs no read. In MCP chat each call starts with no reads, so read the file in the same call. |
+| A file edited by `write_file`, `patch_file` or `splice_file` | Replaced through a temp file and a rename, keeping its mode. The replacement is a new file owned by you, so another user's ownership, extended attributes (such as macOS `com.apple.*`) and ACLs are not kept. A file in a directory celeste cannot write to can no longer be edited. |

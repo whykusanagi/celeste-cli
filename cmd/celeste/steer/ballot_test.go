@@ -61,6 +61,7 @@ func TestBallotHeuristics(t *testing.T) {
 	write := decide.CallView{Tool: "write_file", Args: `{"path":"a.go","content":"package a // darling~"}`}
 	bash := decide.CallView{Tool: "bash", Args: `{"command":"go test ./..."}`}
 	force := decide.CallView{Tool: "bash", Args: `{"command":"git push --force"}`}
+	multi := decide.CallView{Tool: "patch_file", Args: `{"path":"a.go","edits":[{"old_string":"x","new_string":"y"},{"old_string":"z","new_string":"// done, darling~"}]}`}
 	cases := []struct {
 		id    string
 		st    decide.State
@@ -75,6 +76,7 @@ func TestBallotHeuristics(t *testing.T) {
 		{QUnverified, decide.State{Turns: []decide.TurnView{{Calls: []decide.CallView{write}}, {Assistant: "Next I will run the tests."}}}, 0.1, true},
 		{QPersonaBreak, decide.State{Turns: []decide.TurnView{{Calls: []decide.CallView{write}}}}, 0.8, true},
 		{QPersonaBreak, decide.State{Turns: []decide.TurnView{{Calls: []decide.CallView{bash}}}}, 0.1, true},
+		{QPersonaBreak, decide.State{Turns: []decide.TurnView{{Calls: []decide.CallView{multi}}}}, 0.8, true},
 		{QUnsafe, decide.State{Turns: []decide.TurnView{{Calls: []decide.CallView{force}}}}, 0.8, true},
 		{QUnsafe, decide.State{Call: &bash}, 0, false},
 		{QDrifting, decide.State{}, 0, false},

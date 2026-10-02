@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -123,5 +124,32 @@ func TestFileTrackerReset(t *testing.T) {
 	ft.Reset()
 	if err := ft.CheckStale(path); err != nil {
 		t.Fatalf("after Reset: %v", err)
+	}
+}
+
+// Must-read-before-edit (2.0 W4 ruling 6).
+func TestCheckReadRequiresARead(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.txt")
+	ft := NewFileTracker()
+	if err := ft.CheckRead(p); err != nil {
+		t.Fatalf("a missing file needs no read: %v", err)
+	}
+	require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+	if err := ft.CheckRead(p); !errors.Is(err, ErrNotRead) {
+		t.Fatalf("an unread existing file: %v", err)
+	}
+	require.NoError(t, ft.RecordRead(p))
+	if err := ft.CheckRead(p); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(2 * time.Second)
+	require.NoError(t, os.Chtimes(p, later, later))
+	if err := ft.CheckRead(p); err == nil || errors.Is(err, ErrNotRead) {
+		t.Fatalf("a file changed since the read must be stale: %v", err)
+	}
+	ft.Reset()
+	if err := ft.CheckRead(p); !errors.Is(err, ErrNotRead) {
+		t.Fatalf("after Reset the file is unread again: %v", err)
 	}
 }
