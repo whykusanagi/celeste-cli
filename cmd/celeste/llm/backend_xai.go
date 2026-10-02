@@ -682,16 +682,8 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 
 // applyThinkingConfig sets reasoning_effort on the request when thinking is enabled.
 func (b *XAIBackend) applyThinkingConfig(req *xAIChatCompletionRequest) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
-		return
-	}
-	switch b.thinkingConfig.Level {
-	case "low":
-		req.ReasoningEffort = "low"
-	case "medium":
-		req.ReasoningEffort = "medium"
-	case "high", "max":
-		req.ReasoningEffort = "high"
+	if effort := reasoningEffort(b.thinkingConfig); effort != "" {
+		req.ReasoningEffort = effort
 	}
 }
 

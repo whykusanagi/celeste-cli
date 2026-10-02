@@ -10,8 +10,6 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
-	"strings"
-
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -426,25 +424,12 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	return nil
 }
 
-// applyThinkingConfig adds reasoning_effort to the request when the model
-// supports it (OpenAI o-series) and thinking is enabled.
+// applyThinkingConfig adds reasoning_effort to the request when thinking
+// is on and the model takes it (openAIReasoningModel: the o-series and
+// gpt-5), so a Responses backend that falls back here keeps its effort.
 func (b *OpenAIBackend) applyThinkingConfig(req *openai.ChatCompletionRequest) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
-		return
-	}
-	// OpenAI o-series models support reasoning_effort ("low", "medium", "high").
-	// Map our extended levels into what the API accepts.
-	model := strings.ToLower(req.Model)
-	if !strings.HasPrefix(model, "o1") && !strings.HasPrefix(model, "o3") && !strings.HasPrefix(model, "o4") {
-		return // Not an o-series model; skip silently
-	}
-	switch b.thinkingConfig.Level {
-	case "low":
-		req.ReasoningEffort = "low"
-	case "medium":
-		req.ReasoningEffort = "medium"
-	case "high", "max":
-		req.ReasoningEffort = "high"
+	if effort := openAIEffort(req.Model, b.thinkingConfig); effort != "" {
+		req.ReasoningEffort = effort
 	}
 }
 
