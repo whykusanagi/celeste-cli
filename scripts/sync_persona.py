@@ -30,6 +30,10 @@ DEST = REPO / "cmd" / "celeste" / "prompts" / "persona"
 HANDOFF = REPO / "docs" / "slider-agent-handoff.md"
 PROFILES = ("full", "spine", "lite", "off")
 NOT_LORE = ("platform_rules/",)  # stream formatting rules, not lore
+# Marks a lore directory this script installed. The sync replaces only such a
+# directory (or an empty one), so a mistyped PERSONA_LORE_DIR can never wipe
+# unrelated files.
+LORE_MARKER = ".celeste-persona-lore"
 
 
 def git(repo, *args):
@@ -94,6 +98,17 @@ def build(core, container, core_commit, container_commit, with_lore, tmp):
         git(container, "worktree", "remove", "--force", str(cont_wt))
 
 
+def check_lore_dir(lore_dir):
+    """Refuse a lore directory the sync did not install: it would be deleted."""
+    if inside_repo(lore_dir):
+        raise SystemExit("PERSONA_LORE_DIR is inside the repository; lore never goes there")
+    if lore_dir.exists() and (not lore_dir.is_dir() or (
+            any(lore_dir.iterdir()) and not (lore_dir / LORE_MARKER).is_file())):
+        raise SystemExit(f"{shown(lore_dir)} exists and was not installed by this script "
+                         f"(no {LORE_MARKER}); refusing to replace it. Point PERSONA_LORE_DIR "
+                         "at a new or empty directory, or use --no-lore")
+
+
 def personaseal(command, plain, *extra):
     subprocess.run(["go", "run", "./scripts/personaseal", command, "-repo", str(REPO),
                     "-in", str(plain), *extra], check=True, cwd=REPO)
@@ -117,8 +132,8 @@ def main():
     core_commit = git(core, "rev-parse", "--verify", core_ref + "^{commit}")
     cont_commit = git(container, "rev-parse", "--verify", cont_ref + "^{commit}")
     lore_dir = Path(os.environ.get("PERSONA_LORE_DIR", Path.home() / ".celeste" / "persona-lore"))
-    if inside_repo(lore_dir):
-        raise SystemExit("PERSONA_LORE_DIR is inside the repository; lore never goes there")
+    if not (a.check or a.no_lore):
+        check_lore_dir(lore_dir)
     with tempfile.TemporaryDirectory(prefix="persona-sync-") as tmp:
         tmp = Path(tmp)
         if inside_repo(tmp):
@@ -133,6 +148,8 @@ def main():
         personaseal("seal", plain, "-core", core_commit, "-container", cont_commit)
         HANDOFF.write_bytes(handoff)
         if lore is not None:
+            check_lore_dir(lore_dir)
+            (lore / LORE_MARKER).write_text("installed by celeste-cli scripts/sync_persona.py\n")
             if lore_dir.exists():
                 shutil.rmtree(lore_dir)
             shutil.copytree(lore, lore_dir)
