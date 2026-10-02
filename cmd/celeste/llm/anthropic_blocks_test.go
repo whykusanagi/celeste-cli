@@ -61,7 +61,7 @@ func TestAnthropicProviderKey(t *testing.T) {
 func TestAnthropicReplaysStoredBlocksByteForByte(t *testing.T) {
 	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
 	asst := thinkingTurn(t, b.providerKey())
-	body, _ := requestBody(t, b.buildParams(toolLoop(asst), nil))
+	body, _ := requestBody(t, prepared(t, b, toolLoop(asst)))
 	require.Len(t, body.Messages, 3)
 	assert.Equal(t, "assistant", body.Messages[1].Role)
 	got := body.Messages[1].Content
@@ -71,11 +71,26 @@ func TestAnthropicReplaysStoredBlocksByteForByte(t *testing.T) {
 	}
 }
 
+// With binding controls on, prepare adds the beta header and drop_block
+// as request options; the replayed bytes in the params are unchanged.
+func TestAnthropicPrepareBindsReplayWithoutTouchingBytes(t *testing.T) {
+	b := &AnthropicBackend{config: &Config{Model: "claude-opus-5-5"}, bindingControls: true}
+	asst := thinkingTurn(t, b.providerKey())
+	params, opts := b.preparedParams(toolLoop(asst), nil)
+	assert.Len(t, opts, 2, "binding beta header and thinking.block_binding")
+	require.NotNil(t, params.Thinking.OfAdaptive, "always-on model: adaptive thinking carries block_binding")
+	body, _ := requestBody(t, params)
+	require.Len(t, body.Messages, 3)
+	for i, blk := range body.Messages[1].Content {
+		assert.Equal(t, string(asst.ProviderBlocks.Blocks[i]), string(blk), "block %d", i)
+	}
+}
+
 // Replayed blocks never get cache_control; the breakpoints land on the
 // tool result and the first user message.
 func TestAnthropicReplayedBlocksCarryNoCacheControl(t *testing.T) {
 	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
-	body, raw := requestBody(t, b.buildParams(toolLoop(thinkingTurn(t, b.providerKey())), nil))
+	body, raw := requestBody(t, prepared(t, b, toolLoop(thinkingTurn(t, b.providerKey()))))
 	for _, blk := range body.Messages[1].Content {
 		assert.NotContains(t, string(blk), "cache_control")
 	}
@@ -101,11 +116,11 @@ func TestAnthropicReplayOnlyForTheSameKey(t *testing.T) {
 	haiku := &AnthropicBackend{config: &Config{Model: "claude-haiku-4-5"}, thinkingConfig: on}
 	history := toolLoop(thinkingTurn(t, opus.providerKey()))
 
-	body, raw := requestBody(t, haiku.buildParams(history, nil))
+	body, raw := requestBody(t, prepared(t, haiku, history))
 	assert.NotContains(t, raw, "sig-1")
 	assert.Empty(t, body.Thinking, "budget model, continuation without replay: thinking off")
 
-	_, raw = requestBody(t, opus.buildParams(history, nil))
+	_, raw = requestBody(t, prepared(t, opus, history))
 	assert.Contains(t, raw, "sig-1")
 }
 
