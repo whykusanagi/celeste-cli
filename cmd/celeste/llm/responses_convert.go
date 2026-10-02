@@ -177,10 +177,15 @@ func reasoningEffort(tc ThinkingConfig) string {
 }
 
 // openAIEffort is reasoningEffort for a model that takes one
-// (openAIReasoningModel), else "".
+// (openAIReasoningModel), else "". gpt-5-pro takes only high: OpenAI
+// refuses any other effort for it.
 func openAIEffort(model string, tc ThinkingConfig) string {
 	if !openAIReasoningModel(model) {
 		return ""
 	}
-	return reasoningEffort(tc)
+	effort := reasoningEffort(tc)
+	if m := strings.ToLower(model); effort != "" && (m == "gpt-5-pro" || strings.HasPrefix(m, "gpt-5-pro-")) {
+		return "high"
+	}
+	return effort
 }

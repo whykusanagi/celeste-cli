@@ -27,8 +27,11 @@ var leaked = []string{
 // identity is set for every git a test runs, directly or through the code
 // under test. GIT_CONFIG_COUNT/KEY/VALUE give user.name and user.email as
 // configuration (git config user.name reads them) without writing a file,
-// and turn off commit signing a developer's global config may ask for.
+// and turn off commit signing a developer's global config may ask for. The
+// global config (~/.gitconfig) is not read at all, so its hooksPath,
+// signing or aliases never apply to a test's repository.
 var identity = []string{
+	"GIT_CONFIG_GLOBAL=" + os.DevNull,
 	"GIT_CONFIG_NOSYSTEM=1",
 	"GIT_CONFIG_COUNT=3",
 	"GIT_CONFIG_KEY_0=user.name", "GIT_CONFIG_VALUE_0=" + Name,

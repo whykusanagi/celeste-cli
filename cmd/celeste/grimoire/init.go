@@ -57,7 +57,8 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 		if _, err := os.Stat(filepath.Join(dir, "tsconfig.json")); err == nil {
 			lang = "typescript"
 		}
-		c := &langCandidate{language: lang, testCmd: "npm test", buildCmd: "npm run build", hasManifest: true}
+		// npm run build fails without a build script: named only with one.
+		c := &langCandidate{language: lang, testCmd: "npm test", hasManifest: true}
 		var pkg map[string]any
 		if err := json.Unmarshal(data, &pkg); err == nil {
 			if name, ok := pkg["name"].(string); ok {
@@ -69,6 +70,9 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 				}
 				if lint, ok := scripts["lint"].(string); ok {
 					c.lintCmd = lint
+				}
+				if _, ok := scripts["build"].(string); ok {
+					c.buildCmd = "npm run build"
 				}
 			}
 		}
@@ -246,11 +250,15 @@ func Init(dir string) (string, error) {
 // HasProjectContext reports a project grimoire (.grimoire, .grimoire.local,
 // .celeste/grimoire/*.md) that LoadAll would load, or a context file
 // (AGENTS.md, CLAUDE.md) between the git root and the workspace (2.0 W4,
-// ruling 6). The global ~/.celeste/grimoire.md is not project context.
+// ruling 6). The global ~/.celeste/grimoire.md is not project context, and
+// neither is an empty or blank grimoire, which renders nothing.
 func HasProjectContext(workspace string) bool {
 	sources, _ := Discover(workspace)
 	for _, src := range sources {
-		if src.Priority != PriorityGlobal {
+		if src.Priority == PriorityGlobal {
+			continue
+		}
+		if data, err := os.ReadFile(src.Path); err == nil && strings.TrimSpace(string(data)) != "" {
 			return true
 		}
 	}
@@ -298,17 +306,25 @@ func InitAgents(dir string) (string, error) {
 
 // writeNew creates path with content and fails if anything (a file or a
 // symlink) is already there, so an init never overwrites the user's file.
+// A write that fails removes the file it created, so a later init is not
+// refused by a half-written one.
 func writeNew(path, content string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
+	_, err = writeContent(f, content)
+	if cerr := f.Close(); err == nil {
+		err = cerr
 	}
-	return f.Close()
+	if err != nil {
+		_ = os.Remove(path)
+	}
+	return err
 }
+
+// writeContent is writeNew's write (a test seam).
+var writeContent = (*os.File).WriteString
 
 // existsError is an init refusing to overwrite a file; it matches
 // fs.ErrExist.
