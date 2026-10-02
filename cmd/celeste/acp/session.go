@@ -292,7 +292,18 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.mu.Lock()
 	s.history = msgs
 	s.mu.Unlock()
+	s.save(a, msgs)
 	return s.finish(a, st, l.Limits, res, err)
+}
+
+// save writes the session's history to its celeste session (ruling 11),
+// so `celeste resume` shows the editor's thread. Only the running prompt
+// calls it; a failure is logged.
+func (s *session) save(a *Agent, msgs []tui.ChatMessage) {
+	s.store.SetMessagesRaw(tui.SessionMessagesFromChat(msgs))
+	if err := a.saveStore(s.store); err != nil {
+		a.logf("acp: session %s: saving the history: %v", s.id, err)
+	}
 }
 
 // newLoop is the prompt's loop: the chat's limits (the turn cap is

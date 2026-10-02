@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 )
 
 func TestNewSessionBuildsAnEnvForCwd(t *testing.T) {
@@ -104,5 +106,25 @@ func TestNewSessionSkipsRepoMCPConfigs(t *testing.T) {
 	}
 	if _, ok := s.env.Registry.Get("mcp__mine__echo"); !ok {
 		t.Fatal("the user's global MCP server is missing")
+	}
+}
+
+// Each prompt's history is saved to the celeste session (ruling 11), so
+// `celeste resume` of an editor thread shows it.
+func TestPromptSavesHistory(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "acp-reply-marker"})
+	c := newTestClient(t, testConfig(srv, 0))
+	sid := c.newSession(t.TempDir())
+	if _, err := c.call("session/prompt", textPrompt(sid, "acp-prompt-marker")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(c.home, ".celeste", "sessions", sid+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"acp-prompt-marker", "acp-reply-marker"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("saved session lacks %q:\n%s", want, data)
+		}
 	}
 }
