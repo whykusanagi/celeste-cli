@@ -63,6 +63,31 @@ func TestMeterUsedCountsOverheadAndAppended(t *testing.T) {
 	}
 }
 
+// A reply whose provider reported no usage still marks its request as
+// seen, but must not wipe the last real prompt count: Used keeps that
+// count and adds everything appended after the request it measured.
+func TestMeterZeroUsageReplyKeepsTheProviderBaseline(t *testing.T) {
+	m := NewMeter(0)
+	h := []tui.ChatMessage{msg("user", "read")}
+	m.Observe(h, 0)
+	m.Sending(h) // request 1 carries 1 message
+	h = append(h,
+		tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "a", Name: "read_file"}}},
+		tui.ChatMessage{Role: "tool", ToolCallID: "a", Content: "body"})
+	m.Observe(h, 50_000) // provider counted request 1
+	m.Sending(h)         // request 2 carries 3 messages
+	h = append(h,
+		tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "b", Name: "read_file"}}},
+		tui.ChatMessage{Role: "tool", ToolCallID: "b", Content: strings.Repeat("y", 4_000)})
+	m.Observe(h, 0) // request 2 answered, but the reply carried no usage
+	if got := m.Unseen(h); got != 2 {
+		t.Fatalf("Unseen = %d, want 2 (request 2 was answered)", got)
+	}
+	if got, want := m.Used(h), 50_000+Estimate(h[1:]); got != want {
+		t.Fatalf("Used = %d, want the request-1 baseline plus everything after it = %d", got, want)
+	}
+}
+
 func TestDefinitionTokens(t *testing.T) {
 	defs := []tui.SkillDefinition{{Name: "read_file", Description: strings.Repeat("d", 400)}}
 	if got := DefinitionTokens(defs); got < 100 {

@@ -16,22 +16,28 @@ type Meter struct {
 
 	sent    int // history length the last answered request carried; -1: all seen
 	pending int // history length handed to the latest request; -1: none yet
-	prompt  int // the provider's prompt tokens for the request that carried sent
+	prompt  int // the provider's prompt tokens for the request that carried base
+	base    int // history length that request carried; -1: no provider count yet
 }
 
 // NewMeter returns a meter for a compactor whose requests carry overhead
 // tokens besides the history.
 func NewMeter(overhead int) *Meter {
-	return &Meter{Overhead: overhead, sent: -1, pending: -1}
+	return &Meter{Overhead: overhead, sent: -1, pending: -1, base: -1}
 }
 
 // Observe is called first in every Compact, with the history about to be
 // compacted and the provider's prompt tokens for the previous request (0
 // when it reported none). The previous request was answered when its
-// reply, an assistant message, sits right after what it carried.
+// reply, an assistant message, sits right after what it carried. A reply
+// without a prompt count marks its request as seen but keeps the last
+// count the provider did report as the baseline for Used.
 func (m *Meter) Observe(history []tui.ChatMessage, promptTokens int) {
 	if m.pending >= 0 && m.pending < len(history) && history[m.pending].Role == "assistant" {
-		m.sent, m.prompt = m.pending, promptTokens
+		m.sent = m.pending
+		if promptTokens > 0 {
+			m.prompt, m.base = promptTokens, m.pending
+		}
 	}
 }
 
@@ -49,12 +55,12 @@ func (m *Meter) Unseen(history []tui.ChatMessage) int {
 }
 
 // Used estimates the next request: the history plus Overhead, or the
-// provider's count for the last answered request plus what was appended
-// since, whichever is larger.
+// provider's last reported count plus what was appended after the request
+// it measured, whichever is larger.
 func (m *Meter) Used(history []tui.ChatMessage) int {
 	used := Estimate(history) + m.Overhead
-	if m.prompt > 0 && m.sent >= 0 && m.sent <= len(history) {
-		if p := m.prompt + Estimate(history[m.sent:]); p > used {
+	if m.prompt > 0 && m.base >= 0 && m.base <= len(history) {
+		if p := m.prompt + Estimate(history[m.base:]); p > used {
 			used = p
 		}
 	}
