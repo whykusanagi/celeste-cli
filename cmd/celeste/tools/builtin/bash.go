@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -59,10 +58,6 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 		return tools.ToolResult{Error: true, Content: "command is required"}, nil
 	}
 
-	if reason := checkDangerousCommand(command); reason != "" {
-		return tools.ToolResult{Error: true, Content: reason}, nil
-	}
-
 	timeoutSeconds := getIntArg(input, "timeout_seconds", 20)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 20
@@ -71,37 +66,28 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 		timeoutSeconds = 300
 	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", command)
-	cmd.Dir = t.workspace
-	output, err := cmd.CombinedOutput()
-
-	outputStr := string(output)
-	truncated := false
-	if len(outputStr) > maxCommandOutput {
-		outputStr = outputStr[:maxCommandOutput]
-		truncated = true
+	res := RunShell(ctx, ShellOptions{Dir: t.workspace, Command: command, Timeout: time.Duration(timeoutSeconds) * time.Second})
+	if res.Blocked != "" {
+		return tools.ToolResult{Error: true, Content: res.Blocked}, nil
 	}
-
-	exitCode := 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-
-	timedOut := cmdCtx.Err() == context.DeadlineExceeded
 
 	result := map[string]any{
 		"command":   command,
 		"workspace": t.workspace,
-		"exit_code": exitCode,
-		"output":    outputStr,
-		"truncated": truncated,
-		"timed_out": timedOut,
+		"exit_code": res.ExitCode,
+		"output":    res.Output,
+		"truncated": res.Truncated,
+		"timed_out": res.TimedOut,
 	}
-	if err != nil {
-		result["error"] = err.Error()
+	switch {
+	case res.Err != nil:
+		result["error"] = res.Err.Error()
+	case res.TimedOut:
+		result["error"] = fmt.Sprintf("timed out after %ds; the command and everything it started were killed", timeoutSeconds)
+	case ctx.Err() != nil:
+		result["error"] = "cancelled; the command and everything it started were killed"
+	case res.ExitCode != 0:
+		result["error"] = fmt.Sprintf("exit status %d", res.ExitCode)
 	}
 
 	data, _ := json.Marshal(result)

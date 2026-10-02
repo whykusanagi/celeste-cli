@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
 )
 
 const (
@@ -73,9 +75,8 @@ func runHook(ctx context.Context, def Definition, dir string, payload map[string
 	// pgid while any process in that group still exists, so the only residual
 	// risk is a brand-new, unrelated group leader that later reused this exact
 	// pid after the original group fully emptied — accepted (parity with the
-	// Windows Job Object caveat documented in shell_windows.go's
-	// killProcessTree).
-	_ = killProcessTree(proc)
+	// Windows caveat documented on proctree's Windows Kill).
+	_ = proctree.Kill(proc)
 	if stdout.over {
 		// Applies to both protocols, including v1: 1.x had no stdout cap, so a
 		// v1 guard that floods stdout now fails closed even at exit 0 instead
