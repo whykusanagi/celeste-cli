@@ -50,18 +50,21 @@ const ToolDiscoveryThreshold = 40
 
 // Env is everything a mode needs around the loop.
 type Env struct {
-	Mode             Mode
-	Workspace        string
-	Registry         *tools.Registry
-	Checker          *permissions.Checker
-	ToolMode         tools.RuntimeMode
-	MCP              *mcp.Manager
-	Indexer          *codegraph.Indexer
-	Hooks            *hooks.Runner // tool hooks run in Registry; nil when loading failed
-	Files            *checkpoints.FileTracker
-	Snapshots        *checkpoints.SnapshotManager
-	ProjectContext   string // grimoire, project memories, code-graph summary
-	GitSnapshot      string
+	Mode           Mode
+	Workspace      string
+	Registry       *tools.Registry
+	Checker        *permissions.Checker
+	ToolMode       tools.RuntimeMode
+	MCP            *mcp.Manager
+	Indexer        *codegraph.Indexer
+	Hooks          *hooks.Runner // tool hooks run in Registry; nil when loading failed
+	Files          *checkpoints.FileTracker
+	Snapshots      *checkpoints.SnapshotManager
+	ProjectContext string // grimoire, context files, code-graph summary
+	GitSnapshot    string
+	// Memories is the "# Project Memories" block. It follows git in the
+	// prompt (W5 ruling 8); GrimoireContext still shows it.
+	Memories         string
 	GrimoireContext  string // grimoire and "# Project Memories" (the /grimoire view)
 	CodeGraphSummary string // the code graph's project summary (the /index view)
 	// Rules are the stream rules for this workspace (2.0 W3): built-ins,
@@ -70,6 +73,7 @@ type Env struct {
 	Rules *rules.Set
 
 	opts        SetupOptions
+	window      int               // cfg's model's resolved context window (W5 guard); 0 = unknown
 	approve     hooks.ApproveFunc // resolved once by approver
 	approveSet  bool
 	permConfig  permissions.PermissionConfig
@@ -136,6 +140,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		opts.SessionID = fmt.Sprintf("%s-%d-%s", mode, os.Getpid(), config.UniqueNanoID())
 	}
 	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, home: home}
+	env.window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
 	if mode == ModeAgent {
 		env.ToolMode = tools.ModeAgent
 	}
@@ -239,7 +244,7 @@ func (e *Env) StartSession(ctx context.Context, source string) {
 
 // SessionStartContext fires SessionStart and returns its additional
 // context, leaving the Env unchanged, so several runs sharing one Env each
-// get their own session. Pass the result to SystemPromptWithSession.
+// get their own session. Pass the result as PromptOptions.Session.
 func (e *Env) SessionStartContext(ctx context.Context, source string) string {
 	if e.Hooks == nil {
 		return ""
@@ -323,7 +328,9 @@ func (e *Env) globalMCPConfigs(paths []string, home string) []string {
 
 // setupContext builds ProjectContext exactly as the TUI does: grimoire, then
 // "# Project instructions" (AGENTS.md / CLAUDE.md from the git root down to
-// the workspace, 2.0 W4), then "# Project Memories", then "# Code Graph".
+// the workspace, 2.0 W4), then "# Code Graph". "# Project Memories" goes to
+// Memories, which the prompt puts after git (W5 ruling 8); GrimoireContext,
+// the /grimoire view, keeps it after the instructions, as before.
 func (e *Env) setupContext(ws string) {
 	var text string
 	var ruleSections []rules.Section
@@ -351,12 +358,15 @@ func (e *Env) setupContext(ws string) {
 	e.Rules = rules.Load(e.home, rules.Trusted(e.home, ruleSections, e.approver(), warn), warn)
 	store := memories.NewStore(ws)
 	if idx, err := memories.LoadIndex(filepath.Join(store.BaseDir(), "MEMORY.md")); err == nil && len(idx.Entries()) > 0 {
-		if text != "" {
-			text += "\n\n"
-		}
-		text += "# Project Memories\n\n" + idx.Render()
+		e.Memories = "# Project Memories\n\n" + idx.Render()
 	}
 	e.GrimoireContext = text
+	if e.Memories != "" {
+		if e.GrimoireContext != "" {
+			e.GrimoireContext += "\n\n"
+		}
+		e.GrimoireContext += e.Memories
+	}
 	e.GitSnapshot = e.captureGit(ws)
 	if summary := e.setupCodeGraph(ws); summary != "" {
 		e.CodeGraphSummary = summary
@@ -422,39 +432,46 @@ func (e *Env) setupCodeGraph(ws string) string {
 	return idx.ProjectSummary()
 }
 
-// SystemPrompt composes the mode's system prompt: persona,
-// contract (agent mode), sliders, project context and git state.
-func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string {
-	return e.compose(e.ProjectContext, contract, sliders, "")
+// PromptOptions is what one system prompt adds to the Env's own inputs.
+type PromptOptions struct {
+	// Contract is the agent operating contract (agent mode only).
+	Contract string
+	// Sliders overrides slider.json (a subagent's persona override).
+	Sliders *config.SliderConfig
+	// Session is one run's SessionStart context; it never enters the Env.
+	Session string
+	// Level is the persona level: "" is the mode's profile (chat full,
+	// agent spine); prompts.PersonaOff for typed explore and review
+	// subagents (2.0 W4e) and orchestrator lanes.
+	Level prompts.PersonaLevel
+	// Window is the run's model's context window; 0 uses the Env's.
+	Window int
 }
 
-// SystemPromptOpts is SystemPrompt at a persona level for this one prompt
-// (typed explore and review subagents, 2.0 W4e, and orchestrator lanes run
-// prompts.PersonaOff).
-func (e *Env) SystemPromptOpts(contract string, sliders *config.SliderConfig, level prompts.PersonaLevel) string {
-	return e.compose(e.ProjectContext, contract, sliders, level)
-}
-
-// SystemPromptWithSession is SystemPrompt with one run's SessionStart
-// context added to the project context, under the TUI's heading. The Env is
-// not changed.
-func (e *Env) SystemPromptWithSession(session, contract string, sliders *config.SliderConfig) string {
-	return e.compose(withSessionContext(e.ProjectContext, session), contract, sliders, "")
-}
-
-func (e *Env) compose(projectContext, contract string, sliders *config.SliderConfig, level prompts.PersonaLevel) string {
+// SystemPrompt composes the mode's system prompt (W5): the persona profile
+// as the byte-stable Static part, stepped down for the window, then
+// sliders, identity, mode rules, project context, git, memories and the
+// date. A Notice in the result is the small-window guard's one-time
+// message; the caller decides where it shows (W5 ruling 7).
+func (e *Env) SystemPrompt(o PromptOptions) prompts.Prompt {
 	pm := prompts.ModeChat
 	if e.Mode == ModeAgent {
 		pm = prompts.ModeAgent
 	}
+	window := o.Window
+	if window <= 0 {
+		window = e.window
+	}
 	return prompts.Compose(prompts.ComposeOptions{
 		Mode:           pm,
-		PersonaLevel:   level,
-		Contract:       contract,
-		Sliders:        sliders,
-		ProjectContext: projectContext,
+		PersonaLevel:   o.Level,
+		Window:         window,
+		Contract:       o.Contract,
+		Sliders:        o.Sliders,
+		ProjectContext: withSessionContext(e.ProjectContext, o.Session),
 		GitSnapshot:    e.GitSnapshot,
-	}).String()
+		Memories:       e.Memories,
+	})
 }
 
 // Close releases this Env. A Setup Env and its Nested children share MCP

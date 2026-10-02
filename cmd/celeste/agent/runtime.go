@@ -439,11 +439,25 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	client.SetToolMode(tools.ModeAgent)
 
-	// Build the system prompt: persona (if enabled) with the voice boundary,
-	// then the agent contract, then project context. Agent mode never carries
-	// the chat task rules or confirm mode (#170).
-	systemPrompt := env.SystemPromptOpts(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders, options.PersonaLevel)
+	// Honour the configured context_limit, as the TUI does: for local models it
+	// is the only way to know the window (#169). The persona steps down for
+	// it (W5 guard).
+	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit)
 
+	// Build the system prompt: the persona profile (spine unless the caller
+	// picked a level, stepped down on a small window), then the agent
+	// contract, project context, git and memories. Agent mode never carries
+	// the chat task rules or confirm mode (#170).
+	sp := env.SystemPrompt(loop.PromptOptions{
+		Contract: buildAgentSystemPrompt(options, detectEnvContext()),
+		Sliders:  options.Sliders,
+		Level:    options.PersonaLevel,
+		Window:   contextLimit,
+	})
+	if sp.Notice != "" {
+		fmt.Fprintln(errOut, sp.Notice)
+	}
+	systemPrompt := sp.String()
 	client.SetSystemPrompt(systemPrompt)
 
 	store, err := NewCheckpointStore("")
@@ -460,9 +474,6 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	// Create a token budget for context tracking.
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
-	// Honour the configured context_limit, as the TUI does: for local models it
-	// is the only way to know the window (#169).
-	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit)
 	if !known {
 		if notice := config.UnknownContextNotice(model, contextLimit); notice != "" {
 			fmt.Fprintln(errOut, notice)
