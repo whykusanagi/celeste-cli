@@ -194,6 +194,16 @@ func (c *Client) GetConfig() *Config {
 	return c.config
 }
 
+// ServerCompaction reports whether this client's endpoint serves
+// server-side compaction (2.0 W8; W1 consumes it). Backends without a
+// probe report CompactionUnsupported.
+func (c *Client) ServerCompaction(ctx context.Context) CompactionSupport {
+	if p, ok := c.backend.(CompactionProber); ok {
+		return p.ProbeCompaction(ctx)
+	}
+	return CompactionUnsupported
+}
+
 // ChatCompletionResult holds the result of a chat completion.
 type ChatCompletionResult struct {
 	Content      string
