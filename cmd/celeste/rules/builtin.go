@@ -37,6 +37,7 @@ func Builtins() []*Rule {
 			panic("rules: built-in " + n + ": " + err.Error()) // caught by TestBuiltinsParse
 		}
 		r.guard = guards[r.Name]
+		r.wholeValue = r.Name == "destructive-bash" // condition \S: the guard decides
 		out = append(out, r)
 	}
 	return out

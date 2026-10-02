@@ -85,22 +85,11 @@ func responsesInput(messages []tui.ChatMessage, key string) (items []json.RawMes
 // imagePart returns a tool result's image (metadata type "image") as an
 // input_image part, with the file name for the caption.
 func imagePart(md map[string]any) (respContentPart, string, bool) {
-	if md == nil {
-		return respContentPart{}, "", false
-	}
-	if t, _ := md["type"].(string); t != "image" {
-		return respContentPart{}, "", false
-	}
-	b64, ok := md["base64"].(string)
+	img, ok := toolImageOf(md)
 	if !ok {
 		return respContentPart{}, "", false
 	}
-	format, _ := md["format"].(string)
-	if format == "" {
-		format = "png"
-	}
-	name, _ := md["filename"].(string)
-	return respContentPart{Type: "input_image", ImageURL: fmt.Sprintf("data:image/%s;base64,%s", format, b64), Detail: "auto"}, name, true
+	return respContentPart{Type: "input_image", ImageURL: img.DataURL(), Detail: "auto"}, img.Name, true
 }
 
 // replayItem returns a stored output item as an input item. Requests use
@@ -151,16 +140,18 @@ func responsesTools(tools []tui.SkillDefinition) []openai.Tool {
 	return out
 }
 
-// responsesReasoningModel reports a model that reasons and accepts
-// include reasoning.encrypted_content: the o1, o3, o4 and gpt-5 families,
-// except gpt-5-chat, which does not reason. OpenAI answers a request that
-// asks a non-reasoning model for encrypted reasoning with a 400 ("Encrypted
-// content is not supported with this model."), so this one predicate gates
-// both include and reasoning.effort.
-func responsesReasoningModel(model string) bool {
+// openAIReasoningModel reports an OpenAI model that reasons, takes a
+// reasoning effort (reasoning.effort on Responses, reasoning_effort on Chat
+// Completions) and accepts include reasoning.encrypted_content: the o1, o3,
+// o4 and gpt-5 families, except their -chat variants (gpt-5-chat,
+// gpt-5.1-chat-latest), which do not reason. OpenAI
+// answers a request that asks a non-reasoning model for encrypted reasoning
+// with a 400 ("Encrypted content is not supported with this model."), so
+// this one predicate gates include and the effort on both APIs.
+func openAIReasoningModel(model string) bool {
 	m := strings.ToLower(model)
-	if strings.HasPrefix(m, "gpt-5-chat") {
-		return false
+	if strings.Contains(m, "-chat") {
+		return false // gpt-5-chat, gpt-5.1-chat-latest: chat variants do not reason
 	}
 	for _, p := range []string{"o1", "o3", "o4", "gpt-5"} {
 		if strings.HasPrefix(m, p) {
@@ -170,19 +161,26 @@ func responsesReasoningModel(model string) bool {
 	return false
 }
 
-// responsesEffort maps celeste's thinking level to reasoning.effort for
-// reasoning models (responsesReasoningModel); "" sends no reasoning field.
-func responsesEffort(model string, tc ThinkingConfig) string {
-	if !tc.Enabled || tc.Level == "off" || !responsesReasoningModel(model) {
+// reasoningEffort maps celeste's thinking level to an OpenAI-style
+// reasoning effort (low, medium, high; max is high). "" sends none.
+func reasoningEffort(tc ThinkingConfig) string {
+	if !tc.Enabled {
 		return ""
 	}
 	switch tc.Level {
-	case "low":
-		return "low"
-	case "medium":
-		return "medium"
-	case "high", "max":
+	case "low", "medium", "high":
+		return tc.Level
+	case "max":
 		return "high"
 	}
 	return ""
+}
+
+// openAIEffort is reasoningEffort for a model that takes one
+// (openAIReasoningModel), else "".
+func openAIEffort(model string, tc ThinkingConfig) string {
+	if !openAIReasoningModel(model) {
+		return ""
+	}
+	return reasoningEffort(tc)
 }

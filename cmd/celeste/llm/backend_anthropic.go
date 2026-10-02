@@ -942,17 +942,8 @@ func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthrop
 			var blocks []anthropic.ContentBlockParamUnion
 
 			// Check for image metadata.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						mediaType := "image/" + format
-						blocks = append(blocks, anthropic.NewImageBlockBase64(mediaType, b64))
-					}
-				}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				blocks = append(blocks, anthropic.NewImageBlockBase64(img.MediaType(), img.B64))
 			}
 
 			if msg.Content != "" {
@@ -1004,21 +995,11 @@ func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthrop
 			result = append(result, anthropic.NewUserMessage(toolResultBlock))
 
 			// If this tool result has image metadata, add it as an image block.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						mediaType := "image/" + format
-						result = append(result, anthropic.NewUserMessage(
-							anthropic.NewImageBlockBase64(mediaType, b64),
-							anthropic.NewTextBlock(fmt.Sprintf("[Image from tool result: %s]",
-								msg.Metadata["filename"])),
-						))
-					}
-				}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				result = append(result, anthropic.NewUserMessage(
+					anthropic.NewImageBlockBase64(img.MediaType(), img.B64),
+					anthropic.NewTextBlock(fmt.Sprintf("[Image from tool result: %s]", img.Name)),
+				))
 			}
 		}
 	}

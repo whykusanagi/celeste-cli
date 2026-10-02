@@ -428,24 +428,13 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 
 			// If the tool result carries image metadata, inject a user
 			// message with the image as inline data so Gemini can see it.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						filename, _ := msg.Metadata["filename"].(string)
-						imageBytes, decErr := base64.StdEncoding.DecodeString(b64)
-						if decErr == nil {
-							mimeType := fmt.Sprintf("image/%s", format)
-							parts := []*genai.Part{
-								genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", filename)),
-								genai.NewPartFromBytes(imageBytes, mimeType),
-							}
-							contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
-						}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				if imageBytes, err := base64.StdEncoding.DecodeString(img.B64); err == nil {
+					parts := []*genai.Part{
+						genai.NewPartFromText(fmt.Sprintf("[Attached image from tool result: %s]", img.Name)),
+						genai.NewPartFromBytes(imageBytes, img.MediaType()),
 					}
+					contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
 				}
 			}
 			continue

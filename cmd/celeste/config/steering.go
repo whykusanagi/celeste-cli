@@ -39,3 +39,12 @@ func (c *Config) WatchdogMode() string {
 func (c *Config) CompletionGateMode() string {
 	return mode(c.CompletionGate, ModeShadow, ModeShadow, ModeOn)
 }
+
+// JevPruneMode is jev_prune: "off" (default), "shadow" or "on".
+func (c *Config) JevPruneMode() string { return mode(c.JevPrune, ModeOff, ModeShadow, ModeOn) }
+
+// JevGateMode is jev_gate: "off" (default), "shadow" or "on".
+func (c *Config) JevGateMode() string { return mode(c.JevGate, ModeOff, ModeShadow, ModeOn) }
+
+// JevRouteMode is jev_route: "off" (default), "shadow" or "on".
+func (c *Config) JevRouteMode() string { return mode(c.JevRoute, ModeOff, ModeShadow, ModeOn) }

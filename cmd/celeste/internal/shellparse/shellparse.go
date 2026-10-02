@@ -2,10 +2,10 @@
 // quotes (including $'...' escapes and $"..."), a leading backslash,
 // unquoted $IFS as a word break, operators, subshells, $( ) and backtick
 // substitutions, and the strings run by sh -c, eval and ssh. It does not
-// expand other variables, globs or braces. It is a pure
-// tokenizer with no dependencies, shared by the blocking bash check
-// (tools/builtin) and meant for the advisory stream rule (rules), which
-// carries its own copy until it switches over.
+// expand other variables, globs or braces. It has no dependencies. The
+// blocking bash check (tools/builtin) and the advisory destructive-bash
+// rule and watchdog (rules) both read commands with it, and share its rm
+// policy (DestructiveRm), so the rule sees whatever the check refuses.
 package shellparse
 
 import (

@@ -730,3 +730,34 @@ func TestRunTurnSyncsTheCompactedHistoryWhenTheTurnEndsEarly(t *testing.T) {
 		})
 	}
 }
+
+// jev_prune "on" (2.0 W3): the turn's compactor asks Jev inside the loop,
+// before the request, so Jev has been asked by the time the turn ends;
+// shadow asks in the background afterwards.
+func TestChatCompactorJevOnAsksBeforeTheRequest(t *testing.T) {
+	var hits atomic.Int32
+	jevSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "test", http.StatusTeapot)
+	}))
+	defer jevSrv.Close()
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	a.baseConfig.JevPrune = "on"
+	a.jev, a.jevFor = &jev.Client{Key: "k", URL: jevSrv.URL}, a.baseConfig
+
+	big := strings.Repeat("x", 40*1024)
+	history := userTurn("read the files")
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: big})
+	}
+	history = append(history, userTurn("next")...)
+	runTurnMsgs(t, a, tui.TurnRequest{History: history, Tools: true, Window: 20_000, Run: 1})
+	if hits.Load() == 0 {
+		t.Fatal("jev_prune on: Jev was not asked inside the turn")
+	}
+}

@@ -83,6 +83,8 @@ type Server struct {
 
 	// cost adds up this process's LLM usage for celeste_status (#210).
 	cost sessionCost
+	// health counts completion outcomes for celeste_status (2.0 W3).
+	health completionHealth
 
 	// modelNotes holds the model-resolution notes already logged.
 	modelNotes sync.Map
