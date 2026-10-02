@@ -55,7 +55,11 @@ var shellSteps atomic.Int64
 func gitForcePush(args []string) bool {
 	push := false
 	var c int64
-	defer func() { shellSteps.Add(c) }()
+	defer func() {
+		if c > 0 {
+			shellSteps.Add(c)
+		}
+	}()
 	for _, a := range args {
 		c++
 		switch {
@@ -79,7 +83,9 @@ func rmRecursiveForce(args []string) bool {
 	if len(targets) == 0 {
 		return true
 	}
-	shellSteps.Add(int64(len(targets)))
+	if len(targets) > 0 {
+		shellSteps.Add(int64(len(targets)))
+	}
 	for _, t := range targets {
 		if !buildDirTarget(t) {
 			return true

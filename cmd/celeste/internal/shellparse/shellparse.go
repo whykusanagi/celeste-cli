@@ -20,8 +20,15 @@ const MaxDepth = 4
 
 // steps is the work this package has done reading commands: bytes
 // tokenized plus words examined by every loop over a word list. Each call
-// adds its count once, at the end.
+// adds its count once, at the end, and only when it examined something, so
+// a line costs a few atomic adds per simple command, not one per word.
 var steps atomic.Int64
+
+func count(n int64) {
+	if n > 0 {
+		steps.Add(n)
+	}
+}
 
 // Steps reports the running total of that work. Tests compare it across
 // input sizes to check that reading a line stays linear; the count is
@@ -70,7 +77,7 @@ func walk(cmd string, depth int, fn func(words []string) bool) Result {
 	}
 	segs, nested := Segments(cmd)
 	var c int64
-	defer func() { steps.Add(c) }()
+	defer func() { count(c) }()
 	for _, n := range nested {
 		if r := walk(n, depth+1, fn); r != None {
 			return r
@@ -124,7 +131,7 @@ var shellValueOptions = map[string]bool{"-o": true, "+o": true, "-O": true, "+O"
 // -S/--split-string. Anything else returns nil.
 func commandStrings(name string, args []string) []string {
 	var examined int64
-	defer func() { steps.Add(examined) }()
+	defer func() { count(examined) }()
 	switch {
 	case Shells[name]:
 		// sh [options] -c [--] 'string': -c may be alone or in a cluster
@@ -197,7 +204,7 @@ func commandStrings(name string, args []string) []string {
 // (CommandName) and arguments. name is "" when there is no command word.
 func Command(words []string) (name string, args []string) {
 	i := 0
-	defer func() { steps.Add(int64(i)) }() // every word up to the command word
+	defer func() { count(int64(i)) }() // every word up to the command word
 	for i < len(words) {
 		w := CommandName(words[i])
 		if strings.Contains(words[i], "=") && !strings.HasPrefix(words[i], "-") {
@@ -227,7 +234,7 @@ func Segments(s string) (segs [][]string, nested []string) {
 	// A backslash-newline is a line continuation: the shell drops both.
 	s = strings.ReplaceAll(s, "\\\n", "")
 	// One forward pass; substitution bodies are counted again when walked.
-	steps.Add(int64(len(s)))
+	count(int64(len(s)))
 	var words []string
 	var cur strings.Builder
 	inWord := false

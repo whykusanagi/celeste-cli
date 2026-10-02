@@ -33,7 +33,7 @@ func RmRefused(words []string) bool {
 	type summary struct{ recursive, force, critical, sysOrHome bool }
 	n := len(words)
 	var c int64
-	defer func() { steps.Add(c) }()
+	defer func() { count(c) }()
 	var sum [2][]summary
 	sum[0], sum[1] = make([]summary, n+2), make([]summary, n+2)
 	merge := func(x, y summary) summary {
@@ -78,7 +78,7 @@ func RmRefused(words []string) bool {
 func RmFlags(args []string) (recursive, force bool, targets []string) {
 	endOfFlags := false
 	var c int64
-	defer func() { steps.Add(c) }()
+	defer func() { count(c) }()
 	for k := 0; k < len(args); k++ {
 		c++
 		a := args[k]
