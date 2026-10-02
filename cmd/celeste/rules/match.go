@@ -195,6 +195,9 @@ func (m *Matcher) fire(r *Rule, h Hit) (Hit, bool) {
 	if r.guard != nil && !r.guard(&m.facts, h) {
 		return Hit{}, false
 	}
+	if r.wholeValue && h.Call != nil {
+		h.Text, _ = fieldText(h.Call.Input[h.Scope.Field])
+	}
 	m.fired[r.Name] = true
 	m.last[r.Name] = m.request
 	return h, true

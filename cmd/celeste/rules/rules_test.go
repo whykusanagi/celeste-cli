@@ -487,6 +487,18 @@ func TestStripUnbackedSpawnClaim(t *testing.T) {
 	}
 }
 
+// destructive-bash's condition matches any command (\S), so its hit carries
+// the command itself for the log, not the first character (review of
+// cleanup-4).
+func TestDestructiveBashHitTextIsTheCommand(t *testing.T) {
+	m := builtinMatcher(t)
+	m.StartRequest()
+	hits := m.Calls([]Call{{Name: "bash", Input: map[string]any{"command": "  rm -rf src"}}})
+	if len(hits) != 1 || hits[0].Text != "  rm -rf src" {
+		t.Fatalf("hits = %+v", hits)
+	}
+}
+
 // The advisory rule reads every bash call (condition \S) and the watchdog
 // reads recent ones: 40 KB of adversarial shell stays fast.
 func TestDestructiveLinearOnLongLines(t *testing.T) {

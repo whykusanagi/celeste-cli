@@ -64,6 +64,10 @@ type Rule struct {
 	// guard, for built-ins, vetoes a match the regex alone cannot judge
 	// (an exempt path, a TTS call that did run).
 	guard func(*Facts, Hit) bool
+	// wholeValue, for built-ins whose condition matches any value (the
+	// guard decides): Hit.Text is the whole argument value, not the one
+	// character the condition matched.
+	wholeValue bool
 }
 
 // Set is the rules in effect, sorted by name.
