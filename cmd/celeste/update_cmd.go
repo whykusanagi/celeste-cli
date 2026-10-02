@@ -30,12 +30,28 @@ func runUpdateCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	check := fs.Bool("check", false, "")
+	// Maintainer-only (release.yml, W5 ruling 30): verify a release
+	// directory with this binary's embedded key, the updater's own checks.
+	verifyDist := fs.String("verify-dist", "", "")
+	distTag := fs.String("tag", "", "")
 	usage := func() int {
 		fmt.Fprintln(stderr, "Usage: celeste update [--check]")
 		return 2
 	}
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return usage()
+	}
+	if *verifyDist != "" {
+		if *distTag == "" {
+			fmt.Fprintln(stderr, "Usage: celeste update --verify-dist <dir> --tag <tag>")
+			return 2
+		}
+		if err := selfupdate.VerifyDist(*verifyDist, *distTag, selfupdate.ReleaseKey); err != nil {
+			fmt.Fprintf(stderr, "celeste update --verify-dist: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "release %s verifies with the embedded release key\n", *distTag)
+		return 0
 	}
 	kind, current := updateKind()
 	if kind != selfupdate.Official && kind != selfupdate.Module {

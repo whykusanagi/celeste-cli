@@ -100,3 +100,13 @@ func TestUpdateUsage(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 }
+
+func TestUpdateVerifyDist(t *testing.T) {
+	code, stdout, stderr := runUpdate("--verify-dist", t.TempDir(), "--tag", "v2.0.0")
+	if code != 1 || !strings.Contains(stderr, "celeste update --verify-dist: ") || stdout != "" {
+		t.Fatalf("an empty dist: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if code, _, stderr := runUpdate("--verify-dist", t.TempDir()); code != 2 || !strings.Contains(stderr, "--tag") {
+		t.Fatalf("no tag: exit %d, stderr %q", code, stderr)
+	}
+}
