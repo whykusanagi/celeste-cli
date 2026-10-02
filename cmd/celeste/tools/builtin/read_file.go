@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -103,7 +102,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 	}
 	endLine := getIntArg(input, "end_line", 0)
 
-	targetPath, err := resolvePath(t.workspace, path, false)
+	targetPath, realPath, err := resolvePathReal(t.workspace, path, false)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
@@ -111,10 +110,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 	// Check for image files and handle them with base64 encoding
 	ext := strings.ToLower(filepath.Ext(targetPath))
 	if isImageExtension(ext) {
-		return t.readImageFile(targetPath, path, ext)
+		return t.readImageFile(targetPath, realPath, path, ext)
 	}
 
-	data, err := os.ReadFile(targetPath)
+	data, err := readFileNoFollow(realPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
@@ -239,8 +238,8 @@ func isImageExtension(ext string) bool {
 // readImageFile reads an image file and returns a ToolResult with base64-encoded
 // content in the Metadata map, enabling downstream consumers (LLM client / TUI
 // adapter) to convert it into provider-specific image content blocks.
-func (t *ReadFileTool) readImageFile(targetPath, relPath, ext string) (tools.ToolResult, error) {
-	data, err := os.ReadFile(targetPath)
+func (t *ReadFileTool) readImageFile(targetPath, realPath, relPath, ext string) (tools.ToolResult, error) {
+	data, err := readFileNoFollow(realPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
