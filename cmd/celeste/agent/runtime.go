@@ -107,7 +107,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit}, summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, State: r.renderState()}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
 			// Always reported, not only in verbose output (TUI parity).
@@ -127,6 +127,14 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 		changed = true
 	}
 	return msgs, notes, changed
+}
+
+// renderState is the run's authoritative state for summaries (#200).
+func (r *Runner) renderState() string {
+	if r.env == nil {
+		return ""
+	}
+	return r.env.RenderState()
 }
 
 // SmallModelSummarizer returns a SummarizeFunc on its own client for the

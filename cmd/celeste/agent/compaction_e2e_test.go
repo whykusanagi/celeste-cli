@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -27,10 +32,14 @@ type windowBackend struct {
 	overflows int
 	maxSeen   int
 	issued    int // tool calls made so far; a summary can't reset it
+	onRequest func([]tui.ChatMessage)
 }
 
 func (b *windowBackend) SendMessageStreamEvents(_ context.Context, msgs []tui.ChatMessage, _ []tui.SkillDefinition, cb llm.StreamEventCallback) error {
 	b.mu.Lock()
+	if b.onRequest != nil {
+		b.onRequest(msgs)
+	}
 	b.requests++
 	size := compact.Estimate(msgs)
 	if size > b.maxSeen {
@@ -285,5 +294,51 @@ func TestAgentNeverElidesAResultBeforeTheModelSawIt(t *testing.T) {
 	}
 	if len(backend.elided) > 0 {
 		t.Fatalf("results elided before the model saw them: %v", backend.elided)
+	}
+}
+
+// #200 end to end: the agent's summary rung carries the todo list and the
+// files the run changed, whatever the summarizer wrote.
+func TestAgentSummaryCarriesAuthoritativeState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	backend := &windowBackend{window: 64_000, turns: 20}
+	runner, _ := newCompactionRunner(t, backend, 64_000)
+	runner.pruned = nil // force the summary rung
+	ws := runner.options.Workspace
+	builtin.NewTodoStore(ws).Create("read every file", "")
+	env, err := loop.Setup(loop.ModeAgent, &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "m"}, ws, loop.SetupOptions{SessionID: "agent-state", Warn: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	changed := filepath.Join(ws, "notes.md")
+	if err := os.WriteFile(changed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Snapshots.Checkpoint(changed, "call_0"); err != nil {
+		t.Fatal(err)
+	}
+	runner.env = env
+	var summaries []string
+	runner.summarize = func(_ context.Context, _, _ string) (string, error) {
+		return "## Goal\nread every file", nil // omits todos and files
+	}
+	backend.onRequest = func(msgs []tui.ChatMessage) {
+		if len(msgs) > 0 && compact.IsSummary(msgs[0]) {
+			summaries = append(summaries, msgs[0].Content)
+		}
+	}
+	if _, err := runner.RunGoal(context.Background(), "read every file"); err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) == 0 {
+		t.Fatal("no request carried a summary")
+	}
+	for _, want := range []string{"- [ ] 1. read every file (pending)", "- notes.md"} {
+		if !strings.Contains(summaries[0], want) {
+			t.Errorf("summary lacks %q:\n%s", want, summaries[0])
+		}
 	}
 }

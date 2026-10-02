@@ -150,6 +150,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// the chat.
 	subMgr.UseParent(env, tuiAgentWarn)
 	tuiClient.parentEnv = env
+	tuiClient.state = env.RenderState
 
 	app := tui.NewApp(tuiClient)
 	app = app.SetVersion(Version, Build)

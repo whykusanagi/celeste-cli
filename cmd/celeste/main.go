@@ -297,6 +297,10 @@ type TUIClientAdapter struct {
 	workspace   string
 	undoConfirm *undoWarning
 
+	// state renders the authoritative state for summaries (#200); the
+	// chat Env's RenderState. Nil adds none.
+	state func() string
+
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.
 	pruned *compact.Store
@@ -727,7 +731,11 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	if cfg := a.baseConfig; cfg != nil {
 		window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window}, hooked)
+	state := ""
+	if a.state != nil {
+		state = a.state()
+	}
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, State: state}, hooked)
 	if blocked != "" {
 		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
 	}

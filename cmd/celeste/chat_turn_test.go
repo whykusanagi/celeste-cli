@@ -20,6 +20,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -773,5 +774,19 @@ func TestChatSummaryKeepsByTheWindow(t *testing.T) {
 	}
 	if out.Cut == 0 {
 		t.Fatal("nothing was summarized")
+	}
+}
+
+// #200 in the chat: /compact's summary carries the workspace's todos.
+func TestChatSummaryCarriesAuthoritativeState(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "## Goal\nread the files"})
+	_, deps, ws := chatApp(t, srv)
+	builtin.NewTodoStore(ws).Create("port the lexer", "")
+	out, err := deps.adapter.SummarizeContext(context.Background(), bigToolHistory(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Messages[0].Content, "port the lexer (pending)") {
+		t.Fatalf("summary lacks the todo list:\n%s", out.Messages[0].Content)
 	}
 }
