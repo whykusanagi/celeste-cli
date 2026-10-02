@@ -38,10 +38,19 @@ const maxDiffBytes = 4 << 20
 
 // ComputeDiff compares each changed file's oldest backup (its state before
 // the session changed it) with the file now. Sorted by path. A file that
-// cannot be compared carries its error in FileChange.Err.
+// cannot be compared carries its error in FileChange.Err. It holds the
+// session lock while it reads, so an undo in another process cannot remove
+// a backup between the index read and the backup read.
 func (sm *SnapshotManager) ComputeDiff() ([]FileChange, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	if sm.dir != "" {
+		unlock, err := lockSession(sm.dir, false)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+	}
 	sm.reloadLocked()
 	return sm.computeDiffLocked()
 }
