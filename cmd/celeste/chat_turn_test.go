@@ -752,3 +752,26 @@ func TestChatCompactorCountsSystemPromptAndTools(t *testing.T) {
 		t.Fatal("the compactor ignored the system prompt and tool schemas")
 	}
 }
+
+// The chat's summaries keep KeepFor(window) of the newest history, so a
+// 40k-window chat can be summarized once it is past ~10k (#234).
+func TestChatSummaryKeepsByTheWindow(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "## Goal\nread the files"})
+	_, deps, _ := chatAppWithContextLimit(t, srv, 40_000)
+	// ~16k tokens: inside the old fixed 20k tail, over a 40k window's 10k.
+	history := userTurn("read the files")
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	history = append(history, userTurn("next")...)
+	out, err := deps.adapter.SummarizeContext(context.Background(), history, "")
+	if err != nil {
+		t.Fatalf("SummarizeContext: %v (a 40k window keeps 10k, so this history shrinks)", err)
+	}
+	if out.Cut == 0 {
+		t.Fatal("nothing was summarized")
+	}
+}
