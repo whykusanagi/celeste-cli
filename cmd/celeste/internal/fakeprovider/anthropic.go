@@ -1,6 +1,7 @@
 package fakeprovider
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 )
@@ -13,11 +14,15 @@ func NewAnthropic(t testing.TB, turns ...Turn) *Server {
 
 func writeAnthropic(w http.ResponseWriter, turn Turn) {
 	w.Header().Set("Content-Type", "text/event-stream")
-	sse(w, "message_start", map[string]any{"type": "message_start", "message": map[string]any{
+	message := map[string]any{
 		"id": "msg_fake", "type": "message", "role": "assistant", "model": "fake-model",
 		"content": []any{}, "stop_reason": nil, "stop_sequence": nil,
 		"usage": map[string]any{"input_tokens": 100, "output_tokens": 0},
-	}})
+	}
+	if turn.Transformations != "" {
+		message["input_transformations"] = json.RawMessage(turn.Transformations)
+	}
+	sse(w, "message_start", map[string]any{"type": "message_start", "message": message})
 	idx := 0
 	block := func(start map[string]any, deltas ...map[string]any) {
 		sse(w, "content_block_start", map[string]any{"type": "content_block_start", "index": idx, "content_block": start})
@@ -31,6 +36,9 @@ func writeAnthropic(w http.ResponseWriter, turn Turn) {
 		block(map[string]any{"type": "thinking", "thinking": "", "signature": ""},
 			map[string]any{"type": "thinking_delta", "thinking": th.Text},
 			map[string]any{"type": "signature_delta", "signature": th.Signature})
+	}
+	if turn.RedactedThinking != "" {
+		block(map[string]any{"type": "redacted_thinking", "data": turn.RedactedThinking})
 	}
 	if turn.Text != "" {
 		block(map[string]any{"type": "text", "text": ""}, map[string]any{"type": "text_delta", "text": turn.Text})

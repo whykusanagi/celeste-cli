@@ -16,8 +16,14 @@ import (
 type Turn struct {
 	Text      string
 	ToolCalls []ToolCall
-	Thinking  *Thinking  // Anthropic only
-	Reasoning *Reasoning // Responses only: one reasoning item before the output
+	Thinking  *Thinking // Anthropic only
+	// RedactedThinking adds an Anthropic redacted_thinking block with this
+	// data right after the thinking block.
+	RedactedThinking string
+	// Transformations is raw JSON set as input_transformations on the
+	// Anthropic message_start message; "" omits the field.
+	Transformations string
+	Reasoning       *Reasoning // Responses only: one reasoning item before the output
 	// Incomplete ends a Responses stream with response.incomplete and this
 	// reason (e.g. "max_output_tokens").
 	Incomplete string
@@ -46,12 +52,13 @@ type Thinking struct{ Text, Signature string }
 // Reasoning is a Responses reasoning output item.
 type Reasoning struct{ ID, Summary, Encrypted string }
 
-// Request is what the client sent: the path, the decoded body and its raw
-// bytes.
+// Request is what the client sent: the path, the decoded body, its raw
+// bytes and the request headers.
 type Request struct {
-	Path string
-	Body map[string]any
-	Raw  []byte
+	Path   string
+	Body   map[string]any
+	Raw    []byte
+	Header http.Header
 }
 
 type Server struct {
@@ -75,7 +82,7 @@ func newServer(t testing.TB, prefix string, write func(http.ResponseWriter, Turn
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
 		s.mu.Lock()
-		s.requests = append(s.requests, Request{Path: r.URL.Path, Body: body, Raw: raw})
+		s.requests = append(s.requests, Request{Path: r.URL.Path, Body: body, Raw: raw, Header: r.Header.Clone()})
 		if h, ok := s.handlers[r.URL.Path]; ok {
 			s.mu.Unlock()
 			h(w, r)
