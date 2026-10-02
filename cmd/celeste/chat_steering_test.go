@@ -55,3 +55,14 @@ func TestChatRecordsDroppedReplyUsage(t *testing.T) {
 		t.Errorf("cost tracker turns = %d, want %d", after.Turns, before.Turns)
 	}
 }
+
+func TestLastUserTextSkipsHiddenMessages(t *testing.T) {
+	h := []tui.ChatMessage{
+		{Role: "user", Content: "fix the build"},
+		{Role: "assistant", Content: "on it"},
+		{Role: "user", Content: "<system-reminder>x</system-reminder>", Metadata: map[string]any{"hidden": true}},
+	}
+	if got := lastUserText(h); got != "fix the build" {
+		t.Errorf("lastUserText = %q", got)
+	}
+}

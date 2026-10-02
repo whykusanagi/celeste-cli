@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 )
 
 // CompleteFunc is one small-model call (compact.SummarizeFunc's shape).
@@ -14,8 +16,13 @@ type CompleteFunc func(ctx context.Context, system, user string) (string, error)
 
 // LLM asks the small model and reads a JSON object back. No backend at
 // 2.0 sets a provider JSON mode, so the JSON is required by the prompt and
-// parsed leniently: the first {...} in the reply.
-type LLM struct{ Complete CompleteFunc }
+// parsed leniently: the first {...} in the reply. The small model may be a
+// remote provider, so the state is redacted first, as for Jev: secrets,
+// and file paths (workspace-relative inside Workspace, <path> elsewhere).
+type LLM struct {
+	Complete  CompleteFunc
+	Workspace string
+}
 
 const llmSystem = `You answer typed questions about a state document. Reply with one JSON object and nothing else. Its keys are the question ids. For a yes/no question the value is the probability of yes, a number from 0 to 1. For a score question the value is the 0-based number of the level that fits best. For a choice question the value is one of the listed options, as a string.`
 
@@ -23,7 +30,7 @@ func (o LLM) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 	if o.Complete == nil {
 		return nil, errors.New("llm oracle: no small model")
 	}
-	reply, err := o.Complete(ctx, llmSystem, llmPrompt(state, qs))
+	reply, err := o.Complete(ctx, llmSystem, llmPrompt(redactText(state, o.Workspace), qs))
 	if err != nil {
 		return nil, err
 	}
@@ -47,6 +54,23 @@ func (o LLM) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 		}
 	}
 	return out, nil
+}
+
+// redactText is state as it may leave the machine: a JSON document with
+// every string redacted (jev.RedactValue), or redacted plain text.
+func redactText(state, workspace string) string {
+	if t := strings.TrimSpace(state); strings.HasPrefix(t, "{") {
+		var v any
+		if json.Unmarshal([]byte(t), &v) == nil {
+			var b strings.Builder
+			enc := json.NewEncoder(&b)
+			enc.SetEscapeHTML(false)
+			if enc.Encode(jev.RedactValue(v, workspace)) == nil {
+				return strings.TrimSpace(b.String())
+			}
+		}
+	}
+	return jev.RedactAll(state, workspace)
 }
 
 func llmPrompt(state string, qs []Question) string {

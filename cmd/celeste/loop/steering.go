@@ -78,7 +78,12 @@ func (l *Loop) joinReminders(msgs []Message, b Boundary) []Message {
 	if l.Steering == nil {
 		return msgs
 	}
-	for _, r := range l.Steering.Reminders(b) {
+	return l.appendReminders(msgs, l.Steering.Reminders(b))
+}
+
+// appendReminders appends rs as hidden messages (EventRule each).
+func (l *Loop) appendReminders(msgs []Message, rs []Reminder) []Message {
+	for _, r := range rs {
 		m := ReminderMessage(r)
 		msgs = append(msgs, m)
 		l.emit(Event{Kind: EventRule, Text: r.Source, Msg: m})

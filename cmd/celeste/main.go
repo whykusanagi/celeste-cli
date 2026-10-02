@@ -631,25 +631,34 @@ func (a *TUIClientAdapter) jevShadow() *jev.Client {
 		tui.LogInfo("jev shadow disabled: " + err.Error())
 		return nil
 	}
+	c.Workspace, _ = os.Getwd() // paths in excerpts are sent relative to it
 	tui.LogInfo("jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
 	a.jev = c
 	return c
 }
 
-// steering returns the chat session's stream rules (2.0 W3), one session
-// across turns so a rule's repeat policy spans the chat. Resolved again
-// after a profile switch replaces baseConfig. Update goroutine only
-// (RunTurn), like jevShadow. Nil when stream_rules is off.
+// steering returns the chat session's stream rules and watchdog (2.0 W3),
+// one session across turns so a rule's repeat policy and the ballot's
+// cadence span the chat. Resolved again after a profile switch replaces
+// baseConfig; the old session is closed (a ballot in flight is cancelled).
+// Update goroutine only (RunTurn), like jevShadow: it only builds objects,
+// every oracle call runs in the background. Nil when stream_rules and the
+// watchdog are both off.
 func (a *TUIClientAdapter) steering() *steer.Session {
 	if a.steerSet && a.steerFor == a.baseConfig {
 		return a.steer
 	}
-	a.steerSet, a.steerFor = true, a.baseConfig
-	mode := config.ModeShadow
-	if a.baseConfig != nil {
-		mode = a.baseConfig.StreamRulesMode()
+	if old := a.steer; old != nil {
+		go old.Close()
 	}
-	a.steer = steer.New(steer.Options{Rules: a.rules, RulesMode: mode, Logf: tui.LogInfo})
+	a.steerSet, a.steerFor = true, a.baseConfig
+	o := steer.Options{Rules: a.rules, RulesMode: config.ModeShadow, Watchdog: config.ModeOff, Logf: tui.LogInfo}
+	if cfg := a.baseConfig; cfg != nil {
+		o.RulesMode, o.Watchdog = cfg.StreamRulesMode(), cfg.WatchdogMode()
+		ws, _ := os.Getwd()
+		o.Oracle = agent.WatchdogOracle(cfg, ws, tui.LogInfo)
+	}
+	a.steer = steer.New(o)
 	return a.steer
 }
 

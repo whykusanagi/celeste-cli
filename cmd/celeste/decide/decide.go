@@ -53,7 +53,8 @@ type Oracle interface {
 
 // State is what the oracle sees: the goal, the latest user message, the
 // recent turns, and free text for questions about one string (routing).
-// Every string is redacted (jev.Redact) before it leaves the machine.
+// Every string is redacted (jev.RedactAll: secrets and file paths) before
+// it leaves the machine.
 type State struct {
 	Goal   string     `json:"goal,omitempty"`
 	Latest string     `json:"latest_user_message,omitempty"`

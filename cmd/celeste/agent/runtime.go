@@ -19,6 +19,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
@@ -63,6 +64,10 @@ type Runner struct {
 	firstRunID string
 	// rulesMode is stream_rules (2.0 W3): off, shadow or on.
 	rulesMode string
+	// watchdog is the watchdog mode and oracle answers its ballot (2.0 W3).
+	watchdog string
+	oracle   decide.Oracle
+	gateMode string // completion_gate (2.0 W3)
 }
 
 // compactMessages keeps the history inside the window (#174). It prunes old
@@ -442,19 +447,25 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		indexer:    env.Indexer,
 		pruned:     prunedStore,
 		summarize:  SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
-		jev:        jevShadowClient(cfg.JevPrune, errOut),
+		jev:        jevShadowClient(cfg.JevPrune, options.Workspace, errOut),
 		env:        env,
 		hooks:      env.Hooks,
 		warn:       warn,
 		gate:       gate,
 		firstRunID: firstRunID,
 		rulesMode:  cfg.StreamRulesMode(),
+		watchdog:   cfg.WatchdogMode(),
+		gateMode:   cfg.CompletionGateMode(),
+		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
+			fmt.Fprintf(errOut, "[agent] %s\n", line)
+		}),
 	}, nil
 }
 
 // jevShadowClient returns a Jev client when shadow mode is configured, and
-// says once that excerpts will leave the machine.
-func jevShadowClient(mode string, errOut io.Writer) *jev.Client {
+// says once that excerpts will leave the machine. Paths in them are sent
+// relative to workspace, or as <path>.
+func jevShadowClient(mode, workspace string, errOut io.Writer) *jev.Client {
 	if mode != "shadow" {
 		return nil
 	}
@@ -463,6 +474,7 @@ func jevShadowClient(mode string, errOut io.Writer) *jev.Client {
 		fmt.Fprintf(errOut, "[agent] jev shadow disabled: %v\n", err)
 		return nil
 	}
+	c.Workspace = workspace
 	fmt.Fprintln(errOut, "[agent] jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
 	return c
 }
@@ -556,7 +568,11 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 	}
 
-	l := r.newLoop(state)
+	sess := r.newSteering(ctx, state)
+	// The run's ballot ends with it: one in flight is cancelled, and none
+	// logs to errOut after RunGoal returns (MCP agent mode reads a buffer).
+	defer sess.Close()
+	l := r.newLoop(state, sess)
 	stopContinued := false
 	for {
 		if state.Turn >= state.Options.MaxTurns {
@@ -611,7 +627,17 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 		state.ConsecutiveNoToolTurns++
 
-		if isCompletionResponse(state.LastAssistantResponse, state.Options) {
+		complete, vetoed := r.completion(ctx, state, res.FinalText, sess)
+		if vetoed {
+			// The gate appended its continue prompt: skip the generic one,
+			// and the no-tool-turn count restarts (as after a failed check).
+			state.ConsecutiveNoToolTurns = 0
+			if !state.Options.DisableCheckpoints {
+				_ = r.store.Save(state)
+			}
+			continue
+		}
+		if complete {
 			completed, err := r.handleCompletionCandidate(ctx, state)
 			if err != nil {
 				state.Status = StatusFailed
@@ -688,7 +714,7 @@ func (r *Runner) cancelRun(state *RunState, err error) (*RunState, error) {
 // over when a step ends (it arrived after the loop's last check, or the step
 // stopped on an error) is user input, so it joins the next step instead of
 // being dropped. A new run gets a new Loop, so nothing carries across runs.
-func (r *Runner) newLoop(state *RunState) *loop.Loop {
+func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 	lim := loop.DefaultLimits()
 	lim.MaxCallsPerTurn = state.Options.MaxToolCallsPerTurn
 	lim.ToolTimeout = state.Options.ToolTimeout
@@ -704,15 +730,16 @@ func (r *Runner) newLoop(state *RunState) *loop.Loop {
 		Gate:      loop.PromptGate(r.options.PromptFunc),
 		Compact:   runCompactor{r: r},
 		SessionID: "agent-" + state.RunID,
-		Steering:  r.newSteering(state).Steering(),
+		Steering:  sess.Steering(),
 	}
 }
 
-// newSteering is the run's stream rules (2.0 W3): one session per run, so
-// a rule's repeat policy spans the run's steps. With verification commands
+// newSteering is the run's stream rules and watchdog (2.0 W3): one session
+// per run, so a rule's repeat policy and the ballot's cadence span the
+// run's steps; ctx (the run's) cancels a ballot in flight. With verification commands
 // the runtime checks the work after TASK_COMPLETE, so the
 // task-complete-before-verify rule stands down.
-func (r *Runner) newSteering(state *RunState) *steer.Session {
+func (r *Runner) newSteering(ctx context.Context, state *RunState) *steer.Session {
 	var set *rules.Set
 	if r.env != nil {
 		set = r.env.Rules
@@ -721,8 +748,43 @@ func (r *Runner) newSteering(state *RunState) *steer.Session {
 		Rules:           set,
 		RulesMode:       r.rulesMode,
 		RuntimeVerifies: state.Options.RequireVerification && len(state.Options.VerificationCommands) > 0,
-		Logf:            func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", line) },
+		Watchdog:        r.watchdog,
+		Oracle:          r.oracle,
+		Goal:            state.Goal,
+		Context:         ctx,
+		// The completion gate asks its own ballot at a final reply.
+		FinalRepliesToGate: true,
+		Logf:               func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", line) },
 	})
+}
+
+// WatchdogOracle is the oracle the config names for the watchdog ballot,
+// or nil (the heuristic) when the watchdog is off: no key is read and no
+// notice printed for a feature that is not on. oracle "llm" asks the small
+// model on a client of its own, one call at a time, so a background
+// ballot never shares a client with a compaction summary. That client is
+// a plain completion (no xAI collections or features, persona skip
+// cleared: the Google backend drops the system prompt when it is set). workspace makes paths in what the
+// oracle sends workspace-relative (jev.RedactPaths). The chat, MCP chat
+// and agent runs share it.
+func WatchdogOracle(cfg *config.Config, workspace string, logf func(string)) decide.Oracle {
+	if cfg == nil || cfg.WatchdogMode() == config.ModeOff {
+		return nil
+	}
+	var complete decide.CompleteFunc
+	if cfg.OracleMode() == "llm" {
+		base := llm.ConfigFrom(cfg)
+		base.Collections, base.XAIFeatures = nil, nil
+		base.SkipPersonaPrompt = false
+		small := SmallModelSummarizer(base, cfg.ResolveSmallModel())
+		var mu sync.Mutex
+		complete = func(ctx context.Context, system, user string) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return small(ctx, system, user)
+		}
+	}
+	return decide.New(cfg.OracleMode(), complete, "ballot", workspace, logf)
 }
 
 // step runs the loop once. Only the event consumer touches state (and r.out)

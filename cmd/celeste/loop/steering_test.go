@@ -284,6 +284,11 @@ func TestSteeringInterruptCarriesUsage(t *testing.T) {
 			if ev.Usage != usage {
 				t.Errorf("interrupt usage = %+v", ev.Usage)
 			}
+			// The re-run's reminder sources name who stopped the reply
+			// (a rule or the watchdog; final review M7).
+			if ev.Text != "rule:call" {
+				t.Errorf("interrupt text = %q, want the reminder source", ev.Text)
+			}
 			return
 		}
 	}

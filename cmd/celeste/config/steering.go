@@ -27,3 +27,15 @@ func (c *Config) OracleMode() string {
 func (c *Config) StreamRulesMode() string {
 	return mode(c.StreamRules, ModeShadow, ModeOff, ModeShadow, ModeOn)
 }
+
+// WatchdogMode is watchdog: "off" (default), "shadow" or "on".
+func (c *Config) WatchdogMode() string {
+	return mode(c.Watchdog, ModeOff, ModeOff, ModeShadow, ModeOn)
+}
+
+// CompletionGateMode is completion_gate: "shadow" (default) keeps the
+// substring TASK_COMPLETE check and logs where the gate disagrees, "on"
+// lets the gate decide.
+func (c *Config) CompletionGateMode() string {
+	return mode(c.CompletionGate, ModeShadow, ModeShadow, ModeOn)
+}

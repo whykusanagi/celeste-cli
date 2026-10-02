@@ -219,7 +219,9 @@ type RunState struct {
 	Error                      string              `json:"error,omitempty"`
 	// StopReason is the loop's reason when a guard stopped the run
 	// ("identical", "progress", "invalid_args"); empty otherwise.
-	StopReason string  `json:"stop_reason,omitempty"`
+	StopReason string `json:"stop_reason,omitempty"`
+	// GateVetoes counts completions the gate rejected (2.0 W3; at most one).
+	GateVetoes int     `json:"gate_vetoes,omitempty"`
 	Options    Options `json:"options"`
 }
 

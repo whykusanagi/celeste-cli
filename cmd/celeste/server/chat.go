@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
@@ -70,7 +71,10 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	system := env.SystemPromptWithSession(session, "", nil)
 	sessionID := "mcp-chat-" + config.UniqueNanoID()
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
-	l.Steering = chatSteering(cfg, env, prompt).Steering()
+	sess := chatSteering(ctx, cfg, env, prompt, workspace)
+	// The call's ballot ends with it: one in flight is cancelled.
+	defer sess.Close()
+	l.Steering = sess.Steering()
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
 	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
 	var blocked *promptBlockedError
@@ -84,12 +88,21 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	return []ContentBlock{{Type: "text", Text: text + warns.section()}}, nil
 }
 
-// chatSteering is one MCP chat call's stream rules (2.0 W3). Lines go to
-// the server log (stderr); the result carries none of them. prompt is the
-// watchdog's goal from W3-2.
-func chatSteering(cfg *config.Config, env *loop.Env, prompt string) *steer.Session {
+// chatSteering is one MCP chat call's stream rules and watchdog (2.0 W3);
+// the prompt is the watchdog's goal and ctx (the call's) cancels a ballot
+// in flight. Lines go to the server log (stderr); the result carries none
+// of them.
+func chatSteering(ctx context.Context, cfg *config.Config, env *loop.Env, prompt, workspace string) *steer.Session {
 	logf := func(line string) { log.Printf("celeste chat: %s", line) }
-	return steer.New(steer.Options{Rules: env.Rules, RulesMode: cfg.StreamRulesMode(), Logf: logf})
+	return steer.New(steer.Options{
+		Rules:     env.Rules,
+		RulesMode: cfg.StreamRulesMode(),
+		Watchdog:  cfg.WatchdogMode(),
+		Oracle:    agent.WatchdogOracle(cfg, workspace, logf),
+		Goal:      prompt,
+		Context:   ctx,
+		Logf:      logf,
+	})
 }
 
 // grimoireInitMu serializes the grimoire auto-init. Two first calls on one

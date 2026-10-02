@@ -76,3 +76,15 @@ func TestRuleEventsAfterEsc(t *testing.T) {
 	assert.Equal(t, reminder.Content, llm[len(llm)-1].Content)
 	assert.NotContains(t, lastSystemLine(m), "stream rule stopped the reply")
 }
+
+// A watchdog blocker is announced as the watchdog's, not a stream rule's
+// (final review M7).
+func TestWatchdogInterruptIsAnnouncedAsTheWatchdogs(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "clean up"})
+	m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+	m, _ = feed(t, m, RuleInterruptMsg{Source: "watchdog"})
+	assert.Contains(t, lastSystemLine(m), "watchdog stopped the reply")
+	m, _ = feed(t, m, RuleInterruptMsg{Source: "rule:destructive-bash, watchdog"})
+	assert.Contains(t, lastSystemLine(m), "stream rule stopped the reply")
+}
