@@ -56,6 +56,7 @@ func TestComposeGolden(t *testing.T) {
 		{"chat", false, ComposeOptions{Mode: ModeChat}},
 		{"chat_confirm", true, ComposeOptions{Mode: ModeChat}},
 		{"chat_context", false, ComposeOptions{Mode: ModeChat, ProjectContext: "PROJECT", GitSnapshot: "GIT", Memories: "# Project Memories\n\nMEMORY"}},
+		{"chat_window_8192", false, ComposeOptions{Mode: ModeChat, Window: 8192}},
 		{"agent", true, ComposeOptions{Mode: ModeAgent, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"}},
 		{"agent_off", true, ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff, Contract: testContract}},
 	}

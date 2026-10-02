@@ -77,6 +77,9 @@ type ComposeOptions struct {
 	// PersonaLevel is the persona level; empty (or anything but PersonaOff)
 	// is the mode's profile (ProfileFor). No config sets it.
 	PersonaLevel PersonaLevel
+	// Window is the model's resolved context window in tokens
+	// (config.ResolveContextLimit); 0 means unknown: no small-window guard.
+	Window int
 	// Contract is the agent operating contract. Used in ModeAgent only.
 	Contract string
 	// Sliders overrides slider.json for this prompt (a subagent's persona
@@ -104,19 +107,21 @@ var now = time.Now
 // Compose builds a system prompt. Every caller goes through here so a prompt
 // refresh or endpoint switch produces the same prompt as session start.
 //
-// Static: the persona profile (personaStatic). Dynamic, in order (W5 ruling
+// Static: the persona profile (personaStatic), stepped down by the
+// small-window guard (selectProfile) when opts.Window is known. Dynamic, in order (W5 ruling
 // 8): sliders, user identity, mode rules (the chat rules and confirm mode,
 // or the agent contract), project context, git, memories, the date (day
 // granularity, so a day's prompts share bytes). The off profile has no
 // voice to modulate, so it gets no sliders or identity, and the PersonaOff
-// level (a reporting lane) gets no chat rules either.
+// level (a reporting lane) gets no chat rules either; a chat the guard put
+// on off keeps them, confirm mode included.
 func Compose(opts ComposeOptions) Prompt {
 	want := ProfileFor(opts.Mode)
 	if opts.PersonaLevel == PersonaOff {
 		want = ProfileOff
 	}
-	pp := mustProfile(want)
-	p := Prompt{Static: personaStatic(pp), Profile: pp.Profile}
+	pp, notice := selectProfile(want, opts.Window)
+	p := Prompt{Static: personaStatic(pp), Profile: pp.Profile, Notice: notice}
 	var dynamic []string
 	if pp.Profile != ProfileOff {
 		sliders := opts.Sliders

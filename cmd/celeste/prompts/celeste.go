@@ -43,8 +43,9 @@ Read-only operations (listing files, reading, searching, status checks) do not r
 This applies to ALL write paths: direct file writes, subagent spawns for generation, bash commands that modify state.`
 
 // GetContentPrompt returns a prompt tailored for content generation.
-func GetContentPrompt(platform, format, tone, topic string) string {
-	basePrompt := Compose(ComposeOptions{Mode: ModeChat}).String()
+// window is the model's resolved context window; 0 = unknown.
+func GetContentPrompt(window int, platform, format, tone, topic string) string {
+	basePrompt := Compose(ComposeOptions{Mode: ModeChat, Window: window}).String()
 
 	var contentAddendum strings.Builder
 	contentAddendum.WriteString("\n\nCONTENT GENERATION MODE:\n")

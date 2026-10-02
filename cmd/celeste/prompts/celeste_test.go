@@ -61,7 +61,7 @@ func TestGetContentPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prompt := GetContentPrompt(tt.platform, tt.format, tt.tone, tt.topic)
+			prompt := GetContentPrompt(0, tt.platform, tt.format, tt.tone, tt.topic)
 
 			assert.NotEmpty(t, prompt, "Prompt should not be empty")
 			assert.Contains(t, prompt, "CONTENT GENERATION MODE", "Should indicate content mode")
@@ -87,7 +87,7 @@ func TestGetContentPromptPlatforms(t *testing.T) {
 
 	for _, p := range platforms {
 		t.Run(p.name, func(t *testing.T) {
-			prompt := GetContentPrompt(p.name, "", "", "")
+			prompt := GetContentPrompt(0, p.name, "", "", "")
 			assert.Contains(t, prompt, p.keyword, "Should mention platform")
 		})
 	}
@@ -106,7 +106,7 @@ func TestGetContentPromptFormats(t *testing.T) {
 
 	for _, f := range formats {
 		t.Run(f.name, func(t *testing.T) {
-			prompt := GetContentPrompt("", f.name, "", "")
+			prompt := GetContentPrompt(0, "", f.name, "", "")
 			assert.Contains(t, prompt, f.keyword, "Should mention format")
 		})
 	}
@@ -117,7 +117,7 @@ func TestGetContentPromptFormats(t *testing.T) {
 func TestContentPromptIncludesBase(t *testing.T) {
 	composeEnv(t, false)
 	base := Compose(ComposeOptions{Mode: ModeChat}).String()
-	contentPrompt := GetContentPrompt("twitter", "short", "casual", "tech")
+	contentPrompt := GetContentPrompt(0, "twitter", "short", "casual", "tech")
 	assert.True(t, strings.HasPrefix(contentPrompt, base), "content prompt should start with the chat prompt")
 	assert.Contains(t, contentPrompt, "CONTENT GENERATION MODE")
 }
