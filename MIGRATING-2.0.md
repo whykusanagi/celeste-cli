@@ -66,3 +66,10 @@ left it. `/undo` and `celeste revert` compare the file with that before
 restoring; a file changed since (by you, a formatter, a command) is left
 alone with a warning, until you repeat `/undo` or pass `--force`.
 
+## OpenAI uses the Responses API
+
+| 1.x | 2.0 |
+|---|---|
+| The `openai` provider used Chat Completions (`/v1/chat/completions`) | It uses the Responses API (`/v1/responses`), with `store: false`; nothing is kept on OpenAI's side between requests. |
+| An endpoint configured as `openai` that has no `/v1/responses` (a proxy, a gateway) | The first request gets a 404 or "unsupported endpoint"; celeste answers it through Chat Completions and stays on Chat Completions for the session. One log line says so. No config change needed. |
+| Sessions saved before 2.0 | Load and continue unchanged; their messages are sent as plain messages. |
