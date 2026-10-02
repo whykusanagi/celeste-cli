@@ -604,8 +604,8 @@ project's `.mcp.json` cannot.
 ```
 
 MCP tools are named `mcp__<server>__<tool>` and never replace another tool:
-if two servers' names sanitize to the same tool name, the first one connected
-keeps it and celeste warns about the other.
+if two servers' names sanitize to the same tool name, the server whose name
+sorts first keeps it and celeste warns about the other.
 
 Optionally, install the [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)
 companion for the persona-routed skill command wrappers (`/celeste-review`,

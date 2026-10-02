@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -106,13 +108,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	totalTools := 0
 	connectedServers := 0
 
-	for name, serverCfg := range cfg.Servers {
-		// Opt-in: skip servers not explicitly enabled before spawning any
-		// process or opening any connection, so they cost nothing at startup.
-		if !serverCfg.Enabled {
-			continue
-		}
-		if err := m.Connect(ctx, name, serverCfg); err != nil {
+	for _, name := range startOrder(cfg.Servers) {
+		if err := m.Connect(ctx, name, cfg.Servers[name]); err != nil {
 			log.Printf("[mcp] warning: %v", err)
 			continue
 		}
@@ -127,6 +124,21 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// startOrder returns the enabled servers' names, sorted. Connecting in a
+// fixed order means the server whose name sorts first keeps a tool name two
+// servers sanitize to (e.g. "a.b" and "a_b") on every launch. Servers not
+// explicitly enabled are skipped before any process is spawned or connection
+// opened, so they cost nothing at startup.
+func startOrder(servers map[string]ServerConfig) []string {
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(servers)) {
+		if servers[name].Enabled {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // loadConfig reads the manager's config: the merged discovery paths, or

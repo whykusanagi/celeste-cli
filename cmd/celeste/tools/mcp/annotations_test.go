@@ -211,3 +211,21 @@ func TestSingleConfigStampsOrigin(t *testing.T) {
 		t.Fatalf("server = %+v, trusted=%v", sc, m.trusts(sc))
 	}
 }
+
+// Start connects enabled servers in name order, so which server keeps a
+// colliding tool name is the same on every launch ("a.b" sorts before "a_b").
+func TestStartOrderIsSortedAndSkipsDisabled(t *testing.T) {
+	servers := map[string]ServerConfig{
+		"a_b": {Enabled: true},
+		"off": {Enabled: false},
+		"a.b": {Enabled: true},
+		"z":   {Enabled: true},
+	}
+	for i := 0; i < 20; i++ {
+		got := startOrder(servers)
+		want := []string{"a.b", "a_b", "z"}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("startOrder = %v, want %v", got, want)
+		}
+	}
+}
