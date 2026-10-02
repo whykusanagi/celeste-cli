@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -58,7 +59,8 @@ func (s *TodoStore) load() {
 	}
 }
 
-// save writes tasks to disk.
+// save writes tasks to disk atomically: a reader on the same workspace (a
+// summary rendering the list) never sees a torn file.
 func (s *TodoStore) save() {
 	if s.filePath == "" {
 		return
@@ -69,7 +71,7 @@ func (s *TodoStore) save() {
 		NextID int        `json:"next_id"`
 	}{Tasks: s.tasks, NextID: s.nextID}
 	data, _ := json.MarshalIndent(state, "", "  ")
-	os.WriteFile(s.filePath, data, 0644)
+	_ = atomicfile.Write(s.filePath, data, 0644)
 }
 
 // Create adds a new todo item and returns it.

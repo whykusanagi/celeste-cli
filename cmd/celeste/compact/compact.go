@@ -31,6 +31,16 @@ const (
 	perMessageOverhead = 4
 )
 
+// minSavings is the least a proactive prune must save: minSavingsTokens, or
+// a tenth of the window when that is smaller. A fixed 20k on a 40k window
+// (protected tail 10k) almost never fired (#234).
+func minSavings(window int) int {
+	if s := window / 10; s < minSavingsTokens {
+		return s
+	}
+	return minSavingsTokens
+}
+
 // EstimateTokens approximates the tokens a message costs: its text, tool-call
 // arguments and a small per-message overhead (about 4 characters per token).
 func EstimateTokens(msg tui.ChatMessage) int {
@@ -74,6 +84,11 @@ type Options struct {
 	// Force prunes even below the threshold and below the minimum saving:
 	// the reactive path after a context-overflow error, and /context compact.
 	Force bool
+	// Unseen is how many trailing messages the model has not been shown
+	// yet (new tool results; see Meter). A proactive prune never edits
+	// them: eliding a result before its first read makes the model recall
+	// it, and the recall gets elided in turn (#234). Force ignores it.
+	Unseen int
 	// Score, when set, rates how likely each elision candidate is still
 	// needed (0..1); the least-needed are elided first. A nil or empty
 	// result keeps the default oldest-first order (#175).
@@ -153,6 +168,11 @@ func Plan(msgs []tui.ChatMessage, opts Options) Result {
 		protect /= 2
 	}
 	boundary := protectedBoundary(msgs, protect)
+	if !opts.Force && opts.Unseen > 0 {
+		if first := len(msgs) - opts.Unseen; first < boundary {
+			boundary = max(first, 0)
+		}
+	}
 
 	calls := indexCalls(msgs)
 	var res Result
@@ -188,6 +208,9 @@ func Plan(msgs []tui.ChatMessage, opts Options) Result {
 		m := msgs[i]
 		if m.Role != "tool" || pruned[i] || isElided(m.Content) {
 			continue
+		}
+		if m.Name == "recall_tool_result" && !opts.Force {
+			continue // the model asked for this body back (#234)
 		}
 		if t := EstimateTokens(m) - perMessageOverhead; t >= minElideTokens {
 			cands = append(cands, cand{i, t})
@@ -225,7 +248,7 @@ func Plan(msgs []tui.ChatMessage, opts Options) Result {
 		res.Elided++
 	}
 
-	if !opts.Force && res.SavedTokens < minSavingsTokens && res.SavedTokens < needed {
+	if !opts.Force && res.SavedTokens < minSavings(opts.Window) && res.SavedTokens < needed {
 		// Not worth breaking the prompt cache for.
 		return Result{}
 	}
@@ -269,10 +292,30 @@ func indexCalls(msgs []tui.ChatMessage) map[string]callInfo {
 		for _, tc := range m.ToolCalls {
 			var args map[string]any
 			_ = json.Unmarshal([]byte(tc.Arguments), &args)
-			calls[tc.ID] = callInfo{name: tc.Name, args: args}
+			calls[tc.ID] = callInfo{name: tc.Name, args: normalizeArgs(tc.Name, args)}
 		}
 	}
 	return calls
+}
+
+// normalizeArgs drops arguments equal to the tool's defaults, so a re-read
+// with the defaults spelled out supersedes one without them (#234).
+// read_file: start_line <= 1 and end_line <= 0 mean the whole file.
+func normalizeArgs(name string, args map[string]any) map[string]any {
+	if name != "read_file" || args == nil {
+		return args
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		n, isNum := v.(float64)
+		switch {
+		case k == "start_line" && isNum && n <= 1:
+		case k == "end_line" && isNum && n <= 0:
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // rereadable tools return the current state of something, so a later
