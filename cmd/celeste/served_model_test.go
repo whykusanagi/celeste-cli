@@ -189,7 +189,7 @@ func TestAgentCommandEndToEnd(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
 			writeNamed(t, home, "e2e", `{"api_key":"k","base_url":"http://api.openai.com/v1","model":"`+tc.configured+`","timeout":10}`)
-			inner := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: ok"})
+			inner := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Text: "TASK_COMPLETE: ok"}) // api.openai.com talks Responses (2.0 W8)
 			fakeOpenAIDotCom(t, []string{"gpt-4.1-nano", "text-embedding-3-small"}, tc.aliases, inner)
 
 			stderr := runAgentCLI(t, t.TempDir())

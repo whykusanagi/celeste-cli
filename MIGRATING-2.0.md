@@ -73,3 +73,10 @@ alone with a warning, until you repeat `/undo` or pass `--force`.
 | Automatic `.grimoire` / `.gitignore` creation (chat, MCP `mode: "chat"` and `mode: "agent"`) | Stops. Nothing is written into your project unless you ask: `/init` (or `celeste init`) writes `.grimoire`, `/init agents` (or `celeste init --agents`) also writes `AGENTS.md`. The chat suggests `/init` once per session when the project has no context. Existing `.grimoire` files are read as before. |
 | The `project-init` "first visit" memory | No longer created. Existing ones stay. |
 | `AGENTS.md` / `CLAUDE.md` | Read from the workspace up to the git root and added to the project context under the grimoire (the grimoire wins on conflict). 32 KiB per file, 64 KiB in all. |
+## OpenAI uses the Responses API
+
+| 1.x | 2.0 |
+|---|---|
+| The `openai` provider used Chat Completions (`/v1/chat/completions`) | It uses the Responses API (`/v1/responses`), with `store: false`; nothing is kept on OpenAI's side between requests. |
+| An endpoint configured as `openai` that has no `/v1/responses` (a proxy, a gateway) | The first request gets a 404 or "unsupported endpoint"; celeste answers it through Chat Completions and stays on Chat Completions for the session. One log line says so. No config change needed. |
+| Sessions saved before 2.0 | Load and continue unchanged; their messages are sent as plain messages. |

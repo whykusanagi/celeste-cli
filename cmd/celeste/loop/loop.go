@@ -84,6 +84,13 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		allow := interrupts < lim.MaxRuleInterrupts
 		rep, rerr := l.request(ctx, msgs, lim, turn, allow)
 		if rerr != nil {
+			if llm.BlocksRejectedIn(rerr) {
+				// The provider refused the replayed blocks and the resend
+				// without them failed too: the refusal still stands, so the
+				// history this run returns sends the neutral view (2.0 F3).
+				msgs = tui.StripProviderBlocks(msgs)
+				l.unsynced = true
+			}
 			if ctx.Err() != nil {
 				res.StopReason = StopInterrupted
 				return msgs, res, ctx.Err()

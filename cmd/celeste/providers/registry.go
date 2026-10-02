@@ -29,6 +29,10 @@ type ProviderCapabilities struct {
 	// ExampleBaseURL is shown by `providers info` when BaseURL is empty
 	// because the endpoint is the user's own (a local server, a DO agent).
 	ExampleBaseURL string
+	// SupportsResponses marks an OpenAI-compatible provider whose endpoint
+	// serves the OpenAI Responses API; celeste then talks to it through
+	// /v1/responses instead of Chat Completions (2.0 W8).
+	SupportsResponses bool
 }
 
 // ModelInfo represents metadata about a model.
@@ -60,6 +64,7 @@ var Registry = map[string]ProviderCapabilities{
 		PreferredToolModel:      "gpt-4.1-nano",
 		RequiresAPIKey:          true,
 		IsOpenAICompatible:      true,
+		SupportsResponses:       true,
 		Notes:                   "Native function calling support. Gold standard implementation.",
 	},
 

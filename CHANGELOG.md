@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **context:** `/init` in the chat writes `.grimoire` for the project, and `/init agents` also writes an `AGENTS.md` with the detected build and test commands; `celeste init --agents` does the same from the shell. An existing file is never overwritten. A chat session in a project with no `.grimoire` and no `AGENTS.md`/`CLAUDE.md` says so once at the start.
 * **context (breaking):** celeste no longer creates `.grimoire` or edits `.gitignore` in your project: not in the chat, not in MCP `mode: "chat"` or `mode: "agent"`. Run `/init` (or `celeste init`) when you want one. See `MIGRATING-2.0.md`.
 * **sessions:** messages can carry a provider's own reply format (`provider_blocks` in session files and agent checkpoints), kept byte for byte across save and resume. Nothing fills it yet; Anthropic thinking replay and the OpenAI Responses backend build on it. Older session files load unchanged.
+* **providers:** the `openai` provider talks to OpenAI's Responses API. A reasoning model's reasoning is kept (encrypted, as OpenAI returns it) and sent back on later turns, also after `celeste resume`. An endpoint that has no Responses API is answered through Chat Completions for the rest of the session, with one log line. Other OpenAI-compatible providers (Venice, OpenRouter, local servers) still use Chat Completions.
 
 ### Bug Fixes
 
@@ -36,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **chat:** switching endpoints, `/set-model` and the model picker no longer wait on a network request inside the UI loop.
 * **chat:** when a tool result is too large and is saved to disk, the model now sees the "full output saved to" notice, which names the id `recall_tool_result` takes to page through the full output. A second, per-request 64 KiB trim used to cut the notice off ([#211](https://github.com/whykusanagi/celeste-cli/issues/211)).
 * **loop:** a tool result is capped once, at 128 KiB, when it is recorded, including when the spill file cannot be written. Requests and their retries send the conversation unchanged; nothing trims tool results per request any more. Results between 64 and 128 KiB are now sent whole, so with a small context window the first request after one can overflow it, and the compactor then prunes that result.
+* **chat:** `/set-model` and a switch between two OpenAI-compatible endpoints now change the model and URL the next request goes to, keeping the system prompt and thinking level. Before, the client kept its previous backend until the switch was to a different kind of provider.
+* **providers:** when OpenAI refuses the reasoning items celeste replays (for example after the API key changed) and the request sent without them fails too, the items are still dropped from the history, so the next turn does not fail the same way.
 
 ### Hooks
 

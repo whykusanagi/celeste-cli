@@ -656,6 +656,16 @@ type ProviderBlocks struct {
 - **Limits.** At most 100 entries per session (the oldest is evicted with its backup); no byte limit on a backup.
 - **Retention.** The first store a process opens prunes sessions that are neither among the 20 most recently changed nor changed in the last 30 days.
 
+### OpenAI transport (2.0)
+
+The `openai` provider (and any provider whose registry entry sets `SupportsResponses`) uses `llm.ResponsesBackend` on `/v1/responses`; every other OpenAI-compatible provider uses `llm.OpenAIBackend` on Chat Completions.
+
+- **History.** The whole conversation is sent on every request (`store: false`, no `previous_response_id`). A reply's output items (reasoning, message, function_call) become the assistant message's `ProviderBlocks` and are replayed in order on later turns: reasoning items byte for byte, other items without their `id`. Tool calls are keyed by `call_id`.
+- **Fallback.** An endpoint that answers 404 (not `model_not_found`), 405, 501 or a 400 "unsupported endpoint" is answered by Chat Completions and remembered for the process.
+- **Refused items.** When the endpoint refuses replayed items, the request is resent without them and the reply carries `BlocksRejected`, so the loop strips them from the history. If the resend fails too, the error is an `llm.BlocksRejectedError` and the history is stripped all the same.
+- **Switching.** `Client.UpdateConfig` rebuilds the backend when the backend type, base URL, API key or model changes, keeping the system prompt and thinking config.
+- **Server compaction.** `Client.ServerCompaction(ctx)` probes `/responses/compact` once per endpoint per process (an empty input, so no model runs). W1 decides from it whether to compact on the server or on the client ladder.
+
 ### Storage Format
 
 ```

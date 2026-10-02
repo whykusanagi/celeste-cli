@@ -98,11 +98,14 @@ func (b *ResponsesBackend) turn(ctx context.Context, messages []tui.ChatMessage,
 		markResponsesFallback(b.baseURL, err)
 		return t, false, true, nil
 	}
-	if err != nil {
-		return t, rejected, false, err
+	if err == nil {
+		defer stream.Close()
+		t, err = readResponses(stream, emit)
 	}
-	defer stream.Close()
-	t, err = readResponses(stream, emit)
+	if err != nil && rejected {
+		// The resend failed too: the refusal still stands (W8-1 review M4).
+		err = &BlocksRejectedError{Err: err}
+	}
 	return t, rejected, false, err
 }
 
