@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **config:** `"pin_model": true` (or `CELESTE_PIN_MODEL=1`) turns model resolution off; `/set-model <name> --force` pins a model for the session.
 * **sessions:** messages can carry a provider's own reply format (`provider_blocks` in session files and agent checkpoints), kept byte for byte across save and resume. Nothing fills it yet; Anthropic thinking replay and the OpenAI Responses backend build on it. Older session files load unchanged.
 * **providers:** the `openai` provider talks to OpenAI's Responses API. A reasoning model's reasoning is kept (encrypted, as OpenAI returns it) and sent back on later turns, also after `celeste resume`. An endpoint that has no Responses API is answered through Chat Completions for the rest of the session, with one log line. Other OpenAI-compatible providers (Venice, OpenRouter, local servers) still use Chat Completions.
+* **compact:** compaction summaries carry an authoritative state block ([#200](https://github.com/whykusanagi/celeste-cli/issues/200)): the workspace todo list, the files the session changed (from the checkpoint index) and the voice rule, rendered from celeste's own records rather than from what the summarizer kept.
 
 ### Bug Fixes
 

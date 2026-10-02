@@ -880,9 +880,9 @@ func handleNewCommand(cmd *Command, ctx *CommandContext) *CommandResult {
 
 ### Context Management
 
-- Automatic summarization when context window fills
-- Keeps recent messages, summarizes old ones
-- Configurable context window per provider
+Compaction (`compact`) is a ladder: prune old tool results, then summarize the older history, then `/handoff` to a new session. Before every request the loop's compactor (agent run, chat turn, MCP chat call) measures the next request with a `compact.Meter`: the history plus the system prompt and tool schemas, or the provider's prompt count for the last answered request plus what was appended since, whichever is larger. Pruning starts above `compact.Threshold(window)`, never elides a tool result the model has not seen yet or a body it just recalled (only the forced prune after an overflow may), and its minimum saving (`min(20k, window/10)`) and the summary's kept tail (`compact.KeepFor`: `min(20k, window/4)`) scale with the window, so small local windows prune instead of overflowing. Pruned bodies are spilled to disk and `recall_tool_result` restores them.
+
+Every summary's `<compacted-context>` ends with a `## Authoritative state` section rendered by `loop.Env.RenderState` (`compact.RenderState`): the workspace todo list (from `.celeste/tasks.json`), the files the session changed (the checkpoint index's `Files()`, relative to the workspace) and the voice rule (`prompts.VoiceBoundary`). It is rendered from celeste's own records on every summary, in the same bytes for the same state; a previous summary's state is cut before the summary is merged, so it is re-rendered, never summarized.
 
 ### Caching
 
