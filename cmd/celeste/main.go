@@ -341,6 +341,7 @@ func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
 // SwitchEndpoint switches to a different endpoint by loading its named config.
 func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	prevProvider := ""  // set when falling back to the base config
+	targetKey := false  // the fallback found a key for the target provider
 	fallbackModel := "" // skills.json's Venice model, for that fallback
 	// Try to load named config for the endpoint
 	cfg, err := config.LoadNamed(endpoint)
@@ -357,6 +358,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 			skillsConfig, err := config.LoadSkillsConfig()
 			if err == nil && skillsConfig.VeniceAPIKey != "" {
 				cfg.APIKey = skillsConfig.VeniceAPIKey
+				targetKey = true
 				cfg.BaseURL = skillsConfig.VeniceBaseURL
 				fallbackModel = skillsConfig.VeniceModel
 				tui.LogInfo("Loaded Venice configuration from skills.json")
@@ -364,6 +366,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 				// Fall back to environment variables
 				if veniceKey := os.Getenv("VENICE_API_KEY"); veniceKey != "" {
 					cfg.APIKey = veniceKey
+					targetKey = true
 					tui.LogInfo("Using VENICE_API_KEY from environment")
 				} else {
 					tui.LogInfo("Warning: No VENICE_API_KEY found, using default API key (will likely fail)")
@@ -394,6 +397,12 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 		}
 	} else {
 		tui.LogInfo(fmt.Sprintf("Loaded named config for endpoint: %s", endpoint))
+	}
+	if prevProvider != "" && providers.DetectProvider(cfg.BaseURL) != prevProvider && !targetKey {
+		// The startup key (CELESTE_API_KEY included) belongs to the old
+		// provider: never send it to another. The request then fails with
+		// the normal "no API key" message.
+		cfg.APIKey = ""
 	}
 	if prevProvider != "" && providers.DetectProvider(cfg.BaseURL) != prevProvider {
 		// The previous provider's models mean nothing here: drop them so
