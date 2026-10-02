@@ -165,7 +165,7 @@ func TestStdioContextCancel(t *testing.T) {
 		if err != context.Canceled {
 			t.Fatalf("expected context.Canceled, got: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(30 * time.Second): // headroom: a loaded CI box has timed out at 3s
 		t.Fatal("timeout waiting for shutdown")
 	}
 }
