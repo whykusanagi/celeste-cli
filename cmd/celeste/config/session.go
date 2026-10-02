@@ -123,14 +123,21 @@ func UniqueNanoID() string {
 	}
 }
 
-// NewSession creates a new session with a unique ID.
-func (m *SessionManager) NewSession() *Session {
+// newSessionID is a UniqueNanoID no session file in the directory has yet:
+// another celeste process may have used it on the same clock tick. Two
+// processes that both pick an ID before either saves can still collide;
+// with nanosecond IDs that takes the same tick in both.
+func (m *SessionManager) newSessionID() string {
 	id := UniqueNanoID()
-	// Another celeste process may have used this ID on the same clock tick:
-	// never hand out one whose file already exists.
 	for m.sessionsDir != "" && fileExists(filepath.Join(m.sessionsDir, id+".json")) {
 		id = UniqueNanoID()
 	}
+	return id
+}
+
+// NewSession creates a new session with a unique ID.
+func (m *SessionManager) NewSession() *Session {
+	id := m.newSessionID()
 	m.currentID = id
 
 	return &Session{
@@ -556,7 +563,7 @@ func (s *Session) SetName(name string) {
 // MergeSessions combines messages from two sessions chronologically.
 func (m *SessionManager) MergeSessions(session1, session2 *Session) *Session {
 	merged := &Session{
-		ID:        UniqueNanoID(),
+		ID:        m.newSessionID(),
 		Name:      fmt.Sprintf("%s + %s", session1.Name, session2.Name),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
