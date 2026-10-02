@@ -69,7 +69,7 @@ func TestCutIndexNeverStartsWithToolResult(t *testing.T) {
 
 // Summaries are iterative: a previous summary is fed back in and replaced.
 func TestSummarizeMergesPreviousSummary(t *testing.T) {
-	msgs := append(SummaryMessages("## Goal\nShip the parser rewrite", true),
+	msgs := append(SummaryMessages("## Goal\nShip the parser rewrite", "", true),
 		history(step{"read_file", `{"path":"a.go"}`, 40_000}, step{"read_file", `{"path":"b.go"}`, 40_000})...)
 	f := &fakeSummarizer{reply: "## Goal\nShip the parser rewrite\n## Progress\nread a.go"}
 
@@ -117,10 +117,10 @@ func TestSummarizeFailuresLeaveHistory(t *testing.T) {
 // When the kept tail starts with a user turn, an acknowledgement keeps roles
 // alternating.
 func TestSummaryMessagesAlternate(t *testing.T) {
-	if got := SummaryMessages("s", true); len(got) != 2 || got[1].Role != "assistant" {
+	if got := SummaryMessages("s", "", true); len(got) != 2 || got[1].Role != "assistant" {
 		t.Errorf("want summary + acknowledgement, got %+v", got)
 	}
-	if got := SummaryMessages("s", false); len(got) != 1 {
+	if got := SummaryMessages("s", "", false); len(got) != 1 {
 		t.Errorf("want summary only, got %+v", got)
 	}
 }

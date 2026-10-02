@@ -76,24 +76,25 @@ type Runner struct {
 // compactMessages keeps the history inside the window (#174). It prunes old
 // tool results when the history is over the compaction threshold, or
 // unconditionally when force is set (after a context-overflow error); if
-// that isn't enough it summarizes everything but the newest ~20k tokens. It
-// returns the history, progress notes for the event stream, and whether it
-// changed. It runs on the loop goroutine and must not write r.out.
-func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, force bool) ([]tui.ChatMessage, []string, bool) {
+// that isn't enough it summarizes everything but the newest
+// compact.KeepFor(window) tokens. It returns the history, progress notes for
+// the event stream, and whether it changed. It runs on the loop goroutine and must not write r.out.
+func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, meter *compact.Meter, force bool) ([]tui.ChatMessage, []string, bool) {
 	// A nil prune store only disables pruning (Prune is a no-op without
 	// one); the summary rung below must still run.
 	if r.budget == nil || (r.pruned == nil && r.summarize == nil) {
 		return msgs, nil, false
 	}
 	var notes []string
-	used := compact.Estimate(msgs) + r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
-	if last := r.budget.LastPromptTokens; last > used {
-		used = last // the API's count includes tool schemas the estimate misses
-	}
-	overhead := r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
+	meter.Overhead = r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
+	used := meter.Used(msgs)
+	// What the provider counts beyond the history estimate (the system
+	// prompt and tools, or more) still counts after a prune, as in the
+	// chat's compactWith.
+	overhead := used - compact.Estimate(msgs)
 	// Shadow reports inline: errOut may be a caller's bytes.Buffer, and the
 	// run must not outlive its output.
-	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Force: force}, func(line string) {
+	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
 		fmt.Fprintf(r.errOut, "[agent] %s\n", line)
 	}, false)
 	pruned, res := compact.Prune(msgs, opts, r.pruned)
@@ -107,11 +108,24 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 
 	// Next rung: summarize when pruning wasn't enough, or when a forced
 	// compaction (after an overflow) found nothing to prune.
-	stillOver := compact.Estimate(msgs)+overhead > compact.Threshold(r.budget.ModelLimit)
+	threshold := compact.Threshold(r.budget.ModelLimit)
+	next := compact.Estimate(msgs) + overhead
+	stillOver := next > threshold
+	// ceiling leaves the reply room: halfway from the threshold to the
+	// window, so it never takes more than half the threshold's reserve.
+	ceiling := threshold + (r.budget.ModelLimit-threshold)/2
+	if unseen := meter.Unseen(msgs); stillOver && !force && unseen > 0 && unseen <= len(msgs) &&
+		compact.Estimate(msgs[:len(msgs)-unseen])+overhead <= threshold && next <= ceiling {
+		// What keeps the history over is what the model has not seen yet:
+		// the prune left it alone and a summary cannot split a batch. Wait
+		// for the next call, after the model has seen it, unless the
+		// request would leave the reply no room (#234).
+		stillOver = false
+	}
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{}, summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, State: r.renderState()}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
 			// Always reported, not only in verbose output (TUI parity).
@@ -131,6 +145,14 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 		changed = true
 	}
 	return msgs, notes, changed
+}
+
+// renderState is the run's authoritative state for summaries (#200).
+func (r *Runner) renderState() string {
+	if r.env == nil {
+		return ""
+	}
+	return r.env.RenderState()
 }
 
 // SmallModelSummarizer returns a SummarizeFunc on its own client for the
@@ -446,7 +468,8 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 			fmt.Fprintln(errOut, notice)
 		}
 	}
-	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, 0)
+	// The tool schemas the run offers count too (#234 item 1).
+	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, compact.DefinitionTokens(client.GetSkills()))
 
 	return &Runner{
 		client:     client,
@@ -742,7 +765,7 @@ func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 		Tools:     r.registry,
 		Limits:    lim,
 		Gate:      loop.PromptGate(r.options.PromptFunc),
-		Compact:   runCompactor{r: r},
+		Compact:   &runCompactor{r: r, meter: compact.NewMeter(0)},
 		SessionID: "agent-" + state.RunID,
 		Steering:  sess.Steering(),
 		Advisor: steer.NewToolGate(r.jevGate, r.options.Workspace, func() string { return state.Goal }, func(line string) {
@@ -881,14 +904,25 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 }
 
 // runCompactor feeds the loop's usage into the token budget and runs the
-// agent's compaction ladder (#174) on the loop goroutine.
-type runCompactor struct{ r *Runner }
+// agent's compaction ladder (#174) on the loop goroutine. Its meter spans
+// the run (#234).
+type runCompactor struct {
+	r     *Runner
+	meter *compact.Meter
+}
 
-func (c runCompactor) Compact(ctx context.Context, history []tui.ChatMessage, usage *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
-	if usage != nil && c.r.budget != nil {
-		c.r.budget.AddTurn(usage.PromptTokens, usage.CompletionTokens)
+func (c *runCompactor) Compact(ctx context.Context, history []tui.ChatMessage, usage *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
+	prompt := 0
+	if usage != nil {
+		prompt = usage.PromptTokens
+		if c.r.budget != nil {
+			c.r.budget.AddTurn(usage.PromptTokens, usage.CompletionTokens)
+		}
 	}
-	return c.r.compactMessages(ctx, history, force)
+	c.meter.Observe(history, prompt)
+	out, notes, changed := c.r.compactMessages(ctx, history, c.meter, force)
+	c.meter.Sending(out)
+	return out, notes, changed
 }
 
 func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {

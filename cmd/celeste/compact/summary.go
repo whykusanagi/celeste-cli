@@ -26,6 +26,16 @@ const (
 	summaryClose = "</compacted-context>"
 )
 
+// KeepFor is how much of the newest history a summary keeps verbatim on a
+// window: keepTokens, or a quarter of the window when that is smaller. An
+// unknown window (0) keeps keepTokens.
+func KeepFor(window int) int {
+	if q := window / 4; window > 0 && q < keepTokens {
+		return q
+	}
+	return keepTokens
+}
+
 // SummarySystemPrompt is the structured template the summarizer fills in.
 // The goal is restated from the original request because it is the one
 // thing a chain of summaries most easily drifts from.
@@ -53,12 +63,19 @@ Be specific and factual; keep paths, identifiers and error text exact. If a prev
 
 // SummaryOptions controls a summary.
 type SummaryOptions struct {
-	// KeepTokens of the newest history stay verbatim (default 20k).
+	// KeepTokens of the newest history stay verbatim; 0 means
+	// KeepFor(Window).
 	KeepTokens int
+	// Window is the model's context window; it sizes the kept tail when
+	// KeepTokens is 0 (#234).
+	Window int
 	// Focus is an optional instruction from /compact [focus].
 	Focus string
 	// All summarizes the whole history, keeping no tail (/handoff).
 	All bool
+	// State is RenderState's output, appended inside the summary's
+	// <compacted-context> (#200). "" adds nothing.
+	State string
 }
 
 // SummaryResult describes a summary.
@@ -108,7 +125,11 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 	}
 	cut := len(msgs)
 	if !opts.All {
-		cut = CutIndex(msgs, opts.KeepTokens)
+		keep := opts.KeepTokens
+		if keep <= 0 {
+			keep = KeepFor(opts.Window)
+		}
+		cut = CutIndex(msgs, keep)
 	}
 	if cut <= 0 {
 		return msgs, SummaryResult{}, ErrNothingToSummarize
@@ -125,7 +146,7 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 		return msgs, SummaryResult{}, errors.New("summarize: the model returned an empty summary")
 	}
 
-	out := SummaryMessages(text, len(tail) > 0 && tail[0].Role == "user")
+	out := SummaryMessages(text, opts.State, len(tail) > 0 && tail[0].Role == "user")
 	out = append(out, tail...)
 	res := SummaryResult{
 		Cut:           cut,
@@ -142,18 +163,32 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 	return out, res, nil
 }
 
+// SummaryText is the content of the message that stands in for summarized
+// history: the summary and the authoritative state inside
+// <compacted-context>, then the instruction to continue.
+func SummaryText(summary, state string) string {
+	body := strings.TrimSpace(summary)
+	if state = strings.TrimSpace(state); state != "" {
+		body += "\n\n" + state
+	}
+	return summaryOpen + "\n" + body + "\n" + summaryClose +
+		"\nThe earlier part of this conversation was compacted into the summary above. Continue the work from it."
+}
+
+// StateMessage carries only the state, for a server compaction whose
+// summary is inside a signed block (ruling 9).
+func StateMessage(state string) tui.ChatMessage {
+	return tui.ChatMessage{Role: "user", Content: summaryOpen + "\n" + strings.TrimSpace(state) + "\n" + summaryClose, Timestamp: time.Now()}
+}
+
 // SummaryMessages builds the messages that stand in for the summarized
-// history: a user message carrying the summary (not a system message, which
-// some providers drop mid-conversation) and, when the kept tail starts with
-// a user turn, an assistant acknowledgement so roles still alternate.
-func SummaryMessages(summary string, tailStartsWithUser bool) []tui.ChatMessage {
+// history: a user message carrying the summary and state (not a system
+// message, which some providers drop mid-conversation) and, when the kept
+// tail starts with a user turn, an assistant acknowledgement so roles still
+// alternate.
+func SummaryMessages(summary, state string, tailStartsWithUser bool) []tui.ChatMessage {
 	now := time.Now()
-	out := []tui.ChatMessage{{
-		Role: "user",
-		Content: summaryOpen + "\n" + summary + "\n" + summaryClose +
-			"\nThe earlier part of this conversation was compacted into the summary above. Continue the work from it.",
-		Timestamp: now,
-	}}
+	out := []tui.ChatMessage{{Role: "user", Content: SummaryText(summary, state), Timestamp: now}}
 	if tailStartsWithUser {
 		out = append(out, tui.ChatMessage{Role: "assistant", Content: "Understood. Continuing from the summary.", Timestamp: now})
 	}
@@ -181,6 +216,13 @@ func summaryPrompt(head []tui.ChatMessage, focus string) (string, bool) {
 		body := strings.TrimPrefix(head[0].Content, summaryOpen)
 		if i := strings.Index(body, summaryClose); i >= 0 {
 			body = body[:i]
+		}
+		// The state block is re-rendered from the records, never
+		// summarized. Cut the block SummaryText (or StateMessage) appended,
+		// not a heading the summarizer echoed in its prose.
+		body = "\n" + body
+		if k := strings.LastIndex(body, "\n\n"+stateHeading+"\n"); k >= 0 {
+			body = body[:k]
 		}
 		previous = strings.TrimSpace(body)
 		start = 1

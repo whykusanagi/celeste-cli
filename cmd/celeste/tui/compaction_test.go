@@ -240,5 +240,21 @@ func TestTurnRequestCarriesTheWindow(t *testing.T) {
 	step(t, m, SendMessageMsg{Content: "go"})
 	require.Len(t, client.turns, 1)
 	assert.Equal(t, 100_000, client.turns[0].req.Window)
-	assert.Equal(t, 50_000, client.turns[0].req.Used)
+}
+
+// #234 caveat 3: "🗜 Summarizing older context…" never got an outcome line
+// when an automatic summary found nothing to summarize.
+func TestAutomaticSummarySkipSaysSo(t *testing.T) {
+	m, _ := newCompactTestApp(t)
+	m.summarizing = true
+	m, applied := m.applySummary(ContextSummarizedMsg{Err: ErrNothingToSummarize, manual: false})
+	if applied {
+		t.Fatal("nothing should be applied")
+	}
+	shown := m.chat.GetMessages()
+	require.NotEmpty(t, shown, "no outcome line")
+	last := shown[len(shown)-1]
+	if !strings.Contains(last.Content, "Summary skipped") {
+		t.Fatalf("last line = %q, want the skip notice", last.Content)
+	}
 }
