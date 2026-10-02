@@ -183,10 +183,33 @@ func Build(t testing.TB, key *Key, tag string, bin []byte) map[string][]byte {
 	return files
 }
 
-// Resign recomputes checksums.txt from the archives in files and signs it
-// and manifest.json again, after a test changed them.
+// Resign recomputes checksums.txt from the archives in files, updates the
+// sha256 of each manifest.json artifact whose archive is still in files (a
+// manifest without a readable artifacts list is left as the test wrote it),
+// and signs both again, after a test changed them.
 func Resign(t testing.TB, key *Key, files map[string][]byte) {
 	t.Helper()
+	var m map[string]any
+	if json.Unmarshal(files["manifest.json"], &m) == nil {
+		if arts, ok := m["artifacts"].([]any); ok {
+			for _, a := range arts {
+				e, ok := a.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := e["filename"].(string)
+				if b, ok := files[name]; ok {
+					h := sha256.Sum256(b)
+					e["sha256"] = hex.EncodeToString(h[:])
+				}
+			}
+			man, err := json.MarshalIndent(m, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			files["manifest.json"] = man
+		}
+	}
 	var sums strings.Builder
 	for _, p := range Platforms {
 		if a, ok := files[p.Archive]; ok {

@@ -135,6 +135,10 @@ func TestUpgradeRejectsAnUnverifiedRelease(t *testing.T) {
 			f["manifest.json"] = []byte(`{"tag": "v1.16.0"}`)
 			selfupdatetest.Resign(t, key, f)
 		}, ErrManifest},
+		{"a signed manifest that does not list this archive", func(t *testing.T, key *selfupdatetest.Key, f map[string][]byte) {
+			f["manifest.json"] = []byte(`{"tag": "v2.0.0", "artifacts": []}`)
+			selfupdatetest.Resign(t, key, f)
+		}, ErrManifest},
 		{"archive swapped after signing", func(t *testing.T, _ *selfupdatetest.Key, f map[string][]byte) {
 			f["celeste-linux-amd64.tar.gz"] = selfupdatetest.TarGz(t, map[string][]byte{"celeste-linux-amd64": []byte("evil")})
 		}, ErrChecksum},
@@ -161,6 +165,26 @@ func TestUpgradeRejectsAnUnverifiedRelease(t *testing.T) {
 			assertUnchanged(t, exe)
 		})
 	}
+}
+
+// Ruling 26: the signed manifest binds the download to its version. Someone
+// who can replace release assets but not sign them copies an older signed
+// release's checksums, their signature and its archive into this release,
+// keeping this release's real signed manifest: the archive is not the one
+// this version's manifest lists, so nothing is installed.
+func TestUpgradeRejectsChecksumsFromAnotherRelease(t *testing.T) {
+	key := selfupdatetest.NewKey(t, time.Now().Add(-time.Hour), 0)
+	files := selfupdatetest.Build(t, key, tag, official)
+	old := selfupdatetest.Build(t, key, "v1.0.0", []byte("OLD VULNERABLE"))
+	for _, name := range []string{"checksums.txt", "checksums.txt.asc", "celeste-linux-amd64.tar.gz"} {
+		files[name] = old[name]
+	}
+	s := selfupdatetest.Serve(t, tag, files)
+	exe := writeExe(t, "celeste")
+	if _, err := testUpdater(s, key, exe).Upgrade(context.Background(), tag); !errors.Is(err, ErrChecksum) {
+		t.Fatalf("err = %v, want ErrChecksum", err)
+	}
+	assertUnchanged(t, exe)
 }
 
 func TestUpgradeRejectsAnOversizedArchive(t *testing.T) {

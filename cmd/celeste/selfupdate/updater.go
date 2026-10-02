@@ -171,8 +171,9 @@ func (u *Updater) Upgrade(ctx context.Context, tag string) (string, error) {
 
 // verifyRelease gets a release's files through get and returns p's binary
 // only if, in this order: checksums.txt's signature verifies with pubKey,
-// manifest.json's signature verifies and its tag is tag, and p's archive
-// matches its signed checksum and holds the binary (ruling 26). Nothing
+// manifest.json's signature verifies, its tag is tag and it lists the same
+// SHA-256 for p's archive as checksums.txt, and p's archive matches that
+// checksum and holds the binary (ruling 26). Nothing
 // later runs unless everything earlier passed.
 func verifyRelease(get func(name string, max int64) ([]byte, error), pubKey []byte, tag string, p Platform) ([]byte, error) {
 	sums, err := get("checksums.txt", limits.Checksums)
@@ -197,12 +198,16 @@ func verifyRelease(get func(name string, max int64) ([]byte, error), pubKey []by
 	if err := VerifySignature(pubKey, man, manSig); err != nil {
 		return nil, fmt.Errorf("manifest.json: %w", err)
 	}
-	if err := CheckManifestTag(man, tag); err != nil {
+	listed, err := CheckManifest(man, tag, p.Archive)
+	if err != nil {
 		return nil, err
 	}
 	want, err := FindChecksum(sums, p.Archive)
 	if err != nil {
 		return nil, err
+	}
+	if want != listed {
+		return nil, fmt.Errorf("%w: checksums.txt and the %s manifest disagree on %s", ErrChecksum, tag, p.Archive)
 	}
 	data, err := get(p.Archive, limits.Archive)
 	if err != nil {

@@ -27,7 +27,7 @@ var ReleaseKey []byte
 var (
 	ErrBadSignature = errors.New("the release signature does not verify with celeste's release key")
 	ErrChecksum     = errors.New("the download does not match the signed checksums")
-	ErrManifest     = errors.New("the signed release manifest is for another version")
+	ErrManifest     = errors.New("the signed release manifest does not describe this download")
 )
 
 // VerifySignature checks an ASCII-armoured detached signature over signed
@@ -99,17 +99,45 @@ func FindChecksum(checksums []byte, name string) ([32]byte, error) {
 	return sum, nil
 }
 
-// CheckManifestTag checks that a signed manifest.json describes tag, which
-// binds the download to its version (ruling 26).
-func CheckManifestTag(manifest []byte, tag string) error {
+// CheckManifest checks that a signed manifest.json describes tag and
+// returns the SHA-256 it lists for archive. The caller requires that sum to
+// equal checksums.txt's, which binds the download to its version (ruling
+// 26): checksums.txt names no version, so an older release's signed
+// checksums and archive copied into this release would otherwise pass. A
+// missing, malformed or repeated entry is ErrManifest. Call it only on a
+// manifest whose signature verified.
+func CheckManifest(manifest []byte, tag, archive string) ([32]byte, error) {
+	var sum [32]byte
 	var m struct {
-		Tag string `json:"tag"`
+		Tag       string `json:"tag"`
+		Artifacts []struct {
+			Filename string `json:"filename"`
+			SHA256   string `json:"sha256"`
+		} `json:"artifacts"`
 	}
 	if err := json.Unmarshal(manifest, &m); err != nil {
-		return fmt.Errorf("%w (unreadable manifest)", ErrManifest)
+		return sum, fmt.Errorf("%w (unreadable manifest)", ErrManifest)
 	}
 	if m.Tag != tag {
-		return fmt.Errorf("%w: it is for %q, want %q", ErrManifest, m.Tag, tag)
+		return sum, fmt.Errorf("%w: it is for %q, want %q", ErrManifest, m.Tag, tag)
 	}
-	return nil
+	found := false
+	for _, a := range m.Artifacts {
+		if a.Filename != archive {
+			continue
+		}
+		if found {
+			return sum, fmt.Errorf("%w: it lists %s twice", ErrManifest, archive)
+		}
+		b, err := hex.DecodeString(a.SHA256)
+		if err != nil || len(b) != len(sum) {
+			return sum, fmt.Errorf("%w: malformed sha256 for %s", ErrManifest, archive)
+		}
+		copy(sum[:], b)
+		found = true
+	}
+	if !found {
+		return sum, fmt.Errorf("%w: it does not list %s", ErrManifest, archive)
+	}
+	return sum, nil
 }

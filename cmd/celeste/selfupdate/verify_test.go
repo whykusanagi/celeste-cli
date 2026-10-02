@@ -2,10 +2,12 @@ package selfupdate
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,18 +166,47 @@ func TestFindChecksum(t *testing.T) {
 	}
 }
 
-func TestCheckManifestTag(t *testing.T) {
+func TestCheckManifest(t *testing.T) {
 	m, err := os.ReadFile(filepath.Join("testdata", "v1.16.0", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckManifestTag(m, "v1.16.0"); err != nil {
+	const archive = "celeste-darwin-arm64.tar.gz"
+	got, err := CheckManifest(m, "v1.16.0", archive)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckManifestTag(m, "v2.0.0"); !errors.Is(err, ErrManifest) {
+	if hex.EncodeToString(got[:]) != "846ab8b14a3d2c29534d7033201f5be999a82fdc5e0d9286059949528918fb7f" {
+		t.Fatalf("sha256 = %x", got)
+	}
+	sums, err := os.ReadFile(filepath.Join("testdata", "v1.16.0", "checksums.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range Platforms {
+		fromManifest, err := CheckManifest(m, "v1.16.0", p.Archive)
+		if err != nil {
+			t.Fatalf("%s: %v", p.Archive, err)
+		}
+		if fromSums, err := FindChecksum(sums, p.Archive); err != nil || fromSums != fromManifest {
+			t.Fatalf("%s: the real manifest and checksums disagree (%v)", p.Archive, err)
+		}
+	}
+	if _, err := CheckManifest(m, "v2.0.0", archive); !errors.Is(err, ErrManifest) {
 		t.Fatalf("another tag: err = %v, want ErrManifest", err)
 	}
-	if err := CheckManifestTag([]byte("{"), "v1.16.0"); !errors.Is(err, ErrManifest) {
-		t.Fatalf("garbage: err = %v, want ErrManifest", err)
+	h := strings.Repeat("ab", 32)
+	for name, man := range map[string]string{
+		"garbage":      `{`,
+		"no artifacts": `{"tag": "v1.16.0"}`,
+		"not listed":   `{"tag": "v1.16.0", "artifacts": [{"filename": "celeste-linux-amd64.tar.gz", "sha256": "` + h + `"}]}`,
+		"listed twice": `{"tag": "v1.16.0", "artifacts": [{"filename": "` + archive + `", "sha256": "` + h + `"}, {"filename": "` + archive + `", "sha256": "` + h + `"}]}`,
+		"bad hex":      `{"tag": "v1.16.0", "artifacts": [{"filename": "` + archive + `", "sha256": "zz"}]}`,
+		"short sha256": `{"tag": "v1.16.0", "artifacts": [{"filename": "` + archive + `", "sha256": "abab"}]}`,
+		"wrong type":   `{"tag": "v1.16.0", "artifacts": {"filename": "` + archive + `"}}`,
+	} {
+		if _, err := CheckManifest([]byte(man), "v1.16.0", archive); !errors.Is(err, ErrManifest) {
+			t.Errorf("%s: err = %v, want ErrManifest", name, err)
+		}
 	}
 }
