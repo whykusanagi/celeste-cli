@@ -67,7 +67,7 @@ func profileFor(t Type, cfg *config.Config) Profile {
 			if exploreDenied[tl.Name()] {
 				return false
 			}
-			// MCP tools are never read-only, so no MCP tool passes.
+			// Only a trusted server's tools that set readOnlyHint pass (mcp.MCPTool.IsReadOnly).
 			return tl.IsReadOnly()
 		}}
 	case TypeReview:

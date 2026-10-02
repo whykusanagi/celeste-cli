@@ -61,6 +61,9 @@ type MCPTool struct {
 	// run's registry keeps working after /mcp disconnects and reconnects
 	// the server (2.0 F2e). nil: always call client.
 	resolve func(server string) (*Client, bool)
+	// trusted: the server is marked "trusted": true in a home-level
+	// config, so its readOnlyHint is honoured (2.0 W4).
+	trusted bool
 }
 
 // NewMCPTool creates a new MCPTool adapter for the given MCP tool definition.
@@ -91,11 +94,13 @@ func (m *MCPTool) IsConcurrencySafe(input map[string]any) bool {
 	return false
 }
 
-// IsReadOnly returns false because we cannot know if an MCP tool mutates state.
-// The server's readOnlyHint is deliberately not trusted here: it is the
-// server's own unverified claim, and IsReadOnly auto-approves in default mode.
+// IsReadOnly is the tool's readOnlyHint when the user marked its server
+// "trusted": true; otherwise false. The hint is the server's own unverified
+// claim, and IsReadOnly auto-approves in default mode, so an untrusted
+// server's hint is ignored.
 func (m *MCPTool) IsReadOnly() bool {
-	return false
+	a := m.def.Annotations
+	return m.trusted && a != nil && a.ReadOnlyHint != nil && *a.ReadOnlyHint
 }
 
 // ValidateInput returns nil -- validation is delegated to the MCP server.
