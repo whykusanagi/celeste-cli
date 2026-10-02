@@ -34,3 +34,11 @@ func TestCompletionGateModeDefaultsToShadow(t *testing.T) {
 		}
 	}
 }
+
+func TestJevPruneModeDefaultsToOff(t *testing.T) {
+	for in, want := range map[string]string{"": "off", "shadow": "shadow", "on": "on", "yes": "off"} {
+		if got := (&Config{JevPrune: in}).JevPruneMode(); got != want {
+			t.Errorf("jev_prune %q = %q, want %q", in, got, want)
+		}
+	}
+}

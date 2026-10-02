@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
@@ -171,7 +172,11 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
-		t.compactor = &chatCompactor{a: a, window: req.Window, used: req.Used, jev: a.jevShadow()}
+		jevMode := config.ModeOff
+		if a.baseConfig != nil {
+			jevMode = a.baseConfig.JevPruneMode()
+		}
+		t.compactor = &chatCompactor{a: a, window: req.Window, used: req.Used, jev: a.jevShadow(), jevMode: jevMode}
 		l.Compact = t.compactor
 	}
 	return l
@@ -418,19 +423,20 @@ func (c chatLLM) GetSkills() []tui.SkillDefinition {
 }
 
 // chatCompactor is the chat's loop.Compactor: before every request it
-// prunes old tool results through CompactContext (Jev shadow scoring
+// prunes old tool results through compactWith (jev_prune scoring
 // included), and records when pruning was not enough, so the chat writes a
 // summary when the turn ends.
 type chatCompactor struct {
-	a      *TUIClientAdapter
-	jev    *jev.Client // shadow scorer, resolved when the turn started; nil: off
-	window int
-	used   int          // Run's goroutine only: the tracker's count, then the provider's
-	saved  atomic.Int64 // the tokens the last prune freed, for the chat's count (read by the pump)
-	over   atomic.Bool
+	a       *TUIClientAdapter
+	jev     *jev.Client // the scorer, resolved when the turn started; nil: off
+	jevMode string      // jev_prune when the turn started: "on" scores in the loop
+	window  int
+	used    int          // Run's goroutine only: the tracker's count, then the provider's
+	saved   atomic.Int64 // the tokens the last prune freed, for the chat's count (read by the pump)
+	over    atomic.Bool
 }
 
-func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, last *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
+func (c *chatCompactor) Compact(ctx context.Context, history []tui.ChatMessage, last *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
 	if last != nil {
 		if last.TotalTokens > 0 {
 			c.used = last.TotalTokens
@@ -438,7 +444,7 @@ func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, la
 			c.used = last.PromptTokens + last.CompletionTokens
 		}
 	}
-	out := c.a.compactWith(history, c.window, c.used, force, c.jev)
+	out := c.a.compactWith(ctx, history, c.window, c.used, force, c.jev, c.jevMode)
 	c.over.Store(out.StillOver)
 	if len(out.Edits) == 0 {
 		return history, nil, false

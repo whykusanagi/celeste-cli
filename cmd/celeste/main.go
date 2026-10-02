@@ -583,15 +583,19 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 // and returns the replacement for each pruned result (#174). /context compact
 // calls it on the Update goroutine, never while a turn runs (commands wait
 // for the turn).
+//
+// With jev_prune "on" it still only asks Jev in shadow: it runs on the
+// Update goroutine, which must never wait on a network call (2.0 W3).
 func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
-	return a.compactWith(msgs, window, used, force, a.jevShadow())
+	return a.compactWith(context.Background(), msgs, window, used, force, a.jevShadow(), config.ModeShadow)
 }
 
-// compactWith prunes with jc as the Jev shadow scorer (nil: none). A chat
-// turn's compactor passes the client RunTurn resolved, so the run goroutine
-// never reads the adapter's config, which endpoint and profile switches
-// replace on the Update goroutine.
-func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client) tui.CompactOutcome {
+// compactWith prunes with jc as the Jev scorer (nil: none) in jevMode
+// ("on" or "shadow", compact.WithJev). A chat turn's compactor passes the
+// client and mode RunTurn resolved, so the run goroutine never reads the
+// adapter's config, which endpoint and profile switches replace on the
+// Update goroutine.
+func (a *TUIClientAdapter) compactWith(ctx context.Context, msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client, jevMode string) tui.CompactOutcome {
 	a.compactMu.Lock()
 	defer a.compactMu.Unlock()
 	if est := compact.Estimate(msgs); est > used {
@@ -603,11 +607,7 @@ func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int,
 			a.pruned = store
 		}
 	}
-	opts := compact.Options{Window: window, Used: used, Force: force}
-	report := func(compact.Result) {}
-	if jc != nil {
-		opts, report = compact.Shadow(jc, msgs, opts, tui.LogInfo, true)
-	}
+	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Force: force}, tui.LogInfo, true)
 	after, res := compact.Prune(msgs, opts, a.pruned)
 	report(res)
 	out := tui.CompactOutcome{
@@ -625,7 +625,8 @@ func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int,
 	return out
 }
 
-// jevShadow returns the Jev client when jev_prune is "shadow", resolved once
+// jevShadow returns the Jev client when jev_prune is "shadow" or "on",
+// resolved once
 // per config. Reports go to the log file: the TUI owns the terminal. Update
 // goroutine only (CompactContext, RunTurn).
 func (a *TUIClientAdapter) jevShadow() *jev.Client {
@@ -635,7 +636,7 @@ func (a *TUIClientAdapter) jevShadow() *jev.Client {
 		return a.jev
 	}
 	a.jevFor, a.jev = a.baseConfig, nil
-	if a.baseConfig == nil || a.baseConfig.JevPrune != "shadow" {
+	if a.baseConfig == nil || a.baseConfig.JevPruneMode() == config.ModeOff {
 		return nil
 	}
 	c, err := jev.NewFromEnv()

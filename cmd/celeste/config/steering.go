@@ -39,3 +39,6 @@ func (c *Config) WatchdogMode() string {
 func (c *Config) CompletionGateMode() string {
 	return mode(c.CompletionGate, ModeShadow, ModeShadow, ModeOn)
 }
+
+// JevPruneMode is jev_prune: "off" (default), "shadow" or "on".
+func (c *Config) JevPruneMode() string { return mode(c.JevPrune, ModeOff, ModeShadow, ModeOn) }

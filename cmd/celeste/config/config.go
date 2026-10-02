@@ -107,8 +107,10 @@ type Config struct {
 	PinModel bool `json:"pin_model,omitempty"`
 	// JevPrune turns on TypeSafe Jev as a judge for context pruning (#175).
 	// "shadow" asks Jev in the background and only logs what it would have
-	// pruned; anything else is off. Redacted excerpts of old tool results go
-	// to TypeSafe. The key comes from TYPESAFE_API_KEY or ~/.celeste/typesafe.key.
+	// pruned; "on" (2.0 W3) elides the least-needed results first, asking
+	// Jev inside the loop (2.5 s cap, rules on any error); anything else is
+	// off. Redacted excerpts of old tool results go to TypeSafe. The key
+	// comes from TYPESAFE_API_KEY or ~/.celeste/typesafe.key.
 	JevPrune string `json:"jev_prune,omitempty"`
 	// Oracle picks the judge for steering questions (2.0 W3):
 	// "heuristic" (default), "llm" (the small model) or "jev". The
