@@ -6,16 +6,17 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 )
 
 // ConfigStamp fingerprints (path, mtime, size) the config files Setup bakes
 // into an Env, so an owner that keeps an Env can replace it as soon as one
-// changes: a new deny rule, hook, trust approval, skill, MCP server or
-// grimoire edit applies to the next run. A directory's mtime covers files
-// added to or removed from it; an edit inside one is not seen. MCP chat's
-// Env cache and Parent use it.
+// changes: a new deny rule, hook, trust approval, skill, MCP server,
+// grimoire or AGENTS.md / CLAUDE.md edit applies to the next run. A
+// directory's mtime covers files added to or removed from it; an edit inside
+// one is not seen. MCP chat's Env cache and Parent use it.
 func ConfigStamp(ws string) string {
 	home, _ := os.UserHomeDir()
 	paths := []string{
@@ -33,6 +34,8 @@ func ConfigStamp(ws string) string {
 		// stale (the memory tools read live).
 	}
 	paths = append(paths, mcp.GlobalConfigPaths(home)...)
+	// AGENTS.md / CLAUDE.md from the git root down to the workspace (W4).
+	paths = append(paths, grimoire.ContextFilePaths(ws)...)
 	var b strings.Builder
 	for _, p := range paths {
 		if fi, err := os.Stat(p); err == nil {
