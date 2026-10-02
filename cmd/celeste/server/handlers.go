@@ -234,6 +234,7 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 	defer runner.Close()
 
 	state, err := runner.RunGoal(ctx, goal)
+	healthFrom(ctx).record(err) // nil-safe: a direct call in tests has no tally
 	if err != nil {
 		return agentOutcome{}, fmt.Errorf("agent error: %w", err)
 	}
@@ -330,7 +331,7 @@ func (s *Server) runAgentMode(ctx context.Context, cfg *config.Config, goal, wor
 	cfg = s.servedConfig(ctx, cfg)
 	// The background goroutine must outlive this request, so it cannot inherit
 	// the request context — that is cancelled the moment we return the handle.
-	ctx = withCost(ctx, &s.cost)
+	ctx = withHealth(withCost(ctx, &s.cost), &s.health)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	type outcome struct {
@@ -461,6 +462,7 @@ func registerCelesteContentTool(s *Server) {
 		}
 
 		result, err := client.SendMessageSync(ctx, messages, nil)
+		s.health.record(err)
 		if err != nil {
 			return nil, fmt.Errorf("content generation error: %w", err)
 		}
@@ -544,7 +546,8 @@ func registerCelesteStatusTool(s *Server) {
 			// restarts, and this is the field that says so.
 			"commit": BuildCommit(),
 			"uptime": time.Since(startTime).Round(time.Second).String(),
-			"health": "ok",
+			// "degraded" while the latest completion failed (2.0 W3).
+			"health": s.health.state(),
 		}
 
 		if cfg != nil {
@@ -559,6 +562,11 @@ func registerCelesteStatusTool(s *Server) {
 		status["grimoire"] = grimoireStatus(s.config.Workspace)
 		status["project"] = s.projectStatus(s.config.Workspace)
 		status["session_cost"] = s.cost.snapshot()
+		// Additive fields (2.0 W3): completion outcomes, the oracle's
+		// latency and hit rate, and stream-rule fires.
+		status["completions"] = s.health.snapshot()
+		status["oracle"] = oracleStatus(cfg)
+		status["rules"] = rulesStatus(cfg)
 
 		data, err := json.MarshalIndent(status, "", "  ")
 		if err != nil {
