@@ -60,3 +60,28 @@ func TestGrimoireCommandShowsContextFileWarnings(t *testing.T) {
 		t.Fatalf("/grimoire should show the cap warning:\n%.300s", last[len(last)-min(300, len(last)):])
 	}
 }
+
+// With nothing on disk, /grimoire says so and shows the context this
+// session loaded at start, not the text an earlier /grimoire showed.
+func TestGrimoireCommandFallsBackToTheSessionContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	m, _ := newCompactTestApp(t)
+	m = m.SetWorkDir(ws).WithGrimoireContent("SESSION CONTEXT")
+	agents := filepath.Join(ws, "AGENTS.md")
+	if err := os.WriteFile(agents, []byte("use tabs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = step(t, m, SendMessageMsg{Content: "/grimoire"})
+	if err := os.Remove(agents); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = step(t, m, SendMessageMsg{Content: "/grimoire"})
+	msgs := m.DebugMessages()
+	last := msgs[len(msgs)-1].Content
+	if !strings.Contains(last, "No .grimoire") || !strings.Contains(last, "SESSION CONTEXT") || strings.Contains(last, "use tabs") {
+		t.Fatalf("/grimoire with nothing on disk:\n%s", last)
+	}
+}

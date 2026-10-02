@@ -64,7 +64,7 @@ type AppModel struct {
 	modelCheckPending bool   // the restored model needs a catalog load (Init runs it)
 	version           string // Application version (e.g., "1.0.1")
 	build             string // Build identifier (e.g., "bubbletea-tui")
-	grimoireContent   string // Resolved .grimoire content for /grimoire command
+	grimoireContent   string // project context loaded at session start, for /grimoire
 	codeGraphSummary  string // Code graph stats for /index command
 
 	// Simulated typing state
@@ -1128,12 +1128,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "grimoire":
 				// Re-read from disk so edits are reflected immediately
 				// (2.0 W4, ruling 2); celeste grimoire shows the same text.
+				// With nothing on disk, the context this session loaded at
+				// start still applies, so it is shown under that note.
 				text, found := grimoire.Describe(m.projectDir())
-				switch {
-				case found:
-					m.grimoireContent = text
-				case m.grimoireContent != "":
-					text = m.grimoireContent
+				if !found && m.grimoireContent != "" {
+					text += "\n\nThis session loaded at start:\n\n" + m.grimoireContent
 				}
 				m.chat = m.chat.AddSystemMessage(text)
 				return m, nil
