@@ -8,7 +8,7 @@ import (
 	"image"
 	"image/color/palette"
 	"image/gif"
-	_ "image/jpeg"
+	"image/jpeg"
 	"image/png"
 	"strings"
 	"testing"
@@ -190,4 +190,47 @@ func TestHeaderReadersSurviveTruncation(t *testing.T) {
 		}
 	}
 	assert.True(t, gifAnimated(imagefittest.AnimatedGIF(t)))
+}
+
+// pngHeader is a PNG signature and IHDR claiming w×h, with no pixel data.
+func pngHeader(w, h uint32) []byte {
+	ihdr := []byte("IHDR")
+	ihdr = binary.BigEndian.AppendUint32(ihdr, w)
+	ihdr = binary.BigEndian.AppendUint32(ihdr, h)
+	ihdr = append(ihdr, 8, 0, 0, 0, 0)
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0d")
+	data = append(data, ihdr...)
+	return binary.BigEndian.AppendUint32(data, crc32.ChecksumIEEE(ihdr))
+}
+
+func TestFitRefusesMoreThan50MegapixelsBeforeDecoding(t *testing.T) {
+	// 7500×7000 is under the 8000 px edge but 52.5 MP; resizing it for a
+	// 2000 px cap would decode about 210 MB.
+	_, err := Fit(pngHeader(7500, 7000), "png", Anthropic.WithMaxDim(2000))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too many pixels")
+}
+
+func TestFitUnreadableImageErrorDoesNotLeadWithASizeLimit(t *testing.T) {
+	_, err := Fit([]byte("definitely not an image"), "png", Universal)
+	require.Error(t, err)
+	var fe *FitError
+	require.True(t, errors.As(err, &fe))
+	assert.True(t, strings.HasPrefix(err.Error(), "png image is not readable: "), err.Error())
+	assert.NotContains(t, err.Error(), "5 MB")
+}
+
+func TestFitShrinksALargeJPEGToTheCap(t *testing.T) {
+	src := image.NewYCbCr(image.Rect(0, 0, 900, 600), image.YCbCrSubsampleRatio420)
+	for i := range src.Y {
+		src.Y[i] = byte(i)
+	}
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, src, nil))
+	res, err := Fit(buf.Bytes(), "jpeg", Anthropic.WithMaxDim(300))
+	require.NoError(t, err)
+	assert.True(t, res.Changed)
+	assert.Equal(t, "jpeg", res.Format)
+	w, h := dims(t, res.Data)
+	assert.Equal(t, [2]int{300, 200}, [2]int{w, h})
 }

@@ -1,8 +1,11 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -57,4 +60,13 @@ func TestReadFileRefusesAnImageItCannotFit(t *testing.T) {
 	assert.Nil(t, md, "no base64 is attached to a refusal")
 	assert.Contains(t, content, "5 MB")
 	assert.Contains(t, content, "PNG or JPEG")
+}
+
+func TestReadFileNamesTheFormatTheBytesAre(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, image.NewGray(image.Rect(0, 0, 8, 8)), nil))
+	content, md, isErr := readImage(t, "photo.png", buf.Bytes()) // a JPEG saved as .png
+	require.False(t, isErr, content)
+	assert.Equal(t, "jpeg", md["format"])
+	assert.Equal(t, "Image file: photo.png (jpeg, "+strconv.Itoa(buf.Len())+" bytes)", content)
 }

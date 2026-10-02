@@ -126,7 +126,7 @@ func TestBackendsSendTheNoteInPlaceOfTheImage(t *testing.T) {
 	})
 	t.Run("google", func(t *testing.T) {
 		got := encode((&GoogleBackend{config: &Config{}}).convertMessagesToGenAI(imageLoop("gif", []byte("not a gif"))))
-		assert.Contains(t, got, "omitted: Gemini allows")
+		assert.Contains(t, got, "omitted: gif image is not readable")
 		assert.NotContains(t, got, "inlineData")
 	})
 	t.Run("openai chat on xAI", func(t *testing.T) {

@@ -263,7 +263,7 @@ func (t *ReadFileTool) readImageFile(targetPath, realPath, relPath, ext string) 
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("image %s not attached: %v", relPath, err)}, nil
 	}
-	content := fmt.Sprintf("Image file: %s (%s, %d bytes)", relPath, format, len(data))
+	content := fmt.Sprintf("Image file: %s (%s, %d bytes)", relPath, res.Format, len(data))
 	md := map[string]any{"type": "image", "format": res.Format, "filename": filepath.Base(targetPath)}
 	if res.Changed {
 		ow, oh := decodeDims(data)

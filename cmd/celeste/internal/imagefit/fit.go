@@ -34,7 +34,14 @@ type FitError struct {
 	Reason string
 }
 
+// unreadable starts the Reason of an image that would not decode.
+const unreadable = "not a readable image: "
+
 func (e *FitError) Error() string {
+	if detail, ok := strings.CutPrefix(e.Reason, unreadable); ok {
+		// No size limit was broken; don't lead with one.
+		return fmt.Sprintf("%s image is not readable: %s", e.Format, detail)
+	}
 	return fmt.Sprintf("%s allows %s per image (base64) in %s; this %s image is %s (%s)",
 		e.Limits.Provider, limitMB(e.Limits.MaxB64), strings.Join(e.Limits.Formats, "/"), e.Format, mb(e.B64), e.Reason)
 }
@@ -53,8 +60,8 @@ const (
 	maxAttempts = 8
 	minEdge     = 64
 	// maxDecodePixels bounds the memory a decode can take (a small file
-	// can claim huge dimensions): 8000×8000, about 256 MB as RGBA.
-	maxDecodePixels = 8000 * 8000
+	// can claim huge dimensions): 50 MP, about 200 MB as RGBA.
+	maxDecodePixels = 50_000_000
 )
 
 // isWebP reports a RIFF/WEBP header, whatever the file was called.
@@ -83,20 +90,21 @@ func Fit(data []byte, format string, lim Limits) (Result, error) {
 			}
 			return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: reason}
 		}
-		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: "not a readable image: " + err.Error()}
+		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: unreadable + err.Error()}
 	}
 	format = detected
 	if lim.Accepts(format) && B64Len(len(data)) <= lim.MaxB64 && within(cfg.Width, cfg.Height, lim.MaxDim) {
 		return Result{Data: data, Format: format, Width: cfg.Width, Height: cfg.Height}, nil
 	}
-	if cfg.Width*cfg.Height > maxDecodePixels {
+	if int64(cfg.Width)*int64(cfg.Height) > maxDecodePixels {
 		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format,
 			Reason: fmt.Sprintf("%d×%d is too many pixels to resize here; scale it down first", cfg.Width, cfg.Height)}
 	}
-	img, note, err := decodeFirst(data, format)
+	decoded, note, err := decodeFirst(data, format)
 	if err != nil {
-		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: err.Error()}
+		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: unreadable + err.Error()}
 	}
+	img := toRGBA(decoded) // once, so resize and encode take the fast paths
 	out := "png"
 	if format == "jpeg" && lim.Accepts("jpeg") {
 		out = "jpeg"
@@ -110,7 +118,9 @@ func Fit(data []byte, format string, lim Limits) (Result, error) {
 	w, h := scaled(img.Bounds().Dx(), img.Bounds().Dy(), lim.MaxDim)
 	last := len(data)
 	for range maxAttempts {
-		enc, err := encode(resize(img, w, h), out)
+		// Each attempt shrinks the previous one, not the full-size source.
+		img = resize(img, w, h)
+		enc, err := encode(img, out)
 		if err != nil {
 			return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: "re-encoding failed: " + err.Error()}
 		}
@@ -244,29 +254,43 @@ func webpSize(data []byte) (w, h int, ok bool) {
 	return 0, 0, false
 }
 
-func encode(img image.Image, format string) ([]byte, error) {
+func encode(img *image.RGBA, format string) ([]byte, error) {
 	var buf bytes.Buffer
 	var err error
-	if format == "jpeg" {
+	switch {
+	case format == "jpeg" && img.Opaque():
+		err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85})
+	case format == "jpeg": // flatten transparency onto white
 		flat := image.NewRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
 		draw.Draw(flat, flat.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 		draw.Draw(flat, flat.Bounds(), img, img.Bounds().Min, draw.Over)
 		err = jpeg.Encode(&buf, flat, &jpeg.Options{Quality: 85})
-	} else {
+	default:
 		err = png.Encode(&buf, img)
 	}
 	return buf.Bytes(), err
 }
 
-// resize is an area-average (box) downscale; it returns src when the size
-// is unchanged.
-func resize(src image.Image, w, h int) image.Image {
+// toRGBA returns img as an *image.RGBA, converting it once if needed
+// (image/draw has fast paths from YCbCr, NRGBA, Gray and Paletted).
+func toRGBA(img image.Image) *image.RGBA {
+	if r, ok := img.(*image.RGBA); ok {
+		return r
+	}
+	b := img.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(dst, dst.Bounds(), img, b.Min, draw.Src)
+	return dst
+}
+
+// resize is an area-average (box) downscale of premultiplied pixels; it
+// returns src when the size is unchanged.
+func resize(src *image.RGBA, w, h int) *image.RGBA {
 	b := src.Bounds()
 	if b.Dx() == w && b.Dy() == h {
 		return src
 	}
-	nrgba, fast := src.(*image.NRGBA)
-	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		y0, y1 := b.Min.Y+y*b.Dy()/h, b.Min.Y+(y+1)*b.Dy()/h
 		y1 = max(y1, y0+1)
@@ -276,17 +300,12 @@ func resize(src image.Image, w, h int) image.Image {
 			var r, g, bl, a, n uint64
 			for sy := y0; sy < y1; sy++ {
 				for sx := x0; sx < x1; sx++ {
-					var c color.NRGBA
-					if fast {
-						i := nrgba.PixOffset(sx, sy)
-						c = color.NRGBA{nrgba.Pix[i], nrgba.Pix[i+1], nrgba.Pix[i+2], nrgba.Pix[i+3]}
-					} else {
-						c = color.NRGBAModel.Convert(src.At(sx, sy)).(color.NRGBA)
-					}
-					r, g, bl, a, n = r+uint64(c.R), g+uint64(c.G), bl+uint64(c.B), a+uint64(c.A), n+1
+					i := src.PixOffset(sx, sy)
+					p := src.Pix[i : i+4 : i+4]
+					r, g, bl, a, n = r+uint64(p[0]), g+uint64(p[1]), bl+uint64(p[2]), a+uint64(p[3]), n+1
 				}
 			}
-			dst.SetNRGBA(x, y, color.NRGBA{uint8(r / n), uint8(g / n), uint8(bl / n), uint8(a / n)})
+			dst.SetRGBA(x, y, color.RGBA{uint8(r / n), uint8(g / n), uint8(bl / n), uint8(a / n)})
 		}
 	}
 	return dst
