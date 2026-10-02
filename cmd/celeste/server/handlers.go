@@ -19,6 +19,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -276,7 +277,7 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 	if response == "" && outBuf.Len() > 0 {
 		response = outBuf.String()
 	}
-	response = llm.StripUnbackedSpawnClaim(response, spawnRan)
+	response = rules.StripUnbackedSpawnClaim(response, spawnRan)
 	if response != "" {
 		sb.WriteString("## Response\n\n")
 		sb.WriteString(response)

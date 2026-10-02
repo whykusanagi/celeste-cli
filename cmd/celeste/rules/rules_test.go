@@ -467,3 +467,21 @@ func TestIsEditIsCheck(t *testing.T) {
 		t.Error("bash is the check; read_file is neither")
 	}
 }
+
+func TestStripUnbackedSpawnClaim(t *testing.T) {
+	fake := "Subagent spawned: subagent-sleep-task (id: task-47)"
+	// No spawn ran → fabricated claim is replaced.
+	got := StripUnbackedSpawnClaim(fake, false)
+	if got == fake || !strings.Contains(got, "no subagent was actually spawned") {
+		t.Fatalf("expected fabricated spawn claim to be stripped, got %q", got)
+	}
+	// A real spawn ran → content passes through unchanged.
+	if got := StripUnbackedSpawnClaim(fake, true); got != fake {
+		t.Fatalf("expected passthrough when spawn ran, got %q", got)
+	}
+	// Unrelated text is never touched.
+	plain := "Here is a summary of the repo."
+	if got := StripUnbackedSpawnClaim(plain, false); got != plain {
+		t.Fatalf("expected unrelated text untouched, got %q", got)
+	}
+}
