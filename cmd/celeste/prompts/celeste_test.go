@@ -66,16 +66,9 @@ func TestLoadEssenceFromFile(t *testing.T) {
 
 // TestGetSystemPrompt tests system prompt generation
 func TestGetSystemPrompt(t *testing.T) {
-	t.Run("with prompt", func(t *testing.T) {
-		prompt := GetSystemPrompt(false)
-		assert.NotEmpty(t, prompt, "Prompt should not be empty")
-		assert.Contains(t, prompt, "Celeste", "Prompt should mention Celeste")
-	})
-
-	t.Run("skip prompt", func(t *testing.T) {
-		prompt := GetSystemPrompt(true)
-		assert.Empty(t, prompt, "Prompt should be empty when skipped")
-	})
+	prompt := GetSystemPrompt()
+	assert.NotEmpty(t, prompt, "Prompt should not be empty")
+	assert.Contains(t, prompt, "Celeste", "Prompt should mention Celeste")
 }
 
 // TestBuildPromptFromEssence tests prompt construction
@@ -251,7 +244,7 @@ func TestGetContentPromptFormats(t *testing.T) {
 
 // TestPromptStructure tests that prompts have expected structure
 func TestPromptStructure(t *testing.T) {
-	prompt := GetSystemPrompt(false)
+	prompt := GetSystemPrompt()
 
 	// Check for essential content present in both v1.x and v3.0.0 schemas
 	expectedContent := []string{
@@ -281,15 +274,15 @@ func TestEssenceValidation(t *testing.T) {
 
 // TestGetSystemPromptConsistency tests that repeated calls return same result
 func TestGetSystemPromptConsistency(t *testing.T) {
-	prompt1 := GetSystemPrompt(false)
-	prompt2 := GetSystemPrompt(false)
+	prompt1 := GetSystemPrompt()
+	prompt2 := GetSystemPrompt()
 
 	assert.Equal(t, prompt1, prompt2, "Multiple calls should return identical prompts")
 }
 
 // TestContentPromptIncludesBase tests that content prompt includes base prompt
 func TestContentPromptIncludesBase(t *testing.T) {
-	basePrompt := GetSystemPrompt(false)
+	basePrompt := GetSystemPrompt()
 	contentPrompt := GetContentPrompt("twitter", "short", "casual", "tech")
 
 	assert.Contains(t, contentPrompt, strings.TrimSpace(basePrompt),
@@ -368,7 +361,7 @@ func TestLoadEssenceOverrideFallsBackToEmbedded(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, embedded.SystemPrompt, essence.SystemPrompt)
 
-			prompt := GetSystemPrompt(false)
+			prompt := GetSystemPrompt()
 			assert.True(t, strings.HasPrefix(prompt, embedded.SystemPrompt),
 				"prompt should start with the embedded persona")
 			assert.NotContains(t, prompt, "You are . ")
@@ -385,5 +378,5 @@ func TestLoadEssenceBuiltArtifactOverride(t *testing.T) {
 	essence, err := LoadEssence()
 	require.NoError(t, err)
 	assert.Equal(t, "3.1.0", essence.Version)
-	assert.True(t, strings.HasPrefix(GetSystemPrompt(false), "You are Celeste. BUILT-FROM-CONTAINER"))
+	assert.True(t, strings.HasPrefix(GetSystemPrompt(), "You are Celeste. BUILT-FROM-CONTAINER"))
 }

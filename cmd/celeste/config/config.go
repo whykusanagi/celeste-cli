@@ -138,9 +138,6 @@ type Config struct {
 	// is given. Exactly one file should set it; the first match wins.
 	Default bool `json:"default,omitempty"`
 
-	// Persona settings
-	SkipPersonaPrompt bool `json:"skip_persona_prompt"`
-
 	// Confirm mode: when true, Celeste proposes actions before executing
 	// write/generate operations. When false, she auto-executes.
 	ConfirmActions bool `json:"confirm_actions,omitempty"`
@@ -270,7 +267,6 @@ func DefaultConfig() *Config {
 		BaseURL:           seed.BaseURL,
 		Model:             seed.DefaultModel,
 		Timeout:           60,
-		SkipPersonaPrompt: false,
 		SimulateTyping:    true,
 		TypingSpeed:       DefaultTypingSpeed,
 		MaxToolIterations: DefaultMaxToolIterations,

@@ -88,3 +88,11 @@ func TestRemovedTemplatesError(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "no profile may be written")
 	require.NoError(t, createConfigTemplate("openai"), "live templates still work")
 }
+
+func TestSkipPersonaErrorPointsToMigrationGuide(t *testing.T) {
+	assert.NoError(t, skipPersonaError(""))
+	err := skipPersonaError("true")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--skip-persona was removed in celeste 2.0")
+	assert.Contains(t, err.Error(), "MIGRATING-2.0.md")
+}

@@ -44,9 +44,7 @@ func TestComposeGolden(t *testing.T) {
 		{"chat", false, ComposeOptions{Mode: ModeChat}},
 		{"chat_confirm", true, ComposeOptions{Mode: ModeChat}},
 		{"chat_context", false, ComposeOptions{Mode: ModeChat, ProjectContext: "PROJECT", GitSnapshot: "GIT"}},
-		{"chat_skip_persona", true, ComposeOptions{Mode: ModeChat, SkipPersona: true, ProjectContext: "PROJECT"}},
 		{"agent", true, ComposeOptions{Mode: ModeAgent, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"}},
-		{"agent_skip_persona", true, ComposeOptions{Mode: ModeAgent, SkipPersona: true, Contract: testContract}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,14 +123,11 @@ func TestComposeSliderOverride(t *testing.T) {
 // The legacy helpers are Compose in chat mode.
 func TestLegacyHelpersUseCompose(t *testing.T) {
 	composeEnv(t, false)
-	if GetSystemPrompt(false) != Compose(ComposeOptions{Mode: ModeChat}) {
+	if GetSystemPrompt() != Compose(ComposeOptions{Mode: ModeChat}) {
 		t.Error("GetSystemPrompt differs from Compose chat mode")
 	}
-	if GetSystemPrompt(true) != "" {
-		t.Error("GetSystemPrompt(true) should be empty")
-	}
 	want := Compose(ComposeOptions{Mode: ModeChat, ProjectContext: "P", GitSnapshot: "G"})
-	if GetSystemPromptWithContext(false, "P", "G") != want {
+	if GetSystemPromptWithContext("P", "G") != want {
 		t.Error("GetSystemPromptWithContext differs from Compose")
 	}
 }

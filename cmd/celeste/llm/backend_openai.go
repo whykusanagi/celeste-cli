@@ -457,9 +457,7 @@ func (b *OpenAIBackend) Close() error {
 func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.ChatCompletionMessage {
 	var result []openai.ChatCompletionMessage
 
-	// Add system prompt if set. The SkipPersonaPrompt flag controls whether the
-	// Celeste VTuber persona is prepended (handled upstream in runtime.go), not
-	// whether the system prompt itself is omitted — so we always include it here.
+	// Add the system prompt if set.
 	//
 	// TODO(prompt-caching): When using Anthropic via OpenAI compat, structure
 	// the system message with cache_control hints for prompt caching. The

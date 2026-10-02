@@ -14,6 +14,14 @@ func setModeError(value string) error {
 	return errors.New("--set-mode was removed in celeste 2.0: chat always runs tools in a loop, so there is no mode to set. See MIGRATING-2.0.md")
 }
 
+// skipPersonaError answers --skip-persona (W5 ruling 18).
+func skipPersonaError(value string) error {
+	if value == "" {
+		return nil
+	}
+	return errors.New("--skip-persona was removed in celeste 2.0: the persona is always on in chat and agent runs. See MIGRATING-2.0.md")
+}
+
 // resolveMaxIterFlags merges --set-max-tool-iterations (newVal) and the
 // deprecated --set-claw-max-iterations (legacyVal). -1 means the flag was not
 // given; any other value <= 0 was typed by the user and is invalid, so the

@@ -768,10 +768,9 @@ func (r *Runner) newSteering(ctx context.Context, state *RunState) *steer.Sessio
 // notice printed for a feature that is not on. oracle "llm" asks the small
 // model on a client of its own, one call at a time, so a background
 // ballot never shares a client with a compaction summary. That client is
-// a plain completion (no xAI collections or features, persona skip
-// cleared: the Google backend drops the system prompt when it is set). workspace makes paths in what the
-// oracle sends workspace-relative (jev.RedactPaths). The chat, MCP chat
-// and agent runs share it.
+// a plain completion (no xAI collections or features). workspace makes
+// paths in what the oracle sends workspace-relative (jev.RedactPaths). The
+// chat, MCP chat and agent runs share it.
 func WatchdogOracle(cfg *config.Config, workspace string, logf func(string)) decide.Oracle {
 	if cfg == nil || cfg.WatchdogMode() == config.ModeOff {
 		return nil
@@ -780,7 +779,6 @@ func WatchdogOracle(cfg *config.Config, workspace string, logf func(string)) dec
 	if cfg.OracleMode() == "llm" {
 		base := llm.ConfigFrom(cfg)
 		base.Collections, base.XAIFeatures = nil, nil
-		base.SkipPersonaPrompt = false
 		small := SmallModelSummarizer(base, cfg.ResolveSmallModel())
 		var mu sync.Mutex
 		complete = func(ctx context.Context, system, user string) (string, error) {

@@ -24,7 +24,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, seed.BaseURL, config.BaseURL)
 	assert.Equal(t, seed.DefaultModel, config.Model)
 	assert.Equal(t, 60, config.Timeout)
-	assert.False(t, config.SkipPersonaPrompt)
 	assert.True(t, config.SimulateTyping)
 	assert.Equal(t, 60, config.TypingSpeed)
 	assert.Equal(t, DefaultMaxToolIterations, config.MaxToolIterations)
@@ -120,7 +119,6 @@ func TestSaveAndLoad(t *testing.T) {
 		BaseURL:           "https://test.example.com",
 		Model:             "test-model",
 		Timeout:           120,
-		SkipPersonaPrompt: true,
 		SimulateTyping:    false,
 		TypingSpeed:       50,
 		MaxToolIterations: 7,
@@ -140,7 +138,6 @@ func TestSaveAndLoad(t *testing.T) {
 	assert.Equal(t, config.BaseURL, loaded.BaseURL)
 	assert.Equal(t, config.Model, loaded.Model)
 	assert.Equal(t, config.Timeout, loaded.Timeout)
-	assert.Equal(t, config.SkipPersonaPrompt, loaded.SkipPersonaPrompt)
 	assert.Equal(t, config.SimulateTyping, loaded.SimulateTyping)
 	assert.Equal(t, config.TypingSpeed, loaded.TypingSpeed)
 	assert.Equal(t, config.MaxToolIterations, loaded.MaxToolIterations)

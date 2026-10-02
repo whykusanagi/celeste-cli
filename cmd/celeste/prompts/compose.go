@@ -30,9 +30,6 @@ Your voice, personality and the voice modulation below apply only to prose you a
 // ComposeOptions describes one system prompt.
 type ComposeOptions struct {
 	Mode Mode
-	// SkipPersona leaves out the persona core, voice boundary, user identity
-	// and sliders (skip_persona_prompt).
-	SkipPersona bool
 	// Contract is the agent operating contract. Used in ModeAgent only.
 	Contract string
 	// Sliders overrides slider.json for this prompt (a subagent's persona
@@ -57,37 +54,25 @@ var confirmActionsEnabled = func() bool {
 // Order: persona core (byte-stable, so the prefix stays cacheable), voice
 // boundary, user identity, sliders, mode contract, project context, git.
 func Compose(opts ComposeOptions) string {
-	var persona []string
-	if !opts.SkipPersona {
-		persona = append(persona, personaCore(), voiceBoundaryPrompt)
-		if user := ComposeUserPrompt(config.LoadUser()); user != "" {
-			persona = append(persona, user)
-		}
-		sliders := opts.Sliders
-		if sliders == nil {
-			sliders = config.LoadSliders()
-		}
-		if block := ComposeSliderPrompt(sliders); block != "" {
-			persona = append(persona, block)
+	persona := []string{personaCore(), voiceBoundaryPrompt}
+	if user := ComposeUserPrompt(config.LoadUser()); user != "" {
+		persona = append(persona, user)
+	}
+	sliders := opts.Sliders
+	if sliders == nil {
+		sliders = config.LoadSliders()
+	}
+	if block := ComposeSliderPrompt(sliders); block != "" {
+		persona = append(persona, block)
+	}
+	if opts.Mode == ModeChat {
+		persona = append(persona, taskExecutionPrompt)
+		if confirmActionsEnabled() {
+			persona = append(persona, confirmModePrompt)
 		}
 	}
 
-	switch opts.Mode {
-	case ModeChat:
-		// The chat rules are part of the persona prompt; with the persona
-		// skipped, chat has always run with no system rules at all.
-		if !opts.SkipPersona {
-			persona = append(persona, taskExecutionPrompt)
-			if confirmActionsEnabled() {
-				persona = append(persona, confirmModePrompt)
-			}
-		}
-	}
-
-	var sections []string
-	if len(persona) > 0 {
-		sections = append(sections, strings.TrimRight(strings.Join(persona, "\n"), "\n"))
-	}
+	sections := []string{strings.TrimRight(strings.Join(persona, "\n"), "\n")}
 	if opts.Mode == ModeAgent && opts.Contract != "" {
 		sections = append(sections, opts.Contract)
 	}

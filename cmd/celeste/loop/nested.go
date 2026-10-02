@@ -74,15 +74,14 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	e.lifeMu.Unlock()
 
 	c := &Env{
-		Mode:        ModeAgent,
-		Workspace:   ws,
-		ToolMode:    tools.ModeAgent,
-		MCP:         e.MCP,
-		opts:        e.opts,
-		skipPersona: e.skipPersona,
-		home:        e.home,
-		shared:      e.shared,
-		nested:      true,
+		Mode:      ModeAgent,
+		Workspace: ws,
+		ToolMode:  tools.ModeAgent,
+		MCP:       e.MCP,
+		opts:      e.opts,
+		home:      e.home,
+		shared:    e.shared,
+		nested:    true,
 	}
 	if opts.Warn != nil {
 		c.opts.Warn, c.opts.Notice = opts.Warn, opts.Warn
