@@ -34,11 +34,7 @@ func NewSessionTracker() *SessionTracker {
 func (t *SessionTracker) RecordUsage(model string, inputTokens, outputTokens int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	t.Model = model
-	t.TotalInput += inputTokens
-	t.TotalOutput += outputTokens
-	t.TotalCostUSD += GetCost(model, inputTokens, outputTokens)
+	t.record(model, inputTokens, outputTokens)
 	t.Turns++
 }
 
@@ -47,7 +43,11 @@ func (t *SessionTracker) RecordUsage(model string, inputTokens, outputTokens int
 func (t *SessionTracker) RecordCost(model string, inputTokens, outputTokens int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.record(model, inputTokens, outputTokens)
+}
 
+// record adds usage and its cost; the caller holds t.mu.
+func (t *SessionTracker) record(model string, inputTokens, outputTokens int) {
 	t.Model = model
 	t.TotalInput += inputTokens
 	t.TotalOutput += outputTokens

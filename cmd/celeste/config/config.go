@@ -83,6 +83,10 @@ type WalletSecuritySettingsConfig struct {
 // claw_max_tool_iterations; migrate.go maps the old key).
 const DefaultMaxToolIterations = 25
 
+// DefaultTypingSpeed is typing_speed's default, in characters per second
+// (3 characters per 50ms animation tick).
+const DefaultTypingSpeed = 60
+
 // Config holds all configuration for Celeste CLI.
 type Config struct {
 	// API settings
@@ -268,7 +272,7 @@ func DefaultConfig() *Config {
 		Timeout:           60,
 		SkipPersonaPrompt: false,
 		SimulateTyping:    true,
-		TypingSpeed:       60, // 3 chars per 50ms tick
+		TypingSpeed:       DefaultTypingSpeed,
 		MaxToolIterations: DefaultMaxToolIterations,
 		VeniceBaseURL:     venice.BaseURL,
 		VeniceModel:       venice.DefaultModel,

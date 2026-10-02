@@ -53,7 +53,7 @@ func migrateLegacyKeys(data []byte) (out []byte, notes []string, changed bool) {
 	}
 	if v, ok := raw[typingSpeedKey]; ok && isOldTypingSpeedDefault(v) {
 		delete(raw, typingSpeedKey)
-		notes = append(notes, "removed typing_speed: it is honoured now, and this value was an old default that would type slower than before; the new default is 60 chars/sec")
+		notes = append(notes, fmt.Sprintf("removed typing_speed: it is honoured now, and this value was an old default that would type slower than before; the new default is %d chars/sec (%s)", DefaultTypingSpeed, migrationGuide))
 	}
 	if len(notes) == 0 {
 		return data, nil, false

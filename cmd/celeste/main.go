@@ -459,12 +459,13 @@ func (a *TUIClientAdapter) ActiveEndpoint() tui.ActiveEndpoint {
 		BaseURL:  c.BaseURL,
 		APIKey:   c.APIKey,
 		Model:    c.Model,
-		Pinned:   os.Getenv("CELESTE_PIN_MODEL") == "1",
 	}
-	if b := a.baseConfig; b != nil {
-		ep.AgentModel, ep.SmallModel = b.AgentModel, b.SmallModel
-		ep.Pinned = ep.Pinned || b.ModelPinned()
+	b := a.baseConfig
+	if b == nil {
+		b = &config.Config{} // CELESTE_PIN_MODEL still counts
 	}
+	ep.AgentModel, ep.SmallModel = b.AgentModel, b.SmallModel
+	ep.Pinned = b.ModelPinned()
 	return ep
 }
 
@@ -1150,7 +1151,7 @@ func createConfigTemplate(name string) error {
 		Timeout:           o.timeout,
 		SkipPersonaPrompt: o.skipPersona,
 		SimulateTyping:    true,
-		TypingSpeed:       60,
+		TypingSpeed:       config.DefaultTypingSpeed,
 		MaxToolIterations: config.DefaultMaxToolIterations,
 	}
 
