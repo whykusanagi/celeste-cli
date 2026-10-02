@@ -278,7 +278,8 @@ type TokenUsage struct {
 	CompletionTokens int
 	TotalTokens      int
 	// CacheReadTokens and CacheWriteTokens are the parts of PromptTokens
-	// served from or written to the prompt cache (Anthropic only).
+	// served from or written to the prompt cache (Anthropic; OpenAI
+	// Responses reports CacheReadTokens only).
 	CacheReadTokens  int
 	CacheWriteTokens int
 	// Estimated: celeste counted these itself, because the provider sent
