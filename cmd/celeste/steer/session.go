@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 )
@@ -126,7 +127,9 @@ func (s *Session) Steering() loop.Steering {
 
 // SetGoal sets what the ballot judges progress against (the chat: each
 // turn's prompt). A changed goal drops watchdog reminders and nits not yet
-// handed out, and the verdict of a ballot still running. Nil-safe.
+// handed out, the verdict of a ballot still running, and the turns the
+// watchdog saw (the same call under two prompts is not a loop); the request
+// cadence carries on. Nil-safe.
 func (s *Session) SetGoal(goal string) {
 	if s == nil {
 		return
@@ -140,6 +143,7 @@ func (s *Session) SetGoal(goal string) {
 	// what the user asked"): drop the ones pending and the one running.
 	s.o.Goal = goal
 	s.gen++
+	s.turns = nil
 	s.nits = nil
 	for b, rs := range s.pending {
 		kept := rs[:0]
@@ -219,8 +223,9 @@ func (s *Session) act(hits []rules.Hit) bool {
 	for _, h := range hits {
 		acting := s.o.RulesMode == config.ModeOn
 		rules.Record(h.Rule.Name, acting)
-		// The log line shows at most 80 bytes of the match.
-		matched := h.Text
+		// The log line shows at most 80 bytes of the match, secrets
+		// redacted: these lines reach log sinks.
+		matched := jev.Redact(h.Text)
 		if len(matched) > 80 {
 			matched = textutil.CutBytes(matched, 77) + "..."
 		}
