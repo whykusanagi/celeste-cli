@@ -49,6 +49,10 @@ func selectProfile(want Profile, window int) (*PersonaProfile, string) {
 	return pp, guardNotice(want, pp.Profile, window)
 }
 
+// NoticePrefix starts every surface's line for the guard's notice, so the
+// TUI, `celeste message` and `celeste agent` show it the same way.
+const NoticePrefix = "ℹ "
+
 // guardSeen holds the (want, chosen, window) notices already returned.
 var guardSeen sync.Map
 
@@ -56,8 +60,13 @@ func guardNotice(want, got Profile, window int) string {
 	if _, seen := guardSeen.LoadOrStore(fmt.Sprintf("%s>%s@%d", want, got, window), true); seen {
 		return ""
 	}
+	size := config.FormatTokenCount(window)
 	msg := fmt.Sprintf("Persona: using the %s profile instead of %s: the context window (%s tokens) is too small for it; the persona may take at most a quarter of the window. If the model's window is larger, set context_limit in your config.",
-		got, want, config.FormatTokenCount(window))
+		got, want, size)
+	if got == ProfileOff {
+		msg = fmt.Sprintf("Persona: even the lite profile would take over half of the %s-token context window, so only the persona's identity, honesty rule and voice boundary are kept. If the model's window is larger, set context_limit in your config.",
+			size)
+	}
 	log.Printf("[persona] %s", msg)
 	return msg
 }

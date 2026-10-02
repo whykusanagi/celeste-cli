@@ -93,3 +93,42 @@ func TestChatShowsTheNoticeOnceAfterASwitch(t *testing.T) {
 		t.Fatal("the prompt changed again with nothing changed")
 	}
 }
+
+// A step-down that no longer applies leaves no notice behind: a compose at a
+// small window queues the lite notice, a compose back at a large one drops
+// it, and the next turn runs on full with no lite notice (window 9500 is
+// used by no other test).
+func TestChatDropsAStaleNotice(t *testing.T) {
+	promptstest.Install(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "one"})
+	m, deps, _ := chatAppWithContextLimit(t, srv, 200000)
+	deps.adapter.baseConfig.ContextLimit = 9500
+	deps.adapter.RefreshSystemPrompt()
+	deps.adapter.baseConfig.ContextLimit = 200000
+	deps.adapter.RefreshSystemPrompt()
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "first"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "one" && turnIdle(m) }, 30*time.Second)
+	if !strings.HasPrefix(requestSystem(t, srv, 0), profileBytes(t, prompts.ProfileFull)) {
+		t.Fatal("the request is not on the full profile")
+	}
+	if n := countSystem(m, "lite profile instead of full"); n != 0 {
+		t.Fatalf("a stale lite notice shows %d times", n)
+	}
+}
+
+// The persona notice reads the same on every TUI path: an info line, not a
+// hook warning.
+func TestChatPersonaNoticeIsInfo(t *testing.T) {
+	promptstest.Install(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "one"})
+	m, deps, _ := chatAppWithContextLimit(t, srv, 200000)
+	deps.adapter.baseConfig.ContextLimit = 9600
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "first"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "one" && turnIdle(m) }, 30*time.Second)
+	if countSystem(m, prompts.NoticePrefix+"Persona: using the lite profile") != 1 {
+		t.Fatal("the turn's persona notice is not one info line")
+	}
+	if countSystem(m, "⚠ Persona:") != 0 {
+		t.Fatal("the persona notice shows as a warning")
+	}
+}

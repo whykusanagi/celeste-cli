@@ -180,7 +180,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// ruling 17). It is computed from state, not latched, so it shows once
 	// per chat and never reaches a turn.
 	if n := prompts.PersonaNotice(); n != "" {
-		app = app.WithSystemMessage("ℹ " + n)
+		app = app.WithSystemMessage(prompts.NoticePrefix + n)
 	}
 	// 2.0 W4 (ruling 6): nothing writes .grimoire implicitly any more, so a
 	// session in a project without context says how to add one.
@@ -192,7 +192,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// A window too small for the full persona says so once (W5 ruling 7),
 	// after a restored endpoint has recomposed the prompt.
 	if n := tuiClient.takePersonaNotice(); n != "" {
-		app = app.WithSystemMessage("ℹ " + n)
+		app = app.WithSystemMessage(prompts.NoticePrefix + n)
 	}
 
 	if hist := currentSession.GetCommandHistory(); len(hist) > 0 {

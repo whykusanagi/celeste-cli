@@ -16,6 +16,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -134,7 +135,7 @@ func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd
 	t := &chatTurn{ctx: ctx, cancel: cancel, box: newMailbox(), model: cfg.Model, endpoint: cfg.BaseURL, msgs: len(req.History)}
 	t.loop = a.newTurnLoop(req, t)
 	if n := a.takePersonaNotice(); n != "" {
-		t.box.put(tui.HookWarningMsg{Text: n})
+		t.box.put(tui.PersonaNoticeMsg{Text: prompts.NoticePrefix + n})
 	}
 	t.tools = len(t.loop.Client.GetSkills())
 	read := t.box.reader(req.Run)

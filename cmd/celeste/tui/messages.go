@@ -115,6 +115,12 @@ type HookWarningMsg struct {
 	Text string
 }
 
+// PersonaNoticeMsg shows the small-window guard's notice in the chat as an
+// info line (W5). Text carries its own prefix.
+type PersonaNoticeMsg struct {
+	Text string
+}
+
 // AgentCommandResultMsg is sent when a TUI /agent command completes.
 type AgentCommandResultMsg struct {
 	Output string

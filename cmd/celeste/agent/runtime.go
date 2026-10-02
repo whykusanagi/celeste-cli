@@ -26,6 +26,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
@@ -455,7 +456,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		Window:   contextLimit,
 	})
 	if sp.Notice != "" {
-		fmt.Fprintln(errOut, sp.Notice)
+		fmt.Fprintln(errOut, prompts.NoticePrefix+sp.Notice)
 	}
 	systemPrompt := sp.String()
 	client.SetSystemPrompt(systemPrompt)

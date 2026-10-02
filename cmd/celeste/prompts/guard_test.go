@@ -120,7 +120,7 @@ func TestComposeGuardFloorKeepsTheChatRules(t *testing.T) {
 	if p.Profile != ProfileOff || p.Static != publicIdentity+"\n\n"+publicHonesty+"\n\n"+mustProfile(ProfileOff).SystemPrompt {
 		t.Fatalf("got profile %s", p.Profile)
 	}
-	if p.Notice == "" || !strings.Contains(p.Notice, "off profile") {
+	if p.Notice == "" || !strings.Contains(p.Notice, "voice boundary") {
 		t.Fatalf("notice %q", p.Notice)
 	}
 	for _, want := range []string{"Task Execution Rules:", "Action Confirmation Mode:"} {
@@ -143,5 +143,26 @@ func TestContentPromptUsesTheWindow(t *testing.T) {
 	}
 	if got := GetContentPrompt(0, "", "", "", ""); !strings.HasPrefix(got, mustProfile(ProfileFull).SystemPrompt) {
 		t.Fatal("content prompt with an unknown window is not on full")
+	}
+}
+
+// A fall to off says what is kept and the half-window rule, not the quarter
+// rule, and never names the internal "off" profile (window 1700 is used by
+// no other test).
+func TestGuardNoticeAtTheFloor(t *testing.T) {
+	personaHome(t)
+	pp, n := selectProfile(ProfileFull, 1700)
+	if pp.Profile != ProfileOff {
+		t.Fatalf("got %s, want off", pp.Profile)
+	}
+	for _, want := range []string{"even the lite profile", "over half", "voice boundary", "context_limit"} {
+		if !strings.Contains(n, want) {
+			t.Errorf("notice %q lacks %q", n, want)
+		}
+	}
+	for _, banned := range []string{"quarter", "off profile"} {
+		if strings.Contains(n, banned) {
+			t.Errorf("notice %q says %q", n, banned)
+		}
 	}
 }

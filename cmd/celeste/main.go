@@ -391,7 +391,11 @@ func (a *TUIClientAdapter) applySystemPrompt() {
 	})
 	a.client.SetSystemPrompt(p.String())
 	a.promptSet, a.promptWindow = true, window
-	if p.Notice != "" {
+	// A compose on chat's own profile drops a pending notice from an earlier
+	// step-down that no longer applies.
+	if p.Profile == prompts.ProfileFor(prompts.ModeChat) {
+		a.personaNotice = ""
+	} else if p.Notice != "" {
 		a.personaNotice = p.Notice
 	}
 }
@@ -1592,7 +1596,7 @@ func runSingleMessage(message string) {
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
 	sp := prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat, Window: window})
 	if sp.Notice != "" {
-		fmt.Fprintln(os.Stderr, "ℹ "+sp.Notice)
+		fmt.Fprintln(os.Stderr, prompts.NoticePrefix+sp.Notice)
 	}
 	client.SetSystemPrompt(sp.String())
 
