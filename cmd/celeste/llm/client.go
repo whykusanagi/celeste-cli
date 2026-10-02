@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -16,7 +17,15 @@ import (
 
 // Client wraps LLM backends and provides a unified interface.
 // It automatically selects the appropriate backend (OpenAI or Google) based on the provider.
+//
+// A Client is safe for concurrent use: the TUI switches model while a turn
+// streams on the same client. mu guards backend, config, backendType,
+// systemPrompt, thinking and toolMode. A request takes one snapshot of
+// backend and config per attempt and keeps using that backend even if
+// UpdateConfig replaces it meanwhile; no lock is held across a network
+// call or a callback.
 type Client struct {
+	mu           sync.RWMutex
 	backend      LLMBackend
 	config       *Config
 	registry     *tools.Registry
@@ -150,6 +159,8 @@ func newBackend(config *Config, registry *tools.Registry, bt BackendType) (LLMBa
 
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (c *Client) SetSystemPrompt(prompt string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.systemPrompt = prompt
 	if c.backend != nil {
 		c.backend.SetSystemPrompt(prompt)
@@ -159,28 +170,50 @@ func (c *Client) SetSystemPrompt(prompt string) {
 // SetThinkingConfig configures extended thinking / reasoning effort. It is
 // kept and re-applied when UpdateConfig rebuilds the backend.
 func (c *Client) SetThinkingConfig(config ThinkingConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.thinking = &config
 	if c.backend != nil {
 		c.backend.SetThinkingConfig(config)
 	}
 }
 
-// UpdateConfig switches the client to config. The backend is rebuilt when
-// the backend type, base URL, API key or model changes, so the next
-// request goes to the new endpoint with the new model; the system prompt
-// and thinking config carry over (2.0 W8 ruling 12).
+// UpdateConfig switches the client to config. The backend is rebuilt
+// whenever any field differs, so the next request goes to the new endpoint
+// with the new model and the rest (timeout, collections, credentials)
+// reaches the backend too; the system prompt and thinking config carry
+// over (2.0 W8 ruling 12). A request already in flight finishes on the
+// backend it started with, so the old backend is not closed (every
+// backend's Close is a no-op). The backend is built outside the lock.
 func (c *Client) UpdateConfig(config *Config) {
-	old := c.config
-	c.config = config
 	bt := resolveBackendType(config)
-	if c.backend != nil && old != nil && bt == c.backendType &&
-		old.BaseURL == config.BaseURL && old.APIKey == config.APIKey && old.Model == config.Model {
-		return
+	c.mu.RLock()
+	old, oldBackend, oldType := c.config, c.backend, c.backendType
+	c.mu.RUnlock()
+	if oldBackend != nil && old != nil && bt == oldType && *old == *config {
+		c.mu.Lock()
+		// Another UpdateConfig may have installed a different backend since
+		// the snapshot; then this config needs its own backend.
+		if c.config == old && c.backend == oldBackend {
+			c.config = config
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
 	}
-	if c.backend != nil {
-		c.backend.Close()
+	backend, built := newBackend(config, c.registry, bt)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Under the lock, so no SetSystemPrompt lands between reading the
+	// current backend's state and installing the new one. Lock order is
+	// always Client.mu, then a backend's mu.
+	if nb, ok := backend.(*AnthropicBackend); ok {
+		if ob, ok := c.backend.(*AnthropicBackend); ok {
+			nb.inherit(ob)
+		}
 	}
-	c.backend, c.backendType = newBackend(config, c.registry, bt)
+	c.config = config
+	c.backend, c.backendType = backend, built
 	if c.systemPrompt != "" {
 		c.backend.SetSystemPrompt(c.systemPrompt)
 	}
@@ -191,14 +224,26 @@ func (c *Client) UpdateConfig(config *Config) {
 
 // GetConfig returns the current configuration.
 func (c *Client) GetConfig() *Config {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.config
+}
+
+// snapshot returns the backend and config a request attempt uses. The
+// caller uses them without the lock, so a concurrent UpdateConfig affects
+// only later attempts.
+func (c *Client) snapshot() (LLMBackend, *Config) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.backend, c.config
 }
 
 // ServerCompaction reports whether this client's endpoint serves
 // server-side compaction (2.0 W8; W1 consumes it). Backends without a
 // probe report CompactionUnsupported.
 func (c *Client) ServerCompaction(ctx context.Context) CompactionSupport {
-	if p, ok := c.backend.(CompactionProber); ok {
+	backend, _ := c.snapshot()
+	if p, ok := backend.(CompactionProber); ok {
 		return p.ProbeCompaction(ctx)
 	}
 	return CompactionUnsupported
@@ -236,8 +281,9 @@ type ToolCallResult struct {
 func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	var res *ChatCompletionResult
 	err := withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
+		backend, _ := c.snapshot()
 		var e error
-		res, e = c.backend.SendMessageSync(reqCtx, messages, tools)
+		res, e = backend.SendMessageSync(reqCtx, messages, tools)
 		return e
 	}, func(d time.Duration) { time.Sleep(d) })
 	return res, err
@@ -246,8 +292,8 @@ func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage
 // perAttemptTimeout is the deadline applied to each individual send attempt.
 // Falls back to 60s when the config carries no timeout.
 func (c *Client) perAttemptTimeout() time.Duration {
-	if c.config != nil && c.config.Timeout > 0 {
-		return c.config.Timeout
+	if _, cfg := c.snapshot(); cfg != nil && cfg.Timeout > 0 {
+		return cfg.Timeout
 	}
 	return 60 * time.Second
 }
@@ -289,7 +335,8 @@ func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessa
 	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
 		started := false
 		wrapped := func(chunk StreamChunk) { started = true; callback(chunk) }
-		err := c.backend.SendMessageStream(reqCtx, messages, tools, wrapped)
+		backend, _ := c.snapshot()
+		err := backend.SendMessageStream(reqCtx, messages, tools, wrapped)
 		if err != nil && started {
 			return fatalErr(err)
 		}
@@ -303,7 +350,8 @@ func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.Cha
 	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
 		started := false
 		wrapped := func(ev StreamEvent) { started = true; callback(ev) }
-		err := c.backend.SendMessageStreamEvents(reqCtx, messages, tools, wrapped)
+		backend, _ := c.snapshot()
+		err := backend.SendMessageStreamEvents(reqCtx, messages, tools, wrapped)
 		if err != nil && started {
 			return fatalErr(err)
 		}
@@ -315,12 +363,17 @@ func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.Cha
 // Agent runs call this with tools.ModeAgent; everything else stays on the
 // default, tools.ModeChat.
 func (c *Client) SetToolMode(mode tools.RuntimeMode) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.toolMode = mode
 }
 
 // GetSkills returns the tools the model may call in this client's mode.
 func (c *Client) GetSkills() []tui.SkillDefinition {
-	return skillDefinitions(c.registry, c.toolMode)
+	c.mu.RLock()
+	mode := c.toolMode
+	c.mu.RUnlock()
+	return skillDefinitions(c.registry, mode)
 }
 
 // skillDefinitions converts the registry's tools for mode into skill
