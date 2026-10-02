@@ -1076,6 +1076,10 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	m.mu.Unlock()
 
 	state, err := runner.Resume(ctx, checkpointID)
+	// The run is registered: ListRuns and the stagger scan read it under
+	// the lock, so every write from here on (typedFailure's too) holds it.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	run.EndedAt = time.Now()
 	if state != nil {
 		// CheckpointID stays as set in the struct literal (checkpointID); do

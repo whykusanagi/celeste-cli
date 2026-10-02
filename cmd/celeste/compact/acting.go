@@ -13,8 +13,9 @@ import (
 // WithJev applies jev_prune to a prune's options (#175, 2.0 W3). "on":
 // Plan asks Jev for P(needed) and elides the least-needed first (Acting).
 // "shadow": the rules decide and the returned report logs Jev's verdict
-// (Shadow; async as Shadow describes). Anything else, or a nil client,
-// leaves opts alone. Call the report after the prune.
+// (Shadow; async as Shadow describes; a synchronous report asks under ctx).
+// Anything else, or a nil client, leaves opts alone. Call the report after
+// the prune.
 func WithJev(ctx context.Context, c *jev.Client, mode string, msgs []tui.ChatMessage, opts Options, logf func(string), async bool) (Options, func(Result)) {
 	noop := func(Result) {}
 	if c == nil {
@@ -24,7 +25,7 @@ func WithJev(ctx context.Context, c *jev.Client, mode string, msgs []tui.ChatMes
 	case "on":
 		return Acting(ctx, c, msgs, opts, logf), noop
 	case "shadow":
-		return Shadow(c, msgs, opts, logf, async)
+		return shadow(ctx, c, msgs, opts, logf, async)
 	}
 	return opts, noop
 }

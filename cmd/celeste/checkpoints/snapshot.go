@@ -571,7 +571,8 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	if err != nil {
 		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
 	}
-	if cur, err := os.ReadFile(e.Path); err == nil && bytes.Equal(cur, data) {
+	cur, curErr := os.ReadFile(e.Path)
+	if curErr == nil && bytes.Equal(cur, data) {
 		// Already as checkpointed (a write that failed before changing a
 		// byte, e.g. on a read-only file): nothing to restore.
 		return nil
@@ -589,11 +590,12 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	var noTemp *atomicfile.TempError
 	if errors.As(err, &noTemp) && errors.Is(noTemp.Err, os.ErrPermission) {
 		// The directory is not writable but the file may be (the write
-		// tools change files in place): restore in place. Not atomic — a
-		// failure halfway leaves the file truncated — but the only way.
-		// Any other reason (a full disk) is reported as it is.
-		if _, serr := os.Stat(e.Path); serr == nil {
-			err = writeInPlace(e.Path, data)
+		// tools change files in place): restore in place. Not atomic, so
+		// only when the current contents could be read: a write that fails
+		// halfway puts them back. Any other reason (a full disk) is
+		// reported as it is.
+		if _, serr := os.Stat(e.Path); serr == nil && curErr == nil {
+			err = writeInPlace(e.Path, data, cur)
 		}
 	}
 	if err != nil {
@@ -606,18 +608,34 @@ func (sm *SnapshotManager) restore(e Entry) error {
 var atomicWrite = atomicfile.WriteKeepMode
 
 // writeInPlace overwrites the existing file at path with data, keeping
-// the file itself (its mode, owner, links and attributes).
-func writeInPlace(path string, data []byte) error {
+// the file itself (its mode, owner, links and attributes). prev is what the
+// file holds now: when the write fails, it is written back (best effort),
+// so a failed restore does not leave the file truncated.
+func writeInPlace(path string, data, prev []byte) error {
+	err := overwrite(path, data)
+	if err != nil {
+		if rerr := overwrite(path, prev); rerr != nil {
+			return fmt.Errorf("%w (and putting back its previous contents failed: %v)", err, rerr)
+		}
+	}
+	return err
+}
+
+// overwrite truncates the file at path and writes data to it.
+func overwrite(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(data)
+	_, err = inPlaceWrite(f, data)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	return err
 }
+
+// inPlaceWrite is overwrite's write (a test seam).
+var inPlaceWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
 
 // backupPath is e's backup in the session directory. A name that is not a
 // plain file name there (a hand-edited index) is refused, so no restore

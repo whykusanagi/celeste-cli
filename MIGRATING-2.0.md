@@ -59,12 +59,17 @@ replaces it with a new file of the same mode, so other hard links to it,
 another user's ownership, extended attributes and ACLs are not kept. When
 celeste is not permitted to create files in the file's directory, it
 overwrites the file in place instead, which keeps all of them but is not
-atomic: if that write fails halfway, the file is left partly written.
+atomic. It does so only when it can read the file's current contents, and
+puts them back if the write fails halfway; if that fails too, the error
+says so and the file may be left partly written.
 
 Each checkpoint also records the file's size and SHA-256 as celeste's write
 left it. `/undo` and `celeste revert` compare the file with that before
 restoring; a file changed since (by you, a formatter, a command) is left
-alone with a warning, until you repeat `/undo` or pass `--force`.
+alone with a warning, until you repeat `/undo` or pass `--force`. The
+check does not lock out other programs: one that writes the file after
+the check and before the restore replaces it has that edit overwritten
+without a warning.
 
 ## Project context files
 
@@ -77,8 +82,8 @@ alone with a warning, until you repeat `/undo` or pass `--force`.
 
 | 1.x | 2.0 |
 |---|---|
-| The `openai` provider used Chat Completions (`/v1/chat/completions`) | It uses the Responses API (`/v1/responses`), with `store: false`; nothing is kept on OpenAI's side between requests. |
-| An endpoint configured as `openai` that has no `/v1/responses` (a proxy, a gateway) | The first request gets a 404 or "unsupported endpoint"; celeste answers it through Chat Completions and stays on Chat Completions for the session. One log line says so. No config change needed. |
+| The `openai` provider used Chat Completions (`/v1/chat/completions`) | It uses the Responses API (`/v1/responses`), with `store: false`: OpenAI keeps no response state between requests (each request sends the whole conversation), though its own abuse-monitoring retention still applies. |
+| An endpoint configured as `openai` that has no `/v1/responses` (a proxy, a gateway) | The first request gets a 404 or "unsupported endpoint"; celeste answers it through Chat Completions and stays on Chat Completions for that endpoint until celeste restarts (for `celeste serve`, every later call too). One log line says so. No config change needed. |
 | Sessions saved before 2.0 | Load and continue unchanged; their messages are sent as plain messages. |
 
 ## Editing files
