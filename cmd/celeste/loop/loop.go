@@ -89,6 +89,12 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 				return msgs, res, ctx.Err()
 			}
 			if errors.Is(rerr, ErrRuleInterrupt) {
+				if rep.blocksRejected {
+					// The dropped reply still told us the replayed blocks
+					// were refused: the re-run must not send them (F3).
+					msgs = tui.StripProviderBlocks(msgs)
+					l.unsynced = true
+				}
 				msgs = l.rerun(msgs, turn, rep)
 				interrupts++
 				turn--
