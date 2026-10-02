@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -715,4 +716,22 @@ func TestSessionMessageToolFieldsRoundTrip(t *testing.T) {
 	for _, key := range []string{"tool_calls", "tool_call_id", "hidden", "compacted"} {
 		assert.NotContains(t, string(plain), key)
 	}
+}
+
+// Sessions hold tool output now, so the files are owner-only, including
+// files an older version wrote as 0644 (#235).
+func TestSessionFilesAreOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	manager := NewSessionManager()
+	session := manager.NewSession()
+	path := filepath.Join(manager.sessionsDir, session.ID+".json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o644)) // an older file
+	require.NoError(t, manager.Save(session))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }

@@ -126,9 +126,10 @@ func (m *SessionManager) Save(session *Session) error {
 	}
 
 	path := filepath.Join(m.sessionsDir, session.ID+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return err
 	}
+	_ = os.Chmod(path, 0600) // WriteFile keeps the mode of a file an older version wrote as 0644
 
 	// Update global analytics with this session's data
 	analytics, err := LoadGlobalAnalytics()
