@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,15 @@ import (
 
 // resolvePath checks that the resolved absolute path stays within the workspace.
 func resolvePath(workspace, input string, forWrite bool) (string, error) {
+	path, _, err := resolvePathReal(workspace, input, forWrite)
+	return path, err
+}
+
+// resolvePathReal is resolvePath that also returns real, the
+// symlink-resolved path it checked. Readers open real through
+// readFileNoFollow, so a symlink swapped in after the check fails instead
+// of escaping the workspace (ruling 4).
+func resolvePathReal(workspace, input string, forWrite bool) (path, real string, err error) {
 	workspace = filepath.Clean(workspace)
 	if input == "" {
 		input = "."
@@ -25,7 +35,7 @@ func resolvePath(workspace, input string, forWrite bool) (string, error) {
 	}
 
 	if !withinDir(workspace, candidate) {
-		return "", fmt.Errorf("path escapes workspace: %s", input)
+		return "", "", fmt.Errorf("path escapes workspace: %s", input)
 	}
 
 	// The check above is lexical, so a symlink inside the workspace that
@@ -37,17 +47,17 @@ func resolvePath(workspace, input string, forWrite bool) (string, error) {
 	}
 	realCandidate, err := resolveExisting(candidate)
 	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w", input, err)
+		return "", "", fmt.Errorf("resolve %s: %w", input, err)
 	}
 	if !withinDir(realWorkspace, realCandidate) {
-		return "", fmt.Errorf("path escapes workspace through a symlink: %s", input)
+		return "", "", fmt.Errorf("path escapes workspace through a symlink: %s", input)
 	}
 	if forWrite {
 		if reason := protectedHookFile(candidate, realCandidate); reason != "" {
-			return "", fmt.Errorf("%s", reason)
+			return "", "", fmt.Errorf("%s", reason)
 		}
 	}
-	return candidate, nil
+	return candidate, realCandidate, nil
 }
 
 // withinDir reports whether path is dir or lies under it (both cleaned).
@@ -81,6 +91,17 @@ func resolveExisting(path string) (string, error) {
 		rest = filepath.Join(filepath.Base(cur), rest)
 		cur = parent
 	}
+}
+
+// readFileNoFollow reads the whole file at real (resolvePathReal's second
+// result) through openNoFollow.
+func readFileNoFollow(real string) ([]byte, error) {
+	f, err := openNoFollow(real)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {

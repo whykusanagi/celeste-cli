@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -106,7 +105,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}, nil
 	}
 
-	targetPath, err := resolvePath(t.workspace, path, true)
+	targetPath, realPath, err := resolvePathReal(t.workspace, path, true)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
@@ -123,7 +122,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 	}
 
-	data, err := os.ReadFile(targetPath)
+	data, err := readFileNoFollow(realPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}

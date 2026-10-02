@@ -83,11 +83,11 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	sourceRel := getStringArg(input, "source", "")
 	destRel := getStringArg(input, "dest", sourceRel)
 
-	sourcePath, err := resolvePath(t.workspace, sourceRel, op == "move")
+	sourcePath, sourceReal, err := resolvePathReal(t.workspace, sourceRel, op == "move")
 	if err != nil {
 		return errResult(fmt.Sprintf("source path error: %s", err)), nil
 	}
-	destPath, err := resolvePath(t.workspace, destRel, true)
+	destPath, destReal, err := resolvePathReal(t.workspace, destRel, true)
 	if err != nil {
 		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
 	}
@@ -120,7 +120,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	srcData, err := os.ReadFile(sourcePath)
+	srcData, err := readFileNoFollow(sourceReal)
 	if err != nil {
 		return errResult(fmt.Sprintf("read source: %s", err)), nil
 	}
@@ -146,7 +146,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	if sameFile {
 		dest = sourceAfter
 	} else {
-		if b, rerr := os.ReadFile(destPath); rerr == nil {
+		if b, rerr := readFileNoFollow(destReal); rerr == nil {
 			dest = string(b)
 		} else if !os.IsNotExist(rerr) {
 			return errResult(fmt.Sprintf("read dest: %s", rerr)), nil
