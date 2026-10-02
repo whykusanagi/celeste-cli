@@ -5,6 +5,7 @@ package checkpoints
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -318,6 +319,7 @@ const (
 // The returned function releases the lock.
 func lockSession(dir string, create bool) (func(), error) {
 	path := filepath.Join(dir, lockFile)
+	token := newToken()
 	deadline := time.Now().Add(lockWait)
 	for {
 		if create {
@@ -329,8 +331,15 @@ func lockSession(dir string, create bool) (func(), error) {
 		}
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			_ = f.Close()
-			return func() { _ = os.Remove(path) }, nil
+			_, werr := f.WriteString(token)
+			if cerr := f.Close(); werr == nil {
+				werr = cerr
+			}
+			if werr != nil {
+				_ = os.Remove(path)
+				return nil, fmt.Errorf("cannot lock checkpoint index in %s: %w", dir, werr)
+			}
+			return func() { releaseLock(path, token) }, nil
 		}
 		if !create && errors.Is(err, os.ErrNotExist) {
 			if _, derr := os.Stat(dir); errors.Is(derr, os.ErrNotExist) {
@@ -339,13 +348,50 @@ func lockSession(dir string, create bool) (func(), error) {
 		}
 		// Held by someone else, or (Windows) being deleted: wait.
 		if info, serr := os.Stat(path); serr == nil && time.Since(info.ModTime()) > lockStale {
-			_ = os.Remove(path) // then retry below
+			if held, rerr := os.ReadFile(path); rerr == nil {
+				takeOverLock(path, string(held)) // then retry below
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("cannot lock checkpoint index in %s: %w", dir, err)
 		}
 		time.Sleep(lockRetry)
 	}
+}
+
+// newToken identifies one lock holder.
+func newToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+// releaseLock removes the lock at path only while it is still this
+// holder's (a holder that was too slow may have lost it to a takeover).
+func releaseLock(path, token string) {
+	if held, err := os.ReadFile(path); err == nil && string(held) == token {
+		_ = os.Remove(path)
+	}
+}
+
+// takeOverLock removes the stale lock at path if it still holds token, the
+// holder a waiter saw: it claims the file by renaming it (of two waiters,
+// one rename wins) and gives it back when what it claimed is a newer
+// holder's lock.
+func takeOverLock(path, token string) bool {
+	claim := path + ".claim-" + newToken()
+	if err := os.Rename(path, claim); err != nil {
+		return false
+	}
+	held, err := os.ReadFile(claim)
+	if err == nil && string(held) == token {
+		_ = os.Remove(claim)
+		return true
+	}
+	_ = os.Rename(claim, path) // a newer holder's lock: put it back
+	return false
 }
 
 // reloadLocked takes the index on disk as the truth: another process

@@ -491,3 +491,32 @@ func TestCheckpointOfAVeryLongFileName(t *testing.T) {
 	assert.True(t, utf8.ValidString(c.Entry().Backup))
 	assert.Equal(t, "x", read(t, filepath.Join(sm.Dir(), c.Entry().Backup)))
 }
+
+// A holder whose stale lock was taken over does not release the new
+// holder's lock when it finally finishes.
+func TestUnlockLeavesAnotherHoldersLock(t *testing.T) {
+	dir := t.TempDir()
+	unlock, err := lockSession(dir, true)
+	require.NoError(t, err)
+	lock := filepath.Join(dir, "index.lock")
+	write(t, lock, "someone-else")
+	unlock()
+	assert.Equal(t, "someone-else", read(t, lock))
+}
+
+// Two waiters both saw the same stale lock: the second must not remove the
+// lock the first took after removing the stale one.
+func TestTakeOverOnlyRemovesTheStaleLockItSaw(t *testing.T) {
+	dir := t.TempDir()
+	lock := filepath.Join(dir, "index.lock")
+	write(t, lock, "first-waiters-new-lock")
+	assert.False(t, takeOverLock(lock, "stale-token"))
+	assert.Equal(t, "first-waiters-new-lock", read(t, lock))
+
+	write(t, lock, "stale-token")
+	assert.True(t, takeOverLock(lock, "stale-token"))
+	_, err := os.Stat(lock)
+	assert.True(t, os.IsNotExist(err))
+	left, _ := filepath.Glob(filepath.Join(dir, "index.lock*"))
+	assert.Empty(t, left, "no claim file is left behind")
+}
