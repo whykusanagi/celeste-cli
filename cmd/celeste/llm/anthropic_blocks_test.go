@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -72,17 +74,31 @@ func TestAnthropicReplaysStoredBlocksByteForByte(t *testing.T) {
 }
 
 // With binding controls on, prepare adds the beta header and drop_block
-// as request options; the replayed bytes in the params are unchanged.
+// as request options. The request that reaches the wire carries both, and
+// the replayed bytes in it are unchanged.
 func TestAnthropicPrepareBindsReplayWithoutTouchingBytes(t *testing.T) {
-	b := &AnthropicBackend{config: &Config{Model: "claude-opus-5-5"}, bindingControls: true}
+	srv := fakeprovider.NewAnthropic(t, fakeprovider.Turn{Text: "ok"})
+	_, b := newAnthropicTestClient(t, srv, "claude-opus-5-5")
+	b.bindingControls = true // the fake is on 127.0.0.1; pretend it is Anthropic's endpoint
 	asst := thinkingTurn(t, b.providerKey())
 	params, opts := b.preparedParams(toolLoop(asst), nil)
 	assert.Len(t, opts, 2, "binding beta header and thinking.block_binding")
 	require.NotNil(t, params.Thinking.OfAdaptive, "always-on model: adaptive thinking carries block_binding")
-	body, _ := requestBody(t, params)
+
+	_, err := b.SendMessageSync(context.Background(), toolLoop(asst), nil)
+	require.NoError(t, err)
+	require.Len(t, srv.Requests(), 1)
+	r := srv.Requests()[0]
+	assert.Equal(t, thinkingBindingBeta, betaHeader(r))
+	assert.Equal(t, map[string]any{"prefix_mismatch_behavior": "drop_block"},
+		r.Body["thinking"].(map[string]any)["block_binding"])
+	var body anthropicRequestBody
+	require.NoError(t, json.Unmarshal(r.Raw, &body))
 	require.Len(t, body.Messages, 3)
-	for i, blk := range body.Messages[1].Content {
-		assert.Equal(t, string(asst.ProviderBlocks.Blocks[i]), string(blk), "block %d", i)
+	got := body.Messages[1].Content
+	require.Len(t, got, len(asst.ProviderBlocks.Blocks))
+	for i := range got {
+		assert.Equal(t, string(asst.ProviderBlocks.Blocks[i]), string(got[i]), "block %d", i)
 	}
 }
 
