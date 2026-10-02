@@ -68,3 +68,21 @@ func TestRealPersonaSizes(t *testing.T) {
 		t.Logf("WARNING: lite is ~%d tokens; the spec's target is <=1,500 (W5 ruling 1)", lite.Tokens())
 	}
 }
+
+// The off level with the real persona is identity, honesty, then the sealed
+// off profile, and carries nothing of the full profile (W7 ruling 5).
+func TestRealPersonaOffLevel(t *testing.T) {
+	useRealPersona(t)
+	tempHome(t)
+	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff})
+	want := publicIdentity + "\n\n" + publicHonesty + "\n\n" + mustProfile(ProfileOff).SystemPrompt
+	if !strings.HasPrefix(got, want) {
+		t.Fatal("off level is not identity + honesty + voice boundary") // never print persona text
+	}
+	if strings.Contains(got, "When I'm working in the terminal") {
+		t.Error("off carries cli_conduct.md")
+	}
+	if strings.Contains(got, mustProfile(ProfileFull).SystemPrompt) {
+		t.Error("off carries the full profile") // never print persona text
+	}
+}

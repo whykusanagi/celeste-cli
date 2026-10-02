@@ -429,7 +429,8 @@ func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string
 }
 
 // SystemPromptOpts is SystemPrompt at a persona level for this one prompt
-// (a typed explore or review subagent runs prompts.PersonaOff, 2.0 W4e).
+// (typed explore and review subagents, 2.0 W4e, and orchestrator lanes run
+// prompts.PersonaOff).
 func (e *Env) SystemPromptOpts(contract string, sliders *config.SliderConfig, level prompts.PersonaLevel) string {
 	return e.compose(e.ProjectContext, contract, sliders, level)
 }

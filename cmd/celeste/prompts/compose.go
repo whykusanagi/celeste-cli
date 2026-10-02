@@ -26,11 +26,14 @@ const (
 // level composes an empty persona section.
 type PersonaLevel string
 
-// PersonaOff is Celeste's "off" level, for the internal review and research
-// lanes (a typed explore or review subagent, 2.0 W4e): her identity line and
-// the honesty rule (publicPreamble), then the ProfileOff profile (the voice
-// boundary rule, sealed or public), with no full profile, user identity,
-// sliders or chat rules. Never less than that (owner ruling on #265).
+// PersonaOff is Celeste's "off" level, for the internal lanes that report to
+// the CLI rather than talk to the user: typed explore and review subagents
+// (2.0 W4e), orchestrator lanes and the debate reviewer. It is her identity
+// line and the honesty rule (publicPreamble), then the ProfileOff profile
+// (the voice boundary rule, sealed or public), with no full profile, user
+// identity, sliders or chat rules. Never less than that (owner ruling on
+// #265). The CLI adds identity and honesty itself, for sealed and public
+// builds alike, because the sealed off profile is the voice boundary only.
 const PersonaOff PersonaLevel = "off"
 
 // ComposeOptions describes one system prompt.
