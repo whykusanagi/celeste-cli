@@ -216,8 +216,9 @@ func GenerateTemplate(info *ProjectInfo, dir string) string {
 	return sb.String()
 }
 
-// Init creates a .grimoire file in the given directory.
-// Returns the path to the created file, or error if one already exists.
+// Init creates a .grimoire file in the given directory. It writes nothing
+// else: the project's .gitignore is left alone (2.0 W4). Returns the path to
+// the created file, or an error if one already exists.
 func Init(dir string) (string, error) {
 	grimPath := filepath.Join(dir, ".grimoire")
 
@@ -234,18 +235,6 @@ func Init(dir string) (string, error) {
 	content := GenerateTemplate(info, dir)
 	if err := os.WriteFile(grimPath, []byte(content), 0644); err != nil {
 		return "", fmt.Errorf("failed to write .grimoire: %w", err)
-	}
-
-	// Append .celeste/ to .gitignore if not already there
-	gitignorePath := filepath.Join(dir, ".gitignore")
-	if data, err := os.ReadFile(gitignorePath); err == nil {
-		if !strings.Contains(string(data), ".celeste/") {
-			f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
-			if err == nil {
-				_, _ = f.WriteString("\n# Celeste CLI local data\n.celeste/\n")
-				f.Close()
-			}
-		}
 	}
 
 	return grimPath, nil

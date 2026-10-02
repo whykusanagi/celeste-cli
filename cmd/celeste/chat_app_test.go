@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -304,5 +305,14 @@ func TestSwitchEndpointFallbackDoesNotSendTheOldKeyToAnotherProvider(t *testing.
 	}
 	if got := deps.adapter.client.GetConfig().APIKey; got != "venice-key" {
 		t.Errorf("venice key = %q", got)
+	}
+}
+
+// 2.0 W4 (ruling 5): starting the chat UI writes nothing into the project.
+func TestChatAppNoLongerCreatesAGrimoire(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, _, ws := chatApp(t, srv)
+	if _, err := os.Stat(filepath.Join(ws, ".grimoire")); !os.IsNotExist(err) {
+		t.Fatalf(".grimoire was created: %v", err)
 	}
 }

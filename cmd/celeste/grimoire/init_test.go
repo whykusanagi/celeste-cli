@@ -121,3 +121,15 @@ func TestInit_AlreadyExists(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
+
+// 2.0 W4 (ruling 5): Init writes .grimoire only; .gitignore is the user's.
+func TestInitLeavesGitignoreAlone(t *testing.T) {
+	dir := t.TempDir()
+	mk(t, filepath.Join(dir, ".gitignore"), "bin/\n")
+	if _, err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(b) != "bin/\n" {
+		t.Fatalf(".gitignore changed: %q", b)
+	}
+}
