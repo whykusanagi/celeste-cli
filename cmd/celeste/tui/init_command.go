@@ -19,33 +19,20 @@ func (m AppModel) projectDir() string {
 	return dir
 }
 
-// runInitCommand is /init [agents] (2.0 W4, ruling 7): it writes .grimoire
-// with grimoire.Init and, with "agents", AGENTS.md with grimoire.InitAgents.
-// An existing file is never overwritten; the reply says so and names it.
+// runInitCommand is /init [agents] (2.0 W4, ruling 7): grimoire.RunInit,
+// which `celeste init` runs too. Nothing is overwritten; the reply names
+// each file written or left alone.
 func runInitCommand(dir string, args []string) string {
-	steps := []func(string) (string, error){grimoire.Init}
+	agents := false
 	if len(args) > 0 {
 		if strings.ToLower(args[0]) != "agents" {
 			return "Usage: /init [agents]"
 		}
-		steps = append(steps, grimoire.InitAgents)
+		agents = true
 	}
-	var lines []string
-	wrote := false
-	for _, step := range steps {
-		path, err := step(dir)
-		switch {
-		case errors.Is(err, fs.ErrExist):
-			lines = append(lines, err.Error()+" (left as it is).")
-		case err != nil:
-			lines = append(lines, "init failed: "+err.Error())
-		default:
-			wrote = true
-			lines = append(lines, "Created "+path+" (edit it to describe the project).")
-		}
-	}
-	if wrote {
-		lines = append(lines, "The new context applies from the next session.")
+	lines, err := grimoire.RunInit(dir, agents)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		lines = append(lines, "init failed: "+err.Error())
 	}
 	return strings.Join(lines, "\n")
 }
