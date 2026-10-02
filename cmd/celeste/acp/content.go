@@ -3,6 +3,7 @@ package acp
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 )
@@ -49,12 +50,17 @@ func promptText(blocks []ContentBlock, logf func(format string, args ...any)) (s
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// uriPath is the local path of a file:// URI, or the URI unchanged.
+// uriPath is the local, percent-decoded path of a file:// URI, or the URI
+// unchanged (any other scheme, or one that does not parse).
 func uriPath(uri string) string {
-	p, ok := strings.CutPrefix(uri, "file://")
-	if !ok {
+	if !strings.HasPrefix(uri, "file://") {
 		return uri
 	}
+	u, err := url.Parse(uri)
+	if err != nil || u.Path == "" {
+		return uri
+	}
+	p := u.Path
 	// file:///C:/x on Windows: drop the slash before the drive letter.
 	if len(p) >= 3 && p[0] == '/' && p[2] == ':' {
 		p = p[1:]

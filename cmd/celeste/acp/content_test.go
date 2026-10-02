@@ -99,3 +99,17 @@ func TestToolLocations(t *testing.T) {
 		t.Fatalf("no path, no locations: %+v", got)
 	}
 }
+
+func TestURIPathDecodes(t *testing.T) {
+	for uri, want := range map[string]string{
+		"file:///Users/me/My%20Project/a.go": "/Users/me/My Project/a.go",
+		"file:///C:/w/a%23b.go":              "C:/w/a#b.go",
+		"file:///w/a.go":                     "/w/a.go",
+		"untitled:Untitled-1":                "untitled:Untitled-1",
+		"file:///w/bad%zz.go":                "file:///w/bad%zz.go",
+	} {
+		if got := uriPath(uri); got != want {
+			t.Errorf("uriPath(%q) = %q, want %q", uri, got, want)
+		}
+	}
+}
