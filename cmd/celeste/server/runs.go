@@ -2,9 +2,10 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
 // maxTrackedRuns bounds the registry. Completed runs are retained so a caller
@@ -43,7 +44,7 @@ var runSeq atomic.Uint64
 // RunID because RunGoal builds its state internally and only returns it on
 // completion — the agent's ID does not exist when the handle must be returned.
 func newRunID(now time.Time) string {
-	return fmt.Sprintf("bg-%d", now.UnixNano())
+	return "bg-" + config.UniqueNanoID()
 }
 
 // registerRun records a run as running and returns its state.

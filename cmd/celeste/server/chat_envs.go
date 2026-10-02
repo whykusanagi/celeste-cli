@@ -124,7 +124,7 @@ func (c *chatEnvs) acquire(cfg *config.Config, workspace string, sink *warnSink)
 	c.closeAll(toClose)
 
 	env, err := c.build(cfg, key, loop.SetupOptions{
-		SessionID: fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano()),
+		SessionID: "mcp-chat-" + config.UniqueNanoID(),
 		Warn:      e.warns.warn,
 		Notice:    chatNotice,
 	})

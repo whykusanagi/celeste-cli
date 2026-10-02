@@ -20,6 +20,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
@@ -380,7 +382,7 @@ func lockSession(dir string, create bool) (func(), error) {
 func newToken() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+		return fmt.Sprintf("%d-%s", os.Getpid(), config.UniqueNanoID())
 	}
 	return hex.EncodeToString(b)
 }

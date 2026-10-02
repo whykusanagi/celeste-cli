@@ -68,7 +68,7 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// call.
 	session := env.SessionStartContext(ctx, "startup")
 	system := env.SystemPromptWithSession(session, "", nil)
-	sessionID := fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano())
+	sessionID := "mcp-chat-" + config.UniqueNanoID()
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
 	l.Steering = chatSteering(cfg, env, prompt).Steering()
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }

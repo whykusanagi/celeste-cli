@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -102,9 +103,32 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
+// lastSessionID is the newest session ID handed out in this process.
+var lastSessionID atomic.Int64
+
+// UniqueNanoID is the current time in nanoseconds, moved past the previous ID
+// when the clock hasn't advanced: Windows' clock is coarse, and two sessions
+// with one ID overwrite each other's file.
+func UniqueNanoID() string {
+	for {
+		now, last := time.Now().UnixNano(), lastSessionID.Load()
+		if now <= last {
+			now = last + 1
+		}
+		if lastSessionID.CompareAndSwap(last, now) {
+			return fmt.Sprintf("%d", now)
+		}
+	}
+}
+
 // NewSession creates a new session with a unique ID.
 func (m *SessionManager) NewSession() *Session {
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	id := UniqueNanoID()
+	// Another celeste process may have used this ID on the same clock tick:
+	// never hand out one whose file already exists.
+	for m.sessionsDir != "" && fileExists(filepath.Join(m.sessionsDir, id+".json")) {
+		id = UniqueNanoID()
+	}
 	m.currentID = id
 
 	return &Session{
@@ -530,7 +554,7 @@ func (s *Session) SetName(name string) {
 // MergeSessions combines messages from two sessions chronologically.
 func (m *SessionManager) MergeSessions(session1, session2 *Session) *Session {
 	merged := &Session{
-		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+		ID:        UniqueNanoID(),
 		Name:      fmt.Sprintf("%s + %s", session1.Name, session2.Name),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -553,4 +577,9 @@ func (m *SessionManager) MergeSessions(session1, session2 *Session) *Session {
 	merged.TokenCount = EstimateSessionTokens(merged)
 
 	return merged
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

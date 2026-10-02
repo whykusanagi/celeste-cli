@@ -178,7 +178,7 @@ func (orch *Orchestrator) Run(ctx context.Context, goal string) (*Result, error)
 	}
 	lanes := newLanes(o.cfg, ws, loop.SetupOptions{
 		// One session_id for every lane's hooks.
-		SessionID: fmt.Sprintf("orchestrator-%d", time.Now().UnixNano()),
+		SessionID: "orchestrator-" + config.UniqueNanoID(),
 		// Load-time warnings only (hooks skipped, MCP failures): a lane's
 		// hook warnings follow its own runner (hooks.WithWarn).
 		Warn: func(s string) { o.emit(OrchestratorEvent{Kind: EventAction, Text: "⚠ " + s}) },
