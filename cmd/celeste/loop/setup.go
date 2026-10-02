@@ -134,7 +134,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	if opts.SessionID == "" {
 		// The start time too: a later process can get the same pid, and
 		// would then share this run's checkpoints (and /undo them).
-		opts.SessionID = fmt.Sprintf("%s-%d-%d", mode, os.Getpid(), time.Now().UnixNano())
+		opts.SessionID = fmt.Sprintf("%s-%d-%s", mode, os.Getpid(), config.UniqueNanoID())
 	}
 	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, skipPersona: cfg.SkipPersonaPrompt, home: home}
 	if mode == ModeAgent {
