@@ -6,10 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"  // DecodeConfig for the "reduced from" note
+	_ "image/jpeg" // ditto
+	_ "image/png"  // ditto
 	"path/filepath"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -251,21 +256,38 @@ func (t *ReadFileTool) readImageFile(targetPath, realPath, relPath, ext string) 
 		}, nil
 	}
 
-	base64Data := base64.StdEncoding.EncodeToString(data)
+	// #239: store an image every provider accepts, or refuse it with the
+	// limit named. One that already fits keeps its bytes.
 	format := ext[1:] // strip leading dot: ".png" -> "png"
+	res, err := imagefit.Fit(data, format, imagefit.Universal)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("image %s not attached: %v", relPath, err)}, nil
+	}
+	content := fmt.Sprintf("Image file: %s (%s, %d bytes)", relPath, format, len(data))
+	md := map[string]any{"type": "image", "format": res.Format, "filename": filepath.Base(targetPath)}
+	if res.Changed {
+		ow, oh := decodeDims(data)
+		content += fmt.Sprintf("; reduced from %d×%d to %d×%d %s to fit every provider's limits", ow, oh, res.Width, res.Height, res.Format)
+		if res.Note != "" {
+			content += " (" + res.Note + ")"
+		}
+		md["original_bytes"] = len(data)
+	}
+	md["base64"] = base64.StdEncoding.EncodeToString(res.Data)
 
 	// Record mtime for stale detection
 	if t.tracker != nil {
 		_ = t.tracker.RecordRead(targetPath)
 	}
 
-	return tools.ToolResult{
-		Content: fmt.Sprintf("Image file: %s (%s, %d bytes)", relPath, format, len(data)),
-		Metadata: map[string]any{
-			"type":     "image",
-			"format":   format,
-			"base64":   base64Data,
-			"filename": filepath.Base(targetPath),
-		},
-	}, nil
+	return tools.ToolResult{Content: content, Metadata: md}, nil
+}
+
+// decodeDims is the image's size for the "reduced from" note; 0×0 if unreadable.
+func decodeDims(data []byte) (int, int) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
 }
