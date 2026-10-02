@@ -175,22 +175,6 @@ func (ci ContextIndicator) getColorStyle() lipgloss.Style {
 	}
 }
 
-// GetWarningMessage returns a user-friendly warning message
-func (ci ContextIndicator) GetWarningMessage() string {
-	percentage := int(ci.getUsagePercentage() * 100)
-
-	switch ci.warningLevel {
-	case "critical":
-		return fmt.Sprintf("🚨 Context at %d%% - old tool results are pruned automatically; /context compact frees space now", percentage)
-	case "caution":
-		return fmt.Sprintf("⚠️  Context at %d%% - old tool results will be pruned as needed", percentage)
-	case "warn":
-		return fmt.Sprintf("⚠️  Context at %d%% - approaching the context limit", percentage)
-	default:
-		return ""
-	}
-}
-
 // GetWarningLevel returns the current warning level
 func (ci ContextIndicator) GetWarningLevel() string {
 	return ci.warningLevel

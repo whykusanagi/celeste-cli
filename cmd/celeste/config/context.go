@@ -154,23 +154,6 @@ func (ct *ContextTracker) EstimateMessagesUntilLimit(avgTokensPerMsg int) int {
 	return tokensUntilWarn / avgTokensPerMsg
 }
 
-// GetWarningMessage returns a user-friendly warning message.
-func (ct *ContextTracker) GetWarningMessage() string {
-	level := ct.GetWarningLevel()
-	percentage := int(ct.GetUsagePercentage() * 100)
-
-	switch level {
-	case "critical":
-		return fmt.Sprintf("\xf0\x9f\x9a\xa8 Context at %d%% - old tool results are pruned automatically; /context compact frees space now", percentage)
-	case "caution":
-		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - old tool results will be pruned as needed", percentage)
-	case "warn":
-		return fmt.Sprintf("\xe2\x9a\xa0\xef\xb8\x8f  Context at %d%% - approaching the context limit", percentage)
-	default:
-		return ""
-	}
-}
-
 // GetContextSummary returns a formatted summary of context usage.
 func (ct *ContextTracker) GetContextSummary() string {
 	current := ctxmgr.FormatTokenCount(ct.CurrentTokens)

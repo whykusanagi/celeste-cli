@@ -9,9 +9,6 @@ type MultiLangParser struct{}
 
 func NewMultiLangParser() *MultiLangParser { return &MultiLangParser{} }
 func (m *MultiLangParser) Close()          {}
-func (m *MultiLangParser) SupportsFile(_ string) bool {
-	return false
-}
 func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 	return NewGenericParser("unknown").ParseFile(path)
 }
