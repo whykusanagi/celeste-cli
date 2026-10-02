@@ -520,3 +520,20 @@ func TestTakeOverOnlyRemovesTheStaleLockItSaw(t *testing.T) {
 	left, _ := filepath.Glob(filepath.Join(dir, "index.lock*"))
 	assert.Empty(t, left, "no claim file is left behind")
 }
+
+// Two spellings of one existing file match: letter case on a
+// case-insensitive volume (macOS by default), or a hard link.
+func TestSamePathByFileIdentity(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "Name.txt")
+	write(t, f, "x")
+	if _, err := os.Stat(filepath.Join(dir, "name.txt")); err == nil {
+		assert.True(t, samePath(f, filepath.Join(dir, "name.txt")), "case-insensitive volume")
+	}
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Link(f, link); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	assert.True(t, samePath(f, link))
+	assert.False(t, samePath(f, filepath.Join(dir, "other.txt")))
+}

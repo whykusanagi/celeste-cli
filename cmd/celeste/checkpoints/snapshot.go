@@ -542,11 +542,18 @@ func backUp(src, dst string, before os.FileInfo) error {
 }
 
 // samePath reports whether a and b name the same file: equal once
-// absolute and clean, or once symlinks are resolved (macOS temp and home
-// directories are often symlinked).
+// absolute and clean, once symlinks are resolved (macOS temp and home
+// directories are often symlinked), or, when both exist, by file identity.
 func samePath(a, b string) bool {
 	a, b = absClean(a), absClean(b)
-	return pathEqual(a, b) || pathEqual(realPath(a), realPath(b))
+	if pathEqual(a, b) || pathEqual(realPath(a), realPath(b)) {
+		return true
+	}
+	// Both exist: the same file under two spellings (letter case on a
+	// case-insensitive macOS volume, a hard link).
+	ai, aerr := os.Stat(a)
+	bi, berr := os.Stat(b)
+	return aerr == nil && berr == nil && os.SameFile(ai, bi)
 }
 
 // pathEqual compares two clean paths; Windows paths are case-insensitive.
