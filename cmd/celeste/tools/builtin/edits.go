@@ -165,10 +165,17 @@ func fuzzyEdit(content string, e edit, path string) (string, editOutcome, error)
 	}
 	matched := content[start:end]
 	repl := reindent(e.New, e.Old, matched)
+	// TrimSpace let LF lines of old_string match CRLF lines of the file:
+	// new_string gets the file's CRLF too, so the endings are not mixed.
+	eol := "\n"
+	if strings.Contains(matched, "\r\n") {
+		eol = "\r\n"
+		repl = strings.ReplaceAll(strings.ReplaceAll(repl, "\r\n", "\n"), "\n", eol)
+	}
 	// The window is replaced as whole lines, its final newline kept (an
 	// empty new_string deletes the lines).
 	if repl != "" && !strings.HasSuffix(repl, "\n") && strings.HasSuffix(matched, "\n") {
-		repl += "\n"
+		repl += eol
 	}
 	out := content[:start] + repl + content[end:]
 	return out, editOutcome{Count: 1, Fuzzy: true, Diff: unifiedHunk(path, content, out, start, end, start+len(repl))}, nil
@@ -223,13 +230,25 @@ func firstNonBlank(s string) string {
 
 // reindent moves newText from oldText's indentation to matched's, line by
 // line (ruling 3): a non-blank line i indented exactly like oldText's line
-// i takes the matched window's line i indentation; any other line has
-// oldText's base indentation (its first non-blank line's) replaced by the
-// window's.
+// i takes the matched window's line i indentation; any other line indented
+// exactly like some old line takes that line's indentation in the window;
+// any other line has oldText's base indentation (its first non-blank
+// line's) replaced by the window's.
 func reindent(newText, oldText, matched string) string {
 	oldLines := strings.Split(oldText, "\n")
 	winLines := strings.Split(strings.TrimSuffix(matched, "\n"), "\n")
 	from, to := leadingWS(firstNonBlank(oldText)), leadingWS(firstNonBlank(matched))
+	// Indentation map over the aligned non-blank lines; the first mapping
+	// of an indentation wins.
+	byIndent := map[string]string{}
+	for j := 0; j < len(oldLines) && j < len(winLines); j++ {
+		if strings.TrimSpace(oldLines[j]) == "" {
+			continue
+		}
+		if _, ok := byIndent[leadingWS(oldLines[j])]; !ok {
+			byIndent[leadingWS(oldLines[j])] = leadingWS(winLines[j])
+		}
+	}
 	lines := strings.Split(newText, "\n")
 	for i, l := range lines {
 		if strings.TrimSpace(l) == "" {
@@ -238,6 +257,10 @@ func reindent(newText, oldText, matched string) string {
 		ind := leadingWS(l)
 		if i < len(oldLines) && i < len(winLines) && ind == leadingWS(oldLines[i]) {
 			lines[i] = leadingWS(winLines[i]) + l[len(ind):]
+			continue
+		}
+		if mapped, ok := byIndent[ind]; ok {
+			lines[i] = mapped + l[len(ind):]
 			continue
 		}
 		if strings.HasPrefix(ind, from) {

@@ -153,13 +153,14 @@ func fileSize(info os.FileInfo) int64 {
 
 // atomicWrite replaces path through a temp file in its directory and a
 // rename (2.0 W4 ruling 5): a reader never sees a half-written file, an
-// existing file keeps its mode, a new one gets perm. path is the
-// symlink-resolved path resolvePathReal checked; a symlink found there now
-// is replaced, not followed. A file with several hard links is rewritten
-// in place instead, as editors do: a rename would leave its other names
-// holding the old content.
+// existing file keeps its mode, a new one gets perm under the umask. path
+// is the symlink-resolved path resolvePathReal checked; a symlink found
+// there now is replaced, not followed. A file with several hard links is
+// rewritten in place instead, as editors do: a rename would leave its
+// other names holding the old content.
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
-	if fi, err := os.Lstat(path); err == nil && hardLinked(path, fi) {
+	fi, lerr := os.Lstat(path)
+	if lerr == nil && hardLinked(path, fi) {
 		f, err := openInPlace(path)
 		if err != nil {
 			return err
@@ -169,6 +170,24 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 			err = cerr
 		}
 		return err
+	}
+	if errors.Is(lerr, os.ErrNotExist) {
+		// Create a new file first, so its mode is perm under the umask as
+		// with os.WriteFile; the replace below then keeps that mode. A
+		// failed replace removes it again.
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		if err != nil {
+			return err
+		}
+		if err := f.Close(); err != nil {
+			_ = os.Remove(path)
+			return err
+		}
+		if err := atomicfile.ReplaceKeepMode(path, data, perm); err != nil {
+			_ = os.Remove(path)
+			return err
+		}
+		return nil
 	}
 	return atomicfile.ReplaceKeepMode(path, data, perm)
 }

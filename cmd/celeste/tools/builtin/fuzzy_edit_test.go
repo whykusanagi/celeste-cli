@@ -155,3 +155,27 @@ func TestUnifiedHunk(t *testing.T) {
 		t.Fatalf("hunk =\n%s\nwant\n%s", got, want)
 	}
 }
+
+// Review I1: a tolerant match in a CRLF file writes CRLF lines, not LF
+// ones, so the file does not end up with mixed line endings.
+func TestFuzzyKeepsCRLF(t *testing.T) {
+	ws, tool, _ := patchEnv(t, map[string]string{"f.go": "func f() {\r\n\tx := 1\r\n\ty := 2\r\n}\r\n"})
+	res, _ := tool.Execute(context.Background(), map[string]any{"path": "f.go",
+		"old_string": "x := 1\ny := 2", "new_string": "x := 3\ny := 4"}, nil)
+	if res.Error {
+		t.Fatal(res.Content)
+	}
+	b, _ := os.ReadFile(filepath.Join(ws, "f.go"))
+	if string(b) != "func f() {\r\n\tx := 3\r\n\ty := 4\r\n}\r\n" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+// Review M3: a new line indented like some old line takes that line's
+// indentation in the file, so tabs and spaces are not mixed.
+func TestReindentNewLineMatchesAnOldLinesIndent(t *testing.T) {
+	got := reindent("if x {\n    y()\n    z()\n}", "if x {\n    y()\n}", "\tif x {\n\t\ty()\n\t}\n")
+	if got != "\tif x {\n\t\ty()\n\t\tz()\n\t}" {
+		t.Fatalf("got %q", got)
+	}
+}

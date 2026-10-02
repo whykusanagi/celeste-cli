@@ -39,9 +39,7 @@ func (ft *FileTracker) RecordRead(path string) error {
 // Returns an error if the file was modified externally since the last read.
 // Returns nil if the file has never been tracked (first write is allowed).
 func (ft *FileTracker) CheckStale(path string) error {
-	ft.mu.RLock()
-	recorded, tracked := ft.readTimes[path]
-	ft.mu.RUnlock()
+	recorded, tracked := ft.lookup(path)
 
 	if !tracked {
 		return nil // never read — allow write
@@ -69,9 +67,7 @@ var ErrNotRead = errors.New("not read in this session")
 // and is unchanged since; ErrNotRead for an existing file never read; the
 // CheckStale error for one changed since its read.
 func (ft *FileTracker) CheckRead(path string) error {
-	ft.mu.RLock()
-	_, tracked := ft.readTimes[path]
-	ft.mu.RUnlock()
+	_, tracked := ft.lookup(path)
 	if !tracked {
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -79,6 +75,27 @@ func (ft *FileTracker) CheckRead(path string) error {
 		return ErrNotRead
 	}
 	return ft.CheckStale(path)
+}
+
+// lookup finds the recorded read of path, or of another name of the same
+// file (a symlink to it, a different case on a case-insensitive
+// filesystem): reads count per file, not per spelling.
+func (ft *FileTracker) lookup(path string) (time.Time, bool) {
+	ft.mu.RLock()
+	defer ft.mu.RUnlock()
+	if t, ok := ft.readTimes[path]; ok {
+		return t, true
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	for p, t := range ft.readTimes {
+		if other, err := os.Stat(p); err == nil && os.SameFile(info, other) {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // ClearStale removes tracking for the given path (e.g. after a successful re-read).

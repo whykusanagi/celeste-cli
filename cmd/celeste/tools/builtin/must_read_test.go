@@ -172,3 +172,28 @@ func TestAtomicWriteNewFileGetsDefaultMode(t *testing.T) {
 		t.Fatalf("mode = %v", fi.Mode().Perm())
 	}
 }
+
+// Review M4: a read through one name of a file counts for an edit through
+// another (a symlink to it, or a different case on a case-insensitive
+// filesystem).
+func TestReadCountsAcrossNamesOfOneFile(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("AGENTS.md", filepath.Join(ws, "CLAUDE.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	ft := checkpoints.NewFileTracker()
+	read := NewReadFileTool(ws, WithReadFileTracker(ft))
+	patch := NewPatchFileTool(ws, WithPatchFileTracker(ft))
+	if res, _ := read.Execute(context.Background(), map[string]any{"path": "AGENTS.md"}, nil); res.Error {
+		t.Fatal(res.Content)
+	}
+	if res, _ := patch.Execute(context.Background(), map[string]any{"path": "CLAUDE.md", "old_string": "old", "new_string": "new"}, nil); res.Error {
+		t.Fatal(res.Content)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "AGENTS.md")); string(b) != "new\n" {
+		t.Fatalf("got %q", b)
+	}
+}
