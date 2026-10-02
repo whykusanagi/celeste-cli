@@ -64,7 +64,10 @@ func TestAnthropicTextToolAndThinking(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "toolu_1" {
-		t.Fatalf("turn 1 = %+v, want one tool call (thinking is dropped today, #192)", res)
+		t.Fatalf("turn 1 = %+v, want one tool call", res)
+	}
+	if res.ProviderBlocks == nil || len(res.ProviderBlocks.Blocks) != 2 {
+		t.Fatalf("turn 1 kept %+v, want its thinking and tool_use blocks (#192)", res.ProviderBlocks)
 	}
 	res, err = c.SendMessageSync(context.Background(), msgs, nil)
 	if err != nil || res.Content != "done" {

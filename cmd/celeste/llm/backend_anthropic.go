@@ -9,6 +9,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -20,6 +21,14 @@ type AnthropicBackend struct {
 	config         *Config
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
+	// bindingControls: send the thinking-binding beta with drop_block on
+	// requests that replay thinking (2.0 W2 ruling 6). Set for Anthropic's
+	// own endpoint; cleared for good when the endpoint refuses the beta
+	// (ruling 9).
+	bindingControls bool
+	// promptChanged: the system prompt changed since the last request; the
+	// next one sends no blocks and reports BlocksRejected (ruling 10).
+	promptChanged bool
 }
 
 // NewAnthropicBackend creates a new Anthropic backend using the native SDK.
@@ -38,13 +47,19 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 	client := anthropic.NewClient(opts...)
 
 	return &AnthropicBackend{
-		client: &client,
-		config: config,
+		client:          &client,
+		config:          config,
+		bindingControls: config.BaseURL == "" || isAnthropicProvider(config.BaseURL),
 	}, nil
 }
 
-// SetSystemPrompt sets the system prompt (Celeste persona).
+// SetSystemPrompt sets the system prompt (Celeste persona). A change from
+// a previous prompt makes the next request drop replayed blocks: their
+// signatures cover the old prompt (2.0 W2 ruling 10).
 func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
+	if b.systemPrompt != "" && prompt != b.systemPrompt {
+		b.promptChanged = true
+	}
 	b.systemPrompt = prompt
 }
 
@@ -57,6 +72,29 @@ func (b *AnthropicBackend) SetThinkingConfig(config ThinkingConfig) {
 // Close cleans up resources (no-op for Anthropic backend).
 func (b *AnthropicBackend) Close() error {
 	return nil
+}
+
+// providerKey names this backend's blocks: the effective base URL and the
+// model it sends (the served model, #232). 2.0 W2 ruling 4.
+func (b *AnthropicBackend) providerKey() string {
+	base := b.config.BaseURL
+	if base == "" {
+		base = anthropicDefaultBaseURL
+	}
+	return ProviderKey(BlocksAnthropicMessages, base, b.config.Model)
+}
+
+// lastAssistantReplays reports whether the newest assistant message is
+// sent as its recorded blocks. Only then may a budget-thinking model keep
+// thinking on a tool-loop continuation (2.0 W2 ruling 5).
+func (b *AnthropicBackend) lastAssistantReplays(messages []tui.ChatMessage) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" {
+			_, ok := tui.ReplayBlocks(messages[i], b.providerKey())
+			return ok
+		}
+	}
+	return false
 }
 
 // maxTokens returns the max_tokens value for the request.
@@ -93,6 +131,64 @@ func (b *AnthropicBackend) maxTokens() int64 {
 	return 32768 // default for non-thinking requests
 }
 
+// replays reports whether any assistant message is sent as its blocks.
+func (b *AnthropicBackend) replays(messages []tui.ChatMessage) bool {
+	key := b.providerKey()
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			if _, ok := tui.ReplayBlocks(m, key); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// replaysThinking reports whether any replayed message carries a thinking
+// or redacted_thinking block.
+func (b *AnthropicBackend) replaysThinking(messages []tui.ChatMessage) bool {
+	key := b.providerKey()
+	for _, m := range messages {
+		if m.Role != "assistant" {
+			continue
+		}
+		raws, ok := tui.ReplayBlocks(m, key)
+		if !ok {
+			continue
+		}
+		for _, raw := range raws {
+			var head struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(raw, &head) == nil && (head.Type == "thinking" || head.Type == "redacted_thinking") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// prepare builds the request and its per-request options: the binding
+// beta with drop_block when ruling 6 applies.
+func (b *AnthropicBackend) prepare(messages []tui.ChatMessage, tools []tui.SkillDefinition) (anthropic.MessageNewParams, []option.RequestOption) {
+	params := b.buildParams(messages, tools)
+	if !b.bindingControls || !b.replaysThinking(messages) {
+		return params, nil
+	}
+	if params.Thinking.OfAdaptive == nil && params.Thinking.OfEnabled == nil {
+		if anthropicThinkingFamily(b.config.Model) != familyAlwaysOn {
+			return params, nil
+		}
+		// Always-on models take adaptive explicitly; block_binding needs a
+		// thinking object to sit in.
+		params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+	}
+	return params, []option.RequestOption{
+		option.WithHeaderAdd("anthropic-beta", thinkingBindingBeta),
+		option.WithJSONSet("thinking.block_binding", map[string]any{"prefix_mismatch_behavior": "drop_block"}),
+	}
+}
+
 // buildParams constructs the MessageNewParams shared by sync and streaming requests.
 func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.SkillDefinition) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
@@ -116,11 +212,76 @@ func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.S
 	}
 
 	// Apply thinking config.
-	b.applyThinkingConfig(&params, continuesToolLoop(messages))
+	b.applyThinkingConfig(&params, continuesToolLoop(messages) && !b.lastAssistantReplays(messages))
 
 	applyCacheBreakpoints(&params)
 
 	return params
+}
+
+// anthropicStream is a message stream whose first event may already have
+// been read by open.
+type anthropicStream struct {
+	s      *ssestream.Stream[anthropic.MessageStreamEventUnion]
+	primed bool
+}
+
+func (a *anthropicStream) Next() bool {
+	if a.primed {
+		a.primed = false
+		return true
+	}
+	return a.s.Next()
+}
+
+func (a *anthropicStream) Current() anthropic.MessageStreamEventUnion { return a.s.Current() }
+func (a *anthropicStream) Err() error                                 { return a.s.Err() }
+func (a *anthropicStream) Close() error                               { return a.s.Close() }
+
+// open sends the request and reads its first event, so a request refused
+// before any output is handled before anything reaches the caller:
+//   - after a system-prompt change, blocks are dropped (ruling 10);
+//   - a 400 about replayed thinking is resent once without blocks (ruling 8);
+//   - a 400 refusing the binding beta is resent once without it, and the
+//     beta is not sent again (ruling 9).
+//
+// rejected reports that the reply comes from a history whose blocks were
+// dropped; the caller passes it on as BlocksRejected.
+func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*anthropicStream, bool, error) {
+	rejected := false
+	if b.promptChanged && hasProviderBlocks(messages) {
+		tui.LogInfo("anthropic: the system prompt changed; replayed blocks are dropped from here on")
+		messages = tui.StripProviderBlocks(messages)
+		rejected = true
+	}
+	retriedStrip, retriedBeta := false, false
+	for {
+		params, opts := b.prepare(messages, tools)
+		s := b.client.Messages.NewStreaming(ctx, params, opts...)
+		if s.Next() {
+			b.promptChanged = false
+			return &anthropicStream{s: s, primed: true}, rejected, nil
+		}
+		err := s.Err()
+		if err == nil {
+			b.promptChanged = false
+			return &anthropicStream{s: s}, rejected, nil
+		}
+		s.Close()
+		body, bad := anthropicBadRequest(err)
+		switch {
+		case bad && !retriedStrip && b.replays(messages) && isThinkingRejection(body):
+			tui.LogInfo("anthropic: replayed thinking was refused; resending without it")
+			messages = tui.StripProviderBlocks(messages)
+			rejected, retriedStrip = true, true
+		case bad && !retriedBeta && len(opts) > 0 && isBindingBetaRejection(body):
+			tui.LogInfo("anthropic: the endpoint does not take " + thinkingBindingBeta + "; not sending it again")
+			b.bindingControls = false
+			retriedBeta = true
+		default:
+			return nil, rejected, err
+		}
+	}
 }
 
 // messageCacheBreakpoints is how many of the newest messages get a
@@ -255,13 +416,13 @@ func (b *AnthropicBackend) thinkingEnabled() bool {
 
 // applyThinkingConfig sets the thinking parameters the model accepts.
 //
-// continuingToolLoop is true when the request carries tool results back.
-// Thinking blocks aren't replayed yet (the shared message type has nowhere
-// to keep them, and celeste still edits history between requests), and
-// budget-thinking models reject a tool-loop continuation whose assistant
-// turn lacks its thinking block, so those turns run without thinking.
-// Adaptive models accept the continuation; they reason again from the
-// visible history.
+// continuingToolLoop is true when the request carries tool results back
+// and the assistant turn being continued is not replayed from its blocks
+// (dropped calls, another endpoint or model, stripped blocks, a pre-2.0
+// history). Budget-thinking models reject such a continuation when its
+// assistant turn lacks its thinking block, so those turns run without
+// thinking. Adaptive models accept it and reason again from the visible
+// history. A replayed turn carries its thinking, so thinking stays on.
 func (b *AnthropicBackend) applyThinkingConfig(params *anthropic.MessageNewParams, continuingToolLoop bool) {
 	enabled := b.thinkingEnabled()
 	switch anthropicThinkingFamily(b.config.Model) {
@@ -350,11 +511,14 @@ func (u *usageTracker) result() *TokenUsage {
 
 // SendMessageSync sends a message and returns the complete result.
 func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	params := b.buildParams(messages, tools)
-
 	// Use streaming internally to accumulate the full response, matching
 	// the pattern used by the OpenAI backend for consistency.
-	stream := b.client.Messages.NewStreaming(ctx, params)
+	stream, rejected, err := b.open(ctx, messages, tools)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	var capture anthropicCapture
 
 	result := &ChatCompletionResult{}
 	var toolCalls []ToolCallResult
@@ -371,6 +535,7 @@ func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.C
 
 	for stream.Next() {
 		event := stream.Current()
+		capture.add(event)
 
 		switch event.Type {
 		case "content_block_start":
@@ -426,14 +591,28 @@ func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.C
 	}
 
 	result.ToolCalls = toolCalls
+	result.ProviderBlocks = capture.blocks(b.providerKey())
+	result.BlocksRejected = rejected || capture.prefixDropped()
 	return result, nil
 }
 
 // SendMessageStream sends a message with streaming callback.
 func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	params := b.buildParams(messages, tools)
-
-	stream := b.client.Messages.NewStreaming(ctx, params)
+	stream, rejected, err := b.open(ctx, messages, tools)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	var capture anthropicCapture
+	// The final chunk can be sent twice (at message_delta and after the
+	// loop); the blocks and the rejection are settled once.
+	var kept *tui.ProviderBlocks
+	refused, settled := rejected, false
+	settle := func() {
+		if !settled {
+			kept, refused, settled = capture.blocks(b.providerKey()), rejected || capture.prefixDropped(), true
+		}
+	}
 
 	var toolCalls []ToolCallResult
 	var usage *TokenUsage
@@ -450,6 +629,7 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 	for stream.Next() {
 		event := stream.Current()
+		capture.add(event)
 
 		switch event.Type {
 		case "content_block_start":
@@ -496,11 +676,14 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 			usage = tracker.result()
 			if event.Delta.StopReason != "" {
 				finishReason := mapStopReason(string(event.Delta.StopReason))
+				settle()
 				callback(StreamChunk{
-					IsFinal:      true,
-					FinishReason: finishReason,
-					ToolCalls:    toolCalls,
-					Usage:        usage,
+					IsFinal:        true,
+					FinishReason:   finishReason,
+					ToolCalls:      toolCalls,
+					Usage:          usage,
+					ProviderBlocks: kept,
+					BlocksRejected: refused,
 				})
 			}
 
@@ -516,11 +699,14 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 	// If we never got a message_delta with stop_reason, send a final chunk.
 	if isFirst || len(toolCalls) > 0 {
+		settle()
 		callback(StreamChunk{
-			IsFinal:      true,
-			FinishReason: "stop",
-			ToolCalls:    toolCalls,
-			Usage:        usage,
+			IsFinal:        true,
+			FinishReason:   "stop",
+			ToolCalls:      toolCalls,
+			Usage:          usage,
+			ProviderBlocks: kept,
+			BlocksRejected: refused,
 		})
 	}
 
@@ -529,9 +715,12 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 // SendMessageStreamEvents sends a message with granular streaming events.
 func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
-	params := b.buildParams(messages, tools)
-
-	stream := b.client.Messages.NewStreaming(ctx, params)
+	stream, rejected, err := b.open(ctx, messages, tools)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	var capture anthropicCapture
 
 	var usage *TokenUsage
 	var finishReason string
@@ -547,6 +736,7 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 
 	for stream.Next() {
 		event := stream.Current()
+		capture.add(event)
 
 		switch event.Type {
 		case "content_block_start":
@@ -623,9 +813,11 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 		finishReason = "stop"
 	}
 	callback(StreamEvent{
-		Type:         EventMessageDone,
-		Usage:        usage,
-		FinishReason: finishReason,
+		Type:           EventMessageDone,
+		Usage:          usage,
+		FinishReason:   finishReason,
+		ProviderBlocks: capture.blocks(b.providerKey()),
+		BlocksRejected: rejected || capture.prefixDropped(),
 	})
 
 	return nil
@@ -635,11 +827,21 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 // System messages are handled separately via the System parameter.
 func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthropic.MessageParam {
 	var result []anthropic.MessageParam
+	key := b.providerKey()
 
 	for _, msg := range messages {
 		// Skip system messages — they are handled via the System parameter.
 		if msg.Role == "system" {
 			continue
+		}
+
+		// 2.0 F3 precedence: blocks from this endpoint and model are the
+		// authoritative content, in their original order (W2).
+		if msg.Role == "assistant" {
+			if raws, ok := tui.ReplayBlocks(msg, key); ok {
+				result = append(result, anthropic.NewAssistantMessage(replayedContent(raws)...))
+				continue
+			}
 		}
 
 		// Skip empty messages (except tool results which can have empty content).

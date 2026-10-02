@@ -645,6 +645,7 @@ type ProviderBlocks struct {
 }
 ```
 
+**Anthropic thinking (W2).** A reply that holds a `thinking`, `redacted_thinking` or `compaction` block keeps all its content blocks, as the SDK accumulator rebuilt them from the stream, under `anthropic-messages|<endpoint>|<model>`. Later requests send them unchanged as the assistant turn's content. A budget-thinking model runs a tool-loop continuation with thinking off only when that turn does not replay. History changes under replayed thinking are handled three ways: the `thinking-binding-controls-2026-08-01` beta with `drop_block` on Anthropic's endpoint (dropped blocks are logged from `input_transformations` and reported as `BlocksRejected`), a single resend without blocks after a prefix-mismatch 400, and one strip after a system-prompt change.
 ### File checkpoints (2.0)
 
 `checkpoints.SnapshotManager` is one session's store: backups plus `index.json`, a JSON array of `{message_id, path, version, backup, time, after}` in `~/.celeste/checkpoints/<session>/`, rewritten atomically on every change under a per-session lock file. `loop.Setup` opens it for the run's `SessionID` (chat session, agent run, the MCP chat Env; `<mode>-<pid>-<config.UniqueNanoID>` when none is given); nested Envs (subagents, `/agent`) share their parent's.
