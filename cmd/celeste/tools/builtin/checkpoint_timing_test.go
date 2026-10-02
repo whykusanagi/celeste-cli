@@ -204,3 +204,39 @@ func TestSpliceFileMoveOfARepeatedRegion(t *testing.T) {
 	assert.Equal(t, "x\nX\n", get(t, dst))
 	assert.Len(t, sm.Entries(), 2)
 }
+
+// Review C1/I1: a successful write commits its checkpoint — the entry
+// records the file as the call left it, and nothing stays open, so /undo
+// is not refused as "a write in progress".
+func TestSuccessfulWritesCommitTheirCheckpoints(t *testing.T) {
+	ws, sm := timingSetup(t)
+	put(t, filepath.Join(ws, "a.txt"), "a\nb\nc\n")
+	put(t, filepath.Join(ws, "b.txt"), "x\n")
+	ctx := context.Background()
+	for _, res := range []tools.ToolResult{
+		run(t, NewWriteFileTool(ws, WithWriteFileSnapshots(sm)), ctx, map[string]any{"path": "new.txt", "content": "n"}),
+		run(t, NewPatchFileTool(ws, WithPatchFileSnapshots(sm)), ctx, map[string]any{"path": "a.txt", "old_string": "c", "new_string": "C"}),
+		run(t, NewSpliceFileTool(ws, WithSpliceFileSnapshots(sm)), ctx, map[string]any{"op": "move", "source": "a.txt", "dest": "b.txt", "start_line": 2, "end_line": 2}),
+	} {
+		require.False(t, res.Error, res.Content)
+	}
+	entries := sm.Entries()
+	require.Len(t, entries, 4)
+	for _, e := range entries[2:] { // the splice's two files
+		require.NotNil(t, e.After, e.Path)
+		now, err := checkpoints.StateOf(e.Path)
+		require.NoError(t, err)
+		assert.Equal(t, now, *e.After, e.Path)
+	}
+	for range entries {
+		_, err := sm.RevertLastIf(func(e checkpoints.Entry) error {
+			if _, changed, _ := checkpoints.Changed(e); changed {
+				return errors.New("changed: " + e.Path)
+			}
+			return nil
+		})
+		require.NoError(t, err)
+	}
+	assert.Equal(t, "a\nb\nc\n", get(t, filepath.Join(ws, "a.txt")))
+	assert.Equal(t, "x\n", get(t, filepath.Join(ws, "b.txt")))
+}

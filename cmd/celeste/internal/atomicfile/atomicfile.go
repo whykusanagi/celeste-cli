@@ -36,7 +36,7 @@ func Write(path string, data []byte, perm os.FileMode) (err error) {
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
 	if err != nil {
-		return err
+		return &TempError{Err: err}
 	}
 	tmpName := tmp.Name()
 	defer func() {
@@ -70,6 +70,15 @@ func Write(path string, data []byte, perm os.FileMode) (err error) {
 	}
 	return err
 }
+
+// TempError is Write's error when it could not create its temporary file
+// next to the target — typically a directory the process cannot write,
+// though the file itself may be writable. Nothing was changed. It reads as
+// the underlying error.
+type TempError struct{ Err error }
+
+func (e *TempError) Error() string { return e.Err.Error() }
+func (e *TempError) Unwrap() error { return e.Err }
 
 // WriteKeepMode is Write that keeps an existing file's mode (following
 // symlinks); a new file gets defaultPerm.

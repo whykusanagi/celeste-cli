@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
 )
 
 func initRepo(t *testing.T) string {
@@ -13,16 +15,8 @@ func initRepo(t *testing.T) string {
 		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
-	for _, args := range [][]string{
-		{"init"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"},
-		{"commit", "--allow-empty", "-m", "init"},
-	} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	gittest.Run(t, dir, "init")
+	gittest.Run(t, dir, "commit", "--allow-empty", "-m", "init")
 	return dir
 }
 
@@ -58,13 +52,8 @@ func TestMergeWorktree(t *testing.T) {
 	if err := os.WriteFile(newfile, []byte("hi"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"add", "out.txt"}, {"commit", "-m", "work"}} {
-		c := exec.Command("git", args...)
-		c.Dir = wt.Path
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	gittest.Run(t, wt.Path, "add", "out.txt")
+	gittest.Run(t, wt.Path, "commit", "-m", "work")
 	if err := MergeWorktree(repo, wt); err != nil {
 		t.Fatalf("MergeWorktree: %v", err)
 	}

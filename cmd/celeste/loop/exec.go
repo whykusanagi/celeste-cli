@@ -109,8 +109,11 @@ func (l *Loop) runGroup(ctx context.Context, group []*pending, lim Limits) {
 	ex := tools.NewStreamingToolExecutorWithContext(ctx, l.Tools)
 	defer ex.Cancel()
 	// Executor call IDs are group indexes: model IDs may repeat or be empty.
-	ex.SetExecFunc(func(ectx context.Context, _ string, t tools.Tool, input map[string]any) (tools.ToolResult, error) {
-		return l.invoke(ectx, t, input, lim)
+	ex.SetExecFunc(func(ectx context.Context, id string, t tools.Tool, input map[string]any) (tools.ToolResult, error) {
+		// The tool sees the model's call ID (2.0 F4: its checkpoint's
+		// message_id), not the executor's group index.
+		i, _ := strconv.Atoi(id)
+		return l.invoke(tools.WithCallID(ectx, group[i].call.ID), t, input, lim)
 	})
 	for i, p := range group {
 		b, _ := json.Marshal(p.call.Input)

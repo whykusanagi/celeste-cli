@@ -289,6 +289,14 @@ type PromptRefresher interface {
 	RefreshSystemPrompt()
 }
 
+// Checkpointer undoes and lists the file changes this session made (2.0
+// F4). The chat's client adapter implements it over the session's
+// checkpoints; each method returns the text to show.
+type Checkpointer interface {
+	UndoLastChange() (string, error)
+	SessionChanges() (string, error)
+}
+
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
 type EndpointSwitcher interface {
 	SwitchEndpoint(endpoint string) error
@@ -1061,11 +1069,29 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "diff":
-				m.chat = m.chat.AddSystemMessage("Session changes:\n(File checkpointing shows diffs of modified files)\nNo changes tracked in this session yet.")
+				cp, ok := m.llmClient.(Checkpointer)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("Diff is unavailable in this session.")
+					return m, nil
+				}
+				text, err := cp.SessionChanges()
+				if err != nil {
+					text = "Diff: " + err.Error()
+				}
+				m.chat = m.chat.AddSystemMessage(text)
 				return m, nil
 
 			case "undo":
-				m.chat = m.chat.AddSystemMessage("Undo: reverting last file modification...\nNo checkpoints available in this session.")
+				cp, ok := m.llmClient.(Checkpointer)
+				if !ok {
+					m.chat = m.chat.AddSystemMessage("Undo is unavailable in this session.")
+					return m, nil
+				}
+				text, err := cp.UndoLastChange()
+				if err != nil {
+					text = "Undo: " + err.Error()
+				}
+				m.chat = m.chat.AddSystemMessage(text)
 				return m, nil
 
 			case "memories":

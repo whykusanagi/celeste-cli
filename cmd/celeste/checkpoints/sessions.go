@@ -162,8 +162,9 @@ func LatestSessionFor(root, path string) (string, error) {
 
 // RevertFile restores path from its newest checkpoint in sessionID — or,
 // when sessionID is "", in the session that changed it last — and removes
-// that entry (celeste revert, 2.0 F4).
-func RevertFile(root, path, sessionID string) (string, Entry, error) {
+// that entry (celeste revert, 2.0 F4). check, when not nil, is asked about
+// that entry first, as in RevertIf.
+func RevertFile(root, path, sessionID string, check func(Entry) error) (string, Entry, error) {
 	if root == "" {
 		return sessionID, Entry{}, errDisabled
 	}
@@ -178,12 +179,12 @@ func RevertFile(root, path, sessionID string) (string, Entry, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return sessionID, Entry{}, fmt.Errorf("no checkpoints for session %s", sessionID)
 	}
-	e, err := newSnapshotManagerWithBase(dir).Revert(path)
+	e, err := newSnapshotManagerWithBase(dir).RevertIf(path, check)
 	if errors.Is(err, errNoCheckpoint) {
 		return sessionID, Entry{}, fmt.Errorf("no checkpoint of %s in session %s", path, sessionID)
 	}
 	if err != nil {
-		return sessionID, Entry{}, err
+		return sessionID, e, err
 	}
 	return sessionID, e, nil
 }

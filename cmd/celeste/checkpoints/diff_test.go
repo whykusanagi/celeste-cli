@@ -2,8 +2,10 @@ package checkpoints
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -141,7 +143,7 @@ func TestDiffStats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ins, del := diffStats(tt.old, tt.new)
+			ins, del, _ := diffStats(tt.old, tt.new)
 			assert.Equal(t, tt.wantIns, ins, "insertions")
 			assert.Equal(t, tt.wantDel, del, "deletions")
 		})
@@ -199,6 +201,39 @@ func TestComputeDiffRefusesBackupsOutsideTheSession(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(sdir, "index.json"), data, 0o600))
 
-	_, err = newSnapshotManagerWithBase(sdir).ComputeDiff()
-	assert.ErrorContains(t, err, "invalid backup name")
+	changes, err := newSnapshotManagerWithBase(sdir).ComputeDiff()
+	require.NoError(t, err, "one file's error does not fail the listing")
+	require.Len(t, changes, 1)
+	assert.Contains(t, changes[0].Err, "invalid backup name")
+}
+
+// Review M4: /diff stays bounded and readable. A binary file says so; a
+// file over maxDiffBytes is compared by size only, never read; a pair
+// whose line comparison would be too large gets line counts only; a file
+// that cannot be read shows its error while the others still list.
+func TestComputeDiffBinaryLargeAndErrors(t *testing.T) {
+	dir := t.TempDir()
+	sm := newSnapshotManagerWithBase(filepath.Join(dir, "session"))
+	bin, big, long, bad := filepath.Join(dir, "a.bin"), filepath.Join(dir, "b.big"), filepath.Join(dir, "c.txt"), filepath.Join(dir, "d.txt")
+	require.NoError(t, os.WriteFile(bin, []byte("x\x00y"), 0o644))
+	require.NoError(t, os.WriteFile(big, []byte("small"), 0o644))
+	lines := strings.Repeat("line\n", 4000)
+	require.NoError(t, os.WriteFile(long, []byte(lines), 0o644))
+	require.NoError(t, os.WriteFile(bad, []byte("x"), 0o644))
+	for _, f := range []string{bin, big, long, bad} {
+		require.NoError(t, snap(sm, f))
+	}
+	require.NoError(t, os.WriteFile(bin, []byte("x\x00z"), 0o644))
+	require.NoError(t, os.WriteFile(big, make([]byte, maxDiffBytes+1), 0o644))
+	require.NoError(t, os.WriteFile(long, []byte(strings.Repeat("other\n", 3000)), 0o644))
+	require.NoError(t, os.Remove(filepath.Join(sm.Dir(), sm.Entries()[3].Backup)))
+
+	changes, err := sm.ComputeDiff()
+	require.NoError(t, err)
+	require.Len(t, changes, 4)
+	out := FormatChanges(changes, dir)
+	assert.Contains(t, out, "  a.bin  (binary)\n")
+	assert.Contains(t, out, fmt.Sprintf("  b.big  (large file: 5 -> %d bytes)\n", maxDiffBytes+1))
+	assert.Contains(t, out, "  c.txt  +0 -1000 (large file, line counts only)\n")
+	assert.Contains(t, out, "  d.txt  (error: ")
 }

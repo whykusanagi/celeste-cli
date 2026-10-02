@@ -206,6 +206,8 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
+	commit(ckpts...)
+
 	if t.tracker != nil {
 		_ = t.tracker.RecordRead(sourcePath)
 		if !sameFile {

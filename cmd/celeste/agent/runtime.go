@@ -347,7 +347,11 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		options.Nested = true
 		env, err = options.ParentEnv.Nested(loop.NestedOptions{Workspace: options.Workspace, Warn: warn})
 	} else {
-		env, err = loop.Setup(loop.ModeAgent, cfg, options.Workspace, loop.SetupOptions{SessionID: firstRunID, Warn: warn})
+		sessionID := firstRunID
+		if options.ResumeRunID != "" {
+			sessionID = options.ResumeRunID
+		}
+		env, err = loop.Setup(loop.ModeAgent, cfg, options.Workspace, loop.SetupOptions{SessionID: sessionID, Warn: warn})
 	}
 	if err != nil {
 		return nil, err

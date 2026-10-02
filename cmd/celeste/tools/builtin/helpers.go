@@ -145,6 +145,17 @@ func fileSize(info os.FileInfo) int64 {
 // (2.0 F4); only serial tests may, restoring it with t.Cleanup.
 var writeFileFunc = os.WriteFile
 
+// commit records, after a call's writes succeeded, the state each file
+// was left in (checkpoints.Entry.After), closing its checkpoints. A commit
+// that fails leaves the entry without it, so undoing it warns.
+func commit(ckpts ...*checkpoints.Checkpoint) {
+	for _, c := range ckpts {
+		if c != nil {
+			_ = c.Commit()
+		}
+	}
+}
+
 // rollback undoes the checkpoints a failed call took, newest first, and
 // returns msg with any rollback failure appended.
 func rollback(msg string, ckpts ...*checkpoints.Checkpoint) string {

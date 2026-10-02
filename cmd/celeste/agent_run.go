@@ -161,6 +161,7 @@ func runAgentCommand(args []string) {
 		opts.VerifyTimeout = time.Duration(*verifyTimeout) * time.Second
 	}
 
+	opts.ResumeRunID = *resume // its checkpoints stay under its run ID
 	runner, err := agent.NewRunner(cfg, opts, os.Stdout, os.Stderr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent runner: %v\n", err)
