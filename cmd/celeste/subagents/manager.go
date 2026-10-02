@@ -679,6 +679,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 			run.Status = "failed"
 			run.Error = fmt.Sprintf("worktree setup: %v", err)
 			run.EndedAt = time.Now()
+			typedFailure(run, holderFor(run.Type), "", run.Error)
 			m.mu.Unlock()
 			return run, err
 		}
@@ -727,6 +728,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 			run.Status = "failed"
 			run.Error = "cancelled during stagger delay"
 			run.EndedAt = time.Now()
+			typedFailure(run, holderFor(run.Type), "", run.Error)
 			m.mu.Unlock()
 			return run, ctx.Err()
 		}
@@ -741,6 +743,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		run.Status = "failed"
 		run.Error = err.Error()
 		run.EndedAt = time.Now()
+		typedFailure(run, holderFor(run.Type), "", err.Error())
 		m.mu.Unlock()
 		return run, fmt.Errorf("create subagent: %w", err)
 	}
@@ -753,6 +756,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		run.Status = "failed"
 		run.Error = err.Error()
 		run.EndedAt = time.Now()
+		typedFailure(run, holder, "", err.Error())
 		m.mu.Unlock()
 		return run, fmt.Errorf("create subagent: %w", err)
 	}

@@ -136,9 +136,15 @@ func TestSpawnAgentTypeArgument(t *testing.T) {
 	if err := tool.ValidateInput(map[string]any{"goal": "g", "type": "general", "persona": map[string]any{"flirt": 3.0}}); err != nil {
 		t.Fatalf("persona on general: %v", err)
 	}
-	res, _ := tool.Execute(context.Background(), map[string]any{"goal": "g", "type": "review", "persona": map[string]any{}}, nil)
+	res, _ := tool.Execute(context.Background(), map[string]any{"goal": "g", "type": "review", "persona": map[string]any{"preset": "x"}}, nil)
 	if !res.Error {
 		t.Fatalf("Execute must refuse a persona on review: %+v", res)
+	}
+	// An empty or null persona asks for no override, so it is not refused.
+	for _, p := range []any{map[string]any{}, nil} {
+		if err := tool.ValidateInput(map[string]any{"goal": "g", "type": "explore", "persona": p}); err != nil {
+			t.Fatalf("empty persona %v on explore: %v", p, err)
+		}
 	}
 	for _, in := range []map[string]any{{"goal": "a", "type": "explore"}, {"goal": "b"}} {
 		if res, _ := tool.Execute(context.Background(), in, nil); res.Error {

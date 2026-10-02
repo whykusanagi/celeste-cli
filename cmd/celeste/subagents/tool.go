@@ -142,10 +142,17 @@ func spawnType(input map[string]any) (Type, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, has := input["persona"]; has && (typ == TypeExplore || typ == TypeReview) {
+	// An empty or null persona asks for no override, so only a non-empty
+	// one is refused.
+	if p, has := input["persona"]; has && p != nil && !isEmptyMap(p) && (typ == TypeExplore || typ == TypeReview) {
 		return "", fmt.Errorf("explore and review subagents run without the persona; drop 'persona' or use type general")
 	}
 	return typ, nil
+}
+
+func isEmptyMap(v any) bool {
+	m, ok := v.(map[string]any)
+	return ok && len(m) == 0
 }
 
 func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {

@@ -162,3 +162,32 @@ func TestFailedRunWithoutSubmitIsTyped(t *testing.T) {
 		t.Fatalf("head = %q result = %+v", head, r)
 	}
 }
+
+// A typed run that fails before it starts (the manager is closed) still
+// hands the parent the typed JSON.
+func TestFailedBeforeStartIsTyped(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	m, _, _, _ := fakeManager(t, srv)
+	m.Close()
+	res, _ := NewSpawnAgentTool(m).Execute(context.Background(), map[string]any{"goal": "look", "type": "explore"}, nil)
+	if !res.Error {
+		t.Fatalf("a spawn on a closed manager should fail: %+v", res)
+	}
+	head, r := splitTypedResult(t, res.Content)
+	if !strings.Contains(head, "(explore): failed") || !strings.Contains(r.Warning, "closed") {
+		t.Fatalf("head = %q result = %+v", head, r)
+	}
+}
+
+// The failure reason in the warning is bounded.
+func TestTypedFailureBoundsTheReason(t *testing.T) {
+	run := &SubagentRun{Type: TypeExplore}
+	typedFailure(run, &resultHolder{}, "", strings.Repeat("x", 50_000))
+	var r Result
+	if err := json.Unmarshal([]byte(run.Result), &r); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Warning) > 2000 {
+		t.Fatalf("warning is %d bytes", len(r.Warning))
+	}
+}

@@ -379,9 +379,26 @@ func marshalResult(r *Result) ([]byte, error) {
 // submitted, or else its last reply as the summary, with why it stopped
 // as the warning. An untyped run (nil holder) keeps its partial text. The
 // caller holds the manager's lock when run is shared.
+// holderFor is an empty result holder for a typed run that fails before
+// its runner exists, so typedFailure still gives it the typed JSON; nil for
+// an untyped run.
+func holderFor(t Type) *resultHolder {
+	if t == "" {
+		return nil
+	}
+	return &resultHolder{}
+}
+
+// maxFailureReason bounds the failure reason in a typed failure's warning.
+const maxFailureReason = 1024
+
 func typedFailure(run *SubagentRun, h *resultHolder, lastReply, why string) {
 	if h == nil {
 		return
+	}
+	// The reason can be a whole provider error body; keep it short.
+	if len(why) > maxFailureReason {
+		why = strings.ToValidUTF8(why[:maxFailureReason], "") + "..."
 	}
 	warning := "the subagent stopped before finishing: " + why
 	if h.get() == nil {
