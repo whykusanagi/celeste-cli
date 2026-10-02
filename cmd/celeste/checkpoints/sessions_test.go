@@ -191,3 +191,20 @@ func TestRevertFileMatchesThroughSymlinks(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(real, "a.txt"))
 	assert.Equal(t, "before", string(got))
 }
+
+// A session another process is changing right now (a fresh index.lock) is
+// never pruned, however old its last finished change.
+func TestPruneSkipsALockedSession(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 21; i++ {
+		mkSession(t, root, fmt.Sprintf("s%02d", i), pruneNow.Add(-time.Duration(40+i)*24*time.Hour), false)
+	}
+	lock := filepath.Join(root, "s20", "index.lock")
+	require.NoError(t, os.WriteFile(lock, []byte("token"), 0o600))
+	held := pruneNow.Add(-time.Minute)
+	require.NoError(t, os.Chtimes(lock, held, held))
+	require.NoError(t, os.Chtimes(filepath.Join(root, "s20"), held, held))
+	require.NoError(t, os.Chtimes(filepath.Join(root, "s20", "index.json"), pruneNow.Add(-60*24*time.Hour), pruneNow.Add(-60*24*time.Hour)))
+	require.NoError(t, Prune(root, "", pruneNow))
+	assert.Contains(t, sessionsIn(t, root), "s20")
+}

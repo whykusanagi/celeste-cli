@@ -80,6 +80,10 @@ func Prune(root, keep string, now time.Time) error {
 		if i < KeepSessions || now.Sub(s.changed) < KeepAge || s.name == current {
 			continue
 		}
+		// Another process is changing it right now.
+		if info, err := os.Stat(filepath.Join(root, s.name, lockFile)); err == nil && now.Sub(info.ModTime()) < lockStale {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(root, s.name)); err != nil {
 			errs = append(errs, err)
 		}
