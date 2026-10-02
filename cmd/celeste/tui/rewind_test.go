@@ -131,3 +131,10 @@ func TestRewindCommandRefusesBadArguments(t *testing.T) {
 	assert.Empty(t, client.rewound)
 	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Usage: /rewind [n]"))
 }
+
+// /rewind and /fork autocomplete like the other commands.
+func TestRewindAndForkAreKnownCommands(t *testing.T) {
+	for _, name := range []string{"rewind", "fork"} {
+		assert.Contains(t, knownCommands, name)
+	}
+}

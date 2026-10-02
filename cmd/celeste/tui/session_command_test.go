@@ -156,3 +156,56 @@ func TestSessionListShowsThisProjectFirst(t *testing.T) {
 	m, _ = step(t, m, SendMessageMsg{Content: "/session new Fresh"})
 	assert.Equal(t, ws, m.currentSession.GetWorkspace())
 }
+
+// 2.0 W4 ruling 3: /fork saves the session, continues in a copy (messages,
+// tool calls, provider blocks) and leaves the original as it was.
+func TestForkCopiesTheSessionAndSwitches(t *testing.T) {
+	m, mgr, _ := newSessionTestApp(t)
+	ws := t.TempDir()
+	m = m.SetWorkDir(ws)
+	m.currentSession.SetName("Design talk")
+	m.model = "model-x"
+	pb := mustBlocks(t, keyA, `{"type":"text","text":"done"}`)
+	m.chat = m.chat.Clear().RestoreMessages([]ChatMessage{
+		prompt("read a"),
+		{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "read_file", Arguments: `{"path":"a"}`}}},
+		{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "alpha"},
+		AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "done"}, pb),
+	})
+	orig := m.currentSession.(*config.Session)
+	origID := orig.ID
+
+	m, _ = step(t, m, SendMessageMsg{Content: "/fork"})
+	fork, ok := m.currentSession.(*config.Session)
+	require.True(t, ok)
+	require.NotEqual(t, origID, fork.ID)
+	assert.Equal(t, "fork of Design talk", fork.Name)
+	assert.Equal(t, ws, fork.Workspace)
+	assert.Equal(t, "model-x", fork.GetModel())
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(),
+		"Forked into "+fork.ID+"; the original is unchanged (/session resume "+origID+" to go back)."))
+
+	saved, err := mgr.mgr.Load(origID)
+	require.NoError(t, err)
+	require.Len(t, saved.Messages, 4)
+	forked, err := mgr.mgr.Load(fork.ID)
+	require.NoError(t, err)
+	require.Equal(t, len(saved.Messages), len(forked.Messages))
+	for i := range saved.Messages {
+		a, b := saved.Messages[i], forked.Messages[i]
+		assert.Equal(t, a.Role, b.Role)
+		assert.Equal(t, a.Content, b.Content)
+		assert.Equal(t, a.ToolCalls, b.ToolCalls)
+		assert.Equal(t, a.ToolCallID, b.ToolCallID)
+		assert.Equal(t, a.ProviderBlocks, b.ProviderBlocks)
+	}
+	require.NotNil(t, forked.Messages[3].ProviderBlocks, "provider blocks are copied")
+
+	// Later messages go to the fork only.
+	m.chat = m.chat.AddUserMessage("only in the fork")
+	m.persistSession()
+	saved, _ = mgr.mgr.Load(origID)
+	assert.Len(t, saved.Messages, 4)
+	forked, _ = mgr.mgr.Load(fork.ID)
+	assert.Len(t, forked.Messages, 5)
+}

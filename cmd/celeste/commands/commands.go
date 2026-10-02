@@ -838,6 +838,7 @@ Chat Commands:
   /diff                        List the files this session changed
   /undo                        Undo the last file change (repeat to go back)
   /rewind [n]                  Take back the last n prompts and the file changes they made
+  /fork                        Continue in a copy of this session (the original is kept)
   /help                        Show this help message
 
 Current Configuration:
@@ -911,6 +912,7 @@ Project:
   /diff              List the files this session changed
   /undo              Undo the last file change (repeat to go back)
   /rewind [n]        Take back the last n prompts and the file changes they made
+  /fork              Continue in a copy of this session (the original is kept)
   /costs             Show session costs
 
 Agent & Orchestrator:

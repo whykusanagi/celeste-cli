@@ -1115,6 +1115,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m = m.rewind(cmd.Args)
 				return m, nil
 
+			case "fork":
+				m = m.fork()
+				return m, nil
+
 			case "memories":
 				cwd, _ := os.Getwd()
 				m.viewMode = "memories"
