@@ -10,6 +10,7 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -79,8 +80,14 @@ func (b *ResponsesBackend) ProbeCompaction(ctx context.Context) CompactionSuppor
 	if got != CompactionUnknown {
 		compactProbes.Store(key, got)
 	}
-	tui.LogInfo(fmt.Sprintf("openai: server compaction on %s: %s", key, got))
+	tui.LogInfo(compactProbeLogLine(b.baseURL, got))
 	return got
+}
+
+// compactProbeLogLine names the endpoint without credentials its base URL
+// may carry.
+func compactProbeLogLine(baseURL string, got CompactionSupport) string {
+	return fmt.Sprintf("openai: server compaction on %s: %s", providers.CleanBaseURL(baseURL), got)
 }
 
 func classifyCompactProbe(err error) CompactionSupport {

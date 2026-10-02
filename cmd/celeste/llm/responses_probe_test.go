@@ -82,3 +82,17 @@ func TestServerCompactionWithoutAProbe(t *testing.T) {
 	assert.Equal(t, CompactionUnsupported, c.ServerCompaction(context.Background()))
 	assert.Equal(t, "unsupported", CompactionUnsupported.String())
 }
+
+// The probe and fallback log lines name the endpoint without credentials a
+// base URL may carry (userinfo, query).
+func TestResponsesLogLinesRedactTheBaseURL(t *testing.T) {
+	base := "https://user:s3cret@gw.example/v1?api_key=k3y#frag"
+	for _, line := range []string{
+		compactProbeLogLine(base, CompactionSupported),
+		fallbackLogLine(base, assert.AnError),
+	} {
+		assert.NotContains(t, line, "s3cret")
+		assert.NotContains(t, line, "k3y")
+		assert.Contains(t, line, "gw.example/v1")
+	}
+}

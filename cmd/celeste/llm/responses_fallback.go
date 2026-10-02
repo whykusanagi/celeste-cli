@@ -9,6 +9,7 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -106,8 +107,14 @@ func responsesFellBack(baseURL string) bool {
 // markResponsesFallback records the fallback and logs it once per endpoint.
 func markResponsesFallback(baseURL string, cause error) {
 	if _, loaded := responsesFallback.LoadOrStore(endpointKey(baseURL), struct{}{}); !loaded {
-		tui.LogInfo(fmt.Sprintf("openai: %s has no Responses API (%v); using Chat Completions for this session", endpointKey(baseURL), cause))
+		tui.LogInfo(fallbackLogLine(baseURL, cause))
 	}
+}
+
+// fallbackLogLine names the endpoint without credentials its base URL may
+// carry.
+func fallbackLogLine(baseURL string, cause error) string {
+	return fmt.Sprintf("openai: %s has no Responses API (%v); using Chat Completions for this session", providers.CleanBaseURL(baseURL), cause)
 }
 
 // resetResponsesFallback forgets every fallback (tests).
