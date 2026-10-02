@@ -16,7 +16,9 @@ func (j Jev) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 		return nil, errors.New("jev: no client")
 	}
 	wire := make(map[string]jev.Question, len(qs))
+	byID := make(map[string]Question, len(qs))
 	for _, q := range qs {
+		byID[q.ID] = q
 		w := jev.Question{Type: string(q.Kind), Instructions: q.Text}
 		switch q.Kind {
 		case YesNo:
@@ -50,6 +52,12 @@ func (j Jev) Ask(ctx context.Context, state string, qs []Question) (map[string]A
 		case a.Score != nil:
 			out[id] = Answer{Score: *a.Score, Probs: a.Probabilities, Confidence: a.Confidence, Source: "jev"}
 		case a.Choice != "":
+			// A choice outside the options is no answer, as an empty one.
+			if opts := byID[id].Options; len(opts) > 0 {
+				if _, known := opts[a.Choice]; !known {
+					continue
+				}
+			}
 			out[id] = Answer{Choice: a.Choice, Probs: a.Probabilities, Confidence: a.Confidence, Source: "jev"}
 		}
 	}
