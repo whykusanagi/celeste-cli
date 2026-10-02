@@ -11,11 +11,22 @@ package shellparse
 import (
 	"path"
 	"strings"
+	"sync/atomic"
 )
 
 // MaxDepth bounds recursion into nested shells (sh -c, eval, ssh,
 // substitutions).
 const MaxDepth = 4
+
+// steps is the work this package has done reading commands: bytes
+// tokenized plus words examined by every loop over a word list. Each call
+// adds its count once, at the end.
+var steps atomic.Int64
+
+// Steps reports the running total of that work. Tests compare it across
+// input sizes to check that reading a line stays linear; the count is
+// deterministic, where wall-clock ratios are noisy on shared CI runners.
+func Steps() int64 { return steps.Load() }
 
 // Shells are the commands whose -c argument is itself a command line.
 var Shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true}
@@ -58,6 +69,8 @@ func walk(cmd string, depth int, fn func(words []string) bool) Result {
 		return TooDeep
 	}
 	segs, nested := Segments(cmd)
+	var c int64
+	defer func() { steps.Add(c) }()
 	for _, n := range nested {
 		if r := walk(n, depth+1, fn); r != None {
 			return r
@@ -70,6 +83,7 @@ func walk(cmd string, depth int, fn func(words []string) bool) Result {
 		// Command strings anywhere in the segment (docker exec web sh -c,
 		// sudo bash -lc, script -qc, env -S).
 		for i := range words {
+			c++
 			for _, inner := range commandStrings(CommandName(words[i]), words[i+1:]) {
 				if r := walk(inner, depth+1, fn); r != None {
 					return r
@@ -85,6 +99,7 @@ func walk(cmd string, depth int, fn func(words []string) bool) Result {
 		case "ssh":
 			// ssh [opts] host command...: the remote command.
 			for k := 0; k < len(args); k++ {
+				c++
 				if strings.HasPrefix(args[k], "-") {
 					if len(args[k]) == 2 && strings.ContainsAny(args[k][1:], "bcDEeFIiJLlmOopQRSWw") {
 						k++ // an option that takes a value
@@ -108,6 +123,8 @@ var shellValueOptions = map[string]bool{"-o": true, "+o": true, "-O": true, "+O"
 // execute itself: a shell's -c string, script's -c/--command, env's
 // -S/--split-string. Anything else returns nil.
 func commandStrings(name string, args []string) []string {
+	var examined int64
+	defer func() { steps.Add(examined) }()
 	switch {
 	case Shells[name]:
 		// sh [options] -c [--] 'string': -c may be alone or in a cluster
@@ -115,6 +132,7 @@ func commandStrings(name string, args []string) []string {
 		c := false
 		k := 0
 		for ; k < len(args); k++ {
+			examined++
 			a := args[k]
 			if a == "--" {
 				k++
@@ -136,6 +154,7 @@ func commandStrings(name string, args []string) []string {
 		}
 	case name == "script":
 		for k := 0; k < len(args); k++ {
+			examined++
 			a := args[k]
 			switch {
 			case a == "--command" && k+1 < len(args):
@@ -155,6 +174,7 @@ func commandStrings(name string, args []string) []string {
 		}
 	case name == "env":
 		for k := 0; k < len(args); k++ {
+			examined++
 			a := args[k]
 			switch {
 			case (a == "-S" || a == "--split-string") && k+1 < len(args):
@@ -177,6 +197,7 @@ func commandStrings(name string, args []string) []string {
 // (CommandName) and arguments. name is "" when there is no command word.
 func Command(words []string) (name string, args []string) {
 	i := 0
+	defer func() { steps.Add(int64(i)) }() // every word up to the command word
 	for i < len(words) {
 		w := CommandName(words[i])
 		if strings.Contains(words[i], "=") && !strings.HasPrefix(words[i], "-") {
@@ -205,6 +226,8 @@ func Command(words []string) (name string, args []string) {
 func Segments(s string) (segs [][]string, nested []string) {
 	// A backslash-newline is a line continuation: the shell drops both.
 	s = strings.ReplaceAll(s, "\\\n", "")
+	// One forward pass; substitution bodies are counted again when walked.
+	steps.Add(int64(len(s)))
 	var words []string
 	var cur strings.Builder
 	inWord := false

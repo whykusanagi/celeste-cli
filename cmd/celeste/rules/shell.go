@@ -3,6 +3,7 @@ package rules
 import (
 	"path"
 	"strings"
+	"sync/atomic"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
 )
@@ -47,9 +48,16 @@ func destructiveShell(cmd string) bool {
 	}) != shellparse.None
 }
 
+// shellSteps counts the words this file's own loops examine, on top of
+// shellparse.Steps, so tests can check destructiveShell's work is linear.
+var shellSteps atomic.Int64
+
 func gitForcePush(args []string) bool {
 	push := false
+	var c int64
+	defer func() { shellSteps.Add(c) }()
 	for _, a := range args {
+		c++
 		switch {
 		case a == "push":
 			push = true
@@ -71,6 +79,7 @@ func rmRecursiveForce(args []string) bool {
 	if len(targets) == 0 {
 		return true
 	}
+	shellSteps.Add(int64(len(targets)))
 	for _, t := range targets {
 		if !buildDirTarget(t) {
 			return true
