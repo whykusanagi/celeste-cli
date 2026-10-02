@@ -34,3 +34,27 @@ func TestCompletionGateModeDefaultsToShadow(t *testing.T) {
 		}
 	}
 }
+
+func TestJevPruneModeDefaultsToOff(t *testing.T) {
+	for in, want := range map[string]string{"": "off", "shadow": "shadow", "on": "on", "yes": "off"} {
+		if got := (&Config{JevPrune: in}).JevPruneMode(); got != want {
+			t.Errorf("jev_prune %q = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestJevGateModeDefaultsToOff(t *testing.T) {
+	for in, want := range map[string]string{"": "off", "shadow": "shadow", "on": "on", "ask": "off"} {
+		if got := (&Config{JevGate: in}).JevGateMode(); got != want {
+			t.Errorf("jev_gate %q = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestJevRouteModeDefaultsToOff(t *testing.T) {
+	for in, want := range map[string]string{"": "off", "shadow": "shadow", "on": "on", "maybe": "off"} {
+		if got := (&Config{JevRoute: in}).JevRouteMode(); got != want {
+			t.Errorf("jev_route %q = %q, want %q", in, got, want)
+		}
+	}
+}

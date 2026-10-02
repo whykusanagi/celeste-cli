@@ -99,7 +99,10 @@ they are recorded or run. The loop drops the interrupted reply
 (`EventRuleInterrupt`) and re-runs the turn with the reminder as a hidden
 `<system-reminder>` message (`EventRule`), at most twice per turn.
 `steer.Session` implements it for a chat, an agent run or an MCP call,
-with the stream rules `loop.Setup` loads into `Env.Rules`.
+with the stream rules `loop.Setup` loads into `Env.Rules`. jev_gate is a
+`tools.AskAdvisor` the loop puts on each call's context (`Loop.Advisor`):
+the registry consults it only for calls the policy allows, and it can only
+turn one into an Ask.
 
 ```
 User types message
