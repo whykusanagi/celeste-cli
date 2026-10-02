@@ -121,17 +121,24 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links to a file that is not AGENTS.md or CLAUDE.md)", p))
 			continue
 		}
-		info, err := os.Stat(real)
-		if err != nil || !info.Mode().IsRegular() || seen[real] {
+		if seen[real] {
+			continue
+		}
+		// One descriptor for the checks and the read: a file swapped in
+		// after the checks above (a symlink, a FIFO) is refused, not read.
+		f, info, err := openRegular(real)
+		if err != nil {
 			continue
 		}
 		seen[real] = true
 		budget := min(contextFileCap, contextTotalCap-total)
 		if budget <= 0 {
+			f.Close()
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (the %d KiB total is used)", p, contextTotalCap>>10))
 			continue
 		}
-		text, cut, ok := readCapped(real, budget, info.Size())
+		text, cut, ok := readCapped(f, budget, info.Size())
+		f.Close()
 		if !ok {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (not UTF-8 text)", p))
 			continue
@@ -152,15 +159,11 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 	return out, warns
 }
 
-// readCapped reads at most limit bytes of path, ending on a rune boundary.
-// It reports the bytes left unread and false for a file that is not UTF-8.
-func readCapped(path string, limit int, size int64) (string, int, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0, false
-	}
-	defer f.Close()
-	buf, err := io.ReadAll(io.LimitReader(f, int64(limit)))
+// readCapped reads at most limit bytes of r (a file of size bytes), ending
+// on a rune boundary. It reports the bytes left unread and false for a file
+// that is not UTF-8.
+func readCapped(r io.Reader, limit int, size int64) (string, int, bool) {
+	buf, err := io.ReadAll(io.LimitReader(r, int64(limit)))
 	if err != nil {
 		return "", 0, false
 	}
