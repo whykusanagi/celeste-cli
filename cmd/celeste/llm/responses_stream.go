@@ -71,7 +71,8 @@ func readResponses(stream responsesEvents, emit func(StreamEvent)) (responsesTur
 			return turn, err
 		}
 		switch ev.Type {
-		case openai.ResponseStreamEventOutputTextDelta:
+		case openai.ResponseStreamEventOutputTextDelta, openai.ResponseStreamEventRefusalDelta:
+			// A refusal is the model's answer: shown as text like any other.
 			turn.text += ev.Delta
 			emit(StreamEvent{Type: EventContentDelta, ContentDelta: ev.Delta})
 		case openai.ResponseStreamEventOutputItemAdded:

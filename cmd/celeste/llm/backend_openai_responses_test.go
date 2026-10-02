@@ -521,3 +521,28 @@ func TestUnsupportedEndpointClassification(t *testing.T) {
 		assert.Equal(t, c.want, isUnsupportedEndpoint(c.err), "%v", c.err)
 	}
 }
+
+// Review M2: a refusal streams as content so the user sees it; the
+// message item keeps the refusal part in the blocks.
+func TestReadResponsesRefusalIsContent(t *testing.T) {
+	var deltas []string
+	evs := scriptedEvents{
+		`{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_0","type":"message","role":"assistant","content":[]}}`,
+		`{"type":"response.refusal.delta","item_id":"msg_0","output_index":0,"content_index":0,"delta":"I can't help "}`,
+		`{"type":"response.refusal.delta","item_id":"msg_0","output_index":0,"content_index":0,"delta":"with that."}`,
+		`{"type":"response.refusal.done","item_id":"msg_0","output_index":0,"content_index":0,"refusal":"I can't help with that."}`,
+		`{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_0","type":"message","role":"assistant","content":[{"type":"refusal","refusal":"I can't help with that."}]}}`,
+		`{"type":"response.completed","response":{"id":"r","status":"completed","output":[]}}`,
+	}
+	turn, err := readResponses(&evs, func(ev StreamEvent) {
+		if ev.Type == EventContentDelta {
+			deltas = append(deltas, ev.ContentDelta)
+		}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "I can't help with that.", turn.text)
+	assert.Equal(t, []string{"I can't help ", "with that."}, deltas)
+	assert.Equal(t, "stop", turn.finish)
+	require.Len(t, turn.items, 1)
+	assert.Contains(t, string(turn.items[0]), `"type":"refusal"`)
+}
