@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // FileChange represents the diff stats for a single file.
@@ -198,8 +200,10 @@ func FormatChanges(changes []FileChange, workspace string) string {
 // DisplayPath shows path relative to workspace when it is inside it, and
 // as it is otherwise.
 func DisplayPath(workspace, path string) string {
-	if rel, err := filepath.Rel(workspace, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return rel
+	if pathutil.Within(workspace, path) {
+		if rel, err := filepath.Rel(workspace, path); err == nil {
+			return rel
+		}
 	}
 	return path
 }
