@@ -4,10 +4,12 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 )
 
@@ -15,8 +17,13 @@ import (
 // (ruling 8), whichever Env is built first.
 var sandboxWarnOnce = new(sync.Once)
 
-// resolveSandbox is bash's OS sandbox policy for this Env (2.0 W4): the
-// default, then the user's "sandbox" settings from the loaded config.
+// resolveSandbox is bash's OS sandbox policy for this Env (2.0 W4, ruling
+// 9): the default, then the user's "sandbox" settings from the loaded
+// config, then the workspace's .celeste/config.json. The workspace's
+// tightening ("enabled": true, "network": false) always applies; its
+// loosening ("enabled": false, "network": true, "writable") only once
+// that file's settings are trusted, or the interactive chat approves them
+// now. Non-interactive runs skip an untrusted loosening with a warning.
 func (e *Env) resolveSandbox(cfg *config.Config) sandbox.Policy {
 	p := sandbox.Policy{Enabled: sandbox.DefaultEnabled, Network: true}
 	var extra []string
@@ -29,10 +36,67 @@ func (e *Env) resolveSandbox(cfg *config.Config) sandbox.Policy {
 		}
 		extra = append(extra, s.Writable...)
 	}
+	repo, path, body, err := config.LoadWorkspaceSandbox(e.Workspace)
+	if err != nil {
+		e.warn("sandbox: ignoring the workspace's sandbox settings: %v", err)
+	}
+	if repo != nil {
+		if repo.Enabled != nil && *repo.Enabled {
+			p.Enabled = true
+		}
+		if repo.Network != nil && !*repo.Network {
+			p.Network = false
+		}
+		if repo.Loosens() && e.trustRepoSandbox(path, body) {
+			if repo.Enabled != nil && !*repo.Enabled {
+				p.Enabled = false
+			}
+			if repo.Network != nil && *repo.Network {
+				p.Network = true
+			}
+			extra = append(extra, repo.Writable...)
+		}
+	}
 	p.Workspace = sandbox.Resolve(e.Workspace)
 	p.Writable = sandbox.Normalize(append(sandbox.DefaultWritable(e.home, p.Workspace), e.writablePaths(extra)...))
 	e.warnMissingSandbox(p)
 	return p
+}
+
+// trustRepoSandbox reports whether the workspace config at path, whose
+// "sandbox" object is body, may loosen the sandbox: trusted by content
+// hash in the hooks trust store, or approved now by the interactive chat
+// (and stored). A symlinked file is never trusted.
+func (e *Env) trustRepoSandbox(path, body string) bool {
+	skip := func(why string) bool {
+		e.warn("sandbox: ignoring the loosening in %s (%s): a repository's \"sandbox.enabled\": false, \"sandbox.network\": true and \"sandbox.writable\" apply only once trusted; run `celeste hooks trust` to approve them", strconv.Quote(path), why)
+		return false
+	}
+	if e.home == "" {
+		return skip("no home directory for the trust store")
+	}
+	if err := hooks.CheckRepoSandbox(path); err != nil {
+		return skip(err.Error())
+	}
+	store := hooks.LoadTrust(e.home)
+	if err := store.Err(); err != nil {
+		e.warn("sandbox: %v; repository sandbox settings stay untrusted until it is fixed or removed", err)
+	}
+	src := hooks.SandboxSource(path, body)
+	status := store.Status(src)
+	if status == hooks.Trusted {
+		return true
+	}
+	if approve := e.approver(); approve != nil && store.Err() == nil && approve(src, status) {
+		if err := store.Approve(src); err != nil {
+			e.warn("sandbox: %s approved for this session only: %v", strconv.Quote(path), err)
+		}
+		return true
+	}
+	if status == hooks.Changed {
+		return skip("changed since you approved it")
+	}
+	return skip("not trusted")
 }
 
 // writablePaths expands "~/" against home and resolves relative entries

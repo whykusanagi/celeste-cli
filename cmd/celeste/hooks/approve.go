@@ -15,7 +15,7 @@ import (
 // approving. Every string from the file is shown Go-quoted, so control and
 // bidi characters appear as escapes instead of acting on the terminal.
 func DescribeSource(w io.Writer, src Source) {
-	if src.Kind == KindRepoStreamRules {
+	if src.Kind == KindRepoStreamRules || src.Kind == KindRepoSandbox {
 		for _, line := range strings.Split(src.Rules, "\n") {
 			fmt.Fprintf(w, "    %s\n", strconv.Quote(line))
 		}
@@ -36,11 +36,16 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 		if status == Changed {
 			what = "have changed since you approved them"
 		}
-		if src.Kind == KindRepoStreamRules {
+		switch src.Kind {
+		case KindRepoStreamRules:
 			fmt.Fprintf(out, "\nStream rules in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, streamRulesSuffix)), what)
 			DescribeSource(out, src)
 			fmt.Fprint(out, "These rules can stop replies, re-run turns and add instructions the model follows.\nTrust them? [y/N]: ")
-		} else {
+		case KindRepoSandbox:
+			fmt.Fprintf(out, "\nSandbox settings in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, sandboxSuffix)), what)
+			DescribeSource(out, src)
+			fmt.Fprint(out, "These settings loosen the sandbox bash commands run in (more writable directories, the network, or no sandbox).\nTrust them? [y/N]: ")
+		default:
 			fmt.Fprintf(out, "\nHooks in %s (%s) %s:\n", strconv.Quote(src.Path), src.Kind, what)
 			DescribeSource(out, src)
 			fmt.Fprint(out, "These commands run on this machine with your permissions.\nTrust them? [y/N]: ")
