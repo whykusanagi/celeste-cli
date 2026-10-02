@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -17,6 +18,8 @@ import (
 
 func newResponsesTestClient(t *testing.T, srv *fakeprovider.Server, model string) (*Client, *ResponsesBackend) {
 	t.Helper()
+	resetResponsesFallback()
+	t.Cleanup(resetResponsesFallback)
 	cfg := &Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: model, Timeout: 10 * time.Second}
 	b := NewResponsesBackend(cfg)
 	return NewClientWithBackend(cfg, nil, b), b
@@ -227,4 +230,150 @@ func TestReadResponsesErrorEventAndDoneOnlyCall(t *testing.T) {
 	require.Len(t, evs, 2)
 	assert.Equal(t, EventToolUseStart, evs[0].Type)
 	assert.Equal(t, EventToolUseDone, evs[1].Type)
+}
+
+const notFoundBody = `{"error":{"message":"Not found","type":"invalid_request_error"}}`
+
+func paths(srv *fakeprovider.Server) []string {
+	var out []string
+	for _, r := range srv.Requests() {
+		out = append(out, r.Path)
+	}
+	return out
+}
+
+// Review Focus 1: an endpoint without /v1/responses answers through Chat
+// Completions in the same call, and is not asked again.
+func TestResponsesFallsBackOn404(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t,
+		fakeprovider.Turn{Status: 404, Body: notFoundBody},
+		fakeprovider.Turn{Text: "from chat"},
+		fakeprovider.Turn{Text: "chat again"},
+	)
+	c, b := newResponsesTestClient(t, srv, "gpt-test")
+	c.SetSystemPrompt("be brief")
+
+	res, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "from chat", res.Content)
+	assert.Nil(t, res.ProviderBlocks, "Chat Completions keeps no blocks")
+	assert.True(t, responsesFellBack(b.baseURL))
+	chatBody := srv.Requests()[1].Body
+	assert.Equal(t, "system", chatBody["messages"].([]any)[0].(map[string]any)["role"], "the fallback keeps the system prompt")
+
+	var text string
+	err = c.SendMessageStreamEvents(context.Background(), userMsgs("hi"), nil, func(ev StreamEvent) { text += ev.ContentDelta })
+	require.NoError(t, err)
+	assert.Equal(t, "chat again", text)
+	assert.Equal(t, []string{"/v1/responses", "/v1/chat/completions", "/v1/chat/completions"}, paths(srv))
+}
+
+func TestResponsesFallsBackOn400UnsupportedEndpoint(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t,
+		fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"Unsupported endpoint: /v1/responses","type":"invalid_request_error"}}`},
+		fakeprovider.Turn{Text: "from chat"},
+	)
+	c, _ := newResponsesTestClient(t, srv, "gpt-test")
+	var text string
+	err := c.SendMessageStream(context.Background(), userMsgs("hi"), nil, func(ch StreamChunk) { text += ch.Content })
+	require.NoError(t, err)
+	assert.Equal(t, "from chat", text)
+	assert.Equal(t, []string{"/v1/responses", "/v1/chat/completions"}, paths(srv))
+}
+
+// A second backend for the same endpoint (an UpdateConfig, a subagent's
+// client) goes straight to Chat Completions.
+func TestResponsesFallbackIsRememberedPerEndpoint(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t,
+		fakeprovider.Turn{Status: 404, Body: notFoundBody},
+		fakeprovider.Turn{Text: "one"},
+		fakeprovider.Turn{Text: "two"},
+	)
+	c, _ := newResponsesTestClient(t, srv, "gpt-test")
+	_, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.NoError(t, err)
+
+	other := NewResponsesBackend(&Config{APIKey: "k", BaseURL: srv.BaseURL() + "/", Model: "gpt-other", Timeout: 10 * time.Second})
+	res, err := other.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "two", res.Content)
+	assert.Equal(t, []string{"/v1/responses", "/v1/chat/completions", "/v1/chat/completions"}, paths(srv))
+}
+
+// Review Focus 2: a retired model is an error, not a missing endpoint.
+func TestResponsesModelNotFoundIsNotAFallback(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Status: 404,
+		Body: `{"error":{"message":"The model 'gpt-gone' does not exist or you do not have access to it.","type":"invalid_request_error","code":"model_not_found"}}`})
+	c, b := newResponsesTestClient(t, srv, "gpt-gone")
+	_, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not exist")
+	assert.False(t, responsesFellBack(b.baseURL))
+	assert.Equal(t, []string{"/v1/responses"}, paths(srv))
+}
+
+// Review Focus 4: stored items the endpoint no longer accepts are dropped
+// for one resend, and the reply says so (BlocksRejected) so the loop strips
+// the history.
+func TestResponsesRetriesWithoutRefusedBlocks(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t,
+		fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"The encrypted content for item rs_1 could not be verified.","type":"invalid_request_error","code":"invalid_encrypted_content"}}`},
+		fakeprovider.Turn{Text: "ok"},
+	)
+	c, b := newResponsesTestClient(t, srv, "gpt-test")
+	pb, err := tui.NewProviderBlocks(b.providerKey(), []json.RawMessage{
+		json.RawMessage(`{"encrypted_content":"stale","id":"rs_1","summary":[],"type":"reasoning"}`),
+		json.RawMessage(`{"content":[{"annotations":[],"text":"earlier","type":"output_text"}],"id":"msg_1","role":"assistant","status":"completed","type":"message"}`),
+	})
+	require.NoError(t, err)
+	history := []tui.ChatMessage{
+		{Role: "user", Content: "hi"},
+		tui.AttachProviderBlocks(tui.ChatMessage{Role: "assistant", Content: "earlier"}, pb),
+		{Role: "user", Content: "again"},
+	}
+	res, err := c.SendMessageSync(context.Background(), history, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", res.Content)
+	assert.True(t, res.BlocksRejected)
+	require.Len(t, srv.Requests(), 2)
+	assert.Contains(t, string(srv.Requests()[0].Raw), `"encrypted_content":"stale"`)
+	assert.NotContains(t, string(srv.Requests()[1].Raw), `"encrypted_content":"stale"`, "the resend is the neutral history")
+	assert.Contains(t, string(srv.Requests()[1].Raw), `{"type":"message","role":"assistant","content":"earlier"}`)
+	assert.False(t, responsesFellBack(b.baseURL))
+}
+
+// Without replayed blocks the same 400 is just an error: nothing to drop.
+func TestResponsesRejectionWithoutReplayIsAnError(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Status: 400,
+		Body: `{"error":{"message":"The encrypted content for item rs_1 could not be verified.","type":"invalid_request_error"}}`})
+	c, _ := newResponsesTestClient(t, srv, "gpt-test")
+	_, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.Error(t, err)
+	assert.Len(t, srv.Requests(), 1)
+}
+
+func TestUnsupportedEndpointClassification(t *testing.T) {
+	apiErr := func(status int, code, msg string) error {
+		return &openai.APIError{HTTPStatusCode: status, Code: code, Message: msg}
+	}
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{apiErr(404, "", "Not found"), true},
+		{apiErr(405, "", "Method not allowed"), true},
+		{apiErr(501, "", "Not implemented"), true},
+		{apiErr(400, "", "Unsupported endpoint"), true},
+		{apiErr(400, "", "Invalid URL (POST /v1/responses)"), true},
+		{&openai.RequestError{HTTPStatusCode: 404, Body: []byte("404 page not found")}, true},
+		{apiErr(404, "model_not_found", "The model 'x' does not exist"), false},
+		{apiErr(404, "", "The model 'x' does not exist"), false},
+		{apiErr(404, "", "Item with id 'rs_1' not found."), false},
+		{apiErr(400, "", "Invalid value for 'reasoning.effort'"), false},
+		{apiErr(401, "", "Incorrect API key"), false},
+		{errors.New("dial tcp: connection refused"), false},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, isUnsupportedEndpoint(c.err), "%v", c.err)
+	}
 }

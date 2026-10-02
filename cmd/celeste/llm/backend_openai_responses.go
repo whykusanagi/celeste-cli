@@ -72,19 +72,33 @@ func (b *ResponsesBackend) request(messages []tui.ChatMessage, tools []tui.Skill
 	return req, replayed
 }
 
-// turn runs one request and reads its reply. rejected reports that the
-// endpoint refused the replayed items and the reply came from the neutral
-// history; fallback that the caller must make the same call on Chat
-// Completions instead (Task 5 fills both in).
+// turn runs one request and reads its reply. An endpoint known to lack the
+// Responses API, or found to lack it now, returns fallback=true and the
+// caller makes the same call on Chat Completions (ruling 8). A request
+// whose replayed items are refused is resent once with the neutral history
+// and returns rejected=true (ruling 10).
 func (b *ResponsesBackend) turn(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, emit func(StreamEvent)) (t responsesTurn, rejected, fallback bool, err error) {
-	req, _ := b.request(messages, tools)
+	if responsesFellBack(b.baseURL) {
+		return t, false, true, nil
+	}
+	req, replayed := b.request(messages, tools)
 	stream, err := b.client.CreateResponseStream(ctx, req)
+	if err != nil && replayed && isBlocksRejection(err) {
+		tui.LogInfo("openai responses: the endpoint refused replayed items, resending without them: " + err.Error())
+		req, _ = b.request(tui.StripProviderBlocks(messages), tools)
+		stream, err = b.client.CreateResponseStream(ctx, req)
+		rejected = true
+	}
+	if err != nil && isUnsupportedEndpoint(err) {
+		markResponsesFallback(b.baseURL, err)
+		return t, false, true, nil
+	}
 	if err != nil {
-		return t, false, false, err
+		return t, rejected, false, err
 	}
 	defer stream.Close()
 	t, err = readResponses(stream, emit)
-	return t, false, false, err
+	return t, rejected, false, err
 }
 
 // blocks keeps a reply's output items (ruling 3). A failure to keep them
