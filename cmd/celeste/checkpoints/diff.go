@@ -123,12 +123,6 @@ func (sm *SnapshotManager) readBackup(e Entry) (size int64, data []byte, big boo
 	return info.Size(), data, false, err
 }
 
-// computeDiffLocked is ComputeDiff without the session lock; the caller
-// holds sm.mu.
-func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
-	return diffOldSides(sm.oldSidesLocked()), nil
-}
-
 // diffOldSides compares each old side with its file now.
 func diffOldSides(olds []oldSide) []FileChange {
 	changes := make([]FileChange, 0, len(olds))
