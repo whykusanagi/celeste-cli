@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 func TestRenderStateIsDeterministic(t *testing.T) {
@@ -74,6 +76,37 @@ func TestPreviousStateIsNotFedToTheSummarizer(t *testing.T) {
 	}
 	if !strings.Contains(f.user, "old goal") {
 		t.Fatal("the previous summary itself must still be merged")
+	}
+}
+
+// The summarizer may echo the state heading in its own prose; only the
+// block SummaryText appended is cut, so the prose after the echo survives.
+func TestPreviousSummaryEchoingTheStateHeadingIsKept(t *testing.T) {
+	summary := "## Goal\nold goal\n\n## Authoritative state\nthe user said this heading wins\n\n## Next Steps\nkeep porting"
+	prev := SummaryMessages(summary, RenderState([]Todo{{ID: 9, Title: "stale item", Status: "pending"}}, nil, ""), false)
+	msgs := append(prev, history(step{"read_file", `{"path":"a.go"}`, 40_000}, step{"read_file", `{"path":"b.go"}`, 40_000})...)
+	f := &fakeSummarizer{reply: "## Goal\nold goal"}
+	if _, _, err := Summarize(context.Background(), msgs, SummaryOptions{KeepTokens: 8_000}, f.fn); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.user, "keep porting") {
+		t.Fatal("the previous summary was cut at the heading its own prose echoed")
+	}
+	if strings.Contains(f.user, "stale item") {
+		t.Fatal("the previous state reached the summarizer")
+	}
+}
+
+// A state-only message (a server compaction's) feeds no state back either.
+func TestPreviousStateMessageIsNotFedToTheSummarizer(t *testing.T) {
+	prev := []tui.ChatMessage{StateMessage(RenderState([]Todo{{ID: 9, Title: "stale item", Status: "pending"}}, nil, ""))}
+	msgs := append(prev, history(step{"read_file", `{"path":"a.go"}`, 40_000}, step{"read_file", `{"path":"b.go"}`, 40_000})...)
+	f := &fakeSummarizer{reply: "## Goal\nx"}
+	if _, _, err := Summarize(context.Background(), msgs, SummaryOptions{KeepTokens: 8_000}, f.fn); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.user, "stale item") {
+		t.Fatal("the previous state reached the summarizer")
 	}
 }
 

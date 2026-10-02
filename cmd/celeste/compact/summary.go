@@ -216,8 +216,12 @@ func summaryPrompt(head []tui.ChatMessage, focus string) (string, bool) {
 		if i := strings.Index(body, summaryClose); i >= 0 {
 			body = body[:i]
 		}
-		if k := strings.Index(body, stateHeading); k >= 0 {
-			body = body[:k] // re-rendered from the records, never summarized
+		// The state block is re-rendered from the records, never
+		// summarized. Cut the block SummaryText (or StateMessage) appended,
+		// not a heading the summarizer echoed in its prose.
+		body = "\n" + body
+		if k := strings.LastIndex(body, "\n\n"+stateHeading+"\n"); k >= 0 {
+			body = body[:k]
 		}
 		previous = strings.TrimSpace(body)
 		start = 1
