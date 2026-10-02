@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +33,15 @@ func TestInitProjectAgentsFlag(t *testing.T) {
 	if !strings.Contains(out.String(), "already exists") {
 		t.Fatalf("output should note the existing .grimoire:\n%s", out.String())
 	}
-	if err := initProject(ws, []string{"--agents"}, &out); err == nil {
+	err := initProject(ws, []string{"--agents"}, &out)
+	if err == nil {
 		t.Fatal("nothing left to write must be an error")
+	}
+	if msg := initErrorText(err); msg != "" {
+		t.Fatalf("the skip lines already say why; stderr should not repeat it: %q", msg)
+	}
+	if msg := initErrorText(errors.New("boom")); msg != "Error: boom" {
+		t.Fatalf("another failure is printed: %q", msg)
 	}
 }
 

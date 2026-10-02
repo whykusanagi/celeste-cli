@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"fmt"
 	"runtime/debug"
 	"testing"
 )
@@ -41,7 +42,7 @@ func TestClassify(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			kind, tag := Classify(c.info, c.ok, c.official, c.key)
 			if kind != c.kind || tag != c.tag {
-				t.Fatalf("Classify = %v %q, want %v %q", kind, tag, c.kind, c.tag)
+				t.Fatalf("Classify = %s %q, want %s %q", kindName(kind), tag, kindName(c.kind), c.tag)
 			}
 		})
 	}
@@ -85,4 +86,12 @@ func TestNewer(t *testing.T) {
 			t.Errorf("Newer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
 	}
+}
+
+// kindName names a Kind in failure messages; Kind has no String method.
+func kindName(k Kind) string {
+	if n, ok := map[Kind]string{Source: "Source", Module: "Module", Keyed: "Keyed", Official: "Official"}[k]; ok {
+		return n
+	}
+	return fmt.Sprintf("Kind(%d)", int(k))
 }

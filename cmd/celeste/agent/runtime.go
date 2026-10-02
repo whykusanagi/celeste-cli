@@ -21,6 +21,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -1058,32 +1059,24 @@ func executeVerificationCommand(parent context.Context, workspace, command strin
 		timeout = DefaultOptions().VerifyTimeout
 	}
 
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = workspace
-	output, err := cmd.CombinedOutput()
-
-	outputStr := string(output)
-	if len(outputStr) > maxCommandOutput {
-		outputStr = outputStr[:maxCommandOutput]
+	// --verify-cmd is user-authored (trusted, so no denylist); the runner
+	// still kills its whole process group on timeout, so a go test child
+	// holding the pipe cannot keep the check open.
+	res := shellrun.Run(parent, shellrun.Options{Dir: workspace, Command: command, Timeout: timeout, MaxOutput: maxCommandOutput})
+	output := res.Output
+	if res.Err != nil {
+		output += "\n" + res.Err.Error()
+		if len(output) > maxCommandOutput {
+			output = output[:maxCommandOutput]
+		}
 	}
-
-	exitCode := 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-
-	timedOut := ctx.Err() == context.DeadlineExceeded
-	passed := err == nil && !timedOut
 
 	return VerificationCheck{
 		Command:   command,
-		Passed:    passed,
-		ExitCode:  exitCode,
-		Output:    outputStr,
-		TimedOut:  timedOut,
+		Passed:    res.Err == nil && !res.TimedOut && res.ExitCode == 0,
+		ExitCode:  res.ExitCode,
+		Output:    output,
+		TimedOut:  res.TimedOut,
 		Timestamp: time.Now(),
 	}
 }

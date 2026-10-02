@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate"
 )
 
@@ -17,7 +18,7 @@ var (
 	newUpdater = selfupdate.New
 	updateKind = func() (selfupdate.Kind, string) {
 		info, ok := debug.ReadBuildInfo()
-		kind, tag := selfupdate.Classify(info, ok, Channel == "release", hasPersonaKey())
+		kind, tag := selfupdate.Classify(info, ok, Channel == "release", prompts.HasPersonaKey())
 		if kind == selfupdate.Official {
 			tag = "v" + Version
 		}

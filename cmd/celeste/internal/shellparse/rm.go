@@ -32,6 +32,8 @@ func RmRefused(words []string) bool {
 	// end-of-flags off (e=0) or on (e=1), as RmFlags would read it.
 	type summary struct{ recursive, force, critical, sysOrHome bool }
 	n := len(words)
+	var c int64
+	defer func() { count(c) }()
 	var sum [2][]summary
 	sum[0], sum[1] = make([]summary, n+2), make([]summary, n+2)
 	merge := func(x, y summary) summary {
@@ -39,6 +41,7 @@ func RmRefused(words []string) bool {
 	}
 	target := func(t string) summary { return summary{critical: criticalPath(t), sysOrHome: systemOrHomePath(t)} }
 	for k := n - 1; k >= 0; k-- {
+		c++
 		a := words[k]
 		sum[1][k] = merge(target(a), sum[1][k+1])
 		switch {
@@ -59,6 +62,7 @@ func RmRefused(words []string) bool {
 		}
 	}
 	for i, w := range words {
+		c++
 		if CommandName(w) == "rm" {
 			if s := sum[0][i+1]; s.recursive && (s.critical || s.force && s.sysOrHome) {
 				return true
@@ -73,7 +77,10 @@ func RmRefused(words []string) bool {
 // --for) and the paths it removes. Redirections are not paths.
 func RmFlags(args []string) (recursive, force bool, targets []string) {
 	endOfFlags := false
+	var c int64
+	defer func() { count(c) }()
 	for k := 0; k < len(args); k++ {
+		c++
 		a := args[k]
 		switch {
 		case !endOfFlags && IsRedirect(a):

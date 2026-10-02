@@ -56,6 +56,12 @@ func (p *PersonaProfile) Tokens() int { return len(p.SystemPrompt) / 4 }
 // empty and run the public persona. Nothing may log, print or wrap it.
 var personaKey string
 
+// HasPersonaKey reports whether this binary was built with a persona key
+// (W5 ruling 25): such a build is Keyed and never replaces itself with a
+// downloaded release. It says nothing about whether the key decrypts; that
+// is VerifyPersona. The key itself never leaves this package.
+func HasPersonaKey() bool { return strings.TrimSpace(personaKey) != "" }
+
 // personaFS is the sealed persona (make sync-persona): SOURCE.json and the
 // four celeste_<profile>.enc files. persona/LICENSE is not embedded.
 //
@@ -115,8 +121,8 @@ func currentPersona() *personaSet {
 // UsePersonaSource makes the process run the persona sealed in fsys
 // (SOURCE.json and celeste_<profile>.enc at its root) under hexKey, and
 // returns the function that restores the previous one. It exists for
-// tests (promptstest.Install): every package can exercise decryption and
-// realistic profile sizes with the public test key, never the real one.
+// tests: they exercise decryption and realistic profile sizes with the
+// public test key (personacrypttest), never the real one.
 func UsePersonaSource(fsys fs.FS, hexKey string) (restore func()) {
 	prev := personaOverride.Swap(loadPersona(fsys, hexKey))
 	return func() { personaOverride.Store(prev) }
