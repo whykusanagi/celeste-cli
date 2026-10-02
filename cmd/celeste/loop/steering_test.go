@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -340,5 +341,24 @@ func TestSteeringEscDuringRerun(t *testing.T) {
 	}
 	if len(msgs) != 2 || msgs[1].Metadata[MetaReminder] != "rule:text" {
 		t.Errorf("history = %+v", msgs)
+	}
+}
+
+// A provider error is never masked as a rule interrupt: the end-of-stream
+// check runs only after a stream that completed (re-review item 2).
+func TestSteeringEndStreamSkippedOnProviderError(t *testing.T) {
+	boom := errors.New("provider exploded")
+	llmStub := &stubLLM{reply: func(_ int, _ context.Context, cb llm.StreamEventCallback) error {
+		cb(llm.StreamEvent{Type: llm.EventContentDelta, ContentDelta: "Audio saved: x"})
+		return boom
+	}}
+	st := &endSteering{}
+	l := &Loop{Client: llmStub, Tools: newRegistry(), Limits: DefaultLimits(), Steering: st}
+	_, res, err := l.Run(context.Background(), []Message{{Role: "user", Content: "x"}})
+	if !errors.Is(err, boom) || res.StopReason != StopError || llmStub.calls != 1 {
+		t.Fatalf("res=%+v err=%v calls=%d", res, err, llmStub.calls)
+	}
+	if st.ends != 0 {
+		t.Errorf("EndStream ran %d times after a failed stream", st.ends)
 	}
 }

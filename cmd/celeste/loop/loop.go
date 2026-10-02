@@ -353,7 +353,9 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits, turn int
 			r.blocksRejected = ev.BlocksRejected
 		}
 	})
-	if se, ok := l.Steering.(StreamEnder); ok && se.EndStream() && allow {
+	// Only a stream that completed gets the end-of-stream check: a provider
+	// error must surface as itself, never as a rule interrupt and a re-run.
+	if se, ok := l.Steering.(StreamEnder); ok && err == nil && se.EndStream() && allow {
 		intr.fire()
 	}
 	// Read before cancel(): afterwards the context reports Canceled.

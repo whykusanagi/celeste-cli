@@ -54,7 +54,7 @@ type Steering interface {
 }
 
 // StreamEnder is an optional Steering method. EndStream is called when a
-// request's stream has ended, before the request returns: a matcher that
+// request's stream has completed without an error, before the request returns: a matcher that
 // batches its scans checks what it held back. True interrupts the request
 // (the reply is dropped even though the provider sent all of it).
 type StreamEnder interface {
