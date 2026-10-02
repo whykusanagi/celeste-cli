@@ -825,7 +825,7 @@ export CELESTE_API_ENDPOINT="https://api.openai.com/v1"
 export TAROT_AUTH_TOKEN="Basic xxx"
 ```
 
-Precedence is flag > environment variable > config file. `CELESTE_API_KEY`,
+Precedence is environment variable > config file. `CELESTE_API_KEY`,
 `CELESTE_API_ENDPOINT` and `TAROT_AUTH_TOKEN` override `api_key`, `base_url`
 and `tarot_auth_token` for the profile you start with (`chat`, `message`,
 `agent`, `serve`). They apply to that run only: they are never written to a

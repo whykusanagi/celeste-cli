@@ -274,7 +274,11 @@ type Loop struct {
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string
-	// SpillDir overrides the spill base directory; "" uses the default.
+	// SpillDir overrides the spill base directory; "" uses the default
+	// (ctxmgr.ToolResultsBaseDir). Only tests set it. recall_tool_result
+	// reads from the default base, so with a custom SpillDir the recall id
+	// in a capped result's marker does not resolve: the spill file is still
+	// written and named, but only that path reaches it.
 	SpillDir string
 	// SpillCounter numbers spill files across Loops that share it (the chat
 	// starts one Loop per turn, 2.0 F2d), so a call ID repeated in a later

@@ -375,7 +375,7 @@ func SaveSkillsConfig(skillsConfig *Config) error {
 	return atomicfile.Write(skillsFile, data, 0600)
 }
 
-// Environment overrides. Precedence is flag > environment > config file.
+// Environment overrides. Precedence is environment > config file.
 // They apply to this run only: ApplyEnvOverrides is called by the entry
 // points that run a session (chat, message, agent, serve), never by the
 // loads that are saved back, so a variable's value is never written to disk.

@@ -116,12 +116,12 @@ func TestStreamDoneMsg_SetsStreamDone(t *testing.T) {
 	assert.True(t, mm.streamDone, "StreamDoneMsg must set streamDone=true")
 }
 
-// TestAgentResponse_SimulatedTyping_SetsStreamDone verifies that the
+// TestAgentResponse_SetsStreamDoneBeforeTyping verifies that the
 // non-streaming agent response path also sets streamDone=true before
-// starting the typing animation. Without that, the tick-complete branch
+// starting the typing animation (with no config, typing is on). Without that, the tick-complete branch
 // would enter its new !streamDone idle loop and never commit the agent
 // reply to session history.
-func TestAgentResponse_SimulatedTyping_SetsStreamDone(t *testing.T) {
+func TestAgentResponse_SetsStreamDoneBeforeTyping(t *testing.T) {
 	model := NewApp(nil)
 
 	m, _ := model.Update(AgentProgressMsg{

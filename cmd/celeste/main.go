@@ -168,7 +168,7 @@ Agent:
                                           Enable plan->execute->verify gating
 
 Environment Variables:
-  CELESTE_API_KEY         API key (overrides the config file; a flag wins over both)
+  CELESTE_API_KEY         API key (overrides the config file)
   CELESTE_API_ENDPOINT    API endpoint (overrides the config file)
   VENICE_API_KEY          Venice.ai API key for NSFW mode (fallback when skills.json has none)
   TAROT_AUTH_TOKEN        Tarot function auth token (overrides the config file)
