@@ -126,7 +126,9 @@ func (s *Session) Steering() loop.Steering {
 
 // SetGoal sets what the ballot judges progress against (the chat: each
 // turn's prompt). A changed goal drops watchdog reminders and nits not yet
-// handed out, and the verdict of a ballot still running. Nil-safe.
+// handed out, the verdict of a ballot still running, and the turns the
+// watchdog saw (the same call under two prompts is not a loop); the request
+// cadence carries on. Nil-safe.
 func (s *Session) SetGoal(goal string) {
 	if s == nil {
 		return
@@ -140,6 +142,7 @@ func (s *Session) SetGoal(goal string) {
 	// what the user asked"): drop the ones pending and the one running.
 	s.o.Goal = goal
 	s.gen++
+	s.turns = nil
 	s.nits = nil
 	for b, rs := range s.pending {
 		kept := rs[:0]
