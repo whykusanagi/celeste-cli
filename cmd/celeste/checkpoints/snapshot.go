@@ -428,15 +428,6 @@ func (sm *SnapshotManager) Entries() []Entry {
 	return append([]Entry(nil), sm.entries...)
 }
 
-// GetChanges returns a FileChange per changed file (errors give nil).
-func (sm *SnapshotManager) GetChanges() []FileChange {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.reloadLocked()
-	changes, _ := sm.computeDiffLocked()
-	return changes
-}
-
 // Cleanup removes the session's directory and forgets its entries.
 func (sm *SnapshotManager) Cleanup() error {
 	sm.mu.Lock()
