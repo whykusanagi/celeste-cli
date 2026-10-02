@@ -647,7 +647,7 @@ type ProviderBlocks struct {
 
 ### File checkpoints (2.0)
 
-`checkpoints.SnapshotManager` is one session's store: backups plus `index.json`, a JSON array of `{message_id, path, version, backup, time}` in `~/.celeste/checkpoints/<session>/`, rewritten atomically on every change under a per-session lock file. `loop.Setup` opens it for the run's `SessionID` (chat session, agent run, the MCP chat Env; `<mode>-<pid>-<start nanos>` when none is given); nested Envs (subagents, `/agent`) share their parent's.
+`checkpoints.SnapshotManager` is one session's store: backups plus `index.json`, a JSON array of `{message_id, path, version, backup, time}` (plus `restored` once celeste put the file back to that entry's state by undoing a later change) in `~/.celeste/checkpoints/<session>/`, rewritten atomically on every change under a per-session lock file. `loop.Setup` opens it for the run's `SessionID` (chat session, agent run, the MCP chat Env; `<mode>-<pid>-<start nanos>` when none is given); nested Envs (subagents, `/agent`) share their parent's.
 
 - **Timing.** `write_file`, `patch_file` and `splice_file` call `Checkpoint(path, callID)` after their input validated, immediately before writing; any failure after it calls `Rollback`, which restores the file and drops the entry. `message_id` is the tool call's ID (`tools.CallIDFromContext`, set by the loop's `runGroup` for every call).
 - **Consumers.** `/undo` (`RevertLast`, through `tui.Checkpointer`; it asks before overwriting a file modified after the change, `ModifiedAfter`), `/diff` (`ComputeDiff` + `FormatChanges`), `celeste revert` (`RevertFile`, latest session by default), `/rewind` (`RewindTo`, W4), the files-modified list for compaction (`Files`, W1/#200).

@@ -39,6 +39,11 @@ type Entry struct {
 	Backup string `json:"backup"`
 	// Time is when the checkpoint was taken (UTC).
 	Time time.Time `json:"time"`
+	// Restored is when celeste last put Path back to the state this
+	// change left it in, by undoing a later change (UTC; absent when
+	// never), so that restore is not taken for a change made outside
+	// celeste (ModifiedAfter).
+	Restored time.Time `json:"restored,omitzero"`
 }
 
 // errNoCheckpoint: the session has no checkpoint of the file asked for.
@@ -285,7 +290,8 @@ const writeWindow = 10 * time.Second
 
 // ModifiedAfter reports whether e's file was modified after the change e
 // records (by an editor, a formatter, a bash command), judged by its
-// modification time being more than writeWindow past e.Time, and returns
+// modification time being more than writeWindow past e.Time (or past
+// e.Restored, when celeste restored it since), and returns
 // that time. Undoing e would overwrite (or, for a file the session
 // created, delete) that later change. A file that is gone has nothing to
 // overwrite. Changes within writeWindow of the checkpoint are not seen.
@@ -294,7 +300,11 @@ func ModifiedAfter(e Entry) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	return info.ModTime(), info.ModTime().After(e.Time.Add(writeWindow))
+	last := e.Time
+	if e.Restored.After(last) {
+		last = e.Restored // celeste's own restore
+	}
+	return info.ModTime(), info.ModTime().After(last.Add(writeWindow))
 }
 
 // SameEntry reports whether a and b are the same checkpoint.
@@ -455,6 +465,13 @@ func (sm *SnapshotManager) undoLocked(i int) error {
 		return err
 	}
 	next := append(append([]Entry(nil), sm.entries[:i]...), sm.entries[i+1:]...)
+	// The file is now as its previous change left it, by celeste's hand.
+	for j := len(next) - 1; j >= 0; j-- {
+		if next[j].Path == e.Path {
+			next[j].Restored = time.Now().UTC()
+			break
+		}
+	}
 	if err := writeIndex(sm.dir, next); err != nil {
 		return fmt.Errorf("cannot update checkpoint index: %w", err)
 	}

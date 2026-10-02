@@ -596,3 +596,36 @@ func TestRestoreWritesInPlaceWhenNoTempFileCanBeCreated(t *testing.T) {
 	_, err = sm.RevertLast()
 	assert.ErrorIs(t, err, os.ErrPermission)
 }
+
+// Smoke finding: undoing the second of two changes to a file restores it
+// (a new modification time); that is celeste's own doing, so the first
+// change, now the newest, must not read as modified after it — also in a
+// later process (the index records it).
+func TestUndoneChangeIsNotAModificationAfterTheEarlierOne(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	require.NoError(t, snap(sm, f))
+	write(t, f, "v1")
+	require.NoError(t, snap(sm, f))
+	write(t, f, "v2")
+
+	// Make the first change look old, as it is when /undo comes later.
+	entries, err := readIndex(sm.Dir())
+	require.NoError(t, err)
+	entries[0].Time = entries[0].Time.Add(-time.Hour)
+	entries[1].Time = entries[1].Time.Add(-time.Hour)
+	require.NoError(t, writeIndex(sm.Dir(), entries))
+
+	_, err = sm.RevertLast()
+	require.NoError(t, err)
+	assert.Equal(t, "v1", read(t, f))
+	left := newSnapshotManagerWithBase(sm.Dir()).Entries()
+	require.Len(t, left, 1)
+	_, changed := ModifiedAfter(left[0])
+	assert.False(t, changed, "celeste's own restore counted as a change made outside it")
+
+	var raw []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(read(t, filepath.Join(sm.Dir(), "index.json"))), &raw))
+	assert.Contains(t, raw[0], "restored")
+}
