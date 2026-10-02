@@ -33,6 +33,10 @@ Remove the key file to turn Jev off everywhere.`
 // comes from TYPESAFE_API_KEY, else one line of in; with neither, an
 // existing key file is kept. The caller saves cfg.
 func initJev(cfg *config.Config, home string, in io.Reader, out io.Writer) error {
+	// An unknown home would put the key under the working directory.
+	if home == "" || !filepath.IsAbs(home) {
+		return fmt.Errorf("cannot save the TypeSafe key: no home directory (got %q)", home)
+	}
 	keyPath := filepath.Join(home, ".celeste", "typesafe.key")
 	key := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY"))
 	if key == "" {
