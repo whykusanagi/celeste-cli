@@ -349,3 +349,40 @@ func TestWatchdogInterruptRunsOutsideTheLock(t *testing.T) {
 	}
 	s.Wait()
 }
+
+// A new goal (the chat's next prompt) drops a verdict about the old one:
+// one still running, and watchdog reminders and nits not yet handed out
+// (final review I1).
+func TestNewGoalDropsWatchdogVerdictsAboutTheOldOne(t *testing.T) {
+	s, _, _ := watch("on", map[string]decide.Answer{QDrifting: {P: 0.9}, QPersonaBreak: {P: 0.9}})
+	s.o.Every = 1
+	turn(s, nil) // the final reply ends: a ballot runs
+	s.Wait()
+	s.SetGoal("an unrelated new prompt")
+	if got := s.Reminders(loop.BoundaryRun); len(got) != 0 {
+		t.Errorf("verdict about the old goal survived: %+v", got)
+	}
+
+	// A ballot still running when the goal changes is dropped too.
+	o := &blockingOracle{started: make(chan struct{}, 1), release: make(chan struct{}), ended: make(chan error, 1)}
+	s2 := New(Options{Watchdog: "on", Oracle: o, Every: 1, Goal: "old"})
+	turn(s2, nil)
+	<-o.started
+	s2.SetGoal("new")
+	close(o.release)
+	<-o.ended
+	s2.Wait()
+	if got := s2.Reminders(loop.BoundaryRun); len(got) != 0 {
+		t.Errorf("an in-flight verdict about the old goal steered: %+v", got)
+	}
+
+	// The same goal again (an agent step) keeps what is pending.
+	s3, _, _ := watch("on", map[string]decide.Answer{QDrifting: {P: 0.9}})
+	s3.o.Every = 1
+	turn(s3, nil)
+	s3.Wait()
+	s3.SetGoal("fix the build")
+	if got := s3.Reminders(loop.BoundaryRun); len(got) != 1 {
+		t.Errorf("an unchanged goal dropped the verdict: %+v", got)
+	}
+}

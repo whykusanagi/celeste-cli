@@ -23,6 +23,9 @@ const DefaultEvery = 3
 // steerGap is the rate limit: at most one watchdog steer per 3 requests.
 const steerGap = 3
 
+// watchdogSource is the Source of the watchdog's reminders.
+const watchdogSource = "watchdog"
+
 // keepTurns is how many recent turns the ballot sees.
 const keepTurns = 4
 
@@ -65,6 +68,7 @@ type Session struct {
 	lastBallot int
 	lastSteer  int // request of the last watchdog steer; 0: none yet
 	nits       []string
+	gen        int // bumped when the goal changes: older verdicts are dropped
 	ballots    sync.WaitGroup
 	busy       bool
 }
@@ -114,14 +118,31 @@ func (s *Session) Steering() loop.Steering {
 }
 
 // SetGoal sets what the ballot judges progress against (the chat: each
-// turn's prompt). Nil-safe.
+// turn's prompt). A changed goal drops watchdog reminders and nits not yet
+// handed out, and the verdict of a ballot still running. Nil-safe.
 func (s *Session) SetGoal(goal string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if goal == s.o.Goal {
+		return
+	}
+	// A verdict about the old goal would judge the new one ("drifting from
+	// what the user asked"): drop the ones pending and the one running.
 	s.o.Goal = goal
-	s.mu.Unlock()
+	s.gen++
+	s.nits = nil
+	for b, rs := range s.pending {
+		kept := rs[:0]
+		for _, r := range rs {
+			if r.Source != watchdogSource {
+				kept = append(kept, r)
+			}
+		}
+		s.pending[b] = kept
+	}
 }
 
 func (s *Session) Request(_ int, interrupt func()) {
@@ -237,7 +258,7 @@ func (s *Session) Reminders(b loop.Boundary) []loop.Reminder {
 			out[0].Text += "\n" + nits
 			s.nits = nil
 		case b == loop.BoundaryRun:
-			out = append(out, loop.Reminder{Source: "watchdog", Text: nits})
+			out = append(out, loop.Reminder{Source: watchdogSource, Text: nits})
 			s.nits = nil
 		}
 	}
@@ -264,7 +285,7 @@ func (s *Session) startBallotLocked() {
 	s.busy = true
 	s.lastBallot = s.requests
 	state := s.stateLocked().String()
-	ctx := s.ctx
+	ctx, gen := s.ctx, s.gen
 	s.ballots.Add(1)
 	go func() {
 		defer s.ballots.Done()
@@ -274,6 +295,10 @@ func (s *Session) startBallotLocked() {
 		s.busy = false
 		if ctx.Err() != nil {
 			return // the run ended: a late verdict steers nothing
+		}
+		if gen != s.gen {
+			s.o.Logf("watchdog: verdict dropped (the goal changed)")
+			return
 		}
 		if interrupt := s.applyLocked(Judge(ans)); interrupt != nil {
 			// Outside the lock: the callback is the loop's, and may be
@@ -318,7 +343,7 @@ func (s *Session) applyLocked(v Verdict) (interrupt func()) {
 		return nil
 	}
 	s.lastSteer = s.requests
-	r := loop.Reminder{Source: "watchdog", Text: steers.Reminder()}
+	r := loop.Reminder{Source: watchdogSource, Text: steers.Reminder()}
 	if sev == Blocker {
 		s.pending[loop.BoundaryRetry] = append(s.pending[loop.BoundaryRetry], r)
 		return s.interrupt // the request in flight, if any; a no-op once it returned
