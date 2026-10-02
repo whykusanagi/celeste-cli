@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +31,8 @@ func TestSyncShadowReportStopsWithTheCallersContext(t *testing.T) {
 	}
 	msgs := history(steps...)
 	ctx, cancel := context.WithCancel(context.Background())
-	opts, report := WithJev(ctx, &jev.Client{Key: "k", URL: srv.URL}, "shadow", msgs, Options{Window: 20_000, Used: Estimate(msgs)}, func(string) {}, false)
+	var logged []string
+	opts, report := WithJev(ctx, &jev.Client{Key: "k", URL: srv.URL}, "shadow", msgs, Options{Window: 20_000, Used: Estimate(msgs)}, func(l string) { logged = append(logged, l) }, false)
 	res := Plan(msgs, opts)
 	if len(res.Edits) == 0 {
 		t.Fatal("the plan elided nothing; the report would not ask Jev")
@@ -39,9 +41,10 @@ func TestSyncShadowReportStopsWithTheCallersContext(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	start := time.Now()
 	report(res)
-	if d := time.Since(start); d > time.Second {
-		t.Errorf("report took %v after the caller's context was cancelled", d)
+	// Ended by the caller's cancel, not by Jev's own timeout (which a
+	// report under context.Background would wait out).
+	if len(logged) != 1 || !strings.Contains(logged[0], context.Canceled.Error()) {
+		t.Errorf("report did not stop with the caller's context: %q", logged)
 	}
 }
