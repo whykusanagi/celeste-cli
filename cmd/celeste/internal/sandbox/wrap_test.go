@@ -2,12 +2,16 @@ package sandbox
 
 import (
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"testing"
 )
 
 func TestBwrapArgs(t *testing.T) {
+	orig := resolvConf
+	resolvConf = filepath.Join(t.TempDir(), "resolv.conf") // not under /run
+	t.Cleanup(func() { resolvConf = orig })
 	a, b := t.TempDir(), t.TempDir()
 	missing := a + "-missing"
 	p := Policy{Enabled: true, Workspace: a, Writable: []string{a, b, missing}, Network: false}
@@ -33,6 +37,23 @@ func TestBwrapArgs(t *testing.T) {
 	p.Network = true
 	if slices.Contains(BwrapArgs(p, "true"), "--unshare-net") {
 		t.Fatal("network on: no --unshare-net")
+	}
+}
+
+// Review Minor 6: a resolver file under /run other than systemd's
+// (NetworkManager, resolvconf) stays visible behind the /run tmpfs.
+func TestBwrapKeepsTheResolverDirUnderRun(t *testing.T) {
+	for target, want := range map[string]string{
+		"/run/NetworkManager/resolv.conf":       "/run/NetworkManager",
+		"/run/resolvconf/resolv.conf":           "/run/resolvconf",
+		"/run/systemd/resolve/stub-resolv.conf": "",                 // already bound
+		"/run/resolv.conf":                      "/run/resolv.conf", // never all of /run
+		"/etc/resolv.conf":                      "",
+		"/runner/resolv.conf":                   "",
+	} {
+		if got := runResolverDir(target); got != want {
+			t.Errorf("runResolverDir(%s) = %q, want %q", target, got, want)
+		}
 	}
 }
 
