@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -300,7 +301,7 @@ type reply struct {
 // rerun drops an interrupted turn's reply (EventRuleInterrupt, with the
 // usage the provider billed for it) and joins the reminders for its re-run.
 func (l *Loop) rerun(msgs []Message, turn int, rep reply) []Message {
-	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn, Usage: rep.usage, Elapsed: rep.elapsed})
+	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn, Usage: droppedUsage(msgs, rep), Elapsed: rep.elapsed})
 	return l.joinReminders(msgs, BoundaryRetry)
 }
 
@@ -364,6 +365,7 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits, turn int
 	cancel()
 	r.elapsed = time.Since(start)
 	if interrupted && ctx.Err() == nil {
+		r.text = text.String() // what was streamed before the cut, for the cost estimate
 		return r, ErrRuleInterrupt
 	}
 	if err != nil {
@@ -408,4 +410,17 @@ func toToolCallInfo(calls []llm.ToolCallResult) []tui.ToolCallInfo {
 
 func cloneHistory(msgs []Message) []Message {
 	return append([]Message(nil), msgs...)
+}
+
+// droppedUsage is what a dropped reply cost: the provider's usage when it
+// sent one, else an estimate (marked Estimated) from the history sent and
+// the text streamed before the cut. A cancelled stream usually ends before
+// the provider reports usage, but the provider bills it anyway.
+func droppedUsage(sent []Message, rep reply) *llm.TokenUsage {
+	if rep.usage != nil {
+		return rep.usage
+	}
+	in := compact.Estimate(sent)
+	out := (len(rep.text) + 3) / 4
+	return &llm.TokenUsage{PromptTokens: in, CompletionTokens: out, TotalTokens: in + out, Estimated: true}
 }

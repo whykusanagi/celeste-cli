@@ -362,3 +362,35 @@ func TestSteeringEndStreamSkippedOnProviderError(t *testing.T) {
 		t.Errorf("EndStream ran %d times after a failed stream", st.ends)
 	}
 }
+
+// A request cut short mid-stream gets no usage from the provider, but was
+// still billed: the interrupt carries an estimate, marked as one
+// (re-review item 3). Real usage, when it came, is used as is.
+func TestSteeringMidStreamInterruptBillsAnEstimate(t *testing.T) {
+	llmStub := &stubLLM{reply: func(n int, ctx context.Context, cb llm.StreamEventCallback) error {
+		if n == 0 {
+			cb(llm.StreamEvent{Type: llm.EventContentDelta, ContentDelta: "Audio saved: " + strings.Repeat("x", 400)})
+			<-ctx.Done() // cut short: no MessageDone, no usage
+			return ctx.Err()
+		}
+		sayText(cb, "No audio.", nil)
+		return nil
+	}}
+	l := &Loop{Client: llmStub, Tools: newRegistry(), Limits: DefaultLimits(), Steering: &fakeSteering{onText: "Audio saved:"}}
+	wait := collect(l)
+	history := []Message{{Role: "user", Content: strings.Repeat("y", 800)}}
+	if _, _, err := l.Run(context.Background(), history); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range wait() {
+		if ev.Kind != EventRuleInterrupt {
+			continue
+		}
+		u := ev.Usage
+		if u == nil || !u.Estimated || u.PromptTokens < 200 || u.CompletionTokens < 100 || u.TotalTokens != u.PromptTokens+u.CompletionTokens {
+			t.Fatalf("estimated usage = %+v", u)
+		}
+		return
+	}
+	t.Fatal("no EventRuleInterrupt")
+}

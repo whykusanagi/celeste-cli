@@ -261,6 +261,9 @@ type TokenUsage struct {
 	// served from or written to the prompt cache (Anthropic only).
 	CacheReadTokens  int
 	CacheWriteTokens int
+	// Estimated: celeste counted these itself, because the provider sent
+	// no usage (a stream a steering rule cut short, 2.0 W3).
+	Estimated bool
 }
 
 type StreamChunk struct {
