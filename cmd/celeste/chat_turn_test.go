@@ -14,11 +14,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -693,7 +695,7 @@ func TestRunTurnSyncsTheCompactedHistoryWhenTheTurnEndsEarly(t *testing.T) {
 			}
 			cleanupChatDeps(t, deps)
 			history := bigToolHistory()
-			req := tui.TurnRequest{History: history, Tools: true, Window: 20_000, Used: 30_000, Run: 1}
+			req := tui.TurnRequest{History: history, Tools: true, Window: 20_000, Run: 1}
 			h, cmd := deps.adapter.RunTurn(req)
 			msgs := drainTurnWith(t, cmd, req, func(msg tea.Msg) {
 				if _, ok := msg.(tui.CompactedMsg); ok && tc.stop == "interrupted" {
@@ -728,6 +730,96 @@ func TestRunTurnSyncsTheCompactedHistoryWhenTheTurnEndsEarly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestChatCompactorCountsSystemPromptAndTools(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	history := userTurn("read the files")
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	if est := compact.Estimate(history); est >= compact.Threshold(40_000) {
+		t.Fatalf("test setup: history alone (%d) should be under the threshold", est)
+	}
+	c := &chatCompactor{a: a, window: 40_000, meter: compact.NewMeter(12_000)}
+	_, notes, changed := c.Compact(context.Background(), history, nil, false)
+	if !changed || len(notes) == 0 {
+		t.Fatal("the compactor ignored the system prompt and tool schemas")
+	}
+}
+
+// The chat's summaries keep KeepFor(window) of the newest history, so a
+// 40k-window chat can be summarized once it is past ~10k (#234).
+func TestChatSummaryKeepsByTheWindow(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "## Goal\nread the files"})
+	_, deps, _ := chatAppWithContextLimit(t, srv, 40_000)
+	// ~16k tokens: inside the old fixed 20k tail, over a 40k window's 10k.
+	history := userTurn("read the files")
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	history = append(history, userTurn("next")...)
+	out, err := deps.adapter.SummarizeContext(context.Background(), history, "")
+	if err != nil {
+		t.Fatalf("SummarizeContext: %v (a 40k window keeps 10k, so this history shrinks)", err)
+	}
+	if out.Cut == 0 {
+		t.Fatal("nothing was summarized")
+	}
+}
+
+// /set-model changes the live client's model, not baseConfig: the summary's
+// kept tail follows the model in use. A chat started on a 1M-token model
+// that moved to a 32k one keeps 8k, not 20k (#234).
+func TestChatSummaryKeepsByTheLiveModel(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	a.summarize = func(context.Context, string, string) (string, error) { return "## Goal\nread the files", nil }
+	a.baseConfig.BaseURL, a.baseConfig.Model = "https://api.anthropic.com/v1", "claude-opus-5-5"
+	live := *a.client.GetConfig()
+	live.BaseURL, live.Model = a.baseConfig.BaseURL, a.baseConfig.Model
+	a.client.UpdateConfig(&live)
+	if err := a.ChangeModel("venice-uncensored"); err != nil { // 32k
+		t.Fatal(err)
+	}
+	history := userTurn("read the files")
+	for i := 0; i < 4; i++ { // ~16k tokens: under 20k, over 8k
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	history = append(history, userTurn("next")...)
+	out, err := a.SummarizeContext(context.Background(), history, "")
+	if err != nil {
+		t.Fatalf("SummarizeContext: %v (the 32k model in use keeps 8k)", err)
+	}
+	if out.Cut == 0 {
+		t.Fatal("nothing was summarized")
+	}
+}
+
+// #200 in the chat: /compact's summary carries the workspace's todos.
+func TestChatSummaryCarriesAuthoritativeState(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "## Goal\nread the files"})
+	_, deps, ws := chatApp(t, srv)
+	builtin.NewTodoStore(ws).Create("port the lexer", "")
+	out, err := deps.adapter.SummarizeContext(context.Background(), bigToolHistory(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Messages[0].Content, "port the lexer (pending)") {
+		t.Fatalf("summary lacks the todo list:\n%s", out.Messages[0].Content)
 	}
 }
 

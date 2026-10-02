@@ -120,8 +120,12 @@ func CompactionTrigger(ctx context.Context) string {
 func (m AppModel) applySummary(msg ContextSummarizedMsg) (AppModel, bool) {
 	m.summarizing = false
 	if msg.Err != nil {
-		if msg.manual || !isNothingToSummarize(msg.Err) {
+		switch {
+		case msg.manual || !isNothingToSummarize(msg.Err):
 			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Context summary not applied: %v", msg.Err))
+		default:
+			// "Summarizing older context…" is on screen; close it (#234).
+			m.chat = m.chat.AddSystemMessage("🗜 Summary skipped: the older history is too small to shrink.")
 		}
 		return m, false
 	}
@@ -169,7 +173,7 @@ func summaryStillFits(current, snapshot []ChatMessage, cut int) bool {
 }
 
 // ErrNothingToSummarize is what SummarizeContext returns when there is no
-// older history worth summarizing; automatic summaries stay quiet about it.
+// older history worth summarizing; an automatic summary reports it as skipped.
 var ErrNothingToSummarize = errors.New("nothing to summarize: the older history is too small to shrink")
 
 func isNothingToSummarize(err error) bool { return errors.Is(err, ErrNothingToSummarize) }

@@ -302,6 +302,10 @@ type TUIClientAdapter struct {
 	workspace   string
 	undoConfirm *undoWarning
 
+	// state renders the authoritative state for summaries (#200); the
+	// chat Env's RenderState. Nil adds none.
+	state func() string
+
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.
 	pruned *compact.Store
@@ -594,7 +598,7 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 // With jev_prune "on" it still only asks Jev in shadow: it runs on the
 // Update goroutine, which must never wait on a network call (2.0 W3).
 func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
-	return a.compactWith(context.Background(), msgs, window, used, force, a.jevShadow(), config.ModeShadow)
+	return a.compactWith(context.Background(), msgs, window, used, 0, force, a.jevShadow(), config.ModeShadow) // between turns: everything was seen
 }
 
 // compactWith prunes with jc as the Jev scorer (nil: none) in jevMode
@@ -602,19 +606,21 @@ func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used i
 // client and mode RunTurn resolved, so the run goroutine never reads the
 // adapter's config, which endpoint and profile switches replace on the
 // Update goroutine.
-func (a *TUIClientAdapter) compactWith(ctx context.Context, msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client, jevMode string) tui.CompactOutcome {
+// used is the whole next request (system prompt and tools included);
+// unseen is how many trailing messages the model has not been shown (#234).
+func (a *TUIClientAdapter) compactWith(ctx context.Context, msgs []tui.ChatMessage, window, used, unseen int, force bool, jc *jev.Client, jevMode string) tui.CompactOutcome {
 	a.compactMu.Lock()
 	defer a.compactMu.Unlock()
 	if est := compact.Estimate(msgs); est > used {
 		used = est
 	}
-	overhead := used - compact.Estimate(msgs) // system prompt and tool schemas
+	overhead := used - compact.Estimate(msgs) // system prompt and tool schemas, or the provider's surplus
 	if a.pruned == nil {
 		if store, err := compact.DefaultStore(); err == nil {
 			a.pruned = store
 		}
 	}
-	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Force: force}, tui.LogInfo, true)
+	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Unseen: unseen, Force: force}, tui.LogInfo, true)
 	after, res := compact.Prune(msgs, opts, a.pruned)
 	report(res)
 	out := tui.CompactOutcome{
@@ -697,7 +703,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
 
 // SummarizeContext implements tui.ContextCompactor: it summarizes all but
-// the newest ~20k tokens with the small-model role (#174). PreCompact runs
+// the newest compact.KeepFor(window) tokens with the small-model role (#174). PreCompact runs
 // inside the summarize call, which compact.Summarize only makes when there
 // is something to summarize; it may block the summary or add instructions.
 // PostCompact sees the summary.
@@ -728,7 +734,22 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 		}
 		return summarize(ctx, system, user)
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus}, hooked)
+	// The kept tail scales with the window of the model in use (#234):
+	// /set-model changes the live client's config, never baseConfig.
+	window := 0
+	if cfg := a.baseConfig; cfg != nil {
+		baseURL, model := cfg.BaseURL, cfg.Model
+		if a.client != nil {
+			lc := a.client.GetConfig()
+			baseURL, model = lc.BaseURL, lc.Model
+		}
+		window, _ = config.ResolveContextLimit(baseURL, model, cfg.ContextLimit)
+	}
+	state := ""
+	if a.state != nil {
+		state = a.state()
+	}
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, State: state}, hooked)
 	if blocked != "" {
 		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
 	}

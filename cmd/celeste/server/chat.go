@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -142,11 +141,11 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 // go to the pruned-results store, where recall_tool_result restores them.
 // MCP chat has no summary rung: a call is one prompt of at most 25 turns.
 type chatCompactor struct {
-	window   int // the model's context window, in tokens
-	overhead int // system prompt and tool definitions, estimated
-	store    *compact.Store
-	jev      *jev.Client // jev_prune's scorer (2.0 W3); nil: off
-	jevMode  string
+	window  int            // the model's context window, in tokens
+	meter   *compact.Meter // the next request's size and what is unseen (#234)
+	store   *compact.Store
+	jev     *jev.Client // jev_prune's scorer (2.0 W3); nil: off
+	jevMode string
 }
 
 // newChatCompactor sizes the compactor for cfg's model (context_limit
@@ -158,12 +157,11 @@ func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefin
 		return nil
 	}
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
-	defs, _ := json.Marshal(skills)
 	c := &chatCompactor{
-		window:   window,
-		overhead: ctxmgr.EstimateTokens(system) + len(defs)/4,
-		store:    store,
-		jevMode:  cfg.JevPruneMode(),
+		window:  window,
+		meter:   compact.NewMeter(ctxmgr.EstimateTokens(system) + compact.DefinitionTokens(skills)),
+		store:   store,
+		jevMode: cfg.JevPruneMode(),
 	}
 	if c.jevMode != config.ModeOff {
 		if jc, err := jev.NewFromEnv(); err == nil {
@@ -179,16 +177,18 @@ func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefin
 // Compact implements loop.Compactor. The loop calls it before every request,
 // and once with force after a context-overflow error.
 func (c *chatCompactor) Compact(ctx context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
-	used := compact.Estimate(history) + c.overhead
-	if usage != nil && usage.PromptTokens > used {
-		used = usage.PromptTokens // the provider's count includes what the estimate misses
+	prompt := 0
+	if usage != nil {
+		prompt = usage.PromptTokens
 	}
+	c.meter.Observe(history, prompt)
 	// Shadow reports inline: a call's log lines must not outlive it.
-	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: used, Force: force}, func(line string) {
+	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: c.meter.Used(history), Unseen: c.meter.Unseen(history), Force: force}, func(line string) {
 		log.Printf("celeste chat: %s", line)
 	}, false)
 	out, res := compact.Prune(history, opts, c.store)
 	report(res)
+	c.meter.Sending(out)
 	if !res.Pruned() {
 		return history, nil, false
 	}

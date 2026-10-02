@@ -45,20 +45,26 @@ func TestAgentJevPruneOnElidesTheLeastNeeded(t *testing.T) {
 			{ID: "b", Name: "read_file", Args: `{"path":"f1.txt"}`},
 			{ID: "c", Name: "read_file", Args: `{"path":"f2.txt"}`},
 		}},
+		// The reads must be seen before they can be pruned (#234): the
+		// prune before the third request is the one Jev steers.
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{
+			{ID: "d", Name: "read_file", Args: `{"path":"f3.txt"}`},
+		}},
 		fakeprovider.Turn{Text: "TASK_COMPLETE: read them"},
 	)
-	r, _ := steerRunner(t, srv, func(c *config.Config) { c.JevPrune, c.ContextLimit = "on", 20_000 })
+	r, _ := steerRunner(t, srv, func(c *config.Config) { c.JevPrune, c.ContextLimit = "on", 40_000 })
 	r.jev = &jev.Client{Key: "k", URL: jevSrv.URL}
 	for i := 0; i < 3; i++ {
-		os.WriteFile(filepath.Join(r.options.Workspace, fmt.Sprintf("f%d.txt", i)), []byte(strings.Repeat("word ", 2500)), 0o644)
+		os.WriteFile(filepath.Join(r.options.Workspace, fmt.Sprintf("f%d.txt", i)), []byte(strings.Repeat("word ", 5200)), 0o644)
 	}
+	os.WriteFile(filepath.Join(r.options.Workspace, "f3.txt"), []byte("small"), 0o644)
 	if _, err := r.RunGoal(context.Background(), "read f0, f1 and f2"); err != nil {
 		t.Fatal(err)
 	}
 	if asked.Load() == 0 {
 		t.Fatal("Jev was never asked inside the loop")
 	}
-	msgs := srv.Requests()[1].Body["messages"].([]any)
+	msgs := srv.Requests()[2].Body["messages"].([]any)
 	elided := ""
 	for _, m := range msgs {
 		mm := m.(map[string]any)
@@ -66,7 +72,8 @@ func TestAgentJevPruneOnElidesTheLeastNeeded(t *testing.T) {
 			elided += mm["tool_call_id"].(string)
 		}
 	}
-	if !strings.HasPrefix(elided, "b") {
-		t.Errorf("elided %q first, want b (Jev: least needed)", elided)
+	// One elision meets the target: oldest-first would take a.
+	if elided != "b" {
+		t.Errorf("elided %q, want b (Jev: least needed)", elided)
 	}
 }

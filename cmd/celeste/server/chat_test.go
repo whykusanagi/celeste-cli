@@ -552,7 +552,7 @@ func toolTurns(n, size int) []loop.Message {
 // 2.0 F2b intentional change: about 96k tokens of results against a 64k
 // window (48k threshold) get the oldest elided, never removed.
 func TestChatCompactorPrunesNearTheWindow(t *testing.T) {
-	c := &chatCompactor{window: 64_000, store: &compact.Store{Dir: t.TempDir()}}
+	c := &chatCompactor{window: 64_000, meter: compact.NewMeter(0), store: &compact.Store{Dir: t.TempDir()}}
 	in := toolTurns(12, 32_000)
 	out, notes, changed := c.Compact(context.Background(), in, nil, false)
 	if !changed || len(notes) != 1 || !strings.HasPrefix(notes[0], "context compacted: ") {
@@ -572,7 +572,7 @@ func TestChatCompactorPrunesNearTheWindow(t *testing.T) {
 // The MCP chat's prune is an edit too (2.0 F3): an elided result loses its
 // provider blocks; the messages it did not touch keep theirs.
 func TestChatCompactorClearsBlocksOfPrunedResults(t *testing.T) {
-	c := &chatCompactor{window: 64_000, store: &compact.Store{Dir: t.TempDir()}}
+	c := &chatCompactor{window: 64_000, meter: compact.NewMeter(0), store: &compact.Store{Dir: t.TempDir()}}
 	pb, err := tui.NewProviderBlocks("k", []json.RawMessage{json.RawMessage(`{"a":1}`)})
 	if err != nil {
 		t.Fatal(err)
@@ -596,7 +596,7 @@ func TestChatCompactorClearsBlocksOfPrunedResults(t *testing.T) {
 // Well under the window nothing is pruned, unless the loop forces it after
 // a context-overflow error.
 func TestChatCompactorOnlyForcedBelowTheWindow(t *testing.T) {
-	c := &chatCompactor{window: 64_000, store: &compact.Store{Dir: t.TempDir()}}
+	c := &chatCompactor{window: 64_000, meter: compact.NewMeter(0), store: &compact.Store{Dir: t.TempDir()}}
 	in := toolTurns(6, 8_000) // ~12k tokens
 	if _, notes, changed := c.Compact(context.Background(), in, nil, false); changed || notes != nil {
 		t.Fatalf("pruned below the threshold: %q", notes)
@@ -614,7 +614,7 @@ func TestNewChatLoopCompacts(t *testing.T) {
 	if !ok {
 		t.Fatalf("Compact = %T, want *chatCompactor", l.Compact)
 	}
-	if c.window != 64_000 || c.store == nil || c.overhead <= 0 {
+	if c.window != 64_000 || c.store == nil || c.meter == nil || c.meter.Overhead <= 0 {
 		t.Fatalf("compactor = %+v", c)
 	}
 }

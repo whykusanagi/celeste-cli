@@ -167,6 +167,13 @@ func (c *Client) SetSystemPrompt(prompt string) {
 	}
 }
 
+// SystemPrompt returns the prompt last set with SetSystemPrompt.
+func (c *Client) SystemPrompt() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.systemPrompt
+}
+
 // SetThinkingConfig configures extended thinking / reasoning effort. It is
 // kept and re-applied when UpdateConfig rebuilds the backend.
 func (c *Client) SetThinkingConfig(config ThinkingConfig) {
