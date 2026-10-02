@@ -23,6 +23,8 @@ func SessionMessagesFromChat(msgs []ChatMessage) []config.SessionMessage {
 			Name:       msg.Name,
 			Hidden:     metaFlag(msg, "hidden"),
 			Compacted:  metaFlag(msg, "compacted"),
+
+			ProviderBlocks: CurrentBlocks(msg), // only blocks that still match (2.0 F3)
 		}
 		for _, tc := range msg.ToolCalls {
 			sm.ToolCalls = append(sm.ToolCalls, config.SessionToolCall{
@@ -64,9 +66,12 @@ func ChatMessagesFromSession(msgs []config.SessionMessage) []ChatMessage {
 			Timestamp:  sm.Timestamp,
 			ToolCallID: sm.ToolCallID,
 			Name:       sm.Name,
+
+			ProviderBlocks: sm.ProviderBlocks,
 		}
 		for _, tc := range sm.ToolCalls {
 			if !answered[tc.ID] {
+				msg.ProviderBlocks = nil // dropping a call edits the message (2.0 F3)
 				continue
 			}
 			msg.ToolCalls = append(msg.ToolCalls, ToolCallInfo{
@@ -76,7 +81,7 @@ func ChatMessagesFromSession(msgs []config.SessionMessage) []ChatMessage {
 				ThoughtSignature: tc.ThoughtSignature,
 			})
 		}
-		if msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
+		if IsEmptyReply(msg) {
 			continue // only held calls that were dropped
 		}
 		if sm.Hidden || sm.Compacted {
@@ -116,6 +121,7 @@ func CapLoadedToolResults(msgs []ChatMessage, maxBytes int) []ChatMessage {
 			copied = true
 		}
 		out[i].Content = ctxmgr.SnipToolResult(m.Content, maxBytes, loadedCutNote)
+		out[i].ProviderBlocks = nil
 	}
 	return out
 }

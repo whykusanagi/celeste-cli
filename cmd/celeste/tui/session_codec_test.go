@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -103,4 +104,64 @@ func TestCapLoadedToolResultsLeavesCappedPreviewsAlone(t *testing.T) {
 	assert.Equal(t, preview, got[0].Content)
 	assert.Len(t, got[1].Content, 300*1024, "only tool results are capped")
 	assert.Same(t, &msgs[0], &got[0], "nothing to cut: the input slice comes back")
+}
+
+func TestCapLoadedToolResultsClearsBlocksOfACutMessage(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	msgs := []ChatMessage{AttachProviderBlocks(ChatMessage{Role: "tool", ToolCallID: "c1", Content: strings.Repeat("y", 300*1024)}, pb)}
+	got := CapLoadedToolResults(msgs, ctxmgr.DefaultMaxToolResultBytes)
+	assert.Nil(t, got[0].ProviderBlocks)
+}
+
+// Blocks survive save → JSON file (MarshalIndent) → load, byte for byte;
+// a blocks-only reply (W1's compaction turn) is kept.
+func TestSessionCodecRoundTripsProviderBlocks(t *testing.T) {
+	withCall := mustBlocks(t, keyA, `{"type":"thinking","thinking":"read <a>","signature":"S1"}`, `{"type":"tool_use","id":"c1","name":"read_file","input":{"path":"a"}}`)
+	compaction := mustBlocks(t, keyA, `{"type":"compaction","content":"summary"}`)
+	chat := []ChatMessage{
+		{Role: "user", Content: "read it"},
+		AttachProviderBlocks(ChatMessage{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "read_file", Arguments: `{"path":"a"}`}}}, withCall),
+		{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "alpha"},
+		AttachProviderBlocks(ChatMessage{Role: "assistant"}, compaction),
+	}
+	data, err := json.MarshalIndent(SessionMessagesFromChat(chat), "", "  ")
+	require.NoError(t, err)
+	var saved []config.SessionMessage
+	require.NoError(t, json.Unmarshal(data, &saved))
+	restored := ChatMessagesFromSession(saved)
+	require.Len(t, restored, 4, "the blocks-only reply is not dropped as empty")
+	for i, want := range map[int]*ProviderBlocks{1: withCall, 3: compaction} {
+		got, ok := ReplayBlocks(restored[i], keyA)
+		require.True(t, ok, "message %d lost its blocks", i)
+		require.Len(t, got, len(want.Blocks))
+		for j := range got {
+			assert.Equal(t, string(want.Blocks[j]), string(got[j]), "message %d block %d", i, j)
+		}
+	}
+}
+
+// Only blocks that still match their message are saved: a reply whose text
+// is mid-typing (or was edited) is saved without them (Review Focus 3).
+func TestSessionCodecSavesOnlyCurrentBlocks(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"text","text":"Hello"}`)
+	msg := AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "Hello"}, pb)
+	typing := msg
+	typing.Content = "Hel"
+	assert.Nil(t, SessionMessagesFromChat([]ChatMessage{typing})[0].ProviderBlocks)
+	assert.NotNil(t, SessionMessagesFromChat([]ChatMessage{msg})[0].ProviderBlocks)
+}
+
+// A call whose result was never saved is dropped on load; that edits its
+// message, which loses its blocks.
+func TestSessionCodecClearsBlocksWhenACallIsDropped(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	chat := []ChatMessage{
+		{Role: "user", Content: "go"},
+		AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "reading", ToolCalls: []ToolCallInfo{{ID: "c1"}, {ID: "c2"}}}, pb),
+		{Role: "tool", ToolCallID: "c1", Content: "one"},
+	}
+	got := ChatMessagesFromSession(SessionMessagesFromChat(chat))
+	require.Len(t, got, 3)
+	require.Len(t, got[1].ToolCalls, 1)
+	assert.Nil(t, got[1].ProviderBlocks)
 }

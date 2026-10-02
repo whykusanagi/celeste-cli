@@ -6,6 +6,8 @@ package llm
 import (
 	"fmt"
 	"sync"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 // StreamEventType identifies the kind of streaming event.
@@ -90,6 +92,17 @@ type StreamEvent struct {
 
 	// FinishReason indicates why the response ended (only for EventMessageDone).
 	FinishReason string
+
+	// ProviderBlocks is the reply as the provider sent it, in order (only
+	// for EventMessageDone; nil from backends that keep none). The loop
+	// attaches it to the assistant message it records (2.0 F3).
+	ProviderBlocks *tui.ProviderBlocks
+
+	// BlocksRejected reports that the provider refused the blocks replayed
+	// in this request and the backend sent the neutral history instead
+	// (only for EventMessageDone). The loop then strips every message's
+	// blocks so they are not sent again (2.0 F3).
+	BlocksRejected bool
 }
 
 // StreamEventCallback is called for each streaming event.

@@ -245,18 +245,8 @@ func Apply(msgs []tui.ChatMessage, edits []Edit) []tui.ChatMessage {
 	for _, e := range edits {
 		byID[e.ToolCallID] = e.Content
 	}
-	out := make([]tui.ChatMessage, len(msgs))
-	copy(out, msgs)
-	for i := range out {
-		if out[i].Role != "tool" {
-			continue
-		}
-		if c, ok := byID[out[i].ToolCallID]; ok {
-			out[i].Content = c
-			out[i].Metadata = nil // drop inline image data with the body
-		}
-	}
-	return out
+	// Drops inline image data and provider blocks with the body (2.0 F3).
+	return tui.EditToolResults(msgs, byID)
 }
 
 // protectedBoundary returns the index where the protected tail starts: the

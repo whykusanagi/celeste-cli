@@ -819,12 +819,25 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	planTurnStart := time.Now()
 
 	var result llm.ChatCompletionResult
+	// The planning request offers tools but records only text: a reply that
+	// called one keeps no blocks, which would replay a tool_use that never
+	// gets a result (2.0 F3, ruling 6).
+	sawCalls := false
 	streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
+		switch event.Type {
+		case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
+			sawCalls = true
+		}
 		switch event.Type {
 		case llm.EventContentDelta:
 			result.Content += event.ContentDelta
 		case llm.EventMessageDone:
 			result.Usage = event.Usage
+			result.ProviderBlocks = event.ProviderBlocks
+			result.BlocksRejected = event.BlocksRejected
+			if event.FinishReason == "tool_use" || event.FinishReason == "tool_calls" {
+				sawCalls = true
+			}
 		}
 	})
 	planTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
@@ -842,12 +855,19 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 		r.options.OnTurnStats(stats)
 	}
 
+	if result.BlocksRejected {
+		// The provider refused the blocks this request replayed: strip them,
+		// as the loop does (2.0 F3).
+		state.Messages = tui.StripProviderBlocks(state.Messages)
+	}
 	planResponse := strings.TrimSpace(result.Content)
-	state.Messages = append(state.Messages, tui.ChatMessage{
-		Role:      "assistant",
-		Content:   planResponse,
-		Timestamp: time.Now(),
-	})
+	planMsg := tui.ChatMessage{Role: "assistant", Content: planResponse, Timestamp: time.Now()}
+	if !sawCalls && planResponse == result.Content {
+		// Trimmed text is an edit: the blocks would no longer match it
+		// (2.0 F3).
+		planMsg = tui.AttachProviderBlocks(planMsg, result.ProviderBlocks)
+	}
+	state.Messages = append(state.Messages, planMsg)
 	state.Steps = append(state.Steps, Step{
 		Turn:      state.Turn,
 		Type:      "plan",

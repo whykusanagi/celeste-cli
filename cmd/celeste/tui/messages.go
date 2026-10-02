@@ -18,6 +18,13 @@ type ChatMessage struct {
 	ToolCalls  []ToolCallInfo // For assistant messages, the tool calls that were made
 	Timestamp  time.Time      // When the message was created
 	Metadata   map[string]any // Optional metadata (e.g. image data from tool results)
+
+	// ProviderBlocks is this message as the provider returned it (2.0 F3):
+	// the backend whose key matches replays it instead of Content and
+	// ToolCalls while BlocksDigest still matches (ReplayBlocks). Never
+	// modified in place; an edit sets it to nil. The only tagged field:
+	// agent checkpoints marshal ChatMessage directly.
+	ProviderBlocks *ProviderBlocks `json:"provider_blocks,omitempty"`
 }
 
 // ToolCallInfo represents a tool call in an assistant message.

@@ -262,21 +262,7 @@ func (m ChatModel) GetMessages() []ChatMessage {
 // ReplaceToolResults swaps the content of tool results by tool call ID; used
 // by context compaction to replace pruned results with placeholders.
 func (m ChatModel) ReplaceToolResults(edits map[string]string) ChatModel {
-	if len(edits) == 0 {
-		return m
-	}
-	msgs := make([]ChatMessage, len(m.messages))
-	copy(msgs, m.messages)
-	for i := range msgs {
-		if msgs[i].Role != "tool" {
-			continue
-		}
-		if c, ok := edits[msgs[i].ToolCallID]; ok {
-			msgs[i].Content = c
-			msgs[i].Metadata = nil
-		}
-	}
-	m.messages = msgs
+	m.messages = EditToolResults(m.messages, edits)
 	return m
 }
 
@@ -314,6 +300,7 @@ func (m ChatModel) ApplySummary(cut int, summary []ChatMessage) ChatModel {
 			}
 			meta["compacted"] = true
 			msg.Metadata = meta
+			msg.ProviderBlocks = nil // replaced by the summary: an edit (2.0 F3)
 			marked++
 		} else if llmVisible && !inserted {
 			msgs = append(msgs, hideAll(summary)...)
@@ -591,7 +578,7 @@ func (m ChatModel) SyncLLM(history []ChatMessage, keepLive bool) ChatModel {
 			msgs = append(msgs, msg)
 			continue
 		}
-		if i != last && msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
+		if i != last && IsEmptyReply(msg) {
 			continue
 		}
 		h := history[j]
@@ -624,7 +611,7 @@ func (m ChatModel) DropEmptyLastReply() ChatModel {
 		if msg.Role == "system" || isCompacted(msg) {
 			continue
 		}
-		if msg.Role != "assistant" || msg.Content != "" || len(msg.ToolCalls) != 0 {
+		if !IsEmptyReply(msg) {
 			return m
 		}
 		m.messages = append(append([]ChatMessage(nil), m.messages[:i]...), m.messages[i+1:]...)

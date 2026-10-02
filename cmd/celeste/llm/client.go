@@ -207,6 +207,9 @@ type ChatCompletionResult struct {
 	FinishReason string
 	Error        error
 	Usage        *TokenUsage // Token usage from the API response (if available)
+
+	ProviderBlocks *tui.ProviderBlocks // the reply as the provider sent it (2.0 F3); nil from backends that keep none
+	BlocksRejected bool                // the provider refused the replayed blocks; the caller strips them (2.0 F3)
 }
 
 // ToolCallResult holds a tool call from the LLM.
@@ -267,6 +270,9 @@ type StreamChunk struct {
 	FinishReason string
 	ToolCalls    []ToolCallResult
 	Usage        *TokenUsage // Only populated on final chunk with stream_options
+
+	ProviderBlocks *tui.ProviderBlocks // only on the final chunk (2.0 F3)
+	BlocksRejected bool                // only on the final chunk: the provider refused the replayed blocks (2.0 F3)
 }
 
 // SendMessageStream sends a message with streaming callback.

@@ -227,3 +227,65 @@ func TestSyncLLMLogsDrift(t *testing.T) {
 	assert.Contains(t, drift[0], "position 1")
 	assert.Contains(t, drift[0], "role assistant")
 }
+
+// A summary cut is an edit of the cut messages: they stay in the scrollback,
+// marked compacted, without blocks. The kept tail keeps its blocks.
+func TestApplySummaryClearsBlocksOfCutMessages(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	c := NewChatModel().AddUserMessage("old")
+	c = c.AppendLLM(AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "old reply"}, pb))
+	c = c.AddUserMessage("new")
+	c = c.AppendLLM(AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "kept reply"}, pb))
+	c = c.ApplySummary(2, []ChatMessage{{Role: "user", Content: "<summary>"}})
+	all := c.GetMessages()
+	require.Len(t, all, 5) // old, old reply (compacted), summary (hidden), new, kept reply
+	assert.Equal(t, "old reply", all[1].Content)
+	assert.Nil(t, all[1].ProviderBlocks, "a message the summary replaced loses its blocks")
+	assert.Equal(t, "kept reply", all[4].Content)
+	assert.NotNil(t, all[4].ProviderBlocks, "the kept tail keeps its blocks")
+}
+
+func TestReplaceToolResultsClearsBlocks(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"a":1}`)
+	c := NewChatModel().AppendLLM(AttachProviderBlocks(ChatMessage{Role: "tool", ToolCallID: "c1", Content: "big"}, pb))
+	c = c.ReplaceToolResults(map[string]string{"c1": "[pruned]"})
+	assert.Equal(t, "[pruned]", c.GetMessages()[0].Content)
+	assert.Nil(t, c.GetMessages()[0].ProviderBlocks)
+}
+
+// SyncLLM takes the loop's copy, blocks included, so the next request
+// (GetLLMMessages) replays them.
+func TestSyncLLMTakesTheLoopsBlocks(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"text","text":"done"}`)
+	c := NewChatModel().AddUserMessage("go").AddAssistantMessage("done")
+	c = c.SyncLLM([]ChatMessage{{Role: "user", Content: "go"}, AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "done"}, pb)}, false)
+	_, ok := ReplayBlocks(c.GetLLMMessages()[1], keyA)
+	assert.True(t, ok)
+}
+
+// While a reply is typed out its bubble shows a prefix: the blocks ride
+// along but are inert, and replay again once the text is whole
+// (append-only ruling 4).
+func TestSyncLLMKeepLiveBlocksAreInertUntilTheTextIsWhole(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"text","text":"Hello"}`)
+	c := NewChatModel().AddUserMessage("go").AddAssistantMessage("Hel")
+	c = c.SyncLLM([]ChatMessage{{Role: "user", Content: "go"}, AttachProviderBlocks(ChatMessage{Role: "assistant", Content: "Hello"}, pb)}, true)
+	live := c.GetLLMMessages()[1]
+	assert.Equal(t, "Hel", live.Content)
+	_, ok := ReplayBlocks(live, keyA)
+	assert.False(t, ok, "a half-typed reply never replays blocks")
+	c = c.SetLastAssistantContent("Hello")
+	_, ok = ReplayBlocks(c.GetLLMMessages()[1], keyA)
+	assert.True(t, ok, "the typing commit makes them valid again")
+}
+
+// A blocks-only reply in the middle of the history is not an empty bubble:
+// SyncLLM must not skip it, or every later position shifts.
+func TestSyncLLMKeepsABlocksOnlyReply(t *testing.T) {
+	pb := mustBlocks(t, keyA, `{"type":"compaction","content":"s"}`)
+	compaction := AttachProviderBlocks(ChatMessage{Role: "assistant"}, pb)
+	c := NewChatModel().AddUserMessage("go").AppendLLM(compaction).AddUserMessage("next")
+	c = c.SyncLLM([]ChatMessage{{Role: "user", Content: "go"}, compaction, {Role: "user", Content: "next"}, {Role: "assistant", Content: "ok"}}, false)
+	assert.Equal(t, []string{"user:go", "assistant:", "user:next", "assistant:ok"}, llmRoles(c))
+	assert.NotNil(t, c.GetLLMMessages()[1].ProviderBlocks)
+}

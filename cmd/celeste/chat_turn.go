@@ -186,9 +186,10 @@ func (a *TUIClientAdapter) runTurn(t *chatTurn, history []tui.ChatMessage) {
 		t.loop.Limits.MaxTurns = turnsLeft // >= 1: stopHook stops at 0
 		msgs, res, err := a.runOnce(t, history)
 		turnsLeft -= res.Turns
-		if t.compacted {
-			// The run pruned and ended before its next snapshot (an error,
-			// an interrupt, a guard): the chat takes the pruned history.
+		if t.compacted || res.HistoryEdited {
+			// The run edited its history (a prune, rejected provider blocks
+			// stripped) and ended before its next snapshot (an error, an
+			// interrupt, a guard): the chat takes the edited history.
 			t.compacted = false
 			t.box.put(tui.HistoryMsg{History: withoutEmptyReplies(msgs)})
 		}
@@ -313,7 +314,7 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 func withoutEmptyReplies(history []tui.ChatMessage) []tui.ChatMessage {
 	out := make([]tui.ChatMessage, 0, len(history))
 	for _, m := range history {
-		if m.Role == "assistant" && m.Content == "" && len(m.ToolCalls) == 0 {
+		if tui.IsEmptyReply(m) {
 			continue
 		}
 		out = append(out, m)
@@ -405,16 +406,7 @@ func (c *chatCompactor) Compact(_ context.Context, history []tui.ChatMessage, la
 	if len(out.Edits) == 0 {
 		return history, nil, false
 	}
-	edited := append([]tui.ChatMessage(nil), history...)
-	for i := range edited {
-		if edited[i].Role != "tool" {
-			continue
-		}
-		if content, ok := out.Edits[edited[i].ToolCallID]; ok {
-			edited[i].Content = content
-			edited[i].Metadata = nil
-		}
-	}
+	edited := tui.EditToolResults(history, out.Edits)
 	if c.used > out.SavedTokens {
 		c.used -= out.SavedTokens
 	}

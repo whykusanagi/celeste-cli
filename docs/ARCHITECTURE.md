@@ -620,6 +620,22 @@ type Session struct {
 }
 ```
 
+### Message model (2.0)
+
+Every message (`tui.ChatMessage`, saved as `config.SessionMessage`) has a provider-neutral view (`Content`, `ToolCalls`) that every provider, the UI and compaction use. It can also carry `ProviderBlocks`: the reply exactly as one provider returned it (thinking blocks with signatures, reasoning items, compaction blocks), saved as `provider_blocks`.
+
+- **Precedence.** The backend that produced the blocks (same format, endpoint and model, `llm.ProviderKey`) sends them instead of rebuilding the message from `Content` and `ToolCalls`. Any other backend ignores them and sends the neutral view.
+- **Edits.** Blocks are sealed to the neutral view they arrived with (`digest`). Pruning, a summary cut or a dropped tool call clears them; any other change makes them inert. When a provider rejects replayed blocks, the backend reports it (`BlocksRejected`) and whoever sent the request (the loop, or the agent's planning request) strips blocks from the whole history; the chat and the saved session take the stripped history even when the run ends right after.
+- **Append-only history.** A tool result is capped once, at 128 KiB, when it is recorded. Nothing trims or rewrites the history per request, so a message reaches the provider with the same bytes on every later turn. Compaction is the only rewriter.
+
+```go
+type ProviderBlocks struct {
+    Provider string            // llm.ProviderKey: format|endpoint|model
+    Digest   string            // tui.BlocksDigest(Content, ToolCalls) when attached
+    Blocks   []json.RawMessage // canonical JSON, in the provider's order
+}
+```
+
 ### Storage Format
 
 ```

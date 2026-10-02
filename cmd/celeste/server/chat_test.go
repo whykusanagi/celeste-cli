@@ -562,6 +562,30 @@ func TestChatCompactorPrunesNearTheWindow(t *testing.T) {
 	}
 }
 
+// The MCP chat's prune is an edit too (2.0 F3): an elided result loses its
+// provider blocks; the messages it did not touch keep theirs.
+func TestChatCompactorClearsBlocksOfPrunedResults(t *testing.T) {
+	c := &chatCompactor{window: 64_000, store: &compact.Store{Dir: t.TempDir()}}
+	pb, err := tui.NewProviderBlocks("k", []json.RawMessage{json.RawMessage(`{"a":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := toolTurns(12, 32_000)
+	for i := range in {
+		in[i] = tui.AttachProviderBlocks(in[i], pb)
+	}
+	out, _, changed := c.Compact(context.Background(), in, nil, false)
+	if !changed {
+		t.Fatal("nothing pruned")
+	}
+	if !strings.Contains(out[2].Content, "recall_tool_result") || out[2].ProviderBlocks != nil {
+		t.Fatalf("pruned result kept its blocks: %.40q %+v", out[2].Content, out[2].ProviderBlocks)
+	}
+	if out[1].ProviderBlocks == nil || out[len(out)-1].ProviderBlocks == nil {
+		t.Fatal("an unedited message lost its blocks")
+	}
+}
+
 // Well under the window nothing is pruned, unless the loop forces it after
 // a context-overflow error.
 func TestChatCompactorOnlyForcedBelowTheWindow(t *testing.T) {

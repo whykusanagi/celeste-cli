@@ -107,6 +107,11 @@ type Result struct {
 	StopReason        StopReason
 	Turns             int // turns started this Run (an overflow retry is the same turn)
 	ToolCalls         int // tool calls executed this Run
+	// HistoryEdited: the returned history holds an edit (a prune, or
+	// provider blocks stripped after BlocksRejected) that no History
+	// snapshot event carried, because the run ended first. A consumer that
+	// mirrors the snapshots takes the returned history (2.0 F3).
+	HistoryEdited bool
 }
 
 // EventKind identifies an Event.
@@ -271,6 +276,7 @@ type Loop struct {
 	events    chan Event
 	lastUsage *llm.TokenUsage // Run's goroutine only
 	spillSeq  int             // Run's goroutine only
+	unsynced  bool            // Run's goroutine only: an edit since the last History snapshot
 	gateMu    sync.Mutex      // serializes calls to Gate.Ask across a batch
 }
 
@@ -289,6 +295,9 @@ func (l *Loop) Events() <-chan Event {
 }
 
 func (l *Loop) emit(ev Event) {
+	if ev.History != nil {
+		l.unsynced = false // only Run's goroutine emits snapshots
+	}
 	l.mu.Lock()
 	ch := l.events
 	l.mu.Unlock()

@@ -17,7 +17,9 @@ import (
 func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res Result, err error) {
 	lim := l.Limits.withDefaults()
 	msgs = append([]Message(nil), history...)
+	l.unsynced = false
 	defer func() {
+		res.HistoryEdited = l.unsynced
 		l.emit(Event{Kind: EventDone, Result: res, Err: err})
 	}()
 	if l.CheckPrompt != nil {
@@ -94,6 +96,13 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		}
 		overflowRetried = false
 		l.lastUsage = rep.usage
+		if rep.blocksRejected {
+			// The provider refused the blocks this request replayed: a
+			// sanctioned history edit, so later requests (and the chat,
+			// via the snapshots) send the neutral view (2.0 F3).
+			msgs = tui.StripProviderBlocks(msgs)
+			l.unsynced = true
+		}
 
 		calls := capCalls(rep.calls, lim.MaxCallsPerTurn)
 		native := calls
@@ -104,7 +113,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		res.FinalText = rep.text
 
 		if len(calls) == 0 {
-			msgs = append(msgs, Message{Role: "assistant", Content: rep.text, Timestamp: time.Now()})
+			msgs = append(msgs, tui.AttachProviderBlocks(Message{Role: "assistant", Content: rep.text, Timestamp: time.Now()}, rep.blocks))
 			res.ToolCallsLastTurn = 0
 			res.NoToolTurns++
 			l.emit(Event{Kind: EventTurnEnd, Turn: turn, History: cloneHistory(msgs)})
@@ -135,7 +144,15 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			res.StopReason = StopIdentical
 			return msgs, res, nil
 		}
-		msgs = append(msgs, Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: time.Now()})
+		turnMsg := Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: time.Now()}
+		if len(native) == len(rep.calls) && len(calls) == len(native) {
+			// The blocks hold every call the provider made: after
+			// MaxCallsPerTurn dropped some, they would replay tool_use
+			// blocks that never get a result; text-format calls have no
+			// tool_use blocks at all (2.0 F3).
+			turnMsg = tui.AttachProviderBlocks(turnMsg, rep.blocks)
+		}
+		msgs = append(msgs, turnMsg)
 		l.emit(Event{Kind: EventCallsRecorded, Turn: turn, History: cloneHistory(msgs)})
 		out := l.runCalls(ctx, calls, lim)
 		msgs = append(msgs, out.messages...)
@@ -241,6 +258,7 @@ func (l *Loop) compact(ctx context.Context, msgs []Message, force bool) ([]Messa
 	if !changed {
 		return msgs, false
 	}
+	l.unsynced = true
 	return out, true
 }
 
@@ -249,6 +267,9 @@ type reply struct {
 	calls   []llm.ToolCallResult
 	usage   *llm.TokenUsage
 	elapsed time.Duration
+	blocks  *tui.ProviderBlocks // EventMessageDone's; nil when the backend keeps none
+	// blocksRejected: the provider refused the replayed blocks (2.0 F3).
+	blocksRejected bool
 }
 
 // request streams one turn. Text deltas are forwarded as they arrive.
@@ -270,6 +291,8 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits) (reply, 
 			acc.HandleEvent(ev)
 		case llm.EventMessageDone:
 			r.usage = ev.Usage
+			r.blocks = ev.ProviderBlocks
+			r.blocksRejected = ev.BlocksRejected
 		}
 	})
 	// Read before cancel(): afterwards the context reports Canceled.

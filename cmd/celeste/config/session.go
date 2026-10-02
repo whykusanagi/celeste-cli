@@ -47,6 +47,10 @@ type SessionMessage struct {
 	// rendered in the scrollback but no longer sent.
 	Hidden    bool `json:"hidden,omitempty"`
 	Compacted bool `json:"compacted,omitempty"`
+
+	// ProviderBlocks is the message as the provider returned it (2.0 F3),
+	// saved only while it still matches Content and ToolCalls.
+	ProviderBlocks *ProviderBlocks `json:"provider_blocks,omitempty"`
 }
 
 // SessionToolCall is a tool call recorded on an assistant message.
