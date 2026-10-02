@@ -23,6 +23,15 @@ const maxGoalChars = 2000
 // flight; without it, report returns only after logging, so nothing writes
 // to the caller's output after a run ends. A nil client makes report a no-op.
 func Shadow(c *jev.Client, msgs []tui.ChatMessage, opts Options, logf func(string), async bool) (Options, func(Result)) {
+	return shadow(context.Background(), c, msgs, opts, logf, async)
+}
+
+// shadow is Shadow with the context a synchronous report asks Jev under;
+// an async one outlives its caller and uses none.
+func shadow(ctx context.Context, c *jev.Client, msgs []tui.ChatMessage, opts Options, logf func(string), async bool) (Options, func(Result)) {
+	if async {
+		ctx = context.Background()
+	}
 	var cands []Candidate
 	opts.Score = func(cs []Candidate) map[string]float64 {
 		cands = cs
@@ -43,7 +52,7 @@ func Shadow(c *jev.Client, msgs []tui.ChatMessage, opts Options, logf func(strin
 		goal, latest := goalAndLatest(msgs)
 		run := func() {
 			start := time.Now()
-			scores, err := JevScore(context.Background(), c, goal, latest, cands)
+			scores, err := JevScore(ctx, c, goal, latest, cands)
 			line := shadowReport(scores, cands, rules)
 			if err != nil {
 				line += ": " + err.Error()
