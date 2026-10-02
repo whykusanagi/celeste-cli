@@ -231,3 +231,49 @@ func TestWriteNoTempIsTempError(t *testing.T) {
 		t.Fatal("something was written")
 	}
 }
+
+func TestReplaceKeepModeReplacesASymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "a.txt")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := ReplaceKeepMode(path, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, outside); got != "secret" {
+		t.Fatalf("wrote through the symlink: %q", got)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("path is not a regular file: %v %v", fi, err)
+	}
+	if got := readString(t, path); got != "new" {
+		t.Fatalf("got %q", got)
+	}
+	assertNoTemps(t, dir)
+}
+
+func TestReplaceKeepModeKeepsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(path, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceKeepMode(path, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("mode = %v", fi.Mode().Perm())
+	}
+}

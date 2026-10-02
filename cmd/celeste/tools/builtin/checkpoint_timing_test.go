@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -239,4 +240,32 @@ func TestSuccessfulWritesCommitTheirCheckpoints(t *testing.T) {
 	}
 	assert.Equal(t, "a\nb\nc\n", get(t, filepath.Join(ws, "a.txt")))
 	assert.Equal(t, "x\n", get(t, filepath.Join(ws, "b.txt")))
+}
+
+// Ruling 7 (2.0 W4): with the atomic writer, a second write that really
+// fails (the source's directory is read-only, so its temp file cannot be
+// created) still restores both files.
+func TestSpliceFileAtomicSecondWriteFailureRestoresBoth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permissions")
+	}
+	ws, sm := timingSetup(t)
+	roDir := filepath.Join(ws, "ro")
+	src, dst := filepath.Join(roDir, "a.txt"), filepath.Join(ws, "b.txt")
+	put(t, src, "a\nb\nc\n")
+	put(t, dst, "x\n")
+	require.NoError(t, os.Chmod(roDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
+	if f, err := os.CreateTemp(roDir, "probe"); err == nil {
+		f.Close()
+		_ = os.Remove(f.Name())
+		t.Skip("directory permissions are not enforced (running as root?)")
+	}
+	splice := NewSpliceFileTool(ws, WithSpliceFileSnapshots(sm))
+	res := run(t, splice, context.Background(), map[string]any{"op": "move", "source": "ro/a.txt", "dest": "b.txt", "start_line": 2, "end_line": 2})
+	assert.True(t, res.Error)
+	assert.Contains(t, res.Content, "write source")
+	assert.Equal(t, "a\nb\nc\n", get(t, src))
+	assert.Equal(t, "x\n", get(t, dst))
+	assert.Empty(t, sm.Entries())
 }
