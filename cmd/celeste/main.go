@@ -138,6 +138,7 @@ Configuration:
   celeste config --show                  Show current config
   celeste config --list                  List all config profiles
   celeste config --init <name>           Create a new config profile
+  celeste config --init jev              Save a TypeSafe key; Jev in shadow mode
   celeste config --set-key <key>         Set API key
   celeste config --set-url <url>         Set API URL
   celeste config --set-model <model>     Set model
@@ -850,8 +851,10 @@ func runConfigCommand(args []string) {
 		return
 	}
 
-	// Handle --init
-	if *initConfig != "" {
+	// Handle --init. "jev" is not a profile template: it writes the
+	// TypeSafe key and turns Jev on in shadow mode in the profile below.
+	jevInit := strings.EqualFold(*initConfig, "jev")
+	if *initConfig != "" && !jevInit {
 		if err := createConfigTemplate(*initConfig); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating config: %v\n", err)
 			os.Exit(1)
@@ -896,6 +899,15 @@ func runConfigCommand(args []string) {
 	}
 
 	changed := false
+
+	if jevInit {
+		home, _ := os.UserHomeDir()
+		if err := initJev(cfg, home, keyInput(os.Stdin), os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		changed = true
+	}
 
 	if *setKey != "" {
 		cfg.APIKey = *setKey
