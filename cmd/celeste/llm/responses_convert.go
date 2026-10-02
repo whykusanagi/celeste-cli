@@ -85,22 +85,11 @@ func responsesInput(messages []tui.ChatMessage, key string) (items []json.RawMes
 // imagePart returns a tool result's image (metadata type "image") as an
 // input_image part, with the file name for the caption.
 func imagePart(md map[string]any) (respContentPart, string, bool) {
-	if md == nil {
-		return respContentPart{}, "", false
-	}
-	if t, _ := md["type"].(string); t != "image" {
-		return respContentPart{}, "", false
-	}
-	b64, ok := md["base64"].(string)
+	img, ok := toolImageOf(md)
 	if !ok {
 		return respContentPart{}, "", false
 	}
-	format, _ := md["format"].(string)
-	if format == "" {
-		format = "png"
-	}
-	name, _ := md["filename"].(string)
-	return respContentPart{Type: "input_image", ImageURL: fmt.Sprintf("data:image/%s;base64,%s", format, b64), Detail: "auto"}, name, true
+	return respContentPart{Type: "input_image", ImageURL: img.DataURL(), Detail: "auto"}, img.Name, true
 }
 
 // replayItem returns a stored output item as an input item. Requests use
