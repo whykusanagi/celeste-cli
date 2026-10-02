@@ -124,16 +124,6 @@ func (s *Session) SetGoal(goal string) {
 	s.mu.Unlock()
 }
 
-// Facts are the session's rule facts (TTS ran, spawn ran). Nil-safe.
-func (s *Session) Facts() rules.Facts {
-	if s == nil {
-		return rules.Facts{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return *s.matcher.Facts()
-}
-
 func (s *Session) Request(_ int, interrupt func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -285,44 +275,56 @@ func (s *Session) startBallotLocked() {
 		if ctx.Err() != nil {
 			return // the run ended: a late verdict steers nothing
 		}
-		s.applyLocked(Judge(ans))
+		if interrupt := s.applyLocked(Judge(ans)); interrupt != nil {
+			// Outside the lock: the callback is the loop's, and may be
+			// anything that is safe from any goroutine.
+			s.mu.Unlock()
+			interrupt()
+			s.mu.Lock()
+		}
 	}()
 }
 
 // applyLocked acts on a verdict by severity: a blocker interrupts the
 // request in flight (or joins before the next one), a concern joins at the
 // next tool boundary, nits ride on the next reminder. At most one steer
-// per steerGap requests; nits are not steers.
-func (s *Session) applyLocked(v Verdict) {
+// per steerGap requests; nits are not steers, so a rate-limited steer
+// still batches the verdict's nits. It returns the interrupt to call (the
+// request in flight's, for a blocker), which the caller calls after
+// releasing the lock.
+func (s *Session) applyLocked(v Verdict) (interrupt func()) {
 	s.o.Logf("watchdog: " + v.String())
-	sev := v.Highest()
-	if sev == 0 {
-		return
+	if v.Highest() == 0 {
+		return nil
 	}
 	if s.o.Watchdog != config.ModeOn {
 		s.o.Logf("watchdog (shadow): would steer: " + v.Reminder())
-		return
+		return nil
 	}
-	if sev == Nit {
-		for _, f := range v.Act {
+	var steers Verdict
+	for _, f := range v.Act {
+		if f.Severity == Nit {
 			s.nits = append(s.nits, advice[f.ID])
+		} else {
+			steers.Act = append(steers.Act, f)
 		}
-		return
+	}
+	sev := steers.Highest()
+	if sev == 0 {
+		return nil
 	}
 	if s.lastSteer > 0 && s.requests-s.lastSteer < steerGap {
 		s.o.Logf("watchdog: steer rate-limited (one per 3 turns)")
-		return
+		return nil
 	}
 	s.lastSteer = s.requests
-	r := loop.Reminder{Source: "watchdog", Text: v.Reminder()}
+	r := loop.Reminder{Source: "watchdog", Text: steers.Reminder()}
 	if sev == Blocker {
 		s.pending[loop.BoundaryRetry] = append(s.pending[loop.BoundaryRetry], r)
-		if s.interrupt != nil {
-			s.interrupt() // the request in flight, if any; a no-op once it returned
-		}
-		return
+		return s.interrupt // the request in flight, if any; a no-op once it returned
 	}
 	s.pending[loop.BoundaryTools] = append(s.pending[loop.BoundaryTools], r)
+	return nil
 }
 
 // Ballot asks the ballot now and waits for the answer: the agent's

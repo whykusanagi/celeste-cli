@@ -10,7 +10,6 @@ import (
 // Matcher from tool results.
 type Facts struct {
 	TTSRan   bool // generate_speech returned without an error this session
-	SpawnRan bool // spawn_agent returned without an error this session
 	editSeq  int  // the last successful write_file / patch_file / splice_file
 	checkSeq int  // the last successful bash call
 	seq      int
@@ -161,8 +160,6 @@ func (m *Matcher) ToolResult(name string, isError bool) {
 	switch name {
 	case "generate_speech":
 		m.facts.TTSRan = true
-	case "spawn_agent":
-		m.facts.SpawnRan = true
 	case "write_file", "patch_file", "splice_file":
 		m.facts.editSeq = m.facts.seq
 	case "bash":

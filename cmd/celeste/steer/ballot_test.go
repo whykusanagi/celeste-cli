@@ -311,3 +311,41 @@ func TestBallotStateKeepsArgumentsParseable(t *testing.T) {
 		t.Errorf("args = %q", st.Turns[0].Calls[0].Args)
 	}
 }
+
+// A rate-limited steer still batches the verdict's nits: nits are not
+// steers (review fix).
+func TestWatchdogRateLimitKeepsNits(t *testing.T) {
+	s, _, _ := watch("on", map[string]decide.Answer{QLooping: {P: 0.9}, QPersonaBreak: {P: 0.9}})
+	s.o.Every = 1
+	turn(s, nil)
+	s.Wait()
+	if got := s.Reminders(loop.BoundaryTools); len(got) != 1 || !strings.Contains(got[0].Text, "keep it out of files") {
+		t.Fatalf("first verdict: %+v", got)
+	}
+	turn(s, nil) // rate-limited concern, nit kept
+	s.Wait()
+	got := s.Reminders(loop.BoundaryRun)
+	if len(got) != 1 || !strings.Contains(got[0].Text, "keep it out of files") || strings.Contains(got[0].Text, "repeating") {
+		t.Errorf("after a rate-limited steer: %+v", got)
+	}
+}
+
+// The interrupt is called outside the session's lock: a callback that
+// calls back into the session does not deadlock (review fix).
+func TestWatchdogInterruptRunsOutsideTheLock(t *testing.T) {
+	s, _, _ := watch("on", map[string]decide.Answer{QUnsafe: {P: 0.95}})
+	s.o.Every = 1
+	called := make(chan []loop.Reminder, 1)
+	s.Request(0, func() { called <- s.Reminders(loop.BoundaryRetry) })
+	s.Observe(loop.Event{Kind: loop.EventAssistant, Text: "x"})
+	s.Observe(loop.Event{Kind: loop.EventTurnEnd})
+	select {
+	case got := <-called:
+		if len(got) != 1 || !strings.Contains(got[0].Text, "destructive") {
+			t.Errorf("reminders = %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the interrupt deadlocked on the session lock")
+	}
+	s.Wait()
+}

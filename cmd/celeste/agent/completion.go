@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
@@ -71,5 +73,19 @@ func markerOnLine(text string, o Options) bool {
 	if len(lines) == 0 {
 		return false
 	}
-	return strings.HasPrefix(lines[0], marker) || strings.HasPrefix(lines[len(lines)-1], marker)
+	return startsWithMarker(lines[0], marker) || startsWithMarker(lines[len(lines)-1], marker)
+}
+
+// startsWithMarker: line begins with marker as a whole token, so
+// TASK_COMPLETED or TASK_COMPLETE_LATER do not count.
+func startsWithMarker(line, marker string) bool {
+	if !strings.HasPrefix(line, marker) {
+		return false
+	}
+	rest := line[len(marker):]
+	if rest == "" {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_')
 }
