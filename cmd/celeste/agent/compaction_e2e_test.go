@@ -444,3 +444,39 @@ func TestAgentSkipsTheSummaryWhileAnUnseenBatchFits(t *testing.T) {
 		t.Fatal("no summary although the request exceeds the window")
 	}
 }
+
+// A provider that reports usage once must not leave the meter at that
+// pre-prune count: once the history is pruned, later replies without usage
+// must see the smaller history, not prune or summarize again every call.
+func TestAgentDoesNotRecompactAfterAPruneWithoutNewUsage(t *testing.T) {
+	runner, _ := newCompactionRunner(t, &windowBackend{}, 64_000)
+	var summaries int
+	runner.summarize = func(context.Context, string, string) (string, error) {
+		summaries++
+		return "## Goal\nread every file", nil
+	}
+	msgs := []tui.ChatMessage{{Role: "user", Content: "read every file"}}
+	for i := 0; i < 14; i++ {
+		id := fmt.Sprintf("toolu_%03d", i)
+		msgs = append(msgs,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%03d.go"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	msgs = append(msgs, tui.ChatMessage{Role: "assistant", Content: "reading on"})
+	c := &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	c.meter.Sending(msgs[:len(msgs)-1])
+	out, _, changed := c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(msgs[:len(msgs)-1])}, false)
+	if !changed {
+		t.Fatal("the first call did not compact a history over the threshold")
+	}
+	first := summaries
+	for call := 2; call <= 4; call++ {
+		out = append(out, tui.ChatMessage{Role: "user", Content: "go on"}, tui.ChatMessage{Role: "assistant", Content: "ok"})
+		var again bool
+		out, _, again = c.Compact(context.Background(), out, &llm.TokenUsage{}, false)
+		if again || summaries != first {
+			t.Fatalf("call %d compacted again (changed=%v, summaries %d -> %d): used = %d for an estimate of %d",
+				call, again, first, summaries, c.meter.Used(out), compact.Estimate(out))
+		}
+	}
+}

@@ -88,6 +88,37 @@ func TestMeterZeroUsageReplyKeepsTheProviderBaseline(t *testing.T) {
 	}
 }
 
+// A prune or summary shrinks the history without changing its length (or
+// shortens it); Used must fall with it, not keep reporting the pre-prune
+// prompt count until the provider reports a new one. The meter keeps the
+// provider's surplus over the estimate, not the absolute count.
+func TestMeterUsedFallsAfterAPruneWithoutNewUsage(t *testing.T) {
+	m := NewMeter(1_000)
+	h := []tui.ChatMessage{
+		msg("user", "read"),
+		{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "a", Name: "read_file"}}},
+		{Role: "tool", ToolCallID: "a", Content: strings.Repeat("x", 80_000)},
+	}
+	m.Observe(h, 0)
+	m.Sending(h) // request 1 carries the read
+	h = append(h, tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "b", Name: "todo"}}},
+		tui.ChatMessage{Role: "tool", ToolCallID: "b", Content: "ok"})
+	surplus := 2_000
+	m.Observe(h, Estimate(h[:3])+surplus) // the provider counted request 1
+	before := m.Used(h)
+	// The prune elides the read: same length, far fewer tokens.
+	h[2].Content = "[elided]"
+	if got, want := m.Used(h), Estimate(h)+surplus; got != want {
+		t.Fatalf("Used right after the prune = %d, want estimate + surplus = %d (was %d)", got, want, before)
+	}
+	m.Sending(h)
+	h = append(h, msg("assistant", "done"))
+	m.Observe(h, 0) // request 2 answered without usage
+	if got, want := m.Used(h), Estimate(h)+surplus; got != want {
+		t.Fatalf("Used after a zero-usage reply = %d, want estimate + the provider's surplus = %d (pre-prune %d)", got, want, before)
+	}
+}
+
 func TestDefinitionTokens(t *testing.T) {
 	defs := []tui.SkillDefinition{{Name: "read_file", Description: strings.Repeat("d", 400)}}
 	if got := DefinitionTokens(defs); got < 100 {

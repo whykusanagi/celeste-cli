@@ -16,27 +16,31 @@ type Meter struct {
 
 	sent    int // history length the last answered request carried; -1: all seen
 	pending int // history length handed to the latest request; -1: none yet
-	prompt  int // the provider's prompt tokens for the request that carried base
-	base    int // history length that request carried; -1: no provider count yet
+	// surplus is how far the provider's prompt count for the last request
+	// that reported one exceeded the history estimate of what it carried
+	// (system prompt, tool schemas, tokenizer drift). It is kept as a
+	// difference, not an absolute count, so a prune or summary lowers Used
+	// before the provider reports again.
+	surplus int
 }
 
 // NewMeter returns a meter for a compactor whose requests carry overhead
 // tokens besides the history.
 func NewMeter(overhead int) *Meter {
-	return &Meter{Overhead: overhead, sent: -1, pending: -1, base: -1}
+	return &Meter{Overhead: overhead, sent: -1, pending: -1}
 }
 
 // Observe is called first in every Compact, with the history about to be
 // compacted and the provider's prompt tokens for the previous request (0
 // when it reported none). The previous request was answered when its
 // reply, an assistant message, sits right after what it carried. A reply
-// without a prompt count marks its request as seen but keeps the last
-// count the provider did report as the baseline for Used.
+// without a prompt count marks its request as seen but keeps the surplus
+// the provider last reported.
 func (m *Meter) Observe(history []tui.ChatMessage, promptTokens int) {
 	if m.pending >= 0 && m.pending < len(history) && history[m.pending].Role == "assistant" {
 		m.sent = m.pending
 		if promptTokens > 0 {
-			m.prompt, m.base = promptTokens, m.pending
+			m.surplus = promptTokens - Estimate(history[:m.pending])
 		}
 	}
 }
@@ -54,17 +58,13 @@ func (m *Meter) Unseen(history []tui.ChatMessage) int {
 	return len(history) - m.sent
 }
 
-// Used estimates the next request: the history plus Overhead, or the
-// provider's last reported count plus what was appended after the request
-// it measured, whichever is larger.
+// Used estimates the next request: the history estimate plus Overhead, or
+// plus the provider's last reported surplus over the estimate, whichever
+// is larger. Without a prune this equals the provider's count plus what
+// was appended after the request it measured; after a prune or summary it
+// falls with the history.
 func (m *Meter) Used(history []tui.ChatMessage) int {
-	used := Estimate(history) + m.Overhead
-	if m.prompt > 0 && m.base >= 0 && m.base <= len(history) {
-		if p := m.prompt + Estimate(history[m.base:]); p > used {
-			used = p
-		}
-	}
-	return used
+	return Estimate(history) + max(m.Overhead, m.surplus)
 }
 
 // DefinitionTokens estimates the tool schemas a request carries.
