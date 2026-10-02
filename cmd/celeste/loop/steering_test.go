@@ -13,13 +13,13 @@ import (
 // fakeSteering interrupts on text containing onText and on calls to
 // onCall, and hands out the reminders queued in due.
 type fakeSteering struct {
-	mu        sync.Mutex
-	onText    string
-	onCall    string
-	due       map[Boundary][]Reminder
-	requests  []bool // per request: was an interrupt function given
-	observed  []EventKind
-	interrupt func()
+	mu         sync.Mutex
+	onText     string
+	onCall     string
+	due        map[Boundary][]Reminder
+	requests   []bool // per request: was an interrupt function given
+	observed   []EventKind
+	interrupt  func()
 	callChecks int
 }
 
@@ -315,5 +315,30 @@ func TestSteeringCallsNotAskedPastTheCap(t *testing.T) {
 	}
 	if len(st.due[BoundaryRetry]) != 0 {
 		t.Errorf("a reminder was queued for calls that ran: %+v", st.due)
+	}
+}
+
+// Esc during the re-run of an interrupted turn ends the run interrupted;
+// the reminder that joined for the re-run stays in the returned history
+// (the next run sends it), and the dropped reply is not there (review M5).
+func TestSteeringEscDuringRerun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	llmStub := &stubLLM{reply: func(n int, rctx context.Context, cb llm.StreamEventCallback) error {
+		if n == 0 {
+			sayText(cb, "Audio saved: x", nil)
+			return nil
+		}
+		cancel() // the person presses Esc while the re-run streams
+		<-rctx.Done()
+		return rctx.Err()
+	}}
+	l := &Loop{Client: llmStub, Tools: newRegistry(), Limits: DefaultLimits(), Steering: &fakeSteering{onText: "Audio saved:"}}
+	msgs, res, err := l.Run(ctx, []Message{{Role: "user", Content: "x"}})
+	if res.StopReason != StopInterrupted || err == nil {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if len(msgs) != 2 || msgs[1].Metadata[MetaReminder] != "rule:text" {
+		t.Errorf("history = %+v", msgs)
 	}
 }

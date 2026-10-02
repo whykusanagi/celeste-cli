@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,4 +57,22 @@ func lastSystemLine(m AppModel) string {
 		}
 	}
 	return ""
+}
+
+// After Esc, a rule event still in flight keeps the chat aligned with the
+// loop: the reminder joins the LLM history (the loop's history has it), and
+// no retry line is shown for a turn that is ending (review M5).
+func TestRuleEventsAfterEsc(t *testing.T) {
+	m, _ := newQueueTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "make a voice line"})
+	m, _ = feed(t, m, TurnStartMsg{Turn: 1})
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	require.True(t, m.interrupted)
+	m, _ = feed(t, m, RuleInterruptMsg{})
+	reminder := ChatMessage{Role: "user", Content: "<system-reminder>\nno audio\n</system-reminder>", Metadata: map[string]any{"hidden": true, MetaPromptHookDone: true}}
+	m, _ = feed(t, m, RuleReminderMsg{Source: "rule:unbacked-audio-claim", Message: reminder})
+	llm := m.chat.GetLLMMessages()
+	require.NotEmpty(t, llm)
+	assert.Equal(t, reminder.Content, llm[len(llm)-1].Content)
+	assert.NotContains(t, lastSystemLine(m), "stream rule stopped the reply")
 }

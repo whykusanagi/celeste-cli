@@ -6,6 +6,7 @@ package steer
 import (
 	"fmt"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -156,9 +157,14 @@ func (s *Session) Reminders(b loop.Boundary) []loop.Reminder {
 	return out
 }
 
+// clip shortens s to at most 80 bytes for a log line, on a rune boundary.
 func clip(s string) string {
-	if len(s) > 80 {
-		return s[:77] + "..."
+	if len(s) <= 80 {
+		return s
 	}
-	return s
+	cut := 77
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -159,5 +160,13 @@ func TestUnhonouredInterruptReminderJoinsLater(t *testing.T) {
 	}
 	if got := s.Reminders(loop.BoundaryTools); len(got) != 1 || got[0].Source != "rule:unbacked-audio-claim" {
 		t.Errorf("reminders = %+v", got)
+	}
+}
+
+// clip never cuts a rune in half (review M7).
+func TestClipKeepsRunesWhole(t *testing.T) {
+	got := clip(strings.Repeat("é", 100))
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "...") || len(got) > 80 {
+		t.Errorf("clip = %q (%d bytes)", got, len(got))
 	}
 }

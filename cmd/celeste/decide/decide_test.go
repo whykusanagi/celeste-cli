@@ -107,3 +107,26 @@ func TestGuardedWithoutPrimaryIsTheHeuristicAndUncounted(t *testing.T) {
 		t.Errorf("got %+v, stats %v", got, Snapshot())
 	}
 }
+
+// stubborn ignores its context entirely.
+type stubborn struct{ release chan struct{} }
+
+func (s stubborn) Ask(context.Context, string, []Question) (map[string]Answer, error) {
+	<-s.release
+	return map[string]Answer{"a": {P: 1, Source: "late"}}, nil
+}
+
+// The cap holds even for an oracle that never looks at its context
+// (review M5).
+func TestGuardedCapsAnOracleThatIgnoresItsContext(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	start := time.Now()
+	got, err := Guarded(stubborn{release: release}, "gate", nil).Ask(context.Background(), "s", twoQs)
+	if err != nil || got["a"].Source != "heuristic" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if el := time.Since(start); el > Timeout+time.Second {
+		t.Errorf("held the caller %v (cap %v)", el, Timeout)
+	}
+}
