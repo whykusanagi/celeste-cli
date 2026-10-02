@@ -93,4 +93,18 @@ func TestCustomToolOutputIsCapped(t *testing.T) {
 	if len(res.Content) > 70_000 {
 		t.Fatalf("output not capped: %d bytes", len(res.Content))
 	}
+	if !strings.HasSuffix(res.Content, "\n[output truncated at 64000 bytes]") {
+		t.Fatalf("no truncation marker: %q", res.Content[len(res.Content)-60:])
+	}
+}
+
+// A caller's deadline that ends the call first is not reported as the
+// tool's own two-minute timeout (review of cleanup-5c).
+func TestCustomToolNamesTheCallersDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	res, _ := loadCustomTool(t, "sleep 5").Execute(ctx, map[string]any{}, nil)
+	if !res.Error || !strings.Contains(res.Content, "the caller's deadline ended it") || strings.Contains(res.Content, "2m0s") {
+		t.Fatalf("res = %+v", res)
+	}
 }

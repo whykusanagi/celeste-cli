@@ -2,7 +2,9 @@ package shellrun
 
 import (
 	"context"
+	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,6 +33,20 @@ func TestRunReportsAnExitCode(t *testing.T) {
 	}
 	res := Run(context.Background(), Options{Dir: t.TempDir(), Command: "echo out; echo err >&2; exit 3", Timeout: 5 * time.Second})
 	if res.ExitCode != 3 || res.Err != nil || res.TimedOut || res.Output != "out\nerr\n" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+// Args mode runs on every platform, Windows included, where the held-pipe
+// path relies on closing the read end: a direct program run returns its
+// output and exit code (review of cleanup-5c).
+func TestRunArgsRunsAProgramOnEveryPlatform(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skip(err)
+	}
+	res := Run(context.Background(), Options{Dir: t.TempDir(), Args: []string{exe, "-test.run=^$"}, Timeout: 30 * time.Second})
+	if res.ExitCode != 0 || res.Err != nil || res.TimedOut || !strings.Contains(res.Output, "PASS") {
 		t.Fatalf("result = %+v", res)
 	}
 }

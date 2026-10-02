@@ -165,11 +165,20 @@ func captureGitWorkspaceArtifacts(workspace string, timeout time.Duration) (stri
 	return statusOut, diffOut
 }
 
+// gitMaxOutput bounds one git call's output in memory. It is far above any
+// realistic patch, so git_diff.patch is not cut; a var so tests can lower it.
+var gitMaxOutput = 64 << 20
+
 // runGit runs git directly (no shell) through shellrun: its own process
 // group, killed whole on timeout, and a child of git still holding the
 // output pipe after git exits is given shellrun.WaitDelay, then killed.
+// Output over gitMaxOutput ends with a trailer saying it was cut, so a cut
+// patch is never taken for a whole one.
 func runGit(workdir string, timeout time.Duration, args ...string) (string, error) {
-	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, args...), Timeout: timeout})
+	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, args...), Timeout: timeout, MaxOutput: gitMaxOutput})
+	if res.Truncated {
+		res.Output += fmt.Sprintf("\n# celeste: output truncated at %d bytes\n", gitMaxOutput)
+	}
 	switch {
 	case res.TimedOut:
 		return res.Output, fmt.Errorf("git %s timed out", strings.Join(args, " "))

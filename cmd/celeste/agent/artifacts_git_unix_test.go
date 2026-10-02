@@ -82,3 +82,51 @@ func TestCaptureGitWorkspaceArtifactsKillsAPipeHolderAfterAFailingGit(t *testing
 		t.Fatal("the child holding git's pipe survived a failing git")
 	}
 }
+
+// A large diff reaches the bundle whole: runGit's cap is far above the
+// runner's 64 KB default (review of cleanup-5c).
+func TestCaptureGitWorkspaceArtifactsKeepsALargeDiffWhole(t *testing.T) {
+	dir := t.TempDir()
+	gittest.Run(t, dir, "init", "-q")
+	var before, after strings.Builder
+	for i := 0; i < 10000; i++ {
+		before.WriteString("line " + strconv.Itoa(i) + "\n")
+		after.WriteString("line " + strconv.Itoa(i) + " changed\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(before.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, dir, "add", "f.txt")
+	gittest.Run(t, dir, "commit", "-q", "-m", "x")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(after.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, diff := captureGitWorkspaceArtifacts(dir, 30*time.Second)
+	if len(diff) <= 64_000 {
+		t.Fatalf("diff cut to %d bytes", len(diff))
+	}
+	if !strings.HasSuffix(diff, "+line 9999 changed\n") {
+		t.Fatalf("diff does not end with the last hunk line: %q", diff[len(diff)-80:])
+	}
+}
+
+// A diff over the cap says so, so a cut patch is never taken for a whole one.
+func TestCaptureGitWorkspaceArtifactsMarksATruncatedDiff(t *testing.T) {
+	old := gitMaxOutput
+	gitMaxOutput = 1000
+	t.Cleanup(func() { gitMaxOutput = old })
+	dir := t.TempDir()
+	gittest.Run(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(strings.Repeat("a\n", 2000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, dir, "add", "f.txt")
+	gittest.Run(t, dir, "commit", "-q", "-m", "x")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(strings.Repeat("b\n", 2000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, diff := captureGitWorkspaceArtifacts(dir, 30*time.Second)
+	if !strings.HasSuffix(diff, "\n# celeste: output truncated at 1000 bytes\n") {
+		t.Fatalf("no truncation trailer: %q", diff[max(0, len(diff)-120):])
+	}
+}

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -666,6 +667,8 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 	switch {
 	case res.Err != nil:
 		failure = res.Err.Error()
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		failure = "the caller's deadline ended it; the command and everything it started were killed"
 	case res.TimedOut:
 		failure = fmt.Sprintf("timed out after %s; the command and everything it started were killed", customToolTimeout)
 	case ctx.Err() != nil:
@@ -673,10 +676,14 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 	case res.ExitCode != 0:
 		failure = fmt.Sprintf("exit status %d", res.ExitCode)
 	}
-	if failure != "" {
-		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %s\nOutput:\n%s", c.command, failure, res.Output), Error: true}, nil
+	output := res.Output
+	if res.Truncated {
+		output += fmt.Sprintf("\n[output truncated at %d bytes]", shellrun.DefaultMaxOutput)
 	}
-	return ToolResult{Content: res.Output}, nil
+	if failure != "" {
+		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %s\nOutput:\n%s", c.command, failure, output), Error: true}, nil
+	}
+	return ToolResult{Content: output}, nil
 }
 
 // LoadCustomTools loads JSON tool definitions from a directory.
