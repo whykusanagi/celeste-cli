@@ -1,0 +1,69 @@
+package builtin
+
+import (
+	"strings"
+	"testing"
+)
+
+// I1: a shell's -c can sit in an option cluster or after other options.
+func TestCheckDangerousCommand_ShellOptionForms(t *testing.T) {
+	for _, cmd := range []string{
+		`bash -lc "rm -rf ~"`,
+		`bash -ec 'rm -rf $HOME'`,
+		`zsh -ic 'rm -rf ~/'`,
+		`sh -xc 'rm -r -f /usr'`,
+		`bash --norc -c 'rm -r -f /usr'`,
+		`bash -c -- 'rm -r -f /usr'`,
+		`bash -o pipefail -c 'rm -r -f /usr'`,
+		`sudo -u x bash -lc 'rm -r -f /usr'`,
+		`script -c "rm -r -f /usr" /dev/null`,
+		`script -qc 'rm -r -f /usr' /dev/null`,
+		`script --command 'rm -r -f /usr'`,
+		`env -S 'rm -r -f /usr'`,
+		`env -S'rm -r -f /usr'`,
+		`env --split-string='rm -r -f /usr'`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("not blocked: %s", cmd)
+		}
+	}
+}
+
+// I2: input where a naive parse and the shell disagree about where the
+// tail of the line is.
+func TestCheckDangerousCommand_ParserDisagreements(t *testing.T) {
+	for _, cmd := range []string{
+		"rm -r -f \\\n/usr",
+		"r\\\nm -r -f /usr",
+		"echo # '\nrm -r -f /usr",
+		`echo $(echo ")"; rm -r -f /usr)`,
+		`echo $(echo ')'; rm -r -f /usr)`,
+		`echo $(echo \); rm -r -f /usr)`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("not blocked: %q", cmd)
+		}
+	}
+	// A # inside a word is not a comment, and a real comment hides nothing
+	// that runs.
+	for _, cmd := range []string{
+		`echo a#b`,
+		`ls # rm -r -f /usr`,
+	} {
+		if r := checkDangerousCommand(cmd); r != "" {
+			t.Errorf("benign blocked (%s): %q", r, cmd)
+		}
+	}
+}
+
+// M1: nesting past the walker's depth has its own reason.
+func TestCheckDangerousCommand_TooDeepReason(t *testing.T) {
+	cmd := "true"
+	for i := 0; i < 8; i++ {
+		cmd = "eval " + cmd
+	}
+	r := checkDangerousCommand(cmd)
+	if !strings.Contains(r, "nesting too deep") {
+		t.Fatalf("reason = %q, want the nesting reason", r)
+	}
+}

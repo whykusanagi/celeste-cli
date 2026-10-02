@@ -31,41 +31,56 @@ func CommandName(w string) string {
 	return path.Base(w)
 }
 
+// Result is what Walk found.
+type Result int
+
+const (
+	// None: fn returned false for every command.
+	None Result = iota
+	// Found: fn returned true for some command.
+	Found
+	// TooDeep: the line nests command strings past MaxDepth, so not every
+	// command was visited. A caller that blocks should refuse.
+	TooDeep
+)
+
 // Walk calls fn with every simple command in cmd (a word list, quotes
-// removed), including the commands nested in $( ), backticks, sh -c
-// strings, eval arguments and an ssh remote command, each also as its own
-// command line. It stops and returns true as soon as fn does. Nesting past
-// MaxDepth also returns true, so a caller that blocks on true errs on the
-// side of refusing.
-func Walk(cmd string, fn func(words []string) bool) bool {
+// removed), including the commands nested in $( ), backticks, the command
+// string of sh/bash/... -c (wherever -c sits among the shell's options),
+// script -c, env -S, eval arguments and an ssh remote command, each also as
+// its own command line. It stops at the first command fn returns true for.
+func Walk(cmd string, fn func(words []string) bool) Result {
 	return walk(cmd, 0, fn)
 }
 
-func walk(cmd string, depth int, fn func(words []string) bool) bool {
+func walk(cmd string, depth int, fn func(words []string) bool) Result {
 	if depth > MaxDepth {
-		return true
+		return TooDeep
 	}
 	segs, nested := Segments(cmd)
 	for _, n := range nested {
-		if walk(n, depth+1, fn) {
-			return true
+		if r := walk(n, depth+1, fn); r != None {
+			return r
 		}
 	}
 	for _, words := range segs {
 		if fn(words) {
-			return true
+			return Found
 		}
-		// Any sh -c '...' in the segment (docker exec web sh -c, sudo bash -c).
-		for i := 0; i+2 < len(words); i++ {
-			if Shells[CommandName(words[i])] && words[i+1] == "-c" && walk(words[i+2], depth+1, fn) {
-				return true
+		// Command strings anywhere in the segment (docker exec web sh -c,
+		// sudo bash -lc, script -qc, env -S).
+		for i := range words {
+			for _, inner := range commandStrings(CommandName(words[i]), words[i+1:]) {
+				if r := walk(inner, depth+1, fn); r != None {
+					return r
+				}
 			}
 		}
 		name, args := Command(words)
 		switch name {
 		case "eval":
-			if walk(strings.Join(args, " "), depth+1, fn) {
-				return true
+			if r := walk(strings.Join(args, " "), depth+1, fn); r != None {
+				return r
 			}
 		case "ssh":
 			// ssh [opts] host command...: the remote command.
@@ -76,14 +91,85 @@ func walk(cmd string, depth int, fn func(words []string) bool) bool {
 					}
 					continue
 				}
-				if walk(strings.Join(args[k+1:], " "), depth+1, fn) {
-					return true
+				if r := walk(strings.Join(args[k+1:], " "), depth+1, fn); r != None {
+					return r
 				}
 				break
 			}
 		}
 	}
-	return false
+	return None
+}
+
+// shellValueOptions take the next word as their value.
+var shellValueOptions = map[string]bool{"-o": true, "+o": true, "-O": true, "+O": true, "--rcfile": true, "--init-file": true}
+
+// commandStrings returns the command lines that name, run with args, would
+// execute itself: a shell's -c string, script's -c/--command, env's
+// -S/--split-string. Anything else returns nil.
+func commandStrings(name string, args []string) []string {
+	switch {
+	case Shells[name]:
+		// sh [options] -c [--] 'string': -c may be alone or in a cluster
+		// (-lc, -ec, -xc) and other options may come first.
+		c := false
+		k := 0
+		for ; k < len(args); k++ {
+			a := args[k]
+			if a == "--" {
+				k++
+				break
+			}
+			if !strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "+") || a == "-" {
+				break
+			}
+			if shellValueOptions[a] {
+				k++
+				continue
+			}
+			if !strings.HasPrefix(a, "--") && strings.Contains(a[1:], "c") {
+				c = true
+			}
+		}
+		if c && k < len(args) {
+			return []string{args[k]}
+		}
+	case name == "script":
+		for k := 0; k < len(args); k++ {
+			a := args[k]
+			switch {
+			case a == "--command" && k+1 < len(args):
+				return []string{args[k+1]}
+			case strings.HasPrefix(a, "--command="):
+				return []string{strings.TrimPrefix(a, "--command=")}
+			case strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--"):
+				if i := strings.IndexByte(a, 'c'); i > 0 {
+					if rest := a[i+1:]; rest != "" {
+						return []string{rest} // -c'cmd' attached
+					}
+					if k+1 < len(args) {
+						return []string{args[k+1]}
+					}
+				}
+			}
+		}
+	case name == "env":
+		for k := 0; k < len(args); k++ {
+			a := args[k]
+			switch {
+			case (a == "-S" || a == "--split-string") && k+1 < len(args):
+				return []string{strings.Join(args[k+1:], " ")}
+			case strings.HasPrefix(a, "--split-string="):
+				return []string{strings.Join(append([]string{strings.TrimPrefix(a, "--split-string=")}, args[k+1:]...), " ")}
+			case strings.HasPrefix(a, "-S"):
+				return []string{strings.Join(append([]string{a[2:]}, args[k+1:]...), " ")}
+			case strings.HasPrefix(a, "-") || strings.Contains(a, "="):
+				continue
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // Command skips assignments (FOO=1, also after env) and wrappers (sudo, env,
@@ -117,6 +203,8 @@ func Command(words []string) (name string, args []string) {
 // bodies of $( ) and backtick substitutions, wherever they appear (unquoted
 // or in double quotes), as nested commands.
 func Segments(s string) (segs [][]string, nested []string) {
+	// A backslash-newline is a line continuation: the shell drops both.
+	s = strings.ReplaceAll(s, "\\\n", "")
 	var words []string
 	var cur strings.Builder
 	inWord := false
@@ -147,6 +235,21 @@ func Segments(s string) (segs [][]string, nested []string) {
 		depth := 1
 		for j := i; j < len(s); j++ {
 			switch s[j] {
+			case '\\':
+				j++ // an escaped character is never a paren
+			case '\'':
+				// A quoted ) does not close the substitution.
+				if end := strings.IndexByte(s[j+1:], '\''); end >= 0 {
+					j += end + 1
+				} else {
+					j = len(s)
+				}
+			case '"':
+				for j++; j < len(s) && s[j] != '"'; j++ {
+					if s[j] == '\\' {
+						j++
+					}
+				}
 			case '(':
 				depth++
 			case ')':
@@ -219,6 +322,13 @@ func Segments(s string) (segs [][]string, nested []string) {
 			// Unquoted $IFS / ${IFS} splits words like a space does.
 			endWord()
 			i += ifsAt(s, i)
+		case c == '#' && !inWord:
+			// A comment runs to the end of the line.
+			if end := strings.IndexByte(s[i:], '\n'); end >= 0 {
+				i += end
+			} else {
+				i = len(s)
+			}
 		case c == ';' || c == '\n' || c == '(' || c == ')':
 			endSeg()
 			i++

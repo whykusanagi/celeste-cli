@@ -56,8 +56,11 @@ func checkDangerousCommand(command string) string {
 	// The regexes above stay as a backstop; this reads the command as a
 	// shell does, so quoting, \rm, split or long flags, flags after the
 	// path, ~ and $HOME, and nested sh -c / eval / $( ) do not slip past.
-	if destructiveRm(command) {
+	switch destructiveRm(command) {
+	case shellparse.Found:
 		return "recursive rm on system or home paths is not permitted"
+	case shellparse.TooDeep:
+		return "command nesting too deep to check is not permitted"
 	}
 
 	// === SENSITIVE FILE ACCESS ===
@@ -140,16 +143,22 @@ func checkDangerousCommand(command string) string {
 }
 
 // destructiveRm reports whether any command in the line, nested ones
-// included, is a recursive forced rm of a system or home path. Every word
-// that resolves to rm starts a check of the words after it, so wrappers
-// (xargs, timeout 5, nice -n 5) do not hide it. Nesting deeper than
-// shellparse.MaxDepth counts as destructive. Not covered: a path held in a
-// variable (X=/; rm -rf $X), brace or glob expansion, and paths that reach
-// rm through stdin (find / | xargs rm -rf) or a script.
-func destructiveRm(command string) bool {
+// included, is a recursive rm of a system or home path (shellparse.Found),
+// or whether the line nests command strings too deep to check
+// (shellparse.TooDeep). Every word that resolves to rm starts a check of
+// the words after it, so wrappers (xargs, timeout 5, nice -n 5) do not
+// hide it.
+//
+// Out of scope (documented, not checked): relative targets that climb out
+// with .., paths that come from a variable, a substitution or a glob or
+// brace expansion (X=/; rm -rf $X), find -delete, deletes from other
+// programs (python shutil.rmtree), chmod/chown -R, commands fed to a shell
+// on stdin, and paths that reach rm through stdin (find / | xargs rm -rf)
+// or a script. git push --force is the advisory stream rule's job.
+func destructiveRm(command string) shellparse.Result {
 	return shellparse.Walk(command, func(words []string) bool {
 		for i, w := range words {
-			if shellparse.CommandName(w) == "rm" && rmRecursiveForceSystem(words[i+1:]) {
+			if shellparse.CommandName(w) == "rm" && rmDestructive(words[i+1:]) {
 				return true
 			}
 		}
@@ -157,10 +166,10 @@ func destructiveRm(command string) bool {
 	})
 }
 
-// rmRecursiveForceSystem: rm's arguments ask for a recursive (-r, -R,
-// --recursive) and forced (-f, --force) delete, flags anywhere, and at
-// least one target is a system or home path.
-func rmRecursiveForceSystem(args []string) bool {
+// rmDestructive: rm's arguments ask for a recursive (-r, -R, --recursive)
+// and forced (-f, --force) delete, flags anywhere, and at least one target
+// is a system or home path.
+func rmDestructive(args []string) bool {
 	recursive, force := false, false
 	var targets []string
 	endOfFlags := false

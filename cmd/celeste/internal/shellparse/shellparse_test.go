@@ -56,10 +56,10 @@ func TestWalkStopsAtMaxDepth(t *testing.T) {
 	for i := 0; i <= MaxDepth+1; i++ {
 		cmd = "eval " + cmd
 	}
-	if !Walk(cmd, func([]string) bool { return false }) {
+	if Walk(cmd, func([]string) bool { return false }) != TooDeep {
 		t.Error("nesting past MaxDepth must report true")
 	}
-	if Walk("eval eval true", func([]string) bool { return false }) {
+	if Walk("eval eval true", func([]string) bool { return false }) != None {
 		t.Error("shallow nesting reported true")
 	}
 }
@@ -79,4 +79,74 @@ func TestSegmentsIFSAndDollarQuotes(t *testing.T) {
 			t.Errorf("Segments(%q) = %q, want [%q]", in, segs, want)
 		}
 	}
+}
+
+func TestSegmentsContinuationCommentsAndQuotedParens(t *testing.T) {
+	for in, want := range map[string][][]string{
+		"rm -r -f \\\n/usr": {{"rm", "-r", "-f", "/usr"}},
+		"r\\\nm x":          {{"rm", "x"}},
+		"echo # '\nrm x":    {{"echo"}, {"rm", "x"}},
+		"echo a#b":          {{"echo", "a#b"}},
+		"ls # rm -r -f /":   {{"ls"}},
+	} {
+		if segs, _ := Segments(in); !reflect.DeepEqual(segs, want) {
+			t.Errorf("Segments(%q) = %q, want %q", in, segs, want)
+		}
+	}
+	for in, want := range map[string]string{
+		`echo $(echo ")"; rm x)`: `echo ")"; rm x`,
+		`echo $(echo ')'; rm x)`: `echo ')'; rm x`,
+		`echo $(echo \); rm x)`:  `echo \); rm x`,
+	} {
+		if _, nested := Segments(in); len(nested) != 1 || nested[0] != want {
+			t.Errorf("Segments(%q) nested = %q, want [%q]", in, nested, want)
+		}
+	}
+}
+
+func TestCommandStrings(t *testing.T) {
+	for _, tc := range []struct {
+		words []string
+		want  []string
+	}{
+		{[]string{"bash", "-lc", "X"}, []string{"X"}},
+		{[]string{"sh", "-xc", "X"}, []string{"X"}},
+		{[]string{"bash", "--norc", "-c", "X"}, []string{"X"}},
+		{[]string{"bash", "-c", "--", "X"}, []string{"X"}},
+		{[]string{"bash", "-o", "pipefail", "-c", "X"}, []string{"X"}},
+		{[]string{"bash", "script.sh"}, nil},
+		{[]string{"bash", "-l", "script.sh"}, nil},
+		{[]string{"script", "-qc", "X", "/dev/null"}, []string{"X"}},
+		{[]string{"script", "--command", "X"}, []string{"X"}},
+		{[]string{"script", "--command=X"}, []string{"X"}},
+		{[]string{"env", "-S", "rm x"}, []string{"rm x"}},
+		{[]string{"env", "-Srm x"}, []string{"rm x"}},
+		{[]string{"env", "--split-string=rm", "x"}, []string{"rm x"}},
+		{[]string{"env", "FOO=1", "ls"}, nil},
+	} {
+		got := commandStrings(CommandName(tc.words[0]), tc.words[1:])
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("commandStrings(%q) = %q, want %q", tc.words, got, tc.want)
+		}
+	}
+}
+
+// FuzzWalk: any input terminates without panicking and visits only
+// non-empty word lists.
+func FuzzWalk(f *testing.F) {
+	for _, seed := range []string{
+		`rm -rf /`, `bash -lc "rm -rf ~"`, `echo $(echo ")"; rm -r -f /usr)`,
+		"echo # '\nrm -r -f /usr", "rm -rf${IFS}/", `rm -rf $'\x2f'`, `env -S'rm -r -f /'`,
+		`script -qc 'eval "sh -c \"rm -r /\""'`, "`", "$(", `$'`, `"\`,
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		Walk(s, func(words []string) bool {
+			if len(words) == 0 {
+				t.Fatalf("empty command from %q", s)
+			}
+			return false
+		})
+	})
 }
