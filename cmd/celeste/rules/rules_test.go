@@ -502,22 +502,28 @@ func TestDestructiveBashHitTextIsTheCommand(t *testing.T) {
 // The advisory rule reads every bash call (condition \S) and the watchdog
 // reads recent ones: 40 KB of adversarial shell stays fast.
 func TestDestructiveLinearOnLongLines(t *testing.T) {
-	for _, cmd := range []string{
-		strings.Repeat("rm -r x ", 5000),
-		strings.Repeat("env ", 10000),
-		strings.Repeat("bash -lc ", 4500),
-		strings.Repeat("sudo -u x ", 4000),
-		strings.Repeat("git push x ", 3600),
-		strings.Repeat("a=1 ", 10000),
-	} {
-		best := time.Hour
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			Destructive(cmd)
-			best = min(best, time.Since(start))
-		}
-		if best > 100*time.Millisecond {
-			t.Errorf("%q...: %v, want < 100ms (quadratic took seconds)", cmd[:12], best)
+	// Compare growth, not wall time, so a slow CI runner can't fail it: four
+	// times the input costs about 4x when linear and 16x when quadratic.
+	for _, unit := range []string{"rm -r x ", "env ", "bash -lc ", "sudo -u x ", "git push x ", "a=1 "} {
+		n := 40000 / len(unit)
+		small, big := strings.Repeat(unit, n/4), strings.Repeat(unit, n)
+		if r := growth(func() { Destructive(small) }, func() { Destructive(big) }); r > 8 {
+			t.Errorf("%q x4 took %.1fx as long; want linear (~4x, quadratic is ~16x)", unit, r)
 		}
 	}
+}
+
+// growth is how many times longer big takes than small, each timed as the
+// best of five runs.
+func growth(small, big func()) float64 {
+	best := func(f func()) time.Duration {
+		d := time.Duration(1<<63 - 1)
+		for i := 0; i < 5; i++ {
+			start := time.Now()
+			f()
+			d = min(d, time.Since(start))
+		}
+		return max(d, time.Microsecond)
+	}
+	return float64(best(big)) / float64(best(small))
 }
