@@ -656,7 +656,7 @@ func (a *TUIClientAdapter) steering() *steer.Session {
 	if cfg := a.baseConfig; cfg != nil {
 		o.RulesMode, o.Watchdog = cfg.StreamRulesMode(), cfg.WatchdogMode()
 		ws, _ := os.Getwd()
-		o.Oracle = agent.WatchdogOracle(cfg, nil, ws, tui.LogInfo)
+		o.Oracle = agent.WatchdogOracle(cfg, ws, tui.LogInfo)
 	}
 	a.steer = steer.New(o)
 	return a.steer

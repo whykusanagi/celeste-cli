@@ -98,7 +98,7 @@ func chatSteering(ctx context.Context, cfg *config.Config, env *loop.Env, prompt
 		Rules:     env.Rules,
 		RulesMode: cfg.StreamRulesMode(),
 		Watchdog:  cfg.WatchdogMode(),
-		Oracle:    agent.WatchdogOracle(cfg, nil, workspace, logf),
+		Oracle:    agent.WatchdogOracle(cfg, workspace, logf),
 		Goal:      prompt,
 		Context:   ctx,
 		Logf:      logf,

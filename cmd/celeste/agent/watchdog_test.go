@@ -15,16 +15,16 @@ func TestWatchdogOracleOnlyWhenTheWatchdogRuns(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	var logged []string
 	logf := func(s string) { logged = append(logged, s) }
-	if o := WatchdogOracle(&config.Config{Oracle: "jev"}, nil, "", logf); o != nil || len(logged) != 0 {
+	if o := WatchdogOracle(&config.Config{Oracle: "jev"}, "", logf); o != nil || len(logged) != 0 {
 		t.Errorf("watchdog off: oracle %v, logged %v", o, logged)
 	}
-	if WatchdogOracle(nil, nil, "", logf) != nil {
+	if WatchdogOracle(nil, "", logf) != nil {
 		t.Error("no config: no oracle")
 	}
-	if o := WatchdogOracle(&config.Config{Watchdog: "shadow", Oracle: "jev"}, nil, "", logf); o == nil || len(logged) != 1 {
+	if o := WatchdogOracle(&config.Config{Watchdog: "shadow", Oracle: "jev"}, "", logf); o == nil || len(logged) != 1 {
 		t.Errorf("watchdog shadow without a key: oracle %v, logged %v (want the heuristic and one line)", o, logged)
 	}
-	if o := WatchdogOracle(&config.Config{Watchdog: "on", Oracle: "llm", APIKey: "k", BaseURL: "http://127.0.0.1:1"}, nil, "", logf); o == nil {
+	if o := WatchdogOracle(&config.Config{Watchdog: "on", Oracle: "llm", APIKey: "k", BaseURL: "http://127.0.0.1:1"}, "", logf); o == nil {
 		t.Error("watchdog on with oracle llm: no oracle")
 	}
 }

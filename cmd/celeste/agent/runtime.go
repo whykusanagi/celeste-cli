@@ -456,7 +456,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		rulesMode:  cfg.StreamRulesMode(),
 		watchdog:   cfg.WatchdogMode(),
 		gateMode:   cfg.CompletionGateMode(),
-		oracle: WatchdogOracle(cfg, llmConfig, options.Workspace, func(line string) {
+		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
 			fmt.Fprintf(errOut, "[agent] %s\n", line)
 		}),
 	}, nil
@@ -759,26 +759,21 @@ func (r *Runner) newSteering(ctx context.Context, state *RunState) *steer.Sessio
 // WatchdogOracle is the oracle the config names for the watchdog ballot,
 // or nil (the heuristic) when the watchdog is off: no key is read and no
 // notice printed for a feature that is not on. oracle "llm" asks the small
-// model on a client of its own (base: the run's llm.Config; nil builds one
-// from cfg), one call at a time, so a background ballot never shares a
-// client with a compaction summary. workspace makes paths in what the
+// model on a client of its own, one call at a time, so a background
+// ballot never shares a client with a compaction summary. That client is
+// a plain completion (no xAI collections or features, persona skip
+// cleared: the Google backend drops the system prompt when it is set). workspace makes paths in what the
 // oracle sends workspace-relative (jev.RedactPaths). The chat, MCP chat
 // and agent runs share it.
-func WatchdogOracle(cfg *config.Config, base *llm.Config, workspace string, logf func(string)) decide.Oracle {
+func WatchdogOracle(cfg *config.Config, workspace string, logf func(string)) decide.Oracle {
 	if cfg == nil || cfg.WatchdogMode() == config.ModeOff {
 		return nil
 	}
 	var complete decide.CompleteFunc
 	if cfg.OracleMode() == "llm" {
-		if base == nil {
-			base = &llm.Config{
-				APIKey:                cfg.APIKey,
-				BaseURL:               cfg.BaseURL,
-				Timeout:               cfg.GetTimeout(),
-				GoogleCredentialsFile: cfg.GoogleCredentialsFile,
-				GoogleUseADC:          cfg.GoogleUseADC,
-			}
-		}
+		base := llm.ConfigFrom(cfg)
+		base.Collections, base.XAIFeatures = nil, nil
+		base.SkipPersonaPrompt = false
 		small := SmallModelSummarizer(base, cfg.ResolveSmallModel())
 		var mu sync.Mutex
 		complete = func(ctx context.Context, system, user string) (string, error) {
