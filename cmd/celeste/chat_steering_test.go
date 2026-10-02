@@ -34,18 +34,24 @@ func TestChatTurnsShareOneSteeringSession(t *testing.T) {
 }
 
 // A dropped reply's usage still reaches the chat's cost tracker (the
-// provider billed it); it shows nothing in the chat but the retry line.
+// provider billed it), without counting a turn; it shows nothing in the
+// chat but the retry line.
 func TestChatRecordsDroppedReplyUsage(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
 	_, deps, _ := chatApp(t, srv)
 	a := deps.adapter
-	before := a.costTracker.GetSummary().Turns
+	before := a.costTracker.GetSummary()
 	first := false
 	msgs := a.translate(&chatTurn{model: "gpt-4.1"}, loop.Event{Kind: loop.EventRuleInterrupt, Usage: &llm.TokenUsage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110}}, &first)
 	if len(msgs) != 1 {
 		t.Fatalf("msgs = %v", msgs)
 	}
-	if got := a.costTracker.GetSummary().Turns; got != before+1 {
-		t.Errorf("cost tracker turns = %d, want %d", got, before+1)
+	after := a.costTracker.GetSummary()
+	if after.TotalInput != before.TotalInput+100 || after.TotalOutput != before.TotalOutput+10 {
+		t.Errorf("tokens %d/%d -> %d/%d, want +100/+10", before.TotalInput, before.TotalOutput, after.TotalInput, after.TotalOutput)
+	}
+	// A dropped reply is not a turn (re-review item 4).
+	if after.Turns != before.Turns {
+		t.Errorf("cost tracker turns = %d, want %d", after.Turns, before.Turns)
 	}
 }

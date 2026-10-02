@@ -42,6 +42,18 @@ func (t *SessionTracker) RecordUsage(model string, inputTokens, outputTokens int
 	t.Turns++
 }
 
+// RecordCost adds usage and its cost without counting a turn: a reply a
+// stream rule dropped was billed, but the person never saw it (2.0 W3).
+func (t *SessionTracker) RecordCost(model string, inputTokens, outputTokens int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.Model = model
+	t.TotalInput += inputTokens
+	t.TotalOutput += outputTokens
+	t.TotalCostUSD += GetCost(model, inputTokens, outputTokens)
+}
+
 // GetSummary returns a snapshot of the current session cost state.
 func (t *SessionTracker) GetSummary() CostSummary {
 	t.mu.Lock()
