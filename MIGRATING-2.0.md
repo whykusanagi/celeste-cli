@@ -66,6 +66,13 @@ left it. `/undo` and `celeste revert` compare the file with that before
 restoring; a file changed since (by you, a formatter, a command) is left
 alone with a warning, until you repeat `/undo` or pass `--force`.
 
+## Project context files
+
+| 1.x | 2.0 |
+|---|---|
+| Automatic `.grimoire` / `.gitignore` creation (chat, MCP `mode: "chat"` and `mode: "agent"`) | Stops. Nothing is written into your project unless you ask: `/init` (or `celeste init`) writes `.grimoire`, `/init agents` (or `celeste init --agents`) also writes `AGENTS.md`. The chat suggests `/init` once per session when the project has no context. Existing `.grimoire` files are read as before. |
+| The `project-init` "first visit" memory | No longer created. Existing ones stay. |
+| `AGENTS.md` / `CLAUDE.md` | Read from the workspace up to the git root and added to the project context under the grimoire (the grimoire wins on conflict). 32 KiB per file, 64 KiB in all. |
 ## OpenAI uses the Responses API
 
 | 1.x | 2.0 |

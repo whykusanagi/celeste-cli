@@ -3,6 +3,7 @@ package grimoire
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,14 +217,15 @@ func GenerateTemplate(info *ProjectInfo, dir string) string {
 	return sb.String()
 }
 
-// Init creates a .grimoire file in the given directory.
-// Returns the path to the created file, or error if one already exists.
+// Init creates a .grimoire file in the given directory. It writes nothing
+// else: the project's .gitignore is left alone (2.0 W4). Returns the path to
+// the created file, or an error if one already exists.
 func Init(dir string) (string, error) {
 	grimPath := filepath.Join(dir, ".grimoire")
 
 	// Check if .grimoire already exists
-	if _, err := os.Stat(grimPath); err == nil {
-		return "", fmt.Errorf(".grimoire already exists at %s", grimPath)
+	if _, err := os.Lstat(grimPath); err == nil {
+		return "", existsError{".grimoire", grimPath}
 	}
 
 	info, err := DetectProject(dir)
@@ -231,22 +233,86 @@ func Init(dir string) (string, error) {
 		return "", fmt.Errorf("project detection failed: %w", err)
 	}
 
-	content := GenerateTemplate(info, dir)
-	if err := os.WriteFile(grimPath, []byte(content), 0644); err != nil {
-		return "", fmt.Errorf("failed to write .grimoire: %w", err)
-	}
-
-	// Append .celeste/ to .gitignore if not already there
-	gitignorePath := filepath.Join(dir, ".gitignore")
-	if data, err := os.ReadFile(gitignorePath); err == nil {
-		if !strings.Contains(string(data), ".celeste/") {
-			f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
-			if err == nil {
-				_, _ = f.WriteString("\n# Celeste CLI local data\n.celeste/\n")
-				f.Close()
-			}
+	if err := writeNew(grimPath, GenerateTemplate(info, dir)); err != nil {
+		if os.IsExist(err) {
+			return "", existsError{".grimoire", grimPath}
 		}
+		return "", fmt.Errorf("failed to write .grimoire: %w", err)
 	}
 
 	return grimPath, nil
 }
+
+// HasProjectContext reports a project grimoire (.grimoire, .grimoire.local,
+// .celeste/grimoire/*.md) that LoadAll would load, or a context file
+// (AGENTS.md, CLAUDE.md) between the git root and the workspace (2.0 W4,
+// ruling 6). The global ~/.celeste/grimoire.md is not project context.
+func HasProjectContext(workspace string) bool {
+	sources, _ := Discover(workspace)
+	for _, src := range sources {
+		if src.Priority != PriorityGlobal {
+			return true
+		}
+	}
+	files, _ := ContextFiles(workspace)
+	return len(files) > 0
+}
+
+// AgentsTemplate is a starting AGENTS.md for the detected project.
+func AgentsTemplate(info *ProjectInfo) string {
+	var b strings.Builder
+	b.WriteString("# AGENTS.md\n\nInstructions for coding agents working in this repository.\n\n")
+	fmt.Fprintf(&b, "## Project\n\n- Language: %s\n", info.Language)
+	if info.BuildCommand != "" {
+		fmt.Fprintf(&b, "- Build: `%s`\n", info.BuildCommand)
+	}
+	if info.TestCommand != "" {
+		fmt.Fprintf(&b, "- Test: `%s`\n", info.TestCommand)
+	}
+	if info.LintCommand != "" {
+		fmt.Fprintf(&b, "- Lint: `%s`\n", info.LintCommand)
+	}
+	b.WriteString("\n## Conventions\n\n- Run the tests before calling work done.\n")
+	return b.String()
+}
+
+// InitAgents writes AGENTS.md in dir from AgentsTemplate; it never
+// overwrites one.
+func InitAgents(dir string) (string, error) {
+	path := filepath.Join(dir, "AGENTS.md")
+	if _, err := os.Lstat(path); err == nil {
+		return "", existsError{"AGENTS.md", path}
+	}
+	info, err := DetectProject(dir)
+	if err != nil {
+		return "", fmt.Errorf("project detection failed: %w", err)
+	}
+	if err := writeNew(path, AgentsTemplate(info)); err != nil {
+		if os.IsExist(err) {
+			return "", existsError{"AGENTS.md", path}
+		}
+		return "", fmt.Errorf("failed to write AGENTS.md: %w", err)
+	}
+	return path, nil
+}
+
+// writeNew creates path with content and fails if anything (a file or a
+// symlink) is already there, so an init never overwrites the user's file.
+func writeNew(path, content string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// existsError is an init refusing to overwrite a file; it matches
+// fs.ErrExist.
+type existsError struct{ name, path string }
+
+func (e existsError) Error() string        { return e.name + " already exists at " + e.path }
+func (e existsError) Is(target error) bool { return target == fs.ErrExist }

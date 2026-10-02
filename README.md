@@ -23,7 +23,7 @@
 Celeste CLI is a **full standalone agentic development tool** with her own persona, featuring:
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
 - 🔮 **48 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
-- 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery and auto-init
+- 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery; `AGENTS.md` / `CLAUDE.md` are read too
 - 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
 - 🔌 **Direct Codegraph MCP Tools** - `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` served verbatim from the cached graph (no chat-LLM round-trip, no `max_tokens` ceiling, streaming progress notifications)
@@ -146,19 +146,18 @@ or your Sakana account. Use `--set-model fugu-ultra` for the heavier multi-agent
 
 ### Project Setup
 
-When you enter a project directory, Celeste auto-initializes:
+Celeste reads a project's `.grimoire` and its `AGENTS.md` / `CLAUDE.md` (from the
+workspace up to the git root) into every session. It writes nothing into your
+project on its own; create the files when you want them:
 ```bash
 cd your-project
-celeste chat
-# Creates .grimoire (project context), indexes code graph, loads memories
+celeste init           # create .grimoire
+celeste init --agents  # also create AGENTS.md (build and test commands)
+celeste index          # build code graph
+celeste index status   # check graph stats
 ```
 
-Or manually:
-```bash
-celeste init          # create .grimoire
-celeste index         # build code graph
-celeste index status  # check graph stats
-```
+In the chat, `/init` and `/init agents` do the same. An existing file is never overwritten.
 
 ---
 

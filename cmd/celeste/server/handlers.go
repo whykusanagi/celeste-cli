@@ -184,8 +184,6 @@ var agentExecFn = execAgent
 
 // execAgent runs a multi-turn agent loop for complex tasks.
 func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) (agentOutcome, error) {
-	initGrimoire(workspace)
-
 	var outBuf, errBuf bytes.Buffer
 	var warnMu sync.Mutex
 	var warnings []string

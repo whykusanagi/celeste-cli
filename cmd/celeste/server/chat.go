@@ -6,17 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
@@ -50,7 +46,6 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 		return nil, fmt.Errorf("chat error: %w", err)
 	}
 	cfg = s.servedConfig(ctx, cfg)
-	initGrimoire(workspace)
 	var warns warnSink
 	ce, err := s.chatEnvs.acquire(cfg, workspace, &warns)
 	if err != nil {
@@ -109,23 +104,6 @@ func chatSteering(ctx context.Context, cfg *config.Config, env *loop.Env, prompt
 		Context:   ctx,
 		Logf:      logf,
 	})
-}
-
-// grimoireInitMu serializes the grimoire auto-init. Two first calls on one
-// workspace would otherwise both write .grimoire, and a call that stamps the
-// Env inputs between those writes sees a different .grimoire and builds a
-// second Env.
-var grimoireInitMu sync.Mutex
-
-// initGrimoire writes a .grimoire into workspace if it has none (kept until
-// W4). It returns once the file exists, so the chat Env stamp that follows
-// sees it.
-func initGrimoire(workspace string) {
-	grimoireInitMu.Lock()
-	defer grimoireInitMu.Unlock()
-	if _, err := os.Stat(filepath.Join(workspace, ".grimoire")); os.IsNotExist(err) {
-		_, _ = grimoire.Init(workspace)
-	}
 }
 
 // newChatClient is the pre-loop server's client (same config fields) on the

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -15,7 +13,6 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/subagents"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -23,6 +20,9 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
+
+// initHint is the session-start line for a project with no context file.
+const initHint = "No project context — run /init to create a .grimoire (and /init agents for AGENTS.md)."
 
 // chatDeps are the pieces runChatTUI wires to the Bubble Tea program after
 // it exists (prompt/ask funcs need p.Send), and that tests drive directly.
@@ -90,8 +90,6 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		currentSession = sessionManager.NewSession()
 	}
 	resumed := resumeSessionID != "" && len(currentSession.Messages) > 0
-
-	autoInitGrimoire(cwd)
 
 	sink := newChatWarnSink()
 	env, err := loop.Setup(loop.ModeChat, &served, cwd, loop.SetupOptions{
@@ -174,6 +172,11 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	for _, n := range modelNotes {
 		app = app.WithSystemMessage("⚠ " + n)
 	}
+	// 2.0 W4 (ruling 6): nothing writes .grimoire implicitly any more, so a
+	// session in a project without context says how to add one.
+	if !grimoire.HasProjectContext(cwd) {
+		app = app.WithSystemMessage(initHint)
+	}
 
 	app = restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)
 
@@ -199,49 +202,6 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	app = app.SetMCPManager(env.MCP, mcpConfigs)
 
 	return app, &chatDeps{env: env, registry: registry, adapter: tuiClient, hooks: env.Hooks, restoreMigrationWarn: restoreMigrationWarn}, nil
-}
-
-// autoInitGrimoire creates a .grimoire (and the project's first-visit
-// memory) when the workspace has none, before loop.Setup loads it. A load
-// error also reaches the init, as before; Setup reports the error itself.
-func autoInitGrimoire(cwd string) {
-	if g, err := grimoire.LoadAll(cwd); err == nil && g != nil && !g.IsEmpty() {
-		return
-	}
-	fmt.Fprintf(os.Stderr, "📖 No .grimoire found — creating one...\n")
-	if _, err := grimoire.Init(cwd); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-init grimoire failed: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "📖 .grimoire created — run 'celeste grimoire' to view\n")
-
-		// Initialize memory store for this project on first visit
-		detectedLang := "unknown"
-		if projInfo, detectErr := grimoire.DetectProject(cwd); detectErr == nil {
-			detectedLang = projInfo.Language
-		}
-		memStore := memories.NewStore(cwd)
-		mem := memories.NewMemory(
-			"project-init",
-			"First visit — project context established",
-			"project",
-			cwd,
-			fmt.Sprintf("First indexed this project on %s. Language: %s.", time.Now().Format("2006-01-02"), detectedLang),
-		)
-		if saveErr := memStore.Save(mem); saveErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save initial memory: %v\n", saveErr)
-		} else {
-			// Update memory index
-			memIdx, _ := memories.LoadIndex(filepath.Join(memStore.BaseDir(), "MEMORY.md"))
-			if memIdx != nil {
-				_ = memIdx.Add(memories.IndexEntry{
-					Name:        mem.Name,
-					File:        "project-init.md",
-					Description: mem.Description,
-				})
-				_ = memIdx.Save()
-			}
-		}
-	}
 }
 
 // scanCollections lists the xAI collections in the background when a
