@@ -42,3 +42,11 @@ func TestJevPruneModeDefaultsToOff(t *testing.T) {
 		}
 	}
 }
+
+func TestJevGateModeDefaultsToOff(t *testing.T) {
+	for in, want := range map[string]string{"": "off", "shadow": "shadow", "on": "on", "ask": "off"} {
+		if got := (&Config{JevGate: in}).JevGateMode(); got != want {
+			t.Errorf("jev_gate %q = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -69,6 +69,7 @@ type Runner struct {
 	watchdog string
 	oracle   decide.Oracle
 	gateMode string // completion_gate (2.0 W3)
+	jevGate  string // jev_gate (2.0 W3)
 }
 
 // compactMessages keeps the history inside the window (#174). It prunes old
@@ -461,6 +462,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		rulesMode:  cfg.StreamRulesMode(),
 		watchdog:   cfg.WatchdogMode(),
 		gateMode:   cfg.CompletionGateMode(),
+		jevGate:    cfg.JevGateMode(),
 		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
 			fmt.Fprintf(errOut, "[agent] %s\n", line)
 		}),
@@ -736,6 +738,9 @@ func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 		Compact:   runCompactor{r: r},
 		SessionID: "agent-" + state.RunID,
 		Steering:  sess.Steering(),
+		Advisor: steer.NewToolGate(r.jevGate, r.options.Workspace, func() string { return state.Goal }, func(line string) {
+			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+		}),
 	}
 }
 

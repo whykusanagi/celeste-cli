@@ -76,6 +76,9 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// The call's ballot ends with it: one in flight is cancelled.
 	defer sess.Close()
 	l.Steering = sess.Steering()
+	l.Advisor = steer.NewToolGate(cfg.JevGateMode(), workspace, func() string { return prompt }, func(line string) {
+		log.Printf("celeste chat: %s", line)
+	})
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
 	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
 	var blocked *promptBlockedError

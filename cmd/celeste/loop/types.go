@@ -271,6 +271,9 @@ type Loop struct {
 	CheckPrompt PromptCheck
 	// Steering is stream rules and the watchdog (2.0 W3; nil: none).
 	Steering Steering
+	// Advisor is jev_gate (2.0 W3; nil: none): it may turn an allowed call
+	// into an Ask, never the reverse.
+	Advisor tools.AskAdvisor
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string

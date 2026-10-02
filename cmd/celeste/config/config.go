@@ -112,6 +112,10 @@ type Config struct {
 	// off. Redacted excerpts of old tool results go to TypeSafe. The key
 	// comes from TYPESAFE_API_KEY or ~/.celeste/typesafe.key.
 	JevPrune string `json:"jev_prune,omitempty"`
+	// JevGate asks Jev whether a tool call is destructive, exfiltrates data
+	// or goes beyond what was asked (2.0 W3): "shadow" logs, "on" turns an
+	// allowed call into an Ask (never the reverse). Off by default.
+	JevGate string `json:"jev_gate,omitempty"`
 	// Oracle picks the judge for steering questions (2.0 W3):
 	// "heuristic" (default), "llm" (the small model) or "jev". The
 	// watchdog ballot asks it.

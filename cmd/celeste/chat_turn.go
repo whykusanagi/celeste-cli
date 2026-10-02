@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -165,10 +166,16 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		SpillCounter: &a.spillSeq,
 		CheckPrompt:  a.checkPrompt,
 	}
+	goal := lastUserText(req.History)
 	if s := a.steering(); s != nil {
 		// The watchdog judges progress against this turn's prompt.
-		s.SetGoal(lastUserText(req.History))
+		s.SetGoal(goal)
 		l.Steering = s
+	}
+	if a.baseConfig != nil {
+		// Built here, on the Update goroutine; Jev is asked on the run's.
+		ws, _ := os.Getwd()
+		l.Advisor = steer.NewToolGate(a.baseConfig.JevGateMode(), ws, func() string { return goal }, tui.LogInfo)
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
