@@ -151,20 +151,29 @@ func responsesTools(tools []tui.SkillDefinition) []openai.Tool {
 	return out
 }
 
-// responsesEffort maps celeste's thinking level to reasoning.effort for
-// reasoning models (o1, o3, o4, gpt-5); "" sends no reasoning field.
-func responsesEffort(model string, tc ThinkingConfig) string {
-	if !tc.Enabled || tc.Level == "off" {
-		return ""
-	}
+// responsesReasoningModel reports a model that reasons and accepts
+// include reasoning.encrypted_content: the o1, o3, o4 and gpt-5 families,
+// except gpt-5-chat, which does not reason. OpenAI answers a request that
+// asks a non-reasoning model for encrypted reasoning with a 400 ("Encrypted
+// content is not supported with this model."), so this one predicate gates
+// both include and reasoning.effort.
+func responsesReasoningModel(model string) bool {
 	m := strings.ToLower(model)
-	reasoning := false
+	if strings.HasPrefix(m, "gpt-5-chat") {
+		return false
+	}
 	for _, p := range []string{"o1", "o3", "o4", "gpt-5"} {
 		if strings.HasPrefix(m, p) {
-			reasoning = true
+			return true
 		}
 	}
-	if !reasoning {
+	return false
+}
+
+// responsesEffort maps celeste's thinking level to reasoning.effort for
+// reasoning models (responsesReasoningModel); "" sends no reasoning field.
+func responsesEffort(model string, tc ThinkingConfig) string {
+	if !tc.Enabled || tc.Level == "off" || !responsesReasoningModel(model) {
 		return ""
 	}
 	switch tc.Level {

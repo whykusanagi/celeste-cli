@@ -76,7 +76,7 @@ func TestResponsesStreamEventsTextCallsAndBlocks(t *testing.T) {
 	assert.Equal(t, "/v1/responses", req.Path)
 	assert.Equal(t, "gpt-test", req.Body["model"])
 	assert.Equal(t, false, req.Body["store"])
-	assert.Equal(t, []any{"reasoning.encrypted_content"}, req.Body["include"])
+	assert.NotContains(t, req.Body, "include", "gpt-test is not a reasoning model: no encrypted reasoning to ask for")
 	assert.Equal(t, "be brief", req.Body["instructions"])
 	assert.Equal(t, true, req.Body["stream"])
 	assert.NotContains(t, req.Body, "previous_response_id")
@@ -156,6 +156,65 @@ func TestResponsesReasoningEffortForReasoningModels(t *testing.T) {
 	_, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"effort": "high"}, srv.Requests()[0].Body["reasoning"])
+	assert.Equal(t, []any{"reasoning.encrypted_content"}, srv.Requests()[0].Body["include"])
+}
+
+// Coordinator fix C1: OpenAI rejects include reasoning.encrypted_content
+// for non-reasoning models ("Encrypted content is not supported with this
+// model."), so neither include nor reasoning is sent to them.
+func TestResponsesNonReasoningModelSendsNoIncludeOrReasoning(t *testing.T) {
+	for _, model := range []string{"gpt-4o", "gpt-4.1", "gpt-5-chat-latest"} {
+		srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Text: "ok"})
+		c, _ := newResponsesTestClient(t, srv, model)
+		c.SetThinkingConfig(ThinkingConfig{Enabled: true, Level: "high"})
+		_, err := c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+		require.NoError(t, err)
+		body := srv.Requests()[0].Body
+		assert.NotContains(t, body, "include", model)
+		assert.NotContains(t, body, "reasoning", model)
+		assert.Equal(t, false, body["store"], model)
+	}
+}
+
+// C1: a 400 about the include parameter is not a refused replay, even
+// though its message names encrypted content: resending without the
+// blocks cannot help, so it is returned as is.
+func TestResponsesIncludeUnsupportedIsNotARefusedReplay(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t, fakeprovider.Turn{Status: 400,
+		Body: `{"error":{"message":"Encrypted content is not supported with this model.","type":"invalid_request_error","param":"include","code":null}}`})
+	c, b := newResponsesTestClient(t, srv, "gpt-4o")
+	pb, err := tui.NewProviderBlocks(b.providerKey(), []json.RawMessage{
+		json.RawMessage(`{"content":[{"annotations":[],"text":"earlier","type":"output_text"}],"id":"msg_1","role":"assistant","status":"completed","type":"message"}`),
+	})
+	require.NoError(t, err)
+	history := []tui.ChatMessage{
+		{Role: "user", Content: "hi"},
+		tui.AttachProviderBlocks(tui.ChatMessage{Role: "assistant", Content: "earlier"}, pb),
+		{Role: "user", Content: "again"},
+	}
+	_, err = c.SendMessageSync(context.Background(), history, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported with this model")
+	assert.Len(t, srv.Requests(), 1, "not resent")
+	assert.False(t, responsesFellBack(b.baseURL))
+}
+
+func TestBlocksRejectionClassification(t *testing.T) {
+	param := func(s string) *string { return &s }
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{&openai.APIError{HTTPStatusCode: 400, Message: "The encrypted content for item rs_1 could not be verified."}, true},
+		{&openai.APIError{HTTPStatusCode: 404, Message: "Item with id 'rs_1' not found."}, true},
+		{&openai.APIError{HTTPStatusCode: 400, Message: "Encrypted content is not supported with this model.", Param: param("include")}, false},
+		{&openai.APIError{HTTPStatusCode: 400, Message: "Encrypted content is not supported with this model."}, false},
+		{&openai.APIError{HTTPStatusCode: 400, Message: "Invalid encrypted_content.", Param: param("include")}, false},
+		{&openai.APIError{HTTPStatusCode: 401, Message: "encrypted content"}, false},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, isBlocksRejection(c.err), "%v", c.err)
+	}
 }
 
 // Review Focus 3: a reply cut off before its terminal event is an error and

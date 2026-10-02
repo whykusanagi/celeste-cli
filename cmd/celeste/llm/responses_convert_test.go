@@ -121,8 +121,19 @@ func TestResponsesEffort(t *testing.T) {
 		{"gpt-4.1-nano", on("high"), ""},
 		{"gpt-5", ThinkingConfig{Enabled: false, Level: "high"}, ""},
 		{"gpt-5", on("off"), ""},
+		{"gpt-5-chat-latest", on("high"), ""},
+		{"gpt-4o", on("high"), ""},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, responsesEffort(c.model, c.tc), "%s %+v", c.model, c.tc)
+	}
+}
+
+func TestResponsesReasoningModel(t *testing.T) {
+	for model, want := range map[string]bool{
+		"o1": true, "o3-mini": true, "o4-mini": true, "gpt-5": true, "GPT-5-mini": true, "gpt-5.1-codex": true,
+		"gpt-5-chat-latest": false, "gpt-5-chat": false, "gpt-4o": false, "gpt-4o-mini": false, "gpt-4.1": false, "": false,
+	} {
+		assert.Equal(t, want, responsesReasoningModel(model), model)
 	}
 }

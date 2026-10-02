@@ -29,13 +29,22 @@ func apiStatus(err error) (status int, code, msg string, ok bool) {
 
 // isBlocksRejection reports an endpoint refusing replayed output items:
 // reasoning whose encrypted_content no longer decrypts, or an item id it
-// cannot resolve (ruling 10).
+// cannot resolve (ruling 10). A complaint about the request's include
+// parameter, or that the model does not support encrypted content, is not
+// one: the same request without the items would fail the same way.
 func isBlocksRejection(err error) bool {
 	status, _, msg, ok := apiStatus(err)
 	if !ok || (status != http.StatusBadRequest && status != http.StatusNotFound) {
 		return false
 	}
+	var apiErr *openai.APIError
+	if errors.As(err, &apiErr) && apiErr.Param != nil && strings.EqualFold(*apiErr.Param, "include") {
+		return false
+	}
 	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "not supported with this model") {
+		return false
+	}
 	for _, s := range []string{"encrypted_content", "encrypted content", "item with id", "reasoning item"} {
 		if strings.Contains(lower, s) {
 			return true

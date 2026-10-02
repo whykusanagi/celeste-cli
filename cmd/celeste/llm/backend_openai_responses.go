@@ -60,7 +60,12 @@ func (b *ResponsesBackend) request(messages []tui.ChatMessage, tools []tui.Skill
 		Input:        input,
 		Instructions: b.systemPrompt,
 		Store:        &store,
-		Include:      []openai.ResponseInclude{openai.ResponseIncludeReasoningEncryptedContent},
+	}
+	// store=false keeps nothing server side, so a reasoning model's items
+	// must come back encrypted to be replayed (ruling 2). Only reasoning
+	// models accept the include; others answer 400.
+	if responsesReasoningModel(b.config.Model) {
+		req.Include = []openai.ResponseInclude{openai.ResponseIncludeReasoningEncryptedContent}
 	}
 	if t := responsesTools(tools); len(t) > 0 {
 		req.Tools = t
