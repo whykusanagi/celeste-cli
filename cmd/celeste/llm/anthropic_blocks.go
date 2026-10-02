@@ -2,9 +2,11 @@ package llm
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 // anthropicDefaultBaseURL is the SDK's endpoint when the config has none.
@@ -19,4 +21,86 @@ func replayedContent(raws []json.RawMessage) []anthropic.ContentBlockParamUnion 
 		out[i] = param.Override[anthropic.ContentBlockParamUnion](raw)
 	}
 	return out
+}
+
+// keptBlockTypes make a reply worth keeping verbatim (ruling 2): its
+// thinking must be replayed, or (W1) its compaction block must be.
+var keptBlockTypes = map[string]bool{"thinking": true, "redacted_thinking": true, "compaction": true}
+
+// inputTransformation is one entry of a response's input_transformations
+// (thinking-binding-controls beta).
+type inputTransformation struct {
+	Type   string `json:"type"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// anthropicCapture rebuilds a reply's content blocks from its stream with
+// the SDK's accumulator, which keeps each block's wire JSON with the
+// streamed deltas applied (ruling 1), and reads input_transformations
+// from message_start.
+type anthropicCapture struct {
+	msg             anthropic.Message
+	broken          bool
+	transformations []inputTransformation
+}
+
+func (c *anthropicCapture) add(ev anthropic.MessageStreamEventUnion) {
+	if ev.Type == "message_start" {
+		var m struct {
+			InputTransformations []inputTransformation `json:"input_transformations"`
+		}
+		if json.Unmarshal([]byte(ev.Message.RawJSON()), &m) == nil {
+			c.transformations = m.InputTransformations
+		}
+	}
+	if c.broken {
+		return
+	}
+	if err := c.msg.Accumulate(ev); err != nil {
+		c.broken = true
+		tui.LogInfo("anthropic: reply blocks not kept: " + err.Error())
+	}
+}
+
+// blocks returns the reply's content blocks, in order, under key when one
+// of them is thinking, redacted_thinking or compaction; nil otherwise, or
+// when any block could not be reproduced.
+func (c *anthropicCapture) blocks(key string) *tui.ProviderBlocks {
+	if c.broken {
+		return nil
+	}
+	keep := false
+	raws := make([]json.RawMessage, 0, len(c.msg.Content))
+	for _, cb := range c.msg.Content {
+		raw := cb.RawJSON()
+		if raw == "" {
+			return nil
+		}
+		keep = keep || keptBlockTypes[cb.Type]
+		raws = append(raws, json.RawMessage(raw))
+	}
+	if !keep {
+		return nil
+	}
+	pb, err := tui.NewProviderBlocks(key, raws)
+	if err != nil {
+		tui.LogInfo("anthropic: reply blocks not kept: " + err.Error())
+		return nil
+	}
+	return pb
+}
+
+// prefixDropped logs every input transformation and reports whether the
+// API dropped thinking because the history before it changed (ruling 7).
+// Call it once per reply.
+func (c *anthropicCapture) prefixDropped() bool {
+	dropped := false
+	for _, t := range c.transformations {
+		tui.LogInfo(fmt.Sprintf("anthropic: input transformation %s at %s (%s)", t.Type, t.Path, t.Reason))
+		if t.Type == "thinking_dropped" && t.Reason == "prefix_binding_mismatch" {
+			dropped = true
+		}
+	}
+	return dropped
 }

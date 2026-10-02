@@ -9,6 +9,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -144,6 +145,41 @@ func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.S
 	applyCacheBreakpoints(&params)
 
 	return params
+}
+
+// anthropicStream is a message stream whose first event may already have
+// been read by open.
+type anthropicStream struct {
+	s      *ssestream.Stream[anthropic.MessageStreamEventUnion]
+	primed bool
+}
+
+func (a *anthropicStream) Next() bool {
+	if a.primed {
+		a.primed = false
+		return true
+	}
+	return a.s.Next()
+}
+
+func (a *anthropicStream) Current() anthropic.MessageStreamEventUnion { return a.s.Current() }
+func (a *anthropicStream) Err() error                                 { return a.s.Err() }
+func (a *anthropicStream) Close() error                               { return a.s.Close() }
+
+// open sends the request and reads its first event, so a request refused
+// before any output is known before anything reaches the caller. rejected
+// reports that the reply comes from a history whose blocks were dropped
+// (Task 5).
+func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*anthropicStream, bool, error) {
+	s := b.client.Messages.NewStreaming(ctx, b.buildParams(messages, tools))
+	if s.Next() {
+		return &anthropicStream{s: s, primed: true}, false, nil
+	}
+	if err := s.Err(); err != nil {
+		s.Close()
+		return nil, false, err
+	}
+	return &anthropicStream{s: s}, false, nil
 }
 
 // messageCacheBreakpoints is how many of the newest messages get a
@@ -373,11 +409,14 @@ func (u *usageTracker) result() *TokenUsage {
 
 // SendMessageSync sends a message and returns the complete result.
 func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	params := b.buildParams(messages, tools)
-
 	// Use streaming internally to accumulate the full response, matching
 	// the pattern used by the OpenAI backend for consistency.
-	stream := b.client.Messages.NewStreaming(ctx, params)
+	stream, rejected, err := b.open(ctx, messages, tools)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	var capture anthropicCapture
 
 	result := &ChatCompletionResult{}
 	var toolCalls []ToolCallResult
@@ -394,6 +433,7 @@ func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.C
 
 	for stream.Next() {
 		event := stream.Current()
+		capture.add(event)
 
 		switch event.Type {
 		case "content_block_start":
@@ -449,14 +489,28 @@ func (b *AnthropicBackend) SendMessageSync(ctx context.Context, messages []tui.C
 	}
 
 	result.ToolCalls = toolCalls
+	result.ProviderBlocks = capture.blocks(b.providerKey())
+	result.BlocksRejected = rejected || capture.prefixDropped()
 	return result, nil
 }
 
 // SendMessageStream sends a message with streaming callback.
 func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	params := b.buildParams(messages, tools)
-
-	stream := b.client.Messages.NewStreaming(ctx, params)
+	stream, rejected, err := b.open(ctx, messages, tools)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	var capture anthropicCapture
+	// The final chunk can be sent twice (at message_delta and after the
+	// loop); the blocks and the rejection are settled once.
+	var kept *tui.ProviderBlocks
+	refused, settled := rejected, false
+	settle := func() {
+		if !settled {
+			kept, refused, settled = capture.blocks(b.providerKey()), rejected || capture.prefixDropped(), true
+		}
+	}
 
 	var toolCalls []ToolCallResult
 	var usage *TokenUsage
@@ -473,6 +527,7 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 	for stream.Next() {
 		event := stream.Current()
+		capture.add(event)
 
 		switch event.Type {
 		case "content_block_start":
@@ -519,11 +574,14 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 			usage = tracker.result()
 			if event.Delta.StopReason != "" {
 				finishReason := mapStopReason(string(event.Delta.StopReason))
+				settle()
 				callback(StreamChunk{
-					IsFinal:      true,
-					FinishReason: finishReason,
-					ToolCalls:    toolCalls,
-					Usage:        usage,
+					IsFinal:        true,
+					FinishReason:   finishReason,
+					ToolCalls:      toolCalls,
+					Usage:          usage,
+					ProviderBlocks: kept,
+					BlocksRejected: refused,
 				})
 			}
 
@@ -539,11 +597,14 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 	// If we never got a message_delta with stop_reason, send a final chunk.
 	if isFirst || len(toolCalls) > 0 {
+		settle()
 		callback(StreamChunk{
-			IsFinal:      true,
-			FinishReason: "stop",
-			ToolCalls:    toolCalls,
-			Usage:        usage,
+			IsFinal:        true,
+			FinishReason:   "stop",
+			ToolCalls:      toolCalls,
+			Usage:          usage,
+			ProviderBlocks: kept,
+			BlocksRejected: refused,
 		})
 	}
 
@@ -552,9 +613,12 @@ func (b *AnthropicBackend) SendMessageStream(ctx context.Context, messages []tui
 
 // SendMessageStreamEvents sends a message with granular streaming events.
 func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
-	params := b.buildParams(messages, tools)
-
-	stream := b.client.Messages.NewStreaming(ctx, params)
+	stream, rejected, err := b.open(ctx, messages, tools)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	var capture anthropicCapture
 
 	var usage *TokenUsage
 	var finishReason string
@@ -570,6 +634,7 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 
 	for stream.Next() {
 		event := stream.Current()
+		capture.add(event)
 
 		switch event.Type {
 		case "content_block_start":
@@ -646,9 +711,11 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 		finishReason = "stop"
 	}
 	callback(StreamEvent{
-		Type:         EventMessageDone,
-		Usage:        usage,
-		FinishReason: finishReason,
+		Type:           EventMessageDone,
+		Usage:          usage,
+		FinishReason:   finishReason,
+		ProviderBlocks: capture.blocks(b.providerKey()),
+		BlocksRejected: rejected || capture.prefixDropped(),
 	})
 
 	return nil
