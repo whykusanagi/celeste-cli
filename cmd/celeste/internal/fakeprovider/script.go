@@ -69,6 +69,10 @@ type Server struct {
 	// writer is a 404 that consumes no turn.
 	writers  map[string]func(http.ResponseWriter, Turn)
 	handlers map[string]http.HandlerFunc // fixed answers by path, outside the script
+	// reject, when set, vets each scripted request's body before a turn is
+	// served: a non-empty answer is a 400 with that error body, and no turn
+	// is consumed.
+	reject   func(body map[string]any) string
 	mu       sync.Mutex
 	turns    []Turn
 	requests []Request
@@ -94,6 +98,15 @@ func newServer(t testing.TB, prefix string, write func(http.ResponseWriter, Turn
 			if write, ok = s.writers[r.URL.Path]; !ok {
 				s.mu.Unlock()
 				http.Error(w, "fakeprovider: no route for "+r.URL.Path, http.StatusNotFound)
+				return
+			}
+		}
+		if s.reject != nil {
+			if msg := s.reject(body); msg != "" {
+				s.mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, msg)
 				return
 			}
 		}

@@ -71,7 +71,7 @@ func (b *ResponsesBackend) providerKey() string {
 // whether any message was sent as its recorded items.
 func (b *ResponsesBackend) request(messages []tui.ChatMessage, tools []tui.SkillDefinition) (openai.CreateResponseRequest, bool) {
 	prompt, thinking := b.settings()
-	input, replayed := responsesInput(messages, b.providerKey())
+	input, replayed := responsesInput(messages, b.providerKey(), openAIImageLimits(b.baseURL))
 	if input == nil {
 		input = []json.RawMessage{}
 	}
