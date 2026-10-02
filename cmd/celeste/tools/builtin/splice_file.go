@@ -103,7 +103,16 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	if err != nil {
 		return errResult(fmt.Sprintf("dest path error: %s", err)), nil
 	}
+	// One file under two spellings (case on Windows and macOS, a hard
+	// link) is one file: a "cross-file" move would write it twice.
 	sameFile := sourcePath == destPath
+	if !sameFile {
+		if si, err := os.Stat(sourcePath); err == nil {
+			if di, err := os.Stat(destPath); err == nil {
+				sameFile = os.SameFile(si, di)
+			}
+		}
+	}
 
 	if t.tracker != nil {
 		if err := t.tracker.CheckStale(sourcePath); err != nil {

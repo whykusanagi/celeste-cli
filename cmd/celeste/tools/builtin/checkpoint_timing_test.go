@@ -172,3 +172,20 @@ func TestSpliceFileCopyRecordsOnlyTheDestination(t *testing.T) {
 	require.False(t, res.Error, res.Content)
 	assert.Equal(t, []string{filepath.Join(ws, "b.txt")}, sm.Files())
 }
+
+// One file under two names (a hard link here; letter case on Windows and
+// macOS) is one file: a move between them reorders it instead of writing
+// it twice and losing the region.
+func TestSpliceFileMoveBetweenTwoNamesOfOneFile(t *testing.T) {
+	ws, sm := timingSetup(t)
+	a := filepath.Join(ws, "a.txt")
+	put(t, a, "1\n2\n3\n")
+	if err := os.Link(a, filepath.Join(ws, "b.txt")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	splice := NewSpliceFileTool(ws, WithSpliceFileSnapshots(sm))
+	res := run(t, splice, context.Background(), map[string]any{"op": "move", "source": "a.txt", "dest": "b.txt", "start_line": 1, "end_line": 1})
+	require.False(t, res.Error, res.Content)
+	assert.Equal(t, "2\n3\n1\n", get(t, a))
+	assert.Len(t, sm.Entries(), 1, "one file, one checkpoint")
+}
