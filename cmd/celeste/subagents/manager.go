@@ -599,6 +599,9 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 	if turnCb != nil {
 		cb := turnCb
 		opts.OnTurnStats = func(stats agent.TurnStats) {
+			if stats.Dropped {
+				return // a reply a stream rule dropped; the turn re-runs
+			}
 			toolName := ""
 			if len(stats.ToolCalls) > 0 {
 				toolName = strings.Join(stats.ToolCalls, ", ")

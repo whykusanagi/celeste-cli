@@ -92,6 +92,15 @@ a tool itself. There is no separate "no tools" mode — 1.x's `classic` and
 dropped the flag (#144); every chat turn loops until the model answers
 without tools or the turn cap stops it.
 
+**Steering (2.0 W3).** `Loop.Steering` sees every event before consumers
+do. A text delta can cut the request short (`ErrRuleInterrupt`, never
+retried by the client); a turn's complete tool calls are checked before
+they are recorded or run. The loop drops the interrupted reply
+(`EventRuleInterrupt`) and re-runs the turn with the reminder as a hidden
+`<system-reminder>` message (`EventRule`), at most twice per turn.
+`steer.Session` implements it for a chat, an agent run or an MCP call,
+with the stream rules `loop.Setup` loads into `Env.Rules`.
+
 ```
 User types message
   → AppModel.startTurn → TUIClientAdapter.RunTurn (one loop.Loop run, own goroutine)

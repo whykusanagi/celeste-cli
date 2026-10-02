@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -40,11 +41,14 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		}
 	}
 
+	msgs = l.joinReminders(msgs, BoundaryRun)
+
 	turn := 0
 	ident := guard{limit: lim.IdenticalCalls}
 	prog := guard{limit: lim.NoProgressTurns}
 	invalidTurns := 0
 	overflowRetried := false
+	interrupts := 0 // steering re-runs of the current turn
 	for {
 		if cerr := ctx.Err(); cerr != nil {
 			res.StopReason = StopInterrupted
@@ -69,16 +73,33 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			res.StopReason = StopInterrupted
 			return msgs, res, ctx.Err()
 		}
+		if turn > 1 {
+			msgs = l.joinReminders(msgs, BoundaryTools)
+		}
 		l.emit(Event{Kind: EventTurnStart, Turn: turn})
 		if l.Compact != nil {
 			msgs, _ = l.compact(ctx, msgs, false)
 		}
 
-		rep, rerr := l.request(ctx, msgs, lim)
+		allow := interrupts < lim.MaxRuleInterrupts
+		rep, rerr := l.request(ctx, msgs, lim, turn, allow)
 		if rerr != nil {
 			if ctx.Err() != nil {
 				res.StopReason = StopInterrupted
 				return msgs, res, ctx.Err()
+			}
+			if errors.Is(rerr, ErrRuleInterrupt) {
+				if rep.blocksRejected {
+					// The dropped reply still told us the replayed blocks
+					// were refused: the re-run must not send them (F3).
+					msgs = tui.StripProviderBlocks(msgs)
+					l.unsynced = true
+				}
+				msgs = l.rerun(msgs, turn, rep)
+				interrupts++
+				turn--
+				res.Turns = turn
+				continue
 			}
 			// The history overflowed anyway (an estimate was off, or the
 			// window is smaller than configured): compact harder and retry
@@ -109,6 +130,17 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		if len(calls) == 0 && lim.TextToolCalls {
 			calls = capCalls(parseTextToolCalls(rep.text), lim.MaxCallsPerTurn)
 		}
+		// Rules on tool arguments see the calls before they are recorded
+		// or run. Past the turn's re-runs they are not asked: the calls run,
+		// and a reminder must never say "do not run it" after it ran.
+		if l.Steering != nil && allow && len(calls) > 0 && l.Steering.Calls(turn, steeringCalls(calls)) {
+			msgs = l.rerun(msgs, turn, rep)
+			interrupts++
+			turn--
+			res.Turns = turn
+			continue
+		}
+		interrupts = 0
 		l.emit(Event{Kind: EventAssistant, Turn: turn, Text: rep.text, ToolNames: callNames(calls), Usage: rep.usage, Elapsed: rep.elapsed})
 		res.FinalText = rep.text
 
@@ -272,11 +304,42 @@ type reply struct {
 	blocksRejected bool
 }
 
-// request streams one turn. Text deltas are forwarded as they arrive.
-func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits) (reply, error) {
+// rerun drops an interrupted turn's reply (EventRuleInterrupt, with the
+// usage the provider billed for it) and joins the reminders for its re-run.
+func (l *Loop) rerun(msgs []Message, turn int, rep reply) []Message {
+	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn, Usage: droppedUsage(msgs, rep), Elapsed: rep.elapsed})
+	return l.joinReminders(msgs, BoundaryRetry)
+}
+
+// steeringCalls is a turn's calls as Steering sees them.
+func steeringCalls(calls []llm.ToolCallResult) []ToolCall {
+	out := make([]ToolCall, len(calls))
+	for i, c := range calls {
+		input, _ := parseInput(c.Arguments)
+		out[i] = ToolCall{ID: c.ID, Name: c.Name, Input: input}
+	}
+	return out
+}
+
+// request streams one turn. Text deltas are forwarded as they arrive. With
+// Steering, allow lets it interrupt this request: the request then returns
+// ErrRuleInterrupt, whatever the stream did.
+func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits, turn int, allow bool) (reply, error) {
 	reqCtx, cancel := ctx, context.CancelFunc(func() {})
 	if lim.RequestTimeout > 0 {
 		reqCtx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
+	}
+	intr := &interruptor{cancel: func() {}}
+	if l.Steering != nil {
+		var cancelCause context.CancelCauseFunc
+		reqCtx, cancelCause = context.WithCancelCause(reqCtx)
+		defer cancelCause(nil)
+		intr.cancel = func() { cancelCause(ErrRuleInterrupt) }
+		if allow {
+			l.Steering.Request(turn, intr.fire)
+		} else {
+			l.Steering.Request(turn, nil)
+		}
 	}
 	var r reply
 	var text strings.Builder
@@ -286,7 +349,9 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits) (reply, 
 		switch ev.Type {
 		case llm.EventContentDelta:
 			text.WriteString(ev.ContentDelta)
-			l.emit(Event{Kind: EventTextDelta, Text: ev.ContentDelta})
+			if l.emit(Event{Kind: EventTextDelta, Text: ev.ContentDelta}) && allow {
+				intr.fire()
+			}
 		case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
 			acc.HandleEvent(ev)
 		case llm.EventMessageDone:
@@ -295,10 +360,20 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits) (reply, 
 			r.blocksRejected = ev.BlocksRejected
 		}
 	})
+	// Only a stream that completed gets the end-of-stream check: a provider
+	// error must surface as itself, never as a rule interrupt and a re-run.
+	if se, ok := l.Steering.(StreamEnder); ok && err == nil && se.EndStream() && allow {
+		intr.fire()
+	}
 	// Read before cancel(): afterwards the context reports Canceled.
 	timedOut := lim.RequestTimeout > 0 && errors.Is(reqCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+	interrupted := intr.close()
 	cancel()
 	r.elapsed = time.Since(start)
+	if interrupted && ctx.Err() == nil {
+		r.text = text.String() // what was streamed before the cut, for the cost estimate
+		return r, ErrRuleInterrupt
+	}
 	if err != nil {
 		if timedOut {
 			return r, &TurnTimeoutError{Timeout: lim.RequestTimeout, Err: err}
@@ -341,4 +416,17 @@ func toToolCallInfo(calls []llm.ToolCallResult) []tui.ToolCallInfo {
 
 func cloneHistory(msgs []Message) []Message {
 	return append([]Message(nil), msgs...)
+}
+
+// droppedUsage is what a dropped reply cost: the provider's usage when it
+// sent one, else an estimate (marked Estimated) from the history sent and
+// the text streamed before the cut. A cancelled stream usually ends before
+// the provider reports usage, but the provider bills it anyway.
+func droppedUsage(sent []Message, rep reply) *llm.TokenUsage {
+	if rep.usage != nil {
+		return rep.usage
+	}
+	in := compact.Estimate(sent)
+	out := (len(rep.text) + 3) / 4
+	return &llm.TokenUsage{PromptTokens: in, CompletionTokens: out, TotalTokens: in + out, Estimated: true}
 }

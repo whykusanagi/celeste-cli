@@ -137,6 +137,9 @@ func LoadAll(startDir string) (*Grimoire, error) {
 			continue
 		}
 		g.Sources = []string{src.Path}
+		for i := range g.StreamRules {
+			g.StreamRules[i].Source = src.Path
+		}
 		grimoires = append(grimoires, g)
 	}
 

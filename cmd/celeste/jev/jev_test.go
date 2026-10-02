@@ -130,3 +130,37 @@ func TestRedact(t *testing.T) {
 		t.Errorf("a singular token key must still be redacted: %q", out)
 	}
 }
+
+// Choice and score questions go out with their criteria and come back with
+// the typed answer fields (docs.typesafe.ai/api.md, checked 2026-10-01).
+func TestAskChoiceAndScore(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{
+			"lane":{"type":"choice","choice":"code","probabilities":{"code":0.9,"content":0.1},"confidence":0.8},
+			"track":{"type":"score","score":7.4,"legend":{"0":"a"},"probabilities":{"7":0.6,"8":0.4},"confidence":0.7}},
+			"usage":{"input_tokens":10,"output_tokens":2}}`))
+	}))
+	defer srv.Close()
+	answers, _, err := (&Client{Key: "k", URL: srv.URL}).Ask(context.Background(), map[string]any{"goal": "g"}, map[string]Question{
+		"lane":  {Type: "choice", Instructions: "Which lane?", Criteria: map[string]any{"code": "Programming work", "content": nil}},
+		"track": {Type: "score", Instructions: "How on track?", Criteria: []string{"off", "on"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := answers["lane"]; a.Choice != "code" || a.Probabilities["code"] != 0.9 || a.Confidence != 0.8 {
+		t.Errorf("choice answer = %+v", a)
+	}
+	if a := answers["track"]; a.Score == nil || *a.Score != 7.4 {
+		t.Errorf("score answer = %+v", a)
+	}
+	qs := got["questions"].(map[string]any)
+	if lane := qs["lane"].(map[string]any); lane["type"] != "choice" || lane["criteria"].(map[string]any)["content"] != nil {
+		t.Errorf("choice question = %v", lane)
+	}
+	if track := qs["track"].(map[string]any); track["type"] != "score" || len(track["criteria"].([]any)) != 2 {
+		t.Errorf("score question = %v", track)
+	}
+}

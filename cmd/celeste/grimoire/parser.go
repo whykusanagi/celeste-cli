@@ -35,6 +35,8 @@ func Parse(content string, baseDir string) (*Grimoire, error) {
 			g.Incantations = parseIncantations(body)
 		case "Hooks":
 			g.Hooks = parseHooks(body)
+		case "Stream Rules":
+			g.StreamRules = append(g.StreamRules, RuleSection{Body: body})
 		default:
 			g.RawSections[name] = body
 		}

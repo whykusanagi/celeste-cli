@@ -146,6 +146,9 @@ type TurnStats struct {
 	OutputTokens int
 	Response     string   // full assistant content for this turn (may be empty for pure tool-call turns)
 	ToolCalls    []string // names of tools called this turn
+	// Dropped: a stream rule cut this reply short and the turn re-runs
+	// (2.0 W3). The provider billed it; nothing else about it is kept.
+	Dropped bool
 }
 
 func DefaultOptions() Options {
@@ -239,4 +242,14 @@ func NewRunState(goal string, options Options) *RunState {
 
 func generateRunID(t time.Time) string {
 	return fmt.Sprintf("%s-%d", t.Format("20060102-150405.000000000"), runIDSeq.Add(1))
+}
+
+// KeepTurnStats stores st as its turn's stats for a progress display,
+// unless it is a reply a stream rule dropped (2.0 W3): that turn re-runs,
+// and the re-run's stats are the ones to show.
+func KeepTurnStats(m map[int]TurnStats, st TurnStats) {
+	if st.Dropped {
+		return
+	}
+	m[st.Turn] = st
 }

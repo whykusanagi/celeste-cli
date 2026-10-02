@@ -163,6 +163,7 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		SessionID:    fmt.Sprintf("tui-%d", os.Getpid()), // spill directory, as before
 		SpillCounter: &a.spillSeq,
 		CheckPrompt:  a.checkPrompt,
+		Steering:     a.steering().Steering(),
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
@@ -302,6 +303,13 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		return []tea.Msg{tui.PromptBlockedMsg{Reason: ev.Text, Content: ev.Msg.Content, Timestamp: ev.Msg.Timestamp, Steer: ev.Kind == loop.EventSteerBlocked}}
 	case loop.EventNotice:
 		return []tea.Msg{tui.HookWarningMsg{Text: ev.Text}}
+	case loop.EventRuleInterrupt:
+		// The provider billed the dropped reply: it counts in the cost,
+		// but not as a turn.
+		a.recordDroppedUsage(t.model, ev.Usage)
+		return []tea.Msg{tui.RuleInterruptMsg{}}
+	case loop.EventRule:
+		return []tea.Msg{tui.RuleReminderMsg{Source: ev.Text, Message: ev.Msg}}
 	}
 	return nil
 }
@@ -334,6 +342,20 @@ func (a *TUIClientAdapter) recordUsage(model string, u *llm.TokenUsage) *tui.Tok
 		}
 	}
 	return &tui.TokenUsage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+}
+
+// recordDroppedUsage adds a dropped reply's usage (real or estimated) to
+// the session cost without counting a turn.
+func (a *TUIClientAdapter) recordDroppedUsage(model string, u *llm.TokenUsage) {
+	if u == nil || a.costTracker == nil {
+		return
+	}
+	note := ""
+	if u.Estimated {
+		note = " (estimated)"
+	}
+	tui.LogInfo(fmt.Sprintf("  Dropped reply usage%s: %d prompt + %d completion tokens", note, u.PromptTokens, u.CompletionTokens))
+	a.costTracker.RecordCost(model, u.PromptTokens, u.CompletionTokens)
 }
 
 // doneMsg ends the turn: why it stopped, the text for a cap or guard, the

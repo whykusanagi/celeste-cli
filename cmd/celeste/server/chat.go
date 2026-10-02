@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -67,6 +70,7 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	system := env.SystemPromptWithSession(session, "", nil)
 	sessionID := fmt.Sprintf("mcp-chat-%d", time.Now().UnixNano())
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
+	l.Steering = chatSteering(cfg, env, prompt).Steering()
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
 	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
 	var blocked *promptBlockedError
@@ -78,6 +82,14 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
 	return []ContentBlock{{Type: "text", Text: text + warns.section()}}, nil
+}
+
+// chatSteering is one MCP chat call's stream rules (2.0 W3). Lines go to
+// the server log (stderr); the result carries none of them. prompt is the
+// watchdog's goal from W3-2.
+func chatSteering(cfg *config.Config, env *loop.Env, prompt string) *steer.Session {
+	logf := func(line string) { log.Printf("celeste chat: %s", line) }
+	return steer.New(steer.Options{Rules: env.Rules, RulesMode: cfg.StreamRulesMode(), Logf: logf})
 }
 
 // grimoireInitMu serializes the grimoire auto-init. Two first calls on one
@@ -222,7 +234,8 @@ func runObserved(ctx context.Context, l *loop.Loop, history []loop.Message, clai
 		defer close(done)
 		for ev := range events {
 			claims.observe(ev)
-			if ev.Kind == loop.EventAssistant && record != nil {
+			// A reply a stream rule dropped was billed too.
+			if (ev.Kind == loop.EventAssistant || ev.Kind == loop.EventRuleInterrupt) && record != nil {
 				record(ev.Usage)
 			}
 			if ev.Kind == loop.EventDone {
@@ -278,7 +291,11 @@ func (c *chatClaims) observe(ev loop.Event) {
 	}
 }
 
+// strip is the claim backstop. The unbacked-audio-claim stream rule
+// interrupts such a reply when stream_rules is "on"; this still runs on
+// every reply, so the MCP result never carries an unbacked claim whatever
+// the mode (2.0 W3).
 func (c *chatClaims) strip(text string) string {
-	text = llm.StripUnbackedAudioClaim(text, c.tts)
+	text = rules.StripUnbackedAudioClaim(text, c.tts)
 	return llm.StripUnbackedSpawnClaim(text, c.spawn)
 }

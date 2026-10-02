@@ -63,31 +63,40 @@ func NewFromEnv() (*Client, error) {
 	return &Client{Key: key}, nil
 }
 
-type wireNoul struct {
-	Type         string            `json:"type"`
-	Instructions string            `json:"instructions"`
-	Criteria     map[string]string `json:"criteria,omitempty"`
+// Question is one typed System One question: "noul" (yes/no), "choice"
+// (Criteria maps each option to its description, nil for none) or "score"
+// (Criteria is the ordered list of level descriptions, 2 to 10).
+type Question struct {
+	Type         string `json:"type"`
+	Instructions string `json:"instructions"`
+	Criteria     any    `json:"criteria,omitempty"`
 }
 
-// Nouls asks every question against state in one request and returns P(yes)
-// per question id. The response's model version is returned for logging.
-func (c *Client) Nouls(ctx context.Context, state any, qs map[string]Noul) (map[string]float64, string, error) {
+// Answer is one typed answer. Noul carries P(yes); Choice the most likely
+// option; Score the probability-weighted level (0-based, can fall between
+// levels). Probabilities and Confidence come with choice and score answers.
+type Answer struct {
+	Type          string             `json:"type"`
+	Noul          *float64           `json:"noul,omitempty"`
+	Choice        string             `json:"choice,omitempty"`
+	Score         *float64           `json:"score,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	Confidence    float64            `json:"confidence,omitempty"`
+}
+
+// Ask asks every question against state in one request and returns the
+// answers by question id, with the response's model version for logging.
+// The API shape was checked against https://docs.typesafe.ai/api.md
+// (Choice, Score, Noul) on 2026-10-01.
+func (c *Client) Ask(ctx context.Context, state any, qs map[string]Question) (map[string]Answer, string, error) {
 	if len(qs) == 0 {
 		return nil, "", nil
-	}
-	wire := make(map[string]wireNoul, len(qs))
-	for id, q := range qs {
-		w := wireNoul{Type: "noul", Instructions: q.Instructions}
-		if q.True != "" || q.False != "" {
-			w.Criteria = map[string]string{"true": q.True, "false": q.False}
-		}
-		wire[id] = w
 	}
 	model := c.Model
 	if model == "" {
 		model = DefaultModel
 	}
-	body, err := json.Marshal(map[string]any{"state": state, "model": model, "questions": wire})
+	body, err := json.Marshal(map[string]any{"state": state, "model": model, "questions": qs})
 	if err != nil {
 		return nil, "", err
 	}
@@ -118,21 +127,39 @@ func (c *Client) Nouls(ctx context.Context, state any, qs map[string]Noul) (map[
 		return nil, "", fmt.Errorf("jev: HTTP %d: %.300s", resp.StatusCode, raw)
 	}
 	var out struct {
-		Model   string `json:"model"`
-		Answers map[string]struct {
-			Noul *float64 `json:"noul"`
-		} `json:"answers"`
+		Model   string            `json:"model"`
+		Answers map[string]Answer `json:"answers"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, "", fmt.Errorf("jev: bad response: %w", err)
 	}
-	probs := make(map[string]float64, len(out.Answers))
-	for id, a := range out.Answers {
+	return out.Answers, out.Model, nil
+}
+
+// Nouls asks yes/no questions only and returns P(yes) per question id.
+func (c *Client) Nouls(ctx context.Context, state any, qs map[string]Noul) (map[string]float64, string, error) {
+	if len(qs) == 0 {
+		return nil, "", nil
+	}
+	wire := make(map[string]Question, len(qs))
+	for id, q := range qs {
+		w := Question{Type: "noul", Instructions: q.Instructions}
+		if q.True != "" || q.False != "" {
+			w.Criteria = map[string]string{"true": q.True, "false": q.False}
+		}
+		wire[id] = w
+	}
+	answers, model, err := c.Ask(ctx, state, wire)
+	if err != nil {
+		return nil, "", err
+	}
+	probs := make(map[string]float64, len(answers))
+	for id, a := range answers {
 		if a.Noul != nil {
 			probs[id] = *a.Noul
 		}
 	}
-	return probs, out.Model, nil
+	return probs, model, nil
 }
 
 // secretPatterns catches common key formats and key=value secrets. Excerpts

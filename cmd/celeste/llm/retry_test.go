@@ -232,3 +232,18 @@ func TestTokenRateLimitIsNotOverflow(t *testing.T) {
 		t.Fatalf("token rate limit classified as %+v", c)
 	}
 }
+
+// A stream a steering rule cancelled is never retried, even when the
+// backend's error looks transient (2.0 W3).
+func TestWithRetryNeverRetriesARuleInterrupt(t *testing.T) {
+	base, cancel := context.WithCancelCause(context.Background())
+	calls := 0
+	err := withRetry(base, retryOpts{}, func(context.Context) error {
+		calls++
+		cancel(ErrRuleInterrupt)
+		return errors.New("read: connection reset by peer")
+	}, func(time.Duration) { t.Fatal("slept: a rule interrupt was retried") })
+	if calls != 1 || !errors.Is(err, ErrRuleInterrupt) {
+		t.Fatalf("calls=%d err=%v, want one call and ErrRuleInterrupt", calls, err)
+	}
+}

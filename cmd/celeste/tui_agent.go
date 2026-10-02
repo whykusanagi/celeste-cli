@@ -154,7 +154,7 @@ func (a *TUIClientAdapter) runGoalWithProgress(args []string, run uint64) tea.Cm
 		// ProgressResponse (completion turns with no tool calls).
 		turnStatsEmitted := make(map[int]bool)
 		opts.OnTurnStats = func(stats agent.TurnStats) {
-			turnStatsMap[stats.Turn] = stats
+			agent.KeepTurnStats(turnStatsMap, stats)
 		}
 
 		// Pass the receive end of ch so AgentProgressMsg.Ch is a <-chan.

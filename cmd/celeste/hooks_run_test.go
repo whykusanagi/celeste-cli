@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 )
 
 func hooksCLIFixture(t *testing.T, in string, interactive bool) (hooksCLI, *bytes.Buffer, *bytes.Buffer) {
@@ -157,5 +158,43 @@ func TestHooksRejectsExtraArgsAndUnknownFlags(t *testing.T) {
 	c, _, _ := hooksCLIFixture(t, "", false)
 	if code := hooksCommand([]string{"trust", "--yes", "--", c.cwd}, c); code != 0 || !repoLoaded(t, c) {
 		t.Fatalf("-- path: exit %d", code)
+	}
+}
+
+// A repo grimoire's "## Stream Rules" is listed and trusted like repo hooks
+// (2.0 W3, ruling 18): `celeste hooks trust` approves it in the same store,
+// and hooks.Load neither runs nor warns about it.
+func TestHooksTrustCoversStreamRules(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	grim := filepath.Join(ws, ".grimoire")
+	body := "### no-baz\n---\ncondition: baz\n---\nNo baz."
+	if err := os.WriteFile(grim, []byte("## Stream Rules\n"+body+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	c := hooksCLI{cwd: ws, home: home, in: strings.NewReader(""), out: &out, errOut: &errOut}
+	if code := hooksCommand([]string{"list"}, c); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if s := out.String(); !strings.Contains(s, "[repo-stream-rules, untrusted]") || !strings.Contains(s, "condition: baz") {
+		t.Fatalf("list output:\n%s", s)
+	}
+	sec := []rules.Section{{Source: grim, Body: body}}
+	if got := rules.Trusted(home, sec, nil, func(string) {}); len(got) != 0 {
+		t.Fatal("stream rules trusted before `hooks trust`")
+	}
+	out.Reset()
+	if code := hooksCommand([]string{"trust", "--yes"}, c); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if got := rules.Trusted(home, sec, nil, func(string) {}); len(got) != 1 {
+		t.Fatalf("stream rules not trusted after --yes:\n%s", out.String())
+	}
+	var warns []string
+	if _, err := hooks.Load(hooks.Options{Workspace: ws, Home: home, Warn: func(s string) { warns = append(warns, s) }}); err != nil || len(warns) != 0 {
+		t.Errorf("hooks.Load must ignore stream rule sources: err=%v warns=%v", err, warns)
 	}
 }

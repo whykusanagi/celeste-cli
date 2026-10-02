@@ -6,18 +6,6 @@ import (
 	"strings"
 )
 
-// StripUnbackedAudioClaim removes a fabricated "Audio saved:" success string the
-// model may emit as prose when it gives up issuing the TTS tool call. If no TTS
-// tool actually ran this session (ttsRan == false) and the content claims a saved
-// file, the claim is replaced with an honest error. Content is returned
-// unchanged when TTS ran or no claim is present.
-func StripUnbackedAudioClaim(content string, ttsRan bool) string {
-	if ttsRan || !strings.Contains(content, "Audio saved:") {
-		return content
-	}
-	return "I attempted to describe saved audio, but no audio file was actually generated this session (the TTS tool did not run). Please retry — no file was written."
-}
-
 // StripUnbackedSpawnClaim removes a fabricated "subagent spawned (id: …)" success
 // string the model may emit when it can't actually drive the spawn_agent tool (a
 // non-reasoning/weak model flails then claims success — observed with a fake id

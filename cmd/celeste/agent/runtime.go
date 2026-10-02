@@ -25,6 +25,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -59,6 +61,8 @@ type Runner struct {
 	gate *callbackGate
 	// firstRunID is the hooks' session_id; the first RunGoal adopts it.
 	firstRunID string
+	// rulesMode is stream_rules (2.0 W3): off, shadow or on.
+	rulesMode string
 }
 
 // compactMessages keeps the history inside the window (#174). It prunes old
@@ -454,6 +458,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		warn:       warn,
 		gate:       gate,
 		firstRunID: firstRunID,
+		rulesMode:  cfg.StreamRulesMode(),
 	}, nil
 }
 
@@ -709,7 +714,25 @@ func (r *Runner) newLoop(state *RunState) *loop.Loop {
 		Gate:      loop.PromptGate(r.options.PromptFunc),
 		Compact:   runCompactor{r: r},
 		SessionID: "agent-" + state.RunID,
+		Steering:  r.newSteering(state).Steering(),
 	}
+}
+
+// newSteering is the run's stream rules (2.0 W3): one session per run, so
+// a rule's repeat policy spans the run's steps. With verification commands
+// the runtime checks the work after TASK_COMPLETE, so the
+// task-complete-before-verify rule stands down.
+func (r *Runner) newSteering(state *RunState) *steer.Session {
+	var set *rules.Set
+	if r.env != nil {
+		set = r.env.Rules
+	}
+	return steer.New(steer.Options{
+		Rules:           set,
+		RulesMode:       r.rulesMode,
+		RuntimeVerifies: state.Options.RequireVerification && len(state.Options.VerificationCommands) > 0,
+		Logf:            func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", line) },
+	})
 }
 
 // step runs the loop once. Only the event consumer touches state (and r.out)
@@ -743,6 +766,11 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 		r.emitProgress(ProgressTurnStart, fmt.Sprintf("turn %d/%d", state.Turn, state.Options.MaxTurns), state.Turn, state.Options.MaxTurns)
 	case loop.EventCompacted:
 		r.reportCompaction(state, ev.Text)
+	case loop.EventRuleInterrupt:
+		if r.options.OnTurnStats != nil && ev.Usage != nil {
+			r.options.OnTurnStats(TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: ev.Elapsed,
+				InputTokens: ev.Usage.PromptTokens, OutputTokens: ev.Usage.CompletionTokens, Dropped: true})
+		}
 	case loop.EventAssistant:
 		text := strings.TrimSpace(ev.Text)
 		if r.options.OnTurnStats != nil {

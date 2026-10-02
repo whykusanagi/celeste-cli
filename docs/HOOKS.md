@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model.
+Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model. For regex rules on the model's own output (not on tool events), see [STEERING.md](STEERING.md); a project grimoire's `## Stream Rules` section is trusted with the same `celeste hooks trust`.
 
 **Where hooks load.** The chat UI (`celeste chat`, `celeste resume`), every agent run and MCP chat load hooks: `celeste agent`, the MCP server's `celeste` tool in both `mode: "agent"` and `mode: "chat"`, `/agent` in the chat, subagents, and `/orchestrate` lanes.
 

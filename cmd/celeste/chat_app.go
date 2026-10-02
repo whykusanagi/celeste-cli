@@ -145,6 +145,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		projectContext: env.ProjectContext,
 		gitSnapshot:    env.GitSnapshot,
 		hooks:          env.Hooks,
+		rules:          env.Rules,
 	}
 	tuiClient.lifeCtx, tuiClient.lifeCancel = context.WithCancel(context.Background())
 	tuiClient.gate = chatGate(registry)
