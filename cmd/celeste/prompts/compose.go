@@ -21,12 +21,6 @@ const (
 	ModeAgent
 )
 
-// voiceBoundaryPrompt keeps the persona out of artifacts. It follows the
-// persona core directly so it frames everything after it, including the
-// slider block.
-const voiceBoundaryPrompt = `Voice Boundary:
-Your voice, personality and the voice modulation below apply only to prose you address to the user. Code, code comments, commit messages, file contents, and tool-call arguments are written plainly and professionally: no persona voice, emotes, pet names, or stylised spelling. Where a tool's instructions and a voice instruction conflict, the tool's instructions win.`
-
 // ComposeOptions describes one system prompt.
 type ComposeOptions struct {
 	Mode Mode
@@ -51,10 +45,10 @@ var confirmActionsEnabled = func() bool {
 // Compose builds a system prompt. Every caller goes through here so a prompt
 // refresh or endpoint switch produces the same prompt as session start.
 //
-// Order: persona core (byte-stable, so the prefix stays cacheable), voice
-// boundary, user identity, sliders, mode contract, project context, git.
+// Order: persona profile (byte-stable, ending with the voice boundary rule),
+// user identity, sliders, mode contract, project context, git.
 func Compose(opts ComposeOptions) string {
-	persona := []string{personaCore(), voiceBoundaryPrompt}
+	persona := []string{personaCore()}
 	if user := ComposeUserPrompt(config.LoadUser()); user != "" {
 		persona = append(persona, user)
 	}
@@ -85,14 +79,8 @@ func Compose(opts ComposeOptions) string {
 	return strings.Join(sections, "\n\n")
 }
 
-// personaCore returns the persona text from the essence.
+// personaCore returns the full profile, official or public. Either ends
+// with the voice boundary rule.
 func personaCore() string {
-	essence, err := LoadEssence()
-	if err != nil {
-		// Only reachable if the embedded essence itself is broken, which
-		// TestEmbeddedEssenceIsValid guards against. User overrides that
-		// fail to load fall back to the embedded essence inside LoadEssence.
-		return getBasicPrompt()
-	}
-	return buildPromptFromEssence(essence)
+	return mustProfile(ProfileFull).SystemPrompt
 }

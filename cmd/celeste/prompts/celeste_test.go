@@ -1,140 +1,17 @@
 package prompts
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-// TestLoadEssence tests loading persona essence from embedded data
-func TestLoadEssence(t *testing.T) {
-	essence, err := LoadEssence()
-	require.NoError(t, err, "Should load embedded essence")
-	assert.NotNil(t, essence, "Essence should not be nil")
-
-	// Verify essential fields are populated (v3.0.0 schema)
-	assert.NotEmpty(t, essence.Version, "Version should be set")
-	assert.NotEmpty(t, essence.SystemPrompt, "SystemPrompt should be set (v3.0.0)")
-	assert.NotEmpty(t, essence.CanonicalName, "CanonicalName should be set (v3.0.0)")
-	assert.NotEmpty(t, essence.OperationalLaws, "OperationalLaws should be set")
-	assert.NotEmpty(t, essence.InteractionRules, "InteractionRules should be set")
-}
-
-// TestLoadEssenceFromFile tests loading essence from custom file
-func TestLoadEssenceFromFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping HOME environment variable test on Windows")
-	}
-
-	// Create temp directory for test config
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".celeste")
-	require.NoError(t, os.MkdirAll(configDir, 0755))
-
-	// Create custom essence file
-	customEssence := CelesteEssence{
-		Version:     "test-1.0",
-		Character:   "Test Celeste",
-		Description: "A test version",
-		CoreRules:   []string{"Test rule 1", "Test rule 2"},
-	}
-	customEssence.Voice.Style = "Test style"
-
-	data, err := json.MarshalIndent(customEssence, "", "  ")
-	require.NoError(t, err)
-
-	essencePath := filepath.Join(configDir, "celeste_essence.json")
-	require.NoError(t, os.WriteFile(essencePath, data, 0644))
-
-	// Temporarily change home dir
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
-
-	// Load essence (should use custom file)
-	essence, err := LoadEssence()
-	require.NoError(t, err)
-	assert.Equal(t, "test-1.0", essence.Version, "Should load custom version")
-	assert.Equal(t, "Test Celeste", essence.Character, "Should load custom character")
-}
 
 // TestGetSystemPrompt tests system prompt generation
 func TestGetSystemPrompt(t *testing.T) {
 	prompt := GetSystemPrompt()
 	assert.NotEmpty(t, prompt, "Prompt should not be empty")
 	assert.Contains(t, prompt, "Celeste", "Prompt should mention Celeste")
-}
-
-// TestBuildPromptFromEssence tests prompt construction
-func TestBuildPromptFromEssence(t *testing.T) {
-	essence := &CelesteEssence{
-		Version:          "1.0",
-		Character:        "Test Character",
-		Description:      "A test character description",
-		CoreRules:        []string{"Rule 1", "Rule 2"},
-		InteractionRules: []string{"Interaction rule 1"},
-		KnowledgeUsage:   "Test knowledge usage",
-	}
-	essence.Voice.Style = "Test voice style"
-	essence.Voice.Constraints = []string{"Constraint 1", "Constraint 2"}
-	essence.Safety.PlatformSafety = "Test safety"
-	essence.Safety.RefuseList = []string{"refuse1", "refuse2"}
-	essence.Safety.SafeAlternatives = "Test alternatives"
-
-	prompt := buildPromptFromEssence(essence)
-
-	// Verify all sections are present
-	assert.Contains(t, prompt, "Test Character", "Should include character")
-	assert.Contains(t, prompt, "A test character description", "Should include description")
-	assert.Contains(t, prompt, "Test voice style", "Should include voice style")
-	assert.Contains(t, prompt, "Constraint 1", "Should include voice constraints")
-	assert.Contains(t, prompt, "Rule 1", "Should include core rules")
-	assert.Contains(t, prompt, "Interaction rule 1", "Should include interaction rules")
-	assert.Contains(t, prompt, "Test safety", "Should include safety")
-	assert.Contains(t, prompt, "refuse1, refuse2", "Should include refuse list")
-	assert.Contains(t, prompt, "Test alternatives", "Should include safe alternatives")
-	assert.Contains(t, prompt, "Test knowledge usage", "Should include knowledge usage")
-}
-
-// TestBuildPromptFromEssenceV3 tests that v3.0.0 system_prompt is used directly
-func TestBuildPromptFromEssenceV3(t *testing.T) {
-	essence := &CelesteEssence{
-		Version:      "3.0.0",
-		SystemPrompt: "You are Celeste, a test v3 prompt.",
-	}
-
-	prompt := buildPromptFromEssence(essence)
-	assert.Equal(t, "You are Celeste, a test v3 prompt.", prompt,
-		"v3.0.0 should use system_prompt directly")
-}
-
-// TestBuildPromptWithMinimalEssence tests prompt with minimal data
-func TestBuildPromptWithMinimalEssence(t *testing.T) {
-	essence := &CelesteEssence{
-		Character:   "Minimal",
-		Description: "Minimal description",
-	}
-
-	prompt := buildPromptFromEssence(essence)
-	assert.Contains(t, prompt, "Minimal", "Should include minimal character")
-	assert.Contains(t, prompt, "Minimal description", "Should include minimal description")
-}
-
-// TestGetBasicPrompt tests fallback prompt
-func TestGetBasicPrompt(t *testing.T) {
-	prompt := getBasicPrompt()
-	assert.NotEmpty(t, prompt, "Basic prompt should not be empty")
-	assert.Contains(t, prompt, "Celeste", "Should mention Celeste")
-	assert.Contains(t, prompt, "demon noble VTuber", "Should describe character type")
-	assert.Contains(t, prompt, "Voice Style", "Should include voice style")
-	assert.Contains(t, prompt, "Core Rules", "Should include core rules")
-	assert.Contains(t, prompt, "Safety", "Should include safety")
 }
 
 // TestGetContentPrompt tests content generation prompts
@@ -242,36 +119,6 @@ func TestGetContentPromptFormats(t *testing.T) {
 	}
 }
 
-// TestPromptStructure tests that prompts have expected structure
-func TestPromptStructure(t *testing.T) {
-	prompt := GetSystemPrompt()
-
-	// Check for essential content present in both v1.x and v3.0.0 schemas
-	expectedContent := []string{
-		"Celeste",
-		"Kusanagi",
-		"TONE",
-	}
-
-	for _, content := range expectedContent {
-		assert.Contains(t, prompt, content, "Prompt should contain: %s", content)
-	}
-}
-
-// TestEssenceValidation tests that loaded essence has valid structure
-func TestEssenceValidation(t *testing.T) {
-	essence, err := LoadEssence()
-	require.NoError(t, err)
-
-	// v3.0.0: system_prompt is the canonical prompt blob
-	assert.NotEmpty(t, essence.SystemPrompt, "SystemPrompt should be set")
-	assert.Contains(t, essence.SystemPrompt, "Celeste", "SystemPrompt should mention Celeste")
-
-	// Validate OperationalLaws (present in both v1.x and v3.0.0)
-	assert.NotEmpty(t, essence.OperationalLaws, "Operational laws should be defined")
-	assert.Contains(t, essence.OperationalLaws, "law_0", "Should have law_0")
-}
-
 // TestGetSystemPromptConsistency tests that repeated calls return same result
 func TestGetSystemPromptConsistency(t *testing.T) {
 	prompt1 := GetSystemPrompt()
@@ -289,94 +136,4 @@ func TestContentPromptIncludesBase(t *testing.T) {
 		"Content prompt should include base prompt")
 	assert.Greater(t, len(contentPrompt), len(basePrompt),
 		"Content prompt should be longer than base prompt")
-}
-
-// writeEssenceOverride points HOME at a temp dir holding the given
-// ~/.celeste/celeste_essence.json content.
-func writeEssenceOverride(t *testing.T, content string) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping HOME environment variable test on Windows")
-	}
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".celeste")
-	require.NoError(t, os.MkdirAll(configDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "celeste_essence.json"), []byte(content), 0644))
-	t.Setenv("HOME", tmpDir)
-}
-
-// TestEmbeddedEssenceIsValid guards the only path to getBasicPrompt: if the
-// embedded essence fails validation, every override fallback breaks too.
-func TestEmbeddedEssenceIsValid(t *testing.T) {
-	essence, err := parseEssence(embeddedEssence)
-	require.NoError(t, err)
-	assert.NotEmpty(t, essence.SystemPrompt)
-}
-
-func TestValidateEssence(t *testing.T) {
-	tests := []struct {
-		name    string
-		essence CelesteEssence
-		wantErr string
-	}{
-		{"v3 system_prompt", CelesteEssence{SystemPrompt: "You are Celeste."}, ""},
-		{"built artifact keeps preamble", CelesteEssence{SystemPrompt: "You are Celeste.", SystemPromptPreamble: "p"}, ""},
-		{"v1 character", CelesteEssence{Character: "Celeste"}, ""},
-		{"unbuilt template", CelesteEssence{Version: "3.1.0", SystemPromptPreamble: "You are Celeste."}, "unbuilt persona template"},
-		{"whitespace system_prompt", CelesteEssence{SystemPrompt: "  \n"}, "no persona content"},
-		{"empty", CelesteEssence{}, "no persona content"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateEssence(&tt.essence)
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-			} else {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
-// TestLoadEssenceOverrideFallsBackToEmbedded covers #164: an override that
-// would render an empty persona (or fails to parse) must yield the embedded
-// essence, not "You are . " and not the pre-v3 basic prompt.
-func TestLoadEssenceOverrideFallsBackToEmbedded(t *testing.T) {
-	embedded, err := parseEssence(embeddedEssence)
-	require.NoError(t, err)
-
-	overrides := map[string]string{
-		// Shape of celeste-core-persona's celeste_core_prompt.json after PR #22.
-		"unbuilt template": `{"version":"3.1.0","character_id":"celeste","canonical_name":"Celeste",` +
-			`"system_prompt_preamble":"You are Celeste.","operational_laws":{"law_0":"x"}}`,
-		"malformed json": `{"version": "3.1.0", "system_prompt": `,
-		"empty object":   `{}`,
-	}
-	for name, content := range overrides {
-		t.Run(name, func(t *testing.T) {
-			writeEssenceOverride(t, content)
-
-			essence, err := LoadEssence()
-			require.NoError(t, err)
-			assert.Equal(t, embedded.SystemPrompt, essence.SystemPrompt)
-
-			prompt := GetSystemPrompt()
-			assert.True(t, strings.HasPrefix(prompt, embedded.SystemPrompt),
-				"prompt should start with the embedded persona")
-			assert.NotContains(t, prompt, "You are . ")
-			assert.NotContains(t, prompt, getBasicPrompt())
-		})
-	}
-}
-
-// TestLoadEssenceBuiltArtifactOverride: a persona-container build output
-// (system_prompt baked from the tier-0 corpus) is used as-is.
-func TestLoadEssenceBuiltArtifactOverride(t *testing.T) {
-	writeEssenceOverride(t, `{"version":"3.1.0","canonical_name":"Celeste","system_prompt":"You are Celeste. BUILT-FROM-CONTAINER"}`)
-
-	essence, err := LoadEssence()
-	require.NoError(t, err)
-	assert.Equal(t, "3.1.0", essence.Version)
-	assert.True(t, strings.HasPrefix(GetSystemPrompt(), "You are Celeste. BUILT-FROM-CONTAINER"))
 }
