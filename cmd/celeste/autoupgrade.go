@@ -19,10 +19,11 @@ import (
 const selfupdatedEnv = "CELESTE_SELFUPDATED"
 
 // noUpgradeCommands print and exit, or (update) upgrade on their own.
+// persona reports on the binary as it is, so it never replaces it first.
 var noUpgradeCommands = map[string]bool{
 	"help": true, "-h": true, "--help": true,
 	"version": true, "-v": true, "--version": true,
-	"update": true,
+	"update": true, "persona": true,
 }
 
 // stdioCommands own stdout for a protocol, so they upgrade in the

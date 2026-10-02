@@ -179,7 +179,8 @@ func TestAutoUpgradeSkipsServeAndACP(t *testing.T) {
 		{"celeste", "--version"},
 		{"celeste", "version"},
 		{"celeste", "update", "--check"},
-		{"celeste", "-mode", "classic"}, // a flag error: run() reports it, no upgrade first
+		{"celeste", "persona", "verify"}, // a diagnostic reports on this binary, not its upgrade
+		{"celeste", "-mode", "classic"},  // a flag error: run() reports it, no upgrade first
 	} {
 		r := newRig(t, nil)
 		r.hook.beforeRun(argv)
