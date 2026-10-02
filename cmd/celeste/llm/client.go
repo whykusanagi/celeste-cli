@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -21,6 +22,9 @@ type Client struct {
 	registry     *tools.Registry
 	backendType  BackendType
 	systemPrompt string
+	// thinking is the last SetThinkingConfig, re-applied when UpdateConfig
+	// rebuilds the backend. nil: never set.
+	thinking *ThinkingConfig
 	// toolMode selects which registered tools GetSkills offers the model.
 	// The zero value is tools.ModeChat.
 	toolMode tools.RuntimeMode
@@ -73,65 +77,74 @@ func NewClientWithBackend(config *Config, registry *tools.Registry, backend LLMB
 	return &Client{backend: backend, config: config, registry: registry}
 }
 
-// NewClient creates a new LLM client with automatic backend selection.
-// It detects whether to use OpenAI SDK, Google GenAI SDK, or xAI SDK based on the base URL.
+// NewClient creates a new LLM client with automatic backend selection
+// (resolveBackendType).
 func NewClient(config *Config, registry *tools.Registry) *Client {
-	// Detect which backend to use
-	backendType := config.Backend
-	if backendType == "" {
-		backendType = DetectBackendType(config.BaseURL)
-	}
-
-	var backend LLMBackend
-	switch backendType {
-	case BackendTypeXAI:
-		// Use native xAI SDK for Grok with Collections support
-		xaiBackend, err := NewXAIBackend(config, registry)
-		if err != nil {
-			// Fallback to OpenAI backend if xAI backend fails
-			fmt.Fprintf(os.Stderr, "Warning: Failed to create xAI backend: %v\nFalling back to OpenAI SDK\n", err)
-			backendType = BackendTypeOpenAI
-			backend = NewOpenAIBackend(config)
-		} else {
-			backend = xaiBackend
-			tui.LogInfo("Using xAI backend with Collections support")
-		}
-
-	case BackendTypeGoogle:
-		// Use Google GenAI SDK for Gemini/Vertex AI
-		googleBackend, err := NewGoogleBackend(config)
-		if err != nil {
-			// Fallback to OpenAI backend if Google backend fails
-			fmt.Fprintf(os.Stderr, "Warning: Failed to create Google backend: %v\nFalling back to OpenAI SDK\n", err)
-			backendType = BackendTypeOpenAI
-			backend = NewOpenAIBackend(config)
-		} else {
-			backend = googleBackend
-		}
-
-	case BackendTypeAnthropic:
-		// Use native Anthropic SDK for Claude models
-		anthropicBackend, err := NewAnthropicBackend(config)
-		if err != nil {
-			// Fallback to OpenAI backend if Anthropic backend fails
-			fmt.Fprintf(os.Stderr, "Warning: Failed to create Anthropic backend: %v\nFalling back to OpenAI SDK\n", err)
-			backendType = BackendTypeOpenAI
-			backend = NewOpenAIBackend(config)
-		} else {
-			backend = anthropicBackend
-			tui.LogInfo("Using native Anthropic backend with prompt caching")
-		}
-
-	default:
-		// Use OpenAI SDK for OpenAI, Venice, etc.
-		backend = NewOpenAIBackend(config)
-	}
-
+	backend, bt := newBackend(config, registry, resolveBackendType(config))
 	return &Client{
 		backend:     backend,
 		config:      config,
 		registry:    registry,
-		backendType: backendType,
+		backendType: bt,
+	}
+}
+
+// resolveBackendType picks the backend for config: Config.Backend when set,
+// else detection from the base URL. An OpenAI-compatible endpoint whose
+// provider declares Responses support gets the Responses backend (2.0 W8).
+func resolveBackendType(config *Config) BackendType {
+	if config.Backend != "" {
+		return config.Backend
+	}
+	bt := DetectBackendType(config.BaseURL)
+	if bt == BackendTypeOpenAI && usesResponses(config.BaseURL) {
+		return BackendTypeOpenAIResponses
+	}
+	return bt
+}
+
+// usesResponses reports whether the provider at baseURL declares Responses
+// support. An empty base URL is go-openai's default, OpenAI itself.
+func usesResponses(baseURL string) bool {
+	if baseURL == "" {
+		baseURL = openAIDefaultBaseURL
+	}
+	caps, ok := providers.GetProvider(providers.DetectProvider(baseURL))
+	return ok && caps.SupportsResponses
+}
+
+// newBackend builds the backend for bt and returns the type it actually
+// built: a native backend that cannot be created falls back to the OpenAI
+// SDK backend, as before.
+func newBackend(config *Config, registry *tools.Registry, bt BackendType) (LLMBackend, BackendType) {
+	switch bt {
+	case BackendTypeXAI:
+		b, err := NewXAIBackend(config, registry)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to create xAI backend: %v\nFalling back to OpenAI SDK\n", err)
+			return NewOpenAIBackend(config), BackendTypeOpenAI
+		}
+		tui.LogInfo("Using xAI backend with Collections support")
+		return b, bt
+	case BackendTypeGoogle:
+		b, err := NewGoogleBackend(config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to create Google backend: %v\nFalling back to OpenAI SDK\n", err)
+			return NewOpenAIBackend(config), BackendTypeOpenAI
+		}
+		return b, bt
+	case BackendTypeAnthropic:
+		b, err := NewAnthropicBackend(config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to create Anthropic backend: %v\nFalling back to OpenAI SDK\n", err)
+			return NewOpenAIBackend(config), BackendTypeOpenAI
+		}
+		tui.LogInfo("Using native Anthropic backend with prompt caching")
+		return b, bt
+	case BackendTypeOpenAIResponses:
+		return NewResponsesBackend(config), bt
+	default:
+		return NewOpenAIBackend(config), BackendTypeOpenAI
 	}
 }
 
@@ -143,74 +156,37 @@ func (c *Client) SetSystemPrompt(prompt string) {
 	}
 }
 
-// SetThinkingConfig configures extended thinking / reasoning effort.
+// SetThinkingConfig configures extended thinking / reasoning effort. It is
+// kept and re-applied when UpdateConfig rebuilds the backend.
 func (c *Client) SetThinkingConfig(config ThinkingConfig) {
+	c.thinking = &config
 	if c.backend != nil {
 		c.backend.SetThinkingConfig(config)
 	}
 }
 
-// UpdateConfig updates the client configuration and recreates the backend if needed.
-// This allows dynamic endpoint/model switching during runtime.
+// UpdateConfig switches the client to config. The backend is rebuilt when
+// the backend type, base URL, API key or model changes, so the next
+// request goes to the new endpoint with the new model; the system prompt
+// and thinking config carry over (2.0 W8 ruling 12).
 func (c *Client) UpdateConfig(config *Config) {
+	old := c.config
 	c.config = config
-
-	// Detect if backend type changed
-	newBackendType := DetectBackendType(config.BaseURL)
-
-	if newBackendType != c.backendType {
-		// Backend type changed - recreate backend
-		if c.backend != nil {
-			c.backend.Close()
-		}
-
-		switch newBackendType {
-		case BackendTypeXAI:
-			xaiBackend, err := NewXAIBackend(config, c.registry)
-			if err != nil {
-				// Fallback to OpenAI if xAI fails
-				fmt.Fprintf(os.Stderr, "Warning: Failed to create xAI backend: %v\nFalling back to OpenAI SDK\n", err)
-				newBackendType = BackendTypeOpenAI
-				c.backend = NewOpenAIBackend(config)
-			} else {
-				c.backend = xaiBackend
-				tui.LogInfo("Switched to xAI backend with Collections support")
-			}
-
-		case BackendTypeGoogle:
-			googleBackend, err := NewGoogleBackend(config)
-			if err != nil {
-				// Fallback to OpenAI if Google fails
-				fmt.Fprintf(os.Stderr, "Warning: Failed to create Google backend: %v\nFalling back to OpenAI SDK\n", err)
-				newBackendType = BackendTypeOpenAI
-				c.backend = NewOpenAIBackend(config)
-			} else {
-				c.backend = googleBackend
-			}
-
-		case BackendTypeAnthropic:
-			anthropicBackend, err := NewAnthropicBackend(config)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Failed to create Anthropic backend: %v\nFalling back to OpenAI SDK\n", err)
-				newBackendType = BackendTypeOpenAI
-				c.backend = NewOpenAIBackend(config)
-			} else {
-				c.backend = anthropicBackend
-				tui.LogInfo("Switched to native Anthropic backend")
-			}
-
-		default:
-			c.backend = NewOpenAIBackend(config)
-		}
-
-		c.backendType = newBackendType
-
-		// Restore system prompt
-		if c.systemPrompt != "" {
-			c.backend.SetSystemPrompt(c.systemPrompt)
-		}
+	bt := resolveBackendType(config)
+	if c.backend != nil && old != nil && bt == c.backendType &&
+		old.BaseURL == config.BaseURL && old.APIKey == config.APIKey && old.Model == config.Model {
+		return
 	}
-	// Note: Config changes within same backend type are handled by passing config to methods
+	if c.backend != nil {
+		c.backend.Close()
+	}
+	c.backend, c.backendType = newBackend(config, c.registry, bt)
+	if c.systemPrompt != "" {
+		c.backend.SetSystemPrompt(c.systemPrompt)
+	}
+	if c.thinking != nil {
+		c.backend.SetThinkingConfig(*c.thinking)
+	}
 }
 
 // GetConfig returns the current configuration.

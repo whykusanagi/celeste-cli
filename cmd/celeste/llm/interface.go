@@ -59,6 +59,10 @@ const (
 
 	// BackendTypeAnthropic uses the native Anthropic SDK (Claude models)
 	BackendTypeAnthropic BackendType = "anthropic"
+
+	// BackendTypeOpenAIResponses uses OpenAI's Responses API (2.0 W8): the
+	// openai provider, or any provider whose registry entry declares it.
+	BackendTypeOpenAIResponses BackendType = "openai-responses"
 )
 
 // DetectBackendType determines which backend to use based on the base URL.
