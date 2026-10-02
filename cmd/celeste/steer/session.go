@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -329,7 +330,9 @@ func (s *Session) applyLocked(v Verdict) (interrupt func()) {
 	var steers Verdict
 	for _, f := range v.Act {
 		if f.Severity == Nit {
-			s.nits = append(s.nits, advice[f.ID])
+			if !slices.Contains(s.nits, advice[f.ID]) {
+				s.nits = append(s.nits, advice[f.ID])
+			}
 		} else {
 			steers.Act = append(steers.Act, f)
 		}

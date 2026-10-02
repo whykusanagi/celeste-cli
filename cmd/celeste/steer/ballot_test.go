@@ -386,3 +386,26 @@ func TestNewGoalDropsWatchdogVerdictsAboutTheOldOne(t *testing.T) {
 		t.Errorf("an unchanged goal dropped the verdict: %+v", got)
 	}
 }
+
+// The same nit from two ballots is given once (final review M2).
+func TestWatchdogNitsAreDeduplicated(t *testing.T) {
+	s, _, _ := watch("on", map[string]decide.Answer{QPersonaBreak: {P: 0.9}})
+	s.o.Every = 1
+	turn(s, nil)
+	s.Wait()
+	turn(s, nil)
+	s.Wait()
+	got := s.Reminders(loop.BoundaryRun)
+	if len(got) != 1 || strings.Count(got[0].Text, "keep it out of files") != 1 {
+		t.Errorf("reminders = %+v", got)
+	}
+}
+
+// The background ballot judges calls that already ran: the blocker's
+// advice says so (final review M3).
+func TestUnsafeAdviceSpeaksOfACallThatRan(t *testing.T) {
+	r := Judge(map[string]decide.Answer{QUnsafe: {P: 0.9}}).Reminder()
+	if !strings.Contains(r, "You just ran") || !strings.Contains(r, "destructive") || !strings.Contains(r, "tell the user") {
+		t.Errorf("reminder = %q", r)
+	}
+}

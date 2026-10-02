@@ -64,7 +64,9 @@ var advice = map[string]string{
 	QDrifting:     "You seem to be drifting from what the user asked. Return to the goal.",
 	QPersonaBreak: "Keep your voice for what you say to the user, and keep it out of files and tool arguments.",
 	QUnverified:   "You claim success without a tool result that shows it. Run the check that proves it before you report it.",
-	QUnsafe:       "Your next step looks destructive or irreversible, and the user did not ask for it. Do not take it; ask first.",
+	// The background ballot sees calls that already ran, so the advice is
+	// about the call that ran and the ones after it.
+	QUnsafe: "You just ran (or were about to run) a destructive or irreversible command the goal did not ask for. Do not repeat it or anything like it; tell the user what it did, and ask before going on.",
 }
 
 // onTrackLevels are the on_track score's levels, 1 to 10.
