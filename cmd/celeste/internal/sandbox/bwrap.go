@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 )
@@ -60,7 +60,7 @@ func runResolverDir(target string) string {
 	if !strings.HasPrefix(target, "/run/") || target == "/run/systemd/resolve" || strings.HasPrefix(target, "/run/systemd/resolve/") {
 		return ""
 	}
-	if dir := filepath.Dir(target); dir != "/run" {
+	if dir := path.Dir(target); dir != "/run" { // bwrap paths are POSIX on every host
 		return dir
 	}
 	return target
