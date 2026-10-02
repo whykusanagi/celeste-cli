@@ -162,3 +162,13 @@ func TestConnCallErrorsAndClose(t *testing.T) {
 		t.Fatal("Call did not return after the connection closed")
 	}
 }
+
+// A request that is not JSON-RPC 2.0 is answered -32600, not served.
+func TestConnRejectsNonJSONRPC2Requests(t *testing.T) {
+	_, out, in := pipePair(t, echoHandler{notes: make(chan string, 1)})
+	io.WriteString(in, `{"id":5,"method":"echo","params":1}`+"\n")
+	line, _ := out.ReadString('\n')
+	if !strings.Contains(line, `"id":5`) || !strings.Contains(line, `-32600`) {
+		t.Fatalf("non-2.0 request answer = %s", line)
+	}
+}

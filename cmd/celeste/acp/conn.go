@@ -36,6 +36,7 @@ func (e *RPCError) Error() string { return fmt.Sprintf("acp error %d: %s", e.Cod
 // JSON-RPC error codes celeste answers with.
 const (
 	CodeParseError     = -32700
+	CodeInvalidRequest = -32600
 	CodeInvalidParams  = -32602
 	CodeMethodNotFound = -32601
 	CodeInternal       = -32603
@@ -115,6 +116,14 @@ func (c *Conn) Serve(ctx context.Context) error {
 				// client that writes before it reads cannot stall it.
 				answer := map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(append([]byte(nil), id[1]...)),
 					"error": &RPCError{Code: CodeParseError, Message: "parse error: " + err.Error()}}
+				go func() { _ = c.write(answer) }()
+			}
+			continue
+		}
+		if m.JSONRPC != "2.0" {
+			if m.Method != "" && len(m.ID) > 0 {
+				answer := map[string]any{"jsonrpc": "2.0", "id": m.ID,
+					"error": &RPCError{Code: CodeInvalidRequest, Message: `invalid request: jsonrpc must be "2.0"`}}
 				go func() { _ = c.write(answer) }()
 			}
 			continue

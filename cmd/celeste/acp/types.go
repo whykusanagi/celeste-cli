@@ -89,6 +89,8 @@ type EnvVariable struct {
 type NewSessionParams struct {
 	Cwd        string      `json:"cwd"`
 	McpServers []McpServer `json:"mcpServers"`
+	// AdditionalDirectories are extra workspace roots (W4f reads only cwd).
+	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
 }
 
 // NewSessionResult is session/new's answer.
@@ -102,6 +104,8 @@ type LoadSessionParams struct {
 	SessionID  string      `json:"sessionId"`
 	Cwd        string      `json:"cwd"`
 	McpServers []McpServer `json:"mcpServers"`
+	// AdditionalDirectories are extra workspace roots (W4f reads only cwd).
+	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
 }
 
 // PromptParams is session/prompt.
