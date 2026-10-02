@@ -5,11 +5,15 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 )
 
 func TestMarkerOnLine(t *testing.T) {
@@ -125,5 +129,63 @@ func TestCompletionGateShadowWatchdogNeverVetoes(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "watchdog (completion): claims_unverified_success") {
 		t.Errorf("errOut = %q", errOut.String())
+	}
+}
+
+// countOracle answers every ballot the same way and counts the asks.
+type countOracle struct {
+	mu  sync.Mutex
+	n   int
+	ans map[string]decide.Answer
+}
+
+func (o *countOracle) Ask(context.Context, string, []decide.Question) (map[string]decide.Answer, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.n++
+	return o.ans, nil
+}
+
+// A run with verification commands is checked by the runtime after the
+// marker: the gate asks no ballot and never vetoes (final review M4).
+func TestCompletionGateLeavesVerifiedRunsToTheRuntime(t *testing.T) {
+	o := &countOracle{ans: map[string]decide.Answer{steer.QUnverified: {P: 0.9}}}
+	s := steer.New(steer.Options{Watchdog: "on", Oracle: o})
+	defer s.Close()
+	r := &Runner{gateMode: config.ModeOn, errOut: io.Discard}
+	st := &RunState{Options: DefaultOptions()}
+	st.Options.RequireVerification = true
+	st.Options.VerificationCommands = []string{"go test ./..."}
+	complete, vetoed := r.completion(context.Background(), st, "TASK_COMPLETE: done", s)
+	if !complete || vetoed || o.n != 0 || st.GateVetoes != 0 {
+		t.Errorf("complete=%v vetoed=%v asks=%d vetoes=%d", complete, vetoed, o.n, st.GateVetoes)
+	}
+	st.Options.VerificationCommands = nil
+	if _, vetoed := r.completion(context.Background(), st, "TASK_COMPLETE: done", s); !vetoed {
+		t.Error("without verification commands the ballot must veto")
+	}
+}
+
+// A veto settles the unverified-success finding: a watchdog concern about
+// it still pending is not given as well (final review M6).
+func TestCompletionGateVetoSettlesThePendingConcern(t *testing.T) {
+	o := &countOracle{ans: map[string]decide.Answer{steer.QUnverified: {P: 0.9}}}
+	s := steer.New(steer.Options{Watchdog: "on", Oracle: o, Every: 1})
+	defer s.Close()
+	s.Request(0, nil)
+	s.Observe(loop.Event{Kind: loop.EventAssistant, Text: "done", ToolNames: []string{"bash"}})
+	s.Observe(loop.Event{Kind: loop.EventTurnEnd})
+	s.Wait() // a concern about unverified success is pending
+	r := &Runner{gateMode: config.ModeOn, errOut: io.Discard}
+	st := &RunState{Options: DefaultOptions()}
+	if _, vetoed := r.completion(context.Background(), st, "TASK_COMPLETE: done", s); !vetoed {
+		t.Fatal("no veto")
+	}
+	for _, b := range []loop.Boundary{loop.BoundaryTools, loop.BoundaryRun} {
+		for _, rem := range s.Reminders(b) {
+			if strings.Contains(rem.Text, "claim success") {
+				t.Errorf("the settled concern was given too: %q", rem.Text)
+			}
+		}
 	}
 }

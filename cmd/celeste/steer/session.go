@@ -69,7 +69,8 @@ type Session struct {
 	lastBallot int
 	lastSteer  int // request of the last watchdog steer; 0: none yet
 	nits       []string
-	gen        int // bumped when the goal changes: older verdicts are dropped
+	gen        int            // bumped when the goal changes: older verdicts are dropped
+	settled    map[string]int // finding → request it was settled at (Settle)
 	ballots    sync.WaitGroup
 	busy       bool
 }
@@ -329,6 +330,9 @@ func (s *Session) applyLocked(v Verdict) (interrupt func()) {
 	}
 	var steers Verdict
 	for _, f := range v.Act {
+		if at, ok := s.settled[f.ID]; ok && s.requests-at < steerGap {
+			continue // another path already told the model (Settle)
+		}
 		if f.Severity == Nit {
 			if !slices.Contains(s.nits, advice[f.ID]) {
 				s.nits = append(s.nits, advice[f.ID])
@@ -374,6 +378,43 @@ func (s *Session) Ballot(ctx context.Context) (v Verdict, acting bool) {
 	v = Judge(ans)
 	s.o.Logf("watchdog (completion): " + v.String())
 	return v, mode == config.ModeOn
+}
+
+// Settle says a finding was acted on another way (the completion gate's
+// veto names unverified success): watchdog reminders about it that are
+// pending lose its advice, and ballots in the next steerGap requests do
+// not repeat it. Nil-safe.
+func (s *Session) Settle(id string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settled == nil {
+		s.settled = map[string]int{}
+	}
+	s.settled[id] = s.requests
+	line := "Watchdog: " + advice[id]
+	for b, rs := range s.pending {
+		kept := rs[:0]
+		for _, r := range rs {
+			if r.Source == watchdogSource {
+				var lines []string
+				for _, l := range strings.Split(r.Text, "\n") {
+					if l != line {
+						lines = append(lines, l)
+					}
+				}
+				if len(lines) == 0 {
+					continue
+				}
+				r.Text = strings.Join(lines, "\n")
+			}
+			kept = append(kept, r)
+		}
+		s.pending[b] = kept
+	}
+	s.nits = slices.DeleteFunc(s.nits, func(n string) bool { return n == advice[id] })
 }
 
 // Wait blocks until a background ballot finishes (tests). Nil-safe.

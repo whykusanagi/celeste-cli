@@ -23,12 +23,18 @@ const gateVetoPrompt = "The watchdog found no tool result that backs your claim 
 // claims_unverified_success; it vetoes at most once per run. In shadow
 // mode (the default) the substring check decides, as before, and a
 // disagreement is logged. It returns whether the run may complete, and
-// whether the gate vetoed (it has then appended the continue prompt).
+// whether the gate vetoed (it has then appended the continue prompt). A
+// run with verification commands is left to the runtime's check: no
+// ballot veto.
 func (r *Runner) completion(ctx context.Context, state *RunState, final string, s *steer.Session) (complete, vetoed bool) {
 	old := isCompletionResponse(state.LastAssistantResponse, state.Options)
 	anchored := markerOnLine(final, state.Options)
 	gate := anchored
-	if anchored && state.GateVetoes == 0 {
+	// With verification commands the runtime checks the work after the
+	// marker (as the task-complete-before-verify rule stands down): no
+	// ballot veto on top.
+	verifies := state.Options.RequireVerification && len(state.Options.VerificationCommands) > 0
+	if anchored && state.GateVetoes == 0 && !verifies {
 		if v, acting := s.Ballot(ctx); acting && v.Has(steer.QUnverified) {
 			gate, vetoed = false, true
 		}
@@ -40,6 +46,9 @@ func (r *Runner) completion(ctx context.Context, state *RunState, final string, 
 		return old, false
 	}
 	if vetoed {
+		// The veto prompt says it: a watchdog concern about the same
+		// finding is not given as well.
+		s.Settle(steer.QUnverified)
 		state.GateVetoes++
 		state.Messages = append(state.Messages, tui.ChatMessage{
 			Role: "user", Content: fmt.Sprintf(gateVetoPrompt, state.Options.CompletionMarker), Timestamp: time.Now(),
