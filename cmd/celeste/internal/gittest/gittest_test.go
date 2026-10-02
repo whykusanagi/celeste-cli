@@ -76,3 +76,40 @@ func TestIsolateDropsInheritedGitVariables(t *testing.T) {
 		t.Fatal("Isolate did not set the test identity")
 	}
 }
+
+// TestIsolateDropsInheritedConfig covers git run by the code under test,
+// which inherits the process environment: configuration a parent injected
+// (git -c exports GIT_CONFIG_PARAMETERS) must not reach it, and commit
+// signing stays off.
+func TestIsolateDropsInheritedConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'core.bare'='true'")
+	t.Setenv("GIT_CONFIG", "/nonexistent")
+	Isolate()
+	for _, k := range []string{"GIT_CONFIG_PARAMETERS", "GIT_CONFIG"} {
+		if _, ok := os.LookupEnv(k); ok {
+			t.Fatalf("%s still set", k)
+		}
+	}
+
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		cmd := exec.Command("git", args...) // inherits the process env, like the code under test
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	if got := git("config", "--get", "core.bare"); got != "false" {
+		t.Fatalf("core.bare = %q; an inherited -c reached git", got)
+	}
+	if got := git("config", "--get", "commit.gpgsign"); got != "false" {
+		t.Fatalf("commit.gpgsign = %q", got)
+	}
+	git("commit", "-q", "--allow-empty", "-m", "one")
+}
