@@ -186,6 +186,16 @@ var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@:]*:[^\s
 // keyValuePattern redacts the value after any key whose name suggests a secret.
 var keyValuePattern = regexp.MustCompile(`(?i)\b([A-Za-z0-9_-]*(api[_-]?key|secret|token|passw(or)?d|pwd|credential|auth|private[_-]?key|access[_-]?key)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*["']?)[^\s"',}]{6,}`)
 
+// credentialTokens names the plural token keys that hold credentials
+// (refresh_tokens, oauthTokens), not counts.
+var credentialTokens = regexp.MustCompile(`(?i)(refresh|access|auth|bearer|session|api|secret|csrf|xsrf|jwt)[_-]?tokens`)
+
+// tokenCountKey reports a key that counts LLM tokens (InputTokens,
+// max_tokens): "tokens" in its name and nothing that says credential.
+func tokenCountKey(key string) bool {
+	return strings.Contains(strings.ToLower(key), "tokens") && !credentialTokens.MatchString(key)
+}
+
 // Redact replaces likely secrets with [REDACTED]. It errs toward redacting:
 // a lost word costs Jev a little accuracy, a leaked key costs much more.
 func Redact(s string) string {
@@ -197,7 +207,7 @@ func Redact(s string) string {
 	s = urlUserinfo.ReplaceAllString(s, "${1}[REDACTED]@")
 	return keyValuePattern.ReplaceAllStringFunc(s, func(m string) string {
 		g := keyValuePattern.FindStringSubmatch(m)
-		if strings.Contains(strings.ToLower(g[1]), "tokens") {
+		if tokenCountKey(g[1]) {
 			return m // a token count (InputTokens, avgTokens), not a credential
 		}
 		return g[1] + g[4] + "[REDACTED]"
