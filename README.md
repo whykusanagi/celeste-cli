@@ -1090,7 +1090,19 @@ celeste session --load abc123def
 celeste session --clear
 ```
 
-Sessions are auto-saved to `~/.celeste/sessions/` and can be resumed later.
+Sessions are auto-saved to `~/.celeste/sessions/` and can be resumed later. Each records the directory it ran in: `celeste resume` (and `/session list` in the chat) lists the current project's sessions first, marked `(this project)`; `celeste resume <id or name>` opens one.
+
+In the chat:
+
+```
+/rewind [n]   Take back the last n prompts (default 1), restore the files
+              those turns changed, and put the prompt back in the input box
+/fork         Continue in a copy of this session; the original is kept
+/undo         Undo the last file change (repeat to go back)
+/diff         List the files this session changed
+```
+
+`/rewind` cannot go back past a `/compact` summary, and does not restore files changed by shell commands.
 
 ### Skills Management
 
