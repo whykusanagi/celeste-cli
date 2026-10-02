@@ -14,18 +14,17 @@ import (
 	"time"
 )
 
-// The Windows tree kill (taskkill /T) is not tested here: a cmd /c start /b
-// grandchild's lifetime is not observable reliably on CI runners.
-
-func TestPrepareKillsTheWholeGroupOnCancel(t *testing.T) {
+func TestStartKillsTheWholeGroupOnCancel(t *testing.T) {
 	dir := t.TempDir()
 	pidfile := filepath.Join(dir, "pid")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", "sleep 30 & echo $! > pid; wait")
 	cmd.Dir = dir
-	Prepare(cmd)
-	_ = cmd.Run()
+	if err := Start(cmd); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
 
 	b, err := os.ReadFile(pidfile)
 	if err != nil {
@@ -41,11 +40,5 @@ func TestPrepareKillsTheWholeGroupOnCancel(t *testing.T) {
 	}
 	if err := syscall.Kill(pid, 0); err != syscall.ESRCH {
 		t.Fatalf("grandchild %d still exists (kill 0: %v)", pid, err)
-	}
-}
-
-func TestKillBeforeStartIsANoop(t *testing.T) {
-	if err := Kill(exec.Command("true")); err != nil {
-		t.Fatal(err)
 	}
 }
