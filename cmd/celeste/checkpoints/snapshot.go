@@ -14,7 +14,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // Entry is one checkpoint: Path as it was before a tool changed it.
@@ -719,47 +719,8 @@ func backUp(src, dst string, before os.FileInfo) error {
 	return nil
 }
 
-// samePath reports whether a and b name the same file: equal once
-// absolute and clean, once symlinks are resolved (macOS temp and home
-// directories are often symlinked), or, when both exist, by file identity.
-func samePath(a, b string) bool {
-	a, b = absClean(a), absClean(b)
-	if pathEqual(a, b) || pathEqual(realPath(a), realPath(b)) {
-		return true
-	}
-	// Both exist: the same file under two spellings (letter case on a
-	// case-insensitive macOS volume, a hard link).
-	ai, aerr := os.Stat(a)
-	bi, berr := os.Stat(b)
-	return aerr == nil && berr == nil && os.SameFile(ai, bi)
-}
-
-// pathEqual compares two clean paths; Windows paths are case-insensitive.
-func pathEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
-}
-
-func absClean(p string) string {
-	if abs, err := filepath.Abs(p); err == nil {
-		return abs
-	}
-	return filepath.Clean(p)
-}
-
-// realPath resolves symlinks in p, or in its directory when p itself is
-// gone (an undone creation).
-func realPath(p string) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
-	}
-	if d, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-		return filepath.Join(d, filepath.Base(p))
-	}
-	return p
-}
+// samePath reports whether a and b name the same file (pathutil.Same).
+func samePath(a, b string) bool { return pathutil.Same(a, b) }
 
 // maxBackupBase bounds the base-name part of a backup's name, so a long
 // file name (plus atomicfile's temporary suffix) stays under the 255-byte
