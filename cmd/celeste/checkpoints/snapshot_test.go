@@ -732,3 +732,20 @@ func TestRevertLastIfCheckRefuses(t *testing.T) {
 	assert.Equal(t, "v1", read(t, f))
 	assert.Len(t, sm.Entries(), 1)
 }
+
+// M3: only a permission error falls back to the in-place write; any other
+// reason a temporary file cannot be created (a full disk) is reported.
+func TestRestoreDoesNotWriteInPlaceOnOtherTempErrors(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "before")
+	require.NoError(t, snap(sm, f))
+	write(t, f, "after")
+	noSpace := errors.New("no space left on device")
+	old := atomicWrite
+	atomicWrite = func(string, []byte, os.FileMode) error { return &atomicfile.TempError{Err: noSpace} }
+	t.Cleanup(func() { atomicWrite = old })
+	_, err := sm.RevertLast()
+	assert.ErrorIs(t, err, noSpace)
+	assert.Equal(t, "after", read(t, f))
+}

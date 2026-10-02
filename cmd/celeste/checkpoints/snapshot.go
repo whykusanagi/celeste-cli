@@ -596,10 +596,11 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	// extended attributes or ACLs.
 	err = atomicWrite(e.Path, data, perm)
 	var noTemp *atomicfile.TempError
-	if errors.As(err, &noTemp) {
+	if errors.As(err, &noTemp) && errors.Is(noTemp.Err, os.ErrPermission) {
 		// The directory is not writable but the file may be (the write
 		// tools change files in place): restore in place. Not atomic — a
 		// failure halfway leaves the file truncated — but the only way.
+		// Any other reason (a full disk) is reported as it is.
 		if _, serr := os.Stat(e.Path); serr == nil {
 			err = writeInPlace(e.Path, data)
 		}
