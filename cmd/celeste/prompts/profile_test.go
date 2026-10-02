@@ -285,3 +285,20 @@ func TestLegacyEssenceIsIgnoredWithAWarning(t *testing.T) {
 		t.Fatalf("want one legacy warning, got %d:\n%s", n, logs.String())
 	}
 }
+
+// HasPersonaKey makes a local build that carries the key Keyed, so it never
+// replaces itself with a downloaded release (W5 ruling 25, audit #8 W3).
+// It reports only whether a key was injected, not whether it decrypts.
+func TestHasPersonaKey(t *testing.T) {
+	prev := personaKey
+	t.Cleanup(func() { personaKey = prev })
+	for _, tc := range []struct {
+		key  string
+		want bool
+	}{{"", false}, {" \n", false}, {"not hex", true}, {strings.Repeat("ab", 32) + "\n", true}} {
+		personaKey = tc.key
+		if got := HasPersonaKey(); got != tc.want {
+			t.Errorf("HasPersonaKey with %d-byte key = %v, want %v", len(tc.key), got, tc.want)
+		}
+	}
+}
