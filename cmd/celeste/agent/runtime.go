@@ -108,7 +108,17 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 
 	// Next rung: summarize when pruning wasn't enough, or when a forced
 	// compaction (after an overflow) found nothing to prune.
-	stillOver := compact.Estimate(msgs)+overhead > compact.Threshold(r.budget.ModelLimit)
+	threshold := compact.Threshold(r.budget.ModelLimit)
+	next := compact.Estimate(msgs) + overhead
+	stillOver := next > threshold
+	if unseen := meter.Unseen(msgs); stillOver && !force && unseen > 0 && unseen <= len(msgs) &&
+		compact.Estimate(msgs[:len(msgs)-unseen])+overhead <= threshold && next <= r.budget.ModelLimit {
+		// What keeps the history over is what the model has not seen yet:
+		// the prune left it alone and a summary cannot split a batch. Wait
+		// for the next call, after the model has seen it, unless the
+		// request would not fit the window at all (#234).
+		stillOver = false
+	}
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)

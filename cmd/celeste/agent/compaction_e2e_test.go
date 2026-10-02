@@ -393,3 +393,54 @@ func TestAgentSummaryRungSeesTheProviderSurplus(t *testing.T) {
 		t.Fatal("the summary rung ignored the provider's surplus")
 	}
 }
+
+// A large batch the model has not seen yet keeps the history over the
+// threshold, but the prune must leave it alone and a summary cannot split
+// it: the summary rung waits for the next call, after the model has seen
+// the batch, unless the request would not fit the window at all (#234).
+func TestAgentSkipsTheSummaryWhileAnUnseenBatchFits(t *testing.T) {
+	runner, _ := newCompactionRunner(t, &windowBackend{}, 40_000)
+	var summaries int
+	runner.summarize = func(context.Context, string, string) (string, error) {
+		summaries++
+		return "## Goal\nread every file", nil
+	}
+	read := func(msgs []tui.ChatMessage, id string, chars int) []tui.ChatMessage {
+		return append(msgs,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"%s.go"}`, id)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", chars)})
+	}
+	seen := []tui.ChatMessage{{Role: "user", Content: "read every file"}}
+	for i := 0; i < 3; i++ {
+		seen = read(seen, fmt.Sprintf("s%d", i), 800)
+	}
+	batch := func(chars int) []tui.ChatMessage {
+		msgs := append([]tui.ChatMessage{}, seen...)
+		calls := tui.ChatMessage{Role: "assistant"}
+		var results []tui.ChatMessage
+		for i := 0; i < 22; i++ {
+			id := fmt.Sprintf("b%02d", i)
+			calls.ToolCalls = append(calls.ToolCalls, tui.ToolCallInfo{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"%s.go"}`, id)})
+			results = append(results, tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("y", chars)})
+		}
+		return append(append(msgs, calls), results...)
+	}
+
+	// ~33k: over the 30k threshold, inside the 40k window.
+	msgs := batch(6_000)
+	c := &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	c.meter.Sending(seen)
+	c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(seen)}, false)
+	if summaries != 0 {
+		t.Fatalf("summarized %d times while the unseen batch still fits the window", summaries)
+	}
+
+	// Past the window itself: the request cannot be sent, so summarize.
+	msgs = batch(8_000)
+	c = &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	c.meter.Sending(seen)
+	c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(seen)}, false)
+	if summaries == 0 {
+		t.Fatal("no summary although the request exceeds the window")
+	}
+}
