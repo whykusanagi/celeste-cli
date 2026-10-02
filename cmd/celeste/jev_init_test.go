@@ -55,3 +55,36 @@ func TestInitJevNeedsAKey(t *testing.T) {
 		t.Errorf("TYPESAFE_API_KEY must win: %q", b)
 	}
 }
+
+// The key is replaced atomically: a read-only key file left by the user
+// (chmod 400) is replaced, not written into, and the result is 0600.
+func TestInitJevReplacesAReadOnlyKeyFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through a read-only mode")
+	}
+	t.Setenv("TYPESAFE_API_KEY", "new-key")
+	home := t.TempDir()
+	path := filepath.Join(home, ".celeste", "typesafe.key")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := initJev(&config.Config{}, home, strings.NewReader(""), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || strings.TrimSpace(string(b)) != "new-key" {
+		t.Fatalf("key file = %q, %v", b, err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode = %v, want 0600", fi.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("leftover files next to the key: %v", entries)
+	}
+}
