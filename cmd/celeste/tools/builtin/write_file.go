@@ -87,7 +87,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	// its backslash sequences: they are string literals and regexes (#165).
 	content, decoded := decodeDoubleEscaped(content)
 
-	targetPath, err := resolvePath(t.workspace, path, true)
+	targetPath, realPath, err := resolvePathReal(t.workspace, path, true)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
@@ -96,11 +96,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
 
-	// Check for stale reads before writing
-	if t.tracker != nil {
-		if err := t.tracker.CheckStale(targetPath); err != nil {
-			return tools.ToolResult{Error: true, Content: err.Error()}, nil
-		}
+	// Must-read-before-edit: overwriting or appending to an existing file
+	// needs a read in this session (appending blind duplicates content).
+	if msg := checkRead(t.tracker, targetPath, path); msg != "" {
+		return tools.ToolResult{Error: true, Content: msg}, nil
 	}
 
 	// Undo created directories (and a partial new file) on every return
@@ -137,6 +136,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	var bytesWritten int
 	if appendMode {
+		// Append is not atomic by nature: it keeps O_APPEND (ruling 5).
 		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return fail(err.Error())
@@ -151,7 +151,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		bytesWritten = n
 	} else {
-		if err := writeFileFunc(targetPath, []byte(content), 0644); err != nil {
+		if err := writeFileFunc(realPath, []byte(content), 0644); err != nil {
 			return fail(err.Error())
 		}
 		bytesWritten = len(content)
