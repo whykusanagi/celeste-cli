@@ -199,7 +199,7 @@ func TestAnthropicRequestPairsPromptWithStripDecision(t *testing.T) {
 	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
 	b.SetSystemPrompt("one")
 	b.SetSystemPrompt("two") // e.g. lands after open() read promptChanged
-	_, raw := requestBody(t, b.buildParams(toolLoop(thinkingTurn(t, b.providerKey())), nil))
+	_, raw := requestBody(t, prepared(t, b, toolLoop(thinkingTurn(t, b.providerKey()))))
 	assert.Contains(t, raw, `"two"`)
 	assert.NotContains(t, raw, "sig-1", "blocks signed over the old prompt were sent with the new one")
 }

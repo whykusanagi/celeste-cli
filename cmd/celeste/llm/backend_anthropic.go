@@ -216,12 +216,6 @@ func (b *AnthropicBackend) prepare(messages []tui.ChatMessage, tools []tui.Skill
 	}
 }
 
-// buildParams constructs the MessageNewParams shared by sync and streaming
-// requests.
-func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.SkillDefinition) anthropic.MessageNewParams {
-	return b.build(messages, tools).params
-}
-
 // build holds mu throughout, so one request sees one prompt, one thinking
 // config (max_tokens and the thinking budget must agree) and the strip
 // decision for that prompt: after a prompt change, replayed blocks signed
