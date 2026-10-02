@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
@@ -354,6 +355,45 @@ func SaveSkillsConfig(skillsConfig *Config) error {
 	}
 
 	return os.WriteFile(skillsFile, data, 0600) // Restrictive permissions for secrets
+}
+
+// Environment overrides. Precedence is flag > environment > config file.
+// They apply to this run only: ApplyEnvOverrides is called by the entry
+// points that run a session (chat, message, agent, serve), never by the
+// loads that are saved back, so a variable's value is never written to disk.
+const (
+	EnvAPIKey      = "CELESTE_API_KEY"
+	EnvAPIEndpoint = "CELESTE_API_ENDPOINT"
+	EnvTarotToken  = "TAROT_AUTH_TOKEN"
+)
+
+// ApplyEnvOverrides lets CELESTE_API_KEY, CELESTE_API_ENDPOINT and
+// TAROT_AUTH_TOKEN replace the loaded api_key, base_url and
+// tarot_auth_token. An unset or blank variable changes nothing.
+func ApplyEnvOverrides(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvAPIKey)); v != "" {
+		cfg.APIKey = v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvAPIEndpoint)); v != "" {
+		cfg.BaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvTarotToken)); v != "" {
+		cfg.TarotAuthToken = v
+	}
+}
+
+// LoadNamedWithEnv is LoadNamed plus the environment overrides, for the
+// entry points that run a session.
+func LoadNamedWithEnv(name string) (*Config, error) {
+	cfg, err := LoadNamed(name)
+	if err != nil {
+		return nil, err
+	}
+	ApplyEnvOverrides(cfg)
+	return cfg, nil
 }
 
 // LoadNamed loads configuration from a named config file.

@@ -90,7 +90,7 @@ func runAgentCommand(args []string) {
 		return
 	}
 
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)

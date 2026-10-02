@@ -193,7 +193,7 @@ func runChatTUI() {
 	config.MigrateConfigDir()
 
 	// Load configuration (named or default)
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1237,7 +1237,7 @@ func runSkillExecuteCommand(args []string) {
 	}
 
 	// Set up registry and executor
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1453,7 +1453,7 @@ func runCollectionsCommand(args []string) {
 
 // runSingleMessage sends a single message and prints the response.
 func runSingleMessage(message string) {
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
@@ -1787,7 +1787,7 @@ func runServeCommand(args []string) {
 	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
 	_ = serveFlags.Parse(args)
 
-	cfg, err := config.LoadNamed(configName)
+	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
