@@ -52,3 +52,13 @@ func AnimatedGIF(t testing.TB) []byte {
 // WebP is a minimal RIFF/WEBP header followed by filler. imagefit never
 // decodes WebP, so only the header and the length matter.
 func WebP() []byte { return append([]byte("RIFF\x00\x00\x00\x00WEBPVP8 "), make([]byte, 64)...) }
+
+// WebPSized is a WebP whose extended (VP8X) header says w×h; imagefit reads
+// only the header.
+func WebPSized(w, h int) []byte {
+	b := []byte("RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x00\x00\x00\x00")
+	for _, v := range []int{w - 1, h - 1} {
+		b = append(b, byte(v), byte(v>>8), byte(v>>16))
+	}
+	return append(b, make([]byte, 32)...)
+}

@@ -6,7 +6,8 @@ import (
 	"errors"
 	"hash/crc32"
 	"image"
-	_ "image/gif"
+	"image/color/palette"
+	"image/gif"
 	_ "image/jpeg"
 	"image/png"
 	"strings"
@@ -138,4 +139,55 @@ func TestFitTreatsWebPBytesAsWebPWhateverTheName(t *testing.T) {
 	_, err := Fit(imagefittest.WebP(), "png", XAI)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "PNG or JPEG")
+}
+
+func TestFitChecksWebPDimensionsFromItsHeader(t *testing.T) {
+	small := imagefittest.WebPSized(1500, 900)
+	res, err := Fit(small, "webp", Anthropic.WithMaxDim(2000))
+	require.NoError(t, err)
+	assert.Equal(t, small, res.Data)
+	assert.Equal(t, 1500, res.Width)
+
+	_, err = Fit(imagefittest.WebPSized(2400, 900), "webp", Anthropic.WithMaxDim(2000))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2400×900")
+	assert.Contains(t, err.Error(), "PNG or JPEG")
+}
+
+func TestWebPSizeReadsAllThreeHeaders(t *testing.T) {
+	w, h, ok := webpSize(imagefittest.WebPSized(300, 200))
+	assert.True(t, ok)
+	assert.Equal(t, [2]int{300, 200}, [2]int{w, h})
+	// Lossy VP8: frame tag, start code 9d 01 2a, 14-bit width and height.
+	lossy := []byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00\x00\x00\x00\x9d\x01\x2a\x2c\x01\xc8\x00")
+	w, h, ok = webpSize(lossy)
+	assert.True(t, ok)
+	assert.Equal(t, [2]int{300, 200}, [2]int{w, h})
+	// Lossless VP8L: signature 0x2f, then width-1 and height-1 in 14 bits each.
+	v := uint32(299) | uint32(199)<<14
+	lossless := append([]byte("RIFF\x00\x00\x00\x00WEBPVP8L\x00\x00\x00\x00\x2f"), byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+	w, h, ok = webpSize(lossless)
+	assert.True(t, ok)
+	assert.Equal(t, [2]int{300, 200}, [2]int{w, h})
+	_, _, ok = webpSize(imagefittest.WebP())
+	assert.False(t, ok, "a header it can't read leaves the size unknown")
+}
+
+func TestFitStillGIFHasNoFirstFrameNote(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, gif.Encode(&buf, image.NewPaletted(image.Rect(0, 0, 8, 8), palette.Plan9), nil))
+	res, err := Fit(buf.Bytes(), "gif", XAI)
+	require.NoError(t, err)
+	assert.Equal(t, "png", res.Format)
+	assert.Empty(t, res.Note)
+}
+
+func TestHeaderReadersSurviveTruncation(t *testing.T) {
+	for _, data := range [][]byte{imagefittest.AnimatedGIF(t), imagefittest.WebPSized(10, 10)} {
+		for n := range len(data) {
+			gifAnimated(data[:n])
+			webpSize(data[:n])
+		}
+	}
+	assert.True(t, gifAnimated(imagefittest.AnimatedGIF(t)))
 }

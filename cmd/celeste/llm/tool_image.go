@@ -48,7 +48,7 @@ func (i toolImage) DataURL() string { return fmt.Sprintf("data:%s;base64,%s", i.
 // fitToolImage returns the tool result's image fitted to lim (#239). ok is
 // false when md carries no image. A non-empty note means the image can't be
 // sent to this provider: send the note as text in its place, never the
-// image.
+// image (img then carries only its Name).
 func fitToolImage(md map[string]any, lim imagefit.Limits) (img toolImage, note string, ok bool) {
 	img, ok = toolImageOf(md)
 	if !ok {
@@ -56,7 +56,7 @@ func fitToolImage(md map[string]any, lim imagefit.Limits) (img toolImage, note s
 	}
 	fit, note := fitCached(img, lim)
 	if note != "" {
-		return toolImage{}, note, true
+		return toolImage{Name: img.Name}, note, true
 	}
 	return fit, "", true
 }

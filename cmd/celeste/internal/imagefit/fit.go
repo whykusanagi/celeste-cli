@@ -2,6 +2,7 @@ package imagefit
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -71,12 +72,16 @@ func Fit(data []byte, format string, lim Limits) (Result, error) {
 	}
 	cfg, detected, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		if format == "webp" { // ruling 3: never decoded
-			if lim.Accepts("webp") && B64Len(len(data)) <= lim.MaxB64 {
-				return Result{Data: data, Format: format}, nil
+		if format == "webp" { // ruling 3: never decoded, only its header read
+			w, h, sized := webpSize(data)
+			if lim.Accepts("webp") && B64Len(len(data)) <= lim.MaxB64 && (!sized || within(w, h, lim.MaxDim)) {
+				return Result{Data: data, Format: format, Width: w, Height: h}, nil
 			}
-			return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format,
-				Reason: "WebP can't be converted here; convert it to PNG or JPEG"}
+			reason := "WebP can't be converted here; convert it to PNG or JPEG"
+			if sized && !within(w, h, lim.MaxDim) {
+				reason = fmt.Sprintf("%d×%d is over %d px and WebP can't be resized here; convert it to PNG or JPEG", w, h, lim.MaxDim)
+			}
+			return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: reason}
 		}
 		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: "not a readable image: " + err.Error()}
 	}
@@ -139,23 +144,104 @@ func scaled(w, h, maxDim int) (int, int) {
 	return max(1, w*maxDim/h), maxDim
 }
 
+// decodeFirst decodes the image, and only the first frame of a GIF: the
+// other frames are counted from the block structure, never decoded.
 func decodeFirst(data []byte, format string) (image.Image, string, error) {
 	if format == "gif" {
-		g, err := gif.DecodeAll(bytes.NewReader(data))
+		img, err := gif.Decode(bytes.NewReader(data))
 		if err != nil {
 			return nil, "", err
 		}
-		if len(g.Image) == 0 {
-			return nil, "", fmt.Errorf("gif has no frames")
-		}
 		note := ""
-		if len(g.Image) > 1 {
+		if gifAnimated(data) {
 			note = "first frame of an animated GIF"
 		}
-		return g.Image[0], note, nil
+		return img, note, nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, "", err
+}
+
+// gifAnimated reports whether a GIF has more than one image descriptor,
+// walking its blocks without decoding them. A malformed file reads as
+// not animated.
+func gifAnimated(data []byte) bool {
+	if len(data) < 13 {
+		return false
+	}
+	i := 13
+	if data[10]&0x80 != 0 { // global color table
+		i += 3 << (data[10]&7 + 1)
+	}
+	skipSubBlocks := func() bool {
+		for i < len(data) {
+			n := int(data[i])
+			i++
+			if n == 0 {
+				return true
+			}
+			i += n
+		}
+		return false
+	}
+	frames := 0
+	for i < len(data) {
+		switch data[i] {
+		case 0x21: // extension: label, then sub-blocks
+			i += 2
+			if !skipSubBlocks() {
+				return false
+			}
+		case 0x2c: // image descriptor
+			frames++
+			if frames > 1 {
+				return true
+			}
+			if i+10 > len(data) {
+				return false
+			}
+			flags := data[i+9]
+			i += 10
+			if flags&0x80 != 0 { // local color table
+				i += 3 << (flags&7 + 1)
+			}
+			i++ // LZW minimum code size
+			if !skipSubBlocks() {
+				return false
+			}
+		default: // 0x3b trailer, or garbage
+			return false
+		}
+	}
+	return false
+}
+
+// webpSize reads a WebP's dimensions from its first chunk header (VP8X,
+// VP8 or VP8L); ok is false when the header is not one it knows.
+func webpSize(data []byte) (w, h int, ok bool) {
+	if !isWebP(data) || len(data) < 25 {
+		return 0, 0, false
+	}
+	le24 := func(b []byte) int { return int(b[0]) | int(b[1])<<8 | int(b[2])<<16 }
+	switch string(data[12:16]) {
+	case "VP8X":
+		if len(data) < 30 {
+			return 0, 0, false
+		}
+		return le24(data[24:]) + 1, le24(data[27:]) + 1, true
+	case "VP8 ":
+		if len(data) < 30 || data[23] != 0x9d || data[24] != 0x01 || data[25] != 0x2a {
+			return 0, 0, false
+		}
+		return int(binary.LittleEndian.Uint16(data[26:])) & 0x3fff, int(binary.LittleEndian.Uint16(data[28:])) & 0x3fff, true
+	case "VP8L":
+		if data[20] != 0x2f {
+			return 0, 0, false
+		}
+		v := binary.LittleEndian.Uint32(data[21:])
+		return int(v&0x3fff) + 1, int(v>>14&0x3fff) + 1, true
+	}
+	return 0, 0, false
 }
 
 func encode(img image.Image, format string) ([]byte, error) {

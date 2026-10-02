@@ -95,6 +95,7 @@ func TestXAISwapsWebPForNote(t *testing.T) {
 	img, note, ok := fitToolImage(imageLoop("webp", imagefittest.WebP())[2].Metadata, imagefit.XAI)
 	require.True(t, ok)
 	assert.Empty(t, img.B64)
+	assert.Equal(t, "x.webp", img.Name)
 	assert.True(t, strings.HasPrefix(note, "[image x.webp omitted: xAI allows"), note)
 }
 
@@ -145,4 +146,26 @@ func TestOpenAILimitsFollowTheEndpoint(t *testing.T) {
 	assert.Equal(t, imagefit.OpenAI, openAIImageLimits(""), "no base URL is api.openai.com")
 	assert.Equal(t, imagefit.XAI, openAIImageLimits("https://api.x.ai/v1"))
 	assert.Equal(t, imagefit.Universal, openAIImageLimits("http://localhost:11434/v1"))
+}
+
+func TestResponsesImagePartKeepsTheNameOnANote(t *testing.T) {
+	part, name, ok := imagePart(imageLoop("webp", imagefittest.WebP())[2].Metadata, imagefit.XAI)
+	require.True(t, ok)
+	assert.Equal(t, "input_text", part.Type)
+	assert.Equal(t, "x.webp", name)
+}
+
+// A WebP over Anthropic's many-image cap is swapped for a note, since it
+// can't be resized; under 20 images it goes as is.
+func TestAnthropicManyImagesRefusesAWideWebP(t *testing.T) {
+	var msgs []tui.ChatMessage
+	for range 20 {
+		msgs = append(msgs, imageLoop("png", imagefittest.NoisyPNG(t, 8, 8))...)
+	}
+	msgs = append(msgs, imageLoop("webp", imagefittest.WebPSized(2400, 100))...)
+	srv := fakeprovider.NewAnthropic(t, fakeprovider.Turn{Text: "ok"})
+	_, b := newAnthropicTestClient(t, srv, "claude-opus-5-5")
+	_, err := b.SendMessageSync(context.Background(), msgs, nil)
+	require.NoError(t, err)
+	assert.Contains(t, string(srv.Requests()[0].Raw), "[image x.webp omitted: Anthropic allows")
 }
