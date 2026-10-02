@@ -18,6 +18,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -546,7 +547,7 @@ func registerCelesteStatusTool(s *Server) {
 		}
 
 		if cfg != nil {
-			status["provider"] = cfg.BaseURL
+			status["provider"] = providers.CleanBaseURL(cfg.BaseURL)
 			status["model"] = cfg.Model
 		}
 

@@ -837,7 +837,7 @@ A blank variable is ignored. `VENICE_API_KEY` is only a fallback for the
 
 `simulate_typing` (default `true`) types replies out with the corruption
 animation; `false` shows each reply at once. `typing_speed` is characters per
-second, 1-1000 (default 60, about 3 characters per animation tick). A saved `typing_speed` of 40 or 25 (old celeste defaults that were never read) is removed at startup so those configs keep the default pace.
+second, 1-1000 (default 60, about 3 characters per animation tick). The animation moves at least one character per 50ms tick, so speeds below 20 behave as 20. A saved `typing_speed` of 40 or 25 (old celeste defaults that were never read) is removed at startup so those configs keep the default pace.
 
 ### Config Commands
 

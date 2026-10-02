@@ -294,7 +294,7 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 	// Restore endpoint/provider from session, or detect from config
 	sessionEndpoint := s.GetEndpoint()
 	tui.LogInfo(fmt.Sprintf("Session endpoint from file: '%s'", sessionEndpoint))
-	tui.LogInfo(fmt.Sprintf("Config BaseURL: '%s'", cfg.BaseURL))
+	tui.LogInfo(fmt.Sprintf("Config BaseURL: '%s'", providers.CleanBaseURL(cfg.BaseURL)))
 
 	if sessionEndpoint != "" && sessionEndpoint != "default" {
 		// Use endpoint from session if it's valid

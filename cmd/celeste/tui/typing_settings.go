@@ -15,6 +15,9 @@ const (
 // ValidTypingSpeed reports whether n is an acceptable typing_speed.
 func ValidTypingSpeed(n int) bool { return n >= 1 && n <= MaxTypingSpeed }
 
+// The slowest the animation goes is one character per tick, i.e. 20 chars/sec:
+// a typing_speed below 20 behaves as 20 (documented in the README).
+//
 // charsPerTickFor converts a typing_speed to characters per tick; an unset
 // or invalid speed gets the default, and the slowest speed still advances.
 func charsPerTickFor(speed int) int {
