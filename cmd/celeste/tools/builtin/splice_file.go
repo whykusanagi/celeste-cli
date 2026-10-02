@@ -114,9 +114,14 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	if t.tracker != nil {
-		if err := t.tracker.CheckStale(sourcePath); err != nil {
-			return errResult(err.Error()), nil
+	// Must-read-before-edit: the source, and the destination when it
+	// exists (a new destination needs no read).
+	if msg := checkRead(t.tracker, sourcePath, sourceRel); msg != "" {
+		return errResult(msg), nil
+	}
+	if !sameFile {
+		if msg := checkRead(t.tracker, destPath, destRel); msg != "" {
+			return errResult(msg), nil
 		}
 	}
 
@@ -194,14 +199,14 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 
 	// Write. For a same-file move, dest already reflects the removal.
-	if err := writeFileFunc(destPath, []byte(newDest), 0644); err != nil {
+	if err := writeFileFunc(destReal, []byte(newDest), 0644); err != nil {
 		return fail(fmt.Sprintf("write dest: %s", err))
 	}
 	if err := destGuard.verify(); err != nil {
 		return fail(fmt.Sprintf("dest path error: %s", err))
 	}
 	if op == "move" && !sameFile {
-		if err := writeFileFunc(sourcePath, []byte(sourceAfter), 0644); err != nil {
+		if err := writeFileFunc(sourceReal, []byte(sourceAfter), 0644); err != nil {
 			return fail(fmt.Sprintf("write source: %s", err))
 		}
 	}

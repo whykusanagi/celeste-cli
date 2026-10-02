@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // resolvePath checks that the resolved absolute path stays within the workspace.
@@ -17,11 +19,11 @@ func resolvePath(workspace, input string, forWrite bool) (string, error) {
 	return path, err
 }
 
-// resolvePathReal is resolvePath that also returns real, the
-// symlink-resolved path it checked. Readers open real through
-// readFileNoFollow, so a symlink swapped in after the check fails instead
-// of escaping the workspace (ruling 4).
-func resolvePathReal(workspace, input string, forWrite bool) (path, real string, err error) {
+// resolvePathReal is resolvePath that also returns realPath, the
+// symlink-resolved path it checked. Readers open realPath through
+// readFileNoFollow and the write tools write to it (2.0 W4), so a symlink
+// swapped in after the check fails instead of escaping the workspace.
+func resolvePathReal(workspace, input string, forWrite bool) (path, realPath string, err error) {
 	workspace = filepath.Clean(workspace)
 	if input == "" {
 		input = "."
@@ -161,10 +163,73 @@ func fileSize(info os.FileInfo) int64 {
 	return info.Size()
 }
 
+// atomicWrite replaces path through a temp file in its directory and a
+// rename (2.0 W4 ruling 5): a reader never sees a half-written file, an
+// existing file keeps its mode, a new one gets perm under the umask. path
+// is the symlink-resolved path resolvePathReal checked; a symlink found
+// there now is replaced, not followed. A file with several hard links is
+// rewritten in place instead, as editors do: a rename would leave its
+// other names holding the old content.
+func atomicWrite(path string, data []byte, perm os.FileMode) error {
+	fi, lerr := os.Lstat(path)
+	if lerr == nil && hardLinked(path, fi) {
+		f, err := openInPlace(path)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(data)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		return err
+	}
+	if errors.Is(lerr, os.ErrNotExist) {
+		// Create a new file first, so its mode is perm under the umask as
+		// with os.WriteFile; the replace below then keeps that mode. A
+		// failed replace removes it again.
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		if err != nil {
+			return err
+		}
+		if err := f.Close(); err != nil {
+			_ = os.Remove(path)
+			return err
+		}
+		if err := atomicfile.ReplaceKeepMode(path, data, perm); err != nil {
+			_ = os.Remove(path)
+			return err
+		}
+		return nil
+	}
+	return atomicfile.ReplaceKeepMode(path, data, perm)
+}
+
 // writeFileFunc writes a whole file for write_file, patch_file and
 // splice_file. Tests replace it to make a write fail after its checkpoint
 // (2.0 F4); only serial tests may, restoring it with t.Cleanup.
-var writeFileFunc = os.WriteFile
+var writeFileFunc = atomicWrite
+
+// notReadMessage is the must-read refusal, naming the path as the model
+// wrote it (2.0 W4 ruling 6).
+func notReadMessage(path string) string {
+	return fmt.Sprintf("read_file %s first: celeste edits an existing file only after reading it in this session", path)
+}
+
+// checkRead applies the must-read-before-edit rule for target (the path
+// the model gave is shown); "" when the edit may go ahead.
+func checkRead(ft *checkpoints.FileTracker, target, shown string) string {
+	if ft == nil {
+		return ""
+	}
+	err := ft.CheckRead(target)
+	if errors.Is(err, checkpoints.ErrNotRead) {
+		return notReadMessage(shown)
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}
 
 // commit records, after a call's writes succeeded, the state each file
 // was left in (checkpoints.Entry.After), closing its checkpoints. A commit
