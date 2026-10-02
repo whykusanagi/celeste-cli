@@ -58,6 +58,10 @@ func Trusted(home string, secs []Section, approve hooks.ApproveFunc, warn func(s
 				warn(fmt.Sprintf("stream rules: %v; repo stream rules stay untrusted until it is fixed or removed", err))
 			}
 		}
+		if err := hooks.CheckRepoGrimoire(path); err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s (%v)", strconv.Quote(path), err))
+			continue
+		}
 		src := hooks.StreamRulesSource(path, strings.Join(bodies[path], "\n"))
 		status := store.Status(src)
 		switch {

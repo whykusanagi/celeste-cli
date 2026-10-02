@@ -1,7 +1,9 @@
 package rules
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -33,6 +35,7 @@ func TestRepoStreamRulesNeedTrust(t *testing.T) {
 	ws := t.TempDir()
 	sec := Section{Source: filepath.Join(ws, ".grimoire"), Body: repoRuleBody}
 	other := Section{Source: filepath.Join(ws, ".grimoire.local"), Body: "### local\n---\ncondition: q\n---\nNo q."}
+	touch(t, sec.Source, other.Source)
 
 	var warns []string
 	warn := func(s string) { warns = append(warns, s) }
@@ -80,6 +83,7 @@ func TestRepoStreamRulesNeedTrust(t *testing.T) {
 func TestRepoStreamRulesApprover(t *testing.T) {
 	home := trustHome(t)
 	sec := Section{Source: filepath.Join(t.TempDir(), ".grimoire"), Body: repoRuleBody}
+	touch(t, sec.Source)
 	calls := 0
 	no := func(hooks.Source, hooks.TrustStatus) bool { calls++; return false }
 	var warns []string
@@ -107,5 +111,44 @@ func TestGlobalGrimoireStreamRulesNeedNoTrust(t *testing.T) {
 	var warns []string
 	if got := Trusted(home, []Section{sec}, nil, func(s string) { warns = append(warns, s) }); len(got) != 1 || len(warns) != 0 {
 		t.Errorf("global grimoire: got=%v warns=%v", got, warns)
+	}
+}
+
+// A symlinked repo grimoire is refused before anyone is asked, exactly as
+// `celeste hooks trust` refuses it (review M4).
+func TestSymlinkedRepoGrimoireIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs Developer Mode or admin rights on Windows runners")
+	}
+	home := trustHome(t)
+	ws := t.TempDir()
+	real := filepath.Join(t.TempDir(), "elsewhere.md")
+	if err := os.WriteFile(real, []byte("## Stream Rules\n"+repoRuleBody+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(ws, ".grimoire")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	asked := 0
+	yes := func(hooks.Source, hooks.TrustStatus) bool { asked++; return true }
+	var warns []string
+	got := Trusted(home, []Section{{Source: link, Body: repoRuleBody}}, yes, func(s string) { warns = append(warns, s) })
+	if len(got) != 0 || asked != 0 {
+		t.Fatalf("symlinked grimoire: got=%v asked=%d", got, asked)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "symlinked") {
+		t.Errorf("warnings = %v", warns)
+	}
+}
+
+// touch creates the grimoire files a section names (the trust gate refuses
+// a file it cannot check).
+func touch(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		if err := os.WriteFile(p, []byte("## Stream Rules\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

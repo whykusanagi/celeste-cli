@@ -3,6 +3,8 @@ package hooks
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"os"
 	"strings"
 )
 
@@ -31,4 +33,19 @@ func StreamRulesSource(grimoirePath, body string) Source {
 		Rules: body,
 		Hash:  hex.EncodeToString(sum[:]),
 	}
+}
+
+// CheckRepoGrimoire refuses a repo grimoire file the way Discover (and so
+// `celeste hooks trust`) does: a symlinked file, or one reached through a
+// symlinked directory under its project root, is never trusted or asked
+// about.
+func CheckRepoGrimoire(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("refusing a symlinked repo hook file; copy the file instead")
+	}
+	return refuseSymlinkedRepoComponents(path, grimoireRoot(path))
 }
