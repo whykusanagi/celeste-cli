@@ -52,7 +52,7 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 			"type": {
 				"type": "string",
 				"enum": ["explore", "general", "review"],
-				"description": "Subagent type. explore: read-only tools, no persona, the small model; for finding and reading things. review: read and code-graph tools, no persona; for reviewing code. general (default): every tool and the persona; for doing the work. Every type finishes by calling submit_result with {summary, findings, files}, which comes back to you as JSON."
+				"description": "Subagent type. explore: read-only tools, the persona off (identity and voice boundary only), the small model; for finding and reading things. review: read and code-graph tools, the persona off; for reviewing code. general (default): every tool and the persona; for doing the work. Every type finishes by calling submit_result with {summary, findings, files}, which comes back to you as JSON."
 			},
 			"workspace": {
 				"type": "string",
@@ -145,7 +145,7 @@ func spawnType(input map[string]any) (Type, error) {
 	// An empty or null persona asks for no override, so only a non-empty
 	// one is refused.
 	if p, has := input["persona"]; has && p != nil && !isEmptyMap(p) && (typ == TypeExplore || typ == TypeReview) {
-		return "", fmt.Errorf("explore and review subagents run without the persona; drop 'persona' or use type general")
+		return "", fmt.Errorf("explore and review subagents run with the persona off, so they take no persona override; drop 'persona' or use type general")
 	}
 	return typ, nil
 }

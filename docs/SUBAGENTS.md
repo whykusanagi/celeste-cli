@@ -22,9 +22,12 @@ other value is an error that lists the three types.
 
 The type's tool set is applied to the subagent's own registry, so the model
 is never offered the other tools, and a call to one fails as an unknown
-tool. With the persona off, the system prompt has no persona, voice
-boundary, user identity or sliders; the agent contract and project context
-stay. A `persona` argument on an `explore` or `review` spawn is an error.
+tool. With the persona off, the system prompt keeps Celeste's identity line,
+the rule against claiming an action no tool performed, and the voice
+boundary, and leaves out the rest of the persona, the user identity and the
+sliders; the agent contract and project context stay. No type runs with no
+persona at all. A non-empty `persona` argument on an `explore` or `review`
+spawn is an error.
 
 ## Results
 

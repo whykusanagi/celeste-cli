@@ -8,6 +8,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -94,11 +95,10 @@ type Options struct {
 	// registry (Registry.Retain); a call to any other tool fails as unknown.
 	// The parent's registry is never touched. Typed subagents set it (2.0 W4e).
 	ToolFilter func(tools.Tool) bool `json:"-"`
-	// SkipPersona composes the system prompt without the persona core, voice
-	// boundary, user identity and sliders; the agent contract stays. The
-	// explore and review subagent types set it (the persona "off" profile
-	// until W5's profiles land).
-	SkipPersona bool `json:"-"`
+	// PersonaLevel is the system prompt's persona level: empty is the full
+	// persona; the explore and review subagent types set prompts.PersonaOff
+	// (identity, honesty rule and voice boundary). The agent contract stays.
+	PersonaLevel prompts.PersonaLevel `json:"-"`
 	// PromptFunc asks the user to approve a tool the permission policy
 	// resolves to Ask. The TUI's /agent sets it to its permission modal (#172);
 	// without it, Ask means deny.

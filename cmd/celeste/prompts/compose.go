@@ -27,13 +27,33 @@ const (
 const voiceBoundaryPrompt = `Voice Boundary:
 Your voice, personality and the voice modulation below apply only to prose you address to the user. Code, code comments, commit messages, file contents, and tool-call arguments are written plainly and professionally: no persona voice, emotes, pet names, or stylised spelling. Where a tool's instructions and a voice instruction conflict, the tool's instructions win.`
 
+// PersonaLevel picks how much of Celeste's persona a prompt carries. The
+// zero value is the full persona; PersonaOff is the only other level. No
+// level composes an empty persona section.
+type PersonaLevel string
+
+// PersonaOff is Celeste's "off" level, for the internal review and research
+// lanes (a typed explore or review subagent, 2.0 W4e): her identity line,
+// the honesty rule and the voice boundary, with no persona core, user
+// identity, sliders or chat rules. W5-A's rebase maps it to its ProfileOff.
+const PersonaOff PersonaLevel = "off"
+
+// offIdentity and offHonesty are W5-A's public persona text
+// (publicIdentity, publicHonesty in its profile.go); offPersona joins them
+// with the voice boundary the way its public fallback does, so W5-A can
+// swap offPersona for its ProfileOff in one line.
+const (
+	offIdentity = "You are Celeste, the AI companion in the celeste command-line tool, created by whyKusanagi."
+	offHonesty  = "Never say that a file was written, audio was saved or any other action happened unless a tool actually returned that result this turn."
+	offPersona  = offIdentity + "\n\n" + offHonesty + "\n\n" + voiceBoundaryPrompt
+)
+
 // ComposeOptions describes one system prompt.
 type ComposeOptions struct {
 	Mode Mode
-	// SkipPersona leaves out the persona core, voice boundary, user identity,
-	// sliders and chat rules. Only the internal persona-off lanes set it (a
-	// typed explore or review subagent, 2.0 W4e); no config turns it on.
-	SkipPersona bool
+	// PersonaLevel is the persona level; empty (or anything but PersonaOff)
+	// is the full persona. No config sets it.
+	PersonaLevel PersonaLevel
 	// Contract is the agent operating contract. Used in ModeAgent only.
 	Contract string
 	// Sliders overrides slider.json for this prompt (a subagent's persona
@@ -58,9 +78,9 @@ var confirmActionsEnabled = func() bool {
 // Order: persona core (byte-stable, so the prefix stays cacheable), voice
 // boundary, user identity, sliders, mode contract, project context, git.
 func Compose(opts ComposeOptions) string {
-	var sections []string
-	if !opts.SkipPersona {
-		sections = append(sections, personaSection(opts))
+	sections := []string{offPersona}
+	if opts.PersonaLevel != PersonaOff {
+		sections[0] = personaSection(opts)
 	}
 	if opts.Mode == ModeAgent && opts.Contract != "" {
 		sections = append(sections, opts.Contract)

@@ -8,14 +8,16 @@ import (
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
 // A typed subagent's runner (2.0 W4e): ToolFilter trims the run's own
 // registry (never the parent's) to what the type allows, ExtraTools join
-// before the filter, and SkipPersona drops the persona from the system
-// prompt while the agent contract stays.
-func TestToolFilterAndSkipPersona(t *testing.T) {
+// before the filter, and the off persona level composes Celeste's identity,
+// honesty rule and voice boundary in place of the full persona while the
+// agent contract stays.
+func TestToolFilterAndPersonaOff(t *testing.T) {
 	isolateHome(t)
 	ws := t.TempDir()
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"}, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
@@ -24,7 +26,7 @@ func TestToolFilterAndSkipPersona(t *testing.T) {
 	opts := nestedOpts(ws, parent, func(string) {})
 	opts.ExtraTools = []tools.Tool{extraTool{}}
 	opts.ToolFilter = func(tl tools.Tool) bool { return tl.Name() == "read_file" || tl.Name() == "extra_probe" }
-	opts.SkipPersona = true
+	opts.PersonaLevel = prompts.PersonaOff
 	r, err := NewRunner(fakeCfg(srv), opts, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -43,14 +45,14 @@ func TestToolFilterAndSkipPersona(t *testing.T) {
 		t.Fatalf("offered tools = %s", offered)
 	}
 	msgs := toJSONString(body["messages"])
-	if strings.Contains(msgs, "Voice Boundary") {
-		t.Fatal("SkipPersona left the persona in the system prompt")
+	if !strings.Contains(msgs, "Voice Boundary") || !strings.Contains(msgs, "You are Celeste, the AI companion") {
+		t.Fatalf("the off level must keep the identity and voice boundary: %s", msgs)
 	}
 	if !strings.Contains(msgs, "Execution Contract") {
 		t.Fatal("the agent contract must stay")
 	}
 
-	// Without SkipPersona the persona is composed (the general type).
+	// By default the full persona is composed (the general type).
 	opts = nestedOpts(ws, parent, func(string) {})
 	r, err = NewRunner(fakeCfg(srv), opts, io.Discard, io.Discard)
 	if err != nil {
@@ -61,8 +63,9 @@ func TestToolFilterAndSkipPersona(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Close()
-	if !strings.Contains(toJSONString(srv.Requests()[1].Body["messages"]), "Voice Boundary") {
-		t.Fatal("the persona should be composed by default")
+	fullMsgs := toJSONString(srv.Requests()[1].Body["messages"])
+	if !strings.Contains(fullMsgs, "Voice Boundary") || len(fullMsgs) <= len(msgs) {
+		t.Fatal("the full persona should be composed by default, and be larger than off")
 	}
 }
 

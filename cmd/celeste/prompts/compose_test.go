@@ -139,16 +139,39 @@ func firstLine(s string) string {
 	return s
 }
 
-// SkipPersona (a typed explore or review subagent, 2.0 W4e) leaves out the
-// persona, voice boundary and sliders and keeps the agent contract and
-// project context.
-func TestComposeSkipPersona(t *testing.T) {
-	composeEnv(t, false)
-	got := Compose(ComposeOptions{Mode: ModeAgent, SkipPersona: true, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"})
-	if strings.Contains(got, personaCore()) || strings.Contains(got, voiceBoundaryPrompt) {
-		t.Fatalf("persona present with SkipPersona:\n%s", got)
+// The off level (a typed explore or review subagent, 2.0 W4e) keeps
+// Celeste's identity line, the honesty rule and the voice boundary, drops
+// the persona core, user identity, sliders and chat rules, and keeps the
+// agent contract and project context.
+func TestComposePersonaOff(t *testing.T) {
+	composeEnv(t, true)
+	for _, mode := range []Mode{ModeAgent, ModeChat} {
+		got := Compose(ComposeOptions{Mode: mode, PersonaLevel: PersonaOff, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"})
+		want := offIdentity + "\n\n" + offHonesty + "\n\n" + voiceBoundaryPrompt
+		if !strings.HasPrefix(got, want) {
+			t.Fatalf("%v: off prompt does not start with identity, honesty and voice boundary:\n%s", mode, got)
+		}
+		if strings.Contains(got, personaCore()) || strings.Contains(got, taskExecutionPrompt) || strings.Contains(got, confirmModePrompt) {
+			t.Fatalf("%v: off prompt has the persona core or chat rules:\n%s", mode, got)
+		}
+		if !strings.Contains(got, "PROJECT") || !strings.Contains(got, "GIT") {
+			t.Fatalf("%v: context or git missing:\n%s", mode, got)
+		}
+		if (mode == ModeAgent) != strings.Contains(got, testContract) {
+			t.Fatalf("%v: contract presence wrong:\n%s", mode, got)
+		}
 	}
-	if !strings.HasPrefix(got, testContract) || !strings.Contains(got, "PROJECT") || !strings.Contains(got, "GIT") {
-		t.Fatalf("contract, context or git missing:\n%s", got)
+	if !strings.Contains(offIdentity, "You are Celeste, the AI companion in the celeste command-line tool, created by whyKusanagi.") ||
+		!strings.Contains(offHonesty, "unless a tool actually returned that result this turn") {
+		t.Fatal("off text drifted from W5-A's public persona")
+	}
+}
+
+// No level drops the persona: an unknown one composes the full persona.
+func TestComposeUnknownPersonaLevelIsFull(t *testing.T) {
+	composeEnv(t, false)
+	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: "none", Contract: testContract})
+	if got != Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract}) {
+		t.Fatalf("unknown level must compose the full persona:\n%s", got)
 	}
 }

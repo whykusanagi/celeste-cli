@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 )
@@ -60,7 +61,7 @@ func TestExploreSubagentToolSet(t *testing.T) {
 			t.Errorf("explore must not have %s", banned)
 		}
 	}
-	if !p.SkipPersona || p.Model != "small" {
+	if p.PersonaLevel != prompts.PersonaOff || p.Model != "small" {
 		t.Fatalf("explore profile = %+v", p)
 	}
 }
@@ -91,10 +92,10 @@ func TestReviewToolSet(t *testing.T) {
 
 func TestReviewAndGeneralProfiles(t *testing.T) {
 	cfg := &config.Config{Model: "chat", AgentModel: "agent", SmallModel: "small"}
-	if p := profileFor(TypeReview, cfg); !p.SkipPersona || p.Model != "agent" {
+	if p := profileFor(TypeReview, cfg); p.PersonaLevel != prompts.PersonaOff || p.Model != "agent" {
 		t.Fatalf("review = %+v", p)
 	}
-	if p := profileFor(TypeGeneral, cfg); p.SkipPersona || p.Model != "agent" || p.Allow != nil {
+	if p := profileFor(TypeGeneral, cfg); p.PersonaLevel != "" || p.Model != "agent" || p.Allow != nil {
 		t.Fatalf("general = %+v", p)
 	}
 	if typ, err := ParseType(""); err != nil || typ != TypeGeneral {
@@ -130,7 +131,7 @@ func TestSpawnAgentTypeArgument(t *testing.T) {
 	if err := tool.ValidateInput(map[string]any{"goal": "g", "type": "wizard"}); err == nil || !strings.Contains(err.Error(), "explore") {
 		t.Fatalf("unknown type: %v", err)
 	}
-	if err := tool.ValidateInput(map[string]any{"goal": "g", "type": "explore", "persona": map[string]any{"flirt": 3.0}}); err == nil || !strings.Contains(err.Error(), "without the persona") {
+	if err := tool.ValidateInput(map[string]any{"goal": "g", "type": "explore", "persona": map[string]any{"flirt": 3.0}}); err == nil || !strings.Contains(err.Error(), "persona off") {
 		t.Fatalf("persona on explore: %v", err)
 	}
 	if err := tool.ValidateInput(map[string]any{"goal": "g", "type": "general", "persona": map[string]any{"flirt": 3.0}}); err != nil {

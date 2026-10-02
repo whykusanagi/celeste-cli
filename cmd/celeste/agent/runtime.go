@@ -419,7 +419,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Build the system prompt: persona (if enabled) with the voice boundary,
 	// then the agent contract, then project context. Agent mode never carries
 	// the chat task rules or confirm mode (#170).
-	systemPrompt := env.SystemPromptOpts(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders, options.SkipPersona)
+	systemPrompt := env.SystemPromptOpts(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders, options.PersonaLevel)
 
 	client.SetSystemPrompt(systemPrompt)
 

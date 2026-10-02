@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 )
@@ -14,20 +15,21 @@ import (
 type Type string
 
 const (
-	// TypeExplore investigates: read-only tools, no persona, the small model.
+	// TypeExplore investigates: read-only tools, the off persona, the small
+	// model.
 	TypeExplore Type = "explore"
 	// TypeGeneral does the work: every tool, the persona, the agent model.
 	TypeGeneral Type = "general"
-	// TypeReview reviews code: read and code-graph tools, no persona, the
-	// agent model.
+	// TypeReview reviews code: read and code-graph tools, the off persona,
+	// the agent model.
 	TypeReview Type = "review"
 )
 
 // Profile is what a Type sets on a subagent's run.
 type Profile struct {
-	Allow       func(tools.Tool) bool // nil: every tool
-	SkipPersona bool
-	Model       string
+	Allow        func(tools.Tool) bool // nil: every tool
+	PersonaLevel prompts.PersonaLevel
+	Model        string
 }
 
 // ParseType reads spawn_agent's type argument. An empty one is general.
@@ -58,7 +60,7 @@ var exploreDenied = map[string]bool{
 func profileFor(t Type, cfg *config.Config) Profile {
 	switch t {
 	case TypeExplore:
-		return Profile{SkipPersona: true, Model: cfg.ResolveSmallModel(), Allow: func(tl tools.Tool) bool {
+		return Profile{PersonaLevel: prompts.PersonaOff, Model: cfg.ResolveSmallModel(), Allow: func(tl tools.Tool) bool {
 			if tl.Name() == submitResultName {
 				return true
 			}
@@ -69,7 +71,7 @@ func profileFor(t Type, cfg *config.Config) Profile {
 			return tl.IsReadOnly()
 		}}
 	case TypeReview:
-		return Profile{SkipPersona: true, Model: cfg.ResolveAgentModel(), Allow: func(tl tools.Tool) bool {
+		return Profile{PersonaLevel: prompts.PersonaOff, Model: cfg.ResolveAgentModel(), Allow: func(tl tools.Tool) bool {
 			if !reviewTools[tl.Name()] && !strings.HasPrefix(tl.Name(), "code_") {
 				return false
 			}

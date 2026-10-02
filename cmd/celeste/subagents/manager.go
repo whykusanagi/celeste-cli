@@ -596,12 +596,12 @@ func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnC
 	// e8775b91 — with every tool and the persona.
 	profile := profileFor(typ, m.cfg)
 	opts := agent.Options{
-		Workspace:   workspace,
-		MaxTurns:    maxTurns,
-		Model:       profile.Model,
-		ToolFilter:  profile.Allow,
-		SkipPersona: profile.SkipPersona,
-		Verbose:     false,
+		Workspace:    workspace,
+		MaxTurns:     maxTurns,
+		Model:        profile.Model,
+		ToolFilter:   profile.Allow,
+		PersonaLevel: profile.PersonaLevel,
+		Verbose:      false,
 		// Subagents are headless — spawning them is the user's approval, so they
 		// run in Trust mode (allow all tools). Without this, every write/exec tool
 		// resolves to "Ask" with no prompt and is denied, so the subagent can't

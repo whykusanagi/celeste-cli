@@ -53,8 +53,9 @@ func TestTypedRunReturnsTheSubmittedResult(t *testing.T) {
 	if !strings.Contains(offered, `"submit_result"`) || strings.Contains(offered, `"write_file"`) || strings.Contains(offered, `"bash"`) {
 		t.Fatalf("explore offered %s", offered)
 	}
-	if msgs := jsonString(body["messages"]); !strings.Contains(msgs, "submit_result") || strings.Contains(msgs, "Voice Boundary") {
-		t.Fatal("the explore goal should name submit_result and carry no persona")
+	if msgs := jsonString(body["messages"]); !strings.Contains(msgs, "submit_result") ||
+		!strings.Contains(msgs, "You are Celeste, the AI companion") || !strings.Contains(msgs, "Voice Boundary") {
+		t.Fatal("the explore run should name submit_result and carry the off persona (identity and voice boundary)")
 	}
 	// The second request carries the tool's reply.
 	if !strings.Contains(jsonString(srv.Requests()[1].Body["messages"]), "Result recorded") {
