@@ -340,3 +340,39 @@ func TestLoadNamedLeavesPermissionsJSONAlone(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(dir, "permissions.json"))
 	assert.Equal(t, perms, got)
 }
+
+// typing_speed was never read before it was wired, so saved configs carry
+// the values celeste once wrote as defaults (40 in DefaultConfig, 25 in
+// older defaults and --init templates). Those would now type slower than
+// today: they are dropped so the new default applies. Any other value is the
+// user's choice.
+func TestMigrateDropsTheOldTypingSpeedDefaults(t *testing.T) {
+	for _, name := range []string{"typing_old_default.json", "typing_old_template.json"} {
+		in := fixture(t, name)
+		out, notes, changed := migrateLegacyKeys(in)
+		require.True(t, changed, name)
+		require.Len(t, notes, 1, name)
+		assert.Contains(t, notes[0], "typing_speed")
+		after := compactValues(t, out)
+		assert.NotContains(t, after, "typing_speed", name)
+		assert.Equal(t, `"k"`, after["api_key"], name)
+	}
+}
+
+func TestMigrateKeepsACustomTypingSpeed(t *testing.T) {
+	in := fixture(t, "typing_custom.json")
+	out, notes, changed := migrateLegacyKeys(in)
+	assert.False(t, changed)
+	assert.Empty(t, notes)
+	assert.Equal(t, in, out)
+}
+
+func TestLoadNamedAppliesTheNewTypingDefaultAfterMigration(t *testing.T) {
+	home := t.TempDir()
+	writeEnvProfile(t, home, string(fixture(t, "typing_old_default.json")))
+	cfg, err := LoadNamed("envtest")
+	require.NoError(t, err)
+	assert.Equal(t, 60, cfg.TypingSpeed)
+	data, _ := os.ReadFile(NamedConfigPath("envtest"))
+	assert.NotContains(t, string(data), "typing_speed", "the file was rewritten once")
+}

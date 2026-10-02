@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **config:** `CELESTE_API_KEY`, `CELESTE_API_ENDPOINT` and `TAROT_AUTH_TOKEN` are read now (flag > environment > config file) for `chat`, `message`, `agent`, skill execution and `serve`; they were documented but ignored. They are never written to a config file.
 * **llm:** `google_credentials_file` and `google_use_adc` reach every client path (chat, `/endpoint`, `/set-model`, `celeste message`, MCP chat); only agent runs and the summarizer passed them before.
-* **chat:** `simulate_typing` and `typing_speed` take effect: `false` shows replies at once, `typing_speed` is characters per second (1-1000). The default is now 60 (was 40) so the default pace is unchanged.
+* **chat:** `simulate_typing` and `typing_speed` take effect: `false` shows replies at once, `typing_speed` is characters per second (1-1000). The default is now 60 (was 40) so the default pace is unchanged; a `typing_speed` of 40 or 25 (the values celeste once wrote as defaults, never read until now) is removed from the file at startup, with a note, so those configs keep today's pace. Any other value is kept.
 * **chat:** `/session merge|resume|new|...` run instead of opening the picker ([#235](https://github.com/whykusanagi/celeste-cli/issues/235)); `/session new <name>` keeps its name; `/context compact` saves the session; session files are written 0600.
 * **providers:** Venice's default `venice-uncensored` is no longer served and caused routing errors; its offline fallback is now `venice-uncensored-1-2`.
 * **chat:** switching endpoints, `/set-model` and the model picker no longer wait on a network request inside the UI loop.

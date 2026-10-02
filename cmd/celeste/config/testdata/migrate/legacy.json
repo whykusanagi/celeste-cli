@@ -7,7 +7,7 @@
   "context_limit": 65536,
   "skip_persona_prompt": false,
   "simulate_typing": true,
-  "typing_speed": 40,
+  "typing_speed": 90,
   "runtime_mode": "claw",
   "claw_max_tool_iterations": 7,
   "venice_api_key": "venice-é",
