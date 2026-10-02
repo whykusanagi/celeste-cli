@@ -777,6 +777,38 @@ func TestChatSummaryKeepsByTheWindow(t *testing.T) {
 	}
 }
 
+// /set-model changes the live client's model, not baseConfig: the summary's
+// kept tail follows the model in use. A chat started on a 1M-token model
+// that moved to a 32k one keeps 8k, not 20k (#234).
+func TestChatSummaryKeepsByTheLiveModel(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _ := chatApp(t, srv)
+	a := deps.adapter
+	a.summarize = func(context.Context, string, string) (string, error) { return "## Goal\nread the files", nil }
+	a.baseConfig.BaseURL, a.baseConfig.Model = "https://api.anthropic.com/v1", "claude-opus-5-5"
+	live := *a.client.GetConfig()
+	live.BaseURL, live.Model = a.baseConfig.BaseURL, a.baseConfig.Model
+	a.client.UpdateConfig(&live)
+	if err := a.ChangeModel("venice-uncensored"); err != nil { // 32k
+		t.Fatal(err)
+	}
+	history := userTurn("read the files")
+	for i := 0; i < 4; i++ { // ~16k tokens: under 20k, over 8k
+		id := fmt.Sprintf("r%d", i)
+		history = append(history,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%d.txt"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 16_000)})
+	}
+	history = append(history, userTurn("next")...)
+	out, err := a.SummarizeContext(context.Background(), history, "")
+	if err != nil {
+		t.Fatalf("SummarizeContext: %v (the 32k model in use keeps 8k)", err)
+	}
+	if out.Cut == 0 {
+		t.Fatal("nothing was summarized")
+	}
+}
+
 // #200 in the chat: /compact's summary carries the workspace's todos.
 func TestChatSummaryCarriesAuthoritativeState(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "## Goal\nread the files"})

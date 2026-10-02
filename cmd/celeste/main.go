@@ -733,10 +733,16 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 		}
 		return summarize(ctx, system, user)
 	}
-	// The kept tail scales with the window (#234).
+	// The kept tail scales with the window of the model in use (#234):
+	// /set-model changes the live client's config, never baseConfig.
 	window := 0
 	if cfg := a.baseConfig; cfg != nil {
-		window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+		baseURL, model := cfg.BaseURL, cfg.Model
+		if a.client != nil {
+			lc := a.client.GetConfig()
+			baseURL, model = lc.BaseURL, lc.Model
+		}
+		window, _ = config.ResolveContextLimit(baseURL, model, cfg.ContextLimit)
 	}
 	state := ""
 	if a.state != nil {
