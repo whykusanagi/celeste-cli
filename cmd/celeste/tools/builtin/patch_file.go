@@ -30,7 +30,7 @@ func NewPatchFileTool(workspace string, opts ...PatchFileOption) *PatchFileTool 
 	t := &PatchFileTool{
 		BaseTool: BaseTool{
 			ToolName:        "patch_file",
-			ToolDescription: "Make surgical edits to a workspace file by replacing exact strings with new content: one old_string/new_string pair, or several in edits[] (applied in order, all or nothing). Prefer this over write_file when modifying existing files.",
+			ToolDescription: "Make surgical edits to a workspace file by replacing exact strings with new content: one old_string/new_string pair, or several in edits[] (applied in order, all or nothing). When old_string is not found exactly, a unique match that differs only in indentation or surrounding whitespace is used and the result shows its diff. Prefer this over write_file when modifying existing files.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -181,10 +181,14 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	}, nil
 }
 
-// outcomeResult adds one edit's outcome to m: replacements, and
-// decoded_escapes or the literal-backslash note.
+// outcomeResult adds one edit's outcome to m: replacements, fuzzy and its
+// diff (ruling 4), and decoded_escapes or the literal-backslash note.
 func outcomeResult(m map[string]any, e edit, out editOutcome) map[string]any {
 	m["replacements"] = out.Count
+	if out.Fuzzy {
+		m["fuzzy"] = true
+		m["diff"] = out.Diff
+	}
 	if out.Decoded {
 		m["decoded_escapes"] = true
 	} else if _, looksEscaped := decodeDoubleEscaped(e.New); looksEscaped {
