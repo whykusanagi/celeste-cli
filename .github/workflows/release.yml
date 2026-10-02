@@ -46,18 +46,28 @@ jobs:
         # a native-runner matrix so the tree-sitter parser ships with
         # pre-built binaries too.
         CGO_ENABLED: "0"
+        VERSION: ${{ steps.get_version.outputs.VERSION }}
       run: |
-        # Linux
-        GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-linux-amd64 ./cmd/celeste
-        GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-linux-arm64 ./cmd/celeste
+        set -euo pipefail
+        # -X main.Channel=release is what makes a binary official to
+        # celeste update and the go install upgrade (W5 ruling 29).
+        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release"
+        build() { GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" ./cmd/celeste; }
+        build linux amd64 celeste-linux-amd64
+        build linux arm64 celeste-linux-arm64
+        build darwin amd64 celeste-darwin-amd64
+        build darwin arm64 celeste-darwin-arm64
+        build windows amd64 celeste-windows-amd64.exe
 
-        # macOS
-        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-darwin-amd64 ./cmd/celeste
-        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-darwin-arm64 ./cmd/celeste
-
-        # Windows
-        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=${{ steps.get_version.outputs.VERSION }} -X main.CommitSHA=${{ github.sha }}" -o dist/celeste-windows-amd64.exe ./cmd/celeste
-
+    # THE UPDATER CONTRACT (W5 ruling 30). `go install` builds and
+    # `celeste update` download these exact names from every release:
+    # celeste-{linux,darwin}-{amd64,arm64}.tar.gz holding
+    # celeste-<os>-<arch> at the archive root, celeste-windows-amd64.zip
+    # holding celeste-windows-amd64.exe, checksums.txt (sha256sum format),
+    # manifest.json (with "tag"), and the armoured detached signatures
+    # checksums.txt.asc and manifest.json.asc. Renaming any of them breaks
+    # every installed binary's updater. cmd/celeste/selfupdate's
+    # TestReleaseWorkflowKeepsTheUpdaterContract checks this file.
     - name: Create archives
       run: |
         cd dist
@@ -120,6 +130,18 @@ jobs:
         See VERIFICATION.md in the repository for verification instructions.
         https://github.com/whykusanagi/celeste-cli/blob/main/VERIFICATION.md
         EOF
+
+    # Check what users' updaters will check, with the release binary itself
+    # and its embedded key (W5 ruling 30), then cross-check with gpg. A
+    # release that would fail any updater publishes nothing.
+    - name: Verify the updater contract
+      env:
+        VERSION: ${{ steps.get_version.outputs.VERSION }}
+      run: |
+        set -euo pipefail
+        ./dist/celeste-linux-amd64 update --verify-dist dist --tag "v${VERSION}"
+        gpg --verify dist/checksums.txt.asc dist/checksums.txt
+        gpg --verify dist/manifest.json.asc dist/manifest.json
 
     - name: Create Release
       uses: softprops/action-gh-release@v3
