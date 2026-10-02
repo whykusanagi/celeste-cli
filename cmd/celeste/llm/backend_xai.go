@@ -584,24 +584,14 @@ func (b *XAIBackend) convertMessages(messages []tui.ChatMessage) []xAIMessage {
 
 			// Inject a user message with image data when present,
 			// mirroring the OpenAI backend approach.
-			if msg.Metadata != nil {
-				if imgType, ok := msg.Metadata["type"].(string); ok && imgType == "image" {
-					if b64, ok := msg.Metadata["base64"].(string); ok {
-						format, _ := msg.Metadata["format"].(string)
-						if format == "" {
-							format = "png"
-						}
-						filename, _ := msg.Metadata["filename"].(string)
-						dataURL := fmt.Sprintf("data:image/%s;base64,%s", format, b64)
-						result = append(result, xAIMessage{
-							Role: "user",
-							MultiContent: []xAIContentPart{
-								{Type: "text", Text: fmt.Sprintf("[Attached image from tool result: %s]", filename)},
-								{Type: "image_url", ImageURL: &xAIImageURL{URL: dataURL, Detail: "auto"}},
-							},
-						})
-					}
-				}
+			if img, ok := toolImageOf(msg.Metadata); ok {
+				result = append(result, xAIMessage{
+					Role: "user",
+					MultiContent: []xAIContentPart{
+						{Type: "text", Text: fmt.Sprintf("[Attached image from tool result: %s]", img.Name)},
+						{Type: "image_url", ImageURL: &xAIImageURL{URL: img.DataURL(), Detail: "auto"}},
+					},
+				})
 			}
 		} else if len(msg.ToolCalls) > 0 {
 			// Assistant message with tool calls
@@ -682,16 +672,8 @@ func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 
 // applyThinkingConfig sets reasoning_effort on the request when thinking is enabled.
 func (b *XAIBackend) applyThinkingConfig(req *xAIChatCompletionRequest) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
-		return
-	}
-	switch b.thinkingConfig.Level {
-	case "low":
-		req.ReasoningEffort = "low"
-	case "medium":
-		req.ReasoningEffort = "medium"
-	case "high", "max":
-		req.ReasoningEffort = "high"
+	if effort := reasoningEffort(b.thinkingConfig); effort != "" {
+		req.ReasoningEffort = effort
 	}
 }
 
