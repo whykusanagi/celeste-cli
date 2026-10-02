@@ -59,6 +59,29 @@ func (b *AnthropicBackend) Close() error {
 	return nil
 }
 
+// providerKey names this backend's blocks: the effective base URL and the
+// model it sends (the served model, #232). 2.0 W2 ruling 4.
+func (b *AnthropicBackend) providerKey() string {
+	base := b.config.BaseURL
+	if base == "" {
+		base = anthropicDefaultBaseURL
+	}
+	return ProviderKey(BlocksAnthropicMessages, base, b.config.Model)
+}
+
+// lastAssistantReplays reports whether the newest assistant message is
+// sent as its recorded blocks. Only then may a budget-thinking model keep
+// thinking on a tool-loop continuation (2.0 W2 ruling 5).
+func (b *AnthropicBackend) lastAssistantReplays(messages []tui.ChatMessage) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" {
+			_, ok := tui.ReplayBlocks(messages[i], b.providerKey())
+			return ok
+		}
+	}
+	return false
+}
+
 // maxTokens returns the max_tokens value for the request.
 // When thinking is enabled, Anthropic requires a higher max_tokens that
 // encompasses both thinking and output tokens.
@@ -116,7 +139,7 @@ func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.S
 	}
 
 	// Apply thinking config.
-	b.applyThinkingConfig(&params, continuesToolLoop(messages))
+	b.applyThinkingConfig(&params, continuesToolLoop(messages) && !b.lastAssistantReplays(messages))
 
 	applyCacheBreakpoints(&params)
 
@@ -255,13 +278,13 @@ func (b *AnthropicBackend) thinkingEnabled() bool {
 
 // applyThinkingConfig sets the thinking parameters the model accepts.
 //
-// continuingToolLoop is true when the request carries tool results back.
-// Thinking blocks aren't replayed yet (the shared message type has nowhere
-// to keep them, and celeste still edits history between requests), and
-// budget-thinking models reject a tool-loop continuation whose assistant
-// turn lacks its thinking block, so those turns run without thinking.
-// Adaptive models accept the continuation; they reason again from the
-// visible history.
+// continuingToolLoop is true when the request carries tool results back
+// and the assistant turn being continued is not replayed from its blocks
+// (dropped calls, another endpoint or model, stripped blocks, a pre-2.0
+// history). Budget-thinking models reject such a continuation when its
+// assistant turn lacks its thinking block, so those turns run without
+// thinking. Adaptive models accept it and reason again from the visible
+// history. A replayed turn carries its thinking, so thinking stays on.
 func (b *AnthropicBackend) applyThinkingConfig(params *anthropic.MessageNewParams, continuingToolLoop bool) {
 	enabled := b.thinkingEnabled()
 	switch anthropicThinkingFamily(b.config.Model) {
@@ -635,11 +658,21 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 // System messages are handled separately via the System parameter.
 func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthropic.MessageParam {
 	var result []anthropic.MessageParam
+	key := b.providerKey()
 
 	for _, msg := range messages {
 		// Skip system messages — they are handled via the System parameter.
 		if msg.Role == "system" {
 			continue
+		}
+
+		// 2.0 F3 precedence: blocks from this endpoint and model are the
+		// authoritative content, in their original order (W2).
+		if msg.Role == "assistant" {
+			if raws, ok := tui.ReplayBlocks(msg, key); ok {
+				result = append(result, anthropic.NewAssistantMessage(replayedContent(raws)...))
+				continue
+			}
 		}
 
 		// Skip empty messages (except tool results which can have empty content).

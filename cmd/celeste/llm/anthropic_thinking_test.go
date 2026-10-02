@@ -119,3 +119,23 @@ func TestUsageTracker(t *testing.T) {
 	assert.Equal(t, 9000, got.CacheReadTokens)
 	assert.Equal(t, 300, got.CacheWriteTokens)
 }
+
+// W2 ruling 5: a budget-thinking model keeps thinking on a continuation
+// whose last assistant turn replays its thinking.
+func TestAnthropicThinkingStaysOnWhenTheTurnReplays(t *testing.T) {
+	on := ThinkingConfig{Enabled: true, Level: "high"}
+	key := (&AnthropicBackend{config: &Config{Model: "claude-haiku-4-5"}}).providerKey()
+	thinking, _, _ := requestJSON(t, "claude-haiku-4-5", on, toolLoop(thinkingTurn(t, key)))
+	assert.Contains(t, thinking, `"budget_tokens"`)
+}
+
+// Review Focus 4: stripped blocks or another key's blocks: thinking off,
+// exactly as before W2.
+func TestAnthropicThinkingStaysOffWithoutReplay(t *testing.T) {
+	on := ThinkingConfig{Enabled: true, Level: "high"}
+	key := (&AnthropicBackend{config: &Config{Model: "claude-haiku-4-5"}}).providerKey()
+	thinking, _, _ := requestJSON(t, "claude-haiku-4-5", on, tui.StripProviderBlocks(toolLoop(thinkingTurn(t, key))))
+	assert.Empty(t, thinking)
+	thinking, _, _ = requestJSON(t, "claude-haiku-4-5", on, toolLoop(thinkingTurn(t, "anthropic-messages|https://api.anthropic.com|claude-opus-4-8")))
+	assert.Empty(t, thinking)
+}
