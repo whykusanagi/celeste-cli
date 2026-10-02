@@ -145,3 +145,20 @@ func TestUpdateConfigAnthropicRebuildKeepsEndpointState(t *testing.T) {
 	assert.False(t, other.promptChanged)
 	assert.True(t, other.bindingControls)
 }
+
+// A prompt change made while a request is in flight stays pending: that
+// request went out with the old prompt, so the next one must still drop
+// replayed blocks.
+func TestAnthropicPromptChangeDuringRequestStaysPending(t *testing.T) {
+	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
+	b.SetSystemPrompt("one")
+	b.SetSystemPrompt("two")
+	b.mu.Lock()
+	gen := b.promptGen
+	b.mu.Unlock()
+	b.SetSystemPrompt("three") // lands while the request built with "two" is in flight
+	b.clearPromptChanged(gen)
+	assert.True(t, b.promptChanged)
+	b.clearPromptChanged(b.promptGen)
+	assert.False(t, b.promptChanged)
+}

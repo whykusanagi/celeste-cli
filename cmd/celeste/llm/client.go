@@ -197,13 +197,16 @@ func (c *Client) UpdateConfig(config *Config) {
 		return
 	}
 	backend, built := newBackend(config, c.registry, bt)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Under the lock, so no SetSystemPrompt lands between reading the
+	// current backend's state and installing the new one. Lock order is
+	// always Client.mu, then a backend's mu.
 	if nb, ok := backend.(*AnthropicBackend); ok {
-		if ob, ok := oldBackend.(*AnthropicBackend); ok {
+		if ob, ok := c.backend.(*AnthropicBackend); ok {
 			nb.inherit(ob)
 		}
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.config = config
 	c.backend, c.backendType = backend, built
 	if c.systemPrompt != "" {

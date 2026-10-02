@@ -34,6 +34,9 @@ type AnthropicBackend struct {
 	// promptChanged: the system prompt changed since the last request; the
 	// next one sends no blocks and reports BlocksRejected (ruling 10).
 	promptChanged bool
+	// promptGen counts prompt changes, so a request clears promptChanged
+	// only when no newer change arrived while it was in flight.
+	promptGen uint64
 }
 
 // NewAnthropicBackend creates a new Anthropic backend using the native SDK.
@@ -66,6 +69,7 @@ func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
 	defer b.mu.Unlock()
 	if b.systemPrompt != "" && prompt != b.systemPrompt {
 		b.promptChanged = true
+		b.promptGen++
 	}
 	b.systemPrompt = prompt
 }
@@ -266,7 +270,7 @@ func (a *anthropicStream) Close() error                               { return a
 func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*anthropicStream, bool, error) {
 	rejected := false
 	b.mu.Lock()
-	promptChanged := b.promptChanged
+	promptChanged, gen := b.promptChanged, b.promptGen
 	b.mu.Unlock()
 	if promptChanged && hasProviderBlocks(messages) {
 		tui.LogInfo("anthropic: the system prompt changed; replayed blocks are dropped from here on")
@@ -278,12 +282,12 @@ func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage,
 		params, opts := b.prepare(messages, tools)
 		s := b.client.Messages.NewStreaming(ctx, params, opts...)
 		if s.Next() {
-			b.clearPromptChanged()
+			b.clearPromptChanged(gen)
 			return &anthropicStream{s: s, primed: true}, rejected, nil
 		}
 		err := s.Err()
 		if err == nil {
-			b.clearPromptChanged()
+			b.clearPromptChanged(gen)
 			return &anthropicStream{s: s}, rejected, nil
 		}
 		s.Close()
@@ -321,12 +325,14 @@ func (b *AnthropicBackend) inherit(old *AnthropicBackend) {
 	b.bindingControls = b.bindingControls && binding
 }
 
-// clearPromptChanged records that a request went out with the current
-// system prompt.
-func (b *AnthropicBackend) clearPromptChanged() {
+// clearPromptChanged records that a request went out with the system
+// prompt of generation gen; a change made since then stays pending.
+func (b *AnthropicBackend) clearPromptChanged(gen uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.promptChanged = false
+	if b.promptGen == gen {
+		b.promptChanged = false
+	}
 }
 
 // messageCacheBreakpoints is how many of the newest messages get a
