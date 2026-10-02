@@ -681,20 +681,6 @@ func (b *XAIBackend) convertTools(tools []tui.SkillDefinition) []xAITool {
 	return result
 }
 
-// SwitchEndpoint switches to a different endpoint (for config switching)
-func (b *XAIBackend) SwitchEndpoint(endpoint string) error {
-	// For xAI backend, we don't support switching to other providers
-	// This backend is xAI-specific
-	return fmt.Errorf("xAI backend cannot switch to other providers")
-}
-
-// ChangeModel changes the model
-func (b *XAIBackend) ChangeModel(model string) error {
-	b.model = model
-	tui.LogInfo(fmt.Sprintf("xAI backend model changed to: %s", model))
-	return nil
-}
-
 // GetSkills returns the chat-mode tools from the registry.
 func (b *XAIBackend) GetSkills() []tui.SkillDefinition {
 	return skillDefinitions(b.registry, tools.ModeChat)

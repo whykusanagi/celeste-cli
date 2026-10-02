@@ -192,9 +192,14 @@ func (c *Client) UpdateConfig(config *Config) {
 	c.mu.RUnlock()
 	if oldBackend != nil && old != nil && bt == oldType && *old == *config {
 		c.mu.Lock()
-		c.config = config
+		// Another UpdateConfig may have installed a different backend since
+		// the snapshot; then this config needs its own backend.
+		if c.config == old && c.backend == oldBackend {
+			c.config = config
+			c.mu.Unlock()
+			return
+		}
 		c.mu.Unlock()
-		return
 	}
 	backend, built := newBackend(config, c.registry, bt)
 	c.mu.Lock()

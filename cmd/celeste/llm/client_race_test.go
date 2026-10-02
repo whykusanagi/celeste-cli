@@ -140,10 +140,19 @@ func TestUpdateConfigAnthropicRebuildKeepsEndpointState(t *testing.T) {
 	assert.False(t, nb.bindingControls)
 	assert.Equal(t, "two", nb.systemPrompt)
 
-	c.UpdateConfig(cfg("claude-sonnet-4-6", 2*time.Minute)) // another model: its own state
+	// Another model on the same endpoint: the prompt change belonged to the
+	// old model's blocks, but the endpoint still refuses the beta.
+	c.UpdateConfig(cfg("claude-sonnet-4-6", 2*time.Minute))
 	other := c.backend.(*AnthropicBackend)
 	assert.False(t, other.promptChanged)
-	assert.True(t, other.bindingControls)
+	assert.False(t, other.bindingControls, "a model switch forgot the endpoint refused the binding beta")
+
+	// Another endpoint: its own beta state.
+	elsewhere := cfg("claude-sonnet-4-6", 2*time.Minute)
+	elsewhere.BaseURL = "https://other.example.com"
+	c.UpdateConfig(elsewhere)
+	fresh := c.backend.(*AnthropicBackend)
+	assert.Equal(t, isAnthropicProvider(elsewhere.BaseURL), fresh.bindingControls)
 }
 
 // A prompt change made while a request is in flight stays pending: that
@@ -161,4 +170,36 @@ func TestAnthropicPromptChangeDuringRequestStaysPending(t *testing.T) {
 	assert.True(t, b.promptChanged)
 	b.clearPromptChanged(b.promptGen)
 	assert.False(t, b.promptChanged)
+}
+
+// Two concurrent UpdateConfig calls, one a no-op and one a model switch,
+// must leave the client's config and backend agreeing: the no-op must not
+// install its config next to the other call's backend.
+func TestConcurrentUpdateConfigKeepsConfigAndBackendPaired(t *testing.T) {
+	cfg := func(model string) *Config {
+		return &Config{APIKey: "k", BaseURL: "http://127.0.0.1:1/v1", Model: model, Backend: BackendTypeOpenAIResponses}
+	}
+	for i := 0; i < 2000; i++ {
+		c := NewClient(cfg("a"), nil)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); c.UpdateConfig(cfg("a")) }()
+		go func() { defer wg.Done(); c.UpdateConfig(cfg("b")) }()
+		wg.Wait()
+		b := c.backend.(*ResponsesBackend)
+		require.Equal(t, c.config.Model, b.config.Model, "iteration %d: config and backend disagree", i)
+	}
+}
+
+// The strip decision and the prompt a request sends are read together:
+// a request built after a prompt change sends the new prompt without the
+// blocks signed over the old one, however the change interleaves with
+// open().
+func TestAnthropicRequestPairsPromptWithStripDecision(t *testing.T) {
+	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
+	b.SetSystemPrompt("one")
+	b.SetSystemPrompt("two") // e.g. lands after open() read promptChanged
+	_, raw := requestBody(t, b.buildParams(toolLoop(thinkingTurn(t, b.providerKey())), nil))
+	assert.Contains(t, raw, `"two"`)
+	assert.NotContains(t, raw, "sig-1", "blocks signed over the old prompt were sent with the new one")
 }
