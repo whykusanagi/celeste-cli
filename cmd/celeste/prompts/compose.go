@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"strings"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
@@ -36,21 +37,58 @@ type PersonaLevel string
 // builds alike, because the sealed off profile is the voice boundary only.
 const PersonaOff PersonaLevel = "off"
 
+// ProfileFor is the mode's persona profile (spec W5 "Profiles by mode"):
+// full for chat, spine for agent runs.
+func ProfileFor(m Mode) Profile {
+	if m == ModeAgent {
+		return ProfileSpine
+	}
+	return ProfileFull
+}
+
+// Prompt is one system prompt in two parts (spec W5 "Byte-stable assembly").
+// Static is the persona: a profile's bytes, unchanged by anything
+// per-request, so provider prefix caches hit. Dynamic is everything else, in
+// the spec's order.
+type Prompt struct {
+	Static  string
+	Dynamic string
+	// Profile is the profile in Static.
+	Profile Profile
+	// Notice is the small-window guard's one-time message, for the caller
+	// to show; "" otherwise.
+	Notice string
+}
+
+// String is the whole prompt: Static, a blank line, Dynamic.
+func (p Prompt) String() string {
+	switch {
+	case p.Static == "":
+		return p.Dynamic
+	case p.Dynamic == "":
+		return p.Static
+	}
+	return p.Static + "\n\n" + p.Dynamic
+}
+
 // ComposeOptions describes one system prompt.
 type ComposeOptions struct {
 	Mode Mode
 	// PersonaLevel is the persona level; empty (or anything but PersonaOff)
-	// is the full persona. No config sets it.
+	// is the mode's profile (ProfileFor). No config sets it.
 	PersonaLevel PersonaLevel
 	// Contract is the agent operating contract. Used in ModeAgent only.
 	Contract string
 	// Sliders overrides slider.json for this prompt (a subagent's persona
 	// override). Nil loads slider.json.
 	Sliders *config.SliderConfig
-	// ProjectContext is the grimoire, project memories and code-graph summary.
+	// ProjectContext is the grimoire, context files, code-graph summary and
+	// any SessionStart context.
 	ProjectContext string
 	// GitSnapshot is the formatted git state.
 	GitSnapshot string
+	// Memories is the "# Project Memories" block; it follows git.
+	Memories string
 }
 
 // confirmActionsEnabled reports whether the user has turned on confirm mode.
@@ -60,60 +98,68 @@ var confirmActionsEnabled = func() bool {
 	return err == nil && cfg.ConfirmActions
 }
 
+// now is the clock behind the date line; tests pin it.
+var now = time.Now
+
 // Compose builds a system prompt. Every caller goes through here so a prompt
 // refresh or endpoint switch produces the same prompt as session start.
 //
-// Order: persona profile (byte-stable, ending with the voice boundary rule),
-// user identity, sliders, mode contract, project context, git.
-func Compose(opts ComposeOptions) string {
-	persona := personaSection
+// Static: the persona profile (personaStatic). Dynamic, in order (W5 ruling
+// 8): sliders, user identity, mode rules (the chat rules and confirm mode,
+// or the agent contract), project context, git, memories, the date (day
+// granularity, so a day's prompts share bytes). The off profile has no
+// voice to modulate, so it gets no sliders or identity, and the PersonaOff
+// level (a reporting lane) gets no chat rules either.
+func Compose(opts ComposeOptions) Prompt {
+	want := ProfileFor(opts.Mode)
 	if opts.PersonaLevel == PersonaOff {
-		persona = func(ComposeOptions) string { return offPersona() }
+		want = ProfileOff
 	}
-	sections := []string{persona(opts)}
-	if opts.Mode == ModeAgent && opts.Contract != "" {
-		sections = append(sections, opts.Contract)
+	pp := mustProfile(want)
+	p := Prompt{Static: personaStatic(pp), Profile: pp.Profile}
+	var dynamic []string
+	if pp.Profile != ProfileOff {
+		sliders := opts.Sliders
+		if sliders == nil {
+			sliders = config.LoadSliders()
+		}
+		dynamic = append(dynamic, ComposeSliderPrompt(sliders), ComposeUserPrompt(config.LoadUser()))
 	}
-	if opts.ProjectContext != "" {
-		sections = append(sections, "# Project Context (.grimoire)\n\n"+opts.ProjectContext)
-	}
-	if opts.GitSnapshot != "" {
-		sections = append(sections, opts.GitSnapshot)
-	}
-	return strings.Join(sections, "\n\n")
-}
-
-// personaSection is the full profile (ending with the voice boundary),
-// user identity, sliders and, in chat, the chat rules.
-func personaSection(opts ComposeOptions) string {
-	persona := []string{personaCore()}
-	if user := ComposeUserPrompt(config.LoadUser()); user != "" {
-		persona = append(persona, user)
-	}
-	sliders := opts.Sliders
-	if sliders == nil {
-		sliders = config.LoadSliders()
-	}
-	if block := ComposeSliderPrompt(sliders); block != "" {
-		persona = append(persona, block)
-	}
-	if opts.Mode == ModeChat {
-		persona = append(persona, taskExecutionPrompt)
+	switch {
+	case opts.Mode == ModeAgent:
+		dynamic = append(dynamic, opts.Contract)
+	case opts.PersonaLevel != PersonaOff:
+		dynamic = append(dynamic, taskExecutionPrompt)
 		if confirmActionsEnabled() {
-			persona = append(persona, confirmModePrompt)
+			dynamic = append(dynamic, confirmModePrompt)
 		}
 	}
-
-	return strings.TrimRight(strings.Join(persona, "\n"), "\n")
+	if opts.ProjectContext != "" {
+		dynamic = append(dynamic, "# Project Context (.grimoire)\n\n"+opts.ProjectContext)
+	}
+	dynamic = append(dynamic, opts.GitSnapshot, opts.Memories, "Current date: "+now().Format("2006-01-02"))
+	p.Dynamic = joinSections(dynamic)
+	return p
 }
 
-// offPersona is the PersonaOff persona section.
-func offPersona() string {
-	return publicPreamble + "\n\n" + mustProfile(ProfileOff).SystemPrompt
+// personaStatic is a profile's Static text. The off profile is the voice
+// boundary rule alone, so Celeste's identity line and the honesty rule
+// (publicPreamble) go before it: no prompt carries less (owner ruling on
+// #265).
+func personaStatic(pp *PersonaProfile) string {
+	if pp.Profile == ProfileOff {
+		return publicPreamble + "\n\n" + pp.SystemPrompt
+	}
+	return pp.SystemPrompt
 }
 
-// personaCore returns the full profile, official or public. Either ends
-// with the voice boundary rule.
-func personaCore() string {
-	return mustProfile(ProfileFull).SystemPrompt
+// joinSections joins the non-empty sections with a blank line.
+func joinSections(parts []string) string {
+	var out []string
+	for _, s := range parts {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return strings.Join(out, "\n\n")
 }

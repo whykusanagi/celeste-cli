@@ -353,7 +353,7 @@ type TUIClientAdapter struct {
 // systemPrompt composes the chat system prompt for the current config,
 // including the session's project context.
 func (a *TUIClientAdapter) systemPrompt() string {
-	return prompts.GetSystemPromptWithContext(a.projectContext, a.gitSnapshot)
+	return prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat, ProjectContext: a.projectContext, GitSnapshot: a.gitSnapshot}).String()
 }
 
 // GetSkills implements tui.LLMClient.
@@ -1538,7 +1538,7 @@ func runSingleMessage(message string) {
 	// Initialize LLM client
 	client := llm.NewClient(llm.ConfigFrom(cfg), nil)
 
-	client.SetSystemPrompt(prompts.GetSystemPrompt())
+	client.SetSystemPrompt(prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat}).String())
 
 	// Send message. Cancel-only ctx; the client owns the per-attempt deadline
 	// (cfg.GetTimeout()) so timeout retries get a fresh, non-expired context.

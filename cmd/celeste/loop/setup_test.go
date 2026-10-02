@@ -159,7 +159,7 @@ func TestSetupPermissionsMalformedWarns(t *testing.T) {
 func TestSetupChatPromptMatchesChatComposition(t *testing.T) {
 	setupHome(t)
 	env, _ := mustSetup(t, ModeChat, t.TempDir())
-	if got, want := env.SystemPrompt("", nil), prompts.GetSystemPromptWithContext(env.ProjectContext, env.GitSnapshot); got != want {
+	if got, want := env.SystemPrompt("", nil), prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat, ProjectContext: env.ProjectContext, GitSnapshot: env.GitSnapshot}).String(); got != want {
 		t.Fatalf("chat prompt differs from the TUI's composition:\n%s\n---\n%s", got, want)
 	}
 	if env.ToolMode != tools.ModeChat {

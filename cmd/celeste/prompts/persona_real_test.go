@@ -74,7 +74,7 @@ func TestRealPersonaSizes(t *testing.T) {
 func TestRealPersonaOffLevel(t *testing.T) {
 	useRealPersona(t)
 	tempHome(t)
-	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff})
+	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff}).String()
 	want := publicIdentity + "\n\n" + publicHonesty + "\n\n" + mustProfile(ProfileOff).SystemPrompt
 	if !strings.HasPrefix(got, want) {
 		t.Fatal("off level is not identity + honesty + voice boundary") // never print persona text

@@ -7,13 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestGetSystemPrompt tests system prompt generation
-func TestGetSystemPrompt(t *testing.T) {
-	prompt := GetSystemPrompt()
-	assert.NotEmpty(t, prompt, "Prompt should not be empty")
-	assert.Contains(t, prompt, "Celeste", "Prompt should mention Celeste")
-}
-
 // TestGetContentPrompt tests content generation prompts
 func TestGetContentPrompt(t *testing.T) {
 	tests := []struct {
@@ -119,21 +112,12 @@ func TestGetContentPromptFormats(t *testing.T) {
 	}
 }
 
-// TestGetSystemPromptConsistency tests that repeated calls return same result
-func TestGetSystemPromptConsistency(t *testing.T) {
-	prompt1 := GetSystemPrompt()
-	prompt2 := GetSystemPrompt()
-
-	assert.Equal(t, prompt1, prompt2, "Multiple calls should return identical prompts")
-}
-
-// TestContentPromptIncludesBase tests that content prompt includes base prompt
+// TestContentPromptIncludesBase: the content prompt is the chat prompt
+// plus the content addendum.
 func TestContentPromptIncludesBase(t *testing.T) {
-	basePrompt := GetSystemPrompt()
+	composeEnv(t, false)
+	base := Compose(ComposeOptions{Mode: ModeChat}).String()
 	contentPrompt := GetContentPrompt("twitter", "short", "casual", "tech")
-
-	assert.Contains(t, contentPrompt, strings.TrimSpace(basePrompt),
-		"Content prompt should include base prompt")
-	assert.Greater(t, len(contentPrompt), len(basePrompt),
-		"Content prompt should be longer than base prompt")
+	assert.True(t, strings.HasPrefix(contentPrompt, base), "content prompt should start with the chat prompt")
+	assert.Contains(t, contentPrompt, "CONTENT GENERATION MODE")
 }

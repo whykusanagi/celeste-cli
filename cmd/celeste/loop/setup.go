@@ -454,7 +454,7 @@ func (e *Env) compose(projectContext, contract string, sliders *config.SliderCon
 		Sliders:        sliders,
 		ProjectContext: projectContext,
 		GitSnapshot:    e.GitSnapshot,
-	})
+	}).String()
 }
 
 // Close releases this Env. A Setup Env and its Nested children share MCP

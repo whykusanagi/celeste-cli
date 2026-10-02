@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
@@ -26,16 +27,26 @@ func composeEnv(t *testing.T, confirm bool) {
 	prev := confirmActionsEnabled
 	confirmActionsEnabled = func() bool { return confirm }
 	t.Cleanup(func() { confirmActionsEnabled = prev })
+	prevNow := now
+	now = func() time.Time { return time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC) }
+	t.Cleanup(func() { now = prevNow })
 }
-
-// The persona core is replaced by a marker in the golden files so a persona
-// update doesn't churn them; TestComposePersonaCoreIsPrefix pins the core.
-const personaMarker = "<<PERSONA CORE>>"
 
 const testContract = "AGENT CONTRACT: inspect, act, verify."
 
-// Golden files pin the prompt for each mode (#170). Regenerate with
-// go test ./prompts -run TestComposeGolden -update
+// goldenText shows a prompt with Static as a marker naming its profile and
+// Dynamic verbatim. Persona bytes never go in a golden (W5 ruling 19), and a
+// persona update can't churn these.
+func goldenText(p Prompt) string {
+	static := "(none)"
+	if p.Static != "" {
+		static = "<<PERSONA:" + string(p.Profile) + ">>"
+	}
+	return "STATIC " + static + "\n==== DYNAMIC ====\n" + p.Dynamic + "\n"
+}
+
+// Golden files pin the prompt for each mode (#170, W5). Regenerate with
+// go test ./cmd/celeste/prompts -run TestComposeGolden -update
 func TestComposeGolden(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -44,13 +55,18 @@ func TestComposeGolden(t *testing.T) {
 	}{
 		{"chat", false, ComposeOptions{Mode: ModeChat}},
 		{"chat_confirm", true, ComposeOptions{Mode: ModeChat}},
-		{"chat_context", false, ComposeOptions{Mode: ModeChat, ProjectContext: "PROJECT", GitSnapshot: "GIT"}},
+		{"chat_context", false, ComposeOptions{Mode: ModeChat, ProjectContext: "PROJECT", GitSnapshot: "GIT", Memories: "# Project Memories\n\nMEMORY"}},
 		{"agent", true, ComposeOptions{Mode: ModeAgent, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"}},
+		{"agent_off", true, ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff, Contract: testContract}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			composeEnv(t, tc.confirm)
-			got := strings.Replace(Compose(tc.opts), personaCore(), personaMarker, 1)
+			p := Compose(tc.opts)
+			if p.Static != personaStatic(mustProfile(p.Profile)) {
+				t.Fatalf("Static is not the %s profile's bytes", p.Profile)
+			}
+			got := goldenText(p)
 			path := filepath.Join("testdata", "compose_"+tc.name+".golden")
 			if *updateGolden {
 				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
@@ -69,18 +85,58 @@ func TestComposeGolden(t *testing.T) {
 	}
 }
 
-// The full profile comes first and unchanged in every persona mode, so the
-// prompt prefix stays cacheable. It already ends with the voice boundary.
-func TestComposePersonaCoreIsPrefix(t *testing.T) {
-	composeEnv(t, true)
-	core := mustProfile(ProfileFull).SystemPrompt
+// Static is exactly the mode's profile (spec W5: chat full, agent spine),
+// and String() puts it first.
+func TestComposeStaticIsTheProfile(t *testing.T) {
+	composeEnv(t, false)
 	if mustProfile(ProfileFull).Public {
 		t.Fatal("composeEnv should install the test persona")
 	}
-	for _, mode := range []Mode{ModeChat, ModeAgent} {
-		if got := Compose(ComposeOptions{Mode: mode, Contract: testContract}); !strings.HasPrefix(got, core) {
-			t.Errorf("mode %d: prompt does not start with the full profile", mode)
+	for mode, want := range map[Mode]Profile{ModeChat: ProfileFull, ModeAgent: ProfileSpine} {
+		p := Compose(ComposeOptions{Mode: mode, Contract: testContract})
+		if p.Profile != want || p.Static != mustProfile(want).SystemPrompt {
+			t.Errorf("mode %d: Static is %q, want the %s profile", mode, p.Profile, want)
 		}
+		if p.String() != p.Static+"\n\n"+p.Dynamic {
+			t.Errorf("mode %d: String() is not Static, a blank line, Dynamic", mode)
+		}
+	}
+}
+
+// Dynamic follows the spec's order: sliders, identity, (mode rules),
+// context files/grimoire, git, memories, date (W5 ruling 8).
+func TestComposeDynamicOrder(t *testing.T) {
+	composeEnv(t, false)
+	p := Compose(ComposeOptions{Mode: ModeChat, ProjectContext: "PROJECT-MARK", GitSnapshot: "GIT-MARK", Memories: "# Project Memories\n\nMEMORY-MARK"})
+	order := []string{"Voice Modulation:", "Current User Identity:", "Task Execution Rules:", "# Project Context (.grimoire)", "GIT-MARK", "MEMORY-MARK", "Current date: 2026-10-01"}
+	last := -1
+	for _, mark := range order {
+		i := strings.Index(p.Dynamic, mark)
+		if i < 0 {
+			t.Fatalf("Dynamic lacks %q", mark)
+		}
+		if i <= last {
+			t.Fatalf("%q is out of order in Dynamic", mark)
+		}
+		last = i
+	}
+}
+
+// Static never moves with anything dynamic, so provider prefix caches hit
+// across confirm mode, sliders, context, git, memories and the date.
+func TestComposeStaticIgnoresDynamicInputs(t *testing.T) {
+	composeEnv(t, false)
+	base := Compose(ComposeOptions{Mode: ModeChat}).Static
+	composeEnv(t, true)
+	now = func() time.Time { return time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC) }
+	sliders := config.DefaultSliderConfig()
+	sliders.Flirt = 0
+	other := Compose(ComposeOptions{Mode: ModeChat, Sliders: sliders, ProjectContext: "P", GitSnapshot: "G", Memories: "M"})
+	if other.Static != base {
+		t.Fatal("Static changed with dynamic inputs")
+	}
+	if !strings.Contains(other.Dynamic, "Current date: 2027-01-02") {
+		t.Fatal("the date line did not follow the clock")
 	}
 }
 
@@ -88,7 +144,7 @@ func TestComposePersonaCoreIsPrefix(t *testing.T) {
 // has nobody to confirm with, and the rules contradict the agent contract.
 func TestComposeAgentModeExcludesChatRules(t *testing.T) {
 	composeEnv(t, true)
-	got := Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract})
+	got := Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract}).String()
 	for _, banned := range []string{taskExecutionPrompt, confirmModePrompt, "Wait for explicit user approval"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("agent prompt contains chat-only text %q", firstLine(banned))
@@ -102,7 +158,7 @@ func TestComposeAgentModeExcludesChatRules(t *testing.T) {
 // Chat mode ignores Contract.
 func TestComposeChatIgnoresContract(t *testing.T) {
 	composeEnv(t, false)
-	if got := Compose(ComposeOptions{Mode: ModeChat, Contract: testContract}); strings.Contains(got, testContract) {
+	if got := Compose(ComposeOptions{Mode: ModeChat, Contract: testContract}).String(); strings.Contains(got, testContract) {
 		t.Error("chat prompt includes the agent contract")
 	}
 }
@@ -114,24 +170,12 @@ func TestComposeSliderOverride(t *testing.T) {
 	override := config.DefaultSliderConfig()
 	override.Flirt = 0
 	override.Register = 10
-	got := Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract, Sliders: override})
+	got := Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract, Sliders: override}).String()
 	if n := strings.Count(got, "Voice Modulation:"); n != 1 {
 		t.Fatalf("want exactly one Voice Modulation block, got %d", n)
 	}
 	if !strings.Contains(got, ComposeSliderPrompt(override)) {
 		t.Error("prompt does not carry the override's slider block")
-	}
-}
-
-// The legacy helpers are Compose in chat mode.
-func TestLegacyHelpersUseCompose(t *testing.T) {
-	composeEnv(t, false)
-	if GetSystemPrompt() != Compose(ComposeOptions{Mode: ModeChat}) {
-		t.Error("GetSystemPrompt differs from Compose chat mode")
-	}
-	want := Compose(ComposeOptions{Mode: ModeChat, ProjectContext: "P", GitSnapshot: "G"})
-	if GetSystemPromptWithContext("P", "G") != want {
-		t.Error("GetSystemPromptWithContext differs from Compose")
 	}
 }
 
@@ -165,7 +209,7 @@ func TestComposePersonaOff(t *testing.T) {
 				t.Fatalf("off profile: public %v, %.80q", off.Public, off.SystemPrompt)
 			}
 			for _, mode := range []Mode{ModeAgent, ModeChat} {
-				got := Compose(ComposeOptions{Mode: mode, PersonaLevel: PersonaOff, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"})
+				got := Compose(ComposeOptions{Mode: mode, PersonaLevel: PersonaOff, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"}).String()
 				want := publicIdentity + "\n\n" + publicHonesty + "\n\n" + mustProfile(ProfileOff).SystemPrompt
 				if !strings.HasPrefix(got, want) {
 					t.Fatalf("%v: off prompt does not start with identity, honesty and voice boundary:\n%s", mode, got)
@@ -182,7 +226,7 @@ func TestComposePersonaOff(t *testing.T) {
 				// With the sealed persona the full profile is far more than
 				// the off text; the keyless build's full profile is the same
 				// three parts, so there is nothing more to leave out.
-				if build == "test-key" && strings.Contains(got, personaCore()) {
+				if build == "test-key" && strings.Contains(got, mustProfile(ProfileFull).SystemPrompt) {
 					t.Fatalf("%v: off prompt has the full profile", mode)
 				}
 				if (mode == ModeAgent) != strings.Contains(got, testContract) {
@@ -193,11 +237,12 @@ func TestComposePersonaOff(t *testing.T) {
 	}
 }
 
-// No level drops the persona: an unknown one composes the full persona.
-func TestComposeUnknownPersonaLevelIsFull(t *testing.T) {
+// No level drops the persona: an unknown one composes the mode's default
+// profile.
+func TestComposeUnknownPersonaLevelIsTheModeDefault(t *testing.T) {
 	composeEnv(t, false)
 	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: "none", Contract: testContract})
-	if got != Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract}) {
-		t.Fatalf("unknown level must compose the full persona:\n%s", got)
+	if got != Compose(ComposeOptions{Mode: ModeAgent, Contract: testContract}) || got.Profile != ProfileSpine {
+		t.Fatalf("unknown level must compose the mode's default profile, got %s", got.Profile)
 	}
 }

@@ -88,7 +88,7 @@ func TestFallbackRequestCarriesThePublicPersona(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "ok"})
 	c := llm.NewClient(&llm.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "gpt-4.1", Timeout: 10 * time.Second}, nil)
-	c.SetSystemPrompt(prompts.GetSystemPrompt())
+	c.SetSystemPrompt(prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat}).String())
 	if _, err := c.SendMessageSync(context.Background(), []tui.ChatMessage{{Role: "user", Content: "hi", Timestamp: time.Now()}}, nil); err != nil {
 		t.Fatal(err)
 	}
