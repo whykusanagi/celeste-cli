@@ -111,14 +111,14 @@ func TestReindentDeeperLines(t *testing.T) {
 }
 
 func TestFuzzyDeleteRemovesTheLines(t *testing.T) {
-	ws, tool, _ := patchEnv(t, map[string]string{"d.txt": "a\n\tb\nc\n"})
+	_, tool, _ := patchEnv(t, map[string]string{"d.txt": "a\n\tb\nc\n"})
 	if res, _ := tool.Execute(context.Background(), map[string]any{"path": "d.txt", "old_string": "b", "new_string": ""}, nil); res.Error || res.Metadata["fuzzy"] == true {
 		// "b" matches exactly inside "\tb": an exact edit, not fuzzy.
 		if res.Error {
 			t.Fatal(res.Content)
 		}
 	}
-	ws, tool, _ = patchEnv(t, map[string]string{"d.txt": "a\n\tb x\nc\n"})
+	ws, tool, _ := patchEnv(t, map[string]string{"d.txt": "a\n\tb x\nc\n"})
 	res, _ := tool.Execute(context.Background(), map[string]any{"path": "d.txt", "old_string": "  b x\n", "new_string": ""}, nil)
 	if res.Error {
 		t.Fatal(res.Content)
