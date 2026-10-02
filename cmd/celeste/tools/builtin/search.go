@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -74,7 +73,7 @@ func (t *SearchTool) Execute(ctx context.Context, input map[string]any, progress
 	}
 	caseSensitive := getBoolArg(input, "case_sensitive", false)
 
-	targetPath, err := resolvePath(t.workspace, path, false)
+	targetPath, realPath, err := resolvePathReal(t.workspace, path, false)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
@@ -98,7 +97,14 @@ func (t *SearchTool) Execute(ctx context.Context, input map[string]any, progress
 			return nil
 		}
 
-		file, err := os.Open(p)
+		// A symlink inside the walk is not followed: it could point out of
+		// the workspace (its in-workspace target is searched on its own).
+		// The walk root was checked by resolvePathReal; open what it checked.
+		name := p
+		if p == targetPath {
+			name = realPath
+		}
+		file, err := openNoFollow(name)
 		if err != nil {
 			return nil
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
@@ -121,7 +120,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: msg}, nil
 	}
 
-	data, err := os.ReadFile(targetPath)
+	data, err := readFileNoFollow(realPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
