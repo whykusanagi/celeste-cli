@@ -262,3 +262,22 @@ func TestCapToolResult_RuneSafeAndBounded(t *testing.T) {
 		t.Error("capped result lost its head or tail")
 	}
 }
+
+// A small cap or a long spill path must not push the result over maxBytes:
+// the marker drops the path, then the note, before it overflows.
+func TestCapToolResult_StaysWithinSmallCaps(t *testing.T) {
+	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 120), strings.Repeat("e", 120))
+	result := strings.Repeat("セ", 4000)
+	for _, maxBytes := range []int{64, 100, 200, 300, 512, 1024} {
+		capped, wasCapped, err := CapToolResult(result, maxBytes, "s1", "c1", deep)
+		if err != nil || !wasCapped {
+			t.Fatalf("maxBytes %d: capped=%v err=%v", maxBytes, wasCapped, err)
+		}
+		if len(capped) > maxBytes {
+			t.Errorf("maxBytes %d: capped is %d bytes", maxBytes, len(capped))
+		}
+		if !utf8.ValidString(capped) {
+			t.Errorf("maxBytes %d: split a character", maxBytes)
+		}
+	}
+}

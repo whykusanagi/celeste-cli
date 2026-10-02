@@ -86,7 +86,21 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		// #211: the id recall_tool_result takes to page through the file.
 		recall = fmt.Sprintf("; recall_tool_result with id %q returns it", id)
 	}
-	note := fmt.Sprintf("TRUNCATED: %d bytes total, full output saved to: %s%s", len(result), spillPath, recall)
+	// The longest note that still fits beside the tail: a small cap or a
+	// long spill path drops the path, then the recall id, rather than
+	// overflow maxBytes.
+	notes := []string{
+		fmt.Sprintf("TRUNCATED: %d bytes total, full output saved to: %s%s", len(result), spillPath, recall),
+		fmt.Sprintf("TRUNCATED: %d bytes total%s", len(result), recall),
+		"TRUNCATED",
+	}
+	note := ""
+	for _, n := range notes {
+		if len(snipMarker(len(result), n))+min(256, maxBytes/4) <= maxBytes {
+			note = n
+			break
+		}
+	}
 	return SnipToolResult(result, maxBytes, note), true, nil
 }
 
