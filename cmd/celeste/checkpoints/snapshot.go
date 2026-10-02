@@ -5,6 +5,8 @@ package checkpoints
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
@@ -133,7 +136,12 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint
 		if err := os.MkdirAll(sm.dir, 0o700); err != nil {
 			return nil, fmt.Errorf("cannot create checkpoint directory: %w", err)
 		}
-		e.Backup = fmt.Sprintf("%s_v%d", sanitizeFilename(path), e.Version)
+		e.Backup = backupName(path, e.Version)
+		for _, old := range sm.entries {
+			if old.Backup == e.Backup {
+				return nil, fmt.Errorf("cannot snapshot %s: backup %s is in use by another checkpoint", path, e.Backup)
+			}
+		}
 		if err := backUp(path, filepath.Join(sm.dir, e.Backup), info); err != nil {
 			return nil, err
 		}
@@ -522,13 +530,24 @@ func realPath(p string) string {
 	return p
 }
 
-// sanitizeFilename converts a file path into a safe backup filename.
-func sanitizeFilename(path string) string {
-	name := filepath.Base(path)
-	// Prefix with a hash of the full path to avoid collisions
-	h := uint32(0)
-	for _, c := range path {
-		h = h*31 + uint32(c)
+// maxBackupBase bounds the base-name part of a backup's name, so a long
+// file name (plus atomicfile's temporary suffix) stays under the 255-byte
+// name limit of common filesystems.
+const maxBackupBase = 64
+
+// backupName names version v of path's backup: 16 hex digits of the
+// SHA-256 of the full path (distinct per path), the file's base name cut
+// to maxBackupBase bytes on a rune boundary (for people reading the
+// directory), and the version.
+func backupName(path string, v int) string {
+	sum := sha256.Sum256([]byte(path))
+	base := filepath.Base(path)
+	if len(base) > maxBackupBase {
+		cut := maxBackupBase
+		for cut > 0 && !utf8.RuneStart(base[cut]) {
+			cut--
+		}
+		base = base[:cut]
 	}
-	return fmt.Sprintf("%08x_%s", h, name)
+	return fmt.Sprintf("%s_%s_v%d", hex.EncodeToString(sum[:])[:16], base, v)
 }

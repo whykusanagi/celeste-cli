@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -338,7 +339,7 @@ func TestBackupNeverWritesThroughASymlink(t *testing.T) {
 	outside := filepath.Join(dir, "outside.txt")
 	write(t, outside, "untouched")
 	require.NoError(t, os.MkdirAll(sm.Dir(), 0o700))
-	if err := os.Symlink(outside, filepath.Join(sm.Dir(), sanitizeFilename(f)+"_v1")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(sm.Dir(), backupName(f, 1))); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	c, err := sm.Checkpoint(f, "")
@@ -426,4 +427,67 @@ func TestRollbackOfAnUnchangedFileOnlyDropsTheEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, os.SameFile(before, after), "the file was not replaced")
 	assert.Empty(t, sm.Entries())
+}
+
+// Backups of two files with the same base name never share a name: a weak
+// path hash once mapped Aa/f.go and BB/f.go to one backup, so reverting one
+// wrote the other's content.
+func TestBackupNamesOfCollidingPathsDiffer(t *testing.T) {
+	sm, dir := store(t)
+	a, b := filepath.Join(dir, "Aa", "f.go"), filepath.Join(dir, "BB", "f.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(a), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(b), 0o755))
+	write(t, a, "aa original")
+	write(t, b, "bb original")
+	ca, err := sm.Checkpoint(a, "")
+	require.NoError(t, err)
+	cb, err := sm.Checkpoint(b, "")
+	require.NoError(t, err)
+	assert.NotEqual(t, ca.Entry().Backup, cb.Entry().Backup)
+	write(t, a, "aa edited")
+	write(t, b, "bb edited")
+
+	_, err = sm.Revert(a)
+	require.NoError(t, err)
+	assert.Equal(t, "aa original", read(t, a))
+	_, err = sm.Revert(b)
+	require.NoError(t, err)
+	assert.Equal(t, "bb original", read(t, b))
+}
+
+// A backup name another live entry already uses is refused, never
+// overwritten (a hand-edited or damaged index).
+func TestCheckpointRefusesABackupNameInUse(t *testing.T) {
+	sm, dir := store(t)
+	a, b := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
+	write(t, a, "a")
+	write(t, b, "b")
+	require.NoError(t, os.MkdirAll(sm.Dir(), 0o700))
+	idx := []Entry{{Path: b, Version: 1, Backup: backupName(a, 1)}}
+	data, err := json.Marshal(idx)
+	require.NoError(t, err)
+	write(t, filepath.Join(sm.Dir(), "index.json"), string(data))
+
+	_, err = sm.Checkpoint(a, "")
+	require.Error(t, err)
+	assert.Len(t, sm.Entries(), 1)
+}
+
+// A long file name still gets a backup (the name is shortened), so the
+// write tools can edit the file.
+func TestCheckpointOfAVeryLongFileName(t *testing.T) {
+	sm, dir := store(t)
+	name := ""
+	for len(name) < 230 {
+		name += "é"
+	}
+	f := filepath.Join(dir, name+".txt")
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		t.Skipf("filesystem refuses a long name: %v", err)
+	}
+	c, err := sm.Checkpoint(f, "")
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(c.Entry().Backup), 100)
+	assert.True(t, utf8.ValidString(c.Entry().Backup))
+	assert.Equal(t, "x", read(t, filepath.Join(sm.Dir(), c.Entry().Backup)))
 }
