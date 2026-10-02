@@ -83,9 +83,13 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 		return msgs, nil, false
 	}
 	var notes []string
-	overhead := r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
-	meter.Overhead = overhead
-	opts := compact.Options{Window: r.budget.ModelLimit, Used: meter.Used(msgs), Unseen: meter.Unseen(msgs), Force: force}
+	meter.Overhead = r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
+	used := meter.Used(msgs)
+	// What the provider counts beyond the history estimate (the system
+	// prompt and tools, or more) still counts after a prune, as in the
+	// chat's compactWith.
+	overhead := used - compact.Estimate(msgs)
+	opts := compact.Options{Window: r.budget.ModelLimit, Used: used, Unseen: meter.Unseen(msgs), Force: force}
 	report := func(compact.Result) {}
 	if r.jev != nil {
 		opts, report = compact.Shadow(r.jev, msgs, opts, func(line string) {
@@ -444,7 +448,8 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 			fmt.Fprintln(errOut, notice)
 		}
 	}
-	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, 0)
+	// The tool schemas the run offers count too (#234 item 1).
+	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, compact.DefinitionTokens(client.GetSkills()))
 
 	return &Runner{
 		client:     client,

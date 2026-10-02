@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -340,5 +341,55 @@ func TestAgentSummaryCarriesAuthoritativeState(t *testing.T) {
 		if !strings.Contains(summaries[0], want) {
 			t.Errorf("summary lacks %q:\n%s", want, summaries[0])
 		}
+	}
+}
+
+// The agent's meter counts the tool schemas the run offers, not only the
+// system prompt: before the first provider count it is all there is (#234
+// item 1).
+func TestAgentBudgetCountsToolSchemas(t *testing.T) {
+	isolateHome(t)
+	srv := fakeprovider.NewOpenAI(t)
+	opts := DefaultOptions()
+	opts.Workspace = t.TempDir()
+	r, err := NewRunner(fakeCfg(srv), opts, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if r.budget.ToolDefinitionTokens <= 0 {
+		t.Fatalf("ToolDefinitionTokens = %d, want the offered tools' schemas", r.budget.ToolDefinitionTokens)
+	}
+}
+
+// When the provider counts more than the estimate, the surplus still counts
+// after a prune: a prune that leaves the next request over the threshold
+// escalates to the summary rung, as the chat's compactor does.
+func TestAgentSummaryRungSeesTheProviderSurplus(t *testing.T) {
+	runner, _ := newCompactionRunner(t, &windowBackend{}, 64_000)
+	var summaries int
+	runner.summarize = func(context.Context, string, string) (string, error) {
+		summaries++
+		return "## Goal\nread every file", nil
+	}
+	// A long request (~10k tokens) that no prune can shrink, then reads.
+	msgs := []tui.ChatMessage{{Role: "user", Content: "read every file\n" + strings.Repeat("y", 40_000)}}
+	for i := 0; i < 16; i++ {
+		id := fmt.Sprintf("toolu_%03d", i)
+		msgs = append(msgs,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"f%03d.go"}`, i)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 24_000)})
+	}
+	msgs = append(msgs, tui.ChatMessage{Role: "assistant", Content: "reading on"})
+	// ~106k estimated; the provider counted 40k more (images, a different
+	// tokenizer). The prune leaves ~23k by the estimate, ~63k by the
+	// provider's count: over the 48k threshold.
+	c := &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	c.meter.Sending(msgs[:len(msgs)-1])
+	if _, _, changed := c.Compact(context.Background(), msgs, &llm.TokenUsage{PromptTokens: compact.Estimate(msgs) + 40_000}, false); !changed {
+		t.Fatal("nothing compacted")
+	}
+	if summaries == 0 {
+		t.Fatal("the summary rung ignored the provider's surplus")
 	}
 }
