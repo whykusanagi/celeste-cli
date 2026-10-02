@@ -824,7 +824,8 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	// gets a result (2.0 F3, ruling 6).
 	sawCalls := false
 	streamErr := r.client.SendMessageStreamEvents(requestCtx, state.Messages, r.client.GetSkills(), func(event llm.StreamEvent) {
-		if event.IsToolEvent() {
+		switch event.Type {
+		case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
 			sawCalls = true
 		}
 		switch event.Type {
