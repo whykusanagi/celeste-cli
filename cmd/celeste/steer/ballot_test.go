@@ -409,3 +409,28 @@ func TestUnsafeAdviceSpeaksOfACallThatRan(t *testing.T) {
 		t.Errorf("reminder = %q", r)
 	}
 }
+
+// In an agent run the completion gate asks its own ballot at a final
+// reply: the background one waits for the next request instead of asking
+// twice about the same state (final review M5).
+func TestFinalRepliesLeftToTheGate(t *testing.T) {
+	o := &fixedOracle{}
+	s := New(Options{Watchdog: "on", Oracle: o, Every: 1, FinalRepliesToGate: true})
+	final := func() {
+		s.Request(0, nil)
+		s.Observe(loop.Event{Kind: loop.EventAssistant, Text: "TASK_COMPLETE: done"})
+		s.Observe(loop.Event{Kind: loop.EventTurnEnd})
+	}
+	final()
+	s.Wait()
+	if o.n != 0 {
+		t.Fatalf("ballots after a final reply = %d, want 0", o.n)
+	}
+	s.Request(0, nil)
+	s.Observe(loop.Event{Kind: loop.EventAssistant, Text: "reading", ToolNames: []string{"read_file"}})
+	s.Observe(loop.Event{Kind: loop.EventTurnEnd})
+	s.Wait()
+	if o.n != 1 {
+		t.Errorf("ballots after a tool turn = %d, want 1", o.n)
+	}
+}

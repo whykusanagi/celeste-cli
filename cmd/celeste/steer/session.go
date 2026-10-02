@@ -46,6 +46,10 @@ type Options struct {
 	// Goal is what the session is for (the agent goal, the MCP prompt).
 	// The chat sets it per turn with SetGoal.
 	Goal string
+	// FinalRepliesToGate: an agent run, whose completion gate asks its own
+	// ballot at a final reply; the background ballot skips final replies
+	// (it runs at the next request's end instead).
+	FinalRepliesToGate bool
 	// Context is the run's: cancelling it cancels a background ballot, as
 	// Close does. nil: context.Background().
 	Context context.Context
@@ -71,6 +75,7 @@ type Session struct {
 	nits       []string
 	gen        int            // bumped when the goal changes: older verdicts are dropped
 	settled    map[string]int // finding → request it was settled at (Settle)
+	lastCalls  bool           // the latest reply called tools
 	ballots    sync.WaitGroup
 	busy       bool
 }
@@ -162,6 +167,7 @@ func (s *Session) Observe(ev loop.Event) bool {
 	case loop.EventTextDelta:
 		return s.act(s.matcher.Text(ev.Text))
 	case loop.EventAssistant:
+		s.lastCalls = len(ev.ToolNames) > 0
 		if s.o.Watchdog != config.ModeOff {
 			s.turns = append(s.turns, decide.TurnView{Assistant: cut(ev.Text, 1500)})
 			if len(s.turns) > keepTurns {
@@ -176,6 +182,9 @@ func (s *Session) Observe(ev loop.Event) bool {
 			})
 		}
 	case loop.EventTurnEnd:
+		if s.o.FinalRepliesToGate && !s.lastCalls {
+			break // the completion gate asks about a final reply
+		}
 		if s.o.Watchdog != config.ModeOff && s.requests-s.lastBallot >= s.o.Every {
 			s.startBallotLocked()
 		}

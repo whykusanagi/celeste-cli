@@ -752,7 +752,9 @@ func (r *Runner) newSteering(ctx context.Context, state *RunState) *steer.Sessio
 		Oracle:          r.oracle,
 		Goal:            state.Goal,
 		Context:         ctx,
-		Logf:            func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", line) },
+		// The completion gate asks its own ballot at a final reply.
+		FinalRepliesToGate: true,
+		Logf:               func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", line) },
 	})
 }
 
