@@ -282,3 +282,59 @@ func TestNestedWorktreeLaneCanWriteTheGitDirs(t *testing.T) {
 		}
 	}
 }
+
+// Review Minor 5: a worktree lane under the parent's workspace whose
+// .celeste/config.json has the same sandbox object reuses the parent's
+// trust decision; a different object, or a workspace outside the
+// parent's, still needs its own.
+func TestNestedLaneReusesTheParentsSandboxTrust(t *testing.T) {
+	home := setupHome(t)
+	repo := t.TempDir()
+	const file = `{"sandbox":{"enabled":true,"network":true}}`
+	write(t, filepath.Join(repo, ".celeste", "config.json"), file)
+	absRepo, _ := filepath.Abs(repo)
+	if err := hooks.LoadTrust(home).Approve(hooks.SandboxSource(filepath.Join(absRepo, ".celeste", "config.json"), `{"enabled":true,"network":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := sandboxCfg(&config.Sandbox{Network: boolPtr(false)})
+	env, _ := setupWithCfg(t, ModeAgent, cfg, repo)
+	if !env.SandboxPolicy.Network {
+		t.Fatalf("parent: the trusted network:true applies: %+v", env.SandboxPolicy)
+	}
+
+	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
+	write(t, filepath.Join(lane, ".celeste", "config.json"), file)
+	w := &warnings{}
+	child, err := env.Nested(NestedOptions{Workspace: lane, Warn: w.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Close()
+	if !child.SandboxPolicy.Network || strings.Contains(w.all(), "not trusted") {
+		t.Fatalf("lane: the parent's trust carries over for the same object: %+v\n%s", child.SandboxPolicy, w.all())
+	}
+
+	other := filepath.Join(repo, ".celeste", "worktrees", "ice")
+	write(t, filepath.Join(other, ".celeste", "config.json"), `{"sandbox":{"enabled":true,"network":true,"writable":["/"]}}`)
+	w2 := &warnings{}
+	child2, err := env.Nested(NestedOptions{Workspace: other, Warn: w2.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child2.Close()
+	if child2.SandboxPolicy.Network || !strings.Contains(w2.all(), "not trusted") {
+		t.Fatalf("a different object needs its own trust: %+v\n%s", child2.SandboxPolicy, w2.all())
+	}
+
+	outside := t.TempDir()
+	write(t, filepath.Join(outside, ".celeste", "config.json"), file)
+	w3 := &warnings{}
+	child3, err := env.Nested(NestedOptions{Workspace: outside, Warn: w3.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child3.Close()
+	if child3.SandboxPolicy.Network {
+		t.Fatalf("a workspace outside the parent's needs its own trust: %+v", child3.SandboxPolicy)
+	}
+}

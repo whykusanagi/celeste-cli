@@ -100,6 +100,8 @@ celeste hooks trust                             # approve this directory's sourc
 celeste hooks trust --yes .celeste/config.json  # just the sandbox settings, without asking
 ```
 
+An isolated subagent's worktree lane sits under the workspace and has its own copy of `.celeste/config.json`. When its `sandbox` object is the same as the one the parent run trusted, the lane reuses that trust; when it differs (the lane's branch changed it), it needs its own and is skipped with a warning like any other. A workspace outside the parent's never inherits trust.
+
 A `.celeste/config.json` that is a symlink, or sits in a symlinked `.celeste` directory, is never trusted. Your own `~/.celeste/config.json` needs no trust.
 
 ## When no sandbox is available

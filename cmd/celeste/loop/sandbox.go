@@ -70,7 +70,9 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 // trustRepoSandbox reports whether the workspace config at path, whose
 // "sandbox" object is body, may loosen the sandbox: trusted by content
 // hash in the hooks trust store, or approved now by the interactive chat
-// (and stored). A symlinked file is never trusted.
+// (and stored), or trusted by the parent of a nested Env under its
+// workspace for the same body (e.sandboxTrust). A symlinked file is never
+// trusted.
 func (e *Env) trustRepoSandbox(path, body string) bool {
 	skip := func(why string) bool {
 		e.warn("sandbox: ignoring the loosening in %s (%s): a repository's \"sandbox.enabled\": false, \"sandbox.network\": true and \"sandbox.writable\" apply only once trusted; run `celeste hooks trust` to approve them", strconv.Quote(path), why)
@@ -82,6 +84,11 @@ func (e *Env) trustRepoSandbox(path, body string) bool {
 	if err := hooks.CheckRepoSandbox(path); err != nil {
 		return skip(err.Error())
 	}
+	if e.sandboxTrust != "" && body == e.sandboxTrust {
+		return true // the parent's decision, for a lane under its workspace
+	}
+	e.sandboxTrust = ""
+	trusted := func() bool { e.sandboxTrust = body; return true }
 	store := hooks.LoadTrust(e.home)
 	if err := store.Err(); err != nil {
 		e.warn("sandbox: %v; repository sandbox settings stay untrusted until it is fixed or removed", err)
@@ -89,18 +96,24 @@ func (e *Env) trustRepoSandbox(path, body string) bool {
 	src := hooks.SandboxSource(path, body)
 	status := store.Status(src)
 	if status == hooks.Trusted {
-		return true
+		return trusted()
 	}
 	if approve := e.approver(); approve != nil && store.Err() == nil && approve(src, status) {
 		if err := store.Approve(src); err != nil {
 			e.warn("sandbox: %s approved for this session only: %v", strconv.Quote(path), err)
 		}
-		return true
+		return trusted()
 	}
 	if status == hooks.Changed {
 		return skip("changed since you approved it")
 	}
 	return skip("not trusted")
+}
+
+// within reports whether path is dir or inside it.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // writablePaths expands "~/" against home and resolves relative entries

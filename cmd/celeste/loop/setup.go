@@ -76,13 +76,18 @@ type Env struct {
 	SandboxPolicy sandbox.Policy
 
 	opts        SetupOptions
-	userSandbox *config.Sandbox   // the user's "sandbox" settings, for nested Envs
-	approve     hooks.ApproveFunc // resolved once by approver
-	approveSet  bool
-	permConfig  permissions.PermissionConfig
-	indexing    sync.WaitGroup     // a code-graph update that outlived its timeout
-	indexCancel context.CancelFunc // stops that update; nil until setupCodeGraph runs
-	closeOnce   sync.Once
+	userSandbox *config.Sandbox // the user's "sandbox" settings, for nested Envs
+	// sandboxTrust is the workspace "sandbox" object whose loosening this
+	// Env trusted (its own approval, or its parent's for a lane under the
+	// parent's workspace); a nested Env under this workspace with the same
+	// object reuses it. "" when none.
+	sandboxTrust string
+	approve      hooks.ApproveFunc // resolved once by approver
+	approveSet   bool
+	permConfig   permissions.PermissionConfig
+	indexing     sync.WaitGroup     // a code-graph update that outlived its timeout
+	indexCancel  context.CancelFunc // stops that update; nil until setupCodeGraph runs
+	closeOnce    sync.Once
 
 	home string // the user's home: children load skills, permissions and hooks from it
 	// shared counts the Envs (a Setup Env and its Nested children) using one
