@@ -165,13 +165,81 @@ func (a *Agent) Request(ctx context.Context, method string, params json.RawMessa
 			return nil, err
 		}
 		return NewSessionResult{SessionID: s.id}, nil
+	case "session/prompt":
+		var p PromptParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return a.prompt(ctx, p)
 	}
 	return nil, &RPCError{Code: CodeMethodNotFound, Message: "method not found: " + method}
 }
 
-// Notify implements Handler.
-func (a *Agent) Notify(method string, _ json.RawMessage) {
-	a.logf("acp: ignoring notification %s", method)
+// Notify implements Handler. It runs on the read loop and never blocks.
+func (a *Agent) Notify(method string, params json.RawMessage) {
+	switch method {
+	case "session/cancel":
+		var p CancelParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			a.logf("acp: session/cancel with invalid params: %v", err)
+			return
+		}
+		if s := a.session(p.SessionID); s != nil {
+			s.cancelPrompt()
+		}
+	default:
+		a.logf("acp: ignoring notification %s", method)
+	}
+}
+
+// prompt answers session/prompt.
+func (a *Agent) prompt(ctx context.Context, p PromptParams) (any, *RPCError) {
+	s := a.session(p.SessionID)
+	if s == nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "unknown session " + p.SessionID}
+	}
+	text, err := promptText(p.Prompt, a.logf)
+	if err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return nil, &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
+	}
+	a.prompts.Add(1)
+	a.mu.Unlock()
+	defer a.prompts.Done()
+	res, rerr := s.prompt(ctx, a, text)
+	if rerr != nil {
+		return nil, rerr
+	}
+	return res, nil
+}
+
+// connection is the attached Conn, or nil.
+func (a *Agent) connection() *Conn {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.conn
+}
+
+// notify sends a notification to the editor.
+func (a *Agent) notify(method string, params any) error {
+	c := a.connection()
+	if c == nil {
+		return errors.New("acp: no connection")
+	}
+	return c.Notify(method, params)
+}
+
+// call sends a request to the editor and waits for its answer.
+func (a *Agent) call(ctx context.Context, method string, params, result any) error {
+	c := a.connection()
+	if c == nil {
+		return errors.New("acp: no connection")
+	}
+	return c.Call(ctx, method, params, result)
 }
 
 // initialize answers with the agent's latest protocol version whatever the

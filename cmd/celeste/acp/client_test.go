@@ -30,7 +30,8 @@ type testClient struct {
 	nextID  int
 	waiting map[int]chan rpcReply
 	updates []map[string]any
-	// permit answers session/request_permission; nil selects "allow_once".
+	// permit answers session/request_permission; nil selects "allow_once",
+	// and a permit returning nil never answers.
 	permit func(params map[string]any) map[string]any
 }
 
@@ -94,11 +95,20 @@ func (c *testClient) read(r *bufio.Reader) {
 			c.updates = append(c.updates, m.Params["update"].(map[string]any))
 			c.mu.Unlock()
 		case m.Method == "session/request_permission":
-			answer := map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow_once"}}
-			if c.permit != nil {
-				answer = c.permit(m.Params)
-			}
-			c.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": answer})
+			// Answered off the read loop, as an editor does: a permit that
+			// holds its answer must not stop the client reading.
+			c.mu.Lock()
+			permit := c.permit
+			c.mu.Unlock()
+			go func(id json.RawMessage, params map[string]any) {
+				answer := map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow_once"}}
+				if permit != nil {
+					answer = permit(params)
+				}
+				if answer != nil { // nil: never answer
+					c.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": answer})
+				}
+			}(m.ID, m.Params)
 		case m.Method == "":
 			var id int
 			_ = json.Unmarshal(m.ID, &id)
