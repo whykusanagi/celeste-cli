@@ -130,3 +130,64 @@ func TestNewSnapshotManagerPrunesOnceAtStartup(t *testing.T) {
 	NewSnapshotManager("current")
 	assert.Contains(t, sessionsIn(t, root), "s99", "pruning runs once per process")
 }
+
+// checkpointIn records a change to path in session sid under root, with the
+// file's content before and after.
+func checkpointIn(t *testing.T, root, sid, path, before, after string) Entry {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, []byte(before), 0o644))
+	sm := newSnapshotManagerWithBase(SessionDir(root, sid))
+	c, err := sm.Checkpoint(path, "call_"+sid)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(after), 0o644))
+	return c.Entry()
+}
+
+func TestRevertFileDefaultsToTheLatestSession(t *testing.T) {
+	root, work := t.TempDir(), t.TempDir()
+	f := filepath.Join(work, "a.txt")
+	checkpointIn(t, root, "older", f, "v0", "v1")
+	time.Sleep(50 * time.Millisecond) // entry times must differ (coarse clocks)
+	checkpointIn(t, root, "newer", f, "v1", "v2")
+
+	sid, err := LatestSessionFor(root, f)
+	require.NoError(t, err)
+	assert.Equal(t, "newer", sid)
+
+	sid, e, err := RevertFile(root, f, "")
+	require.NoError(t, err)
+	assert.Equal(t, "newer", sid)
+	assert.Equal(t, "call_newer", e.MessageID)
+	got, _ := os.ReadFile(f)
+	assert.Equal(t, "v1", string(got))
+
+	sid, _, err = RevertFile(root, f, "older")
+	require.NoError(t, err)
+	assert.Equal(t, "older", sid)
+	got, _ = os.ReadFile(f)
+	assert.Equal(t, "v0", string(got))
+
+	_, _, err = RevertFile(root, f, "")
+	assert.ErrorContains(t, err, "no checkpoint")
+}
+
+func TestRevertFileUnknownSession(t *testing.T) {
+	root, work := t.TempDir(), t.TempDir()
+	_, _, err := RevertFile(root, filepath.Join(work, "a.txt"), "nope")
+	assert.ErrorContains(t, err, "no checkpoint")
+}
+
+// Review Focus 3: a path through a symlinked directory finds the entry the
+// tool recorded under the other spelling.
+func TestRevertFileMatchesThroughSymlinks(t *testing.T) {
+	root, real := t.TempDir(), t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	checkpointIn(t, root, "s1", filepath.Join(link, "a.txt"), "before", "after")
+	_, _, err := RevertFile(root, filepath.Join(real, "a.txt"), "")
+	require.NoError(t, err)
+	got, _ := os.ReadFile(filepath.Join(real, "a.txt"))
+	assert.Equal(t, "before", string(got))
+}

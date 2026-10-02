@@ -34,6 +34,9 @@ type Entry struct {
 	Time time.Time `json:"time"`
 }
 
+// errNoCheckpoint: the session has no checkpoint of the file asked for.
+var errNoCheckpoint = errors.New("no checkpoint")
+
 const (
 	indexFile         = "index.json"
 	defaultMaxEntries = 100
@@ -99,6 +102,7 @@ func (c *Checkpoint) Entry() Entry { return c.entry }
 func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 
 	e := Entry{MessageID: messageID, Path: path, Version: sm.nextVersionLocked(path), Time: time.Now().UTC()}
 	info, err := os.Stat(path)
@@ -144,6 +148,7 @@ func (c *Checkpoint) Rollback() error {
 	sm := c.sm
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	for i := len(sm.entries) - 1; i >= 0; i-- {
 		if sameEntry(sm.entries[i], c.entry) {
 			return sm.undoLocked(i)
@@ -156,19 +161,21 @@ func (c *Checkpoint) Rollback() error {
 func (sm *SnapshotManager) Revert(path string) (Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	for i := len(sm.entries) - 1; i >= 0; i-- {
 		if samePath(sm.entries[i].Path, path) {
 			e := sm.entries[i]
 			return e, sm.undoLocked(i)
 		}
 	}
-	return Entry{}, fmt.Errorf("no checkpoint of %s in this session", path)
+	return Entry{}, fmt.Errorf("%w of %s in this session", errNoCheckpoint, path)
 }
 
 // RevertLast restores the file of the newest entry and removes it (/undo).
 func (sm *SnapshotManager) RevertLast() (Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	if len(sm.entries) == 0 {
 		return Entry{}, errors.New("no file changes to undo in this session")
 	}
@@ -183,6 +190,7 @@ func (sm *SnapshotManager) RevertLast() (Entry, error) {
 func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	first := -1
 	for i, e := range sm.entries {
 		if messageID != "" && e.MessageID == messageID {
@@ -209,6 +217,7 @@ func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
 func (sm *SnapshotManager) Files() []string {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	seen := map[string]bool{}
 	var out []string
 	for _, e := range sm.entries {
@@ -225,6 +234,7 @@ func (sm *SnapshotManager) Files() []string {
 func (sm *SnapshotManager) Entries() []Entry {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	return append([]Entry(nil), sm.entries...)
 }
 
@@ -232,6 +242,7 @@ func (sm *SnapshotManager) Entries() []Entry {
 func (sm *SnapshotManager) GetChanges() []FileChange {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	changes, _ := sm.computeDiffLocked()
 	return changes
 }
@@ -245,6 +256,16 @@ func (sm *SnapshotManager) Cleanup() error {
 		return os.RemoveAll(sm.dir)
 	}
 	return nil
+}
+
+// reloadLocked takes the index on disk as the truth: another process
+// (celeste revert, a second window on the same session) may have changed
+// it since this store last read or wrote it. An index that cannot be read
+// leaves memory as it is; the next change rewrites it. Callers hold sm.mu.
+func (sm *SnapshotManager) reloadLocked() {
+	if entries, err := readIndex(sm.dir); err == nil {
+		sm.entries = entries
+	}
 }
 
 // undoLocked restores entry i's file, then removes the entry from the

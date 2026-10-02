@@ -165,3 +165,22 @@ func TestComputeDiffMarksDeletedFilesAndSorts(t *testing.T) {
 	assert.True(t, changes[1].Deleted)
 	assert.Equal(t, 2, changes[1].Deletions)
 }
+
+func TestFormatChanges(t *testing.T) {
+	ws := t.TempDir()
+	changes := []FileChange{
+		{Path: filepath.Join(ws, "a.txt"), Insertions: 3, Deletions: 1},
+		{Path: filepath.Join(ws, "sub", "new.txt"), Insertions: 2, IsNew: true},
+		{Path: filepath.Join(ws, "gone.txt"), Deletions: 2, Deleted: true},
+	}
+	outside := filepath.Join(t.TempDir(), "elsewhere.txt")
+	changes = append(changes, FileChange{Path: outside, Insertions: 1})
+
+	want := "Files changed this session:\n" +
+		"  a.txt  +3 -1\n" +
+		"  " + filepath.Join("sub", "new.txt") + "  +2 -0 (new)\n" +
+		"  gone.txt  +0 -2 (deleted)\n" +
+		"  " + outside + "  +1 -0"
+	assert.Equal(t, want, FormatChanges(changes, ws))
+	assert.Equal(t, "No files changed in this session.", FormatChanges(nil, ws))
+}

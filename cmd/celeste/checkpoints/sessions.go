@@ -2,6 +2,7 @@ package checkpoints
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -96,4 +97,59 @@ func lastChange(dir string) time.Time {
 		return info.ModTime()
 	}
 	return time.Time{}
+}
+
+// LatestSessionFor returns the session (its directory name under root)
+// whose newest checkpoint of path is the most recent across all sessions
+// (celeste revert without --session). Paths match as samePath does.
+func LatestSessionFor(root, path string) (string, error) {
+	des, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	var best string
+	var bestTime time.Time
+	for _, d := range des {
+		if !d.IsDir() {
+			continue
+		}
+		entries, err := readIndex(filepath.Join(root, d.Name()))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if samePath(e.Path, path) && (best == "" || e.Time.After(bestTime)) {
+				best, bestTime = d.Name(), e.Time
+			}
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no checkpoint of %s in any session", path)
+	}
+	return best, nil
+}
+
+// RevertFile restores path from its newest checkpoint in sessionID — or,
+// when sessionID is "", in the session that changed it last — and removes
+// that entry (celeste revert, 2.0 F4).
+func RevertFile(root, path, sessionID string) (string, Entry, error) {
+	if sessionID == "" {
+		latest, err := LatestSessionFor(root, path)
+		if err != nil {
+			return "", Entry{}, err
+		}
+		sessionID = latest
+	}
+	dir := SessionDir(root, sessionID)
+	if _, err := os.Stat(dir); err != nil {
+		return sessionID, Entry{}, fmt.Errorf("no checkpoints for session %s", sessionID)
+	}
+	e, err := newSnapshotManagerWithBase(dir).Revert(path)
+	if errors.Is(err, errNoCheckpoint) {
+		return sessionID, Entry{}, fmt.Errorf("no checkpoint of %s in session %s", path, sessionID)
+	}
+	if err != nil {
+		return sessionID, Entry{}, err
+	}
+	return sessionID, e, nil
 }

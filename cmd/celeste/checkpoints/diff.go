@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,7 @@ type FileChange struct {
 func (sm *SnapshotManager) ComputeDiff() ([]FileChange, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	sm.reloadLocked()
 	return sm.computeDiffLocked()
 }
 
@@ -109,4 +111,35 @@ func diffStats(oldLines, newLines []string) (insertions, deletions int) {
 	deletions = m - lcsLen
 	insertions = n - lcsLen
 	return
+}
+
+// FormatChanges renders ComputeDiff's result for /diff: one line per file,
+// relative to workspace when inside it, in the order given (ComputeDiff
+// sorts by path).
+func FormatChanges(changes []FileChange, workspace string) string {
+	if len(changes) == 0 {
+		return "No files changed in this session."
+	}
+	lines := []string{"Files changed this session:"}
+	for _, c := range changes {
+		name := DisplayPath(workspace, c.Path)
+		suffix := ""
+		switch {
+		case c.Deleted:
+			suffix = " (deleted)"
+		case c.IsNew:
+			suffix = " (new)"
+		}
+		lines = append(lines, fmt.Sprintf("  %s  +%d -%d%s", name, c.Insertions, c.Deletions, suffix))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// DisplayPath shows path relative to workspace when it is inside it, and
+// as it is otherwise.
+func DisplayPath(workspace, path string) string {
+	if rel, err := filepath.Rel(workspace, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return rel
+	}
+	return path
 }

@@ -345,3 +345,24 @@ func TestBackupNeverWritesThroughASymlink(t *testing.T) {
 	assert.Equal(t, "untouched", read(t, outside))
 	assert.Equal(t, "secret", read(t, filepath.Join(sm.Dir(), c.Entry().Backup)))
 }
+
+// Another process on the same session (celeste revert, a second window):
+// each change starts from the index on disk, so neither undoes the other's
+// bookkeeping.
+func TestStoreSeesAnotherProcessesChanges(t *testing.T) {
+	sm, dir := store(t)
+	a, b := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
+	write(t, a, "a0")
+	require.NoError(t, snap(sm, a))
+	write(t, a, "a1")
+
+	other := newSnapshotManagerWithBase(sm.Dir())
+	_, err := other.RevertLast()
+	require.NoError(t, err)
+	assert.Equal(t, "a0", read(t, a))
+
+	write(t, b, "b0")
+	require.NoError(t, snap(sm, b))
+	assert.Equal(t, []string{b}, sm.Files(), "the entry the other process reverted stays gone")
+	assert.Len(t, newSnapshotManagerWithBase(sm.Dir()).Entries(), 1)
+}
