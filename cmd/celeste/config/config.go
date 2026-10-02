@@ -83,6 +83,10 @@ type WalletSecuritySettingsConfig struct {
 // claw_max_tool_iterations; migrate.go maps the old key).
 const DefaultMaxToolIterations = 25
 
+// DefaultTypingSpeed is typing_speed's default, in characters per second
+// (3 characters per 50ms animation tick).
+const DefaultTypingSpeed = 60
+
 // Config holds all configuration for Celeste CLI.
 type Config struct {
 	// API settings
@@ -268,7 +272,7 @@ func DefaultConfig() *Config {
 		Timeout:           60,
 		SkipPersonaPrompt: false,
 		SimulateTyping:    true,
-		TypingSpeed:       60, // 3 chars per 50ms tick
+		TypingSpeed:       DefaultTypingSpeed,
 		MaxToolIterations: DefaultMaxToolIterations,
 		VeniceBaseURL:     venice.BaseURL,
 		VeniceModel:       venice.DefaultModel,
@@ -366,10 +370,12 @@ func SaveSkillsConfig(skillsConfig *Config) error {
 		return fmt.Errorf("failed to marshal skills config: %w", err)
 	}
 
-	return os.WriteFile(skillsFile, data, 0600) // Restrictive permissions for secrets
+	// Atomic and exactly 0600: skills.json holds API keys, and a torn write
+	// would lose every one of them.
+	return atomicfile.Write(skillsFile, data, 0600)
 }
 
-// Environment overrides. Precedence is flag > environment > config file.
+// Environment overrides. Precedence is environment > config file.
 // They apply to this run only: ApplyEnvOverrides is called by the entry
 // points that run a session (chat, message, agent, serve), never by the
 // loads that are saved back, so a variable's value is never written to disk.
@@ -845,7 +851,8 @@ func persistReconciled(path string, config *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0600)
+	// Atomic; an existing profile keeps its mode, a new one is 0600.
+	return atomicfile.WriteKeepMode(path, out, 0600)
 }
 
 // deprecatedModels maps the Grok models xAI routes to the cost-prohibitive
@@ -955,7 +962,8 @@ func SaveSecrets(config *Config) error {
 		return fmt.Errorf("failed to marshal secrets: %w", err)
 	}
 
-	return os.WriteFile(secretsFile, data, 0600) // More restrictive permissions for secrets
+	// Atomic and exactly 0600, even over an older file with a looser mode.
+	return atomicfile.Write(secretsFile, data, 0600)
 }
 
 // ConfigLoader provides configuration values to tools.

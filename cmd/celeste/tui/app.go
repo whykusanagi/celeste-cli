@@ -2699,30 +2699,8 @@ type Session interface {
 	GetCommandHistory() []string
 }
 
-// sessionSummaryOf reads a session's summary: the sessions the chat holds
-// summarize as config.SessionSummary; SessionSummary is the same shape.
-func sessionSummaryOf(raw interface{}) (SessionSummary, bool) {
-	switch v := raw.(type) {
-	case SessionSummary:
-		return v, true
-	case config.SessionSummary:
-		return SessionSummary{ID: v.ID, Name: v.Name, MessageCount: v.MessageCount,
-			CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, FirstMessage: v.FirstMessage, Metadata: v.Metadata}, true
-	}
-	return SessionSummary{}, false
-}
-
-// SessionSummary represents session metadata (matches config.SessionSummary).
-// Duplicated here to avoid circular import with config package.
-type SessionSummary struct {
-	ID           string
-	Name         string
-	MessageCount int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	FirstMessage string
-	Metadata     map[string]interface{}
-}
+// SessionSummary is a session's metadata, as SummarizeRaw returns it.
+type SessionSummary = config.SessionSummary
 
 // SetSessionManager sets the session manager for persistence.
 func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel {
@@ -3027,7 +3005,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				for _, sessionRaw := range sessions {
 					if s, ok := sessionRaw.(Session); ok {
 						if summaryRaw := s.SummarizeRaw(); summaryRaw != nil {
-							if summary, ok := sessionSummaryOf(summaryRaw); ok {
+							if summary, ok := summaryRaw.(SessionSummary); ok {
 								if strings.EqualFold(summary.Name, action.SessionID) {
 									loaded = s
 									err = nil
@@ -3087,22 +3065,8 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				for _, sessionRaw := range sessions {
 					if s, ok := sessionRaw.(Session); ok {
 						if summaryRaw := s.SummarizeRaw(); summaryRaw != nil {
-							// Convert config.SessionSummary to tui.SessionSummary
-							if configSummary, ok := summaryRaw.(config.SessionSummary); ok {
-								tuiSummary := SessionSummary{
-									ID:           configSummary.ID,
-									Name:         configSummary.Name,
-									MessageCount: configSummary.MessageCount,
-									CreatedAt:    configSummary.CreatedAt,
-									UpdatedAt:    configSummary.UpdatedAt,
-									FirstMessage: configSummary.FirstMessage,
-									Metadata:     make(map[string]interface{}),
-								}
-								// Copy metadata
-								for k, v := range configSummary.Metadata {
-									tuiSummary.Metadata[k] = v
-								}
-								summaries = append(summaries, tuiSummary)
+							if summary, ok := summaryRaw.(SessionSummary); ok {
+								summaries = append(summaries, summary)
 							}
 						}
 					}
@@ -3120,8 +3084,8 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				var currentSessionID string
 				if m.currentSession != nil {
 					if currentSummaryRaw := m.currentSession.SummarizeRaw(); currentSummaryRaw != nil {
-						if configSummary, ok := currentSummaryRaw.(config.SessionSummary); ok {
-							currentSessionID = configSummary.ID
+						if summary, ok := currentSummaryRaw.(SessionSummary); ok {
+							currentSessionID = summary.ID
 						}
 					}
 				}
@@ -3244,7 +3208,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		currentID := ""
 		if m.currentSession != nil {
 			if summaryRaw := m.currentSession.SummarizeRaw(); summaryRaw != nil {
-				if summary, ok := sessionSummaryOf(summaryRaw); ok {
+				if summary, ok := summaryRaw.(SessionSummary); ok {
 					currentID = summary.ID
 				}
 			}

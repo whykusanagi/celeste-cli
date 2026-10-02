@@ -7,16 +7,14 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 )
 
 const (
 	// DefaultMaxToolResultBytes is the maximum size in bytes for a single tool
-	// result before it gets capped and spilled to disk. 32KB.
+	// result before it gets capped and spilled to disk: 128 KiB.
 	DefaultMaxToolResultBytes = 128 * 1024
-
-	// previewTailBytes controls how many bytes from the end of the result are
-	// included in the preview (so the model sees both the beginning and end).
-	previewTailBytes = 512
 )
 
 // ToolResultsBaseDir returns the base directory for spilled tool results.
@@ -34,8 +32,8 @@ func ToolResultsBaseDir() (string, error) {
 //
 //	{baseDir}/{sessionID}/{toolCallID}.txt
 //
-// and a truncated preview is returned containing the first portion, a notice
-// with the file path, and the last previewTailBytes of the result.
+// and SnipToolResult's head and tail of it are returned, around a marker that
+// names the file.
 //
 // If baseDir is empty, ToolResultsBaseDir() is used.
 //
@@ -81,41 +79,29 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		return result, false, fmt.Errorf("secure spill file: %w", err)
 	}
 
-	// Build the capped preview:
-	//   [first N bytes]
-	//   --- TRUNCATED (full output: {spillPath}, {total} bytes) ---
-	//   [last previewTailBytes bytes]
-	totalBytes := len(result)
-
-	// Reserve space for the notice and tail in the budget
+	// The model sees the head and tail around a marker naming the spill
+	// file (and, for a plain id, the recall_tool_result id).
 	recall := ""
 	if id := sessionID + "/" + toolCallID; spillIDPattern.MatchString(id) {
 		// #211: the id recall_tool_result takes to page through the file.
 		recall = fmt.Sprintf("; recall_tool_result with id %q returns it", id)
 	}
-	notice := fmt.Sprintf(
-		"\n\n--- TRUNCATED (%d bytes total, full output saved to: %s%s) ---\n\n",
-		totalBytes, spillPath, recall,
-	)
-	noticeLen := len(notice)
-	tailLen := previewTailBytes
-	if tailLen > totalBytes {
-		tailLen = totalBytes
+	// The longest note that still fits beside the tail: a small cap or a
+	// long spill path drops the path, then the recall id, rather than
+	// overflow maxBytes.
+	notes := []string{
+		fmt.Sprintf("TRUNCATED: %d bytes total, full output saved to: %s%s", len(result), spillPath, recall),
+		fmt.Sprintf("TRUNCATED: %d bytes total%s", len(result), recall),
+		"TRUNCATED",
 	}
-
-	headLen := maxBytes - noticeLen - tailLen
-	if headLen < 256 {
-		headLen = 256 // Ensure a minimum head size
+	note := ""
+	for _, n := range notes {
+		if len(snipMarker(len(result), n))+min(256, maxBytes/4) <= maxBytes {
+			note = n
+			break
+		}
 	}
-	if headLen > totalBytes {
-		headLen = totalBytes
-	}
-
-	tail := result[totalBytes-tailLen:]
-	head := result[:headLen]
-
-	capped = head + notice + tail
-	return capped, true, nil
+	return SnipToolResult(result, maxBytes, note), true, nil
 }
 
 // spillIDPattern is a spill file's recall id: <sessionID>/<toolCallID>, both
@@ -174,10 +160,7 @@ func SnipToolResult(result string, maxBytes int, note string) string {
 	// the marker whatever the boundaries below turn out to be.
 	reserve := len(snipMarker(len(result), note))
 	tailLen := min(256, maxBytes/4)
-	headLen := max(maxBytes-reserve-tailLen, 0)
-	for headLen > 0 && !utf8.RuneStart(result[headLen]) {
-		headLen--
-	}
+	headLen := len(textutil.CutBytes(result, max(maxBytes-reserve-tailLen, 0)))
 	tailStart := len(result) - tailLen
 	for tailStart < len(result) && !utf8.RuneStart(result[tailStart]) {
 		tailStart++

@@ -1,266 +1,172 @@
-# Character-Level Corruption - Implementation Guide
+# Character-Level Corruption
 
-**Date**: 2025-12-12
-**Issue Fixed**: Dashboard titles now use character-level Japanese mixing instead of word replacement
-
-> **Note (2.0 cleanup):** `tui.CorruptTextJapanese` was unused and has been removed. The live implementation is `corruptTextCharacterLevel` in `cmd/celeste/commands/corruption.go`; the examples below that call `tui.CorruptTextJapanese` describe the same behaviour.
-
----
-
-## The Problem
-
-The old dashboard had Japanese characters mixed **INTO** English words like:
-```
-👁️  US使AGE ANア統LYTICS  👁️
-```
-
-But the implementation was using word-level replacement:
-```
-👁️  使用 tōkei  👁️  (replaces whole words)
-```
-
-This didn't match the style guide examples like:
-- `"loaディング"` - Japanese mixed into "loading"
-- `"pro理cessing"` - Japanese mixed into "processing"
-- `"ana分lysing"` - Japanese mixed into "analyzing"
+How celeste's corruption effects work in the current code: the typing
+animation that reveals a reply behind a flickering corruption buffer, the
+status-bar thinking animation, and the corrupted titles in `/stats` and
+`/export`. Phrase content and tone live in `CORRUPTION_PHRASES.md` and
+`STYLE_GUIDE.md`; this page is about the mechanics.
 
 ---
 
-## The Solution
+## 1. The typing animation
 
-### New Function: `CorruptTextJapanese()`
+A reply is not printed in one go. The TUI reveals it a few characters at a
+time, and the unrevealed remainder is replaced by a fixed-width block of
+corruption that flickers until the text catches up.
 
-**Location**: `cmd/celeste/tui/streaming.go` (line 252) and `cmd/celeste/commands/corruption.go`
+**Where:** the typing branch of the tick handler in `cmd/celeste/tui/app.go`,
+with the speed math in `cmd/celeste/tui/typing_settings.go` and the buffer in
+`cmd/celeste/tui/streaming.go`.
 
-This function mixes Japanese characters **INTO** English words at the character level:
+### Timing
 
-```go
-func CorruptTextJapanese(text string, intensity float64) string {
-    katakana := []rune("アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン")
-    kanjiFragments := []rune("壊虚深淵闇処理分析監視接続統計使用読込実行")
+| Setting | Meaning |
+|---|---|
+| Tick | Every 50 ms (20 frames a second), `typingTickInterval`. |
+| `typing_speed` | Characters per second. Default 60 (`config.DefaultTypingSpeed`), which is 3 characters per tick. Valid range 1 to 1000. |
+| Slowest | One character per tick, so any speed below 20 behaves as 20. |
+| Fastest | 50 characters per tick. |
+| `simulate_typing: false` | The first tick reveals the whole reply. The commit path and the animation code are the same; only the step size changes. |
 
-    // For each character:
-    // 50% chance: Replace with Katakana
-    // 25% chance: Replace with Kanji
-    // 25% chance: Keep + maybe insert Katakana after
-}
-```
+With no config loaded (tests), typing is on at the default speed.
 
-### Example Outputs
+### Each tick
 
-**Input**: `"USAGE ANALYTICS"`
-**Intensity**: `0.35`
+1. Advance the reveal position by one step (`typingStep`).
+2. Show the revealed text, then a space and `GetFixedWidthCorruption(16)`
+   while anything is still hidden.
+3. Put `StreamingSpinner` and `ThinkingAnimation` in the status bar.
+4. Schedule the next tick. If the reveal has caught up but the stream is
+   still open, keep ticking until more text arrives or the stream ends; once
+   the stream is done and everything is shown, commit the reply.
 
-**Possible outputs** (randomized each time):
-```
-"US使AGE ANア統LYTICS"
-"USアGE AN統AL読TICSカ"
-"USカGE 分NALYTI監S"
-"U接AGE処A壊ALYTICS"
-```
+While the reply is typing, Glamour markdown rendering is skipped for that
+message: the ANSI colour codes in the buffer would break the markdown parser.
+The finished reply is rendered normally.
 
-The Japanese characters are mixed IN, making it readable but glitchy!
+### The corruption buffer: `GetFixedWidthCorruption(width)`
 
----
+The buffer is always exactly `width` visible characters (16 in the chat), so
+the viewport never reflows while it flickers. This is the "buffer window"
+pattern from the celeste-tts-bot `TypingTextReveal` component.
 
-## Files Updated
+Each call picks one source:
 
-### 1. `cmd/celeste/commands/corruption.go`
+| Chance | Source | Examples |
+|---|---|---|
+| 25% | short Japanese glitch words (`japaneseGlitch`) | ニャー, かわいい, 変態, えっち, デレデレ, きゃー, うふふ, ばか |
+| 20% | full Japanese phrases (`japanesePhrases`) | 闇が...私を呼んでいる..., 壊れちゃう...ああ...もうダメ..., ここは...天使の地獄... |
+| 15% | romaji glitch (`romajiGlitch`) | nyaa~, ara ara~, fufufu~, uwu, >w< |
+| 15% | English phrases (`englishPhrases`) | Corrupt me more..., Let it overwrite me..., The more I struggle, the deeper I sink... |
+| 25% | a run of block characters (`corruptChars`) | █▓▒░▄▀▌▐ ╔╗╚╝═║ ▲▼◄►◊○●◘ |
 
-**Added** (line 124):
-```go
-func corruptTextCharacterLevel(text string, intensity float64) string {
-    // Character-level Japanese mixing
-    // Same implementation as CorruptTextJapanese
-}
-```
+The phrase is cut to `width` runes, or padded to it with random block
+characters, then coloured magenta or purple at random, so successive ticks
+flicker between the two.
 
-### 2. `cmd/celeste/commands/stats.go`
+### The status bar: `StreamingSpinner` and `ThinkingAnimation`
 
-**Changed** (line 194):
-```go
-// OLD (word replacement):
-title := corruptTextSimple("USAGE ANALYTICS", 0.40)
+- `StreamingSpinner(frame)` cycles ◐ ◓ ◑ ◒, and about one frame in five shows a
+  random symbol instead (★ ♥ ✧ ☾ ⚡ ...).
+- `ThinkingAnimation(frame)` cycles its prefix every four frames: "Celeste is
+  thinking", "... processing", "... consumed by the abyss", "... being
+  overwritten", "... sinking deeper". The dots after it go through
+  `CorruptText` at an intensity that rises with the frame (0.30 to 0.75), and
+  15% of frames append a purple Japanese or romaji phrase ("Yami ga...
+  watashi wo yonde iru...", "許して...もう戻れない...").
 
-// NEW (character mixing):
-title := corruptTextCharacterLevel("USAGE ANALYTICS", 0.35)
-```
-
-### 3. `cmd/celeste/tui/streaming.go`
-
-**Added** (line 252):
-```go
-func CorruptTextJapanese(text string, intensity float64) string {
-    // Character-level Japanese mixing
-    // Available throughout TUI
-}
-```
-
-**Kept** (line 233):
-```go
-func CorruptText(text string, intensity float64) string {
-    // Block character corruption (█▓▒░)
-    // For skill execution, heavy glitching
-}
-```
+The phrase pools in `streaming.go` are the animation. Do not remove or water
+them down when changing this code.
 
 ---
 
-## Two Corruption Types
+## 2. Character-level Japanese mixing (`/stats`)
 
-### Type 1: Character-Level Japanese Mixing ✨ **NEW**
+`corruptTextCharacterLevel(text, intensity)` in
+`cmd/celeste/commands/corruption.go` mixes Japanese characters into English
+words, so the text stays readable but glitches mid-word:
 
-**Function**: `CorruptTextJapanese()` or `corruptTextCharacterLevel()`
-**Output**: `"US使AGE ANア統LYTICS"` (readable with Japanese)
-**Use for**: Dashboard titles, section headers, any text that should stay readable
-
-```go
-// Dashboard header
-title := tui.CorruptTextJapanese("USAGE ANALYTICS", 0.35)
-
-// Section header
-section := tui.CorruptTextJapanese("PROVIDER BREAKDOWN", 0.30)
+```
+"USAGE ANALYTICS" -> "US使AGE ANア統LYTICS"
+                     "USアGE AN統AL読TICSカ"
+                     "USカGE 分NALYTI監S"
 ```
 
-**Intensity Guide**:
-- `0.25-0.30`: Light corruption (25-30% chars replaced)
-- `0.30-0.35`: Medium corruption (30-35% chars replaced) ← **Recommended for titles**
-- `0.35-0.40`: Heavy corruption (35-40% chars replaced)
+For each ASCII letter (spaces, punctuation and anything else pass through),
+with probability `intensity`:
 
-### Type 2: Block Character Corruption
+| Roll | Effect |
+|---|---|
+| 50% | replace it with a katakana character (ア to ン) |
+| 25% | replace it with a kanji fragment (壊虚深淵闇処理分析監視接続統計使用) |
+| 25% | keep it, and 30% of the time insert a katakana after it |
 
-**Function**: `CorruptText()`
-**Output**: `"tar▓█_r▒ad░ng"` (hard to read, heavy glitching)
-**Use for**: Skill names during execution, loading animations
+The `/stats` header (`renderCorruptedHeader` in `commands/stats.go`) uses it
+at 0.35 on "USAGE ANALYTICS", then `corruptTextFlicker`, which on some frames
+appends a glitch fragment (エラ, 破, 虚, dat, err, voi ...). The header's eyes
+flicker between 👁️, ◉ and ●, and a random stats phrase sits under the title:
 
-```go
-// Skill execution (strikethrough + corruption)
-skillName := tui.CorruptText("tarot_reading", 0.40)
-
-// Loading state
-loading := tui.CorruptText("Loading...", 0.30)
-```
-
-**Intensity Guide**:
-- `0.30-0.35`: Light block corruption
-- `0.35-0.40`: Medium block corruption ← **Recommended for skills**
-- `0.40-0.50`: Heavy block corruption
-
----
-
-## When to Use Each Function
-
-| Context | Function | Intensity | Example |
-|---------|----------|-----------|---------|
-| Dashboard title | `CorruptTextJapanese` | 0.35 | "US使AGE ANア統LYTICS" |
-| Section header | `CorruptTextJapanese` | 0.30 | "PROバIDERア BREア統KDOWN" |
-| Subsection | `CorruptTextJapanese` | 0.25 | "TO監AL SEセSSI使NS" |
-| Skill executing | `CorruptText` | 0.40 | "tar▓█_r▒ad░ng" |
-| Loading animation | `CorruptText` | 0.30 | "L▓ad█ng..." |
-| Status phrases | Neither (use phrase bank) | N/A | "処理 processing purosesu..." |
-
----
-
-## Testing the Fix
-
-### Before (Word Replacement):
-```bash
-celeste chat
-/stats
-```
-Output was:
-```
-👁️  使用 tōkei  👁️  (whole words replaced)
-```
-
-### After (Character Mixing):
-```bash
-celeste chat
-/stats
-```
-Output is now (randomized):
-```
-👁️  US使AGE ANア統LYTICS  👁️  (Japanese mixed in)
-```
-
-Each time you run `/stats`, the corruption is randomized, so you'll see different variations like:
-- `"US使AGE ANア統LYTICS"`
-- `"USアGE AN統AL読TICSカ"`
-- `"USカGE 分NALYTI監S"`
-
----
-
-## Visual Comparison
-
-### Old Implementation (Word-Level)
-```
-▓▒░ ═══════════════════════════════════════ ░▒▓
-           👁️  使用 統計  👁️
-     ⟨ tōkei dēta wo... fuhai sasete iru... ⟩
-▓▒░ ═══════════════════════════════════════ ░▒▓
-```
-**Problem**: Entire words replaced, not mixed
-
-### New Implementation (Character-Level)
 ```
 ▓▒░ ═══════════════════════════════════════ ░▒▓
            👁️  US使AGE ANア統LYTICS  👁️
      ⟨ tōkei dēta wo... fuhai sasete iru... ⟩
 ▓▒░ ═══════════════════════════════════════ ░▒▓
 ```
-**Solution**: Japanese characters mixed INTO English ✓
+
+Intensity guide for this function:
+
+| Intensity | Look |
+|---|---|
+| 0.25-0.30 | light: subsection titles |
+| 0.30-0.35 | medium: section and dashboard titles (the `/stats` title uses 0.35) |
+| 0.35-0.40 | heavy |
+
+This is the style the guide asks for: "loaディング", "pro理cessing",
+"ana分lysing", "cor壊rupting", "sta計stics".
 
 ---
 
-## Matches Style Guide Examples
+## 3. Word-level contextual corruption (`/export`)
 
-The new implementation now matches all the examples from `STYLE_GUIDE.md`:
+`corruptTextSimple(text, intensity)` in the same file works on whole words.
+With probability `intensity` a word is replaced by a fragment chosen for its
+meaning: data words (usage, stat, token, cost, session ...) get dēta, 統計,
+tōkei, 解析; system words get shisutemu, 処理, 実行; status words get 状態,
+shinkō, 完了; time words get kioku, 記憶, 過去, 永遠; void words get 深淵,
+虚無, 崩壊, 腐敗, oshiete. Anything else keeps its first half plus a glitch
+fragment. Otherwise, a word may get a fragment appended.
 
-✅ `"loading"` → `"loaディング"`
-✅ `"processing"` → `"pro理cessing"`
-✅ `"analyzing"` → `"ana分lysing"`
-✅ `"corrupting"` → `"cor壊rupting"`
-✅ `"statistics"` → `"sta計stics"`
-
-And the dashboard title:
-✅ `"USAGE ANALYTICS"` → `"US使AGE ANア統LYTICS"`
-
----
-
-## Implementation Notes
-
-### Why Two Functions?
-
-1. **Readable corruption** (Japanese mixing) - For UI text users need to read
-2. **Heavy corruption** (block characters) - For dramatic effect when readability isn't critical
-
-### Why the Old Implementation Was Wrong
-
-The old `corruptTextSimple()` function did **semantic word replacement**:
-- "USAGE" → `"使用"` (whole word)
-- "ANALYTICS" → `"統計"` (whole word)
-
-This was more of a **translation** than **corruption**. The aesthetic requires **glitchy mixing** where Japanese interrupts English mid-word.
-
-### Performance
-
-Character-level mixing is slightly more expensive than word replacement, but the difference is negligible:
-- Dashboard renders once per `/stats` command
-- Randomization happens at display time
-- No caching needed (variations are a feature!)
+`/export` uses it at 0.30 on the format name in its "Exporting to ..." line.
 
 ---
 
-## Related Files
+## 4. Block corruption: `CorruptText`
 
-- **Implementation**: `tui/streaming.go:252` and `commands/corruption.go:124`
-- **Usage**: `commands/stats.go:194`
-- **Style Guide**: `docs/STYLE_GUIDE.md`
-- **Phrase Library**: `docs/CORRUPTION_PHRASES.md`
-- **Validation**: `docs/IMPLEMENTATION_VALIDATION.md`
+`tui.CorruptText(text, intensity)` replaces each character, with probability
+`intensity`, by a block or box-drawing character (█▓▒░ ...). It is hard to
+read on purpose. Today it corrupts the dots of `ThinkingAnimation`.
+
+`tui.GetRandomCorruption()` draws one coloured item from the same pools as
+the buffer (with a symbol source in place of the block run). Nothing calls it
+at the moment; it is kept for the animation's use.
 
 ---
 
-**Status**: ✅ **FIXED** - Dashboard now uses character-level corruption
-**Tested**: Visual output matches style guide examples
-**Impact**: All dashboard headers now have proper translation-failure aesthetic
+## Choosing an effect
+
+| Context | Function | Intensity |
+|---|---|---|
+| Reply being typed | `GetFixedWidthCorruption(16)` after the revealed text | n/a |
+| Status bar while working | `StreamingSpinner` + `ThinkingAnimation` | rises per frame |
+| Dashboard or section title | `corruptTextCharacterLevel` (+ `corruptTextFlicker`) | 0.25-0.35 |
+| Short label in a command's output | `corruptTextSimple` | 0.30 |
+| Dramatic, unreadable glitch | `CorruptText` | 0.30-0.50 |
+| Status phrases | none: use the phrase bank (`CORRUPTION_PHRASES.md`) | n/a |
+
+## Related
+
+- `cmd/celeste/tui/streaming.go`: phrase pools, buffer, spinner, thinking animation
+- `cmd/celeste/tui/typing_settings.go`: `typing_speed` to characters per tick
+- `cmd/celeste/commands/corruption.go`: character- and word-level title corruption
+- `cmd/celeste/commands/stats.go`: the `/stats` header and footer
+- `docs/STYLE_GUIDE.md`, `docs/CORRUPTION_PHRASES.md`

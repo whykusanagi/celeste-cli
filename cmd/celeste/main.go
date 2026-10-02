@@ -168,7 +168,7 @@ Agent:
                                           Enable plan->execute->verify gating
 
 Environment Variables:
-  CELESTE_API_KEY         API key (overrides the config file; a flag wins over both)
+  CELESTE_API_KEY         API key (overrides the config file)
   CELESTE_API_ENDPOINT    API endpoint (overrides the config file)
   VENICE_API_KEY          Venice.ai API key for NSFW mode (fallback when skills.json has none)
   TAROT_AUTH_TOKEN        Tarot function auth token (overrides the config file)
@@ -459,12 +459,13 @@ func (a *TUIClientAdapter) ActiveEndpoint() tui.ActiveEndpoint {
 		BaseURL:  c.BaseURL,
 		APIKey:   c.APIKey,
 		Model:    c.Model,
-		Pinned:   os.Getenv("CELESTE_PIN_MODEL") == "1",
 	}
-	if b := a.baseConfig; b != nil {
-		ep.AgentModel, ep.SmallModel = b.AgentModel, b.SmallModel
-		ep.Pinned = ep.Pinned || b.ModelPinned()
+	b := a.baseConfig
+	if b == nil {
+		b = &config.Config{} // CELESTE_PIN_MODEL still counts
 	}
+	ep.AgentModel, ep.SmallModel = b.AgentModel, b.SmallModel
+	ep.Pinned = b.ModelPinned()
 	return ep
 }
 
@@ -662,16 +663,6 @@ func (a *TUIClientAdapter) steering() *steer.Session {
 	return a.steer
 }
 
-// summarizerConfig is a summary's client config: a plain completion with its
-// own system prompt, so no xAI collections or features, and the persona skip
-// cleared (the Google backend drops the system prompt when it is set).
-func summarizerConfig(cfg *config.Config) *llm.Config {
-	c := llm.ConfigFrom(cfg)
-	c.Collections, c.XAIFeatures = nil, nil
-	c.SkipPersonaPrompt = false
-	return c
-}
-
 // summarizer returns the small-model summarizer, built on first use.
 func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 	if a.summarize == nil {
@@ -679,7 +670,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 		if cfg == nil {
 			return nil, errors.New("no configuration loaded")
 		}
-		a.summarize = agent.SmallModelSummarizer(summarizerConfig(cfg), cfg.ResolveSmallModel())
+		a.summarize = agent.SmallModelSummarizer(llm.PlainConfigFrom(cfg), cfg.ResolveSmallModel())
 	}
 	return a.summarize, nil
 }
@@ -1160,7 +1151,7 @@ func createConfigTemplate(name string) error {
 		Timeout:           o.timeout,
 		SkipPersonaPrompt: o.skipPersona,
 		SimulateTyping:    true,
-		TypingSpeed:       60,
+		TypingSpeed:       config.DefaultTypingSpeed,
 		MaxToolIterations: config.DefaultMaxToolIterations,
 	}
 

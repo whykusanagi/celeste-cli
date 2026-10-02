@@ -62,18 +62,6 @@ func (m *MultiLangParser) Close() {
 	}
 }
 
-// SupportsFile returns true if this parser can handle the given file.
-func (m *MultiLangParser) SupportsFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	lang := SupportedLanguage(ext)
-	if lang == "" {
-		return false
-	}
-	_, hasGrammar := m.langs[lang]
-	_, hasSpec := langSpecs[lang]
-	return hasGrammar && hasSpec
-}
-
 // ParseFile reads a source file and returns extracted symbols and edges
 // using the tree-sitter AST and language-specific node type mappings.
 func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {

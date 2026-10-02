@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // GlobalAnalytics tracks cumulative usage across all sessions
@@ -119,11 +121,10 @@ func (ga *GlobalAnalytics) Save() error {
 		return fmt.Errorf("failed to marshal analytics: %w", err)
 	}
 
-	// Write file
-	if err := os.WriteFile(analyticsPath, data, 0600); err != nil {
+	// Atomic and exactly 0600, also over an older file's 0644.
+	if err := atomicfile.Write(analyticsPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write analytics file: %w", err)
 	}
-	_ = os.Chmod(analyticsPath, 0600) // WriteFile keeps an older file's 0644
 
 	return nil
 }

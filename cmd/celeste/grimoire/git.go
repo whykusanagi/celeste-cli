@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 )
 
 const maxStatusBytes = 2048
@@ -70,10 +72,7 @@ func CaptureGitSnapshot(workDir string) *GitSnapshot {
 		return nil
 	}
 
-	status := vals["status"]
-	if len(status) > maxStatusBytes {
-		status = status[:maxStatusBytes] + "\n... (truncated)"
-	}
+	status := capStatus(vals["status"])
 
 	mainBranch := vals["main"]
 	// Parse "refs/remotes/origin/main" -> "main"
@@ -121,4 +120,13 @@ func (s *GitSnapshot) FormatForPrompt() string {
 	}
 
 	return b.String()
+}
+
+// capStatus cuts git status output (file names can be any UTF-8) to
+// maxStatusBytes on a character boundary and says so.
+func capStatus(status string) string {
+	if len(status) <= maxStatusBytes {
+		return status
+	}
+	return textutil.CutBytes(status, maxStatusBytes) + "\n... (truncated)"
 }

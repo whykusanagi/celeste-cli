@@ -236,3 +236,48 @@ func TestSpillNoticeNamesRecallID(t *testing.T) {
 		t.Error("a missing spill file must be an error")
 	}
 }
+
+// CapToolResult is built on SnipToolResult: cuts fall on character
+// boundaries, the result fits maxBytes, and the marker names the spill file.
+func TestCapToolResult_RuneSafeAndBounded(t *testing.T) {
+	dir := t.TempDir()
+	result := "a" + strings.Repeat("セ", 20000) + "b"
+	const maxBytes = 4096
+	capped, wasCapped, err := CapToolResult(result, maxBytes, "s1", "c1", dir)
+	if err != nil || !wasCapped {
+		t.Fatalf("capped=%v err=%v", wasCapped, err)
+	}
+	if !utf8.ValidString(capped) {
+		t.Fatal("CapToolResult split a UTF-8 character")
+	}
+	if len(capped) > maxBytes {
+		t.Fatalf("capped is %d bytes, over maxBytes %d", len(capped), maxBytes)
+	}
+	for _, want := range []string{"TRUNCATED", "c1.txt", "recall_tool_result", `"s1/c1"`} {
+		if !strings.Contains(capped, want) {
+			t.Errorf("capped result lacks %q", want)
+		}
+	}
+	if !strings.HasPrefix(capped, "aセ") || !strings.HasSuffix(capped, "セb") {
+		t.Error("capped result lost its head or tail")
+	}
+}
+
+// A small cap or a long spill path must not push the result over maxBytes:
+// the marker drops the path, then the note, before it overflows.
+func TestCapToolResult_StaysWithinSmallCaps(t *testing.T) {
+	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 120), strings.Repeat("e", 120))
+	result := strings.Repeat("セ", 4000)
+	for _, maxBytes := range []int{64, 100, 200, 300, 512, 1024} {
+		capped, wasCapped, err := CapToolResult(result, maxBytes, "s1", "c1", deep)
+		if err != nil || !wasCapped {
+			t.Fatalf("maxBytes %d: capped=%v err=%v", maxBytes, wasCapped, err)
+		}
+		if len(capped) > maxBytes {
+			t.Errorf("maxBytes %d: capped is %d bytes", maxBytes, len(capped))
+		}
+		if !utf8.ValidString(capped) {
+			t.Errorf("maxBytes %d: split a character", maxBytes)
+		}
+	}
+}

@@ -1,12 +1,16 @@
 package tui
 
-import "time"
+import (
+	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+)
 
 // typing_speed is in characters per second, as documented. The animation
 // advances once per typingTickInterval, so a speed maps to chars per tick.
 const (
-	// DefaultTypingSpeed is 3 characters per 50ms tick.
-	DefaultTypingSpeed = 60
+	// DefaultTypingSpeed is config.DefaultTypingSpeed, 3 characters per 50ms tick.
+	DefaultTypingSpeed = config.DefaultTypingSpeed
 	// MaxTypingSpeed bounds typing_speed (1..MaxTypingSpeed).
 	MaxTypingSpeed  = 1000
 	maxCharsPerTick = 50

@@ -14,6 +14,12 @@ Chat always runs tools in a loop, so `classic` and `claw` were the same program.
 | `celeste config --set-claw-max-iterations N` | Still works, with a warning. Use `--set-max-tool-iterations N`. |
 | `celeste config --init celeste-classic` / `celeste-claw` | Error. Use `--init openai` (or any provider). |
 
+## Typing speed
+
+| 1.x | 2.0 |
+|---|---|
+| `"typing_speed": 40` or `25` in a config file | Removed automatically the first time the file loads (one line on stderr says so). 1.x ignored `typing_speed`; these were old defaults celeste itself wrote, and honouring them now would type slower than before. The new default is 60 characters per second. Any other value is yours and is kept and honoured. |
+
 Every other key in your config file keeps its value. The MCP `celeste` tool's
 `mode` argument (`chat` / `agent`) is unrelated and unchanged.
 
