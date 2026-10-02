@@ -150,6 +150,43 @@ and never a run with verification commands (the runtime checks those
 itself). In shadow mode the old check decides and the log says where the
 gate would have differed.
 
+## Jev (TypeSafe)
+
+Jev is TypeSafe's decision model. It answers typed yes/no, choice and
+score questions in a fraction of a second. Celeste can ask it to judge
+three things; each is off by default and has its own key:
+
+| Key | What Jev judges | `on` does |
+|---|---|---|
+| `jev_prune` | which old tool results the run still needs | the least-needed are pruned first when the context fills |
+| `jev_gate` | whether a tool call is destructive, sends data out, or goes beyond what you asked | asks you before an otherwise-allowed call (in headless runs, denies it with the reason); it never allows anything |
+| `jev_route` | which kind of work an `/orchestrate` goal is | picks the lane |
+
+`shadow` asks and logs what it would do without acting. Any error, a
+missing key, or no answer within 2.5 seconds falls back to celeste's own
+rules. `oracle: jev` also lets Jev answer the watchdog's ballot.
+
+Details:
+
+- `jev_prune: on` asks Jev inside the loop, before the request, in the
+  chat, agent runs and MCP chat. `/context compact` stays in shadow even
+  with `on`: it runs in the UI loop, which never waits on the network.
+- `jev_gate` looks only at calls your permission policy already allows,
+  and only at tools that change something, plus `web_fetch` (a URL can
+  carry data out). A call the policy denies or already asks about is left
+  alone. Without a key, a destructive bash command (as the
+  `destructive-bash` rule reads it) is still flagged.
+- `jev_route` changes only which lane `/orchestrate` uses; see
+  [ROUTING.md](ROUTING.md#orchestrate-lanes).
+
+Set it up with:
+
+    celeste config --init jev
+
+It saves your TypeSafe key to `~/.celeste/typesafe.key` (readable only by
+you; `TYPESAFE_API_KEY` works too; a pasted key is not echoed) and sets
+the three keys to `shadow` in the profile. A key already `on` stays `on`.
+
 ## Third parties
 
 Stream rules, the heuristic oracle and the completion gate's marker check
@@ -158,6 +195,10 @@ only when you turn on one of these:
 
 - `jev_prune`: excerpts of old tool results with their arguments, the goal and the latest
   user message, to TypeSafe.
+- `jev_gate`: the pending tool call (its name and arguments, cut to 2,000
+  bytes) and your request (the agent goal, the MCP prompt, or the chat's
+  latest prompt), to TypeSafe.
+- `jev_route`: the `/orchestrate` goal, to TypeSafe.
 - `watchdog` (`shadow` or `on`) with `oracle: jev` or `oracle: llm`:
   every ballot, including the one the completion gate asks, sends the
   ballot's questions and this state to TypeSafe (`jev`) or to your
@@ -173,3 +214,23 @@ Before anything is sent, secrets and keys are replaced with
 `[REDACTED]`, and file paths are rewritten: a path inside the workspace
 becomes relative to it, and any other absolute or `~` path becomes
 `<path>`.
+
+Redaction is best-effort. Delete `~/.celeste/typesafe.key` (and unset
+`TYPESAFE_API_KEY`) to turn Jev off everywhere.
+
+## Status
+
+`celeste_status` (MCP) reports:
+
+- `completions`: how many of this server's model calls (MCP chat, agent
+  runs, `celeste_content`) succeeded and failed, with `last_error` while
+  the latest one failed. `health` is `degraded` while the latest one
+  failed and `ok` again after one succeeds; a cancelled call counts as
+  neither.
+- `oracle`: the `oracle` mode, the three `jev_*` modes, and the calls,
+  fallbacks, hit rate and latency of model-backed judgements, in total
+  and per use (`ballot`, `gate`, `route`, `prune`).
+- `rules`: the `stream_rules` and `watchdog` modes and how often each rule
+  fired, acted, or only logged (shadow).
+
+The counters are per server process, like `session_cost`.

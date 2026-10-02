@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 )
 
 var update = flag.Bool("update", false, "rewrite contract goldens")
@@ -268,6 +270,10 @@ func TestContractCodeGraphTools(t *testing.T) {
 }
 
 func TestContractStatusTakesNoArguments(t *testing.T) {
+	// The oracle and rule counters are per process: start this golden
+	// from zero whatever ran before it (2.0 W3).
+	decide.ResetStats()
+	rules.ResetStats()
 	cfg, ws := contractCfg(t, nil)
 	res := call(t, cfg, rpc{1, "tools/call", map[string]any{"name": "celeste_status", "arguments": map[string]any{}}})
 	golden(t, "status", normalize(res[1], ws))

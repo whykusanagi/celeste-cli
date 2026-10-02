@@ -49,9 +49,10 @@ type Runner struct {
 	// summarize writes a compaction summary with the small-model role, the
 	// rung after pruning (#174). Nil disables summaries.
 	summarize compact.SummarizeFunc
-	// jev is set when jev_prune is "shadow": pruning then logs Jev's verdict
-	// next to the rules' (#175).
-	jev *jev.Client
+	// jev is set when jev_prune is "shadow" (pruning logs Jev's verdict next
+	// to the rules', #175) or "on" (Jev orders the elisions, 2.0 W3).
+	jev     *jev.Client
+	jevMode string
 	// env is the loop.Setup environment (registry, MCP, code graph, hooks).
 	// Nil for runners built directly in tests.
 	env *loop.Env
@@ -68,6 +69,7 @@ type Runner struct {
 	watchdog string
 	oracle   decide.Oracle
 	gateMode string // completion_gate (2.0 W3)
+	jevGate  string // jev_gate (2.0 W3)
 }
 
 // compactMessages keeps the history inside the window (#174). It prunes old
@@ -88,13 +90,11 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, fo
 		used = last // the API's count includes tool schemas the estimate misses
 	}
 	overhead := r.budget.SystemPromptTokens + r.budget.ToolDefinitionTokens
-	opts := compact.Options{Window: r.budget.ModelLimit, Used: used, Force: force}
-	report := func(compact.Result) {}
-	if r.jev != nil {
-		opts, report = compact.Shadow(r.jev, msgs, opts, func(line string) {
-			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
-		}, false) // inline: errOut may be a caller's bytes.Buffer, and the run must not outlive its output
-	}
+	// Shadow reports inline: errOut may be a caller's bytes.Buffer, and the
+	// run must not outlive its output.
+	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Force: force}, func(line string) {
+		fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+	}, false)
 	pruned, res := compact.Prune(msgs, opts, r.pruned)
 	report(res)
 	changed := res.Pruned()
@@ -452,7 +452,8 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		indexer:    env.Indexer,
 		pruned:     prunedStore,
 		summarize:  SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
-		jev:        jevShadowClient(cfg.JevPrune, options.Workspace, errOut),
+		jev:        jevShadowClient(cfg.JevPruneMode(), options.Workspace, errOut),
+		jevMode:    cfg.JevPruneMode(),
 		env:        env,
 		hooks:      env.Hooks,
 		warn:       warn,
@@ -461,26 +462,27 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		rulesMode:  cfg.StreamRulesMode(),
 		watchdog:   cfg.WatchdogMode(),
 		gateMode:   cfg.CompletionGateMode(),
+		jevGate:    cfg.JevGateMode(),
 		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
 			fmt.Fprintf(errOut, "[agent] %s\n", line)
 		}),
 	}, nil
 }
 
-// jevShadowClient returns a Jev client when shadow mode is configured, and
-// says once that excerpts will leave the machine. Paths in them are sent
-// relative to workspace, or as <path>.
+// jevShadowClient returns a Jev client when jev_prune is "shadow" or "on",
+// and says once that excerpts will leave the machine. Paths in them are
+// sent relative to workspace, or as <path>.
 func jevShadowClient(mode, workspace string, errOut io.Writer) *jev.Client {
-	if mode != "shadow" {
+	if mode == config.ModeOff {
 		return nil
 	}
 	c, err := jev.NewFromEnv()
 	if err != nil {
-		fmt.Fprintf(errOut, "[agent] jev shadow disabled: %v\n", err)
+		fmt.Fprintf(errOut, "[agent] jev prune disabled: %v\n", err)
 		return nil
 	}
 	c.Workspace = workspace
-	fmt.Fprintln(errOut, "[agent] jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
+	fmt.Fprintf(errOut, "[agent] jev prune %s: redacted excerpts of old tool results are sent to TypeSafe\n", mode)
 	return c
 }
 
@@ -736,6 +738,9 @@ func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 		Compact:   runCompactor{r: r},
 		SessionID: "agent-" + state.RunID,
 		Steering:  sess.Steering(),
+		Advisor: steer.NewToolGate(r.jevGate, r.options.Workspace, func() string { return state.Goal }, func(line string) {
+			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+		}),
 	}
 }
 
