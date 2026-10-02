@@ -7,6 +7,8 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -43,7 +45,7 @@ type respFunctionCallOutput struct {
 // recorded output items, in order, instead of its neutral view (2.0 F3
 // precedence); replayed reports whether any message was. The system prompt
 // is not here: it goes in the request's instructions.
-func responsesInput(messages []tui.ChatMessage, key string) (items []json.RawMessage, replayed bool) {
+func responsesInput(messages []tui.ChatMessage, key string, lim imagefit.Limits) (items []json.RawMessage, replayed bool) {
 	add := func(v any) {
 		if b, err := json.Marshal(v); err == nil {
 			items = append(items, b)
@@ -60,11 +62,15 @@ func responsesInput(messages []tui.ChatMessage, key string) (items []json.RawMes
 		switch msg.Role {
 		case "tool":
 			add(respFunctionCallOutput{Type: "function_call_output", CallID: msg.ToolCallID, Output: msg.Content})
-			if part, name, ok := imagePart(msg.Metadata); ok {
-				add(respMessage{Type: "message", Role: "user", Content: []respContentPart{
-					{Type: "input_text", Text: fmt.Sprintf("[Attached image from tool result: %s]", name)},
-					part,
-				}})
+			if part, name, ok := imagePart(msg.Metadata, lim); ok {
+				if part.Type == "input_text" { // the image can't be sent: its note
+					add(respMessage{Type: "message", Role: "user", Content: []respContentPart{part}})
+				} else {
+					add(respMessage{Type: "message", Role: "user", Content: []respContentPart{
+						{Type: "input_text", Text: fmt.Sprintf("[Attached image from tool result: %s]", name)},
+						part,
+					}})
+				}
 			}
 		case "assistant":
 			if msg.Content != "" {
@@ -82,14 +88,29 @@ func responsesInput(messages []tui.ChatMessage, key string) (items []json.RawMes
 	return items, replayed
 }
 
-// imagePart returns a tool result's image (metadata type "image") as an
-// input_image part, with the file name for the caption.
-func imagePart(md map[string]any) (respContentPart, string, bool) {
-	img, ok := toolImageOf(md)
+// imagePart returns a tool result's image (metadata type "image") fitted to
+// lim as an input_image part, with the file name for the caption; an image
+// that can't be fitted comes back as an input_text part carrying the note
+// (#239).
+func imagePart(md map[string]any, lim imagefit.Limits) (respContentPart, string, bool) {
+	img, note, ok := fitToolImage(md, lim)
 	if !ok {
 		return respContentPart{}, "", false
 	}
+	if note != "" {
+		return respContentPart{Type: "input_text", Text: note}, img.Name, true
+	}
 	return respContentPart{Type: "input_image", ImageURL: img.DataURL(), Detail: "auto"}, img.Name, true
+}
+
+// openAIImageLimits are the image limits for an OpenAI-compatible endpoint:
+// no base URL is api.openai.com, and an unknown or local server gets
+// Universal (ruling 6).
+func openAIImageLimits(baseURL string) imagefit.Limits {
+	if baseURL == "" {
+		baseURL = openAIDefaultBaseURL
+	}
+	return imagefit.ForProvider(providers.DetectProvider(baseURL))
 }
 
 // replayItem returns a stored output item as an input item. Requests use

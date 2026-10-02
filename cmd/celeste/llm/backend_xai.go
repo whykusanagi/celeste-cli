@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -604,7 +605,9 @@ func (b *XAIBackend) convertMessages(messages []tui.ChatMessage) []xAIMessage {
 
 			// Inject a user message with image data when present,
 			// mirroring the OpenAI backend approach.
-			if img, ok := toolImageOf(msg.Metadata); ok {
+			if img, note, ok := fitToolImage(msg.Metadata, imagefit.XAI); ok && note != "" {
+				result = append(result, xAIMessage{Role: "user", MultiContent: []xAIContentPart{{Type: "text", Text: note}}})
+			} else if ok {
 				result = append(result, xAIMessage{
 					Role: "user",
 					MultiContent: []xAIContentPart{

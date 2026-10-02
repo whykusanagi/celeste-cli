@@ -1,7 +1,11 @@
 package llm
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/jpeg"
 	"strings"
 	"testing"
 
@@ -27,8 +31,8 @@ func TestToolImageOf(t *testing.T) {
 // with a user message carrying it as a data URL.
 func TestToolImageReachesChatConverters(t *testing.T) {
 	msgs := []tui.ChatMessage{{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "ok",
-		Metadata: map[string]any{"type": "image", "base64": "QUJD", "filename": "shot.jpg", "format": "jpeg"}}}
-	const want = "data:image/jpeg;base64,QUJD"
+		Metadata: map[string]any{"type": "image", "base64": tinyJPEG, "filename": "shot.jpg", "format": "jpeg"}}}
+	want := "data:image/jpeg;base64," + tinyJPEG
 
 	oa := NewOpenAIBackend(&Config{APIKey: "k", Model: "gpt-4o"}).convertMessages(msgs)
 	if len(oa) != 2 || len(oa[1].MultiContent) != 2 || oa[1].MultiContent[1].ImageURL.URL != want ||
@@ -53,14 +57,24 @@ func TestToolImageReachesAnthropic(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs := []tui.ChatMessage{{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "ok",
-		Metadata: map[string]any{"type": "image", "base64": "QUJD", "filename": "shot.jpg", "format": "jpeg"}}}
+		Metadata: map[string]any{"type": "image", "base64": tinyJPEG, "filename": "shot.jpg", "format": "jpeg"}}}
 	raw, err := json.Marshal(b.convertMessages(msgs))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"media_type":"image/jpeg"`, `"data":"QUJD"`, `[Image from tool result: shot.jpg]`} {
+	for _, want := range []string{`"media_type":"image/jpeg"`, `"data":"` + tinyJPEG + `"`, `[Image from tool result: shot.jpg]`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("missing %s in %s", want, raw)
 		}
 	}
 }
+
+// tinyJPEG is a real 2×2 JPEG in base64: send-time fitting (#239) refuses
+// bytes that are not an image, so converter tests need a decodable one.
+var tinyJPEG = func() string {
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}()
