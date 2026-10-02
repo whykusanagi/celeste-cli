@@ -61,18 +61,25 @@ func DefaultWritable(home, workspace string) []string {
 	return Normalize(out)
 }
 
-// Resolve returns path made absolute, with symlinks resolved when it
-// exists (the sandboxes compare real paths: /tmp is /private/tmp on
-// macOS).
+// Resolve returns path made absolute, with symlinks resolved (the
+// sandboxes compare real paths: /tmp is /private/tmp on macOS). For a
+// path that does not exist yet, its deepest existing ancestor is resolved
+// and the rest kept.
 func Resolve(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = filepath.Clean(path)
 	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return real
+	rest := ""
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, rest)
+		}
+		if filepath.Dir(dir) == dir {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
 	}
-	return abs
 }
 
 // Normalize resolves every path, then sorts and de-duplicates the list.

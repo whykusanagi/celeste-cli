@@ -93,9 +93,8 @@ func TestResolveFollowsSymlinksAndKeepsMissingPaths(t *testing.T) {
 	if got := Resolve(link); got != want {
 		t.Fatalf("Resolve(link) = %s, want %s", got, want)
 	}
-	missing := filepath.Join(dir, "nope")
-	if got := Resolve(missing); !strings.HasSuffix(got, "nope") {
-		t.Fatalf("Resolve(missing) = %s", got)
+	if got := Resolve(filepath.Join(link, "nope", "deeper")); got != filepath.Join(want, "nope", "deeper") {
+		t.Fatalf("Resolve(link/nope/deeper) = %s, want it under %s", got, want)
 	}
 }
 

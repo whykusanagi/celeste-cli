@@ -96,7 +96,14 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	// and files-modified list include what a subagent or /agent changed.
 	c.Snapshots = e.Snapshots
 	c.Registry = tools.NewRegistry()
-	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots)
+	// The parent's sandbox (its trust decisions included), with this
+	// child's workspace writable instead of the parent's.
+	c.SandboxPolicy = e.SandboxPolicy
+	if ws != e.Workspace {
+		c.SandboxPolicy = e.SandboxPolicy.ForWorkspace(ws)
+	}
+	policy := c.SandboxPolicy
+	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots, &policy)
 	if err := c.Registry.LoadCustomTools(filepath.Join(c.home, ".celeste", "skills")); err != nil {
 		c.warn("custom skills: %v", err)
 	}

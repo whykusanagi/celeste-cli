@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 )
 
 // WaitDelay bounds how long a finished or killed shell's output pipes may
@@ -36,6 +37,9 @@ type Options struct {
 	Stdin     []byte        // nil: no stdin
 	Timeout   time.Duration // <= 0: DefaultTimeout
 	MaxOutput int           // <= 0: DefaultMaxOutput
+	// Policy, when enabled and an OS sandbox is available, runs Command
+	// inside it (2.0 W4). nil or disabled: plain sh -c. Ignored with Args.
+	Policy *sandbox.Policy
 }
 
 // Result is what Run observed.
@@ -46,6 +50,8 @@ type Result struct {
 	TimedOut  bool
 	Blocked   string // set only by callers that check a denylist first; nothing ran
 	Err       error  // start or wait error other than a non-zero exit or the timeout
+	Sandbox   string // the OS sandbox the command ran in ("seatbelt", "bubblewrap"); "" for none
+	Hint      string // a failed sandboxed command that looks blocked: the sandbox and the key to change
 }
 
 // Run runs Command with sh -c (or Args directly) in its own process group, killed whole on
@@ -67,8 +73,13 @@ func Run(ctx context.Context, o Options) Result {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var cmd *exec.Cmd
-	if len(o.Args) > 0 {
-		cmd = exec.CommandContext(cctx, o.Args[0], o.Args[1:]...)
+	var kind string
+	args := o.Args
+	if len(args) == 0 && o.Policy != nil {
+		args, kind = sandbox.Wrap(*o.Policy, o.Command)
+	}
+	if len(args) > 0 {
+		cmd = exec.CommandContext(cctx, args[0], args[1:]...)
 	} else {
 		cmd = exec.CommandContext(cctx, "sh", "-c", o.Command)
 	}
@@ -91,7 +102,7 @@ func Run(ctx context.Context, o Options) Result {
 	err = proctree.Start(cmd)
 	_ = w.Close()
 	if err != nil {
-		return Result{ExitCode: -1, Err: err}
+		return Result{ExitCode: -1, Err: err, Sandbox: kind}
 	}
 	defer proctree.Release(cmd) // after Wait, the drain and any Kill below
 	done := make(chan struct{})
@@ -118,9 +129,13 @@ func Run(ctx context.Context, o Options) Result {
 		Truncated: out.truncated,
 		ExitCode:  -1,
 		TimedOut:  errors.Is(cctx.Err(), context.DeadlineExceeded),
+		Sandbox:   kind,
 	}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
+	}
+	if kind != "" && res.ExitCode != 0 {
+		res.Hint = sandbox.Hint(kind, *o.Policy, res.Output)
 	}
 	var exitErr *exec.ExitError
 	switch {

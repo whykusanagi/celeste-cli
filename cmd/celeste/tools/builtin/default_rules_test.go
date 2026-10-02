@@ -12,7 +12,7 @@ import (
 // tool; the allow rule once named search_files, which doesn't exist (#188).
 func TestDefaultPermissionRulesNameRealTools(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil, nil)
 
 	cfg := permissions.DefaultConfig()
 	for _, rule := range append(cfg.AlwaysAllow, cfg.AlwaysDeny...) {
