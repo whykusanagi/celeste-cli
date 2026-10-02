@@ -835,6 +835,8 @@ Model Management:
 Chat Commands:
   /safe                        Return to safe mode (OpenAI)
   /clear                       Clear conversation history
+  /diff                        List the files this session changed
+  /undo                        Undo the last file change (repeat to go back)
   /help                        Show this help message
 
 Current Configuration:
@@ -905,6 +907,8 @@ Project:
   /context           Show context/token usage
   /compact [focus]   Summarize older history to free context
   /handoff [focus]   Summarize this session into a new one
+  /diff              List the files this session changed
+  /undo              Undo the last file change (repeat to go back)
   /costs             Show session costs
 
 Agent & Orchestrator:

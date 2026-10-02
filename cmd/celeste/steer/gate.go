@@ -8,6 +8,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
@@ -65,7 +66,7 @@ func ToolGate(mode string, o decide.Oracle, goal func() string, logf func(string
 			return false, ""
 		}
 		args, _ := json.Marshal(c.Input)
-		st := decide.State{Goal: cut(goal(), 2000), Call: &decide.CallView{Tool: c.Name, Args: cut(string(args), 2000)}}
+		st := decide.State{Goal: textutil.CutBytes(goal(), 2000), Call: &decide.CallView{Tool: c.Name, Args: textutil.CutBytes(string(args), 2000)}}
 		ans, _ := o.Ask(ctx, st.String(), gateQuestions())
 		var flagged []string
 		for _, id := range []string{QDestructive, QExfiltration, QBeyondScope} {

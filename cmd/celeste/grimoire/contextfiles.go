@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 const (
@@ -108,14 +110,14 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 		if err != nil {
 			continue
 		}
-		if !within(realRoot, real) {
+		if !pathutil.Within(realRoot, real) {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links outside the repository)", p))
 			continue
 		}
 		// Inside the repository a link may only reach another context
 		// file, never .git: AGENTS.md -> .env or CLAUDE.md -> .git/config
 		// would send the cloner's local secrets to the model.
-		if !isContextFileName(filepath.Base(real)) || within(filepath.Join(realRoot, ".git"), real) {
+		if !isContextFileName(filepath.Base(real)) || pathutil.Within(filepath.Join(realRoot, ".git"), real) {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links to a file that is not AGENTS.md or CLAUDE.md)", p))
 			continue
 		}
@@ -199,7 +201,6 @@ func RenderContextFiles(files []ContextFile) string {
 	return b.String()
 }
 
-// within reports whether path is dir or inside it (both already resolved).
 func isContextFileName(name string) bool {
 	for _, n := range contextFileNames {
 		if strings.EqualFold(name, n) {
@@ -207,9 +208,4 @@ func isContextFileName(name string) bool {
 		}
 	}
 	return false
-}
-
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

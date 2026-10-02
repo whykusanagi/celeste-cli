@@ -529,3 +529,13 @@ func TestParseStillRecognisesRealCommands(t *testing.T) {
 		}
 	}
 }
+
+// /undo and /diff are listed in both /help texts (safe and NSFW).
+func TestHelpListsUndoAndDiff(t *testing.T) {
+	for _, nsfw := range []bool{false, true} {
+		result := Execute(&Command{Name: "help"}, &CommandContext{NSFWMode: nsfw})
+		for _, want := range []string{"/undo", "/diff"} {
+			assert.Contains(t, result.Message, want, "nsfw=%v", nsfw)
+		}
+	}
+}

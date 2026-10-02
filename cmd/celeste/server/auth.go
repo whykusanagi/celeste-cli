@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 const tokenLength = 32 // 32 bytes = 64 hex chars
@@ -54,8 +56,9 @@ func loadOrCreateToken(path string) (string, error) {
 		return "", fmt.Errorf("create token directory: %w", err)
 	}
 
-	// Write token with restrictive permissions
-	if err := os.WriteFile(path, []byte(token+"\n"), 0600); err != nil {
+	// Write token with restrictive permissions, atomically: a short token
+	// being replaced never lends the new one its mode.
+	if err := atomicfile.Write(path, []byte(token+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("write token file: %w", err)
 	}
 

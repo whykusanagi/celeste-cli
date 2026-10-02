@@ -3,6 +3,7 @@ package steer
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -163,10 +164,23 @@ func TestUnhonouredInterruptReminderJoinsLater(t *testing.T) {
 	}
 }
 
-// clip never cuts a rune in half (review M7).
-func TestClipKeepsRunesWhole(t *testing.T) {
-	got := clip(strings.Repeat("é", 100))
-	if !utf8.ValidString(got) || !strings.HasSuffix(got, "...") || len(got) > 80 {
-		t.Errorf("clip = %q (%d bytes)", got, len(got))
+// A rule hit's log line shows at most 80 bytes of the matched text and
+// never cuts a rune in half (review M7).
+func TestRuleHitLogClipsOnRuneBoundaries(t *testing.T) {
+	cases := []struct{ text, want string }{
+		{strings.Repeat("é", 100), strings.Repeat("é", 38) + "..."},
+		{strings.Repeat("a", 80), strings.Repeat("a", 80)},
+		{strings.Repeat("a", 81), strings.Repeat("a", 77) + "..."},
+	}
+	for _, c := range cases {
+		var logged []string
+		s := New(Options{Rules: builtins(), RulesMode: "shadow", Logf: func(l string) { logged = append(logged, l) }})
+		s.act([]rules.Hit{{Rule: &rules.Rule{Name: "r", Action: rules.Interrupt}, Text: c.text}})
+		if len(logged) != 1 || !strings.Contains(logged[0], "matched "+strconv.Quote(c.want)+" in") {
+			t.Errorf("text of %d bytes: logged %v, want the match shown as %q", len(c.text), logged, c.want)
+		}
+		if !utf8.ValidString(c.want) || len(c.want) > 80 {
+			t.Fatalf("bad case %q", c.want)
+		}
 	}
 }
