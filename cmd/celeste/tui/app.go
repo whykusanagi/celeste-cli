@@ -808,6 +808,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if it's a slash command first
 		if cmd := commands.Parse(content); cmd != nil {
 			// Handle Phase 4 commands that require app state (contextTracker, currentSession)
+			// /session alone opens the picker; with a subcommand
+			// (merge, resume, new, ...) it falls through to run the action.
+			if cmd.Name == "session" && len(cmd.Args) == 0 {
+				m.viewMode = "sessions"
+				panel := NewSessionPanelModel()
+				panel = panel.SetWidth(m.width).SetHeight(m.height)
+				m.sessionPanel = &panel
+				return m, nil
+			}
+
 			switch cmd.Name {
 			case "agent":
 				if len(cmd.Args) == 0 {
@@ -887,6 +897,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(cmd.Args) > 0 && cmd.Args[0] == "compact" {
 					var out CompactOutcome
 					m, out = m.compactContext(true)
+					if len(out.Edits) > 0 {
+						m.persistSession() // the pruned results are the session now
+					}
 					if len(out.Edits) == 0 || out.StillOver {
 						// Pruning found too little: go to the summary rung.
 						return m.startSummaryAs("", len(out.Edits) == 0, "manual")
@@ -1229,14 +1242,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.chat = m.chat.AddSystemMessage("Code Graph:\n" + m.codeGraphSummary)
 					}
 				}
-				return m, nil
-
-			case "session":
-				// Open interactive session picker
-				m.viewMode = "sessions"
-				panel := NewSessionPanelModel()
-				panel = panel.SetWidth(m.width).SetHeight(m.height)
-				m.sessionPanel = &panel
 				return m, nil
 
 			case "persona":
@@ -1638,6 +1643,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Handle session actions
 				if result.StateChange.SessionAction != nil {
 					m = m.handleSessionAction(result.StateChange.SessionAction)
+					// Another session's history is a different conversation:
+					// the prompt follows it (the picker does the same).
+					if a := result.StateChange.SessionAction.Action; a == "resume" || a == "merge" {
+						if refresher, ok := m.llmClient.(PromptRefresher); ok {
+							refresher.RefreshSystemPrompt()
+						}
+					}
 				}
 
 				// Handle selector request
@@ -2687,6 +2699,19 @@ type Session interface {
 	GetCommandHistory() []string
 }
 
+// sessionSummaryOf reads a session's summary: the sessions the chat holds
+// summarize as config.SessionSummary; SessionSummary is the same shape.
+func sessionSummaryOf(raw interface{}) (SessionSummary, bool) {
+	switch v := raw.(type) {
+	case SessionSummary:
+		return v, true
+	case config.SessionSummary:
+		return SessionSummary{ID: v.ID, Name: v.Name, MessageCount: v.MessageCount,
+			CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, FirstMessage: v.FirstMessage, Metadata: v.Metadata}, true
+	}
+	return SessionSummary{}, false
+}
+
 // SessionSummary represents session metadata (matches config.SessionSummary).
 // Duplicated here to avoid circular import with config package.
 type SessionSummary struct {
@@ -2975,8 +3000,9 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		// Create new session
 		newSession := m.sessionManager.NewSession()
 		if s, ok := newSession.(Session); ok {
-			// TODO: Set name through metadata if action.Name is provided
-			// config.Session doesn't currently have a SetName method
+			if action.Name != "" {
+				s.SetName(action.Name)
+			}
 			m.currentSession = s
 
 			// Clear chat
@@ -3001,7 +3027,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				for _, sessionRaw := range sessions {
 					if s, ok := sessionRaw.(Session); ok {
 						if summaryRaw := s.SummarizeRaw(); summaryRaw != nil {
-							if summary, ok := summaryRaw.(SessionSummary); ok {
+							if summary, ok := sessionSummaryOf(summaryRaw); ok {
 								if strings.EqualFold(summary.Name, action.SessionID) {
 									loaded = s
 									err = nil
@@ -3168,6 +3194,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		m.chat = m.chat.AddSystemMessage("🗑️  Session cleared, new session started")
 
 	case "merge":
+		m.persistSession() // the merge reads the current session's saved messages
 		if toMerge, err := m.sessionManager.Load(action.SessionID); err == nil {
 			merged := m.sessionManager.MergeSessions(m.currentSession, toMerge)
 			if s, ok := merged.(Session); ok {
@@ -3217,7 +3244,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		currentID := ""
 		if m.currentSession != nil {
 			if summaryRaw := m.currentSession.SummarizeRaw(); summaryRaw != nil {
-				if summary, ok := summaryRaw.(SessionSummary); ok {
+				if summary, ok := sessionSummaryOf(summaryRaw); ok {
 					currentID = summary.ID
 				}
 			}

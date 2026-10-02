@@ -1114,6 +1114,12 @@ func handleSkillsReload() *CommandResult {
 	}
 }
 
+// sessionRef is a session ID or name from the words after the action; a name
+// may hold spaces and be quoted.
+func sessionRef(words []string) string {
+	return strings.Trim(strings.Join(words, " "), "\"'")
+}
+
 // handleSession handles the /session command for session management.
 func handleSession(cmd *Command, ctx *CommandContext) *CommandResult {
 	if len(cmd.Args) == 0 {
@@ -1154,12 +1160,12 @@ func handleSession(cmd *Command, ctx *CommandContext) *CommandResult {
 		}
 		return &CommandResult{
 			Success:      true,
-			Message:      fmt.Sprintf("📂 Loading session %s...", cmd.Args[1]),
+			Message:      fmt.Sprintf("📂 Loading session %s...", sessionRef(cmd.Args[1:])),
 			ShouldRender: true,
 			StateChange: &StateChange{
 				SessionAction: &SessionAction{
 					Action:    "resume",
-					SessionID: cmd.Args[1],
+					SessionID: sessionRef(cmd.Args[1:]),
 				},
 			},
 		}
