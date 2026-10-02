@@ -94,18 +94,3 @@ func Normalize(paths []string) []string {
 	slices.Sort(out)
 	return slices.Compact(out)
 }
-
-// ForWorkspace is p for a run in another workspace (an isolated worktree):
-// the new workspace replaces the old one in Writable; the rest carries over.
-func (p Policy) ForWorkspace(workspace string) Policy {
-	ws := Resolve(workspace)
-	var writable []string
-	for _, w := range p.Writable {
-		if w != p.Workspace {
-			writable = append(writable, w)
-		}
-	}
-	p.Workspace = ws
-	p.Writable = Normalize(append(writable, ws))
-	return p
-}

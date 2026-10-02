@@ -97,18 +97,3 @@ func TestResolveFollowsSymlinksAndKeepsMissingPaths(t *testing.T) {
 		t.Fatalf("Resolve(link/nope/deeper) = %s, want it under %s", got, want)
 	}
 }
-
-func TestForWorkspaceSwapsTheWorkspace(t *testing.T) {
-	a, b := t.TempDir(), t.TempDir()
-	p := Policy{Enabled: true, Workspace: Resolve(a), Writable: Normalize([]string{a, "/cache"}), Network: false}
-	q := p.ForWorkspace(b)
-	if q.Workspace != Resolve(b) || slices.Contains(q.Writable, Resolve(a)) || !slices.Contains(q.Writable, Resolve(b)) || !slices.Contains(q.Writable, Resolve("/cache")) {
-		t.Fatalf("ForWorkspace = %+v", q)
-	}
-	if q.Network || !q.Enabled {
-		t.Fatalf("other settings carry over: %+v", q)
-	}
-	if !slices.Contains(p.Writable, Resolve(a)) {
-		t.Fatal("ForWorkspace must not modify the receiver")
-	}
-}

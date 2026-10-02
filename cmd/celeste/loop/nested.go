@@ -96,11 +96,13 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	// and files-modified list include what a subagent or /agent changed.
 	c.Snapshots = e.Snapshots
 	c.Registry = tools.NewRegistry()
-	// The parent's sandbox (its trust decisions included), with this
-	// child's workspace writable instead of the parent's.
+	// The parent's sandbox in the same workspace; in another one, the
+	// user's settings and that workspace's own file, whose loosening needs
+	// its own trust (a child never asks: it is non-interactive).
+	c.userSandbox = e.userSandbox
 	c.SandboxPolicy = e.SandboxPolicy
 	if ws != e.Workspace {
-		c.SandboxPolicy = e.SandboxPolicy.ForWorkspace(ws)
+		c.SandboxPolicy = c.resolveSandbox(c.userSandbox)
 	}
 	policy := c.SandboxPolicy
 	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots, &policy)

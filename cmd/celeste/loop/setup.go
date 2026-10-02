@@ -69,11 +69,14 @@ type Env struct {
 	// ~/.celeste/rules/*.md, then the grimoire's "## Stream Rules" (a repo
 	// grimoire's only once trusted, like a repo hook).
 	Rules *rules.Set
-	// SandboxPolicy is bash's OS sandbox (2.0 W4): defaults, then the
-	// user's "sandbox" settings. Nested Envs inherit it.
+	// SandboxPolicy is bash's OS sandbox (2.0 W4): defaults, the user's
+	// "sandbox" settings, then the workspace's (loosening only once
+	// trusted). A nested Env in the same workspace inherits it; one in
+	// another workspace resolves its own.
 	SandboxPolicy sandbox.Policy
 
 	opts        SetupOptions
+	userSandbox *config.Sandbox   // the user's "sandbox" settings, for nested Envs
 	approve     hooks.ApproveFunc // resolved once by approver
 	approveSet  bool
 	permConfig  permissions.PermissionConfig
@@ -148,7 +151,8 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	// agent run, the MCP chat Env; <mode>-<pid>-<nanos> when none was given.
 	env.Snapshots = checkpoints.NewSnapshotManager(opts.SessionID)
 	env.Registry = tools.NewRegistry()
-	env.SandboxPolicy = env.resolveSandbox(cfg)
+	env.userSandbox = cfg.Sandbox
+	env.SandboxPolicy = env.resolveSandbox(env.userSandbox)
 	policy := env.SandboxPolicy
 	builtin.RegisterAll(env.Registry, ws, nil, env.Files, env.Snapshots, &policy)
 	if err := env.Registry.LoadCustomTools(filepath.Join(home, ".celeste", "skills")); err != nil {

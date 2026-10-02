@@ -91,7 +91,38 @@ func TestUserSandboxSettingsApply(t *testing.T) {
 	}
 }
 
-// A child in another workspace (an isolated worktree) keeps the parent's
+// A child in another workspace resolves its own policy: the user's
+// settings, then that workspace's file, whose loosening needs its own
+// trust (a parent's trusted loosening never carries over).
+func TestNestedInAnotherWorkspaceResolvesItsOwnPolicy(t *testing.T) {
+	home := setupHome(t)
+	ws, other := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(ws, ".celeste", "config.json"), `{"sandbox":{"enabled":false}}`)
+	write(t, filepath.Join(other, ".celeste", "config.json"), `{"sandbox":{"enabled":false,"network":false}}`)
+	absWS, _ := filepath.Abs(ws)
+	if err := hooks.LoadTrust(home).Approve(hooks.SandboxSource(filepath.Join(absWS, ".celeste", "config.json"), `{"enabled":false}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
+	env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
+	if env.SandboxPolicy.Enabled {
+		t.Fatalf("parent: the trusted enabled:false applies: %+v", env.SandboxPolicy)
+	}
+	w := &warnings{}
+	child, err := env.Nested(NestedOptions{Workspace: other, Warn: w.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Close()
+	if !child.SandboxPolicy.Enabled || child.SandboxPolicy.Network {
+		t.Fatalf("child: the other workspace's untrusted loosening must not apply, its tightening must: %+v", child.SandboxPolicy)
+	}
+	if !strings.Contains(w.all(), "celeste hooks trust") {
+		t.Fatalf("child warning missing: %s", w.all())
+	}
+}
+
+// A child in another workspace (an isolated worktree) keeps the user's
 // settings with its own workspace writable instead of the parent's.
 func TestNestedInheritsTheSandboxPolicy(t *testing.T) {
 	setupHome(t)

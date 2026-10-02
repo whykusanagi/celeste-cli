@@ -18,16 +18,16 @@ import (
 var sandboxWarnOnce = new(sync.Once)
 
 // resolveSandbox is bash's OS sandbox policy for this Env (2.0 W4, ruling
-// 9): the default, then the user's "sandbox" settings from the loaded
-// config, then the workspace's .celeste/config.json. The workspace's
+// 9): the default, then the user's "sandbox" settings (user, from the
+// loaded config), then the workspace's .celeste/config.json. The workspace's
 // tightening ("enabled": true, "network": false) always applies; its
 // loosening ("enabled": false, "network": true, "writable") only once
 // that file's settings are trusted, or the interactive chat approves them
 // now. Non-interactive runs skip an untrusted loosening with a warning.
-func (e *Env) resolveSandbox(cfg *config.Config) sandbox.Policy {
+func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	p := sandbox.Policy{Enabled: sandbox.DefaultEnabled, Network: true}
 	var extra []string
-	if s := cfg.Sandbox; s != nil {
+	if s := user; s != nil {
 		if s.Enabled != nil {
 			p.Enabled = *s.Enabled
 		}
