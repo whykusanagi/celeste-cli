@@ -4,12 +4,11 @@ package hooks
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"syscall"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
 )
 
 // envValueCap keeps each CELESTE_* value well below Windows' per-variable
@@ -27,7 +26,7 @@ func shellCommand(ctx context.Context, command string) *exec.Cmd {
 	}
 	cmd := exec.CommandContext(ctx, comspec)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: `"` + comspec + `" /d /s /c "` + command + `"`}
-	cmd.Cancel = func() error { return killProcessTree(cmd) }
+	proctree.Prepare(cmd)
 	return cmd
 }
 
@@ -35,24 +34,6 @@ func shellCommand(ctx context.Context, command string) *exec.Cmd {
 // POSIX sh on PATH (Git for Windows ships one).
 func v1Command(ctx context.Context, command string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Cancel = func() error { return killProcessTree(cmd) }
+	proctree.Prepare(cmd)
 	return cmd
-}
-
-func killProcessTree(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return nil
-	}
-	taskkill := "taskkill"
-	if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
-		taskkill = filepath.Join(systemRoot, "System32", "taskkill.exe")
-	}
-	// F0 has no Job Object. If the root has already exited, Windows may no
-	// longer expose every grandchild relationship to taskkill /T; that accepted
-	// limitation means this is best-effort for already-detached descendants.
-	_ = exec.Command(taskkill, "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
-	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return err
-	}
-	return nil
 }

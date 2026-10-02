@@ -3,6 +3,7 @@ package builtin
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,9 +20,9 @@ func resolvePath(workspace, input string, forWrite bool) (string, error) {
 }
 
 // resolvePathReal is resolvePath that also returns realPath, the
-// symlink-resolved path it checked. The write tools write to it (2.0 W4):
-// atomicWrite's rename lands on the checked file, never through a symlink
-// swapped in after the check.
+// symlink-resolved path it checked. Readers open realPath through
+// readFileNoFollow and the write tools write to it (2.0 W4), so a symlink
+// swapped in after the check fails instead of escaping the workspace.
 func resolvePathReal(workspace, input string, forWrite bool) (path, realPath string, err error) {
 	workspace = filepath.Clean(workspace)
 	if input == "" {
@@ -92,6 +93,17 @@ func resolveExisting(path string) (string, error) {
 		rest = filepath.Join(filepath.Base(cur), rest)
 		cur = parent
 	}
+}
+
+// readFileNoFollow reads the whole file at real (resolvePathReal's second
+// result) through openNoFollow.
+func readFileNoFollow(real string) ([]byte, error) {
+	f, err := openNoFollow(real)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {
