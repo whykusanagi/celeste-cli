@@ -13,7 +13,7 @@ func TestBuiltinNamesAreUnique(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	reg := tools.NewRegistry()
-	RegisterAll(reg, t.TempDir(), nil, nil, nil)
+	RegisterAll(reg, t.TempDir(), nil, nil, nil, nil)
 	if dup := reg.Overwritten(); len(dup) > 0 {
 		t.Fatalf("builtins registered twice: %v", dup)
 	}
