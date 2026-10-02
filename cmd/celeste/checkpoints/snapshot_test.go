@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // snap takes a checkpoint with no message ID (the tests that only need the
@@ -560,4 +562,37 @@ func TestModifiedAfter(t *testing.T) {
 	if _, changed := ModifiedAfter(Entry{Path: filepath.Join(dir, "gone"), Time: e.Time}); changed {
 		t.Fatal("a missing file counted as changed")
 	}
+}
+
+// M7: a file whose directory celeste cannot write (no temporary file can
+// be created there) is restored in place: the write tools could change it,
+// so /undo must be able to put it back. In place keeps the file itself
+// (its inode, hard links, owner).
+func TestRestoreWritesInPlaceWhenNoTempFileCanBeCreated(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "before")
+	require.NoError(t, snap(sm, f))
+	write(t, f, "after")
+	before, err := os.Stat(f)
+	require.NoError(t, err)
+
+	old := atomicWrite
+	atomicWrite = func(string, []byte, os.FileMode) error {
+		return &atomicfile.TempError{Err: os.ErrPermission}
+	}
+	t.Cleanup(func() { atomicWrite = old })
+
+	_, err = sm.RevertLast()
+	require.NoError(t, err)
+	assert.Equal(t, "before", read(t, f))
+	now, err := os.Stat(f)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, now), "restored in place")
+
+	// A file that is gone cannot be created in place either: the error stands.
+	require.NoError(t, snap(sm, f))
+	require.NoError(t, os.Remove(f))
+	_, err = sm.RevertLast()
+	assert.ErrorIs(t, err, os.ErrPermission)
 }

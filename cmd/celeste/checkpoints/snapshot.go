@@ -105,7 +105,10 @@ func (c *Checkpoint) Entry() Entry { return c.entry }
 // index. Call it after the tool's input validated, immediately before the
 // write, and Rollback the result if the write then fails (2.0 F4). A path
 // that does not exist yet is recorded without a backup. A path that is not
-// a regular file is refused and nothing is recorded.
+// a regular file is refused and nothing is recorded. The backup is a full
+// copy, read into memory, with no size limit: a session holds at most
+// defaultMaxEntries of them, which bounds the count but not the bytes (a
+// session that rewrites a large file keeps up to that many copies of it).
 func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, error) {
 	if sm.dir == "" {
 		// Checkpoints are off (no home directory): the write goes ahead
@@ -486,11 +489,40 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	}
 	// Atomic: a restore that fails halfway leaves the file as it was, not
 	// truncated. The file keeps its current mode; a deleted one gets the
-	// backup's.
-	if err := atomicfile.WriteKeepMode(e.Path, data, perm); err != nil {
+	// backup's. Being a new file renamed into place, it does not keep the
+	// old file's other hard links, owner (when another user owned it),
+	// extended attributes or ACLs.
+	err = atomicWrite(e.Path, data, perm)
+	var noTemp *atomicfile.TempError
+	if errors.As(err, &noTemp) {
+		// The directory is not writable but the file may be (the write
+		// tools change files in place): restore in place. Not atomic — a
+		// failure halfway leaves the file truncated — but the only way.
+		if _, serr := os.Stat(e.Path); serr == nil {
+			err = writeInPlace(e.Path, data)
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
 	}
 	return nil
+}
+
+// atomicWrite is restore's atomic write (a test seam).
+var atomicWrite = atomicfile.WriteKeepMode
+
+// writeInPlace overwrites the existing file at path with data, keeping
+// the file itself (its mode, owner, links and attributes).
+func writeInPlace(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // backupPath is e's backup in the session directory. A name that is not a
