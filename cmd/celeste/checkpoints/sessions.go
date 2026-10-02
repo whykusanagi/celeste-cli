@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // Root is where every session's checkpoints live: ~/.celeste/checkpoints,
@@ -129,7 +131,7 @@ func lastChange(dir string) time.Time {
 
 // LatestSessionFor returns the session (its directory name under root)
 // whose newest checkpoint of path is the most recent across all sessions
-// (celeste revert without --session). Paths match as samePath does.
+// (celeste revert without --session). Paths match as pathutil.Same does.
 func LatestSessionFor(root, path string) (string, error) {
 	if root == "" {
 		return "", errDisabled
@@ -149,7 +151,7 @@ func LatestSessionFor(root, path string) (string, error) {
 			continue
 		}
 		for _, e := range entries {
-			if samePath(e.Path, path) && (best == "" || e.Time.After(bestTime)) {
+			if pathutil.Same(e.Path, path) && (best == "" || e.Time.After(bestTime)) {
 				best, bestTime = d.Name(), e.Time
 			}
 		}

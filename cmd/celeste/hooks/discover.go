@@ -103,7 +103,7 @@ func Discover(workspace, home string) ([]Source, []string, error) {
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
 		p := filepath.Join(dirs[i], ".celeste", "hooks.json")
-		if lexists(p) && !samePath(p, globalJSON) {
+		if lexists(p) && !pathutil.Same(p, globalJSON) {
 			add(p, dirs[i], KindRepo)
 		}
 	}
@@ -113,7 +113,7 @@ func Discover(workspace, home string) ([]Source, []string, error) {
 		return nil, nil, err
 	}
 	for _, g := range grims {
-		if !samePath(g.Path, globalGrim) {
+		if !pathutil.Same(g.Path, globalGrim) {
 			add(g.Path, grimoireRoot(g.Path), KindRepoGrimoire)
 		}
 	}
@@ -158,10 +158,11 @@ func SourcesAt(target, home string) ([]Source, []string, error) {
 
 func classifyFile(p, home string) (SourceKind, string, bool) {
 	dir, base := filepath.Dir(p), filepath.Base(p)
+	// pathutil.Same only recognises the global files; it is never a trust key.
 	switch {
-	case samePath(p, globalHooksPath(home)):
+	case pathutil.Same(p, globalHooksPath(home)):
 		return KindGlobal, "", true
-	case samePath(p, globalGrimoirePath(home)):
+	case pathutil.Same(p, globalGrimoirePath(home)):
 		return KindGlobalGrimoire, "", true
 	case base == "hooks.json" && filepath.Base(dir) == ".celeste":
 		return KindRepo, filepath.Dir(dir), true
@@ -284,10 +285,6 @@ func refuseSymlinkedRepoComponents(path, root string) error {
 	}
 	return nil
 }
-
-// samePath is pathutil.Same. It is used only to recognise the global
-// files, never as a trust key.
-func samePath(a, b string) bool { return pathutil.Same(a, b) }
 
 func fileExists(p string) bool {
 	info, err := os.Stat(p)
