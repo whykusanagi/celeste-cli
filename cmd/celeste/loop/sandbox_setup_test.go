@@ -254,3 +254,31 @@ func TestRepoSandboxSymlinkIsNeverTrusted(t *testing.T) {
 		t.Fatalf("policy = %+v\n%s", env.SandboxPolicy, w.all())
 	}
 }
+
+// Review Important 1: an isolated subagent's lane is a linked worktree;
+// its git dir and the repository's common dir are outside the lane, and
+// git commit there writes to both.
+func TestNestedWorktreeLaneCanWriteTheGitDirs(t *testing.T) {
+	setupHome(t)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git", "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
+	gitdir := filepath.Join(repo, ".git", "worktrees", "fire")
+	write(t, filepath.Join(lane, ".git"), "gitdir: "+gitdir+"\n")
+	write(t, filepath.Join(gitdir, "commondir"), "../..\n")
+
+	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
+	env, _ := setupWithCfg(t, ModeAgent, cfg, repo)
+	child, err := env.Nested(NestedOptions{Workspace: lane})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Close()
+	for _, want := range []string{filepath.Join(repo, ".git"), gitdir} {
+		if !slices.Contains(child.SandboxPolicy.Writable, sandbox.Resolve(want)) {
+			t.Errorf("lane Writable lacks %s: %v", want, child.SandboxPolicy.Writable)
+		}
+	}
+}

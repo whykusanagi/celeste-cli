@@ -24,6 +24,7 @@ var sandboxWarnOnce = new(sync.Once)
 // loosening ("enabled": false, "network": true, "writable") only once
 // that file's settings are trusted, or the interactive chat approves them
 // now. Non-interactive runs skip an untrusted loosening with a warning.
+// The workspace's git dirs are always writable (sandbox.GitDirs).
 func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	p := sandbox.Policy{Enabled: sandbox.DefaultEnabled, Network: true}
 	var extra []string
@@ -58,6 +59,9 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 		}
 	}
 	p.Workspace = sandbox.Resolve(e.Workspace)
+	// The repository's git dirs: outside a linked worktree (an isolated
+	// subagent's lane) or above a subdirectory, and git commit writes there.
+	extra = append(extra, sandbox.GitDirs(p.Workspace)...)
 	p.Writable = sandbox.Normalize(append(sandbox.DefaultWritable(e.home, p.Workspace), e.writablePaths(extra)...))
 	e.warnMissingSandbox(p)
 	return p
