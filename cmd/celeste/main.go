@@ -551,6 +551,8 @@ func (a *TUIClientAdapter) ListSubagents() []tui.SubagentInfo {
 			Status:  r.Status,
 			Turns:   r.Turns,
 			Elapsed: elapsed,
+			Type:    string(r.Type),
+			Summary: r.Summary,
 		}
 	}
 	return infos

@@ -36,7 +36,9 @@ func (t *SpawnAgentTool) Description() string {
 		"Example: spawn voice generation with task_id='voice', spawn SFX with task_id='sfx1', " +
 		"then spawn the mixer with task_id='mix' and depends_on=['voice','sfx1']. " +
 		"The mixer agent will WAIT until voice and sfx1 complete before starting. " +
-		"Without depends_on, all agents run simultaneously and downstream agents will fail because files don't exist yet."
+		"Without depends_on, all agents run simultaneously and downstream agents will fail because files don't exist yet. " +
+		"Set type to explore (read-only investigation), review (code review) or general (the default: does the work); " +
+		"the subagent's result comes back as JSON {summary, findings, files}."
 }
 
 func (t *SpawnAgentTool) Parameters() json.RawMessage {
@@ -46,6 +48,11 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 			"goal": {
 				"type": "string",
 				"description": "A clear, self-contained description of what the subagent should accomplish"
+			},
+			"type": {
+				"type": "string",
+				"enum": ["explore", "general", "review"],
+				"description": "Subagent type. explore: read-only tools, the persona off (identity and voice boundary only), the small model; for finding and reading things. review: read and code-graph tools, the persona off; for reviewing code. general (default): every tool and the persona; for doing the work. Every type finishes by calling submit_result with {summary, findings, files}, which comes back to you as JSON."
 			},
 			"workspace": {
 				"type": "string",
@@ -119,12 +126,42 @@ func (t *SpawnAgentTool) ValidateInput(input map[string]any) error {
 	if !ok || goal == "" {
 		return fmt.Errorf("'goal' is required and must be a non-empty string")
 	}
-	return nil
+	_, err := spawnType(input)
+	return err
+}
+
+// spawnType reads and checks the type argument: an unknown type is an
+// error, and explore and review refuse a persona override (2.0 W4e).
+func spawnType(input map[string]any) (Type, error) {
+	raw, present := input["type"]
+	s, ok := raw.(string)
+	if present && raw != nil && !ok {
+		return "", fmt.Errorf("'type' must be a string: explore, general or review")
+	}
+	typ, err := ParseType(s)
+	if err != nil {
+		return "", err
+	}
+	// An empty or null persona asks for no override, so only a non-empty
+	// one is refused.
+	if p, has := input["persona"]; has && p != nil && !isEmptyMap(p) && (typ == TypeExplore || typ == TypeReview) {
+		return "", fmt.Errorf("explore and review subagents run with the persona off, so they take no persona override; drop 'persona' or use type general")
+	}
+	return typ, nil
+}
+
+func isEmptyMap(v any) bool {
+	m, ok := v.(map[string]any)
+	return ok && len(m) == 0
 }
 
 func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
-	goal := input["goal"].(string)
+	goal, _ := input["goal"].(string)
 	workspace, _ := input["workspace"].(string)
+	typ, err := spawnType(input)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
 
 	// A persona override replaces the slider block in the subagent's system
 	// prompt. It used to be prepended to the goal, which left the subagent
@@ -177,6 +214,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	spawnOpts := SpawnOptions{
 		TurnCb:  turnCallback,
 		Sliders: sliderOverride,
+		Type:    typ,
 	}
 
 	// 1. Accept explicit params from the model
@@ -263,6 +301,11 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 					run.Name, run.Element, run.Turns,
 					run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
 					run.Result)
+				if run.Type != "" && run.Summary != "" {
+					// A typed run: the result JSON follows.
+					content = fmt.Sprintf("subagent %s (%s): failed after %d turns: %v\n%s",
+						run.Name, run.Type, run.Turns, err, run.Result)
+				}
 			}
 			meta["subagent_id"] = run.ID
 			meta["turns"] = run.Turns
@@ -316,6 +359,10 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 	result := fmt.Sprintf("〔%s〕 (%s) — completed in %d turns (%s)\n\n%s",
 		run.Name, run.Element, run.Turns, elapsed, run.Result)
+	if run.Type != "" {
+		// A typed run (2.0 W4e ruling 6): one status line, then the result JSON.
+		result = fmt.Sprintf("subagent %s (%s): %s\n%s", run.Name, run.Type, run.Status, run.Result)
+	}
 
 	return tools.ToolResult{
 		Content: result,
@@ -325,6 +372,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 			"element":       run.Element,
 			"turns":         run.Turns,
 			"status":        run.Status,
+			"type":          string(run.Type),
 		},
 	}, nil
 }
