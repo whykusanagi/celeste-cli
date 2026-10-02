@@ -63,6 +63,9 @@ type SubagentRun struct {
 	// run spawned without one (Manager.Spawn), which keeps the untyped
 	// behaviour.
 	Type Type `json:"type,omitempty"`
+	// Summary is a typed run's result summary (Result holds its JSON), for
+	// /agents. Empty for an untyped run.
+	Summary string `json:"summary,omitempty"`
 
 	// sliders is the persona override for this run's voice modulation, or
 	// nil for slider.json. It replaces the slider block in the subagent's
@@ -559,6 +562,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 			m.mu.Lock()
 			run.Status = final.Status
 			run.Result = final.Result
+			run.Summary = final.Summary
 			run.Error = final.Error
 			run.EndedAt = final.EndedAt
 			run.Turns = final.Turns
@@ -654,6 +658,9 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)
+	if run.Type != "" {
+		markedGoal += typeBrief(run.Type)
+	}
 
 	// Resolve the execution workspace. When isolation is requested, create a
 	// dedicated git worktree. The element name (e.g. "fire") is used as the
@@ -738,6 +745,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		return run, fmt.Errorf("create subagent: %w", err)
 	}
 	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders, run.ID, parent, run.Type)
+	holder := withSubmitResult(&agentOpts, run.Type)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -772,6 +780,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 			run.Result = fmt.Sprintf("[Partial result — failed after %d turns: %s]\n\n%s",
 				state.Turn, err.Error(), state.LastAssistantResponse)
 		}
+		submittedOnFailure(run, holder, err.Error())
 		m.mu.Unlock()
 		return run, fmt.Errorf("subagent execution: %w", err)
 	}
@@ -787,6 +796,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		if state.LastAssistantResponse != "" {
 			run.Result = fmt.Sprintf("[Partial result — %s]\n\n%s", failure, state.LastAssistantResponse)
 		}
+		submittedOnFailure(run, holder, failure)
 		m.mu.Unlock()
 		return run, fmt.Errorf("subagent execution: %s", failure)
 	}
@@ -801,6 +811,9 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	}
 	if run.Result == "" {
 		run.Result = fmt.Sprintf("Subagent completed after %d turns (status: %s)", state.Turn, state.Status)
+	}
+	if holder != nil {
+		run.Result, run.Summary = typedResult(holder, run.Result, "")
 	}
 	run.Result = capSubagentResult(run.Result)
 	m.mu.Unlock()
@@ -1029,6 +1042,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		return nil, fmt.Errorf("create runner for resume: %w", err)
 	}
 	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders, agentID, parent, typ)
+	holder := withSubmitResult(&agentOpts, typ)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -1041,6 +1055,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		CheckpointID: checkpointID,
 		StartedAt:    time.Now(),
 		Status:       "running",
+		Type:         typ,
 	}
 
 	// Register the resumed run so ListRuns/GetRun reflect it.
@@ -1064,9 +1079,13 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
+		submittedOnFailure(run, holder, err.Error())
 		return run, fmt.Errorf("resume subagent: %w", err)
 	}
 	run.Status = "completed"
+	if holder != nil {
+		run.Result, run.Summary = typedResult(holder, run.Result, "")
+	}
 	return run, nil
 }
 

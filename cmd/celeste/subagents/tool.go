@@ -294,6 +294,11 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 					run.Name, run.Element, run.Turns,
 					run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
 					run.Result)
+				if run.Type != "" && run.Summary != "" {
+					// It submitted a result before failing: the JSON follows.
+					content = fmt.Sprintf("subagent %s (%s): failed after %d turns: %v\n%s",
+						run.Name, run.Type, run.Turns, err, run.Result)
+				}
 			}
 			meta["subagent_id"] = run.ID
 			meta["turns"] = run.Turns
@@ -347,6 +352,10 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 	result := fmt.Sprintf("〔%s〕 (%s) — completed in %d turns (%s)\n\n%s",
 		run.Name, run.Element, run.Turns, elapsed, run.Result)
+	if run.Type != "" {
+		// A typed run (2.0 W4e ruling 6): one status line, then the result JSON.
+		result = fmt.Sprintf("subagent %s (%s): %s\n%s", run.Name, run.Type, run.Status, run.Result)
+	}
 
 	return tools.ToolResult{
 		Content: result,
@@ -356,6 +365,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 			"element":       run.Element,
 			"turns":         run.Turns,
 			"status":        run.Status,
+			"type":          string(run.Type),
 		},
 	}, nil
 }

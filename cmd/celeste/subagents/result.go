@@ -1,6 +1,7 @@
 package subagents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,8 +9,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -109,7 +113,7 @@ func ValidateResult(raw map[string]any) (Result, []string) {
 	if len(errs) == 0 {
 		// The parent gets the result as JSON; keep it within what a
 		// subagent may hand back at all.
-		if b, err := json.Marshal(r); err == nil && len(b) > maxResultBytes {
+		if b, err := marshalResult(&r); err == nil && len(b) > maxResultBytes {
 			addf("result: %d bytes as JSON, at most %d; shorten summary and details", len(b), maxResultBytes)
 		}
 	}
@@ -297,4 +301,112 @@ func (t *SubmitResultTool) Execute(_ context.Context, input map[string]any, _ ch
 	}
 	t.holder.set(r)
 	return tools.ToolResult{Content: "Result recorded. Reply with TASK_COMPLETE as the last line to finish."}, nil
+}
+
+// noSubmitWarning is the warning on a typed result built from the run's
+// final text because it never called submit_result.
+const noSubmitWarning = "the subagent did not call submit_result"
+
+// typeBrief is appended to a typed run's goal: what its tools allow and
+// how to finish. It carries no persona text.
+func typeBrief(t Type) string {
+	var b strings.Builder
+	b.WriteString("\n\n[subagent type: " + string(t) + "]\n")
+	switch t {
+	case TypeExplore:
+		b.WriteString("You have read-only tools: investigate and report; do not try to change files or run commands.\n")
+	case TypeReview:
+		b.WriteString("You have read and code-graph tools: review and report findings; do not try to change files or run commands.\n")
+	}
+	b.WriteString("When you are done, call submit_result with {summary, findings, files}, then reply with TASK_COMPLETE as the last line.")
+	return b.String()
+}
+
+// withSubmitResult gives a typed run its submit_result tool (joined before
+// the type's filter, which keeps it) and returns the holder it stores
+// into; an untyped run gets neither (nil).
+func withSubmitResult(opts *agent.Options, t Type) *resultHolder {
+	if t == "" {
+		return nil
+	}
+	h := &resultHolder{}
+	opts.ExtraTools = append(opts.ExtraTools, NewSubmitResultTool(h))
+	return h
+}
+
+// typedResult is a typed run's result for its parent (ruling 6): the
+// submitted result as indented JSON, or, when the run never called
+// submit_result, its final text (completion marker removed) as the
+// summary with empty findings and files and a warning. warning, when set,
+// overrides the submitted result's (a run that failed after submitting).
+// It returns the JSON and the summary.
+func typedResult(h *resultHolder, finalText, warning string) (string, string) {
+	r := h.get()
+	if r == nil {
+		summary := stripCompletionMarker(finalText)
+		if summary == "" {
+			summary = "The subagent finished without a final reply."
+		}
+		// Bounded so the JSON stays within the subagent result cap.
+		summary = textutil.CutBytes(summary, maxResultBytes/4)
+		r = &Result{Summary: summary, Findings: []Finding{}, Files: []string{}, Warning: noSubmitWarning}
+	}
+	if warning != "" {
+		r.Warning = warning
+	}
+	b, err := marshalResult(r)
+	if err != nil { // a Result always marshals
+		return finalText, r.Summary
+	}
+	return string(b), r.Summary
+}
+
+// marshalResult is the parent-facing JSON: indented, and with <, > and &
+// left as they are (they are common in code and would otherwise grow
+// six-fold).
+func marshalResult(r *Result) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(r); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// submittedOnFailure keeps a failed typed run's submitted result, if it
+// made one, in place of the partial text, with why it stopped as the
+// warning. The caller holds the manager's lock when run is shared.
+func submittedOnFailure(run *SubagentRun, h *resultHolder, why string) {
+	if h == nil || h.get() == nil {
+		return
+	}
+	run.Result, run.Summary = typedResult(h, "", "the subagent stopped before finishing: "+why)
+}
+
+// completionToken is the completion marker without its colon.
+var completionToken = strings.ToUpper(strings.TrimRight(strings.TrimSpace(agent.DefaultOptions().CompletionMarker), ":"))
+
+// stripCompletionMarker removes the completion marker from text: a line
+// that is only the marker goes, and "TASK_COMPLETE: rest" keeps rest.
+// TASK_COMPLETED and the like are not the marker.
+func stripCompletionMarker(text string) string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimLeft(strings.TrimSpace(line), "*_#>` ")
+		upper := strings.ToUpper(t)
+		if strings.HasPrefix(upper, completionToken) {
+			rest := t[len(completionToken):]
+			r, _ := utf8.DecodeRuneInString(rest)
+			if rest == "" || !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_') {
+				if rest = strings.Trim(rest, ":*_` \t"); rest == "" {
+					continue
+				}
+				line = rest
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
