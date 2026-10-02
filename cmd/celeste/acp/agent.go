@@ -263,6 +263,8 @@ func (a *Agent) call(ctx context.Context, method string, params, result any) err
 // initialize answers with the agent's latest protocol version whatever the
 // client asked for (the client disconnects if it cannot speak it), and the
 // capabilities of ruling 5: embedded context yes, images and audio no.
+// loadSession is false until session/load is served (W4f-3): an editor
+// told true offers to reopen threads and each attempt would fail.
 func (a *Agent) initialize(p InitializeParams) InitializeResult {
 	if p.ProtocolVersion != ProtocolVersion {
 		a.logf("acp: client asked for protocol version %d; answering %d", p.ProtocolVersion, ProtocolVersion)
@@ -270,7 +272,7 @@ func (a *Agent) initialize(p InitializeParams) InitializeResult {
 	return InitializeResult{
 		ProtocolVersion: ProtocolVersion,
 		AgentCapabilities: AgentCapabilities{
-			LoadSession:        true,
+			LoadSession:        false,
 			PromptCapabilities: PromptCapabilities{EmbeddedContext: true},
 		},
 		AuthMethods: []AuthMethod{},
