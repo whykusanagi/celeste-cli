@@ -84,8 +84,10 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	var blocked *promptBlockedError
 	if errors.As(err, &blocked) {
 		// The pre-loop server's refusal, verbatim: no "chat error:" prefix.
+		// A hook's refusal of the prompt is not a failed completion.
 		return nil, fmt.Errorf("%w%s", err, warns.section())
 	}
+	s.health.record(err)
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
