@@ -63,10 +63,11 @@ Be specific and factual; keep paths, identifiers and error text exact. If a prev
 
 // SummaryOptions controls a summary.
 type SummaryOptions struct {
-	// KeepTokens of the newest history stay verbatim (default 20k).
+	// KeepTokens of the newest history stay verbatim; 0 means
+	// KeepFor(Window).
 	KeepTokens int
-	// Window is the model's context window. When KeepTokens is 0 the kept
-	// tail is KeepFor(Window) (#234).
+	// Window is the model's context window; it sizes the kept tail when
+	// KeepTokens is 0 (#234).
 	Window int
 	// Focus is an optional instruction from /compact [focus].
 	Focus string
