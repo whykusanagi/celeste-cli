@@ -44,6 +44,11 @@ type ServerConfig struct {
 	// repository's .mcp.json cannot vouch for its own server (2.0 W4).
 	Trusted bool `json:"trusted,omitempty"`
 
+	// Dir is the working directory a stdio server starts in; empty is
+	// celeste's own. Set by the caller (an ACP session uses its folder),
+	// never parsed from JSON.
+	Dir string `json:"-"`
+
 	// Origin is the absolute path of the config file this server was loaded
 	// from. Set by the discovery/merge layer, never parsed from JSON. Used by
 	// the /mcp panel to show provenance.

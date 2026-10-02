@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -33,6 +34,9 @@ type testClient struct {
 	// permit answers session/request_permission; nil selects "allow_once",
 	// and a permit returning nil never answers.
 	permit func(params map[string]any) map[string]any
+	// logs are the agent's log lines.
+	logMu sync.Mutex
+	logs  []string
 }
 
 // testConfig points celeste at srv; a nil srv is for tests that never send
@@ -54,15 +58,34 @@ func newTestClient(t *testing.T, cfg func() (*config.Config, error)) *testClient
 	t.Setenv("USERPROFILE", home)
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	agent := NewAgent(Deps{Config: cfg, Sessions: config.NewSessionManager(), Home: home, Logf: t.Logf})
+	c := &testClient{t: t, home: home, in: inW, waiting: map[int]chan rpcReply{}}
+	logf := func(format string, args ...any) {
+		t.Logf(format, args...)
+		c.logMu.Lock()
+		c.logs = append(c.logs, fmt.Sprintf(format, args...))
+		c.logMu.Unlock()
+	}
+	agent := NewAgent(Deps{Config: cfg, Sessions: config.NewSessionManager(), Home: home, Logf: logf})
+	c.agent = agent
 	conn := NewConn(inR, outW, agent)
 	agent.Attach(conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	go conn.Serve(ctx)
-	c := &testClient{t: t, agent: agent, home: home, in: inW, waiting: map[int]chan rpcReply{}}
 	t.Cleanup(func() { cancel(); inW.Close(); outR.Close(); agent.Close() })
 	go c.read(bufio.NewReader(outR))
 	return c
+}
+
+// logged reports whether a log line contains sub.
+func (c *testClient) logged(sub string) bool {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	for _, l := range c.logs {
+		if strings.Contains(l, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *testClient) send(v any) {

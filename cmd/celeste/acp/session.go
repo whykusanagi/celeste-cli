@@ -120,7 +120,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 	if err != nil {
 		return &RPCError{Code: CodeInternal, Message: "setting up the session: " + err.Error()}
 	}
-	a.connectMCP(ctx, s.id, env, servers)
+	a.connectMCP(ctx, s.id, s.cwd, env, servers)
 	env.RefreshDiscovery()
 
 	llmCfg := llm.ConfigFrom(s.cfg)
@@ -158,10 +158,11 @@ func (s *session) recordHook(src hooks.Source, _ hooks.TrustStatus) bool {
 	return false
 }
 
-// connectMCP connects the client's stdio MCP servers (ruling 4). Failures
-// are logged and the session goes on; http and sse servers (not
-// advertised) are ignored.
-func (a *Agent) connectMCP(ctx context.Context, sid string, env *loop.Env, servers []McpServer) {
+// connectMCP connects the client's stdio MCP servers (ruling 4), started
+// in the session's cwd. Failures are logged and the session goes on; http
+// and sse servers (not advertised) are ignored, and so is one named like a
+// global server already connected (logged).
+func (a *Agent) connectMCP(ctx context.Context, sid, cwd string, env *loop.Env, servers []McpServer) {
 	for _, srv := range servers {
 		if srv.Type != "" && srv.Type != "stdio" {
 			a.logf("acp: session %s: ignoring %s MCP server %q (only stdio is supported)", sid, srv.Type, srv.Name)
@@ -171,13 +172,17 @@ func (a *Agent) connectMCP(ctx context.Context, sid string, env *loop.Env, serve
 			a.logf("acp: session %s: ignoring an MCP server without a name or command", sid)
 			continue
 		}
+		if env.MCP.IsConnected(srv.Name) {
+			a.logf("acp: session %s: MCP server %q is already configured globally; the editor's entry is ignored", sid, srv.Name)
+			continue
+		}
 		envVars := map[string]string{}
 		for _, v := range srv.Env {
 			envVars[v.Name] = v.Value
 		}
 		cctx, cancel := context.WithTimeout(ctx, mcpConnectTimeout)
 		err := env.MCP.Connect(cctx, srv.Name, mcp.ServerConfig{
-			Enabled: true, Transport: "stdio", Command: srv.Command, Args: srv.Args, Env: envVars,
+			Enabled: true, Transport: "stdio", Command: srv.Command, Args: srv.Args, Env: envVars, Dir: cwd,
 		})
 		cancel()
 		if err != nil {

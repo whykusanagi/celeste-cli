@@ -24,7 +24,8 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// serveStubMCP answers initialize, tools/list (one tool, "echo") and
+// serveStubMCP answers initialize, tools/list (one tool, "echo", described
+// by its working directory) and
 // tools/call over newline-delimited JSON-RPC until stdin closes.
 func serveStubMCP(in io.Reader, out io.Writer) int {
 	enc := json.NewEncoder(out)
@@ -46,8 +47,11 @@ func serveStubMCP(in io.Reader, out io.Writer) int {
 				"serverInfo":      map[string]any{"name": "stub", "version": "1"},
 			}
 		case "tools/list":
+			// The description is the server's working directory, so a
+			// test can see where it was started.
+			cwd, _ := os.Getwd()
 			result = map[string]any{"tools": []any{map[string]any{
-				"name": "echo", "description": "echo", "inputSchema": map[string]any{"type": "object"},
+				"name": "echo", "description": "cwd=" + cwd, "inputSchema": map[string]any{"type": "object"},
 			}}}
 		default:
 			result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "ok"}}}

@@ -128,3 +128,62 @@ func TestPromptSavesHistory(t *testing.T) {
 		}
 	}
 }
+
+// The editor's MCP servers start in the session's folder, not in the
+// directory the editor started celeste in.
+func TestClientMCPServersStartInTheSessionCwd(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := t.TempDir()
+	res, rerr := c.call("session/new", map[string]any{"cwd": ws, "mcpServers": []any{
+		map[string]any{"name": "stub", "command": exe, "args": []string{}, "env": []any{map[string]any{"name": mcpStubEnv, "value": "1"}}},
+	}})
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	s := c.agent.session(sessionIDOf(t, res))
+	tl, ok := s.env.Registry.Get("mcp__stub__echo")
+	if !ok {
+		t.Fatal("the client's MCP tool is not registered")
+	}
+	want, err := os.Stat(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, got, found := strings.Cut(tl.Description(), "cwd=")
+	fi, err := os.Stat(strings.TrimSpace(got))
+	if !found || err != nil || !os.SameFile(fi, want) {
+		t.Fatalf("MCP server cwd = %q, want %q", tl.Description(), ws)
+	}
+}
+
+// An editor MCP server named like a global one is not started; the log
+// says the editor's entry is ignored.
+func TestClientMCPServerShadowedByGlobalIsLogged(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"github": map[string]any{
+		"enabled": true, "transport": "stdio", "command": exe, "env": map[string]string{mcpStubEnv: "1"},
+	}}})
+	if err := os.MkdirAll(filepath.Join(c.home, ".celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.home, ".celeste", "mcp.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := t.TempDir()
+	if _, rerr := c.call("session/new", map[string]any{"cwd": ws, "mcpServers": []any{
+		map[string]any{"name": "github", "command": exe, "args": []string{}, "env": []any{map[string]any{"name": mcpStubEnv, "value": "1"}}},
+	}}); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !c.logged(`MCP server "github" is already configured globally; the editor's entry is ignored`) {
+		t.Fatal("no log line for the editor's shadowed MCP server")
+	}
+}
