@@ -44,6 +44,7 @@ type upgradeHook struct {
 	updater  *selfupdate.Updater
 	throttle *selfupdate.Throttle // nil: no home directory; never throttled
 	reexec   func(exe string, argv, env []string) error
+	unsetenv func(string) error
 	environ  func() []string
 	stderr   io.Writer
 	timeout  time.Duration
@@ -55,7 +56,7 @@ func newUpgradeHook() *upgradeHook {
 	th, _ := selfupdate.DefaultThrottle()
 	return &upgradeHook{
 		kind: kind, tag: tag, getenv: os.Getenv, updater: selfupdate.New(), throttle: th,
-		reexec: selfupdate.Reexec, environ: os.Environ, stderr: os.Stderr, timeout: 2 * time.Minute,
+		reexec: selfupdate.Reexec, unsetenv: os.Unsetenv, environ: os.Environ, stderr: os.Stderr, timeout: 2 * time.Minute,
 	}
 }
 
@@ -94,6 +95,12 @@ func (h *upgradeHook) enabled() bool {
 // install it re-executes argv with the official binary and, on unix, does
 // not return.
 func (h *upgradeHook) beforeRun(argv []string) {
+	if h.kind != selfupdate.Module && h.unsetenv != nil {
+		// The loop guard is only for a module build; the official build a
+		// re-exec started drops it, so the tools, agents and hooks it starts
+		// don't inherit it and a go install build among them still upgrades.
+		_ = h.unsetenv(selfupdatedEnv)
+	}
 	if runtime.GOOS == "windows" {
 		if exe, err := os.Executable(); err == nil {
 			selfupdate.CleanupOld(exe)
@@ -106,7 +113,7 @@ func (h *upgradeHook) beforeRun(argv []string) {
 	fmt.Fprintf(h.stderr, "celeste: installing the official %s build for %s/%s (one time; CELESTE_NO_AUTO_UPGRADE=1 skips this)\n", h.tag, h.updater.GOOS, h.updater.GOARCH)
 	exe, err := h.upgrade()
 	if err != nil {
-		fmt.Fprintf(h.stderr, "celeste: couldn't install the official %s build: %v. Running the public persona; celeste tries again within the hour.\n", h.tag, err)
+		fmt.Fprintf(h.stderr, "celeste: couldn't install the official %s build: %v. Running the public persona; celeste tries again in an hour.\n", h.tag, err)
 		return
 	}
 	fmt.Fprintf(h.stderr, "celeste: installed the official %s build; starting it\n", h.tag)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Review Focus 13: the Windows path runs on every OS through Updater.GOOS
@@ -83,6 +84,40 @@ func TestCleanupOldRemovesLeftovers(t *testing.T) {
 		_, err := os.Stat(filepath.Join(dir, n))
 		if got := err == nil; got != want {
 			t.Errorf("%s exists = %v, want %v", n, got, want)
+		}
+	}
+}
+
+// A process killed between writing the temp file and renaming it leaves a
+// full-size binary next to the executable; the next upgrade removes the
+// ones older than an hour and leaves a concurrent upgrade's alone.
+func TestUpgradeRemovesStaleTempFiles(t *testing.T) {
+	key, s := release(t)
+	exe := writeExe(t, "celeste")
+	dir := filepath.Dir(exe)
+	stale := filepath.Join(dir, ".celeste.new-123")
+	fresh := filepath.Join(dir, ".celeste.new-456")
+	other := filepath.Join(dir, ".other.new-789")
+	for _, p := range []string{stale, fresh, other} {
+		if err := os.WriteFile(p, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	for _, p := range []string{stale, other} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := testUpdater(s, key, exe).Upgrade(context.Background(), tag); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the stale temp file is still there: %v", err)
+	}
+	for _, p := range []string{fresh, other} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s was removed: %v", filepath.Base(p), err)
 		}
 	}
 }

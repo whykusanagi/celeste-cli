@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // install writes bin next to exe and swaps it in (ruling 26): one rename on
@@ -15,6 +16,7 @@ import (
 // and exe is what it was.
 func (u *Updater) install(exe string, bin []byte) (err error) {
 	dir, name := filepath.Dir(exe), filepath.Base(exe)
+	u.removeStaleTemps(dir, name)
 	f, err := os.CreateTemp(dir, "."+name+".new-*")
 	if err != nil {
 		return fmt.Errorf("write next to %s: %w", name, err)
@@ -46,6 +48,29 @@ func (u *Updater) install(exe string, bin []byte) (err error) {
 		return fmt.Errorf("replace %s: %w", name, err)
 	}
 	return nil
+}
+
+// staleTempAge is how old a leftover temp file must be before an upgrade
+// removes it; a younger one may belong to an upgrade still running.
+const staleTempAge = time.Hour
+
+// removeStaleTemps deletes the .<name>.new-* files a killed upgrade left in
+// dir (each a whole binary) once they are older than staleTempAge. Best
+// effort.
+func (u *Updater) removeStaleTemps(dir, name string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := "." + name + ".new-"
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && u.Now().Sub(fi.ModTime()) > staleTempAge {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 // swapWindows moves the running exe aside, which Windows allows, then puts

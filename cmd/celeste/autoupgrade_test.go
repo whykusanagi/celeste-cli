@@ -88,9 +88,10 @@ func newRig(t *testing.T, files func(*selfupdatetest.Key) map[string][]byte) *ho
 			*r.execs = append(*r.execs, reexecCall{exe, argv, env})
 			return nil
 		},
-		environ: func() []string { return []string{"PATH=/usr/bin"} },
-		stderr:  r.stderr,
-		timeout: 30 * time.Second,
+		unsetenv: func(k string) error { delete(r.env, k); return nil },
+		environ:  func() []string { return []string{"PATH=/usr/bin"} },
+		stderr:   r.stderr,
+		timeout:  30 * time.Second,
 	}
 	return r
 }
@@ -217,6 +218,9 @@ func TestAutoUpgradeFailureWarnsOnceAndThrottles(t *testing.T) {
 	if n := strings.Count(r.stderr.String(), "couldn't install the official v2.0.0 build"); n != 1 {
 		t.Fatalf("%d warnings: %q", n, r.stderr.String())
 	}
+	if !strings.Contains(r.stderr.String(), "tries again in an hour") {
+		t.Fatalf("the warning misstates the throttle: %q", r.stderr.String())
+	}
 	before, stderr := r.server.Requests(), r.stderr.Len()
 	r.hook.beforeRun([]string{"celeste", "chat"})
 	if r.server.Requests() != before || r.stderr.Len() != stderr {
@@ -240,6 +244,24 @@ func TestAutoUpgradeLoopGuard(t *testing.T) {
 	}
 	if !strings.Contains(r.stderr.String(), "not trying again") {
 		t.Fatalf("stderr = %q", r.stderr.String())
+	}
+	if r.env[selfupdatedEnv] != upTag {
+		t.Fatal("a module build dropped the loop guard")
+	}
+}
+
+// The official build a re-exec started drops the loop guard, so a go
+// install build that one of its child processes starts can still upgrade.
+func TestOfficialBuildDropsTheLoopGuard(t *testing.T) {
+	r := newRig(t, nil)
+	r.hook.kind = selfupdate.Official
+	r.env[selfupdatedEnv] = upTag
+	r.hook.beforeRun([]string{"celeste", "chat"})
+	if _, ok := r.env[selfupdatedEnv]; ok {
+		t.Fatalf("%s is still set for child processes", selfupdatedEnv)
+	}
+	if r.server.Requests() != 0 || len(*r.execs) != 0 || r.stderr.Len() != 0 {
+		t.Fatalf("an official build upgraded or warned: %q", r.stderr.String())
 	}
 }
 
