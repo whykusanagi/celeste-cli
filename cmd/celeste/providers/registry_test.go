@@ -479,3 +479,13 @@ func TestCatalogToolSupport_OpenRouterVariant(t *testing.T) {
 	}
 	assert.False(t, NewModelDetection("openrouter").SupportsTools("meta-llama/llama-3-8b-instruct"))
 }
+
+// 2.0 W8: the spec's "registry entry declares Responses support". Only
+// OpenAI does; adding another provider is a deliberate one-line change.
+func TestOnlyOpenAIDeclaresResponses(t *testing.T) {
+	for name, caps := range Registry {
+		if caps.SupportsResponses != (name == "openai") {
+			t.Errorf("%s: SupportsResponses = %v", name, caps.SupportsResponses)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -53,6 +54,22 @@ func isBlocksRejection(err error) bool {
 	return false
 }
 
+// BlocksRejectedError is a request's error when the provider refused the
+// blocks it replayed and the resend without them failed too (W8-1 review
+// M4). The refusal still holds: the caller strips the history's blocks
+// (2.0 F3), as it does for a reply carrying BlocksRejected.
+type BlocksRejectedError struct{ Err error }
+
+func (e *BlocksRejectedError) Error() string { return e.Err.Error() }
+func (e *BlocksRejectedError) Unwrap() error { return e.Err }
+
+// BlocksRejectedIn reports whether err says the provider refused the
+// replayed blocks (a *BlocksRejectedError anywhere in its chain).
+func BlocksRejectedIn(err error) bool {
+	var e *BlocksRejectedError
+	return errors.As(err, &e)
+}
+
 // isUnsupportedEndpoint reports an endpoint that has no Responses API
 // (ruling 8): 404 (but not a missing model or a refused item), 405, 501,
 // or a 400 naming an unsupported endpoint or an invalid URL.
@@ -90,8 +107,14 @@ func responsesFellBack(baseURL string) bool {
 // markResponsesFallback records the fallback and logs it once per endpoint.
 func markResponsesFallback(baseURL string, cause error) {
 	if _, loaded := responsesFallback.LoadOrStore(endpointKey(baseURL), struct{}{}); !loaded {
-		tui.LogInfo(fmt.Sprintf("openai: %s has no Responses API (%v); using Chat Completions for this session", endpointKey(baseURL), cause))
+		tui.LogInfo(fallbackLogLine(baseURL, cause))
 	}
+}
+
+// fallbackLogLine names the endpoint without credentials its base URL may
+// carry.
+func fallbackLogLine(baseURL string, cause error) string {
+	return fmt.Sprintf("openai: %s has no Responses API (%v); using Chat Completions for this session", providers.CleanBaseURL(baseURL), cause)
 }
 
 // resetResponsesFallback forgets every fallback (tests).

@@ -926,6 +926,10 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 	planTimedOut := errors.Is(requestCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 	cancel()
 	if streamErr != nil {
+		if llm.BlocksRejectedIn(streamErr) {
+			// Refused, and the resend failed too: still strip them (W8-1 M4).
+			state.Messages = tui.StripProviderBlocks(state.Messages)
+		}
 		return annotateTurnTimeout(streamErr, planTimedOut, state.Options.RequestTimeout)
 	}
 
