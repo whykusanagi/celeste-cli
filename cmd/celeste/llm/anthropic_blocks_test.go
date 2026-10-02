@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -61,7 +63,7 @@ func TestAnthropicProviderKey(t *testing.T) {
 func TestAnthropicReplaysStoredBlocksByteForByte(t *testing.T) {
 	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
 	asst := thinkingTurn(t, b.providerKey())
-	body, _ := requestBody(t, b.buildParams(toolLoop(asst), nil))
+	body, _ := requestBody(t, prepared(t, b, toolLoop(asst)))
 	require.Len(t, body.Messages, 3)
 	assert.Equal(t, "assistant", body.Messages[1].Role)
 	got := body.Messages[1].Content
@@ -71,11 +73,40 @@ func TestAnthropicReplaysStoredBlocksByteForByte(t *testing.T) {
 	}
 }
 
+// With binding controls on, prepare adds the beta header and drop_block
+// as request options. The request that reaches the wire carries both, and
+// the replayed bytes in it are unchanged.
+func TestAnthropicPrepareBindsReplayWithoutTouchingBytes(t *testing.T) {
+	srv := fakeprovider.NewAnthropic(t, fakeprovider.Turn{Text: "ok"})
+	_, b := newAnthropicTestClient(t, srv, "claude-opus-5-5")
+	b.bindingControls = true // the fake is on 127.0.0.1; pretend it is Anthropic's endpoint
+	asst := thinkingTurn(t, b.providerKey())
+	params, opts := b.preparedParams(toolLoop(asst), nil)
+	assert.Len(t, opts, 2, "binding beta header and thinking.block_binding")
+	require.NotNil(t, params.Thinking.OfAdaptive, "always-on model: adaptive thinking carries block_binding")
+
+	_, err := b.SendMessageSync(context.Background(), toolLoop(asst), nil)
+	require.NoError(t, err)
+	require.Len(t, srv.Requests(), 1)
+	r := srv.Requests()[0]
+	assert.Equal(t, thinkingBindingBeta, betaHeader(r))
+	assert.Equal(t, map[string]any{"prefix_mismatch_behavior": "drop_block"},
+		r.Body["thinking"].(map[string]any)["block_binding"])
+	var body anthropicRequestBody
+	require.NoError(t, json.Unmarshal(r.Raw, &body))
+	require.Len(t, body.Messages, 3)
+	got := body.Messages[1].Content
+	require.Len(t, got, len(asst.ProviderBlocks.Blocks))
+	for i := range got {
+		assert.Equal(t, string(asst.ProviderBlocks.Blocks[i]), string(got[i]), "block %d", i)
+	}
+}
+
 // Replayed blocks never get cache_control; the breakpoints land on the
 // tool result and the first user message.
 func TestAnthropicReplayedBlocksCarryNoCacheControl(t *testing.T) {
 	b := &AnthropicBackend{config: &Config{Model: "claude-opus-4-8"}}
-	body, raw := requestBody(t, b.buildParams(toolLoop(thinkingTurn(t, b.providerKey())), nil))
+	body, raw := requestBody(t, prepared(t, b, toolLoop(thinkingTurn(t, b.providerKey()))))
 	for _, blk := range body.Messages[1].Content {
 		assert.NotContains(t, string(blk), "cache_control")
 	}
@@ -101,11 +132,11 @@ func TestAnthropicReplayOnlyForTheSameKey(t *testing.T) {
 	haiku := &AnthropicBackend{config: &Config{Model: "claude-haiku-4-5"}, thinkingConfig: on}
 	history := toolLoop(thinkingTurn(t, opus.providerKey()))
 
-	body, raw := requestBody(t, haiku.buildParams(history, nil))
+	body, raw := requestBody(t, prepared(t, haiku, history))
 	assert.NotContains(t, raw, "sig-1")
 	assert.Empty(t, body.Thinking, "budget model, continuation without replay: thinking off")
 
-	_, raw = requestBody(t, opus.buildParams(history, nil))
+	_, raw = requestBody(t, prepared(t, opus, history))
 	assert.Contains(t, raw, "sig-1")
 }
 
