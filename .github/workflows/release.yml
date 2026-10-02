@@ -46,18 +46,53 @@ jobs:
         # a native-runner matrix so the tree-sitter parser ships with
         # pre-built binaries too.
         CGO_ENABLED: "0"
+        # The persona key (W5 rulings 15, 20). Only this step sees it. It
+        # reaches the shell as an environment variable, never as workflow
+        # text, and nothing below echoes it or the flags that carry it;
+        # GitHub also masks it in logs.
+        CELESTE_PERSONA_KEY: ${{ secrets.CELESTE_PERSONA_KEY }}
         VERSION: ${{ steps.get_version.outputs.VERSION }}
       run: |
         set -euo pipefail
+        # The secret was uploaded from a key file that ends in a newline:
+        # trim whitespace before checking its shape.
+        PERSONA_KEY="$(printf '%s' "$CELESTE_PERSONA_KEY" | tr -d ' \t\r\n')"
+        if ! [[ "$PERSONA_KEY" =~ ^[0-9a-fA-F]{64}$ ]]; then
+          echo "::error::the CELESTE_PERSONA_KEY secret is missing or is not 64 hex characters"
+          exit 1
+        fi
         # -X main.Channel=release is what makes a binary official to
         # celeste update and the go install upgrade (W5 ruling 29).
-        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release"
+        # -trimpath: without it the toolchain copies the whole -ldflags
+        # string, key included, into the binary's build info.
+        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release -X github.com/whykusanagi/celeste-cli/cmd/celeste/prompts.personaKey=${PERSONA_KEY}"
         build() { GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" ./cmd/celeste; }
         build linux amd64 celeste-linux-amd64
         build linux arm64 celeste-linux-arm64
         build darwin amd64 celeste-darwin-amd64
         build darwin arm64 celeste-darwin-arm64
         build windows amd64 celeste-windows-amd64.exe
+
+    # Fail the release, not users (W5 ruling 20): the runner can execute the
+    # linux-amd64 binary, and `persona verify` exits non-zero unless all
+    # four profiles decrypt and match SOURCE.json. The other four come from
+    # the same source and flags. No artifact may record the key in its
+    # build info. Nothing is archived, signed or published if this fails.
+    - name: Verify the persona
+      run: |
+        set -euo pipefail
+        ./dist/celeste-linux-amd64 persona verify
+        for f in dist/celeste-*; do
+          # Captured, not piped into grep -q: under pipefail an early grep
+          # exit could SIGPIPE go version and hide a match.
+          info="$(go version -m "$f")"
+          case "$info" in
+            *personaKey*)
+              echo "::error::$f records the persona key in its build info"
+              exit 1
+              ;;
+          esac
+        done
 
     # THE UPDATER CONTRACT (W5 ruling 30). `go install` builds and
     # `celeste update` download these exact names from every release:

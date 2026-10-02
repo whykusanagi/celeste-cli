@@ -102,6 +102,7 @@ func runAgentCommand(args []string) {
 	}
 
 	resolveServedModels(cfg, os.Stderr)
+	printPersonaNoticeOnce(os.Stderr)
 
 	opts := agent.DefaultOptions()
 	// The goal is the user's: UserPromptSubmit sees it once, before any
