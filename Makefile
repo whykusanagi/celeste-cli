@@ -1,4 +1,4 @@
-.PHONY: build install clean help test dev verify import-key sync-persona sync-theme tui-snapshots smoke-cli smoke
+.PHONY: build install clean help test dev verify import-key sync-persona persona-dev persona-check sync-theme tui-snapshots smoke-cli smoke
 
 # Install destination (override with: make install BIN=/custom/path/celeste)
 BIN ?= $(HOME)/.local/bin/celeste
@@ -24,6 +24,18 @@ COMMIT ?= $(shell (git describe --tags --always --dirty --abbrev=7 2>/dev/null |
 # environments where nobody would notice. Callers can still pass their own flags.
 GO_LDFLAGS := -X main.CommitSHA=$(COMMIT) $(LDFLAGS)
 
+# The persona key (W5, rulings 15 and 20). Official releases inject it from
+# the CELESTE_PERSONA_KEY secret; locally it lives in PERSONA_KEY_FILE (mode
+# 0600). PERSONA_LDFLAG expands, inside a recipe line, to the -X flag when
+# that file is readable and to nothing otherwise. It is never a make
+# variable's value, and every line that uses it starts with @, so make never
+# echoes the key. -trimpath keeps it out of the binary's build info, which
+# otherwise records the whole -ldflags string (go version -m).
+PERSONA_KEY_FILE ?= $(HOME)/.celeste/persona.key
+PERSONA_PKG := github.com/whykusanagi/celeste-cli/cmd/celeste/prompts
+PERSONA_LDFLAG = $$(test -r "$(PERSONA_KEY_FILE)" && printf -- '-X $(PERSONA_PKG).personaKey=%s' "$$(tr -d ' \r\n' < "$(PERSONA_KEY_FILE)")")
+PERSONA_SAY = @if test -r "$(PERSONA_KEY_FILE)"; then echo "🔐 persona key found: this build carries the full persona"; else echo "ℹ no persona key: this build runs the public persona"; fi
+
 # Default target
 help:
 	@echo "Celeste CLI Build Commands"
@@ -36,6 +48,9 @@ help:
 	@echo "  make tui-snapshots - Render every TUI component to PNGs (test-output/tui/)"
 	@echo "  make smoke-cli    - Drive the binary through new-feature paths (live model)"
 	@echo "  make smoke        - Build + TUI snapshots + CLI smoke (release gate)"
+	@echo "  make sync-persona  - Seal the persona profiles at their pins (needs the key and private checkouts)"
+	@echo "  make persona-dev   - Decrypt the persona into a temp directory (needs the key)"
+	@echo "  make persona-check - Rebuild the persona at its pins and compare (needs the key and private checkouts)"
 	@echo "  make help         - Show this help message"
 	@echo ""
 	@echo "Security Commands"
@@ -46,7 +61,8 @@ help:
 # Build the binary
 build:
 	@echo "🔨 Building Celeste..."
-	@go build -ldflags "$(GO_LDFLAGS)" -o ./celeste ./cmd/celeste
+	$(PERSONA_SAY)
+	@go build -trimpath -ldflags "$(GO_LDFLAGS) $(PERSONA_LDFLAG)" -o ./celeste ./cmd/celeste
 	@echo "✅ Build complete: ./celeste"
 
 # Build and install to PATH.
@@ -58,7 +74,8 @@ build:
 install:
 	@echo "📦 Installing to $(BIN)..."
 	@mkdir -p "$(dir $(BIN))"
-	@go build -ldflags "$(GO_LDFLAGS)" -o "$(BIN)" ./cmd/celeste
+	$(PERSONA_SAY)
+	@go build -trimpath -ldflags "$(GO_LDFLAGS) $(PERSONA_LDFLAG)" -o "$(BIN)" ./cmd/celeste
 	@chmod +x "$(BIN)"
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		codesign --force --sign - "$(BIN)" && echo "🔏 ad-hoc signed (macOS AMFI)"; \
@@ -108,12 +125,31 @@ verify:
 	@chmod +x scripts/verify.sh
 	@./scripts/verify.sh $(FILE)
 
-# Sync persona files from celeste-core-persona repo
+# Seal the persona (W5, #173): rebuild celeste-persona-container's CLI
+# profiles at the commits pinned in cmd/celeste/prompts/persona/SOURCE.json,
+# in a temp directory outside the repo, and write only their ciphertext
+# here. Installs lore into ~/.celeste/persona-lore (never the repo). Needs
+# both private checkouts (PERSONA_CORE, PERSONA_CONTAINER; default: siblings
+# of this repo) and the key file. Move a pin with PERSONA_CORE_COMMIT=<sha>
+# or PERSONA_CONTAINER_COMMIT=<sha>.
 sync-persona:
-	@echo "🔄 Syncing persona files from celeste-core-persona..."
-	@cp ../celeste-core-persona/cli-prompts/celeste_core.json cmd/celeste/prompts/celeste_essence.json
-	@cp ../celeste-core-persona/docs/slider-agent-handoff.md docs/slider-agent-handoff.md
-	@echo "✅ Persona synced. Run 'go build' and smoke-test prompt load."
+	@CELESTE_PERSONA_KEY_FILE="$(PERSONA_KEY_FILE)" python3 scripts/sync_persona.py
+
+# Decrypt the committed persona into a new private temp directory, to read
+# or diff it. Never inside the repo; delete the directory when done. To run
+# celeste itself on the full persona, use make install (key-aware).
+persona-dev:
+	@dir=$$(mktemp -d "$${TMPDIR:-/tmp}/celeste-persona.XXXXXX") && \
+		CELESTE_PERSONA_KEY_FILE="$(PERSONA_KEY_FILE)" go run ./scripts/personaseal open -out "$$dir" && \
+		echo "persona profiles in $$dir (delete it when done)"
+
+# The full persona check, local only (CI has neither the key nor the
+# corpus): rebuild at the pins, compare plaintext hashes with SOURCE.json,
+# open the committed ciphertext, then run the key-gated tests on the real
+# profiles. Run it before merging any change under persona/.
+persona-check:
+	@CELESTE_PERSONA_KEY_FILE="$(PERSONA_KEY_FILE)" python3 scripts/sync_persona.py --check
+	@CELESTE_PERSONA_KEY_FILE="$(PERSONA_KEY_FILE)" go test ./cmd/celeste/prompts -run TestRealPersona -count=1 -v
 
 # Sync the canonical corrupted-theme color palette into the embedded copy.
 # streaming.go consumes cmd/celeste/tui/theme/colors.json via //go:embed, so the
