@@ -203,3 +203,25 @@ func TestAnthropicRequestPairsPromptWithStripDecision(t *testing.T) {
 	assert.Contains(t, raw, `"two"`)
 	assert.NotContains(t, raw, "sig-1", "blocks signed over the old prompt were sent with the new one")
 }
+
+// The chat compactor reads the system prompt (to count it) while /user or a
+// persona change may set it. Run under -race.
+func TestClientSystemPromptReadDoesNotRace(t *testing.T) {
+	c := NewClient(&Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "m", Timeout: time.Second, Backend: BackendTypeOpenAI}, nil)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			c.SetSystemPrompt("p")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = c.SystemPrompt()
+		}
+	}()
+	wg.Wait()
+	assert.Equal(t, "p", c.SystemPrompt())
+}
