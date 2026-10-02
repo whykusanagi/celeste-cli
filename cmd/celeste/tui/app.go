@@ -27,8 +27,8 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
 )
 
-// Typing speed: ~60 chars/sec — visible animation that keeps up with streaming
-const charsPerTick = 3
+// The typing animation ticks at 20fps; typing_speed (see typing_settings.go,
+// default 60 chars/sec = 3 per tick) sets how many characters each tick shows.
 const typingTickInterval = 50 * time.Millisecond // 20fps
 
 // AppModel is the root model for the Celeste TUI application.
@@ -2385,7 +2385,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// closed still reaches the commit branch below.
 		if m.typingContent != "" && (m.typingPos < len(m.typingContent) || m.streamDone) {
 			// Advance typing position
-			m.typingPos += charsPerTick
+			m.typingPos += m.typingStep()
 			if m.typingPos > len(m.typingContent) {
 				m.typingPos = len(m.typingContent)
 			}

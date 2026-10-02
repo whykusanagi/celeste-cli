@@ -921,7 +921,11 @@ func runConfigCommand(args []string) {
 		changed = true
 		fmt.Printf("Simulate typing: %v\n", cfg.SimulateTyping)
 	}
-	if *typingSpeed > 0 {
+	if *typingSpeed != 0 {
+		if !tui.ValidTypingSpeed(*typingSpeed) {
+			fmt.Fprintf(os.Stderr, "Invalid --typing-speed %d: use 1-%d chars/sec\n", *typingSpeed, tui.MaxTypingSpeed)
+			os.Exit(1)
+		}
 		cfg.TypingSpeed = *typingSpeed
 		changed = true
 		fmt.Printf("Typing speed: %d chars/sec\n", cfg.TypingSpeed)
@@ -1131,7 +1135,7 @@ func createConfigTemplate(name string) error {
 		Timeout:           o.timeout,
 		SkipPersonaPrompt: o.skipPersona,
 		SimulateTyping:    true,
-		TypingSpeed:       25,
+		TypingSpeed:       60,
 		MaxToolIterations: config.DefaultMaxToolIterations,
 	}
 

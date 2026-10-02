@@ -26,7 +26,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 60, config.Timeout)
 	assert.False(t, config.SkipPersonaPrompt)
 	assert.True(t, config.SimulateTyping)
-	assert.Equal(t, 40, config.TypingSpeed)
+	assert.Equal(t, 60, config.TypingSpeed)
 	assert.Equal(t, DefaultMaxToolIterations, config.MaxToolIterations)
 	assert.Equal(t, "https://api.venice.ai/api/v1", config.VeniceBaseURL)
 	venice, _ := providers.GetProvider("venice")

@@ -257,7 +257,7 @@ func DefaultConfig() *Config {
 		Timeout:           60,
 		SkipPersonaPrompt: false,
 		SimulateTyping:    true,
-		TypingSpeed:       40,
+		TypingSpeed:       60, // 3 chars per 50ms tick
 		MaxToolIterations: DefaultMaxToolIterations,
 		VeniceBaseURL:     venice.BaseURL,
 		VeniceModel:       venice.DefaultModel,
