@@ -1,3 +1,10 @@
 # The sealed persona is byte-pinned by SOURCE.json; never convert line endings.
 cmd/celeste/prompts/persona/*.enc binary
 cmd/celeste/prompts/persona/SOURCE.json -text
+
+# The updater's release key and real-release fixtures are verified byte for
+# byte (W5 ruling 26); CRLF conversion would break the signatures. The
+# repo-root key gets the same attribute so its copy stays identical on Windows.
+whykusanagi.asc -text
+cmd/celeste/selfupdate/release_key.asc -text
+cmd/celeste/selfupdate/testdata/** -text
