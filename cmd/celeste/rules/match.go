@@ -28,6 +28,7 @@ type Hit struct {
 	Scope Scope
 	Text  string // what matched
 	Call  *Call  // tool_args scope: the call
+	Value string // tool_args scope: the whole argument value matched
 }
 
 // Call is one tool call as the matcher sees it.
@@ -136,13 +137,11 @@ func (m *Matcher) Calls(calls []Call) []Hit {
 				if sc.Kind != ScopeToolArgs || sc.Tool != c.Name {
 					continue
 				}
-				val, ok := fieldText(c.Input[sc.Field])
-				if !ok {
-					continue
-				}
-				if loc := r.Condition.FindStringIndex(val); loc != nil {
-					if h, ok := m.fire(r, Hit{Rule: r, Scope: sc, Text: val[loc[0]:loc[1]], Call: c}); ok {
-						hits = append(hits, h)
+				for _, val := range FieldValues(c.Input, sc.Field) {
+					if loc := r.Condition.FindStringIndex(val); loc != nil {
+						if h, ok := m.fire(r, Hit{Rule: r, Scope: sc, Text: val[loc[0]:loc[1]], Call: c, Value: val}); ok {
+							hits = append(hits, h)
+						}
 					}
 				}
 			}
@@ -201,6 +200,43 @@ func (m *Matcher) fire(r *Rule, h Hit) (Hit, bool) {
 	m.fired[r.Name] = true
 	m.last[r.Name] = m.request
 	return h, true
+}
+
+// FieldValues returns the values of a tool_args field. A dotted field walks
+// into objects, and an array along the way fans out to each element, so
+// "edits.new_string" is every patch_file edit's new_string (2.0 W4). A
+// string met before the path ends is decoded as JSON.
+func FieldValues(input map[string]any, field string) []string {
+	var out []string
+	var walk func(v any, path []string)
+	walk = func(v any, path []string) {
+		if str, ok := v.(string); ok && len(path) > 0 {
+			// A nested argument sent as JSON text (patch_file accepts
+			// edits[] that way) is read as what it encodes.
+			var parsed any
+			if json.Unmarshal([]byte(str), &parsed) == nil {
+				walk(parsed, path)
+			}
+			return
+		}
+		if arr, ok := v.([]any); ok && len(path) > 0 {
+			for _, el := range arr {
+				walk(el, path)
+			}
+			return
+		}
+		if len(path) == 0 {
+			if s, ok := fieldText(v); ok {
+				out = append(out, s)
+			}
+			return
+		}
+		if m, ok := v.(map[string]any); ok {
+			walk(m[path[0]], path[1:])
+		}
+	}
+	walk(input, strings.Split(field, "."))
+	return out
 }
 
 func fieldText(v any) (string, bool) {

@@ -29,11 +29,17 @@ var (
 // symlink ~/.celeste files to ones they track elsewhere): the temp file is
 // created next to, and the rename lands on, the real target, so the symlink
 // itself survives. The directory must already exist.
-func Write(path string, data []byte, perm os.FileMode) (err error) {
+func Write(path string, data []byte, perm os.FileMode) error {
 	target := path
 	if resolved, evalErr := filepath.EvalSymlinks(path); evalErr == nil {
 		target = resolved
 	}
+	return replace(target, data, perm)
+}
+
+// replace writes data to a temp file next to target, syncs, closes and
+// renames it over target. A symlink at target is replaced, not followed.
+func replace(target string, data []byte, perm os.FileMode) (err error) {
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
 	if err != nil {
 		return &TempError{Err: err}
@@ -88,4 +94,18 @@ func WriteKeepMode(path string, data []byte, defaultPerm os.FileMode) error {
 		perm = fi.Mode().Perm()
 	}
 	return Write(path, data, perm)
+}
+
+// ReplaceKeepMode is WriteKeepMode without following symlinks: the rename
+// lands on path itself, so a symlink there is replaced by a regular file
+// instead of written through. Callers pass a path they already resolved
+// and checked (the edit tools, 2.0 W4), so a symlink swapped in after that
+// check cannot redirect the write. A regular file at path keeps its mode;
+// anything else gets defaultPerm.
+func ReplaceKeepMode(path string, data []byte, defaultPerm os.FileMode) error {
+	perm := defaultPerm
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+		perm = fi.Mode().Perm()
+	}
+	return replace(path, data, perm)
 }

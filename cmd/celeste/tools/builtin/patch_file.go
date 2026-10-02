@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -31,7 +30,7 @@ func NewPatchFileTool(workspace string, opts ...PatchFileOption) *PatchFileTool 
 	t := &PatchFileTool{
 		BaseTool: BaseTool{
 			ToolName:        "patch_file",
-			ToolDescription: "Make a surgical edit to a workspace file by replacing an exact string with new content. Prefer this over write_file when modifying existing files.",
+			ToolDescription: "Make surgical edits to a workspace file by replacing exact strings with new content: one old_string/new_string pair, or several in edits[] (applied in order, all or nothing). When old_string is not found exactly, a unique match that differs only in indentation or surrounding whitespace is used and the result shows its diff. Prefer this over write_file when modifying existing files.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -50,13 +49,26 @@ func NewPatchFileTool(workspace string, opts ...PatchFileOption) *PatchFileTool 
 					"replace_all": {
 						"type": "boolean",
 						"description": "Replace every occurrence when true. Defaults to false (fails if old_string appears more than once)."
+					},
+					"edits": {
+						"type": "array",
+						"description": "Several edits to the same file, applied in order (each to the result of the previous ones), all or nothing. Use instead of old_string/new_string, not with them. 1-50 edits.",
+						"items": {
+							"type": "object",
+							"properties": {
+								"old_string": {"type": "string", "description": "The exact string to find. Must be unique unless replace_all."},
+								"new_string": {"type": "string", "description": "The string to replace it with."},
+								"replace_all": {"type": "boolean", "description": "Replace every occurrence when true."}
+							},
+							"required": ["old_string", "new_string"]
+						}
 					}
 				},
-				"required": ["path", "old_string", "new_string"]
+				"required": ["path"]
 			}`),
 			ReadOnly:        false,
 			ConcurrencySafe: false,
-			RequiredFields:  []string{"path", "old_string", "new_string"},
+			RequiredFields:  []string{"path"},
 		},
 		workspace: workspace,
 	}
@@ -89,24 +101,12 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	path := getStringArg(input, "path", "")
-	oldString := getStringArg(input, "old_string", "")
-	newString := getStringArg(input, "new_string", "")
-	replaceAll := getBoolArg(input, "replace_all", false)
-
-	// Route oversized literals to the deterministic path. A patch this large is
-	// almost always a byte-move (relocating existing content); regenerating it as
-	// a tool argument is slow and a silent-corruption vector. splice_file moves the
-	// bytes on disk without routing them through the model.
-	if len(newString) > maxPatchLiteralBytes {
-		return tools.ToolResult{
-			Error: true,
-			Content: fmt.Sprintf(
-				"new_string is %d bytes (> %d KiB). Literals this large route through the model and risk silent corruption. If you are relocating existing content, use splice_file (it moves bytes on disk by anchors/line-ranges). If this is genuinely new content, split it into smaller anchored patch_file edits.",
-				len(newString), maxPatchLiteralBytes/1024),
-		}, nil
+	edits, err := parseEdits(input)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 
-	targetPath, err := resolvePath(t.workspace, path, true)
+	targetPath, realPath, err := resolvePathReal(t.workspace, path, true)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
@@ -116,44 +116,20 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
 
-	// Check for stale reads before patching
-	if t.tracker != nil {
-		if err := t.tracker.CheckStale(targetPath); err != nil {
-			return tools.ToolResult{Error: true, Content: err.Error()}, nil
-		}
+	// Must-read-before-edit, and no edit over a change made since the read.
+	if msg := checkRead(t.tracker, targetPath, path); msg != "" {
+		return tools.ToolResult{Error: true, Content: msg}, nil
 	}
 
 	data, err := os.ReadFile(targetPath)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
-	original := string(data)
 
-	// old_string must match the file verbatim. Only when it doesn't, and its
-	// unescaped form does, was the whole call double-escaped, so new_string
-	// is decoded the same way. Otherwise both are used byte-for-byte: `\n`
-	// in source code is text, not a line break (#165).
-	oldString, decoded := matchNeedle(original, oldString)
-	if decoded {
-		newString = unescapeSequences(newString)
-	}
-
-	count := strings.Count(original, oldString)
-	if count == 0 {
-		return tools.ToolResult{Error: true, Content: fmt.Sprintf("old_string not found in %s", path)}, nil
-	}
-	if !replaceAll && count > 1 {
-		return tools.ToolResult{
-			Error:   true,
-			Content: fmt.Sprintf("old_string appears %d times in %s — set replace_all:true or make it more specific", count, path),
-		}, nil
-	}
-
-	var patched string
-	if replaceAll {
-		patched = strings.ReplaceAll(original, oldString, newString)
-	} else {
-		patched = strings.Replace(original, oldString, newString, 1)
+	// Every edit applies in memory, in order; any failure writes nothing.
+	patched, outcomes, err := applyEdits(string(data), edits, path)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 
 	// Checkpoint now that the path resolved and old_string matched,
@@ -166,7 +142,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		ckpt = c
 	}
-	if err := writeFileFunc(targetPath, []byte(patched), 0644); err != nil {
+	if err := writeFileFunc(realPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: rollback(err.Error(), ckpt)}, nil
 	}
 
@@ -182,19 +158,39 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	result := map[string]any{
-		"path":         path,
-		"workspace":    t.workspace,
-		"replacements": count,
-		"replace_all":  replaceAll,
+		"path":      path,
+		"workspace": t.workspace,
 	}
-	if decoded {
-		result["decoded_escapes"] = true
-	} else if _, looksEscaped := decodeDoubleEscaped(newString); looksEscaped {
-		result["note"] = `backslash sequences in new_string (e.g. \n) were kept as literal text`
+	if _, multi := input["edits"]; multi && input["edits"] != nil {
+		results := make([]map[string]any, len(outcomes))
+		for i, out := range outcomes {
+			results[i] = outcomeResult(map[string]any{}, edits[i], out)
+		}
+		result["edits"] = len(edits)
+		result["results"] = results
+	} else {
+		result["replace_all"] = edits[0].All
+		outcomeResult(result, edits[0], outcomes[0])
 	}
 
 	return tools.ToolResult{
 		Content:  formatResult(result),
 		Metadata: result,
 	}, nil
+}
+
+// outcomeResult adds one edit's outcome to m: replacements, fuzzy and its
+// diff (ruling 4), and decoded_escapes or the literal-backslash note.
+func outcomeResult(m map[string]any, e edit, out editOutcome) map[string]any {
+	m["replacements"] = out.Count
+	if out.Fuzzy {
+		m["fuzzy"] = true
+		m["diff"] = out.Diff
+	}
+	if out.Decoded {
+		m["decoded_escapes"] = true
+	} else if _, looksEscaped := decodeDoubleEscaped(e.New); looksEscaped {
+		m["note"] = `backslash sequences in new_string (e.g. \n) were kept as literal text`
+	}
+	return m
 }
