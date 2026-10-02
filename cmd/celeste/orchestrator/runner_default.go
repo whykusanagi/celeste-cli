@@ -59,8 +59,9 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 		turnStatsEmitted := false
 
 		opts.OnTurnStats = func(stats agent.TurnStats) {
-			// Store stats; they will be flushed by ProgressToolCall or ProgressResponse.
-			turnStatsMap[stats.Turn] = stats
+			// Store stats; they will be flushed by ProgressToolCall or
+			// ProgressResponse. A reply a stream rule dropped is skipped.
+			agent.KeepTurnStats(turnStatsMap, stats)
 		}
 
 		opts.OnProgress = func(kind agent.ProgressKind, text string, turn, maxTurns int) {

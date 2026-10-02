@@ -243,3 +243,13 @@ func NewRunState(goal string, options Options) *RunState {
 func generateRunID(t time.Time) string {
 	return fmt.Sprintf("%s-%d", t.Format("20060102-150405.000000000"), runIDSeq.Add(1))
 }
+
+// KeepTurnStats stores st as its turn's stats for a progress display,
+// unless it is a reply a stream rule dropped (2.0 W3): that turn re-runs,
+// and the re-run's stats are the ones to show.
+func KeepTurnStats(m map[int]TurnStats, st TurnStats) {
+	if st.Dropped {
+		return
+	}
+	m[st.Turn] = st
+}
