@@ -1,6 +1,8 @@
 package checkpoints
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,10 +18,25 @@ type FileChange struct {
 	IsNew      bool
 	// Deleted: the file no longer exists.
 	Deleted bool
+	// Binary: either side holds a NUL byte; no line counts.
+	Binary bool
+	// Approx: the line comparison was too large; the counts are the
+	// difference in line count only.
+	Approx bool
+	// TooBig: a side is over maxDiffBytes and was not read; OldSize and
+	// NewSize are the byte sizes.
+	TooBig           bool
+	OldSize, NewSize int64
+	// Err: this file could not be compared (the others still are).
+	Err string
 }
 
-// ComputeDiff compares each snapshot's backup against the current file
-// to compute line-level diff stats.
+// maxDiffBytes bounds what /diff reads per side of a file.
+const maxDiffBytes = 4 << 20
+
+// ComputeDiff compares each changed file's oldest backup (its state before
+// the session changed it) with the file now. Sorted by path. A file that
+// cannot be compared carries its error in FileChange.Err.
 func (sm *SnapshotManager) ComputeDiff() ([]FileChange, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -27,9 +44,7 @@ func (sm *SnapshotManager) ComputeDiff() ([]FileChange, error) {
 	return sm.computeDiffLocked()
 }
 
-// computeDiffLocked compares each changed file's oldest backup (its state
-// before the session changed it) with the file now. Sorted by path. The
-// caller holds sm.mu.
+// computeDiffLocked is ComputeDiff; the caller holds sm.mu.
 func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
 	earliest := make(map[string]Entry)
 	var paths []string
@@ -43,45 +58,75 @@ func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
 
 	changes := make([]FileChange, 0, len(paths))
 	for _, path := range paths {
-		e := earliest[path]
 		change := FileChange{Path: path}
-
-		var origLines []string
-		if e.Backup == "" {
-			change.IsNew = true
-		} else {
-			src, err := sm.backupPath(e)
-			if err != nil {
-				return nil, err
-			}
-			data, err := os.ReadFile(src)
-			if err != nil {
-				return nil, err
-			}
-			origLines = strings.Split(string(data), "\n")
+		if err := sm.compare(earliest[path], &change); err != nil {
+			change.Err = err.Error()
 		}
-
-		currentData, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				change.Deleted = true
-				change.Deletions = len(origLines)
-				changes = append(changes, change)
-				continue
-			}
-			return nil, err
-		}
-		ins, del := diffStats(origLines, strings.Split(string(currentData), "\n"))
-		change.Insertions = ins
-		change.Deletions = del
 		changes = append(changes, change)
 	}
 	return changes, nil
 }
 
+// compare fills c for entry e's file.
+func (sm *SnapshotManager) compare(e Entry, c *FileChange) error {
+	var src string
+	if e.Backup == "" {
+		c.IsNew = true
+	} else {
+		p, err := sm.backupPath(e)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		src, c.OldSize = p, info.Size()
+	}
+	info, err := os.Stat(c.Path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		c.Deleted = true
+	case err != nil:
+		return err
+	default:
+		c.NewSize = info.Size()
+	}
+	if c.OldSize > maxDiffBytes || c.NewSize > maxDiffBytes {
+		c.TooBig = true
+		return nil
+	}
+	var old, cur []byte
+	if src != "" {
+		if old, err = os.ReadFile(src); err != nil {
+			return err
+		}
+	}
+	if !c.Deleted {
+		if cur, err = os.ReadFile(c.Path); err != nil {
+			return err
+		}
+	}
+	if bytes.IndexByte(old, 0) >= 0 || bytes.IndexByte(cur, 0) >= 0 {
+		c.Binary = true
+		return nil
+	}
+	var oldLines, newLines []string
+	if src != "" {
+		oldLines = strings.Split(string(old), "\n")
+	}
+	if c.Deleted {
+		c.Deletions = len(oldLines)
+		return nil
+	}
+	newLines = strings.Split(string(cur), "\n")
+	c.Insertions, c.Deletions, c.Approx = diffStats(oldLines, newLines)
+	return nil
+}
+
 // diffStats computes insertion and deletion counts between two sets of lines
 // using a simple LCS-based approach.
-func diffStats(oldLines, newLines []string) (insertions, deletions int) {
+func diffStats(oldLines, newLines []string) (insertions, deletions int, approx bool) {
 	// Build LCS length table
 	m, n := len(oldLines), len(newLines)
 
@@ -89,9 +134,9 @@ func diffStats(oldLines, newLines []string) (insertions, deletions int) {
 	// to avoid excessive memory usage
 	if m*n > 10_000_000 {
 		if n > m {
-			return n - m, 0
+			return n - m, 0, true
 		}
-		return 0, m - n
+		return 0, m - n, true
 	}
 
 	// Standard LCS dynamic programming
@@ -134,7 +179,18 @@ func FormatChanges(changes []FileChange, workspace string) string {
 		case c.IsNew:
 			suffix = " (new)"
 		}
-		lines = append(lines, fmt.Sprintf("  %s  +%d -%d%s", name, c.Insertions, c.Deletions, suffix))
+		switch {
+		case c.Err != "":
+			lines = append(lines, fmt.Sprintf("  %s  (error: %s)", name, c.Err))
+		case c.TooBig:
+			lines = append(lines, fmt.Sprintf("  %s  (large file: %d -> %d bytes)%s", name, c.OldSize, c.NewSize, suffix))
+		case c.Binary:
+			lines = append(lines, fmt.Sprintf("  %s  (binary)%s", name, suffix))
+		case c.Approx:
+			lines = append(lines, fmt.Sprintf("  %s  +%d -%d (large file, line counts only)%s", name, c.Insertions, c.Deletions, suffix))
+		default:
+			lines = append(lines, fmt.Sprintf("  %s  +%d -%d%s", name, c.Insertions, c.Deletions, suffix))
+		}
 	}
 	return strings.Join(lines, "\n")
 }

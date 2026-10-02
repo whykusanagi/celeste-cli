@@ -154,26 +154,26 @@ func TestRevertFileDefaultsToTheLatestSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "newer", sid)
 
-	sid, e, err := RevertFile(root, f, "")
+	sid, e, err := RevertFile(root, f, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "newer", sid)
 	assert.Equal(t, "call_newer", e.MessageID)
 	got, _ := os.ReadFile(f)
 	assert.Equal(t, "v1", string(got))
 
-	sid, _, err = RevertFile(root, f, "older")
+	sid, _, err = RevertFile(root, f, "older", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "older", sid)
 	got, _ = os.ReadFile(f)
 	assert.Equal(t, "v0", string(got))
 
-	_, _, err = RevertFile(root, f, "")
+	_, _, err = RevertFile(root, f, "", nil)
 	assert.ErrorContains(t, err, "no checkpoint")
 }
 
 func TestRevertFileUnknownSession(t *testing.T) {
 	root, work := t.TempDir(), t.TempDir()
-	_, _, err := RevertFile(root, filepath.Join(work, "a.txt"), "nope")
+	_, _, err := RevertFile(root, filepath.Join(work, "a.txt"), "nope", nil)
 	assert.ErrorContains(t, err, "no checkpoint")
 }
 
@@ -186,7 +186,7 @@ func TestRevertFileMatchesThroughSymlinks(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	checkpointIn(t, root, "s1", filepath.Join(link, "a.txt"), "before", "after")
-	_, _, err := RevertFile(root, filepath.Join(real, "a.txt"), "")
+	_, _, err := RevertFile(root, filepath.Join(real, "a.txt"), "", nil)
 	require.NoError(t, err)
 	got, _ := os.ReadFile(filepath.Join(real, "a.txt"))
 	assert.Equal(t, "before", string(got))
@@ -250,7 +250,7 @@ func TestNoHomeDisablesCheckpointsAndNeverUsesTheWorkingDirectory(t *testing.T) 
 	assert.Empty(t, sm.Entries())
 	_, err = sm.RevertLast()
 	assert.ErrorContains(t, err, "disabled")
-	_, _, err = RevertFile(Root(), f, "chat-1")
+	_, _, err = RevertFile(Root(), f, "chat-1", nil)
 	assert.ErrorContains(t, err, "disabled")
 	assert.Equal(t, []string{"a.txt"}, sessionsIn(t, work), "nothing was written under the working directory")
 }

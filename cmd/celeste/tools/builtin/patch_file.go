@@ -174,6 +174,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	if filepath.Base(targetPath) == ".grimoire" {
 		stampGrimoireMetadata(targetPath)
 	}
+	commit(ckpt) // after the stamp: the file as this call leaves it
 
 	// Record new mtime after patch
 	if t.tracker != nil {

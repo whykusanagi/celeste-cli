@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -97,7 +98,7 @@ Commands:
   forget <name>           Delete a memory
   resume [session-id]     Resume a previous session
   plan [show]             Show current plan from .celeste/plan.md
-  revert <file>           Revert a file from checkpoint
+  revert <file> [--session id] [--force]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
   help                    Show this help message
   version                 Show version information
@@ -112,6 +113,8 @@ Interactive Commands (in chat mode):
   /memories               List project memories
   /costs                  Show session costs
   /context                Show context/token usage
+  /diff                   List the files this session changed
+  /undo                   Undo the last file change (repeat to go back)
   /grimoire               Show project grimoire
   /index                  Show code graph status
   /plan [show]            Show current plan
@@ -280,6 +283,15 @@ type TUIClientAdapter struct {
 	// F2e); nil (tests that build an adapter by hand) gives each runner its
 	// own Setup.
 	parentEnv loop.Nester
+
+	// snapshots is the chat session's checkpoint store, for /undo and
+	// /diff (2.0 F4); nil turns both off. workspace relativizes their
+	// paths. undoConfirm is what a first /undo refused to undo because
+	// the file changed afterwards; /undo again undoes it while the file is
+	// still as warned about.
+	snapshots   *checkpoints.SnapshotManager
+	workspace   string
+	undoConfirm *undoWarning
 
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.

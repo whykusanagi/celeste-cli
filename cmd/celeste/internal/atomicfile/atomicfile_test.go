@@ -217,3 +217,17 @@ func TestWriteWhileReaderHoldsFile(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// A temporary file that cannot be created is a *TempError, which reads as
+// the underlying error, and nothing is written.
+func TestWriteNoTempIsTempError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-dir", "a.json")
+	err := Write(path, []byte("x"), 0o600)
+	var te *TempError
+	if !errors.As(err, &te) || !errors.Is(err, os.ErrNotExist) || err.Error() != te.Err.Error() {
+		t.Fatalf("err = %#v, want a *TempError wrapping not-exist", err)
+	}
+	if _, serr := os.Stat(path); !os.IsNotExist(serr) {
+		t.Fatal("something was written")
+	}
+}
