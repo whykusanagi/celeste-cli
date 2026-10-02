@@ -3,6 +3,7 @@ package pathutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -62,5 +63,61 @@ func TestSameByFileIdentity(t *testing.T) {
 	}
 	if !Same(f, link) || Same(f, filepath.Join(dir, "other.txt")) {
 		t.Error("file identity")
+	}
+}
+
+// withinCases are lexical: Within never resolves symlinks or touches the
+// filesystem, and it compares case as filepath.Rel does (Windows folds it).
+func withinCases(root string) []struct {
+	name, dir, path string
+	want            bool
+} {
+	sep := string(filepath.Separator)
+	d := filepath.Join(root, "ws")
+	return []struct {
+		name, dir, path string
+		want            bool
+	}{
+		{"dir itself", d, d, true},
+		{"child", d, filepath.Join(d, "a.txt"), true},
+		{"nested", d, filepath.Join(d, "sub", "a.txt"), true},
+		{"dir trailing separator", d + sep, filepath.Join(d, "a.txt"), true},
+		{"path trailing separator", d, filepath.Join(d, "sub") + sep, true},
+		{"dot-dot prefixed name", d, filepath.Join(d, "..foo"), true},
+		{"unclean but inside", d, d + sep + "sub" + sep + ".." + sep + "a.txt", true},
+		{"parent", d, root, false},
+		{"sibling", d, filepath.Join(root, "other", "a.txt"), false},
+		{"sibling sharing the prefix", d, d + "2" + sep + "a.txt", false},
+		{"unclean escape", d, d + sep + "sub" + sep + ".." + sep + ".." + sep + "x", false},
+		{"relative path against absolute dir", d, "a.txt", false},
+		{"other case", d, filepath.Join(root, "WS", "a.txt"), runtime.GOOS == "windows"},
+	}
+}
+
+func TestWithin(t *testing.T) {
+	for _, c := range withinCases(t.TempDir()) {
+		if got := Within(c.dir, c.path); got != c.want {
+			t.Errorf("%s: Within(%q, %q) = %v, want %v", c.name, c.dir, c.path, got, c.want)
+		}
+	}
+}
+
+// Within is lexical: a symlink inside dir that points outside still counts
+// as inside. Callers that care resolve both paths first.
+func TestWithinDoesNotResolveSymlinks(t *testing.T) {
+	root := t.TempDir()
+	d := filepath.Join(root, "ws")
+	out := filepath.Join(root, "out")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(out, filepath.Join(d, "link")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if !Within(d, filepath.Join(d, "link", "f")) {
+		t.Error("a path through a symlink in dir is lexically inside dir")
 	}
 }

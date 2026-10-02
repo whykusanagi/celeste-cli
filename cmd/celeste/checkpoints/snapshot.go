@@ -315,7 +315,7 @@ func (sm *SnapshotManager) Revert(path string) (Entry, error) { return sm.Revert
 // it would undo, under the store's locks, and undoes nothing when check
 // returns an error, which it returns.
 func (sm *SnapshotManager) RevertIf(path string, check func(Entry) error) (Entry, error) {
-	return sm.undoNewest(check, func(e Entry) bool { return samePath(e.Path, path) },
+	return sm.undoNewest(check, func(e Entry) bool { return pathutil.Same(e.Path, path) },
 		fmt.Errorf("%w of %s in this session", errNoCheckpoint, path))
 }
 
@@ -718,9 +718,6 @@ func backUp(src, dst string, before os.FileInfo) error {
 	}
 	return nil
 }
-
-// samePath reports whether a and b name the same file (pathutil.Same).
-func samePath(a, b string) bool { return pathutil.Same(a, b) }
 
 // maxBackupBase bounds the base-name part of a backup's name, so a long
 // file name (plus atomicfile's temporary suffix) stays under the 255-byte

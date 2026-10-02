@@ -11,6 +11,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // resolvePath checks that the resolved absolute path stays within the workspace.
@@ -36,7 +37,7 @@ func resolvePathReal(workspace, input string, forWrite bool) (path, realPath str
 		candidate = filepath.Clean(filepath.Join(workspace, input))
 	}
 
-	if !withinDir(workspace, candidate) {
+	if !pathutil.Within(workspace, candidate) {
 		return "", "", fmt.Errorf("path escapes workspace: %s", input)
 	}
 
@@ -51,7 +52,7 @@ func resolvePathReal(workspace, input string, forWrite bool) (path, realPath str
 	if err != nil {
 		return "", "", fmt.Errorf("resolve %s: %w", input, err)
 	}
-	if !withinDir(realWorkspace, realCandidate) {
+	if !pathutil.Within(realWorkspace, realCandidate) {
 		return "", "", fmt.Errorf("path escapes workspace through a symlink: %s", input)
 	}
 	if forWrite {
@@ -60,15 +61,6 @@ func resolvePathReal(workspace, input string, forWrite bool) (path, realPath str
 		}
 	}
 	return candidate, realCandidate, nil
-}
-
-// withinDir reports whether path is dir or lies under it (both cleaned).
-func withinDir(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 // resolveExisting resolves symlinks in the longest existing prefix of path and

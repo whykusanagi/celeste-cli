@@ -36,6 +36,15 @@ func Real(p string) string {
 	return p
 }
 
+// Within reports whether path is dir or lies under it. It is lexical, as
+// filepath.Rel is: nothing is resolved, so callers that care about symlinks
+// resolve both paths first, and letter case compares as filepath.Rel
+// compares it. A path on another Windows volume is never within dir.
+func Within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
 // equal compares two clean paths; Windows paths are case-insensitive.
 func equal(a, b string) bool {
 	if runtime.GOOS == "windows" {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 	"golang.org/x/term"
 )
 
@@ -45,11 +46,8 @@ func initJev(cfg *config.Config, home string, in io.Reader, out io.Writer) error
 		if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(keyPath, []byte(key+"\n"), 0o600); err != nil {
-			return err
-		}
-		// WriteFile keeps an existing file's mode: make sure it is 0600.
-		if err := os.Chmod(keyPath, 0o600); err != nil {
+		// Atomic, so the key is never readable at an old file's mode.
+		if err := atomicfile.Write(keyPath, []byte(key+"\n"), 0o600); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "Saved the key to %s (readable only by you)\n", keyPath)

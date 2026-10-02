@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -71,8 +71,7 @@ func (s *CheckpointStore) Load(runID string) (*RunState, error) {
 	}
 
 	path := filepath.Join(s.runsDir, runID+".json")
-	rel, err := filepath.Rel(s.runsDir, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+	if !pathutil.Within(s.runsDir, path) {
 		return nil, fmt.Errorf("invalid run id: %s", runID)
 	}
 	data, err := os.ReadFile(path)
