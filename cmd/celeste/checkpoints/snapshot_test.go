@@ -537,3 +537,27 @@ func TestSamePathByFileIdentity(t *testing.T) {
 	assert.True(t, samePath(f, link))
 	assert.False(t, samePath(f, filepath.Join(dir, "other.txt")))
 }
+
+// ModifiedAfter sees a change made after the checkpoint's write window,
+// not the tool's own write, and not a file that is gone.
+func TestModifiedAfter(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := Entry{Path: f, Time: time.Now().UTC()}
+	if _, changed := ModifiedAfter(e); changed {
+		t.Fatal("the tool's own write counted as a later change")
+	}
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(f, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if mod, changed := ModifiedAfter(e); !changed || !mod.After(e.Time) {
+		t.Fatalf("a later change was not seen: %v %v", mod, changed)
+	}
+	if _, changed := ModifiedAfter(Entry{Path: filepath.Join(dir, "gone"), Time: e.Time}); changed {
+		t.Fatal("a missing file counted as changed")
+	}
+}

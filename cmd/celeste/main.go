@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
@@ -280,6 +281,14 @@ type TUIClientAdapter struct {
 	// F2e); nil (tests that build an adapter by hand) gives each runner its
 	// own Setup.
 	parentEnv loop.Nester
+
+	// snapshots is the chat session's checkpoint store, for /undo and
+	// /diff (2.0 F4); nil turns both off. workspace relativizes their
+	// paths. undoConfirm is the change a first /undo refused to undo
+	// because its file changed afterwards; /undo again undoes it.
+	snapshots   *checkpoints.SnapshotManager
+	workspace   string
+	undoConfirm *checkpoints.Entry
 
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.

@@ -276,6 +276,27 @@ func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
 	return undone, nil
 }
 
+// writeWindow is how long after its checkpoint a tool's write may still
+// land: the backup copy of a large file comes first, then the write.
+const writeWindow = 10 * time.Second
+
+// ModifiedAfter reports whether e's file was modified after the change e
+// records (by an editor, a formatter, a bash command), judged by its
+// modification time being more than writeWindow past e.Time, and returns
+// that time. Undoing e would overwrite (or, for a file the session
+// created, delete) that later change. A file that is gone has nothing to
+// overwrite. Changes within writeWindow of the checkpoint are not seen.
+func ModifiedAfter(e Entry) (time.Time, bool) {
+	info, err := os.Stat(e.Path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return info.ModTime(), info.ModTime().After(e.Time.Add(writeWindow))
+}
+
+// SameEntry reports whether a and b are the same checkpoint.
+func SameEntry(a, b Entry) bool { return sameEntry(a, b) }
+
 // Files returns the sorted, de-duplicated paths of this session's entries:
 // the files it changed (#200's files-modified list).
 func (sm *SnapshotManager) Files() []string {
