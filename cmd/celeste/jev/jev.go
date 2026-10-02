@@ -186,14 +186,28 @@ var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@:]*:[^\s
 // keyValuePattern redacts the value after any key whose name suggests a secret.
 var keyValuePattern = regexp.MustCompile(`(?i)\b([A-Za-z0-9_-]*(api[_-]?key|secret|token|passw(or)?d|pwd|credential|auth|private[_-]?key|access[_-]?key)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*["']?)[^\s"',}]{6,}`)
 
-// credentialTokens names the plural token keys that hold credentials
-// (refresh_tokens, oauthTokens), not counts.
-var credentialTokens = regexp.MustCompile(`(?i)(refresh|access|auth|bearer|session|api|secret|csrf|xsrf|jwt)[_-]?tokens`)
+// tokenCountWord and tokenSecretWord sort keys with "tokens" in them: a
+// count of LLM tokens (InputTokens, max_tokens) names what it counts; a
+// credential (github_tokens, idTokens, pushTokens) names what it unlocks.
+var (
+	tokenCountWord  = regexp.MustCompile(`input|output|prompt|completion|max|total|cached|reasoning|avg|used|matched|count|num|estimate|budget|limit|remaining`)
+	tokenSecretWord = regexp.MustCompile(`secret|passw|key|credential|auth|bearer|session|refresh|access|id_?token|push|device|github|api|csrf|xsrf|jwt`)
+	allDigits       = regexp.MustCompile(`^[0-9]+$`)
+)
 
-// tokenCountKey reports a key that counts LLM tokens (InputTokens,
-// max_tokens): "tokens" in its name and nothing that says credential.
-func tokenCountKey(key string) bool {
-	return strings.Contains(strings.ToLower(key), "tokens") && !credentialTokens.MatchString(key)
+// tokenCount reports a key=value that counts LLM tokens rather than holding
+// one: a "tokens" key whose value is a number, or whose name says count and
+// nothing that says credential. Anything else with "token" in its name is
+// redacted.
+func tokenCount(key, value string) bool {
+	k := strings.ToLower(key)
+	if !strings.Contains(k, "tokens") {
+		return false
+	}
+	if allDigits.MatchString(value) {
+		return true
+	}
+	return tokenCountWord.MatchString(k) && !tokenSecretWord.MatchString(k)
 }
 
 // Redact replaces likely secrets with [REDACTED]. It errs toward redacting:
@@ -207,7 +221,7 @@ func Redact(s string) string {
 	s = urlUserinfo.ReplaceAllString(s, "${1}[REDACTED]@")
 	return keyValuePattern.ReplaceAllStringFunc(s, func(m string) string {
 		g := keyValuePattern.FindStringSubmatch(m)
-		if tokenCountKey(g[1]) {
+		if tokenCount(g[1], m[len(g[1])+len(g[4]):]) {
 			return m // a token count (InputTokens, avgTokens), not a credential
 		}
 		return g[1] + g[4] + "[REDACTED]"
