@@ -833,7 +833,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (merge, resume, new, ...) it falls through to run the action.
 			if cmd.Name == "session" && len(cmd.Args) == 0 {
 				m.viewMode = "sessions"
-				panel := NewSessionPanelModel()
+				panel := NewSessionPanelModel(m.workDir)
 				panel = panel.SetWidth(m.width).SetHeight(m.height)
 				m.sessionPanel = &panel
 				return m, nil
@@ -2742,6 +2742,8 @@ type Session interface {
 	SummarizeRaw() interface{}       // Returns SessionSummary
 	SetCommandHistory(history []string)
 	GetCommandHistory() []string
+	SetWorkspace(ws string) // the directory the chat runs in (2.0 W4)
+	GetWorkspace() string
 }
 
 // SessionSummary is a session's metadata, as SummarizeRaw returns it.
@@ -2971,6 +2973,7 @@ func (m *AppModel) persistSession() {
 		return
 	}
 
+	m.claimWorkspace(m.currentSession)
 	m.currentSession.SetEndpoint(m.endpoint)
 	m.currentSession.SetModel(m.model)
 	m.currentSession.SetModelPinned(m.modelPinned)
@@ -2986,6 +2989,17 @@ func (m *AppModel) persistSession() {
 	// Save synchronously: Save mutates and marshals the session, and Update
 	// keeps mutating it, so a goroutine here races.
 	_ = m.sessionManager.Save(m.currentSession)
+}
+
+// claimWorkspace records the chat's workspace on a session that has none:
+// a new one, or one an older celeste saved (2.0 W4 ruling 1).
+func (m AppModel) claimWorkspace(s Session) {
+	if s == nil || m.workDir == "" || s.GetWorkspace() != "" {
+		return
+	}
+	if abs, err := filepath.Abs(m.workDir); err == nil {
+		s.SetWorkspace(abs)
+	}
 }
 
 // savedMessages is the chat as the session saves it. A reply still being
@@ -3026,6 +3040,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 			if action.Name != "" {
 				s.SetName(action.Name)
 			}
+			m.claimWorkspace(s)
 			m.currentSession = s
 
 			// Clear chat
@@ -3066,6 +3081,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		// Load requested session
 		if err == nil {
 			if s, ok := loaded.(Session); ok {
+				m.claimWorkspace(s)
 				m.currentSession = s
 
 				// Clear current chat
@@ -3117,9 +3133,14 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 					}
 				}
 
-				// Sort by UpdatedAt descending (most recent first)
-				sort.Slice(summaries, func(i, j int) bool {
+				// This project's sessions first, then the rest; each newest
+				// first (2.0 W4 ruling 2).
+				sort.SliceStable(summaries, func(i, j int) bool {
 					return summaries[i].UpdatedAt.After(summaries[j].UpdatedAt)
+				})
+				thisProject := func(sum SessionSummary) bool { return config.SameProject(sum.Workspace, m.workDir) }
+				sort.SliceStable(summaries, func(i, j int) bool {
+					return thisProject(summaries[i]) && !thisProject(summaries[j])
 				})
 
 				var sb strings.Builder
@@ -3164,7 +3185,11 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 					}
 
 					// Format output
-					sb.WriteString(fmt.Sprintf("• %s%s (%s)\n", currentMarker, displayName, summary.ID))
+					projectMark := ""
+					if thisProject(summary) {
+						projectMark = " (this project)"
+					}
+					sb.WriteString(fmt.Sprintf("• %s%s (%s)%s\n", currentMarker, displayName, summary.ID, projectMark))
 					if model != "" && endpoint != "" {
 						sb.WriteString(fmt.Sprintf("  %s • %d msgs • %s @ %s\n",
 							relativeTime, summary.MessageCount, model, endpoint))

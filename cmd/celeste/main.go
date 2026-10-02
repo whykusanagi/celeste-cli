@@ -1562,11 +1562,14 @@ func runSingleMessage(message string) {
 
 // SessionManagerAdapter adapts config.SessionManager to tui.SessionManager interface.
 type SessionManagerAdapter struct {
-	manager *config.SessionManager
+	manager   *config.SessionManager
+	workspace string // recorded on every new session (2.0 W4 ruling 1)
 }
 
 func (a *SessionManagerAdapter) NewSession() interface{} {
-	return a.manager.NewSession()
+	s := a.manager.NewSession()
+	s.Workspace = a.workspace
+	return s
 }
 
 func (a *SessionManagerAdapter) Save(session interface{}) error {

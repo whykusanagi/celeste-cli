@@ -91,6 +91,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		currentSession = sessionManager.NewSession()
 	}
 	resumed := resumeSessionID != "" && len(currentSession.Messages) > 0
+	if currentSession.Workspace == "" {
+		currentSession.Workspace = cwd // new, or saved by an older celeste (2.0 W4 ruling 1)
+	}
 
 	sink := newChatWarnSink()
 	env, err := loop.Setup(loop.ModeChat, &served, cwd, loop.SetupOptions{
@@ -198,7 +201,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 			log.Printf("Warning: Failed to save session with model: %v", err)
 		}
 	}
-	app = app.SetSessionManager(&SessionManagerAdapter{manager: sessionManager}, currentSession)
+	app = app.SetSessionManager(&SessionManagerAdapter{manager: sessionManager, workspace: cwd}, currentSession)
 	app = app.SetWorkDir(cwd).SetPermissionChecker(env.Checker)
 
 	// The /mcp panel shows configured-but-disconnected servers too; a load

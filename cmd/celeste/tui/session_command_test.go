@@ -129,3 +129,30 @@ func TestContextCompactSavesTheSession(t *testing.T) {
 	require.Equal(t, "[pruned call_a]", toolContent(m, "call_a"))
 	assert.Positive(t, mgr.saves, "/context compact must save the compacted session")
 }
+
+// 2.0 W4 rulings 1-2: /session list shows this project's sessions first,
+// marked; a new session records the chat's workspace.
+func TestSessionListShowsThisProjectFirst(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	ws := t.TempDir()
+	m = m.SetWorkDir(ws)
+	here := mgr.mgr.NewSession()
+	here.Name = "Here notes"
+	here.Workspace = ws
+	here.Messages = []config.SessionMessage{{Role: "user", Content: "hi"}}
+	require.NoError(t, mgr.mgr.Save(here))
+	// The other session is newer, but in no project.
+	other.Name = "Other notes"
+	require.NoError(t, mgr.mgr.Save(other))
+
+	m, _ = step(t, m, SendMessageMsg{Content: "/session list"})
+	text := sessChatText(m)
+	iHere, iOther := strings.Index(text, "Here notes"), strings.Index(text, "Other notes")
+	require.True(t, iHere >= 0 && iOther >= 0, text)
+	assert.Less(t, iHere, iOther, "this project's session must come first")
+	assert.Contains(t, text, "Here notes ("+here.ID+") (this project)")
+	assert.NotContains(t, text, "Other notes ("+other.ID+") (this project)")
+
+	m, _ = step(t, m, SendMessageMsg{Content: "/session new Fresh"})
+	assert.Equal(t, ws, m.currentSession.GetWorkspace())
+}
