@@ -23,6 +23,8 @@ type rpcReply struct {
 // records session/update notifications and answers permission requests.
 type testClient struct {
 	t       *testing.T
+	agent   *Agent
+	home    string
 	in      io.Writer
 	mu      sync.Mutex
 	nextID  int
@@ -32,9 +34,15 @@ type testClient struct {
 	permit func(params map[string]any) map[string]any
 }
 
+// testConfig points celeste at srv; a nil srv is for tests that never send
+// a prompt (any request then fails to connect).
 func testConfig(srv *fakeprovider.Server, maxIter int) func() (*config.Config, error) {
+	base := "http://127.0.0.1:1/v1"
+	if srv != nil {
+		base = srv.BaseURL()
+	}
 	return func() (*config.Config, error) {
-		return &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10, MaxToolIterations: maxIter}, nil
+		return &config.Config{APIKey: "k", BaseURL: base, Model: "fake-model", Timeout: 10, MaxToolIterations: maxIter}, nil
 	}
 }
 
@@ -50,7 +58,7 @@ func newTestClient(t *testing.T, cfg func() (*config.Config, error)) *testClient
 	agent.Attach(conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	go conn.Serve(ctx)
-	c := &testClient{t: t, in: inW, waiting: map[int]chan rpcReply{}}
+	c := &testClient{t: t, agent: agent, home: home, in: inW, waiting: map[int]chan rpcReply{}}
 	t.Cleanup(func() { cancel(); inW.Close(); outR.Close(); agent.Close() })
 	go c.read(bufio.NewReader(outR))
 	return c
@@ -145,6 +153,18 @@ func (c *testClient) newSession(ws string) string {
 		SessionID string `json:"sessionId"`
 	}
 	_ = json.Unmarshal(res, &out)
+	return out.SessionID
+}
+
+// sessionIDOf reads session/new's sessionId.
+func sessionIDOf(t *testing.T, res json.RawMessage) string {
+	t.Helper()
+	var out struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil || out.SessionID == "" {
+		t.Fatalf("session/new = %s (%v)", res, err)
+	}
 	return out.SessionID
 }
 

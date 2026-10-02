@@ -3,7 +3,9 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
@@ -25,14 +27,21 @@ type Deps struct {
 type Agent struct {
 	deps Deps
 
-	mu     sync.Mutex
-	conn   *Conn
-	closed bool
+	mu       sync.Mutex
+	conn     *Conn
+	closed   bool
+	sessions map[string]*session
+	// prompts counts running prompts; Close waits for them.
+	prompts sync.WaitGroup
+
+	// storeMu serializes the session store: SessionManager is not safe for
+	// concurrent use, and requests run on their own goroutines.
+	storeMu sync.Mutex
 }
 
 // NewAgent returns an agent; Attach gives it the connection it answers on.
 func NewAgent(deps Deps) *Agent {
-	return &Agent{deps: deps}
+	return &Agent{deps: deps, sessions: map[string]*session{}}
 }
 
 // Attach sets the connection the agent sends its requests and
@@ -43,18 +52,88 @@ func (a *Agent) Attach(c *Conn) {
 	a.conn = c
 }
 
-// Close shuts the agent down: later requests are answered with an
-// internal error.
+// closeWait bounds how long Close waits for cancelled prompts to finish.
+const closeWait = 10 * time.Second
+
+// Close shuts the agent down: later requests are answered with an internal
+// error, running prompts are cancelled (and waited for, briefly), and every
+// session's Env is closed. Nothing is logged once it returns.
 func (a *Agent) Close() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
 	a.closed = true
+	sessions := a.sessions
+	a.sessions = map[string]*session{}
+	a.mu.Unlock()
+	for _, s := range sessions {
+		s.cancelPrompt()
+	}
+	done := make(chan struct{})
+	go func() { a.prompts.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(closeWait):
+	}
+	for _, s := range sessions {
+		s.close()
+	}
 }
 
 func (a *Agent) logf(format string, args ...any) {
-	if a.deps.Logf != nil {
+	a.mu.Lock()
+	closed := a.closed
+	a.mu.Unlock()
+	if a.deps.Logf != nil && !closed {
 		a.deps.Logf(format, args...)
 	}
+}
+
+// loadConfig is celeste's config (Deps.Config).
+func (a *Agent) loadConfig() (*config.Config, error) {
+	if a.deps.Config == nil {
+		return nil, errors.New("no config loader")
+	}
+	cfg, err := a.deps.Config()
+	if err == nil && cfg == nil {
+		err = errors.New("no config")
+	}
+	return cfg, err
+}
+
+// newStore starts a celeste session record (its ID is the sessionId,
+// ruling 3).
+func (a *Agent) newStore() *config.Session {
+	a.storeMu.Lock()
+	defer a.storeMu.Unlock()
+	return a.deps.Sessions.NewSession()
+}
+
+// saveStore writes a session record.
+func (a *Agent) saveStore(s *config.Session) error {
+	a.storeMu.Lock()
+	defer a.storeMu.Unlock()
+	return a.deps.Sessions.Save(s)
+}
+
+// addSession registers s; false once the agent is closed.
+func (a *Agent) addSession(s *session) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.sessions[s.id] = s
+	return true
+}
+
+// session returns the session with id, or nil.
+func (a *Agent) session(id string) *session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sessions[id]
 }
 
 // Request implements Handler.
@@ -76,6 +155,16 @@ func (a *Agent) Request(ctx context.Context, method string, params json.RawMessa
 		// celeste authenticates with its own config and keys; it
 		// advertises no methods, so there is nothing to do.
 		return struct{}{}, nil
+	case "session/new":
+		var p NewSessionParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		s, err := a.newSession(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		return NewSessionResult{SessionID: s.id}, nil
 	}
 	return nil, &RPCError{Code: CodeMethodNotFound, Message: "method not found: " + method}
 }
