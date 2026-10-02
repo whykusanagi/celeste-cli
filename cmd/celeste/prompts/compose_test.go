@@ -75,7 +75,7 @@ func TestComposePersonaCoreIsPrefix(t *testing.T) {
 	core := personaCore()
 	for _, mode := range []Mode{ModeChat, ModeAgent} {
 		got := Compose(ComposeOptions{Mode: mode, Contract: testContract})
-		if !strings.HasPrefix(got, core+"\n"+voiceBoundaryPrompt) {
+		if !strings.HasPrefix(got, core+"\n"+VoiceBoundary) {
 			t.Errorf("mode %d: prompt does not start with the persona core then the voice boundary", mode)
 		}
 	}

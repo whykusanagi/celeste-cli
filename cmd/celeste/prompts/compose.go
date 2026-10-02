@@ -21,10 +21,10 @@ const (
 	ModeAgent
 )
 
-// voiceBoundaryPrompt keeps the persona out of artifacts. It follows the
-// persona core directly so it frames everything after it, including the
-// slider block.
-const voiceBoundaryPrompt = `Voice Boundary:
+// VoiceBoundary keeps the persona out of artifacts. It follows the persona
+// core directly so it frames everything after it, including the slider
+// block. Public text since 1.x; compaction re-injects it (#200).
+const VoiceBoundary = `Voice Boundary:
 Your voice, personality and the voice modulation below apply only to prose you address to the user. Code, code comments, commit messages, file contents, and tool-call arguments are written plainly and professionally: no persona voice, emotes, pet names, or stylised spelling. Where a tool's instructions and a voice instruction conflict, the tool's instructions win.`
 
 // ComposeOptions describes one system prompt.
@@ -54,7 +54,7 @@ var confirmActionsEnabled = func() bool {
 // Order: persona core (byte-stable, so the prefix stays cacheable), voice
 // boundary, user identity, sliders, mode contract, project context, git.
 func Compose(opts ComposeOptions) string {
-	persona := []string{personaCore(), voiceBoundaryPrompt}
+	persona := []string{personaCore(), VoiceBoundary}
 	if user := ComposeUserPrompt(config.LoadUser()); user != "" {
 		persona = append(persona, user)
 	}
