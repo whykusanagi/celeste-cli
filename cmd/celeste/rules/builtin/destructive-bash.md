@@ -1,5 +1,5 @@
 ---
-condition: (?i)\brm\b|\bgit\b[\s\S]*\bpush\b
+condition: \S
 scope: tool_args:bash.command
 action: interrupt
 repeat: after-gap:1

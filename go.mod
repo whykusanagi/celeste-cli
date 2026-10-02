@@ -6,6 +6,7 @@ toolchain go1.26.6
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/anthropics/anthropic-sdk-go v1.76.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -58,6 +59,7 @@ require (
 	github.com/clipperhouse/displaywidth v0.9.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20170627025303-887ab5e44cc3 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect

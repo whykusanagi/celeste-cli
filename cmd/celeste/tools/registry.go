@@ -360,6 +360,28 @@ func WithPrompt(ctx context.Context, fn PromptFunc) context.Context {
 	return context.WithValue(ctx, promptKey{}, fn)
 }
 
+// AdvisedCall is a call the permission policy allows, shown to an
+// AskAdvisor.
+type AdvisedCall struct {
+	Name     string
+	Input    map[string]any
+	ReadOnly bool
+}
+
+// AskAdvisor may turn a call the policy allows into an Ask (jev_gate, 2.0
+// W3). It can never allow a call or deny one outright: Deny stays Deny,
+// and an Ask it adds goes to the prompt, or is denied headless. reason is
+// shown with the prompt and in a headless denial.
+type AskAdvisor func(ctx context.Context, call AdvisedCall) (ask bool, reason string)
+
+type advisorKey struct{}
+
+// WithAskAdvisor makes a consult this call's allowed decision. loop.Loop
+// sets it from Loop.Advisor.
+func WithAskAdvisor(ctx context.Context, a AskAdvisor) context.Context {
+	return context.WithValue(ctx, advisorKey{}, a)
+}
+
 // noPrompt marks a call with no one to ask (see WithoutPrompt).
 type noPrompt struct{}
 
@@ -435,7 +457,14 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 		}
 	}
 
-	if denied, blocked := r.checkPermission(tool, name, input, checker, prompt, forceAsk); blocked {
+	advice := ""
+	if a, _ := ctx.Value(advisorKey{}).(AskAdvisor); a != nil && !forceAsk && allowed(tool, input, checker) {
+		if ask, why := a(hookCtx, AdvisedCall{Name: name, Input: input, ReadOnly: tool.IsReadOnly()}); ask {
+			forceAsk, advice = true, why
+		}
+	}
+
+	if denied, blocked := r.checkPermission(tool, name, input, checker, prompt, forceAsk, advice); blocked {
 		return withHookContext(denied, hookContext), nil
 	}
 
@@ -461,10 +490,16 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	return withHookContext(result, hookContext), nil
 }
 
+// allowed reports the policy's decision for the call is Allow.
+func allowed(tool Tool, input map[string]any, checker *permissions.Checker) bool {
+	return checker == nil || checker.Check(&toolInfoAdapter{tool: tool}, input).Decision == permissions.Allow
+}
+
 // checkPermission applies the permission gate. forceAsk (a PreToolUse hook
-// said "ask") turns Allow into Ask; Deny always stays Deny. It returns the
-// denial result and true when the call must not run.
-func (r *Registry) checkPermission(tool Tool, name string, input map[string]any, checker *permissions.Checker, prompt PromptFunc, forceAsk bool) (ToolResult, bool) {
+// said "ask", or an AskAdvisor did, giving advice) turns Allow into Ask;
+// Deny always stays Deny. It returns the denial result and true when the
+// call must not run.
+func (r *Registry) checkPermission(tool Tool, name string, input map[string]any, checker *permissions.Checker, prompt PromptFunc, forceAsk bool, advice string) (ToolResult, bool) {
 	decision, reason := permissions.Allow, ""
 	if checker != nil {
 		res := checker.Check(&toolInfoAdapter{tool: tool}, input)
@@ -479,14 +514,24 @@ func (r *Registry) checkPermission(tool Tool, name string, input map[string]any,
 	// Hard gate: with no prompt configured (headless), deny so the gate
 	// can't be bypassed silently.
 	if prompt == nil {
+		if advice != "" {
+			return ToolResult{
+				Content: fmt.Sprintf("Permission denied: %s; interactive approval required for %q but no prompt is configured", advice, name),
+				Error:   true,
+			}, true
+		}
 		return ToolResult{
 			Content: fmt.Sprintf("Permission denied: interactive approval required for %q but no prompt is configured", name),
 			Error:   true,
 		}, true
 	}
+	summary := inputSummary(input)
+	if advice != "" {
+		summary = "[" + advice + "] " + summary
+	}
 	// Runs in the tool-execution goroutine (off the Bubble Tea Update loop),
 	// so blocking on the answer is safe.
-	resp := prompt(PermissionRequest{ToolName: name, InputSummary: inputSummary(input), RiskLevel: classifyRiskLevel(name)})
+	resp := prompt(PermissionRequest{ToolName: name, InputSummary: summary, RiskLevel: classifyRiskLevel(name)})
 	pattern := resp.Pattern
 	if pattern == "" {
 		pattern = name

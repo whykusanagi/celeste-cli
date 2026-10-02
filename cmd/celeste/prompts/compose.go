@@ -21,32 +21,17 @@ const (
 	ModeAgent
 )
 
-// voiceBoundaryPrompt keeps the persona out of artifacts. It follows the
-// persona core directly so it frames everything after it, including the
-// slider block.
-const voiceBoundaryPrompt = `Voice Boundary:
-Your voice, personality and the voice modulation below apply only to prose you address to the user. Code, code comments, commit messages, file contents, and tool-call arguments are written plainly and professionally: no persona voice, emotes, pet names, or stylised spelling. Where a tool's instructions and a voice instruction conflict, the tool's instructions win.`
-
 // PersonaLevel picks how much of Celeste's persona a prompt carries. The
 // zero value is the full persona; PersonaOff is the only other level. No
 // level composes an empty persona section.
 type PersonaLevel string
 
 // PersonaOff is Celeste's "off" level, for the internal review and research
-// lanes (a typed explore or review subagent, 2.0 W4e): her identity line,
-// the honesty rule and the voice boundary, with no persona core, user
-// identity, sliders or chat rules. W5-A's rebase maps it to its ProfileOff.
+// lanes (a typed explore or review subagent, 2.0 W4e): her identity line and
+// the honesty rule (publicPreamble), then the ProfileOff profile (the voice
+// boundary rule, sealed or public), with no full profile, user identity,
+// sliders or chat rules. Never less than that (owner ruling on #265).
 const PersonaOff PersonaLevel = "off"
-
-// offIdentity and offHonesty are W5-A's public persona text
-// (publicIdentity, publicHonesty in its profile.go); offPersona joins them
-// with the voice boundary the way its public fallback does, so W5-A can
-// swap offPersona for its ProfileOff in one line.
-const (
-	offIdentity = "You are Celeste, the AI companion in the celeste command-line tool, created by whyKusanagi."
-	offHonesty  = "Never say that a file was written, audio was saved or any other action happened unless a tool actually returned that result this turn."
-	offPersona  = offIdentity + "\n\n" + offHonesty + "\n\n" + voiceBoundaryPrompt
-)
 
 // ComposeOptions describes one system prompt.
 type ComposeOptions struct {
@@ -75,13 +60,14 @@ var confirmActionsEnabled = func() bool {
 // Compose builds a system prompt. Every caller goes through here so a prompt
 // refresh or endpoint switch produces the same prompt as session start.
 //
-// Order: persona core (byte-stable, so the prefix stays cacheable), voice
-// boundary, user identity, sliders, mode contract, project context, git.
+// Order: persona profile (byte-stable, ending with the voice boundary rule),
+// user identity, sliders, mode contract, project context, git.
 func Compose(opts ComposeOptions) string {
-	sections := []string{offPersona}
-	if opts.PersonaLevel != PersonaOff {
-		sections[0] = personaSection(opts)
+	persona := personaSection
+	if opts.PersonaLevel == PersonaOff {
+		persona = func(ComposeOptions) string { return offPersona() }
 	}
+	sections := []string{persona(opts)}
 	if opts.Mode == ModeAgent && opts.Contract != "" {
 		sections = append(sections, opts.Contract)
 	}
@@ -94,10 +80,10 @@ func Compose(opts ComposeOptions) string {
 	return strings.Join(sections, "\n\n")
 }
 
-// personaSection is the persona core, voice boundary, user identity,
-// sliders and, in chat, the chat rules.
+// personaSection is the full profile (ending with the voice boundary),
+// user identity, sliders and, in chat, the chat rules.
 func personaSection(opts ComposeOptions) string {
-	persona := []string{personaCore(), voiceBoundaryPrompt}
+	persona := []string{personaCore()}
 	if user := ComposeUserPrompt(config.LoadUser()); user != "" {
 		persona = append(persona, user)
 	}
@@ -118,14 +104,13 @@ func personaSection(opts ComposeOptions) string {
 	return strings.TrimRight(strings.Join(persona, "\n"), "\n")
 }
 
-// personaCore returns the persona text from the essence.
+// offPersona is the PersonaOff persona section.
+func offPersona() string {
+	return publicPreamble + "\n\n" + mustProfile(ProfileOff).SystemPrompt
+}
+
+// personaCore returns the full profile, official or public. Either ends
+// with the voice boundary rule.
 func personaCore() string {
-	essence, err := LoadEssence()
-	if err != nil {
-		// Only reachable if the embedded essence itself is broken, which
-		// TestEmbeddedEssenceIsValid guards against. User overrides that
-		// fail to load fall back to the embedded essence inside LoadEssence.
-		return getBasicPrompt()
-	}
-	return buildPromptFromEssence(essence)
+	return mustProfile(ProfileFull).SystemPrompt
 }

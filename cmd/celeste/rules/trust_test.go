@@ -152,3 +152,21 @@ func touch(t *testing.T, paths ...string) {
 		}
 	}
 }
+
+// The global grimoire is recognised through a symlinked home (macOS
+// /var -> /private/var, a dotfiles link): audit #6 N5.
+func TestGlobalGrimoireThroughSymlinkedHome(t *testing.T) {
+	home := trustHome(t)
+	link := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(home, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	sec := Section{Source: filepath.Join(link, ".celeste", "grimoire.md"), Body: repoRuleBody}
+	if err := os.MkdirAll(filepath.Join(home, ".celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(home, ".celeste", "grimoire.md"))
+	if got := Trusted(home, []Section{sec}, nil, nil); len(got) != 1 {
+		t.Fatalf("the global grimoire under a symlinked path needed trust: %+v", got)
+	}
+}

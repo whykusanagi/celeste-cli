@@ -49,6 +49,10 @@ var (
 	Version   = "1.16.0" // x-release-please-version
 	Build     = "bubbletea-tui"
 	CommitSHA = "dev"
+	// Channel is "release" only in official release binaries (release.yml
+	// sets -X main.Channel=release). celeste update uses it to tell an
+	// official binary from a local build (W5 ruling 29).
+	Channel = "source"
 )
 
 // Global config name (set by -config flag)
@@ -100,6 +104,7 @@ Commands:
   plan [show]             Show current plan from .celeste/plan.md
   revert <file> [--session id] [--force]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
+  update [--check]        Install the latest official release (go install and release builds)
   help                    Show this help message
   version                 Show version information
 
@@ -133,6 +138,7 @@ Configuration:
   celeste config --show                  Show current config
   celeste config --list                  List all config profiles
   celeste config --init <name>           Create a new config profile
+  celeste config --init jev              Save a TypeSafe key; Jev in shadow mode
   celeste config --set-key <key>         Set API key
   celeste config --set-url <url>         Set API URL
   celeste config --set-model <model>     Set model
@@ -580,15 +586,19 @@ func (a *TUIClientAdapter) ResumeSubagent(ctx context.Context, checkpointID stri
 // and returns the replacement for each pruned result (#174). /context compact
 // calls it on the Update goroutine, never while a turn runs (commands wait
 // for the turn).
+//
+// With jev_prune "on" it still only asks Jev in shadow: it runs on the
+// Update goroutine, which must never wait on a network call (2.0 W3).
 func (a *TUIClientAdapter) CompactContext(msgs []tui.ChatMessage, window, used int, force bool) tui.CompactOutcome {
-	return a.compactWith(msgs, window, used, force, a.jevShadow())
+	return a.compactWith(context.Background(), msgs, window, used, force, a.jevShadow(), config.ModeShadow)
 }
 
-// compactWith prunes with jc as the Jev shadow scorer (nil: none). A chat
-// turn's compactor passes the client RunTurn resolved, so the run goroutine
-// never reads the adapter's config, which endpoint and profile switches
-// replace on the Update goroutine.
-func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client) tui.CompactOutcome {
+// compactWith prunes with jc as the Jev scorer (nil: none) in jevMode
+// ("on" or "shadow", compact.WithJev). A chat turn's compactor passes the
+// client and mode RunTurn resolved, so the run goroutine never reads the
+// adapter's config, which endpoint and profile switches replace on the
+// Update goroutine.
+func (a *TUIClientAdapter) compactWith(ctx context.Context, msgs []tui.ChatMessage, window, used int, force bool, jc *jev.Client, jevMode string) tui.CompactOutcome {
 	a.compactMu.Lock()
 	defer a.compactMu.Unlock()
 	if est := compact.Estimate(msgs); est > used {
@@ -600,11 +610,7 @@ func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int,
 			a.pruned = store
 		}
 	}
-	opts := compact.Options{Window: window, Used: used, Force: force}
-	report := func(compact.Result) {}
-	if jc != nil {
-		opts, report = compact.Shadow(jc, msgs, opts, tui.LogInfo, true)
-	}
+	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Force: force}, tui.LogInfo, true)
 	after, res := compact.Prune(msgs, opts, a.pruned)
 	report(res)
 	out := tui.CompactOutcome{
@@ -622,7 +628,8 @@ func (a *TUIClientAdapter) compactWith(msgs []tui.ChatMessage, window, used int,
 	return out
 }
 
-// jevShadow returns the Jev client when jev_prune is "shadow", resolved once
+// jevShadow returns the Jev client when jev_prune is "shadow" or "on",
+// resolved once
 // per config. Reports go to the log file: the TUI owns the terminal. Update
 // goroutine only (CompactContext, RunTurn).
 func (a *TUIClientAdapter) jevShadow() *jev.Client {
@@ -632,16 +639,16 @@ func (a *TUIClientAdapter) jevShadow() *jev.Client {
 		return a.jev
 	}
 	a.jevFor, a.jev = a.baseConfig, nil
-	if a.baseConfig == nil || a.baseConfig.JevPrune != "shadow" {
+	if a.baseConfig == nil || a.baseConfig.JevPruneMode() == config.ModeOff {
 		return nil
 	}
 	c, err := jev.NewFromEnv()
 	if err != nil {
-		tui.LogInfo("jev shadow disabled: " + err.Error())
+		tui.LogInfo("jev prune disabled: " + err.Error())
 		return nil
 	}
 	c.Workspace, _ = os.Getwd() // paths in excerpts are sent relative to it
-	tui.LogInfo("jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
+	tui.LogInfo("jev prune " + a.baseConfig.JevPruneMode() + ": redacted excerpts of old tool results are sent to TypeSafe")
 	a.jev = c
 	return c
 }
@@ -846,8 +853,10 @@ func runConfigCommand(args []string) {
 		return
 	}
 
-	// Handle --init
-	if *initConfig != "" {
+	// Handle --init. "jev" is not a profile template: it writes the
+	// TypeSafe key and turns Jev on in shadow mode in the profile below.
+	jevInit := strings.EqualFold(*initConfig, "jev")
+	if *initConfig != "" && !jevInit {
 		if err := createConfigTemplate(*initConfig); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating config: %v\n", err)
 			os.Exit(1)
@@ -892,6 +901,15 @@ func runConfigCommand(args []string) {
 	}
 
 	changed := false
+
+	if jevInit {
+		home, _ := os.UserHomeDir()
+		if err := initJev(cfg, home, keyInput(os.Stdin), os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		changed = true
+	}
 
 	if *setKey != "" {
 		cfg.APIKey = *setKey
@@ -1805,6 +1823,10 @@ func runServeCommand(args []string) {
 	certFile := serveFlags.String("cert", "", "TLS certificate file for mTLS")
 	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
 	_ = serveFlags.Parse(args)
+
+	// A go install build upgrades in the background for the next launch;
+	// MCP stdio keeps stdout (W5 ruling 28).
+	newUpgradeHook().background()
 
 	cfg, err := config.LoadNamedWithEnv(configName)
 	if err != nil {

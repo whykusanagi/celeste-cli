@@ -1,0 +1,21 @@
+Celeste persona: all rights reserved
+
+Copyright (c) 2026 whyKusanagi. All rights reserved.
+
+This directory holds Celeste's persona: the encrypted profiles
+celeste_full.enc, celeste_spine.enc, celeste_lite.enc and celeste_off.enc,
+and everything they decrypt to. They are NOT covered by the MIT License that
+covers the rest of this repository (see NOTICE at the repository root).
+
+No permission is granted to decrypt, extract, copy, modify, publish,
+redistribute or sublicense the persona or any decrypted form of it, or to
+use it to build or train other characters or models. You may run it only as
+part of an unmodified official celeste release binary published by
+whyKusanagi.
+
+The encryption is a gate and a statement of these terms, not a secrecy
+measure: official binaries carry the key. That the key can be found does
+not grant any of the rights above.
+
+SOURCE.json in this directory is integrity metadata (commit pins, sizes and
+hashes). It contains no persona text and may be copied with the code.
