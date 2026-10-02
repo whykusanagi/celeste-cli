@@ -300,6 +300,8 @@ type TUIClientAdapter struct {
 	snapshots   *checkpoints.SnapshotManager
 	workspace   string
 	undoConfirm *undoWarning
+	// rewindConfirm is what a first /rewind refused to overwrite (2.0 W4).
+	rewindConfirm *rewindWarning
 
 	// state renders the authoritative state for summaries (#200); the
 	// chat Env's RenderState. Nil adds none.

@@ -16,7 +16,7 @@ var knownCommands = []string{
 	"context", "costs", "diff", "effort", "endpoint", "export", "graph",
 	"grimoire", "handoff", "help", "index", "init", "mcp", "memories", "menu",
 	"model", "nsfw", "orch", "orchestrate", "persona", "plan", "providers",
-	"safe", "session", "set-model", "skills", "stats", "tools", "undo", "user",
+	"rewind", "safe", "session", "set-model", "skills", "stats", "tools", "undo", "user",
 	"voice",
 }
 

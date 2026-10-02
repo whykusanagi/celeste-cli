@@ -304,10 +304,14 @@ type PromptRefresher interface {
 
 // Checkpointer undoes and lists the file changes this session made (2.0
 // F4). The chat's client adapter implements it over the session's
-// checkpoints; each method returns the text to show.
+// checkpoints; UndoLastChange and SessionChanges return the text to show.
+// RewindTo (2.0 W4 ruling 5, /rewind) restores, newest first, every change
+// from the first one made by any of callIDs onward and returns the files
+// it restored; none of them made a change: nothing, no error.
 type Checkpointer interface {
 	UndoLastChange() (string, error)
 	SessionChanges() (string, error)
+	RewindTo(callIDs []string) ([]string, error)
 }
 
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
@@ -1105,6 +1109,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					text = "Undo: " + err.Error()
 				}
 				m.chat = m.chat.AddSystemMessage(text)
+				return m, nil
+
+			case "rewind":
+				m = m.rewind(cmd.Args)
 				return m, nil
 
 			case "memories":

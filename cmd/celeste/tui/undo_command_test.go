@@ -25,6 +25,8 @@ func (f *fakeCheckpointClient) SessionChanges() (string, error) {
 	return "Files changed this session:\n  a.txt  +1 -1", nil
 }
 
+func (f *fakeCheckpointClient) RewindTo([]string) ([]string, error) { return nil, nil }
+
 func sendCommand(m AppModel, content string) AppModel {
 	model, _ := m.Update(SendMessageMsg{Content: content})
 	return model.(AppModel)

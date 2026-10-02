@@ -364,39 +364,70 @@ func (sm *SnapshotManager) undoNewest(check func(Entry) error, match func(Entry)
 // for messageID to the newest (W4's /rewind) and returns them in that
 // order. On an error it stops and returns what it undid so far.
 func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
+	if messageID == "" {
+		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
+	}
+	undone, found, err := sm.rewind([]string{messageID}, nil)
+	if err == nil && !found {
+		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
+	}
+	return undone, err
+}
+
+// RewindToAnyIf is RewindTo from the first entry recorded for any of ids
+// (2.0 W4's /rewind, ruling 5). check (when not nil) first sees the
+// entries it would undo, oldest first, under the store's locks; an error
+// from it undoes nothing and is returned. When no entry has one of ids it
+// undoes nothing and returns no error.
+func (sm *SnapshotManager) RewindToAnyIf(ids []string, check func([]Entry) error) ([]Entry, error) {
+	undone, _, err := sm.rewind(ids, check)
+	return undone, err
+}
+
+func (sm *SnapshotManager) rewind(ids []string, check func([]Entry) error) (undone []Entry, found bool, err error) {
 	if sm.dir == "" {
-		return nil, errDisabled
+		return nil, false, errDisabled
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			want[id] = true
+		}
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if sm.writeInProgressLocked() {
-		return nil, errWriteInProgress
+		return nil, false, errWriteInProgress
 	}
 	unlock, err := lockSession(sm.dir, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer unlock()
 	sm.reloadLocked()
 	first := -1
 	for i, e := range sm.entries {
-		if messageID != "" && e.MessageID == messageID {
+		if want[e.MessageID] {
 			first = i
 			break
 		}
 	}
 	if first < 0 {
-		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
+		return nil, false, nil
 	}
-	var undone []Entry
+	if check != nil {
+		if err := check(append([]Entry(nil), sm.entries[first:]...)); err != nil {
+			return nil, true, err
+		}
+	}
 	for i := len(sm.entries) - 1; i >= first; i-- {
 		e := sm.entries[i]
 		if err := sm.undoLocked(i); err != nil {
-			return undone, err
+			return undone, true, err
 		}
 		undone = append(undone, e)
 	}
-	return undone, nil
+	return undone, true, nil
 }
 
 // SameEntry reports whether a and b are the same checkpoint.

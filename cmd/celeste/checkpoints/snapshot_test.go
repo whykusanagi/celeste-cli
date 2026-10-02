@@ -202,6 +202,38 @@ func TestRewindTo(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// /rewind (2.0 W4 ruling 5): from the first entry of any of the IDs on;
+// check sees what would be undone and can stop it; IDs with no entry
+// undo nothing.
+func TestRewindToAnyIf(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	for i, id := range []string{"call_1", "call_2", "call_3"} {
+		c, err := sm.Checkpoint(f, id)
+		require.NoError(t, err)
+		write(t, f, fmt.Sprintf("v%d", i+1))
+		require.NoError(t, c.Commit())
+	}
+	undone, err := sm.RewindToAnyIf([]string{"read_9"}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, undone)
+
+	stop := errors.New("stop")
+	var seen []Entry
+	_, err = sm.RewindToAnyIf([]string{"call_3", "call_2"}, func(es []Entry) error { seen = es; return stop })
+	assert.ErrorIs(t, err, stop)
+	require.Len(t, seen, 2)
+	assert.Equal(t, "call_2", seen[0].MessageID)
+	assert.Equal(t, "v3", read(t, f), "a refused rewind changes nothing")
+	require.Len(t, sm.Entries(), 3)
+
+	undone, err = sm.RewindToAnyIf([]string{"call_3", "call_2"}, nil)
+	require.NoError(t, err)
+	require.Len(t, undone, 2)
+	assert.Equal(t, "v1", read(t, f))
+}
+
 // #200: the files-modified list.
 func TestFilesAreSortedAndUnique(t *testing.T) {
 	sm, dir := store(t)

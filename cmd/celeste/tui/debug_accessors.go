@@ -20,3 +20,6 @@ func (m AppModel) DebugPermissionPromptActive() bool { return m.permissionPrompt
 
 // DebugLLMMessages returns the messages the next turn would send.
 func (m AppModel) DebugLLMMessages() []ChatMessage { return m.chat.GetLLMMessages() }
+
+// DebugInput returns the text in the input box.
+func (m AppModel) DebugInput() string { return m.input.Value() }
