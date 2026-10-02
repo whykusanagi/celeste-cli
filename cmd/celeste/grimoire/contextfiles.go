@@ -204,6 +204,8 @@ func RenderContextFiles(files []ContextFile) string {
 	return b.String()
 }
 
+// isContextFileName reports whether name is one of contextFileNames, in
+// any case.
 func isContextFileName(name string) bool {
 	for _, n := range contextFileNames {
 		if strings.EqualFold(name, n) {
