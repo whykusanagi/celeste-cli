@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -58,6 +59,26 @@ func (ft *FileTracker) CheckStale(path string) error {
 		return fmt.Errorf("file was modified externally since you last read it — read it again before editing")
 	}
 	return nil
+}
+
+// ErrNotRead: an existing file was never read in this session.
+var ErrNotRead = errors.New("not read in this session")
+
+// CheckRead is the must-read-before-edit rule (2.0 W4 ruling 6): nil for a
+// file that does not exist, or that was read (or written) in this session
+// and is unchanged since; ErrNotRead for an existing file never read; the
+// CheckStale error for one changed since its read.
+func (ft *FileTracker) CheckRead(path string) error {
+	ft.mu.RLock()
+	_, tracked := ft.readTimes[path]
+	ft.mu.RUnlock()
+	if !tracked {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return ErrNotRead
+	}
+	return ft.CheckStale(path)
 }
 
 // ClearStale removes tracking for the given path (e.g. after a successful re-read).

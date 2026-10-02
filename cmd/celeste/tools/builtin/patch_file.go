@@ -106,7 +106,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 
-	targetPath, err := resolvePath(t.workspace, path, true)
+	targetPath, realPath, err := resolvePathReal(t.workspace, path, true)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
@@ -116,11 +116,9 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
 
-	// Check for stale reads before patching
-	if t.tracker != nil {
-		if err := t.tracker.CheckStale(targetPath); err != nil {
-			return tools.ToolResult{Error: true, Content: err.Error()}, nil
-		}
+	// Must-read-before-edit, and no edit over a change made since the read.
+	if msg := checkRead(t.tracker, targetPath, path); msg != "" {
+		return tools.ToolResult{Error: true, Content: msg}, nil
 	}
 
 	data, err := os.ReadFile(targetPath)
@@ -144,7 +142,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		ckpt = c
 	}
-	if err := writeFileFunc(targetPath, []byte(patched), 0644); err != nil {
+	if err := writeFileFunc(realPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: rollback(err.Error(), ckpt)}, nil
 	}
 
