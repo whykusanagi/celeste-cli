@@ -20,14 +20,52 @@ import (
 // on stdin, and paths that reach rm through stdin (find / | xargs rm -rf)
 // or a script.
 func DestructiveRm(command string) Result {
-	return Walk(command, func(words []string) bool {
-		for i, w := range words {
-			if CommandName(w) == "rm" && rmDestructive(words[i+1:]) {
+	return Walk(command, RmRefused)
+}
+
+// RmRefused reports whether a simple command (a word list) holds an rm the
+// bash tool refuses: any word that resolves to rm, with the words after it
+// as its arguments (rm -r rm / removes /). It reads every rm's arguments
+// in one backward pass, so a line of many rm words stays linear.
+func RmRefused(words []string) bool {
+	// sum[e][k] summarises rm's reading of words[k:], entered with
+	// end-of-flags off (e=0) or on (e=1), as RmFlags would read it.
+	type summary struct{ recursive, force, critical, sysOrHome bool }
+	n := len(words)
+	var sum [2][]summary
+	sum[0], sum[1] = make([]summary, n+2), make([]summary, n+2)
+	merge := func(x, y summary) summary {
+		return summary{x.recursive || y.recursive, x.force || y.force, x.critical || y.critical, x.sysOrHome || y.sysOrHome}
+	}
+	target := func(t string) summary { return summary{critical: criticalPath(t), sysOrHome: systemOrHomePath(t)} }
+	for k := n - 1; k >= 0; k-- {
+		a := words[k]
+		sum[1][k] = merge(target(a), sum[1][k+1])
+		switch {
+		case IsRedirect(a):
+			next := k + 1
+			if RedirectTakesNext(a) {
+				next = min(k+2, n)
+			}
+			sum[0][k] = sum[0][next]
+		case a == "--":
+			sum[0][k] = sum[1][k+1]
+		case strings.HasPrefix(a, "--"):
+			sum[0][k] = merge(summary{recursive: strings.HasPrefix("--recursive", a), force: strings.HasPrefix("--force", a)}, sum[0][k+1])
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			sum[0][k] = merge(summary{recursive: strings.ContainsAny(a, "rR"), force: strings.Contains(a, "f")}, sum[0][k+1])
+		default:
+			sum[0][k] = merge(target(a), sum[0][k+1])
+		}
+	}
+	for i, w := range words {
+		if CommandName(w) == "rm" {
+			if s := sum[0][i+1]; s.recursive && (s.critical || s.force && s.sysOrHome) {
 				return true
 			}
 		}
-		return false
-	})
+	}
+	return false
 }
 
 // RmFlags reads rm's arguments: recursive (-r, -R, --recursive or a GNU
@@ -59,24 +97,6 @@ func RmFlags(args []string) (recursive, force bool, targets []string) {
 		}
 	}
 	return recursive, force, targets
-}
-
-// rmDestructive: rm's arguments ask for a recursive delete of a path that
-// matters. A bash tool call runs without a TTY, so rm never prompts and -r
-// alone removes as much as -rf: the root, a home directory and any
-// top-level directory are refused without -f. Deeper absolute paths are
-// refused only with -f.
-func rmDestructive(args []string) bool {
-	recursive, force, targets := RmFlags(args)
-	if !recursive {
-		return false
-	}
-	for _, t := range targets {
-		if criticalPath(t) || force && systemOrHomePath(t) {
-			return true
-		}
-	}
-	return false
 }
 
 // IsRedirect: >, >>, 2>, &>, 2>&1, >file, <file ...

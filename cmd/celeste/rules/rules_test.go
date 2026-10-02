@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRuleFile(t *testing.T) {
@@ -483,5 +484,28 @@ func TestStripUnbackedSpawnClaim(t *testing.T) {
 	plain := "Here is a summary of the repo."
 	if got := StripUnbackedSpawnClaim(plain, false); got != plain {
 		t.Fatalf("expected unrelated text untouched, got %q", got)
+	}
+}
+
+// The advisory rule reads every bash call (condition \S) and the watchdog
+// reads recent ones: 40 KB of adversarial shell stays fast.
+func TestDestructiveLinearOnLongLines(t *testing.T) {
+	for _, cmd := range []string{
+		strings.Repeat("rm -r x ", 5000),
+		strings.Repeat("env ", 10000),
+		strings.Repeat("bash -lc ", 4500),
+		strings.Repeat("sudo -u x ", 4000),
+		strings.Repeat("git push x ", 3600),
+		strings.Repeat("a=1 ", 10000),
+	} {
+		best := time.Hour
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			Destructive(cmd)
+			best = min(best, time.Since(start))
+		}
+		if best > 100*time.Millisecond {
+			t.Errorf("%q...: %v, want < 100ms (quadratic took seconds)", cmd[:12], best)
+		}
 	}
 }

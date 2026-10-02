@@ -31,10 +31,12 @@ func destructiveBash(h Hit) bool {
 }
 
 func destructiveShell(cmd string) bool {
-	if shellparse.DestructiveRm(cmd) != shellparse.None {
-		return true // refused by the bash tool, or nested past reason
-	}
+	// One walk: a refused rm, too deep a nesting (TooDeep), or the rule's
+	// own policy.
 	return shellparse.Walk(cmd, func(words []string) bool {
+		if shellparse.RmRefused(words) {
+			return true
+		}
 		switch name, args := shellparse.Command(words); name {
 		case "rm":
 			return rmRecursiveForce(args)
