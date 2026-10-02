@@ -79,4 +79,4 @@ alone with a warning, until you repeat `/undo` or pass `--force`.
 | 1.x | 2.0 |
 |---|---|
 | Editing a file not read in the session (`patch_file`, `write_file` over an existing file or appending to it, `splice_file`) | Refused with `read_file <path> first: celeste edits an existing file only after reading it in this session`. Read the file, then edit it. Creating a new file needs no read. In MCP chat each call starts with no reads, so read the file in the same call. |
-| A file edited by `write_file`, `patch_file` or `splice_file` | Replaced through a temp file and a rename, keeping its mode. A file in a directory celeste cannot write to can no longer be edited. |
+| A file edited by `write_file`, `patch_file` or `splice_file` | Replaced through a temp file and a rename, keeping its mode. The replacement is a new file owned by you, so another user's ownership, extended attributes (such as macOS `com.apple.*`) and ACLs are not kept. A file in a directory celeste cannot write to can no longer be edited. |
