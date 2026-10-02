@@ -5,41 +5,45 @@ import (
 	"testing"
 )
 
+var shellOptionFormCases = []string{
+	`bash -lc "rm -rf ~"`,
+	`bash -ec 'rm -rf $HOME'`,
+	`zsh -ic 'rm -rf ~/'`,
+	`sh -xc 'rm -r -f /usr'`,
+	`bash --norc -c 'rm -r -f /usr'`,
+	`bash -c -- 'rm -r -f /usr'`,
+	`bash -o pipefail -c 'rm -r -f /usr'`,
+	`sudo -u x bash -lc 'rm -r -f /usr'`,
+	`script -c "rm -r -f /usr" /dev/null`,
+	`script -qc 'rm -r -f /usr' /dev/null`,
+	`script --command 'rm -r -f /usr'`,
+	`env -S 'rm -r -f /usr'`,
+	`env -S'rm -r -f /usr'`,
+	`env --split-string='rm -r -f /usr'`,
+}
+
 // I1: a shell's -c can sit in an option cluster or after other options.
 func TestCheckDangerousCommand_ShellOptionForms(t *testing.T) {
-	for _, cmd := range []string{
-		`bash -lc "rm -rf ~"`,
-		`bash -ec 'rm -rf $HOME'`,
-		`zsh -ic 'rm -rf ~/'`,
-		`sh -xc 'rm -r -f /usr'`,
-		`bash --norc -c 'rm -r -f /usr'`,
-		`bash -c -- 'rm -r -f /usr'`,
-		`bash -o pipefail -c 'rm -r -f /usr'`,
-		`sudo -u x bash -lc 'rm -r -f /usr'`,
-		`script -c "rm -r -f /usr" /dev/null`,
-		`script -qc 'rm -r -f /usr' /dev/null`,
-		`script --command 'rm -r -f /usr'`,
-		`env -S 'rm -r -f /usr'`,
-		`env -S'rm -r -f /usr'`,
-		`env --split-string='rm -r -f /usr'`,
-	} {
+	for _, cmd := range shellOptionFormCases {
 		if checkDangerousCommand(cmd) == "" {
 			t.Errorf("not blocked: %s", cmd)
 		}
 	}
 }
 
+var parserDisagreementCases = []string{
+	"rm -r -f \\\n/usr",
+	"r\\\nm -r -f /usr",
+	"echo # '\nrm -r -f /usr",
+	`echo $(echo ")"; rm -r -f /usr)`,
+	`echo $(echo ')'; rm -r -f /usr)`,
+	`echo $(echo \); rm -r -f /usr)`,
+}
+
 // I2: input where a naive parse and the shell disagree about where the
 // tail of the line is.
 func TestCheckDangerousCommand_ParserDisagreements(t *testing.T) {
-	for _, cmd := range []string{
-		"rm -r -f \\\n/usr",
-		"r\\\nm -r -f /usr",
-		"echo # '\nrm -r -f /usr",
-		`echo $(echo ")"; rm -r -f /usr)`,
-		`echo $(echo ')'; rm -r -f /usr)`,
-		`echo $(echo \); rm -r -f /usr)`,
-	} {
+	for _, cmd := range parserDisagreementCases {
 		if checkDangerousCommand(cmd) == "" {
 			t.Errorf("not blocked: %q", cmd)
 		}
@@ -56,22 +60,24 @@ func TestCheckDangerousCommand_ParserDisagreements(t *testing.T) {
 	}
 }
 
+var recursiveWithoutForceCases = []string{
+	`rm -r ~`,
+	`rm -R $HOME`,
+	`rm -r /usr`,
+	`rm -r /`,
+	`rm --recursive ~/`,
+	`rm -r ~root`,
+	`rm -r /*`,
+	`rm --rec --for /opt/x`,
+	`rm --recur --forc /opt/x`,
+	`rm --r --f /opt/x`,
+	`rm --recursive /etc`,
+}
+
 // I3: with no TTY rm never prompts, so -r alone removes as much as -rf on
 // the paths that matter most; GNU long-option prefixes count.
 func TestCheckDangerousCommand_RecursiveWithoutForce(t *testing.T) {
-	for _, cmd := range []string{
-		`rm -r ~`,
-		`rm -R $HOME`,
-		`rm -r /usr`,
-		`rm -r /`,
-		`rm --recursive ~/`,
-		`rm -r ~root`,
-		`rm -r /*`,
-		`rm --rec --for /opt/x`,
-		`rm --recur --forc /opt/x`,
-		`rm --r --f /opt/x`,
-		`rm --recursive /etc`,
-	} {
+	for _, cmd := range recursiveWithoutForceCases {
 		if checkDangerousCommand(cmd) == "" {
 			t.Errorf("not blocked: %s", cmd)
 		}

@@ -441,6 +441,14 @@ func TestDetectorsMatchTheBuiltins(t *testing.T) {
 		"rm -rf build":                false,
 		"go test ./...":               false,
 		"bash -c 'git push -f'":       true,
+		// What the bash tool refuses, the rule sees (audit #7 D4).
+		"bash -lc 'rm -rf ~'":    true,
+		"rm -rf${IFS}/":          true,
+		"rm -r /":                true,
+		"rm --rec --for src":     true,
+		"r\\\nm -rf src":         true,
+		"echo # rm -rf src":      false,
+		"rm -rf build # and src": false,
 	} {
 		if got := Destructive(cmd); got != want {
 			t.Errorf("Destructive(%q) = %v, want %v", cmd, got, want)
