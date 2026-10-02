@@ -124,6 +124,11 @@ func UniqueNanoID() string {
 // NewSession creates a new session with a unique ID.
 func (m *SessionManager) NewSession() *Session {
 	id := UniqueNanoID()
+	// Another celeste process may have used this ID on the same clock tick:
+	// never hand out one whose file already exists.
+	for m.sessionsDir != "" && fileExists(filepath.Join(m.sessionsDir, id+".json")) {
+		id = UniqueNanoID()
+	}
 	m.currentID = id
 
 	return &Session{
@@ -572,4 +577,9 @@ func (m *SessionManager) MergeSessions(session1, session2 *Session) *Session {
 	merged.TokenCount = EstimateSessionTokens(merged)
 
 	return merged
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
