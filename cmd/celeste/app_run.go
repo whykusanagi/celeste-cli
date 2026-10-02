@@ -156,6 +156,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunHooks(cmdArgs)
 	case "update":
 		return runUpdateCommand(cmdArgs, stdout, stderr)
+	case "persona":
+		return runPersonaCommand(cmdArgs, stdout, stderr)
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":
