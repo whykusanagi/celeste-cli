@@ -893,7 +893,8 @@ Chat:
 
 Project:
   /memories          List project memories
-  /grimoire          Show project grimoire
+  /grimoire          Show project grimoire and AGENTS.md / CLAUDE.md
+  /init [agents]     Create .grimoire (and AGENTS.md) for this project
   /index             Show code graph status
   /index rebuild     Full re-index (populates LSH + BM25)
   /index update      Incremental re-index (changed files only)

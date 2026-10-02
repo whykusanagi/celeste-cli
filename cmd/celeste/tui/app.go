@@ -1106,21 +1106,38 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount))
 				return m, nil
 
+			case "init":
+				// 2.0 W4 (ruling 7): the only writers of .grimoire (and
+				// AGENTS.md) besides `celeste init`; nothing is overwritten.
+				m.chat = m.chat.AddSystemMessage(runInitCommand(m.projectDir(), cmd.Args))
+				return m, nil
+
 			case "grimoire":
-				// Re-read from disk so edits are reflected immediately
-				cwd, _ := os.Getwd()
+				// Re-read from disk so edits are reflected immediately: the
+				// grimoire, then AGENTS.md / CLAUDE.md (2.0 W4, ruling 2).
+				cwd := m.projectDir()
+				var text, stale string
 				if g, err := grimoire.LoadAll(cwd); err == nil && g != nil && !g.IsEmpty() {
-					m.grimoireContent = g.Render()
-					// Check staleness
-					if stale := g.StalenessInfo(cwd); stale != "" {
-						m.chat = m.chat.AddSystemMessage(m.grimoireContent + "\n" + stale)
-					} else {
-						m.chat = m.chat.AddSystemMessage(m.grimoireContent)
+					text = g.Render()
+					stale = g.StalenessInfo(cwd)
+				}
+				if files, _ := grimoire.ContextFiles(cwd); len(files) > 0 {
+					if text != "" {
+						text += "\n\n"
 					}
-				} else if m.grimoireContent != "" {
+					text += grimoire.RenderContextFiles(files)
+				}
+				switch {
+				case text != "":
+					m.grimoireContent = text
+					if stale != "" {
+						text += "\n" + stale
+					}
+					m.chat = m.chat.AddSystemMessage(text)
+				case m.grimoireContent != "":
 					m.chat = m.chat.AddSystemMessage(m.grimoireContent)
-				} else {
-					m.chat = m.chat.AddSystemMessage("No .grimoire loaded for this project.\nRun `celeste init` to create one.")
+				default:
+					m.chat = m.chat.AddSystemMessage("No .grimoire loaded for this project.\nRun /init to create one.")
 				}
 				return m, nil
 

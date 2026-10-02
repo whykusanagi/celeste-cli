@@ -87,7 +87,7 @@ Commands:
   context                 Show context/token usage
   stats                   Show usage statistics
   export                  Export session data
-  init                    Create a starter .grimoire for the current project
+  init [--agents]         Create a starter .grimoire (and AGENTS.md) for the current project
   grimoire                Show the resolved project grimoire (all layers merged)
   index [status|rebuild|reset]  Manage code graph index
   serve                   Start MCP server (stdio or SSE transport)

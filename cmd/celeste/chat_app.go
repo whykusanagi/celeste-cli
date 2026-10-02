@@ -9,6 +9,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
@@ -19,6 +20,9 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
+
+// initHint is the session-start line for a project with no context file.
+const initHint = "No project context — run /init to create a .grimoire (and /init agents for AGENTS.md)."
 
 // chatDeps are the pieces runChatTUI wires to the Bubble Tea program after
 // it exists (prompt/ask funcs need p.Send), and that tests drive directly.
@@ -167,6 +171,11 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 	for _, n := range modelNotes {
 		app = app.WithSystemMessage("⚠ " + n)
+	}
+	// 2.0 W4 (ruling 6): nothing writes .grimoire implicitly any more, so a
+	// session in a project without context says how to add one.
+	if !grimoire.HasProjectContext(cwd) {
+		app = app.WithSystemMessage(initHint)
 	}
 
 	app = restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)
