@@ -305,10 +305,19 @@ type reply struct {
 }
 
 // rerun drops an interrupted turn's reply (EventRuleInterrupt, with the
-// usage the provider billed for it) and joins the reminders for its re-run.
+// usage the provider billed for it and the sources of the re-run's
+// reminders) and joins those reminders.
 func (l *Loop) rerun(msgs []Message, turn int, rep reply) []Message {
-	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn, Usage: droppedUsage(msgs, rep), Elapsed: rep.elapsed})
-	return l.joinReminders(msgs, BoundaryRetry)
+	var rs []Reminder
+	if l.Steering != nil {
+		rs = l.Steering.Reminders(BoundaryRetry)
+	}
+	sources := make([]string, len(rs))
+	for i, r := range rs {
+		sources[i] = r.Source
+	}
+	l.emit(Event{Kind: EventRuleInterrupt, Turn: turn, Text: strings.Join(sources, ", "), Usage: droppedUsage(msgs, rep), Elapsed: rep.elapsed})
+	return l.appendReminders(msgs, rs)
 }
 
 // steeringCalls is a turn's calls as Steering sees them.

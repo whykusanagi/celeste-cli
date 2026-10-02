@@ -322,7 +322,7 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		// The provider billed the dropped reply: it counts in the cost,
 		// but not as a turn.
 		a.recordDroppedUsage(t.model, ev.Usage)
-		return []tea.Msg{tui.RuleInterruptMsg{}}
+		return []tea.Msg{tui.RuleInterruptMsg{Source: ev.Text}}
 	case loop.EventRule:
 		return []tea.Msg{tui.RuleReminderMsg{Source: ev.Text, Message: ev.Msg}}
 	}

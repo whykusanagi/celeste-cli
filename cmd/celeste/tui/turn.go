@@ -100,7 +100,11 @@ type StopHookStartMsg struct{}
 
 // RuleInterruptMsg: steering cut the reply short (2.0 W3). The partial
 // reply is dropped; the turn re-runs with a reminder.
-type RuleInterruptMsg struct{}
+type RuleInterruptMsg struct {
+	// Source: the re-run's reminder sources ("watchdog", "rule:<name>",
+	// ", "-joined), so the line names who stopped the reply.
+	Source string
+}
 
 // RuleReminderMsg: a steering reminder joined the history as a hidden
 // message (2.0 W3). Source is "rule:<name>" or "watchdog".
@@ -278,7 +282,11 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 				m.chat = m.chat.SetLastAssistantContent("")
 				m.chat = m.chat.DropEmptyLastReply()
 			}
-			m.chat = m.chat.AddSystemMessage("↺ A stream rule stopped the reply; retrying with a reminder.")
+			if msg.Source == "watchdog" {
+				m.chat = m.chat.AddSystemMessage("↺ The watchdog stopped the reply; retrying with a warning.")
+			} else {
+				m.chat = m.chat.AddSystemMessage("↺ A stream rule stopped the reply; retrying with a reminder.")
+			}
 		}
 	case RuleReminderMsg:
 		// Hidden, at the loop's position, so later snapshots line up.
