@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -31,6 +32,7 @@ type Manager struct {
 	transports  map[string]string
 	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
 	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
+	home        string              // the user's home: its configs alone may set "trusted"
 	mu          sync.Mutex
 }
 
@@ -46,7 +48,34 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		transports: make(map[string]string),
 		toolNames:  make(map[string][]string),
 		origins:    make(map[string]string),
+		home:       userHome(),
 	}
+}
+
+func userHome() string {
+	h, _ := os.UserHomeDir()
+	return h
+}
+
+// trusts reports whether cfg's "trusted": true is honoured: only when it
+// came from one of the home-level configs (GlobalConfigPaths). A server of
+// unknown origin, or from a workspace's .mcp.json or .celeste/mcp.json,
+// cannot vouch for itself (2.0 W4).
+func (m *Manager) trusts(cfg ServerConfig) bool {
+	if !cfg.Trusted || cfg.Origin == "" || m.home == "" {
+		return false
+	}
+	return isGlobalConfig(m.home, cfg.Origin)
+}
+
+// isGlobalConfig reports whether path is one of home's GlobalConfigPaths.
+func isGlobalConfig(home, path string) bool {
+	for _, p := range GlobalConfigPaths(home) {
+		if filepath.Clean(p) == filepath.Clean(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewManagerMulti creates a Manager that merges MCP config from multiple
@@ -106,13 +135,13 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // connectClient initializes an already-built client, discovers + registers its
 // tools, and records bookkeeping. The caller holds no lock; connectClient locks
-// only while mutating manager maps.
-func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string) error {
+// only while mutating manager maps. trusted honours the tools' readOnlyHint.
+func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string, trusted bool) error {
 	if err := client.Initialize(ctx); err != nil {
 		client.Close()
 		return fmt.Errorf("initialize %q: %w", name, err)
 	}
-	names, err := discoverAndRegister(ctx, client, m.registry, name, m.liveClient)
+	names, err := discoverAndRegister(ctx, client, m.registry, name, m.liveClient, trusted)
 	if err != nil {
 		client.Close()
 		return err
@@ -141,7 +170,7 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) er
 	if err != nil {
 		return fmt.Errorf("create transport for %q: %w", name, err)
 	}
-	if err := m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport); err != nil {
+	if err := m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport, m.trusts(cfg)); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -234,7 +263,11 @@ func (m *Manager) registerInto(dst *tools.Registry, keep func(server string) boo
 	n := 0
 	for _, name := range names {
 		if t, ok := m.registry.Get(name); ok {
-			dst.Register(t)
+			// Add, never Register: a name dst already holds stays its own.
+			if err := dst.Add(t); err != nil {
+				log.Printf("[mcp] %v", err)
+				continue
+			}
 			dst.SetHidden(name, true)
 			n++
 		}
