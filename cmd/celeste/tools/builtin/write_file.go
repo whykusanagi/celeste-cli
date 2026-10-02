@@ -105,7 +105,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	// Snapshot before writing
 	if t.snapMgr != nil {
-		if err := t.snapMgr.Snapshot(targetPath); err != nil {
+		if err := snapshotNow(t.snapMgr, targetPath); err != nil {
 			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
 		}
 	}

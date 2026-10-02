@@ -152,11 +152,11 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 
 	// Snapshot before writing (source first, then dest if distinct).
 	if t.snapMgr != nil {
-		if err := t.snapMgr.Snapshot(sourcePath); err != nil {
+		if err := snapshotNow(t.snapMgr, sourcePath); err != nil {
 			return errResult(fmt.Sprintf("snapshot source: %s", err)), nil
 		}
 		if !sameFile {
-			if err := t.snapMgr.Snapshot(destPath); err != nil {
+			if err := snapshotNow(t.snapMgr, destPath); err != nil {
 				return errResult(fmt.Sprintf("snapshot dest: %s", err)), nil
 			}
 		}

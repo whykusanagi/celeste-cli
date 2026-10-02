@@ -2,6 +2,8 @@ package checkpoints
 
 import (
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -11,6 +13,8 @@ type FileChange struct {
 	Insertions int
 	Deletions  int
 	IsNew      bool
+	// Deleted: the file no longer exists.
+	Deleted bool
 }
 
 // ComputeDiff compares each snapshot's backup against the current file
@@ -21,55 +25,51 @@ func (sm *SnapshotManager) ComputeDiff() ([]FileChange, error) {
 	return sm.computeDiffLocked()
 }
 
-// computeDiffLocked does the actual diff computation (must hold sm.mu).
+// computeDiffLocked compares each changed file's oldest backup (its state
+// before the session changed it) with the file now. Sorted by path. The
+// caller holds sm.mu.
 func (sm *SnapshotManager) computeDiffLocked() ([]FileChange, error) {
-	// Collect the earliest snapshot per file (the original state)
-	earliest := make(map[string]FileSnapshot)
-	for _, snap := range sm.snapshots {
-		if _, exists := earliest[snap.OriginalPath]; !exists {
-			earliest[snap.OriginalPath] = snap
+	earliest := make(map[string]Entry)
+	var paths []string
+	for _, e := range sm.entries {
+		if _, seen := earliest[e.Path]; !seen {
+			earliest[e.Path] = e
+			paths = append(paths, e.Path)
 		}
 	}
+	sort.Strings(paths)
 
-	changes := make([]FileChange, 0, len(earliest))
-	for path, snap := range earliest {
+	changes := make([]FileChange, 0, len(paths))
+	for _, path := range paths {
+		e := earliest[path]
 		change := FileChange{Path: path}
 
-		// Get original content
 		var origLines []string
-		if snap.BackupPath == "" {
-			// File was new
+		if e.Backup == "" {
 			change.IsNew = true
 		} else {
-			data, err := os.ReadFile(snap.BackupPath)
+			data, err := os.ReadFile(filepath.Join(sm.dir, e.Backup))
 			if err != nil {
 				return nil, err
 			}
 			origLines = strings.Split(string(data), "\n")
 		}
 
-		// Get current content
-		var currentLines []string
 		currentData, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				// File was deleted — all original lines are deletions
+				change.Deleted = true
 				change.Deletions = len(origLines)
 				changes = append(changes, change)
 				continue
 			}
 			return nil, err
 		}
-		currentLines = strings.Split(string(currentData), "\n")
-
-		// Compute simple line diff stats using LCS
-		ins, del := diffStats(origLines, currentLines)
+		ins, del := diffStats(origLines, strings.Split(string(currentData), "\n"))
 		change.Insertions = ins
 		change.Deletions = del
-
 		changes = append(changes, change)
 	}
-
 	return changes, nil
 }
 

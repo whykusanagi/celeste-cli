@@ -17,7 +17,7 @@ func TestComputeDiff_Insertions(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3\nline4"), 0644))
 
 	changes, err := sm.ComputeDiff()
@@ -36,7 +36,7 @@ func TestComputeDiff_Deletions(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1"), 0644))
 
 	changes, err := sm.ComputeDiff()
@@ -52,7 +52,7 @@ func TestComputeDiff_NewFile(t *testing.T) {
 	sm := newSnapshotManagerWithBase(backupDir)
 
 	srcFile := filepath.Join(dir, "new.txt")
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 
 	// Now create the file
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
@@ -73,7 +73,7 @@ func TestComputeDiff_DeletedFile(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.Remove(srcFile))
 
 	changes, err := sm.ComputeDiff()
@@ -91,9 +91,9 @@ func TestComputeDiff_MultipleSnapshots_UsesEarliest(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("original"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("modified once"), 0644))
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	require.NoError(t, os.WriteFile(srcFile, []byte("modified twice"), 0644))
 
 	changes, err := sm.ComputeDiff()
@@ -110,7 +110,7 @@ func TestComputeDiff_Mixed(t *testing.T) {
 	srcFile := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
 
-	require.NoError(t, sm.Snapshot(srcFile))
+	require.NoError(t, snap(sm, srcFile))
 	// Replace line2 with lineX and add line4
 	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nlineX\nline3\nline4"), 0644))
 
@@ -145,4 +145,23 @@ func TestDiffStats(t *testing.T) {
 			assert.Equal(t, tt.wantDel, del, "deletions")
 		})
 	}
+}
+
+func TestComputeDiffMarksDeletedFilesAndSorts(t *testing.T) {
+	dir := t.TempDir()
+	sm := newSnapshotManagerWithBase(filepath.Join(dir, "session"))
+	b, a := filepath.Join(dir, "b.txt"), filepath.Join(dir, "a.txt")
+	require.NoError(t, os.WriteFile(b, []byte("x\ny"), 0o644))
+	require.NoError(t, os.WriteFile(a, []byte("x"), 0o644))
+	require.NoError(t, snap(sm, b))
+	require.NoError(t, snap(sm, a))
+	require.NoError(t, os.Remove(b))
+
+	changes, err := sm.ComputeDiff()
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	assert.Equal(t, a, changes[0].Path)
+	assert.Equal(t, b, changes[1].Path)
+	assert.True(t, changes[1].Deleted)
+	assert.Equal(t, 2, changes[1].Deletions)
 }

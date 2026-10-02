@@ -1,228 +1,410 @@
+// Package checkpoints keeps backups of the files celeste's write tools
+// change, on disk per session, so a change can be undone later — also from
+// another process (2.0 F4).
 package checkpoints
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
-// FileSnapshot represents a backup of a file before modification.
-type FileSnapshot struct {
-	OriginalPath string
-	BackupPath   string // empty string if file didn't exist (null sentinel)
-	Version      int
-	Timestamp    time.Time
+// Entry is one checkpoint: Path as it was before a tool changed it.
+type Entry struct {
+	// MessageID is the ID of the tool call that made the change ("" when
+	// unknown), so a rewind can map entries to messages.
+	MessageID string `json:"message_id"`
+	// Path is the absolute path of the changed file.
+	Path string `json:"path"`
+	// Version counts the session's changes to Path: 1, 2, …
+	Version int `json:"version"`
+	// Backup is the backup's file name in the session directory; "" when
+	// the file did not exist, so undoing the change deletes it.
+	Backup string `json:"backup"`
+	// Time is when the checkpoint was taken (UTC).
+	Time time.Time `json:"time"`
 }
 
-// SnapshotManager handles file backups for undo/revert support.
+const (
+	indexFile         = "index.json"
+	defaultMaxEntries = 100
+)
+
+// SnapshotManager is one session's checkpoints: its backups and index.json
+// in one directory. It is safe for concurrent use. Every change is written
+// to the index before it takes effect in memory.
 type SnapshotManager struct {
-	baseDir   string // ~/.celeste/checkpoints/<session-id>/
-	snapshots []FileSnapshot
-	maxCount  int // maximum number of snapshots to retain; the oldest is evicted past it
-	mu        sync.Mutex
+	dir      string
+	entries  []Entry
+	maxCount int // entries kept; past it the oldest entry and backup go
+	mu       sync.Mutex
 }
 
-// NewSnapshotManager creates a SnapshotManager for the given session.
-// Backups are stored under ~/.celeste/checkpoints/<sessionID>/.
+// NewSnapshotManager opens the checkpoints of sessionID under Root(),
+// with whatever an earlier process recorded for it (a resumed session).
+// Nothing is created on disk until the first checkpoint.
 func NewSnapshotManager(sessionID string) *SnapshotManager {
-	home, _ := os.UserHomeDir()
-	baseDir := filepath.Join(home, ".celeste", "checkpoints", sessionID)
-	return &SnapshotManager{
-		baseDir:   baseDir,
-		snapshots: make([]FileSnapshot, 0),
-		maxCount:  100,
-	}
+	return newSnapshotManagerWithBase(SessionDir(Root(), sessionID))
 }
 
-// newSnapshotManagerWithBase is an internal constructor for testing with a custom base directory.
-func newSnapshotManagerWithBase(baseDir string) *SnapshotManager {
-	return &SnapshotManager{
-		baseDir:   baseDir,
-		snapshots: make([]FileSnapshot, 0),
-		maxCount:  100,
+// newSnapshotManagerWithBase opens the session stored in dir. An index
+// that cannot be read is treated as empty and overwritten by the next
+// change (one warning).
+func newSnapshotManagerWithBase(dir string) *SnapshotManager {
+	entries, err := readIndex(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: checkpoint index %s is unreadable, starting empty: %v\n", filepath.Join(dir, indexFile), err)
+		entries = nil
 	}
+	return &SnapshotManager{dir: dir, entries: entries, maxCount: defaultMaxEntries}
 }
 
-// Snapshot creates a backup of the file at filePath before it is modified.
-// If the file does not exist, a sentinel snapshot is recorded (BackupPath = "").
-// Uses two-phase mtime checking to detect concurrent modifications during backup.
-// Past maxCount the oldest snapshot is evicted (its backup file removed), so a
-// long-lived manager keeps accepting snapshots.
-func (sm *SnapshotManager) Snapshot(filePath string) error {
+// Dir is the session's checkpoint directory.
+func (sm *SnapshotManager) Dir() string { return sm.dir }
+
+// Checkpoint is an entry its writer can still roll back.
+type Checkpoint struct {
+	sm    *SnapshotManager
+	entry Entry
+}
+
+// Entry is the recorded entry.
+func (c *Checkpoint) Entry() Entry { return c.entry }
+
+// Checkpoint backs up path as it is now and records the entry in the
+// index. Call it after the tool's input validated, immediately before the
+// write, and Rollback the result if the write then fails (2.0 F4). A path
+// that does not exist yet is recorded without a backup. A path that is not
+// a regular file is refused and nothing is recorded.
+func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// Computed before any eviction, so a new backup never reuses the file
-	// name of the snapshot about to be evicted.
-	version := sm.nextVersion(filePath)
-	ts := time.Now()
-
-	info, err := os.Stat(filePath)
-	if os.IsNotExist(err) {
-		// File doesn't exist yet — record sentinel
-		sm.appendLocked(FileSnapshot{
-			OriginalPath: filePath,
-			BackupPath:   "", // sentinel: file was new
-			Version:      version,
-			Timestamp:    ts,
-		})
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("cannot stat file for snapshot: %w", err)
-	}
-
-	// Phase 1: record mtime
-	mtimeBefore := info.ModTime()
-
-	// Ensure backup directory
-	if err := os.MkdirAll(sm.baseDir, 0755); err != nil {
-		return fmt.Errorf("cannot create checkpoint directory: %w", err)
-	}
-
-	backupName := fmt.Sprintf("%s_v%d", sanitizeFilename(filePath), version)
-	backupPath := filepath.Join(sm.baseDir, backupName)
-
-	// Phase 2: copy file
-	if err := copyFile(filePath, backupPath); err != nil {
-		return fmt.Errorf("snapshot copy failed: %w", err)
-	}
-
-	// Phase 3: re-check mtime
-	infoAfter, err := os.Stat(filePath)
-	if err != nil {
-		os.Remove(backupPath)
-		return fmt.Errorf("file changed during snapshot: %w", err)
-	}
-	if !infoAfter.ModTime().Equal(mtimeBefore) {
-		// File was modified during copy — redo once
-		os.Remove(backupPath)
-		if err := copyFile(filePath, backupPath); err != nil {
-			return fmt.Errorf("snapshot retry copy failed: %w", err)
+	e := Entry{MessageID: messageID, Path: path, Version: sm.nextVersionLocked(path), Time: time.Now().UTC()}
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// A new file: undoing the change deletes it.
+	case err != nil:
+		return nil, fmt.Errorf("cannot stat file for snapshot: %w", err)
+	case !info.Mode().IsRegular():
+		return nil, fmt.Errorf("cannot snapshot %s: not a regular file", path)
+	default:
+		if err := os.MkdirAll(sm.dir, 0o700); err != nil {
+			return nil, fmt.Errorf("cannot create checkpoint directory: %w", err)
+		}
+		e.Backup = fmt.Sprintf("%s_v%d", sanitizeFilename(path), e.Version)
+		if err := backUp(path, filepath.Join(sm.dir, e.Backup), info); err != nil {
+			return nil, err
 		}
 	}
 
-	sm.appendLocked(FileSnapshot{
-		OriginalPath: filePath,
-		BackupPath:   backupPath,
-		Version:      version,
-		Timestamp:    ts,
-	})
+	next := append(append([]Entry(nil), sm.entries...), e)
+	var evicted []Entry
+	for sm.maxCount > 0 && len(next) > sm.maxCount {
+		evicted = append(evicted, next[0])
+		next = next[1:]
+	}
+	if err := writeIndex(sm.dir, next); err != nil {
+		sm.removeBackup(e)
+		return nil, fmt.Errorf("cannot record checkpoint: %w", err)
+	}
+	sm.entries = next
+	for _, old := range evicted {
+		sm.removeBackup(old)
+	}
+	return &Checkpoint{sm: sm, entry: e}, nil
+}
+
+// Rollback restores the file to its checkpointed state (deleting a file
+// that did not exist) and removes the entry and its backup: for a write
+// that failed after Checkpoint. After the entry was already undone,
+// reverted or evicted it does nothing.
+func (c *Checkpoint) Rollback() error {
+	sm := c.sm
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	for i := len(sm.entries) - 1; i >= 0; i-- {
+		if sameEntry(sm.entries[i], c.entry) {
+			return sm.undoLocked(i)
+		}
+	}
 	return nil
 }
 
-// appendLocked records snap and evicts the oldest snapshots past maxCount,
-// removing their backup files. Callers hold sm.mu.
-func (sm *SnapshotManager) appendLocked(snap FileSnapshot) {
-	sm.snapshots = append(sm.snapshots, snap)
-	for sm.maxCount > 0 && len(sm.snapshots) > sm.maxCount {
-		if old := sm.snapshots[0]; old.BackupPath != "" {
-			os.Remove(old.BackupPath)
-		}
-		sm.snapshots[0] = FileSnapshot{}
-		sm.snapshots = sm.snapshots[1:]
-	}
-}
-
-// Revert restores the most recent backup for the given file path.
-func (sm *SnapshotManager) Revert(filePath string) error {
+// Revert restores path from its newest entry and removes that entry.
+func (sm *SnapshotManager) Revert(path string) (Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	for i := len(sm.entries) - 1; i >= 0; i-- {
+		if samePath(sm.entries[i].Path, path) {
+			e := sm.entries[i]
+			return e, sm.undoLocked(i)
+		}
+	}
+	return Entry{}, fmt.Errorf("no checkpoint of %s in this session", path)
+}
 
-	// Find the most recent snapshot for this path
-	idx := -1
-	for i := len(sm.snapshots) - 1; i >= 0; i-- {
-		if sm.snapshots[i].OriginalPath == filePath {
-			idx = i
+// RevertLast restores the file of the newest entry and removes it (/undo).
+func (sm *SnapshotManager) RevertLast() (Entry, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if len(sm.entries) == 0 {
+		return Entry{}, errors.New("no file changes to undo in this session")
+	}
+	i := len(sm.entries) - 1
+	e := sm.entries[i]
+	return e, sm.undoLocked(i)
+}
+
+// RewindTo undoes, newest first, every entry from the first one recorded
+// for messageID to the newest (W4's /rewind) and returns them in that
+// order. On an error it stops and returns what it undid so far.
+func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	first := -1
+	for i, e := range sm.entries {
+		if messageID != "" && e.MessageID == messageID {
+			first = i
 			break
 		}
 	}
-	if idx == -1 {
-		return fmt.Errorf("no snapshot found for %s", filePath)
+	if first < 0 {
+		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
 	}
-
-	snap := sm.snapshots[idx]
-
-	if snap.BackupPath == "" {
-		// File was new — revert means delete it
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("cannot remove file during revert: %w", err)
+	var undone []Entry
+	for i := len(sm.entries) - 1; i >= first; i-- {
+		e := sm.entries[i]
+		if err := sm.undoLocked(i); err != nil {
+			return undone, err
 		}
-	} else {
-		if err := copyFile(snap.BackupPath, filePath); err != nil {
-			return fmt.Errorf("revert copy failed: %w", err)
-		}
+		undone = append(undone, e)
 	}
-
-	// Remove this snapshot from the list
-	sm.snapshots = append(sm.snapshots[:idx], sm.snapshots[idx+1:]...)
-	return nil
+	return undone, nil
 }
 
-// RevertLast reverts the most recent snapshot regardless of path.
-// Returns the path that was reverted.
-func (sm *SnapshotManager) RevertLast() (string, error) {
+// Files returns the sorted, de-duplicated paths of this session's entries:
+// the files it changed (#200's files-modified list).
+func (sm *SnapshotManager) Files() []string {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-
-	if len(sm.snapshots) == 0 {
-		return "", fmt.Errorf("no snapshots to revert")
-	}
-
-	snap := sm.snapshots[len(sm.snapshots)-1]
-
-	if snap.BackupPath == "" {
-		if err := os.Remove(snap.OriginalPath); err != nil && !os.IsNotExist(err) {
-			return "", fmt.Errorf("cannot remove file during revert: %w", err)
-		}
-	} else {
-		if err := copyFile(snap.BackupPath, snap.OriginalPath); err != nil {
-			return "", fmt.Errorf("revert copy failed: %w", err)
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range sm.entries {
+		if !seen[e.Path] {
+			seen[e.Path] = true
+			out = append(out, e.Path)
 		}
 	}
-
-	sm.snapshots = sm.snapshots[:len(sm.snapshots)-1]
-	return snap.OriginalPath, nil
+	sort.Strings(out)
+	return out
 }
 
-// GetChanges returns a FileChange summary for each file that has been snapshotted.
+// Entries returns a copy of the session's entries, oldest first.
+func (sm *SnapshotManager) Entries() []Entry {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return append([]Entry(nil), sm.entries...)
+}
+
+// GetChanges returns a FileChange per changed file (errors give nil).
 func (sm *SnapshotManager) GetChanges() []FileChange {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-
 	changes, _ := sm.computeDiffLocked()
 	return changes
 }
 
-// Cleanup removes the entire checkpoint directory for this session.
+// Cleanup removes the session's directory and forgets its entries.
 func (sm *SnapshotManager) Cleanup() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-
-	sm.snapshots = nil
-	if sm.baseDir != "" {
-		return os.RemoveAll(sm.baseDir)
+	sm.entries = nil
+	if sm.dir != "" {
+		return os.RemoveAll(sm.dir)
 	}
 	return nil
 }
 
-// nextVersion returns the next version number for a given file path.
-func (sm *SnapshotManager) nextVersion(filePath string) int {
+// undoLocked restores entry i's file, then removes the entry from the
+// index and deletes its backup.
+func (sm *SnapshotManager) undoLocked(i int) error {
+	e := sm.entries[i]
+	if err := sm.restore(e); err != nil {
+		return err
+	}
+	next := append(append([]Entry(nil), sm.entries[:i]...), sm.entries[i+1:]...)
+	if err := writeIndex(sm.dir, next); err != nil {
+		return fmt.Errorf("cannot update checkpoint index: %w", err)
+	}
+	sm.entries = next
+	sm.removeBackup(e)
+	return nil
+}
+
+func (sm *SnapshotManager) restore(e Entry) error {
+	if e.Backup == "" {
+		if err := os.Remove(e.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("cannot remove %s: %w", e.Path, err)
+		}
+		return nil
+	}
+	src, err := sm.backupPath(e)
+	if err != nil {
+		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
+	}
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(src); err == nil {
+		perm = info.Mode().Perm()
+	}
+	// Atomic: a restore that fails halfway leaves the file as it was, not
+	// truncated. The file keeps its current mode; a deleted one gets the
+	// backup's.
+	if err := atomicfile.WriteKeepMode(e.Path, data, perm); err != nil {
+		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
+	}
+	return nil
+}
+
+// backupPath is e's backup in the session directory. A name that is not a
+// plain file name there (a hand-edited index) is refused, so no restore
+// reads, and no cleanup deletes, a file outside the directory.
+func (sm *SnapshotManager) backupPath(e Entry) (string, error) {
+	b := e.Backup
+	if b == "" || b != filepath.Base(b) || !filepath.IsLocal(b) || strings.EqualFold(b, indexFile) {
+		return "", fmt.Errorf("invalid backup name %q in the checkpoint index", b)
+	}
+	return filepath.Join(sm.dir, b), nil
+}
+
+func (sm *SnapshotManager) removeBackup(e Entry) {
+	if p, err := sm.backupPath(e); err == nil {
+		_ = os.Remove(p)
+	}
+}
+
+func (sm *SnapshotManager) nextVersionLocked(path string) int {
 	maxV := 0
-	for _, s := range sm.snapshots {
-		if s.OriginalPath == filePath && s.Version > maxV {
-			maxV = s.Version
+	for _, e := range sm.entries {
+		if e.Path == path && e.Version > maxV {
+			maxV = e.Version
 		}
 	}
 	return maxV + 1
 }
 
+func sameEntry(a, b Entry) bool {
+	return a.Path == b.Path && a.Version == b.Version && a.Backup == b.Backup &&
+		a.MessageID == b.MessageID && a.Time.Equal(b.Time)
+}
+
+// readIndex loads dir's index; a missing index is an empty session.
+func readIndex(dir string) ([]Entry, error) {
+	data, err := os.ReadFile(filepath.Join(dir, indexFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var entries []Entry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// writeIndex replaces dir's index with entries, atomically: a reader in
+// another process sees the old index or the new one, never half of one.
+func writeIndex(dir string, entries []Entry) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if entries == nil {
+		entries = []Entry{}
+	}
+	data, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(filepath.Join(dir, indexFile), append(data, '\n'), 0o600)
+}
+
+// backUp writes src's bytes to the backup dst, reading src again once if
+// it changed during the read (its modification time moved). The backup is
+// written atomically with src's mode plus owner write (so it can always be
+// replaced and removed, also on Windows); a leftover file or symlink under
+// its name is removed first, never written through.
+func backUp(src, dst string, before os.FileInfo) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("snapshot copy failed: %w", err)
+	}
+	if info, err := os.Stat(src); err == nil && !info.ModTime().Equal(before.ModTime()) {
+		if data, err = os.ReadFile(src); err != nil {
+			return fmt.Errorf("snapshot retry copy failed: %w", err)
+		}
+	}
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("snapshot copy failed: %w", err)
+	}
+	if err := atomicfile.Write(dst, data, before.Mode().Perm()|0o600); err != nil {
+		return fmt.Errorf("snapshot copy failed: %w", err)
+	}
+	return nil
+}
+
+// samePath reports whether a and b name the same file: equal once
+// absolute and clean, or once symlinks are resolved (macOS temp and home
+// directories are often symlinked).
+func samePath(a, b string) bool {
+	a, b = absClean(a), absClean(b)
+	return pathEqual(a, b) || pathEqual(realPath(a), realPath(b))
+}
+
+// pathEqual compares two clean paths; Windows paths are case-insensitive.
+func pathEqual(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func absClean(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return filepath.Clean(p)
+}
+
+// realPath resolves symlinks in p, or in its directory when p itself is
+// gone (an undone creation).
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	if d, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		return filepath.Join(d, filepath.Base(p))
+	}
+	return p
+}
+
 // sanitizeFilename converts a file path into a safe backup filename.
 func sanitizeFilename(path string) string {
-	// Replace path separators and other special chars with underscores
 	name := filepath.Base(path)
 	// Prefix with a hash of the full path to avoid collisions
 	h := uint32(0)
@@ -230,27 +412,4 @@ func sanitizeFilename(path string) string {
 		h = h*31 + uint32(c)
 	}
 	return fmt.Sprintf("%08x_%s", h, name)
-}
-
-// copyFile copies src to dst, preserving permissions.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	info, err := in.Stat()
-	if err != nil {
-		return err
-	}
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
 }

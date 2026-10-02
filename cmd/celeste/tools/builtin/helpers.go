@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 )
 
 // resolvePath checks that the resolved absolute path stays within the workspace.
@@ -136,4 +138,12 @@ func fileSize(info os.FileInfo) int64 {
 		return 0
 	}
 	return info.Size()
+}
+
+// snapshotNow takes a checkpoint that is never rolled back. Temporary: the
+// next commit takes checkpoints after validation and rolls them back on a
+// failed write (2.0 F4), and deletes this.
+func snapshotNow(sm *checkpoints.SnapshotManager, path string) error {
+	_, err := sm.Checkpoint(path, "")
+	return err
 }
