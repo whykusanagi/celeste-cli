@@ -306,17 +306,25 @@ func InitAgents(dir string) (string, error) {
 
 // writeNew creates path with content and fails if anything (a file or a
 // symlink) is already there, so an init never overwrites the user's file.
+// A write that fails removes the file it created, so a later init is not
+// refused by a half-written one.
 func writeNew(path, content string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
+	_, err = writeContent(f, content)
+	if cerr := f.Close(); err == nil {
+		err = cerr
 	}
-	return f.Close()
+	if err != nil {
+		_ = os.Remove(path)
+	}
+	return err
 }
+
+// writeContent is writeNew's write (a test seam).
+var writeContent = (*os.File).WriteString
 
 // existsError is an init refusing to overwrite a file; it matches
 // fs.ErrExist.
