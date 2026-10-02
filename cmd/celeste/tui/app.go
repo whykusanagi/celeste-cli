@@ -1132,7 +1132,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// start still applies, so it is shown under that note.
 				text, found := grimoire.Describe(m.projectDir())
 				if !found && m.grimoireContent != "" {
-					text += "\n\nThis session loaded at start:\n\n" + m.grimoireContent
+					text += "\n\nNo project context on disk now; this session loaded at start:\n\n" + m.grimoireContent
 				}
 				m.chat = m.chat.AddSystemMessage(text)
 				return m, nil

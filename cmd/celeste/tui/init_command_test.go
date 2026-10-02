@@ -81,7 +81,7 @@ func TestGrimoireCommandFallsBackToTheSessionContext(t *testing.T) {
 	m, _ = step(t, m, SendMessageMsg{Content: "/grimoire"})
 	msgs := m.DebugMessages()
 	last := msgs[len(msgs)-1].Content
-	if !strings.Contains(last, "No .grimoire") || !strings.Contains(last, "SESSION CONTEXT") || strings.Contains(last, "use tabs") {
+	if !strings.Contains(last, "No .grimoire") || !strings.Contains(last, "No project context on disk now; this session loaded at start:\n\nSESSION CONTEXT") || strings.Contains(last, "use tabs") {
 		t.Fatalf("/grimoire with nothing on disk:\n%s", last)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"strings"
 
@@ -19,9 +20,21 @@ func runInitCommand(args []string) {
 		os.Exit(1)
 	}
 	if err := initProject(cwd, args, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		if msg := initErrorText(err); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
 		os.Exit(1)
 	}
+}
+
+// initErrorText is what `celeste init` prints on stderr for err. When
+// nothing was written because every file already exists, the "(left as it
+// is)" lines on stdout already say so; the exit code alone reports it.
+func initErrorText(err error) string {
+	if errors.Is(err, iofs.ErrExist) {
+		return ""
+	}
+	return fmt.Sprintf("Error: %v", err)
 }
 
 // initProject writes .grimoire in dir and, with --agents, AGENTS.md (2.0

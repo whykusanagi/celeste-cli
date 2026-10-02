@@ -31,6 +31,7 @@ func TestRunInit(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(ws, "AGENTS.md"))
 	assert.Contains(t, lines[0], "Created ")
 	assert.Contains(t, lines[len(lines)-1], "next session")
+	assert.Contains(t, lines[len(lines)-1], "Edit the new file ")
 
 	lines, err = RunInit(ws, true)
 	require.NoError(t, err, "an existing .grimoire must not stop agents")
@@ -45,6 +46,16 @@ func TestRunInit(t *testing.T) {
 	assert.True(t, errors.Is(err, fs.ErrExist), "the error says why: %v", err)
 	assert.Len(t, lines, 2)
 	assert.NotContains(t, strings.Join(lines, "\n"), "next session")
+}
+
+// With agents in an empty dir both files are new, and the closing line
+// says "files".
+func TestRunInitPluralClosingLine(t *testing.T) {
+	isolateHome(t)
+	ws := t.TempDir()
+	lines, err := RunInit(ws, true)
+	require.NoError(t, err)
+	assert.Contains(t, lines[len(lines)-1], "Edit the new files ")
 }
 
 // A step that fails for another reason stops the run with that error.

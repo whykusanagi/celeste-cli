@@ -19,6 +19,7 @@ func RunInit(dir string, agents bool) ([]string, error) {
 	}
 	var lines []string
 	var skipped []error
+	created := 0
 	for _, step := range steps {
 		path, err := step(dir)
 		switch {
@@ -28,13 +29,18 @@ func RunInit(dir string, agents bool) ([]string, error) {
 		case err != nil:
 			return lines, err
 		default:
+			created++
 			lines = append(lines, "Created "+path)
 		}
 	}
 	if len(skipped) == len(steps) {
 		return lines, errors.Join(skipped...)
 	}
-	lines = append(lines, "Edit the new file to describe the project; it applies from the next session.")
+	what := "the new file"
+	if created > 1 {
+		what = "the new files"
+	}
+	lines = append(lines, "Edit "+what+" to describe the project; it applies from the next session.")
 	return lines, nil
 }
 
