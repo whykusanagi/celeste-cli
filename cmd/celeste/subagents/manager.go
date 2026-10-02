@@ -199,7 +199,9 @@ func (m *Manager) parentEnv() (loop.Nester, error) {
 		return m.external, nil
 	}
 	if m.parent == nil {
-		sid := fmt.Sprintf("subagents-%d", os.Getpid())
+		// Hooks' session_id and the checkpoint session (2.0 F4): the start
+		// time too, since a later process can reuse the pid.
+		sid := fmt.Sprintf("subagents-%d-%d", os.Getpid(), time.Now().UnixNano())
 		m.parent = loop.NewParent(m.cfg, m.workspace, loop.SetupOptions{SessionID: sid, Warn: m.warn})
 	}
 	return m.parent, nil

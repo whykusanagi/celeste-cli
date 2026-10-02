@@ -99,7 +99,7 @@ type Env struct {
 
 // SetupOptions carries what only the adopter knows.
 type SetupOptions struct {
-	SessionID string       // hooks' session_id; "" = "<mode>-<pid>"
+	SessionID string       // hooks' session_id and checkpoint session; "" = "<mode>-<pid>-<start nanos>"
 	Warn      func(string) // setup and hook warnings; nil = stderr
 	// Notice gets timing notices (a git snapshot or code-graph update that
 	// ran out of time). They depend on the machine, not the configuration.
@@ -132,14 +132,18 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		opts.Notice = opts.Warn
 	}
 	if opts.SessionID == "" {
-		opts.SessionID = fmt.Sprintf("%s-%d", mode, os.Getpid())
+		// The start time too: a later process can get the same pid, and
+		// would then share this run's checkpoints (and /undo them).
+		opts.SessionID = fmt.Sprintf("%s-%d-%d", mode, os.Getpid(), time.Now().UnixNano())
 	}
 	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, skipPersona: cfg.SkipPersonaPrompt, home: home}
 	if mode == ModeAgent {
 		env.ToolMode = tools.ModeAgent
 	}
 	env.Files = checkpoints.NewFileTracker()
-	env.Snapshots = checkpoints.NewSnapshotManager(fmt.Sprintf("%s-%d", mode, os.Getpid()))
+	// Checkpoints are the run's session's (2.0 F4): the chat session, the
+	// agent run, the MCP chat Env; <mode>-<pid>-<nanos> when none was given.
+	env.Snapshots = checkpoints.NewSnapshotManager(opts.SessionID)
 	env.Registry = tools.NewRegistry()
 	builtin.RegisterAll(env.Registry, ws, nil, env.Files, env.Snapshots)
 	if err := env.Registry.LoadCustomTools(filepath.Join(home, ".celeste", "skills")); err != nil {

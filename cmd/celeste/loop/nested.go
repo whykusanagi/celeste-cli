@@ -3,7 +3,6 @@ package loop
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -94,7 +93,9 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	// The same order as Setup: builtins, skills, permissions, hooks, MCP,
 	// discovery mode, then context and the code-graph tools.
 	c.Files = checkpoints.NewFileTracker()
-	c.Snapshots = checkpoints.NewSnapshotManager(fmt.Sprintf("%s-%d", c.Mode, os.Getpid()))
+	// The parent's session's checkpoints (2.0 F4): the chat's /undo, /diff
+	// and files-modified list include what a subagent or /agent changed.
+	c.Snapshots = e.Snapshots
 	c.Registry = tools.NewRegistry()
 	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots)
 	if err := c.Registry.LoadCustomTools(filepath.Join(c.home, ".celeste", "skills")); err != nil {

@@ -74,8 +74,11 @@ func TestNestedSharesParentParts(t *testing.T) {
 	if child.Workspace != parent.Workspace {
 		t.Fatalf("child workspace %q, want the parent's %q", child.Workspace, parent.Workspace)
 	}
-	if child.Registry == parent.Registry || child.Checker == parent.Checker || child.Files == parent.Files || child.Snapshots == parent.Snapshots {
-		t.Fatal("registry, checker, file tracker and snapshots must be the child's own")
+	if child.Registry == parent.Registry || child.Checker == parent.Checker || child.Files == parent.Files {
+		t.Fatal("registry, checker and file tracker must be the child's own")
+	}
+	if child.Snapshots != parent.Snapshots {
+		t.Fatal("checkpoints go to the parent's session (2.0 F4)")
 	}
 	if child.Indexer == nil || child.Indexer != parent.Indexer {
 		t.Fatal("same workspace: the child must share the parent's code graph")
