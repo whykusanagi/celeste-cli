@@ -33,9 +33,20 @@ func isSupportedProtocolVersion(v string) bool {
 
 // MCPToolDef is a tool definition returned by the MCP server.
 type MCPToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	InputSchema json.RawMessage  `json:"inputSchema"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+}
+
+// ToolAnnotations are a tool's hints from tools/list. They are the server's
+// own claims: only readOnlyHint is used, and only for a server the user
+// marked "trusted": true (2.0 W4). The others are kept, unused.
+type ToolAnnotations struct {
+	ReadOnlyHint    *bool `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool `json:"openWorldHint,omitempty"`
 }
 
 // initializeResult is the server's response to the initialize request.

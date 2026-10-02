@@ -22,7 +22,7 @@ func TestManager_connectClient_TracksNames(t *testing.T) {
 	}
 	client := NewClient(mt, "celeste", "1.0")
 
-	err := mgr.connectClient(context.Background(), "srv", client, "stdio")
+	err := mgr.connectClient(context.Background(), "srv", client, "stdio", false)
 	require.NoError(t, err)
 
 	assert.True(t, mgr.IsConnected("srv"))
@@ -39,7 +39,7 @@ func TestManager_Disconnect_RemovesTools(t *testing.T) {
 		makeToolsListResponse("srv__t1", "srv__t2"),
 	}}
 	client := NewClient(mt, "celeste", "1.0")
-	require.NoError(t, mgr.connectClient(context.Background(), "srv", client, "stdio"))
+	require.NoError(t, mgr.connectClient(context.Background(), "srv", client, "stdio", false))
 	require.Equal(t, 2, registry.Count())
 
 	require.NoError(t, mgr.Disconnect("srv"))
