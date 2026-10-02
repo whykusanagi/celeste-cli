@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,5 +70,39 @@ func TestNewSessionConnectsClientMCPServers(t *testing.T) {
 			names = append(names, tl.Name())
 		}
 		t.Fatalf("the client's MCP tool is not registered; tools: %v", names)
+	}
+}
+
+// A repository's MCP config never starts a server in an ACP session: the
+// editor cannot be asked first, and passes its own servers instead. The
+// user's global config still applies.
+func TestNewSessionSkipsRepoMCPConfigs(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := func() map[string]any {
+		return map[string]any{"enabled": true, "transport": "stdio", "command": exe, "env": map[string]string{mcpStubEnv: "1"}}
+	}
+	writeJSON := func(path string, v any) {
+		t.Helper()
+		b, _ := json.Marshal(v)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws := t.TempDir()
+	writeJSON(filepath.Join(ws, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"repo": server()}})
+	writeJSON(filepath.Join(c.home, ".celeste", "mcp.json"), map[string]any{"mcpServers": map[string]any{"mine": server()}})
+	s := c.agent.session(c.newSession(ws))
+	if _, ok := s.env.Registry.Get("mcp__repo__echo"); ok {
+		t.Fatal("a repo MCP config started its server in an ACP session")
+	}
+	if _, ok := s.env.Registry.Get("mcp__mine__echo"); !ok {
+		t.Fatal("the user's global MCP server is missing")
 	}
 }

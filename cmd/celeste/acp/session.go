@@ -104,7 +104,8 @@ func checkCwd(cwd string) (string, *RPCError) {
 
 // setupEnv builds the session's Env, client and system prompt (ruling 4).
 // Warnings go to the log, never to stdout. Untrusted repo hooks are
-// recorded and skipped: Approve never blocks (ruling 9).
+// recorded and skipped: Approve never blocks (ruling 9). Repo MCP configs
+// are skipped: only the user's global ones and the editor's start.
 func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *RPCError {
 	warn := func(msg string) { a.logf("acp: session %s: %s", s.id, msg) }
 	env, err := loop.Setup(loop.ModeChat, s.cfg, s.cwd, loop.SetupOptions{
@@ -112,6 +113,9 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 		Warn:      warn,
 		Notice:    warn,
 		Approve:   s.recordHook,
+		// A repo's MCP servers would start before the editor's user could
+		// be asked; the editor passes the servers it wants instead.
+		GlobalMCPOnly: true,
 	})
 	if err != nil {
 		return &RPCError{Code: CodeInternal, Message: "setting up the session: " + err.Error()}
