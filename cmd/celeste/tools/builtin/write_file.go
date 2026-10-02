@@ -163,7 +163,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	// Auto-stamp .grimoire metadata when writing to it
 	if filepath.Base(targetPath) == ".grimoire" {
-		stampGrimoireMetadata(targetPath)
+		stampGrimoireMetadata(targetPath, realPath)
 	}
 	commit(ckpt) // after the stamp: the file as this call leaves it
 
