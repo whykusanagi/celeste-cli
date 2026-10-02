@@ -833,8 +833,17 @@ func reconcileLoaded(config *Config) (dirty bool) {
 // persistReconciled writes the fields reconcileLoaded may change back into a
 // named profile file, leaving every other key exactly as the user wrote it.
 // Rewriting the whole *Config would copy in the defaults and the skills.json
-// secrets that LoadNamed merges after reading the file.
+// secrets that LoadNamed merges after reading the file. A profile without
+// owner write permission is left as it is: the user made it read-only, and
+// the atomic rename would replace it regardless of its mode.
 func persistReconciled(path string, config *Config) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0o200 == 0 {
+		return nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
