@@ -70,9 +70,14 @@ func TestReviewToolSet(t *testing.T) {
 	for _, n := range []string{"read_file", "list_files", "search", "git_status", "git_log", "code_search", "code_graph", "submit_result", "write_file", "bash", "web_fetch"} {
 		reg.Register(stubTool{name: n, readOnly: n != "write_file" && n != "bash"})
 	}
+	reg.Register(stubTool{name: "code_deploy"})    // a custom or MCP tool named code_*: not read-only
+	reg.Register(builtin.NewCodeSnapshotTool(nil)) // the built-in, not read-only, still in
 	reg.Retain(profileFor(TypeReview, &config.Config{Model: "m"}).Allow)
 	got := toolNames(reg)
-	for _, want := range []string{"read_file", "list_files", "search", "git_status", "git_log", "code_search", "code_graph", "submit_result"} {
+	if got["code_deploy"] {
+		t.Error("review must not take a mutating tool just because it is named code_*")
+	}
+	for _, want := range []string{"read_file", "list_files", "search", "git_status", "git_log", "code_search", "code_graph", "code_snapshot", "submit_result"} {
 		if !got[want] {
 			t.Errorf("review lacks %s", want)
 		}

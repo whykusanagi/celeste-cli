@@ -17,7 +17,7 @@ other value is an error that lists the three types.
 | Type | Tools | Persona | Model |
 |------|-------|---------|-------|
 | `explore` | Every read-only tool except `spawn_agent` and `post_message`, plus `submit_result`. No `bash`, no file writes, no `todo` or `save_memory`, and no MCP tools (celeste cannot tell whether an MCP tool changes anything). | off | `small_model` (falls back to `model`) |
-| `review` | `read_file`, `list_files`, `search`, `git_status`, `git_log`, every `code_*` tool, and `submit_result` | off | `agent_model` (falls back to `model`) |
+| `review` | `read_file`, `list_files`, `search`, `git_status`, `git_log`, every built-in `code_*` tool, and `submit_result` (a custom or MCP tool named `code_*` is not included) | off | `agent_model` (falls back to `model`) |
 | `general` | Everything a subagent had before types existed, plus `submit_result` | on, with the `persona` slider override when given | `agent_model` (falls back to `model`) |
 
 The type's tool set is applied to the subagent's own registry, so the model
@@ -76,8 +76,9 @@ A subagent that ends without calling `submit_result` still returns that
 shape: its final reply, with the `TASK_COMPLETE` line removed, as the
 summary, empty `findings` and `files`, and
 `"warning": "the subagent did not call submit_result"`. A subagent that
-called `submit_result` and then failed (out of turns, for instance) returns
-what it submitted, with why it stopped as the warning.
+fails (out of turns, for instance) returns the same shape with why it
+stopped as the warning: what it submitted, if it called `submit_result`,
+or else its last reply as the summary.
 
 The same JSON is the run's result in `/agents`, which shows each typed
 run's type and the first line of its summary, and it is what a DAG

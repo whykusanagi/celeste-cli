@@ -375,14 +375,22 @@ func marshalResult(r *Result) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-// submittedOnFailure keeps a failed typed run's submitted result, if it
-// made one, in place of the partial text, with why it stopped as the
-// warning. The caller holds the manager's lock when run is shared.
-func submittedOnFailure(run *SubagentRun, h *resultHolder, why string) {
-	if h == nil || h.get() == nil {
+// typedFailure gives a failed typed run the typed result too: what it
+// submitted, or else its last reply as the summary, with why it stopped
+// as the warning. An untyped run (nil holder) keeps its partial text. The
+// caller holds the manager's lock when run is shared.
+func typedFailure(run *SubagentRun, h *resultHolder, lastReply, why string) {
+	if h == nil {
 		return
 	}
-	run.Result, run.Summary = typedResult(h, "", "the subagent stopped before finishing: "+why)
+	warning := "the subagent stopped before finishing: " + why
+	if h.get() == nil {
+		warning += "; it did not call submit_result"
+		if stripCompletionMarker(lastReply) == "" {
+			lastReply = "The subagent stopped before finishing, with no reply."
+		}
+	}
+	run.Result, run.Summary = typedResult(h, lastReply, warning)
 }
 
 // completionToken is the completion marker without its colon.

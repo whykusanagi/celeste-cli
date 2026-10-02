@@ -295,7 +295,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 					run.EndedAt.Sub(run.StartedAt).Round(time.Millisecond),
 					run.Result)
 				if run.Type != "" && run.Summary != "" {
-					// It submitted a result before failing: the JSON follows.
+					// A typed run: the result JSON follows.
 					content = fmt.Sprintf("subagent %s (%s): failed after %d turns: %v\n%s",
 						run.Name, run.Type, run.Turns, err, run.Result)
 				}

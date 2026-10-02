@@ -6,6 +6,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 )
 
 // Type is a subagent type (2.0 W4e): it picks the subagent's tools, model
@@ -69,7 +70,17 @@ func profileFor(t Type, cfg *config.Config) Profile {
 		}}
 	case TypeReview:
 		return Profile{SkipPersona: true, Model: cfg.ResolveAgentModel(), Allow: func(tl tools.Tool) bool {
-			return reviewTools[tl.Name()] || strings.HasPrefix(tl.Name(), "code_")
+			if !reviewTools[tl.Name()] && !strings.HasPrefix(tl.Name(), "code_") {
+				return false
+			}
+			// By name alone a custom skill or an MCP server's tool called
+			// code_* would pass; those are never read-only. code_snapshot is
+			// the one built-in code-graph tool that is not (it saves the
+			// graph's state for a later diff), so it is let in by its type.
+			if _, snapshot := tl.(*builtin.CodeSnapshotTool); snapshot {
+				return true
+			}
+			return tl.IsReadOnly()
 		}}
 	}
 	return Profile{Model: cfg.ResolveAgentModel()}

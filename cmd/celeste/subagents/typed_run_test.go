@@ -145,3 +145,20 @@ func TestFailedRunKeepsTheSubmittedResult(t *testing.T) {
 		t.Fatalf("head = %q result = %+v", head, r)
 	}
 }
+
+// A typed run that fails without submitting still hands the parent the
+// typed JSON: its last reply as the summary, and why it stopped.
+func TestFailedRunWithoutSubmitIsTyped(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{Text: "Looked at a.go so far.", ToolCalls: []fakeprovider.ToolCall{{ID: "r1", Name: "list_files", Args: `{}`}}})
+	m, _, _, _ := fakeManager(t, srv)
+	res, _ := NewSpawnAgentTool(m).Execute(context.Background(), map[string]any{"goal": "look", "type": "review", "max_turns": 1.0}, nil)
+	if !res.Error {
+		t.Fatalf("a run out of turns should fail: %+v", res)
+	}
+	head, r := splitTypedResult(t, res.Content)
+	if !strings.Contains(head, "(review): failed") || r.Summary == "" ||
+		!strings.Contains(r.Warning, "stopped before finishing") || !strings.Contains(r.Warning, "did not call submit_result") {
+		t.Fatalf("head = %q result = %+v", head, r)
+	}
+}

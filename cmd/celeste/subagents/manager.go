@@ -780,7 +780,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 			run.Result = fmt.Sprintf("[Partial result — failed after %d turns: %s]\n\n%s",
 				state.Turn, err.Error(), state.LastAssistantResponse)
 		}
-		submittedOnFailure(run, holder, err.Error())
+		typedFailure(run, holder, lastResponse(state), err.Error())
 		m.mu.Unlock()
 		return run, fmt.Errorf("subagent execution: %w", err)
 	}
@@ -796,7 +796,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		if state.LastAssistantResponse != "" {
 			run.Result = fmt.Sprintf("[Partial result — %s]\n\n%s", failure, state.LastAssistantResponse)
 		}
-		submittedOnFailure(run, holder, failure)
+		typedFailure(run, holder, state.LastAssistantResponse, failure)
 		m.mu.Unlock()
 		return run, fmt.Errorf("subagent execution: %s", failure)
 	}
@@ -819,6 +819,14 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	m.mu.Unlock()
 
 	return run, nil
+}
+
+// lastResponse is the run's last reply, or "" without a state.
+func lastResponse(state *agent.RunState) string {
+	if state == nil {
+		return ""
+	}
+	return state.LastAssistantResponse
 }
 
 // incompleteRunError returns why a run that RunGoal ended without an error
@@ -1079,7 +1087,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
-		submittedOnFailure(run, holder, err.Error())
+		typedFailure(run, holder, run.Result, err.Error())
 		return run, fmt.Errorf("resume subagent: %w", err)
 	}
 	run.Status = "completed"
