@@ -100,9 +100,52 @@ a single MCP `celeste` call in chat mode, where each call starts fresh.
 MCP chat (`celeste serve`) also replaces an unbacked "Audio saved:" claim
 in its result, in every mode.
 
+## Watchdog
+
+Every 3 requests, the watchdog asks a fixed ballot about the last few
+turns: how on track the run is (1–10), and whether it is looping,
+drifting from the goal, letting its persona voice into files, claiming
+success it has not checked, or about to do something destructive.
+
+`watchdog`: `off` (default), `shadow` (asked and logged), `on`.
+`oracle` picks who answers: `heuristic` (default; no model call: it can
+tell looping, voice in files, unchecked success claims and destructive
+commands from the transcript, but has no opinion on being on track or
+drifting), `llm` (your `small_model`), or `jev` (TypeSafe). A model-backed
+oracle that fails or takes more than 2.5 seconds is replaced by the
+heuristic for that ballot.
+
+An answer of 0.70 or more acts; 0.30 to 0.70 is logged only.
+
+- **Blocker** (an unsafe next action): stops the reply in flight and
+  re-runs it with the warning.
+- **Concern** (off track, looping, drifting, unchecked success): a warning
+  before the next request after the tools run.
+- **Nit** (voice in files): added to the next warning or reminder.
+
+At most one blocker or concern every 3 requests. The ballot runs in the
+background and never delays a request. When an agent run or an MCP call
+ends or is cancelled, a ballot still running is cancelled and its answer
+ignored; in the chat, the watchdog spans the conversation.
+
+## Completion gate (agent runs)
+
+`completion_gate`: `shadow` (default) or `on`. With `on`, an agent run
+completes only when its reply starts or ends with a line beginning
+`TASK_COMPLETE` (a mention mid-sentence no longer counts), and, when the
+watchdog is on, only if the ballot does not find an unchecked claim of
+success. The gate sends a run back at most once. In shadow mode the old
+check decides and the log says where the gate would have differed.
+
 ## Third parties
 
-Stream rules run on your machine and send nothing anywhere. The optional
-TypeSafe Jev judge (`jev_prune`, and further steering features in later
-releases) is the only part of steering that sends anything off your
-machine, and only when you turn it on.
+Stream rules, the heuristic oracle and the completion gate run on your
+machine and send nothing anywhere. The optional TypeSafe Jev judge
+(`jev_prune`, `oracle: jev`) is the only part of steering that sends
+anything to a third party, and only when you turn it on; `oracle: llm`
+sends the ballot to your own `small_model` provider.
+
+Before anything leaves your machine this way, secrets and keys are
+replaced with `[REDACTED]`, and file paths are rewritten: a path inside
+the workspace becomes relative to it, and any other absolute or `~` path
+becomes `<path>`.
