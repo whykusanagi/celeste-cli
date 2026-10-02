@@ -57,9 +57,8 @@ type session struct {
 	// allow holds the tools the editor's user allowed always (ruling 8).
 	allow map[string]bool
 	// pendingHooks are the untrusted repo hook sources Setup skipped
-	// (ruling 9); askedHooks is set once the user was asked about them.
+	// (ruling 9); W4f-3 asks the editor's user about them.
 	pendingHooks []hooks.Source
-	askedHooks   bool
 }
 
 // newSession answers session/new (rulings 3-4): a celeste session whose ID
