@@ -11,6 +11,7 @@ import (
 	"github.com/sashabaranov/go-openai"
 
 	"strings"
+	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -20,6 +21,7 @@ import (
 type OpenAIBackend struct {
 	client         *openai.Client
 	config         *Config
+	mu             sync.Mutex // guards systemPrompt and thinkingConfig
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
 }
@@ -39,6 +41,8 @@ func NewOpenAIBackend(config *Config) *OpenAIBackend {
 
 // SetSystemPrompt sets the system prompt (Celeste persona).
 func (b *OpenAIBackend) SetSystemPrompt(prompt string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.systemPrompt = prompt
 }
 
@@ -46,7 +50,23 @@ func (b *OpenAIBackend) SetSystemPrompt(prompt string) {
 // For OpenAI o-series models this maps to reasoning_effort.
 // For Anthropic (via OpenAI compat) this is a no-op for now.
 func (b *OpenAIBackend) SetThinkingConfig(config ThinkingConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.thinkingConfig = config
+}
+
+// prompt and thinking read the settings the setters change; a request may
+// be building while the client sets them.
+func (b *OpenAIBackend) prompt() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.systemPrompt
+}
+
+func (b *OpenAIBackend) thinking() ThinkingConfig {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.thinkingConfig
 }
 
 // SendMessageSync sends a message synchronously and returns the complete result.
@@ -429,7 +449,8 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 // applyThinkingConfig adds reasoning_effort to the request when the model
 // supports it (OpenAI o-series) and thinking is enabled.
 func (b *OpenAIBackend) applyThinkingConfig(req *openai.ChatCompletionRequest) {
-	if !b.thinkingConfig.Enabled || b.thinkingConfig.Level == "off" {
+	tc := b.thinking()
+	if !tc.Enabled || tc.Level == "off" {
 		return
 	}
 	// OpenAI o-series models support reasoning_effort ("low", "medium", "high").
@@ -438,7 +459,7 @@ func (b *OpenAIBackend) applyThinkingConfig(req *openai.ChatCompletionRequest) {
 	if !strings.HasPrefix(model, "o1") && !strings.HasPrefix(model, "o3") && !strings.HasPrefix(model, "o4") {
 		return // Not an o-series model; skip silently
 	}
-	switch b.thinkingConfig.Level {
+	switch tc.Level {
 	case "low":
 		req.ReasoningEffort = "low"
 	case "medium":
@@ -466,10 +487,10 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 	//   {"type": "text", "text": "<static>", "cache_control": {"type": "ephemeral"}}
 	// This requires switching from a simple string content to multi-part content
 	// blocks when b.isAnthropicProvider() is true.
-	if b.systemPrompt != "" {
+	if prompt := b.prompt(); prompt != "" {
 		result = append(result, openai.ChatCompletionMessage{
 			Role:    "system",
-			Content: b.systemPrompt,
+			Content: prompt,
 		})
 	}
 
