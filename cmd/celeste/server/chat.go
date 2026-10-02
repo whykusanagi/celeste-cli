@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
@@ -70,13 +71,18 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// The call's ballot ends with it: one in flight is cancelled.
 	defer sess.Close()
 	l.Steering = sess.Steering()
+	l.Advisor = steer.NewToolGate(cfg.JevGateMode(), workspace, func() string { return prompt }, func(line string) {
+		log.Printf("celeste chat: %s", line)
+	})
 	record := func(u *llm.TokenUsage) { s.cost.record(cfg.Model, u) }
 	text, err := runChat(ctx, l, env.Hooks, prompt, warns.add, record)
 	var blocked *promptBlockedError
 	if errors.As(err, &blocked) {
 		// The pre-loop server's refusal, verbatim: no "chat error:" prefix.
+		// A hook's refusal of the prompt is not a failed completion.
 		return nil, fmt.Errorf("%w%s", err, warns.section())
 	}
+	s.health.record(err)
 	if err != nil {
 		return nil, fmt.Errorf("chat error: %w%s", err, warns.section())
 	}
@@ -125,7 +131,7 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 	}
 	// Assigned only when non-nil: a nil *chatCompactor in the interface
 	// would be a non-nil Compactor.
-	if c := newChatCompactor(cfg, system, client.GetSkills()); c != nil {
+	if c := newChatCompactor(cfg, system, client.GetSkills(), env.Workspace); c != nil {
 		l.Compact = c
 	}
 	return l
@@ -139,33 +145,50 @@ type chatCompactor struct {
 	window   int // the model's context window, in tokens
 	overhead int // system prompt and tool definitions, estimated
 	store    *compact.Store
+	jev      *jev.Client // jev_prune's scorer (2.0 W3); nil: off
+	jevMode  string
 }
 
 // newChatCompactor sizes the compactor for cfg's model (context_limit
 // honoured, as in the TUI and agent). Without a store it returns nil:
 // compact.Prune never prunes without one.
-func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefinition) *chatCompactor {
+func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefinition, workspace string) *chatCompactor {
 	store, err := compact.DefaultStore()
 	if err != nil {
 		return nil
 	}
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
 	defs, _ := json.Marshal(skills)
-	return &chatCompactor{
+	c := &chatCompactor{
 		window:   window,
 		overhead: ctxmgr.EstimateTokens(system) + len(defs)/4,
 		store:    store,
+		jevMode:  cfg.JevPruneMode(),
 	}
+	if c.jevMode != config.ModeOff {
+		if jc, err := jev.NewFromEnv(); err == nil {
+			jc.Workspace = workspace // paths in excerpts are sent relative to it
+			c.jev = jc
+		} else {
+			log.Printf("celeste chat: jev prune disabled: %v", err)
+		}
+	}
+	return c
 }
 
 // Compact implements loop.Compactor. The loop calls it before every request,
 // and once with force after a context-overflow error.
-func (c *chatCompactor) Compact(_ context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
+func (c *chatCompactor) Compact(ctx context.Context, history []loop.Message, usage *llm.TokenUsage, force bool) ([]loop.Message, []string, bool) {
 	used := compact.Estimate(history) + c.overhead
 	if usage != nil && usage.PromptTokens > used {
 		used = usage.PromptTokens // the provider's count includes what the estimate misses
 	}
-	out, res := compact.Prune(history, compact.Options{Window: c.window, Used: used, Force: force}, c.store)
+	// Shadow reports inline: a call's log lines must not outlive it.
+	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: used, Force: force}, func(line string) {
+		log.Printf("celeste chat: %s", line)
+	}, false)
+	out, res := compact.Prune(history, opts, c.store)
+	report(res)
 	if !res.Pruned() {
 		return history, nil, false
 	}

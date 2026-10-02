@@ -135,6 +135,16 @@ flowchart TD
 - `reconcileModel` applies the same deprecated-model migration (the grok-4-1-*
   trap) to `agent_model` as to `model`.
 
+## /orchestrate lanes
+
+`/orchestrate` first sorts a goal into a lane (code, content, media,
+review, research) by keywords; the lane picks the models.
+Keywords match whole words (a plural or `-ed`/`-ing` form counts; `.go`,
+`.py` and the like match file extensions), so "trust" no longer counts as
+"rust". With `jev_route: on`, a Jev choice question picks the lane and the
+keywords are the fallback; `shadow` shows Jev's pick as an orchestrator
+event. See [STEERING.md](STEERING.md).
+
 ## MCP Routing
 
 When running as an MCP server (`celeste serve`), requests route through:
