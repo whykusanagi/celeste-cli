@@ -28,11 +28,11 @@ func VoiceLeak(path, content string) bool {
 }
 
 // Destructive reports a bash command the destructive-bash rule fires on
-// (a force push, a recursive forced rm outside build output), read as a
-// shell would read it.
+// (a force push, a recursive forced rm outside build output, or any rm the
+// bash tool refuses), read as a shell would read it.
 func Destructive(command string) bool {
 	if destructiveRule == nil {
 		return false
 	}
-	return destructiveRule.Condition.MatchString(command) && destructiveShell(command, 0)
+	return destructiveRule.Condition.MatchString(command) && destructiveShell(command)
 }

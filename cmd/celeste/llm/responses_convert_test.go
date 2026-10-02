@@ -108,7 +108,7 @@ func TestResponsesToolsAreFlatAndNotStrict(t *testing.T) {
 	assert.JSONEq(t, `{"type":"function","name":"read_file","description":"Read","parameters":{"type":"object"},"strict":false}`, string(b))
 }
 
-func TestResponsesEffort(t *testing.T) {
+func TestOpenAIEffort(t *testing.T) {
 	on := func(level string) ThinkingConfig { return ThinkingConfig{Enabled: true, Level: level} }
 	cases := []struct {
 		model string
@@ -125,15 +125,15 @@ func TestResponsesEffort(t *testing.T) {
 		{"gpt-4o", on("high"), ""},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, responsesEffort(c.model, c.tc), "%s %+v", c.model, c.tc)
+		assert.Equal(t, c.want, openAIEffort(c.model, c.tc), "%s %+v", c.model, c.tc)
 	}
 }
 
-func TestResponsesReasoningModel(t *testing.T) {
+func TestOpenAIReasoningModel(t *testing.T) {
 	for model, want := range map[string]bool{
 		"o1": true, "o3-mini": true, "o4-mini": true, "gpt-5": true, "GPT-5-mini": true, "gpt-5.1-codex": true,
-		"gpt-5-chat-latest": false, "gpt-5-chat": false, "gpt-4o": false, "gpt-4o-mini": false, "gpt-4.1": false, "": false,
+		"gpt-5-chat-latest": false, "gpt-5-chat": false, "gpt-5.1-chat-latest": false, "GPT-5.2-Chat": false, "o4-mini-chat": false, "gpt-4o": false, "gpt-4o-mini": false, "gpt-4.1": false, "": false,
 	} {
-		assert.Equal(t, want, responsesReasoningModel(model), model)
+		assert.Equal(t, want, openAIReasoningModel(model), model)
 	}
 }
