@@ -9,6 +9,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 )
 
 type realAgentRunner struct {
@@ -21,8 +22,7 @@ type realAgentRunner struct {
 func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, error) {
 	cfg := *r.cfg
 	cfg.Model = r.model
-	opts := agent.DefaultOptions()
-	opts.Nested = true // an orchestrator lane is part of the caller's run
+	opts := laneAgentOptions()
 	// Setup and hook warnings go to the caller's event stream, never
 	// io.Discard (and never raw stderr under the TUI).
 	if r.onEvent != nil {
@@ -122,6 +122,17 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 		return state.LastAssistantResponse, err
 	}
 	return "", err
+}
+
+// laneAgentOptions are the agent options every orchestrator lane starts
+// from (the primary, the debate reviewer and the defense): a nested run at
+// the off persona level, since a lane's output goes to the orchestrator, not
+// to the user (W7 ruling 5).
+func laneAgentOptions() agent.Options {
+	opts := agent.DefaultOptions()
+	opts.Nested = true // an orchestrator lane is part of the caller's run
+	opts.PersonaLevel = prompts.PersonaOff
+	return opts
 }
 
 // defaultRunnerFactory creates a RunnerFactory whose lanes forward agent
