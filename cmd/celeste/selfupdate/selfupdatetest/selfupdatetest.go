@@ -10,7 +10,17 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,3 +151,101 @@ func Zip(t testing.TB, files map[string][]byte) []byte {
 	}
 	return buf.Bytes()
 }
+
+// Build returns a complete signed release of tag, as release.yml publishes
+// it: the five archives, each holding bin under its contract name,
+// checksums.txt, manifest.json, and both signatures by key's subkey.
+func Build(t testing.TB, key *Key, tag string, bin []byte) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	for _, p := range Platforms {
+		if strings.HasSuffix(p.Archive, ".zip") {
+			files[p.Archive] = Zip(t, map[string][]byte{p.Binary: bin})
+		} else {
+			files[p.Archive] = TarGz(t, map[string][]byte{p.Binary: bin})
+		}
+	}
+	type artifact struct {
+		Filename string `json:"filename"`
+		SHA256   string `json:"sha256"`
+	}
+	var arts []artifact
+	for _, p := range Platforms {
+		h := sha256.Sum256(files[p.Archive])
+		arts = append(arts, artifact{p.Archive, hex.EncodeToString(h[:])})
+	}
+	man, err := json.MarshalIndent(map[string]any{"version": strings.TrimPrefix(tag, "v"), "tag": tag, "artifacts": arts}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["manifest.json"] = man
+	Resign(t, key, files)
+	return files
+}
+
+// Resign recomputes checksums.txt from the archives in files and signs it
+// and manifest.json again, after a test changed them.
+func Resign(t testing.TB, key *Key, files map[string][]byte) {
+	t.Helper()
+	var sums strings.Builder
+	for _, p := range Platforms {
+		if a, ok := files[p.Archive]; ok {
+			fmt.Fprintf(&sums, "%x  %s\n", sha256.Sum256(a), p.Archive)
+		}
+	}
+	files["checksums.txt"] = []byte(sums.String())
+	files["checksums.txt.asc"] = key.Sign(t, files["checksums.txt"], time.Time{})
+	files["manifest.json.asc"] = key.Sign(t, files["manifest.json"], time.Time{})
+}
+
+// Server is a fake GitHub release host over HTTPS. Like github.com, it
+// redirects /releases/download/<tag>/<name> to an asset host (AssetBase, or
+// itself) and /releases/latest to /releases/tag/<Latest>. Tests may edit
+// Files, Latest and AssetBase before the first request.
+type Server struct {
+	*httptest.Server
+	Files     map[string][]byte
+	Latest    string
+	AssetBase string
+	requests  atomic.Int64
+}
+
+// Serve starts a Server for a release of tag; t.Cleanup closes it.
+func Serve(t testing.TB, tag string, files map[string][]byte) *Server {
+	t.Helper()
+	s := &Server{Files: files, Latest: tag}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		s.requests.Add(1)
+		http.Redirect(w, r, s.URL+"/releases/tag/"+s.Latest, http.StatusFound)
+	})
+	mux.HandleFunc("/releases/download/"+tag+"/", func(w http.ResponseWriter, r *http.Request) {
+		s.requests.Add(1)
+		base := s.AssetBase
+		if base == "" {
+			base = s.URL
+		}
+		http.Redirect(w, r, base+"/assets/"+path.Base(r.URL.Path), http.StatusFound)
+	})
+	mux.HandleFunc("/assets/", func(w http.ResponseWriter, r *http.Request) {
+		s.requests.Add(1)
+		b, ok := s.Files[path.Base(r.URL.Path)]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(b)
+	})
+	s.Server = httptest.NewTLSServer(mux)
+	t.Cleanup(s.Close)
+	return s
+}
+
+// Host is the server's host:port, for an Updater's allowed Hosts.
+func (s *Server) Host() string {
+	u, _ := url.Parse(s.URL)
+	return u.Host
+}
+
+// Requests counts every request the server has answered.
+func (s *Server) Requests() int64 { return s.requests.Load() }
