@@ -115,6 +115,10 @@ type Options struct {
 	// loop.Setup, sharing MCP clients, hooks and the code graph, and the run
 	// is Nested. The runner never closes ParentEnv; its owner does.
 	ParentEnv loop.Nester `json:"-"`
+	// ResumeRunID is the run a Resume will continue: its ID, not a new
+	// one, names the run's session (hooks' session_id and file
+	// checkpoints, 2.0 F4). Ignored with ParentEnv (the parent's session).
+	ResumeRunID string `json:"-"`
 	// Client, when set, is used instead of building an llm.Client from the
 	// config. Tests inject a client around a fake backend (2.0 F1).
 	Client *llm.Client `json:"-"`
