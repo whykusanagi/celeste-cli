@@ -16,24 +16,42 @@ import (
 type Turn struct {
 	Text      string
 	ToolCalls []ToolCall
-	Thinking  *Thinking // Anthropic only
-	Status    int
-	Body      string
+	Thinking  *Thinking  // Anthropic only
+	Reasoning *Reasoning // Responses only: one reasoning item before the output
+	// Incomplete ends a Responses stream with response.incomplete and this
+	// reason (e.g. "max_output_tokens").
+	Incomplete string
+	// Fail ends a Responses stream with response.failed carrying this message.
+	Fail string
+	// Truncate closes a Responses stream before any terminal event.
+	Truncate bool
+	Status   int
+	Body     string
 }
 
 type ToolCall struct{ ID, Name, Args string }
 
 type Thinking struct{ Text, Signature string }
 
-// Request is what the client sent, decoded.
+// Reasoning is a Responses reasoning output item.
+type Reasoning struct{ ID, Summary, Encrypted string }
+
+// Request is what the client sent: the path, the decoded body and its raw
+// bytes.
 type Request struct {
 	Path string
 	Body map[string]any
+	Raw  []byte
 }
 
 type Server struct {
-	srv      *httptest.Server
-	prefix   string // appended to srv.URL for BaseURL
+	srv    *httptest.Server
+	prefix string // appended to srv.URL for BaseURL
+	write  func(http.ResponseWriter, Turn)
+	// writers, when set, picks the writer by request path; a path with no
+	// writer is a 404 that consumes no turn.
+	writers  map[string]func(http.ResponseWriter, Turn)
+	handlers map[string]http.HandlerFunc // fixed answers by path, outside the script
 	mu       sync.Mutex
 	turns    []Turn
 	requests []Request
@@ -41,13 +59,27 @@ type Server struct {
 
 func newServer(t testing.TB, prefix string, write func(http.ResponseWriter, Turn), turns []Turn) *Server {
 	t.Helper()
-	s := &Server{prefix: prefix, turns: append([]Turn(nil), turns...)}
+	s := &Server{prefix: prefix, write: write, turns: append([]Turn(nil), turns...)}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
 		s.mu.Lock()
-		s.requests = append(s.requests, Request{Path: r.URL.Path, Body: body})
+		s.requests = append(s.requests, Request{Path: r.URL.Path, Body: body, Raw: raw})
+		if h, ok := s.handlers[r.URL.Path]; ok {
+			s.mu.Unlock()
+			h(w, r)
+			return
+		}
+		write := s.write
+		if s.writers != nil {
+			var ok bool
+			if write, ok = s.writers[r.URL.Path]; !ok {
+				s.mu.Unlock()
+				http.Error(w, "fakeprovider: no route for "+r.URL.Path, http.StatusNotFound)
+				return
+			}
+		}
 		if len(s.turns) == 0 {
 			s.mu.Unlock()
 			http.Error(w, "fakeprovider: script exhausted", http.StatusInternalServerError)
@@ -68,6 +100,17 @@ func newServer(t testing.TB, prefix string, write func(http.ResponseWriter, Turn
 	return s
 }
 
+// Handle answers every request for path with h, outside the script. The
+// request is still recorded.
+func (s *Server) Handle(path string, h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.handlers == nil {
+		s.handlers = map[string]http.HandlerFunc{}
+	}
+	s.handlers[path] = h
+}
+
 // BaseURL is the value for llm.Config.BaseURL.
 func (s *Server) BaseURL() string { return s.srv.URL + s.prefix }
 
@@ -75,6 +118,13 @@ func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Request(nil), s.requests...)
+}
+
+// Remaining is the number of scripted turns not yet served.
+func (s *Server) Remaining() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.turns)
 }
 
 // Push appends turns to the script.
