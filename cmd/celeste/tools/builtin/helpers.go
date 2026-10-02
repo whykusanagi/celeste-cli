@@ -140,10 +140,21 @@ func fileSize(info os.FileInfo) int64 {
 	return info.Size()
 }
 
-// snapshotNow takes a checkpoint that is never rolled back. Temporary: the
-// next commit takes checkpoints after validation and rolls them back on a
-// failed write (2.0 F4), and deletes this.
-func snapshotNow(sm *checkpoints.SnapshotManager, path string) error {
-	_, err := sm.Checkpoint(path, "")
-	return err
+// writeFileFunc writes a whole file for write_file, patch_file and
+// splice_file. Tests replace it to make a write fail after its checkpoint
+// (2.0 F4); only serial tests may, restoring it with t.Cleanup.
+var writeFileFunc = os.WriteFile
+
+// rollback undoes the checkpoints a failed call took, newest first, and
+// returns msg with any rollback failure appended.
+func rollback(msg string, ckpts ...*checkpoints.Checkpoint) string {
+	for i := len(ckpts) - 1; i >= 0; i-- {
+		if ckpts[i] == nil {
+			continue
+		}
+		if err := ckpts[i].Rollback(); err != nil {
+			msg += fmt.Sprintf("; restoring %s failed: %v", ckpts[i].Entry().Path, err)
+		}
+	}
+	return msg
 }
