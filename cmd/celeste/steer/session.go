@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
 )
@@ -222,8 +223,9 @@ func (s *Session) act(hits []rules.Hit) bool {
 	for _, h := range hits {
 		acting := s.o.RulesMode == config.ModeOn
 		rules.Record(h.Rule.Name, acting)
-		// The log line shows at most 80 bytes of the match.
-		matched := h.Text
+		// The log line shows at most 80 bytes of the match, secrets
+		// redacted: these lines reach log sinks.
+		matched := jev.Redact(h.Text)
 		if len(matched) > 80 {
 			matched = textutil.CutBytes(matched, 77) + "..."
 		}
