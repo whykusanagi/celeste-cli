@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
@@ -23,10 +22,14 @@ func checkpointHome(t *testing.T) {
 // checkpointed records path's current state in session, then writes after.
 func checkpointed(t *testing.T, sm *checkpoints.SnapshotManager, path, callID, after string) {
 	t.Helper()
-	if _, err := sm.Checkpoint(path, callID); err != nil {
+	c, err := sm.Checkpoint(path, callID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Commit(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -92,9 +95,10 @@ func TestChatUndoWalksBackEditsToOneFile(t *testing.T) {
 	}
 }
 
-// A file changed after celeste's last change to it (by an editor, a
-// formatter, bash): the first /undo says so and leaves it alone; a second
-// /undo overwrites it.
+// A file changed after celeste's last change to it (an editor, a
+// formatter, bash — even a second later): the first /undo says so and
+// leaves it alone; a second /undo, with the file as it was warned about,
+// overwrites it.
 func TestChatUndoAsksBeforeOverwritingAnOutsideChange(t *testing.T) {
 	checkpointHome(t)
 	ws := t.TempDir()
@@ -107,18 +111,86 @@ func TestChatUndoAsksBeforeOverwritingAnOutsideChange(t *testing.T) {
 	if err := os.WriteFile(f, []byte("edited by hand"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	later := time.Now().Add(time.Minute)
-	if err := os.Chtimes(f, later, later); err != nil {
-		t.Fatal(err)
-	}
 	a := &TUIClientAdapter{snapshots: sm, workspace: ws}
 	_, err := a.UndoLastChange()
-	if err == nil || !strings.Contains(err.Error(), "a.txt changed after celeste's last change to it") {
+	if err == nil || !strings.Contains(err.Error(), "a.txt changed after celeste's last change to it") || !strings.Contains(err.Error(), "/undo again to overwrite it") {
 		t.Fatalf("first /undo err = %v", err)
 	}
 	fileIs(t, f, "edited by hand")
 	if msg, err := a.UndoLastChange(); err != nil || msg != "Restored a.txt to its state before change 1." {
 		t.Fatalf("confirmed /undo = %q, %v", msg, err)
+	}
+	fileIs(t, f, "v0")
+}
+
+// Review M1: the confirmation is for the file as it was warned about. An
+// edit after the warning warns again.
+func TestChatUndoWarnsAgainWhenTheFileChangesAfterTheWarning(t *testing.T) {
+	checkpointHome(t)
+	ws := t.TempDir()
+	f := filepath.Join(ws, "a.txt")
+	if err := os.WriteFile(f, []byte("v0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sm := checkpoints.NewSnapshotManager("chat-5")
+	checkpointed(t, sm, f, "call_1", "v1")
+	a := &TUIClientAdapter{snapshots: sm, workspace: ws}
+	for _, edit := range []string{"hand edit 1", "hand edit 2"} {
+		if err := os.WriteFile(f, []byte(edit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.UndoLastChange(); err == nil {
+			t.Fatalf("/undo after %q overwrote it", edit)
+		}
+		fileIs(t, f, edit)
+	}
+}
+
+// Review M2: undoing the creation of a file changed since says the file
+// will be deleted.
+func TestChatUndoOfAChangedCreationSaysItDeletes(t *testing.T) {
+	checkpointHome(t)
+	ws := t.TempDir()
+	sm := checkpoints.NewSnapshotManager("chat-6")
+	f := filepath.Join(ws, "new.txt")
+	checkpointed(t, sm, f, "call_1", "x")
+	if err := os.WriteFile(f, []byte("x and more by hand"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &TUIClientAdapter{snapshots: sm, workspace: ws}
+	if _, err := a.UndoLastChange(); err == nil || !strings.Contains(err.Error(), "new.txt changed after celeste created it") || !strings.Contains(err.Error(), "/undo again to delete it") {
+		t.Fatalf("/undo err = %v", err)
+	}
+	if msg, err := a.UndoLastChange(); err != nil || msg != "Undid the creation of new.txt (deleted it)." {
+		t.Fatalf("confirmed /undo = %q, %v", msg, err)
+	}
+}
+
+// Review I1: while a write (a background subagent's) is between its
+// checkpoint and its commit, /undo refuses and changes nothing.
+func TestChatUndoWaitsForAWriteInProgress(t *testing.T) {
+	checkpointHome(t)
+	ws := t.TempDir()
+	f := filepath.Join(ws, "a.txt")
+	if err := os.WriteFile(f, []byte("v0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sm := checkpoints.NewSnapshotManager("chat-7")
+	checkpointed(t, sm, f, "call_1", "v1")
+	c, err := sm.Checkpoint(filepath.Join(ws, "b.txt"), "call_bg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &TUIClientAdapter{snapshots: sm, workspace: ws}
+	if _, err := a.UndoLastChange(); err == nil || !strings.Contains(err.Error(), "in progress") {
+		t.Fatalf("/undo during a write: %v", err)
+	}
+	fileIs(t, f, "v1")
+	if err := c.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UndoLastChange(); err != nil {
+		t.Fatal(err)
 	}
 	fileIs(t, f, "v0")
 }

@@ -176,11 +176,13 @@ func runRevertCommand(args []string) {
 	}
 }
 
-const revertUsage = `Usage: celeste revert <file> [--session <id>]
+const revertUsage = `Usage: celeste revert <file> [--session <id>] [--force]
 
 Restores a file from its newest checkpoint (taken before each write_file,
 patch_file and splice_file) in the given session, or in the latest session
-that changed it, and drops that checkpoint: run it again to go back further.`
+that changed it, and drops that checkpoint: run it again to go back further.
+When the file changed after that session's change to it (an editor, a
+formatter, a command), it is left alone unless --force.`
 
 // revertCommand is `celeste revert <file> [--session id]` (2.0 F4): 0 when
 // the file was restored, 1 when there is nothing to restore or it failed,
@@ -192,6 +194,7 @@ func revertCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	var file, session string
+	force := false
 	files := false // after "--" every argument is a file
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -201,6 +204,8 @@ func revertCommand(args []string, stdout, stderr io.Writer) int {
 		case !files && (a == "--help" || a == "-h" || a == "-help"):
 			fmt.Fprintln(stdout, revertUsage)
 			return 0
+		case !files && (a == "--force" || a == "-force"):
+			force = true
 		case !files && (a == "--session" || a == "-session"):
 			if i+1 >= len(args) {
 				return usageErr("--session needs a session ID")
@@ -228,7 +233,16 @@ func revertCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error resolving path: %v\n", err)
 		return 1
 	}
-	sid, e, err := checkpoints.RevertFile(checkpoints.Root(), abs, session)
+	check := func(e checkpoints.Entry) error {
+		if force {
+			return nil
+		}
+		if _, changed, err := checkpoints.Changed(e); err != nil || !changed {
+			return err
+		}
+		return outsideChangeError(file, e, "run again with --force")
+	}
+	sid, e, err := checkpoints.RevertFile(checkpoints.Root(), abs, session, check)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1

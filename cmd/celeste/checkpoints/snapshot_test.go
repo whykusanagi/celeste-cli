@@ -2,6 +2,7 @@ package checkpoints
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,7 +20,13 @@ import (
 // snap takes a checkpoint with no message ID (the tests that only need the
 // backup).
 func snap(sm *SnapshotManager, path string) error {
-	_, err := sm.Checkpoint(path, "")
+	c, err := sm.Checkpoint(path, "")
+	if err == nil {
+		// Closed without a Commit: the test writes (or not) itself.
+		sm.mu.Lock()
+		delete(sm.open, c)
+		sm.mu.Unlock()
+	}
 	return err
 }
 
@@ -177,9 +184,10 @@ func TestRewindTo(t *testing.T) {
 	f := filepath.Join(dir, "a.txt")
 	write(t, f, "v0")
 	for i, id := range []string{"call_1", "call_2", "call_3"} {
-		_, err := sm.Checkpoint(f, id)
+		c, err := sm.Checkpoint(f, id)
 		require.NoError(t, err)
 		write(t, f, fmt.Sprintf("v%d", i+1))
+		require.NoError(t, c.Commit())
 	}
 	undone, err := sm.RewindTo("call_2")
 	require.NoError(t, err)
@@ -448,6 +456,8 @@ func TestBackupNamesOfCollidingPathsDiffer(t *testing.T) {
 	assert.NotEqual(t, ca.Entry().Backup, cb.Entry().Backup)
 	write(t, a, "aa edited")
 	write(t, b, "bb edited")
+	require.NoError(t, ca.Commit())
+	require.NoError(t, cb.Commit())
 
 	_, err = sm.Revert(a)
 	require.NoError(t, err)
@@ -540,30 +550,6 @@ func TestSamePathByFileIdentity(t *testing.T) {
 	assert.False(t, samePath(f, filepath.Join(dir, "other.txt")))
 }
 
-// ModifiedAfter sees a change made after the checkpoint's write window,
-// not the tool's own write, and not a file that is gone.
-func TestModifiedAfter(t *testing.T) {
-	dir := t.TempDir()
-	f := filepath.Join(dir, "a.txt")
-	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	e := Entry{Path: f, Time: time.Now().UTC()}
-	if _, changed := ModifiedAfter(e); changed {
-		t.Fatal("the tool's own write counted as a later change")
-	}
-	later := time.Now().Add(time.Minute)
-	if err := os.Chtimes(f, later, later); err != nil {
-		t.Fatal(err)
-	}
-	if mod, changed := ModifiedAfter(e); !changed || !mod.After(e.Time) {
-		t.Fatalf("a later change was not seen: %v %v", mod, changed)
-	}
-	if _, changed := ModifiedAfter(Entry{Path: filepath.Join(dir, "gone"), Time: e.Time}); changed {
-		t.Fatal("a missing file counted as changed")
-	}
-}
-
 // M7: a file whose directory celeste cannot write (no temporary file can
 // be created there) is restored in place: the write tools could change it,
 // so /undo must be able to put it back. In place keeps the file itself
@@ -597,35 +583,152 @@ func TestRestoreWritesInPlaceWhenNoTempFileCanBeCreated(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrPermission)
 }
 
-// Smoke finding: undoing the second of two changes to a file restores it
-// (a new modification time); that is celeste's own doing, so the first
-// change, now the newest, must not read as modified after it — also in a
-// later process (the index records it).
-func TestUndoneChangeIsNotAModificationAfterTheEarlierOne(t *testing.T) {
+// commitWrite is a write tool's successful write: checkpoint, write, Commit.
+func commitWrite(t *testing.T, sm *SnapshotManager, path, content string) {
+	t.Helper()
+	c, err := sm.Checkpoint(path, "")
+	require.NoError(t, err)
+	write(t, path, content)
+	require.NoError(t, c.Commit())
+}
+
+func changed(t *testing.T, sm *SnapshotManager) bool {
+	t.Helper()
+	entries := sm.Entries()
+	require.NotEmpty(t, entries)
+	_, ch, err := Changed(entries[len(entries)-1])
+	require.NoError(t, err)
+	return ch
+}
+
+func TestCommitRecordsTheStateTheWriteLeft(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	commitWrite(t, sm, f, "hello")
+	e := sm.Entries()[0]
+	require.NotNil(t, e.After)
+	assert.Equal(t, int64(5), e.After.Size)
+	assert.Equal(t, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", e.After.SHA256)
+
+	var raw []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(read(t, filepath.Join(sm.Dir(), "index.json"))), &raw))
+	assert.Contains(t, raw[0], "after")
+	assert.False(t, changed(t, sm))
+}
+
+// Review C1, repro A: celeste edits, the user edits, celeste edits again.
+// Undoing the second edit brings back the user's edit; the next undo must
+// see that the file is not as celeste's first edit left it.
+func TestChangedSeesAUserEditBetweenTwoCelesteEdits(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	commitWrite(t, sm, f, "v1")
+	write(t, f, "v1+user")
+	commitWrite(t, sm, f, "v2")
+
+	assert.False(t, changed(t, sm), "nothing changed since celeste's last write")
+	_, err := sm.RevertLast()
+	require.NoError(t, err)
+	assert.Equal(t, "v1+user", read(t, f))
+	assert.True(t, changed(t, sm), "the user's edit is not celeste's first change")
+}
+
+// Review C1, repro B: celeste edits, the user edits, celeste's next write
+// fails (its rollback writes nothing). The user's edit stays visible.
+func TestChangedSeesAUserEditAfterAFailedWrite(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	commitWrite(t, sm, f, "v1")
+	write(t, f, "v1+user")
+	c, err := sm.Checkpoint(f, "")
+	require.NoError(t, err)
+	require.NoError(t, c.Rollback()) // the write failed before changing a byte
+	assert.Equal(t, "v1+user", read(t, f))
+	assert.Len(t, sm.Entries(), 1)
+	assert.True(t, changed(t, sm))
+}
+
+// Review I2: an edit right after celeste's write (format on save, within
+// a second) is seen; there is no time window.
+func TestChangedSeesAnImmediateOutsideEdit(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	commitWrite(t, sm, f, "v1")
+	write(t, f, "v1 formatted")
+	assert.True(t, changed(t, sm))
+}
+
+// Two celeste edits and no outside change: undo walks back with no
+// warning; a file that is gone has nothing to lose.
+func TestChangedIsFalseForCelestesOwnHistory(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	commitWrite(t, sm, f, "v1")
+	commitWrite(t, sm, f, "v2")
+	_, err := sm.RevertLast()
+	require.NoError(t, err)
+	assert.False(t, changed(t, sm))
+	require.NoError(t, os.Remove(f))
+	assert.False(t, changed(t, sm))
+}
+
+// An entry with no recorded After (its Commit never ran) counts as
+// changed: celeste cannot tell.
+func TestChangedWithoutAfterIsChanged(t *testing.T) {
 	sm, dir := store(t)
 	f := filepath.Join(dir, "a.txt")
 	write(t, f, "v0")
 	require.NoError(t, snap(sm, f))
-	write(t, f, "v1")
-	require.NoError(t, snap(sm, f))
-	write(t, f, "v2")
+	assert.True(t, changed(t, sm))
+}
 
-	// Make the first change look old, as it is when /undo comes later.
-	entries, err := readIndex(sm.Dir())
+// Review I1: while a write is between Checkpoint and Commit, undo refuses
+// instead of undoing another entry under it; a checkpoint abandoned for
+// longer than openStale no longer blocks.
+func TestUndoRefusesWhileAWriteIsInProgress(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	commitWrite(t, sm, f, "v1")
+	c, err := sm.Checkpoint(filepath.Join(dir, "b.txt"), "")
 	require.NoError(t, err)
-	entries[0].Time = entries[0].Time.Add(-time.Hour)
-	entries[1].Time = entries[1].Time.Add(-time.Hour)
-	require.NoError(t, writeIndex(sm.Dir(), entries))
+	_, err = sm.RevertLast()
+	assert.ErrorIs(t, err, errWriteInProgress)
+	_, err = sm.RewindTo("")
+	assert.Error(t, err)
+	assert.Equal(t, "v1", read(t, f))
 
+	sm.mu.Lock()
+	sm.open[c] = time.Now().Add(-openStale - time.Second)
+	sm.mu.Unlock()
 	_, err = sm.RevertLast()
 	require.NoError(t, err)
-	assert.Equal(t, "v1", read(t, f))
-	left := newSnapshotManagerWithBase(sm.Dir()).Entries()
-	require.Len(t, left, 1)
-	_, changed := ModifiedAfter(left[0])
-	assert.False(t, changed, "celeste's own restore counted as a change made outside it")
 
-	var raw []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(read(t, filepath.Join(sm.Dir(), "index.json"))), &raw))
-	assert.Contains(t, raw[0], "restored")
+	c2, err := sm.Checkpoint(f, "")
+	require.NoError(t, err)
+	require.NoError(t, c2.Commit())
+	_, err = sm.RevertLast()
+	require.NoError(t, err, "a committed write no longer blocks")
+}
+
+// RevertLastIf's check runs under the store's lock on the entry it would
+// undo; an error from it undoes nothing.
+func TestRevertLastIfCheckRefuses(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	commitWrite(t, sm, f, "v1")
+	no := errors.New("no")
+	e, err := sm.RevertLastIf(func(got Entry) error {
+		assert.Equal(t, f, got.Path)
+		return no
+	})
+	assert.ErrorIs(t, err, no)
+	assert.Equal(t, f, e.Path)
+	assert.Equal(t, "v1", read(t, f))
+	assert.Len(t, sm.Entries(), 1)
 }

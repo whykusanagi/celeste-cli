@@ -122,3 +122,23 @@ func TestRevertCommandArguments(t *testing.T) {
 		t.Fatalf("--help: %d %q", code, out)
 	}
 }
+
+// Review M5: celeste revert does not overwrite a change made after the
+// session's change (by hand, a formatter) unless --force.
+func TestRevertCommandRefusesAnOutsideChangeWithoutForce(t *testing.T) {
+	checkpointHome(t)
+	f := filepath.Join(t.TempDir(), "a.txt")
+	changeIn(t, "chat-1", f, "v0", "v1")
+	if err := os.WriteFile(f, []byte("edited by hand"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := revert(t, f)
+	if code != 1 || !strings.Contains(errOut, "changed after") || !strings.Contains(errOut, "--force") {
+		t.Fatalf("revert = %d %q", code, errOut)
+	}
+	fileIs(t, f, "edited by hand")
+	if code, out, errOut := revert(t, "--force", f); code != 0 || !strings.Contains(out, "Reverted") {
+		t.Fatalf("revert --force = %d %q %q", code, out, errOut)
+	}
+	fileIs(t, f, "v0")
+}

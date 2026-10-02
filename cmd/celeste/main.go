@@ -98,7 +98,7 @@ Commands:
   forget <name>           Delete a memory
   resume [session-id]     Resume a previous session
   plan [show]             Show current plan from .celeste/plan.md
-  revert <file> [--session id]  Restore a file from its last checkpoint
+  revert <file> [--session id] [--force]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
   help                    Show this help message
   version                 Show version information
@@ -286,11 +286,12 @@ type TUIClientAdapter struct {
 
 	// snapshots is the chat session's checkpoint store, for /undo and
 	// /diff (2.0 F4); nil turns both off. workspace relativizes their
-	// paths. undoConfirm is the change a first /undo refused to undo
-	// because its file changed afterwards; /undo again undoes it.
+	// paths. undoConfirm is what a first /undo refused to undo because
+	// the file changed afterwards; /undo again undoes it while the file is
+	// still as warned about.
 	snapshots   *checkpoints.SnapshotManager
 	workspace   string
-	undoConfirm *checkpoints.Entry
+	undoConfirm *undoWarning
 
 	// pruned holds tool results that context compaction removed (#174);
 	// created on first use.
