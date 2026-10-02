@@ -367,6 +367,12 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	}
 	registry := env.Registry
 	checker := env.Checker
+	// A typed subagent (2.0 W4e): its extra tools join its own registry,
+	// then the filter keeps only what its type allows.
+	for _, t := range options.ExtraTools {
+		registry.RegisterWithModes(t, tools.ModeAgent, tools.ModeChat)
+	}
+	registry.Retain(options.ToolFilter)
 
 	// Fail fast rather than no-opping. `celeste agent` never wires an
 	// interactive prompt, so every tool that resolves to Ask is denied — and the
@@ -413,7 +419,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Build the system prompt: persona (if enabled) with the voice boundary,
 	// then the agent contract, then project context. Agent mode never carries
 	// the chat task rules or confirm mode (#170).
-	systemPrompt := env.SystemPrompt(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders)
+	systemPrompt := env.SystemPromptOpts(buildAgentSystemPrompt(options, detectEnvContext()), options.Sliders, options.PersonaLevel)
 
 	client.SetSystemPrompt(systemPrompt)
 

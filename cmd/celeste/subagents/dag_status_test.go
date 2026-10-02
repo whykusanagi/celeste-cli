@@ -317,7 +317,7 @@ func TestSpawnAgentPersonaOverrideReachesRunNotGoal(t *testing.T) {
 	if gotRun.sliders.Flirt != 0 || gotRun.sliders.Register != 0 {
 		t.Errorf("override values lost: flirt=%d register=%d", gotRun.sliders.Flirt, gotRun.sliders.Register)
 	}
-	if opts := m.buildAgentOptions("/tmp", 0, nil, gotRun.sliders, "", nil); opts.Sliders != gotRun.sliders {
+	if opts := m.buildAgentOptions("/tmp", 0, nil, gotRun.sliders, "", nil, ""); opts.Sliders != gotRun.sliders {
 		t.Error("buildAgentOptions dropped the slider override")
 	}
 }

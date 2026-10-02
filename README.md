@@ -361,13 +361,14 @@ You never call these directly — you describe multi-step work in chat and Celes
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `goal` | string | **(required)** What the subagent should accomplish |
+| `type` | string | `explore` (read-only tools, no persona, small model), `review` (read and code-graph tools, no persona) or `general` (default: every tool and the persona). Every type returns JSON `{summary, findings, files}`; see [docs/SUBAGENTS.md](docs/SUBAGENTS.md) |
 | `workspace` | string | Working directory (defaults to current workspace) |
 | `task_id` | string | Unique ID for DAG dependency references |
 | `depends_on` | array of strings | Task IDs that must finish before this subagent starts |
 | `max_turns` | integer | Max agent turns (default 20; raise for complex tasks, lower for simple lookups) |
 | `isolate_worktree` | boolean | Run in its own git worktree so concurrent subagents can't conflict on the same files; merged back on success, removed afterward. Requires a git repo. Default `false`. |
 | `background_after` | integer | Seconds before auto-backgrounding a slow subagent so the parent resumes immediately. Result appears in `/agents` when it finishes. `0` = foreground/blocking (default). |
-| `persona` | object | Override personality sliders (`flirt`, `warmth`, `register`, `lewdness`, `r18`) or load a named `preset` |
+| `persona` | object | Override personality sliders (`flirt`, `warmth`, `register`, `lewdness`, `r18`) or load a named `preset`. `general` only |
 
 **`post_message` parameters:**
 

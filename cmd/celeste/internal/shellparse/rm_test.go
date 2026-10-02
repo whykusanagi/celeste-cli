@@ -25,21 +25,33 @@ func TestDestructiveRmArgsRunPastAnotherRm(t *testing.T) {
 // Every word that is rm starts a check; the checks share one pass, so a
 // long line of rm words stays linear (review of cleanup-4: 40 KB took 2 s).
 func TestDestructiveRmLinearOnManyRmWords(t *testing.T) {
-	cmd := strings.Repeat("rm -r x ", 5000)
-	best := time.Hour
-	for i := 0; i < 3; i++ {
-		start := time.Now()
-		if DestructiveRm(cmd) != None {
-			t.Fatal("benign line flagged")
-		}
-		best = min(best, time.Since(start))
+	// Compare growth, not wall time, so a slow CI runner can't fail it: four
+	// times the input costs about 4x when linear and 16x when quadratic.
+	small, big := strings.Repeat("rm -r x ", 1250), strings.Repeat("rm -r x ", 5000)
+	if r := growth(func() { DestructiveRm(small) }, func() { DestructiveRm(big) }); r > 8 {
+		t.Errorf("4x the rm words took %.1fx as long; want linear (~4x, quadratic is ~16x)", r)
 	}
-	if best > 100*time.Millisecond {
-		t.Errorf("40 KB of rm words took %v, want < 100ms (quadratic took seconds)", best)
+	if DestructiveRm(big) != None {
+		t.Fatal("benign line flagged")
 	}
-	if DestructiveRm(cmd+"/") != Found {
+	if DestructiveRm(big+"/") != Found {
 		t.Error("a trailing / after many rm -r words must be found")
 	}
+}
+
+// growth is how many times longer big takes than small, each timed as the
+// best of five runs.
+func growth(small, big func()) float64 {
+	best := func(f func()) time.Duration {
+		d := time.Duration(1<<63 - 1)
+		for i := 0; i < 5; i++ {
+			start := time.Now()
+			f()
+			d = min(d, time.Since(start))
+		}
+		return max(d, time.Microsecond)
+	}
+	return float64(best(big)) / float64(best(small))
 }
 
 func BenchmarkDestructiveRmManyRmWords(b *testing.B) {

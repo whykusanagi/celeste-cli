@@ -185,6 +185,29 @@ func (r *Registry) Unregister(name string) {
 	delete(r.modes, name)
 }
 
+// Retain removes every tool keep rejects and returns how many it removed.
+// A nil keep removes nothing. A typed subagent (2.0 W4e) trims its own
+// registry with it; the tools' hidden/activated marks go with them.
+func (r *Registry) Retain(keep func(Tool) bool) int {
+	if keep == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for name, t := range r.tools {
+		if keep(t) {
+			continue
+		}
+		delete(r.tools, name)
+		delete(r.modes, name)
+		delete(r.hidden, name)
+		delete(r.activated, name)
+		n++
+	}
+	return n
+}
+
 // UnregisterByPrefix removes every tool whose name starts with prefix and
 // returns the count removed. Used to drop all tools an MCP server contributed.
 func (r *Registry) UnregisterByPrefix(prefix string) int {

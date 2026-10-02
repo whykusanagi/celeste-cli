@@ -77,6 +77,11 @@ const publicIdentity = "You are Celeste, the AI companion in the celeste command
 // official persona's wording.
 const publicHonesty = "Never say that a file was written, audio was saved or any other action happened unless a tool actually returned that result this turn."
 
+// publicPreamble is the public persona's identity line and honesty rule,
+// the part before the voice boundary. The PersonaOff level (compose.go)
+// starts with it too, in the official build as well.
+const publicPreamble = publicIdentity + "\n\n" + publicHonesty
+
 // personaSet is the four profiles a process runs with: all decrypted, or
 // all public. Never a mix.
 type personaSet struct {
@@ -178,7 +183,7 @@ func decryptPersona(fsys fs.FS, hexKey string) (*personaSet, error) {
 func publicPersona(reason error) *personaSet {
 	set := &personaSet{profiles: make(map[Profile]*PersonaProfile, len(Profiles)), reason: reason}
 	for _, p := range Profiles {
-		text := publicIdentity + "\n\n" + publicHonesty + "\n\n" + VoiceBoundary
+		text := publicPreamble + "\n\n" + VoiceBoundary
 		if p == ProfileOff {
 			text = VoiceBoundary
 		}

@@ -21,6 +21,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
@@ -265,6 +266,18 @@ type SubagentInfo struct {
 	Status  string // "waiting", "running", "completed", "failed"
 	Turns   int
 	Elapsed time.Duration
+	Type    string // explore, general or review; "" for an untyped run
+	Summary string // a typed run's result summary
+}
+
+// agentSummaryLine is a typed subagent's summary as one /agents line: its
+// first line, cut to 160 bytes on a character boundary.
+func agentSummaryLine(summary string) string {
+	line, _, more := strings.Cut(strings.TrimSpace(summary), "\n")
+	if cut := textutil.CutBytes(line, 160); cut != line || more {
+		return strings.TrimSpace(cut) + "…"
+	}
+	return line
 }
 
 // SubagentLister is an optional extension for /agents command.
@@ -1508,7 +1521,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if a.TaskID != "" {
 						line += fmt.Sprintf("  (task: %s)", a.TaskID)
 					}
+					if a.Type != "" {
+						line += "  [" + a.Type + "]"
+					}
 					sb.WriteString(line + "\n")
+					if a.Summary != "" {
+						sb.WriteString("      " + agentSummaryLine(a.Summary) + "\n")
+					}
 				}
 				sb.WriteString("\nCancel one with: /agents kill <id|name>  (e.g. the 〔name〕 shown above)\n")
 				m.chat = m.chat.AddSystemMessage(sb.String())
