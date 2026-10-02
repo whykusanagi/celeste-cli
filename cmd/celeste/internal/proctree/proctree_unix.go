@@ -11,15 +11,17 @@ import (
 	"syscall"
 )
 
-// Prepare puts cmd in a new process group and makes cancelling its context
-// kill the whole group. Call it before Start; it keeps any other
+// Start starts cmd in a new process group and makes cancelling its context
+// kill the whole group. Use it instead of cmd.Start; it keeps any other
 // SysProcAttr fields already set.
-func Prepare(cmd *exec.Cmd) {
+// cmd must come from exec.CommandContext.
+func Start(cmd *exec.Cmd) error {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
 	cmd.Cancel = func() error { return Kill(cmd) }
+	return cmd.Start()
 }
 
 // Kill sends SIGKILL to cmd's process group. A command that never started,
@@ -38,3 +40,8 @@ func Kill(cmd *exec.Cmd) error {
 	}
 	return nil
 }
+
+// Release lets go of what Start kept for Kill. A process group needs
+// nothing, so on unix it does nothing; call it anyway, after Wait and any
+// Kill, for Windows.
+func Release(cmd *exec.Cmd) {}

@@ -67,16 +67,20 @@ func runHook(ctx context.Context, def Definition, dir string, payload map[string
 	proc.Stdout, proc.Stderr = stdout, stderr
 	proc.WaitDelay = waitDelay // a child holding stdout can't hang us
 
-	runErr := proc.Run()
+	runErr := proctree.Start(proc)
+	if runErr == nil {
+		runErr = proc.Wait()
+	}
 	// Unconditional, regardless of whether ctx ever fired: a hook's shell can
 	// exit on its own while a background child still holds the group open
 	// (surfacing below as exec.ErrWaitDelay). On unix this signals -pgid after
 	// the group leader has already been reaped; the kernel can't recycle a
 	// pgid while any process in that group still exists, so the only residual
 	// risk is a brand-new, unrelated group leader that later reused this exact
-	// pid after the original group fully emptied — accepted (parity with the
-	// Windows caveat documented on proctree's Windows Kill).
+	// pid after the original group fully emptied — accepted. On Windows it
+	// terminates the hook's Job Object, which holds only the hook's tree.
 	_ = proctree.Kill(proc)
+	proctree.Release(proc)
 	if stdout.over {
 		// Applies to both protocols, including v1: 1.x had no stdout cap, so a
 		// v1 guard that floods stdout now fails closed even at exit 0 instead

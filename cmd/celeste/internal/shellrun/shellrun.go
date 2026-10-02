@@ -87,13 +87,13 @@ func Run(ctx context.Context, o Options) Result {
 	}
 	defer r.Close()
 	cmd.Stdout, cmd.Stderr = w, w
-	proctree.Prepare(cmd)
 	cmd.WaitDelay = WaitDelay // bounds the stdin copy goroutine
-	err = cmd.Start()
+	err = proctree.Start(cmd)
 	_ = w.Close()
 	if err != nil {
 		return Result{ExitCode: -1, Err: err}
 	}
+	defer proctree.Release(cmd) // after Wait, the drain and any Kill below
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(out, r)
