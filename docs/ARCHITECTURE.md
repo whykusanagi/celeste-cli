@@ -645,6 +645,16 @@ type ProviderBlocks struct {
 }
 ```
 
+### File checkpoints (2.0)
+
+`checkpoints.SnapshotManager` is one session's store: backups plus `index.json`, a JSON array of `{message_id, path, version, backup, time}` in `~/.celeste/checkpoints/<session>/`, rewritten atomically on every change under a per-session lock file. `loop.Setup` opens it for the run's `SessionID` (chat session, agent run, the MCP chat Env; `<mode>-<pid>-<start nanos>` when none is given); nested Envs (subagents, `/agent`) share their parent's.
+
+- **Timing.** `write_file`, `patch_file` and `splice_file` call `Checkpoint(path, callID)` after their input validated, immediately before writing; any failure after it calls `Rollback`, which restores the file and drops the entry. `message_id` is the tool call's ID (`tools.CallIDFromContext`, set by the loop's `runGroup` for every call).
+- **Consumers.** `/undo` (`RevertLast`, through `tui.Checkpointer`; it asks before overwriting a file modified after the change, `ModifiedAfter`), `/diff` (`ComputeDiff` + `FormatChanges`), `celeste revert` (`RevertFile`, latest session by default), `/rewind` (`RewindTo`, W4), the files-modified list for compaction (`Files`, W1/#200).
+- **Restore.** Atomic (temporary file, rename), so other hard links, ownership, extended attributes and ACLs are not kept; in place when no temporary file can be created in the file's directory.
+- **Limits.** At most 100 entries per session (the oldest is evicted with its backup); no byte limit on a backup.
+- **Retention.** The first store a process opens prunes sessions that are neither among the 20 most recently changed nor changed in the last 30 days.
+
 ### Storage Format
 
 ```
@@ -655,6 +665,8 @@ type ProviderBlocks struct {
 ├── sessions/
 │   ├── session_<id>.json    ← one file per session, auto-resumed on start
 │   └── ...
+├── checkpoints/
+│   └── <session>/           ← file backups + index.json (/undo, /diff, celeste revert)
 └── agent-runs/
     └── <run-id>/            ← agent checkpoint files (resumable)
 ```
