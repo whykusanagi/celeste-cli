@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -40,5 +42,25 @@ func TestToolImageReachesChatConverters(t *testing.T) {
 	xa := xb.convertMessages(msgs)
 	if len(xa) != 2 || len(xa[1].MultiContent) != 2 || xa[1].MultiContent[1].ImageURL.URL != want {
 		t.Errorf("xai: %+v", xa)
+	}
+}
+
+// Anthropic sends a tool result's image as a base64 image block with its
+// media type, after the tool result.
+func TestToolImageReachesAnthropic(t *testing.T) {
+	b, err := NewAnthropicBackend(&Config{APIKey: "k", Model: "claude-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []tui.ChatMessage{{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "ok",
+		Metadata: map[string]any{"type": "image", "base64": "QUJD", "filename": "shot.jpg", "format": "jpeg"}}}
+	raw, err := json.Marshal(b.convertMessages(msgs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"media_type":"image/jpeg"`, `"data":"QUJD"`, `[Image from tool result: shot.jpg]`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("missing %s in %s", want, raw)
+		}
 	}
 }
