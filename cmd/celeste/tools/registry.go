@@ -149,6 +149,10 @@ type Registry struct {
 	hidden        map[string]bool // tools hidden from the prompt until activated
 	activated     map[string]bool // tools re-activated this session by find_tools
 	discoveryMode bool            // when false, hidden/activated are ignored
+
+	// overwritten lists names Register/RegisterWithModes replaced with a
+	// different tool (builtins never should; TestBuiltinNamesAreUnique).
+	overwritten []string
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -161,20 +165,68 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register adds a tool that is available in all modes.
+// Register adds a tool that is available in all modes. It is for builtins,
+// whose names the code controls; an existing tool of that name is replaced.
+// External tools (MCP servers, JSON custom tools) use Add.
 func (r *Registry) Register(tool Tool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.tools[tool.Name()] = tool
-	r.modes[tool.Name()] = nil // nil means all modes
+	r.RegisterWithModes(tool)
 }
 
-// RegisterWithModes adds a tool that is only available in the specified modes.
+// RegisterWithModes adds a tool that is only available in the specified
+// modes (none: all modes). Like Register, it replaces a tool of that name.
 func (r *Registry) RegisterWithModes(tool Tool, modes ...RuntimeMode) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if old, ok := r.tools[tool.Name()]; ok && !sameTool(old, tool) {
+		r.overwritten = append(r.overwritten, tool.Name())
+	}
+	r.put(tool, modes)
+}
+
+// ErrToolNameTaken is returned by Add when another tool holds the name.
+var ErrToolNameTaken = errors.New("tool name already registered")
+
+// Add registers an external tool (an MCP server's, a JSON custom tool)
+// without ever replacing another (2.0 W4): a name held by a different tool
+// is ErrToolNameTaken, wrapped with the name. Re-adding the very same tool
+// (a reconnect) is a no-op success. Modes as RegisterWithModes.
+func (r *Registry) Add(tool Tool, modes ...RuntimeMode) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if old, ok := r.tools[tool.Name()]; ok && !sameTool(old, tool) {
+		return fmt.Errorf("%w: %s", ErrToolNameTaken, tool.Name())
+	}
+	r.put(tool, modes)
+	return nil
+}
+
+// put stores tool; the caller holds r.mu.
+func (r *Registry) put(tool Tool, modes []RuntimeMode) {
+	if len(modes) == 0 {
+		modes = nil // nil means all modes
+	}
 	r.tools[tool.Name()] = tool
 	r.modes[tool.Name()] = modes
+}
+
+// Overwritten lists the names Register or RegisterWithModes replaced with a
+// different tool, in order; builtins must never do that.
+func (r *Registry) Overwritten() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return slices.Clone(r.overwritten)
+}
+
+// sameTool reports whether a and b are the same tool. == on two values of
+// a type that is not comparable (a struct holding a slice or map) panics;
+// such values count as different.
+func sameTool(a, b Tool) (same bool) {
+	defer func() {
+		if recover() != nil {
+			same = false
+		}
+	}()
+	return a == b
 }
 
 // Unregister removes a tool by name. No-op if the tool is not present.
@@ -697,6 +749,7 @@ func (r *Registry) LoadCustomTools(dir string) error {
 		return fmt.Errorf("reading custom tools directory: %w", err)
 	}
 
+	var taken []error
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -721,12 +774,16 @@ func (r *Registry) LoadCustomTools(dir string) error {
 			continue
 		}
 
-		r.Register(&customToolWrapper{
+		// Add, not Register: a custom tool never replaces a builtin or
+		// another custom tool (2.0 W4); the rest of the directory loads.
+		if err := r.Add(&customToolWrapper{
 			name:        def.Name,
 			description: def.Description,
 			params:      def.Parameters,
 			command:     def.Command,
-		})
+		}); err != nil {
+			taken = append(taken, fmt.Errorf("custom tool file %s not loaded: %w", path, err))
+		}
 	}
-	return nil
+	return errors.Join(taken...)
 }

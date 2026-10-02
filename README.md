@@ -587,6 +587,26 @@ merges MCP servers you've already defined for Claude Code or Cursor
 (`~/.claude/mcp.json`, `~/.cursor/mcp.json`, project `.mcp.json`), gated behind an
 opt-in `"enabled": true` so nothing connects until you ask.
 
+A server's tools need your approval like any other non-read-only tool, even
+when the server marks them `readOnlyHint: true`: that hint is the server's own
+claim. For a server you control, add `"trusted": true` and celeste believes
+its read-only hints (those tools run without asking in default
+mode). Only your home-level configs (`~/.celeste/mcp.json`,
+`~/.claude/mcp.json`, `~/.cursor/mcp.json`) can mark a server trusted; a
+project's `.mcp.json` cannot.
+
+```json
+{
+  "mcpServers": {
+    "notes": { "command": "notes-mcp", "enabled": true, "trusted": true }
+  }
+}
+```
+
+MCP tools are named `mcp__<server>__<tool>` and never replace another tool:
+if two servers' names sanitize to the same tool name, the server whose name
+sorts first keeps it and celeste warns about the other.
+
 Optionally, install the [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)
 companion for the persona-routed skill command wrappers (`/celeste-review`,
 `/celeste-search`, `/celeste-graph`, `/celeste-context`):

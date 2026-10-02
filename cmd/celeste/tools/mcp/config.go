@@ -38,6 +38,12 @@ type ServerConfig struct {
 	// Values support ${VAR} expansion from the host environment.
 	Env map[string]string `json:"env,omitempty"`
 
+	// Trusted honours this server's readOnlyHint, which auto-approves the
+	// tools it marks read-only. Set it only for servers you control. It is
+	// read only from the home-level configs (GlobalConfigPaths): a
+	// repository's .mcp.json cannot vouch for its own server (2.0 W4).
+	Trusted bool `json:"trusted,omitempty"`
+
 	// Origin is the absolute path of the config file this server was loaded
 	// from. Set by the discovery/merge layer, never parsed from JSON. Used by
 	// the /mcp panel to show provenance.
