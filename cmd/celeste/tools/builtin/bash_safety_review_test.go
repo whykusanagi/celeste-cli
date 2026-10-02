@@ -56,6 +56,39 @@ func TestCheckDangerousCommand_ParserDisagreements(t *testing.T) {
 	}
 }
 
+// I3: with no TTY rm never prompts, so -r alone removes as much as -rf on
+// the paths that matter most; GNU long-option prefixes count.
+func TestCheckDangerousCommand_RecursiveWithoutForce(t *testing.T) {
+	for _, cmd := range []string{
+		`rm -r ~`,
+		`rm -R $HOME`,
+		`rm -r /usr`,
+		`rm -r /`,
+		`rm --recursive ~/`,
+		`rm -r ~root`,
+		`rm -r /*`,
+		`rm --rec --for /opt/x`,
+		`rm --recur --forc /opt/x`,
+		`rm --r --f /opt/x`,
+		`rm --recursive /etc`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("not blocked: %s", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		`rm -r ./build`,
+		`rm -r node_modules`,
+		`rm -r /opt/app/cache`, // deep path without -f: still needs force
+		`rm --recursive dist`,
+		`rm -r ~/project/build`,
+	} {
+		if r := checkDangerousCommand(cmd); r != "" {
+			t.Errorf("benign blocked (%s): %s", r, cmd)
+		}
+	}
+}
+
 // M1: nesting past the walker's depth has its own reason.
 func TestCheckDangerousCommand_TooDeepReason(t *testing.T) {
 	cmd := "true"

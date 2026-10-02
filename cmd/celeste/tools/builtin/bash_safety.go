@@ -166,9 +166,12 @@ func destructiveRm(command string) shellparse.Result {
 	})
 }
 
-// rmDestructive: rm's arguments ask for a recursive (-r, -R, --recursive)
-// and forced (-f, --force) delete, flags anywhere, and at least one target
-// is a system or home path.
+// rmDestructive: rm's arguments ask for a recursive delete (-r, -R,
+// --recursive or a GNU prefix of it such as --rec) of a path that matters.
+// A bash tool call runs without a TTY, so rm never prompts and -r alone
+// removes as much as -rf: the root, a home directory and any top-level
+// directory are refused without -f. Deeper absolute paths are refused only
+// with -f (-f, --force or a prefix such as --for), as before.
 func rmDestructive(args []string) bool {
 	recursive, force := false, false
 	var targets []string
@@ -185,11 +188,11 @@ func rmDestructive(args []string) bool {
 			targets = append(targets, a)
 		case a == "--":
 			endOfFlags = true
-		case a == "--recursive":
-			recursive = true
-		case a == "--force":
-			force = true
 		case strings.HasPrefix(a, "--"):
+			// GNU takes any unambiguous prefix: --r.. is only --recursive
+			// and --f.. only --force among rm's long options.
+			recursive = recursive || strings.HasPrefix("--recursive", a)
+			force = force || strings.HasPrefix("--force", a)
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			recursive = recursive || strings.ContainsAny(a, "rR")
 			force = force || strings.Contains(a, "f")
@@ -197,11 +200,11 @@ func rmDestructive(args []string) bool {
 			targets = append(targets, a)
 		}
 	}
-	if !recursive || !force {
+	if !recursive {
 		return false
 	}
 	for _, t := range targets {
-		if systemOrHomePath(t) {
+		if criticalPath(t) || force && systemOrHomePath(t) {
 			return true
 		}
 	}
@@ -212,6 +215,15 @@ func rmDestructive(args []string) bool {
 func isShellRedirect(w string) bool {
 	t := strings.TrimLeft(w, "0123456789&")
 	return strings.HasPrefix(t, ">") || strings.HasPrefix(t, "<")
+}
+
+// criticalPath: the root, a home directory itself, or a top-level
+// directory (/usr, /etc, /*): what rm -r alone must never get.
+func criticalPath(t string) bool {
+	if strings.HasPrefix(t, "/") {
+		return strings.Count(path.Clean(t), "/") <= 1
+	}
+	return systemOrHomePath(t)
 }
 
 // systemOrHomePath: any absolute path, or a home directory itself (~,

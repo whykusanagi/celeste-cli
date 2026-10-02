@@ -83,7 +83,7 @@ func TestCheckDangerousCommand_BenignRmAllowed(t *testing.T) {
 		`rm -r ./old`,
 		`rm file.txt`,
 		`rm -rf *.o`,
-		`git rm -r --cached /usr-docs`,
+		`git rm -r --cached docs/old`,
 		`echo "remove with rm -r -f only in build"`,
 		`grep -r rm .`,
 		`ls -rf /usr`,
