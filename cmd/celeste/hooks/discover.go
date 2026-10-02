@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // maxSourceBytes caps how much of a hook or grimoire file is read.
@@ -284,20 +285,9 @@ func refuseSymlinkedRepoComponents(path, root string) error {
 	return nil
 }
 
-// canonical resolves symlinks when possible. It is used only to recognise
-// the global files, never as a trust key.
-func canonical(p string) string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		abs = p
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return real
-	}
-	return abs
-}
-
-func samePath(a, b string) bool { return canonical(a) == canonical(b) }
+// samePath is pathutil.Same. It is used only to recognise the global
+// files, never as a trust key.
+func samePath(a, b string) bool { return pathutil.Same(a, b) }
 
 func fileExists(p string) bool {
 	info, err := os.Stat(p)

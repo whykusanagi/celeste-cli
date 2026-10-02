@@ -328,5 +328,5 @@ func (c *chatClaims) observe(ev loop.Event) {
 // the mode (2.0 W3).
 func (c *chatClaims) strip(text string) string {
 	text = rules.StripUnbackedAudioClaim(text, c.tts)
-	return llm.StripUnbackedSpawnClaim(text, c.spawn)
+	return rules.StripUnbackedSpawnClaim(text, c.spawn)
 }
