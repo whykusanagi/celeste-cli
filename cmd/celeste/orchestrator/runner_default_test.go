@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,17 +75,17 @@ func TestOrchestratorLanesSendTheOffPersona(t *testing.T) {
 				fakeprovider.Turn{Text: "1. Address the review"},
 				fakeprovider.Turn{Text: "TASK_COMPLETE: revised"},
 			)
-			main := fakeprovider.NewOpenAI(t,
+			reviewer := fakeprovider.NewOpenAI(t,
 				fakeprovider.Turn{Text: "1. Review it"},
 				fakeprovider.Turn{Text: `TASK_COMPLETE: [{"file":"main.go","line":1,"severity":"high","description":"broken"}]`},
 			)
-			cfg := fakeOrchCfg(main)
+			cfg := fakeOrchCfg(reviewer)
 			cfg.Orchestrator = &config.OrchestratorConfig{DebateRounds: 1, Lanes: map[string]config.LaneConfig{
 				"code": {Primary: "fake-primary", PrimaryBaseURL: primary.BaseURL(), PrimaryAPIKey: "pk", Reviewer: "fake-model"},
 			}}
 			runOrch(t, New(cfg), "fix the bug in main.go")
 
-			reqs := append(primary.Requests(), main.Requests()...)
+			reqs := slices.Concat(primary.Requests(), reviewer.Requests())
 			if len(reqs) != 6 {
 				t.Fatalf("got %d requests, want 6 (primary, defense, reviewer)", len(reqs))
 			}

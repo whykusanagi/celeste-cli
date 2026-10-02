@@ -82,4 +82,7 @@ func TestRealPersonaOffLevel(t *testing.T) {
 	if strings.Contains(got, "When I'm working in the terminal") {
 		t.Error("off carries cli_conduct.md")
 	}
+	if strings.Contains(got, mustProfile(ProfileFull).SystemPrompt) {
+		t.Error("off carries the full profile") // never print persona text
+	}
 }
