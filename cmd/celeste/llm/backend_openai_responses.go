@@ -64,14 +64,14 @@ func (b *ResponsesBackend) request(messages []tui.ChatMessage, tools []tui.Skill
 	// store=false keeps nothing server side, so a reasoning model's items
 	// must come back encrypted to be replayed (ruling 2). Only reasoning
 	// models accept the include; others answer 400.
-	if responsesReasoningModel(b.config.Model) {
+	if openAIReasoningModel(b.config.Model) {
 		req.Include = []openai.ResponseInclude{openai.ResponseIncludeReasoningEncryptedContent}
 	}
 	if t := responsesTools(tools); len(t) > 0 {
 		req.Tools = t
 		req.ToolChoice = "auto"
 	}
-	if effort := responsesEffort(b.config.Model, b.thinkingConfig); effort != "" {
+	if effort := openAIEffort(b.config.Model, b.thinkingConfig); effort != "" {
 		req.Reasoning = &openai.ResponseReasoning{Effort: effort}
 	}
 	return req, replayed
