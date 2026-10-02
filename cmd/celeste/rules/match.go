@@ -157,15 +157,30 @@ func (m *Matcher) ToolResult(name string, isError bool) {
 		return
 	}
 	m.facts.seq++
-	switch name {
-	case "generate_speech":
+	switch {
+	case name == "generate_speech":
 		m.facts.TTSRan = true
-	case "write_file", "patch_file", "splice_file":
+	case IsEdit(name):
 		m.facts.editSeq = m.facts.seq
-	case "bash":
+	case IsCheck(name):
 		m.facts.checkSeq = m.facts.seq
 	}
 }
+
+// IsEdit reports a tool that changes a file. An edit with no successful
+// check after it leaves the work unverified (task-complete-before-verify,
+// and the watchdog's unverified heuristic).
+func IsEdit(tool string) bool {
+	switch tool {
+	case "write_file", "patch_file", "splice_file":
+		return true
+	}
+	return false
+}
+
+// IsCheck reports a tool whose successful run counts as checking the work
+// (bash: a build, a test run).
+func IsCheck(tool string) bool { return tool == "bash" }
 
 // fire applies the guard and the repeat policy, and records the fire.
 func (m *Matcher) fire(r *Rule, h Hit) (Hit, bool) {

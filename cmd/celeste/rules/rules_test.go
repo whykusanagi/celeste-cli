@@ -455,3 +455,15 @@ func TestDetectorsMatchTheBuiltins(t *testing.T) {
 		}
 	}
 }
+
+// The edit and check tables are shared with the watchdog (steer).
+func TestIsEditIsCheck(t *testing.T) {
+	for _, tool := range []string{"write_file", "patch_file", "splice_file"} {
+		if !IsEdit(tool) || IsCheck(tool) {
+			t.Errorf("%s: edit", tool)
+		}
+	}
+	if !IsCheck("bash") || IsEdit("bash") || IsEdit("read_file") || IsCheck("read_file") {
+		t.Error("bash is the check; read_file is neither")
+	}
+}
