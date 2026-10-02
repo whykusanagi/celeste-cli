@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
 )
 
 // snap takes a checkpoint with no message ID (the tests that only need the
@@ -315,8 +316,8 @@ func TestConcurrentCheckpointsPastTheCap(t *testing.T) {
 func TestSamePath(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "a.txt")
-	assert.True(t, samePath(f, filepath.Join(dir, ".", "a.txt")))
-	assert.False(t, samePath(f, filepath.Join(dir, "b.txt")))
+	assert.True(t, pathutil.Same(f, filepath.Join(dir, ".", "a.txt")))
+	assert.False(t, pathutil.Same(f, filepath.Join(dir, "b.txt")))
 }
 
 // A hand-edited index cannot make a restore read, or a cleanup delete, a
@@ -540,14 +541,14 @@ func TestSamePathByFileIdentity(t *testing.T) {
 	f := filepath.Join(dir, "Name.txt")
 	write(t, f, "x")
 	if _, err := os.Stat(filepath.Join(dir, "name.txt")); err == nil {
-		assert.True(t, samePath(f, filepath.Join(dir, "name.txt")), "case-insensitive volume")
+		assert.True(t, pathutil.Same(f, filepath.Join(dir, "name.txt")), "case-insensitive volume")
 	}
 	link := filepath.Join(dir, "link.txt")
 	if err := os.Link(f, link); err != nil {
 		t.Skipf("hard links unavailable: %v", err)
 	}
-	assert.True(t, samePath(f, link))
-	assert.False(t, samePath(f, filepath.Join(dir, "other.txt")))
+	assert.True(t, pathutil.Same(f, link))
+	assert.False(t, pathutil.Same(f, filepath.Join(dir, "other.txt")))
 }
 
 // M7: a file whose directory celeste cannot write (no temporary file can
