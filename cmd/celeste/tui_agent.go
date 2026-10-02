@@ -339,7 +339,6 @@ func (a *TUIClientAdapter) currentAgentConfig() *config.Config {
 		cfg.APIKey = current.APIKey
 		cfg.BaseURL = current.BaseURL
 		cfg.Model = current.Model
-		cfg.SkipPersonaPrompt = current.SkipPersonaPrompt
 		cfg.SimulateTyping = current.SimulateTyping
 		cfg.TypingSpeed = current.TypingSpeed
 		cfg.GoogleCredentialsFile = current.GoogleCredentialsFile

@@ -376,3 +376,52 @@ func TestLoadNamedAppliesTheNewTypingDefaultAfterMigration(t *testing.T) {
 	data, _ := os.ReadFile(NamedConfigPath("envtest"))
 	assert.NotContains(t, string(data), "typing_speed", "the file was rewritten once")
 }
+
+// W5 ruling 18: skip_persona_prompt: true is removed, with one note.
+func TestMigrateDropsSkipPersonaPrompt(t *testing.T) {
+	in := []byte(`{"api_key": "k", "skip_persona_prompt": true}`)
+	out, notes, changed := migrateLegacyKeys(in)
+	require.True(t, changed)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "removed skip_persona_prompt")
+	assert.Contains(t, notes[0], "MIGRATING-2.0.md")
+	after := compactValues(t, out)
+	assert.NotContains(t, after, "skip_persona_prompt")
+	assert.Equal(t, `"k"`, after["api_key"])
+}
+
+// false changed nothing, so no config is rewritten for it: json ignores the
+// unknown key, and the next save drops it.
+func TestMigrateLeavesAFalseSkipPersonaPromptAlone(t *testing.T) {
+	in := []byte(`{"api_key": "k", "skip_persona_prompt": false}`)
+	out, notes, changed := migrateLegacyKeys(in)
+	assert.False(t, changed)
+	assert.Empty(t, notes)
+	assert.Equal(t, in, out)
+	var cfg Config
+	require.NoError(t, json.Unmarshal(in, &cfg))
+}
+
+// Review Focus 3: loading a 1.x profile that skipped the persona warns once
+// and saves the file without the key.
+func TestLoadNamedDropsSkipPersonaPromptOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var warned []string
+	orig := MigrationWarn
+	MigrationWarn = func(m string) { warned = append(warned, m) }
+	t.Cleanup(func() { MigrationWarn = orig })
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste"), 0o700))
+	path := NamedConfigPath("do-agent")
+	require.NoError(t, os.WriteFile(path, []byte(`{"base_url": "https://agent.example/api/v1", "skip_persona_prompt": true}`), 0o600))
+
+	for i := 0; i < 2; i++ {
+		_, err := LoadNamed("do-agent")
+		require.NoError(t, err)
+	}
+	require.Len(t, warned, 1)
+	assert.Contains(t, warned[0], "removed skip_persona_prompt")
+	onDisk, _ := os.ReadFile(path)
+	assert.NotContains(t, string(onDisk), "skip_persona_prompt")
+}

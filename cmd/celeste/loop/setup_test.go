@@ -39,7 +39,7 @@ func write(t *testing.T, path, body string) {
 }
 
 func testCfg() *config.Config {
-	return &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", SkipPersonaPrompt: true}
+	return &config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1", Model: "fake-model"}
 }
 
 // warnings collects what Setup (and later its hooks) report.
@@ -159,7 +159,7 @@ func TestSetupPermissionsMalformedWarns(t *testing.T) {
 func TestSetupChatPromptMatchesChatComposition(t *testing.T) {
 	setupHome(t)
 	env, _ := mustSetup(t, ModeChat, t.TempDir())
-	if got, want := env.SystemPrompt("", nil), prompts.GetSystemPromptWithContext(true, env.ProjectContext, env.GitSnapshot); got != want {
+	if got, want := env.SystemPrompt("", nil), prompts.GetSystemPromptWithContext(env.ProjectContext, env.GitSnapshot); got != want {
 		t.Fatalf("chat prompt differs from the TUI's composition:\n%s\n---\n%s", got, want)
 	}
 	if env.ToolMode != tools.ModeChat {

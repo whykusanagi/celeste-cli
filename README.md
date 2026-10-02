@@ -794,7 +794,6 @@ Celeste CLI uses three config files in `~/.celeste/`:
   "base_url": "https://api.x.ai/v1",
   "model": "grok-4.20-0309-non-reasoning",
   "timeout": 60,
-  "skip_persona_prompt": false,
   "simulate_typing": true,
   "typing_speed": 60
 }
@@ -849,7 +848,6 @@ celeste config --show
 celeste config --set-key sk-xxx
 celeste config --set-url https://api.openai.com/v1
 celeste config --set-model gpt-4o-mini
-celeste config --skip-persona true
 celeste config --simulate-typing true
 celeste config --typing-speed 60
 
@@ -1466,17 +1464,6 @@ OPENAI_API_KEY=your-key go test ./cmd/celeste/llm -run TestOpenAI_FunctionCallin
 # If provider doesn't support skills, switch to OpenAI or Grok
 celeste config --set-url https://api.openai.com/v1
 celeste config --set-key sk-openai-key
-```
-
-### Persona Prompt Issues
-
-**Symptom:** Celeste doesn't respond with personality, or endpoint errors
-
-**Cause:** Your endpoint might already have the Celeste persona embedded (e.g., DigitalOcean agent)
-
-**Solution:**
-```bash
-celeste config --skip-persona true
 ```
 
 ### Streaming Looks Choppy

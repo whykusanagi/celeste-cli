@@ -140,7 +140,6 @@ Configuration:
                                           Set the chat's tool-loop turn cap
   celeste config --set-context-limit <tokens>
                                           Set the context window (0 = model default)
-  celeste config --skip-persona <bool>   Skip persona prompt injection
 
 Skills:
   celeste skills --list                  List available skills
@@ -341,8 +340,7 @@ type TUIClientAdapter struct {
 // systemPrompt composes the chat system prompt for the current config,
 // including the session's project context.
 func (a *TUIClientAdapter) systemPrompt() string {
-	skip := a.baseConfig != nil && a.baseConfig.SkipPersonaPrompt
-	return prompts.GetSystemPromptWithContext(skip, a.projectContext, a.gitSnapshot)
+	return prompts.GetSystemPromptWithContext(a.projectContext, a.gitSnapshot)
 }
 
 // GetSkills implements tui.LLMClient.
@@ -442,11 +440,7 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 
 	// Recompose the prompt for the new config, keeping the project context.
 	a.client.SetSystemPrompt(a.systemPrompt())
-	if !cfg.SkipPersonaPrompt {
-		tui.LogInfo("✓ Celeste persona prompt re-injected after endpoint switch")
-	} else {
-		tui.LogInfo("  Persona prompt skipped (SkipPersonaPrompt = true)")
-	}
+	tui.LogInfo("✓ Celeste persona prompt re-injected after endpoint switch")
 
 	// Log the switch with masked API key
 	maskedKey := "none"
@@ -759,9 +753,6 @@ func (a *TUIClientAdapter) HandoffContext(ctx context.Context, msgs []tui.ChatMe
 // RefreshSystemPrompt recomposes and re-injects the system prompt.
 // Called after /confirm, /user, or other prompt-affecting changes.
 func (a *TUIClientAdapter) RefreshSystemPrompt() {
-	if a.baseConfig != nil && a.baseConfig.SkipPersonaPrompt {
-		return
-	}
 	a.client.SetSystemPrompt(a.systemPrompt())
 	tui.LogInfo("✓ System prompt refreshed (confirm/user/persona change)")
 }
@@ -781,7 +772,7 @@ func runConfigCommand(args []string) {
 	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Deprecated: use --set-max-tool-iterations")
 	setContextLimit := fs.Int("set-context-limit", -1, "Set the context window in tokens (0 clears it and uses the model default). Required for local models, whose window celeste cannot know")
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
-	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
+	skipPersona := fs.String("skip-persona", "", "Removed in 2.0 (see MIGRATING-2.0.md)")
 	simulateTyping := fs.String("simulate-typing", "", "Simulate typing (true/false)")
 	typingSpeed := fs.Int("typing-speed", 0, "Typing speed in chars/sec (1-1000, default 60)")
 
@@ -803,6 +794,10 @@ func runConfigCommand(args []string) {
 	_ = fs.Parse(args)
 
 	if err := setModeError(*setMode); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+	if err := skipPersonaError(*skipPersona); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
@@ -939,11 +934,6 @@ func runConfigCommand(args []string) {
 		changed = true
 		fmt.Println("xAI Management API key updated (for Collections)")
 	}
-	if *skipPersona != "" {
-		cfg.SkipPersonaPrompt = strings.ToLower(*skipPersona) == "true"
-		changed = true
-		fmt.Printf("Skip persona prompt: %v\n", cfg.SkipPersonaPrompt)
-	}
 	if *simulateTyping != "" {
 		cfg.SimulateTyping = strings.ToLower(*simulateTyping) == "true"
 		changed = true
@@ -1066,7 +1056,6 @@ func runConfigCommand(args []string) {
 		fmt.Printf("  API URL:           %s\n", cfg.BaseURL)
 		fmt.Printf("  Model:             %s\n", cfg.Model)
 		fmt.Printf("  API Key:           %s\n", maskKey(cfg.APIKey))
-		fmt.Printf("  Skip Persona:      %v\n", cfg.SkipPersonaPrompt)
 		fmt.Printf("  Simulate Typing:   %v\n", cfg.SimulateTyping)
 		fmt.Printf("  Typing Speed:      %d chars/sec\n", cfg.TypingSpeed)
 		if providers.OrchestratesServerSide(providers.DetectProvider(cfg.BaseURL), cfg.Model) {
@@ -1125,11 +1114,10 @@ func createConfigTemplate(name string) error {
 	// baseURL/model, when set, win over the registry (for non-registry templates or
 	// intentional divergence like DigitalOcean's per-agent URL).
 	type override struct {
-		provider    string
-		baseURL     string
-		model       string
-		timeout     int
-		skipPersona bool
+		provider string
+		baseURL  string
+		model    string
+		timeout  int
 	}
 	templates := map[string]override{
 		"openai":       {provider: "openai", timeout: 60},
@@ -1137,7 +1125,7 @@ func createConfigTemplate(name string) error {
 		"venice":       {provider: "venice", timeout: 60},
 		"sakana":       {provider: "sakana", timeout: 300}, // conductor: fan-out width is per-request, so latency is variable by design. 90s was measurably too low — a substantial prompt died at that ceiling.
 		"elevenlabs":   {provider: "elevenlabs", model: "eleven_multilingual_v2", timeout: 60},
-		"digitalocean": {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60, skipPersona: true}, // DO agents have built-in persona
+		"digitalocean": {provider: "digitalocean", baseURL: "https://your-agent.ondigitalocean.app/api/v1", timeout: 60},
 	}
 
 	if alt, ok := removedTemplates[strings.ToLower(name)]; ok {
@@ -1161,7 +1149,6 @@ func createConfigTemplate(name string) error {
 		BaseURL:           baseURL,
 		Model:             model,
 		Timeout:           o.timeout,
-		SkipPersonaPrompt: o.skipPersona,
 		SimulateTyping:    true,
 		TypingSpeed:       config.DefaultTypingSpeed,
 		MaxToolIterations: config.DefaultMaxToolIterations,
@@ -1500,9 +1487,7 @@ func runSingleMessage(message string) {
 	// Initialize LLM client
 	client := llm.NewClient(llm.ConfigFrom(cfg), nil)
 
-	if !cfg.SkipPersonaPrompt {
-		client.SetSystemPrompt(prompts.GetSystemPrompt(false))
-	}
+	client.SetSystemPrompt(prompts.GetSystemPrompt())
 
 	// Send message. Cancel-only ctx; the client owns the per-attempt deadline
 	// (cfg.GetTimeout()) so timeout retries get a fresh, non-expired context.

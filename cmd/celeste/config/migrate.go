@@ -15,6 +15,7 @@ const (
 	legacyRuntimeModeKey = "runtime_mode"
 	legacyClawMaxIterKey = "claw_max_tool_iterations"
 	maxToolIterationsKey = "max_tool_iterations"
+	legacySkipPersonaKey = "skip_persona_prompt"
 	migrationGuide       = "see MIGRATING-2.0.md"
 )
 
@@ -27,7 +28,10 @@ var MigrationWarn = func(msg string) { fmt.Fprintln(os.Stderr, "celeste: "+msg) 
 //   - claw_max_tool_iterations becomes max_tool_iterations, unless the file
 //     already sets max_tool_iterations (which wins), or the value isn't a
 //     JSON number (left in place so the resulting parse error names the key
-//     the user actually wrote, not the renamed one — #144 W6b review, M7).
+//     the user actually wrote, not the renamed one — #144 W6b review, M7);
+//   - skip_persona_prompt: true is dropped (the persona is always on in
+//     chat and agent runs, W5); false is left in place, since it changes
+//     nothing and json ignores the unknown key.
 //
 // Every other key keeps its value bytes exactly (json.RawMessage, HTML
 // escaping off). Keys come out alphabetically sorted (encoding/json sorts
@@ -54,6 +58,10 @@ func migrateLegacyKeys(data []byte) (out []byte, notes []string, changed bool) {
 	if v, ok := raw[typingSpeedKey]; ok && isOldTypingSpeedDefault(v) {
 		delete(raw, typingSpeedKey)
 		notes = append(notes, fmt.Sprintf("removed typing_speed: it is honoured now, and this value was an old default that would type slower than before; the new default is %d chars/sec (%s)", DefaultTypingSpeed, migrationGuide))
+	}
+	if v, ok := raw[legacySkipPersonaKey]; ok && bytes.Equal(bytes.TrimSpace(v), []byte("true")) {
+		delete(raw, legacySkipPersonaKey)
+		notes = append(notes, "removed skip_persona_prompt: the persona is always on in chat and agent runs ("+migrationGuide+")")
 	}
 	if len(notes) == 0 {
 		return data, nil, false

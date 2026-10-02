@@ -72,7 +72,6 @@ type Env struct {
 	opts        SetupOptions
 	approve     hooks.ApproveFunc // resolved once by approver
 	approveSet  bool
-	skipPersona bool
 	permConfig  permissions.PermissionConfig
 	indexing    sync.WaitGroup     // a code-graph update that outlived its timeout
 	indexCancel context.CancelFunc // stops that update; nil until setupCodeGraph runs
@@ -136,7 +135,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		// would then share this run's checkpoints (and /undo them).
 		opts.SessionID = fmt.Sprintf("%s-%d-%s", mode, os.Getpid(), config.UniqueNanoID())
 	}
-	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, skipPersona: cfg.SkipPersonaPrompt, home: home}
+	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, home: home}
 	if mode == ModeAgent {
 		env.ToolMode = tools.ModeAgent
 	}
@@ -432,7 +431,6 @@ func (e *Env) compose(projectContext, contract string, sliders *config.SliderCon
 	}
 	return prompts.Compose(prompts.ComposeOptions{
 		Mode:           pm,
-		SkipPersona:    e.skipPersona,
 		Contract:       contract,
 		Sliders:        sliders,
 		ProjectContext: projectContext,

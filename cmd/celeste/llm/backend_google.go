@@ -119,7 +119,7 @@ func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 	genConfig := &genai.GenerateContentConfig{}
 
 	// Add system instruction if present
-	if b.systemPrompt != "" && !b.config.SkipPersonaPrompt {
+	if b.systemPrompt != "" {
 		// System instruction doesn't need a role - it's handled differently
 		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
 	}
@@ -184,7 +184,7 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 	genConfig := &genai.GenerateContentConfig{}
 
 	// Add system instruction if present
-	if b.systemPrompt != "" && !b.config.SkipPersonaPrompt {
+	if b.systemPrompt != "" {
 		// System instruction doesn't need a role - it's handled differently
 		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
 	}
@@ -274,7 +274,7 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	genConfig := &genai.GenerateContentConfig{}
 
 	// Add system instruction if present
-	if b.systemPrompt != "" && !b.config.SkipPersonaPrompt {
+	if b.systemPrompt != "" {
 		genConfig.SystemInstruction = genai.NewContentFromText(b.systemPrompt, "user")
 	}
 

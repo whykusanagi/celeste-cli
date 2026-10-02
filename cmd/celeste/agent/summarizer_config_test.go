@@ -13,11 +13,10 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 )
 
-// An agent run hands its own client config to SmallModelSummarizer. With
-// skip_persona_prompt set, the Google backend sends no system instruction,
-// so a summary built on that config lost its instructions. The summarizer
-// must send its system prompt whatever the run's persona setting is.
-func TestSmallModelSummarizerSendsSystemPromptDespitePersonaSkip(t *testing.T) {
+// An agent run hands its own client config to SmallModelSummarizer. The
+// summary request carries the summarizer's own system prompt on the Google
+// backend, and the run's config is left as it was.
+func TestSmallModelSummarizerSendsItsSystemPrompt(t *testing.T) {
 	var mu sync.Mutex
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,13 +30,12 @@ func TestSmallModelSummarizerSendsSystemPromptDespitePersonaSkip(t *testing.T) {
 	defer srv.Close()
 
 	run := &llm.Config{
-		APIKey:            "test-key",
-		BaseURL:           srv.URL,
-		Backend:           llm.BackendTypeGoogle,
-		Model:             "run-model",
-		SkipPersonaPrompt: true,
-		Collections:       &config.CollectionsConfig{Enabled: true},
-		XAIFeatures:       &config.XAIFeaturesConfig{},
+		APIKey:      "test-key",
+		BaseURL:     srv.URL,
+		Backend:     llm.BackendTypeGoogle,
+		Model:       "run-model",
+		Collections: &config.CollectionsConfig{Enabled: true},
+		XAIFeatures: &config.XAIFeaturesConfig{},
 	}
 	summarize := SmallModelSummarizer(run, "small-model")
 	got, err := summarize(context.Background(), "SUMMARY-INSTRUCTIONS", "the transcript")
@@ -53,7 +51,7 @@ func TestSmallModelSummarizerSendsSystemPromptDespitePersonaSkip(t *testing.T) {
 		t.Fatalf("summary request carried no system prompt; body: %s", body)
 	}
 	// The run's config must not be mutated by the summarizer.
-	if !run.SkipPersonaPrompt || run.Collections == nil || run.Model != "run-model" {
+	if run.Collections == nil || run.Model != "run-model" {
 		t.Fatalf("SmallModelSummarizer changed the run's config: %+v", run)
 	}
 }

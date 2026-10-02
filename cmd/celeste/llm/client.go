@@ -34,11 +34,10 @@ type Config struct {
 	// Backend forces a backend instead of detecting it from BaseURL. Tests
 	// use it to reach a fake provider on 127.0.0.1 with a native backend.
 	// Empty keeps detection.
-	Backend           BackendType
-	Timeout           time.Duration
-	SkipPersonaPrompt bool
-	SimulateTyping    bool
-	TypingSpeed       int // chars per second
+	Backend        BackendType
+	Timeout        time.Duration
+	SimulateTyping bool
+	TypingSpeed    int // chars per second
 
 	// Google Cloud authentication (for Gemini/Vertex AI)
 	GoogleCredentialsFile string // Path to service account JSON file
@@ -59,7 +58,6 @@ func ConfigFrom(cfg *config.Config) *Config {
 		BaseURL:               cfg.BaseURL,
 		Model:                 cfg.Model,
 		Timeout:               cfg.GetTimeout(),
-		SkipPersonaPrompt:     cfg.SkipPersonaPrompt,
 		SimulateTyping:        cfg.SimulateTyping,
 		TypingSpeed:           cfg.TypingSpeed,
 		GoogleCredentialsFile: cfg.GoogleCredentialsFile,

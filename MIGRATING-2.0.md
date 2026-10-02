@@ -23,6 +23,18 @@ Chat always runs tools in a loop, so `classic` and `claw` were the same program.
 Every other key in your config file keeps its value. The MCP `celeste` tool's
 `mode` argument (`chat` / `agent`) is unrelated and unchanged.
 
+## `skip_persona_prompt` is gone
+
+The persona is always on in chat and agent runs, for every provider.
+
+| 1.x | 2.0 |
+|---|---|
+| `"skip_persona_prompt": true` in a config file | Removed automatically the first time the file loads; one line on stderr says so. |
+| `"skip_persona_prompt": false` | Ignored; the next save drops it. |
+| `celeste config --skip-persona …` | Error. Delete the call. |
+| A DigitalOcean agent profile (`--init digitalocean` set `skip_persona_prompt: true`) | DigitalOcean agents now also get Celeste's persona, on top of the agent's own instructions. |
+| Gemini with `skip_persona_prompt: true` sent no system prompt at all | Gemini gets the system prompt like every other provider. |
+
 ## Sessions and agent checkpoints
 
 | 1.x | 2.0 |

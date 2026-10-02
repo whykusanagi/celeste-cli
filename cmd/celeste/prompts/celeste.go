@@ -159,8 +159,8 @@ func warnOverrideOnce(path string, err error) {
 
 // GetSystemPrompt returns the chat-mode system prompt without project
 // context. See Compose.
-func GetSystemPrompt(skipPrompt bool) string {
-	return Compose(ComposeOptions{Mode: ModeChat, SkipPersona: skipPrompt})
+func GetSystemPrompt() string {
+	return Compose(ComposeOptions{Mode: ModeChat})
 }
 
 // buildPromptFromEssence constructs a system prompt from the essence data.
@@ -244,10 +244,9 @@ Respond in character as Celeste. Be mischievous, engaging, entertaining, and tru
 
 // GetSystemPromptWithContext returns the chat-mode system prompt with
 // project context and git snapshot appended. See Compose.
-func GetSystemPromptWithContext(skipPersona bool, grimoireContent string, gitSnapshot string) string {
+func GetSystemPromptWithContext(grimoireContent string, gitSnapshot string) string {
 	return Compose(ComposeOptions{
 		Mode:           ModeChat,
-		SkipPersona:    skipPersona,
 		ProjectContext: grimoireContent,
 		GitSnapshot:    gitSnapshot,
 	})
@@ -255,7 +254,7 @@ func GetSystemPromptWithContext(skipPersona bool, grimoireContent string, gitSna
 
 // GetContentPrompt returns a prompt tailored for content generation.
 func GetContentPrompt(platform, format, tone, topic string) string {
-	basePrompt := GetSystemPrompt(false)
+	basePrompt := GetSystemPrompt()
 
 	var contentAddendum strings.Builder
 	contentAddendum.WriteString("\n\nCONTENT GENERATION MODE:\n")

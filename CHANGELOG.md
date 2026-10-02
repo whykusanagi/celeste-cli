@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Breaking Changes
+
+* **config:** `skip_persona_prompt` and `celeste config --skip-persona` are removed: the persona is always on in chat and agent runs, for every provider. DigitalOcean agents, which have their own built-in persona, now also get Celeste's. A config with `"skip_persona_prompt": true` loses the key on load, with one note on stderr; `false` is ignored. See MIGRATING-2.0.md.
+
 ### Features
 
 * **anthropic:** Claude's thinking is kept and sent back on later turns, in its original order and byte for byte, also after `celeste resume` ([#192](https://github.com/whykusanagi/celeste-cli/issues/192)). Models that take a thinking budget (Haiku 4.5 and older) now think on tool-loop continuations too, whenever the previous turn's thinking is replayed. On Anthropic's API a request that replays thinking asks the API to drop, rather than reject, any block whose history changed; elsewhere a refused request is resent once without the old thinking. Changing the system prompt (`/user`, `/confirm`, a persona change) drops replayed thinking once, at that point.
