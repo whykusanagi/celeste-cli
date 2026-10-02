@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **tools:** `write_file`, `patch_file` and `splice_file` write atomically: a temp file in the same directory, then a rename, so a reader never sees a half-written file. An existing file keeps its mode (a 0755 script stays executable, a 0600 file stays private); a new file gets 0644 under your umask, as before. A symlink inside the workspace is edited through to its target and stays a link; a file with several hard links is rewritten in place. `write_file` with `append: true` still appends in place. The replacement is a new file owned by you: another user's ownership, extended attributes and ACLs are not kept. A file in a directory celeste cannot write to can no longer be edited, since the temp file cannot be created there ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
 * **tools:** must-read-before-edit: `patch_file`, `write_file` (overwrite or append) and `splice_file` refuse an existing file the session has not read with `read_file <path> first: ...`; creating a new file needs no read. MCP chat (`celeste` with `mode: "chat"`) forgets reads between calls, so a patch there needs a `read_file` of the file in the same call ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+* **tools, agent:** custom JSON tools (`~/.celeste/skills/*.json` `command`), `--verify-cmd` and the agent's artifact bundle use the same shell runner as the bash tool: each command runs in its own process group, killed whole on timeout or cancel, with a bounded wait for a background process holding its output. What changes for you:
+  * A custom tool's output is stdout and stderr combined (it was stdout only), capped at 64,000 bytes with an `[output truncated at 64000 bytes]` marker. Custom tools time out after 2 minutes unless the caller's deadline ends them first.
+  * A command that exits but leaves a background process holding its output now fails (a custom tool call or a verify check) and the process is stopped; redirect its output (`cmd > log 2>&1 &`) to keep it running.
+  * A verify check that times out or is killed reports exit code -1.
+  * Custom tools and verify commands run `sh` from `PATH` instead of `/bin/sh`.
+  * `git_diff.patch` and `git_status.txt` are kept whole up to 64 MiB; beyond that they end with a `# celeste: output truncated` line.
 
 ### Bug Fixes
 
