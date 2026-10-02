@@ -22,6 +22,7 @@ func composeEnv(t *testing.T, confirm bool) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	useTestPersona(t)
 	prev := confirmActionsEnabled
 	confirmActionsEnabled = func() bool { return confirm }
 	t.Cleanup(func() { confirmActionsEnabled = prev })
@@ -68,15 +69,17 @@ func TestComposeGolden(t *testing.T) {
 	}
 }
 
-// The persona core comes first and unchanged in every persona mode, so the
-// prompt prefix stays cacheable.
+// The full profile comes first and unchanged in every persona mode, so the
+// prompt prefix stays cacheable. It already ends with the voice boundary.
 func TestComposePersonaCoreIsPrefix(t *testing.T) {
 	composeEnv(t, true)
-	core := personaCore()
+	core := mustProfile(ProfileFull).SystemPrompt
+	if mustProfile(ProfileFull).Public {
+		t.Fatal("composeEnv should install the test persona")
+	}
 	for _, mode := range []Mode{ModeChat, ModeAgent} {
-		got := Compose(ComposeOptions{Mode: mode, Contract: testContract})
-		if !strings.HasPrefix(got, core+"\n"+voiceBoundaryPrompt) {
-			t.Errorf("mode %d: prompt does not start with the persona core then the voice boundary", mode)
+		if got := Compose(ComposeOptions{Mode: mode, Contract: testContract}); !strings.HasPrefix(got, core) {
+			t.Errorf("mode %d: prompt does not start with the full profile", mode)
 		}
 	}
 }

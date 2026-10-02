@@ -92,6 +92,26 @@ jobs:
         install-mode: goinstall
         args: --timeout=5m
 
+  persona:
+    name: Persona ciphertext
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.26.6'
+        cache: true
+
+    # No key and no private corpus here, ever (W5 rulings 15, 19): this checks
+    # the committed ciphertext against SOURCE.json and runs the crypto,
+    # fallback and leak tests under a public test key. The keyed comparison
+    # is `make persona-check`, run locally before merging.
+    - name: Ciphertext matches SOURCE.json; crypto and fallback tests
+      run: go test ./cmd/celeste/prompts/... ./scripts/personaseal -run 'TestPersona|TestPublicPersona' -count=1 -v
+
   docker-test:
     name: Docker Integration Tests
     runs-on: ubuntu-latest
