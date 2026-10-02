@@ -546,3 +546,43 @@ func TestReadResponsesRefusalIsContent(t *testing.T) {
 	require.Len(t, turn.items, 1)
 	assert.Contains(t, string(turn.items[0]), `"type":"refusal"`)
 }
+
+// W8-1 review M4: the endpoint refused the replayed items and the resend
+// without them failed too. The error still says the items were refused,
+// so the caller strips them and the next turn does not fail the same way.
+func TestResponsesRejectionIsReportedWhenTheResendFails(t *testing.T) {
+	srv := fakeprovider.NewOpenAIResponses(t)
+	c, b := newResponsesTestClient(t, srv, "gpt-test")
+	pb, err := tui.NewProviderBlocks(b.providerKey(), []json.RawMessage{
+		json.RawMessage(`{"encrypted_content":"stale","id":"rs_1","summary":[],"type":"reasoning"}`),
+	})
+	require.NoError(t, err)
+	history := []tui.ChatMessage{
+		{Role: "user", Content: "hi"},
+		tui.AttachProviderBlocks(tui.ChatMessage{Role: "assistant", Content: "earlier"}, pb),
+		{Role: "user", Content: "again"},
+	}
+	for name, send := range map[string]func() error{
+		"events": func() error {
+			return c.SendMessageStreamEvents(context.Background(), history, nil, func(StreamEvent) {})
+		},
+		"stream": func() error {
+			return c.SendMessageStream(context.Background(), history, nil, func(StreamChunk) {})
+		},
+		"sync": func() error { _, err := c.SendMessageSync(context.Background(), history, nil); return err },
+	} {
+		srv.Push(
+			fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"The encrypted content for item rs_1 could not be verified.","type":"invalid_request_error"}}`},
+			fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"Invalid value for tools.","type":"invalid_request_error"}}`},
+		)
+		err := send()
+		require.Error(t, err, name)
+		assert.True(t, BlocksRejectedIn(err), "%s: %v", name, err)
+		assert.Contains(t, err.Error(), "Invalid value for tools", name)
+	}
+
+	// Without a refusal an error is not marked.
+	_, err = c.SendMessageSync(context.Background(), userMsgs("hi"), nil)
+	require.Error(t, err)
+	assert.False(t, BlocksRejectedIn(err))
+}

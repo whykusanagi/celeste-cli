@@ -50,6 +50,7 @@ var ErrRuleInterrupt = errors.New("stream interrupted by a steering rule")
 type nonRetryable struct{ err error }
 
 func (n nonRetryable) Error() string { return n.err.Error() }
+func (n nonRetryable) Unwrap() error { return n.err }
 func fatalErr(err error) error       { return nonRetryable{err} }
 
 // classifyError inspects an error and decides retry policy. SDK errors are opaque

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -234,5 +235,33 @@ func TestLoopReportsAnUnsnapshottedStrip(t *testing.T) {
 	l2 := &Loop{Client: s2, Tools: newRegistry(), Limits: DefaultLimits(), SpillDir: t.TempDir()}
 	if _, res, _ := l2.Run(context.Background(), userMsg("go")); res.HistoryEdited {
 		t.Fatal("HistoryEdited without an edit")
+	}
+}
+
+// W8-1 review M4: the provider refused the replayed blocks and the resend
+// failed as well. The run ends with that error, and the history it returns
+// is stripped (and says so), so the next turn sends the neutral view.
+func TestLoopStripsBlocksWhenARejectedRequestFails(t *testing.T) {
+	hermetic(t)
+	first := mustBlocks(t, `{"type":"thinking","thinking":"a","signature":"S1"}`, `{"type":"tool_use","id":"c1","name":"echo","input":{}}`)
+	s := &stubLLM{reply: func(n int, _ context.Context, cb llm.StreamEventCallback) error {
+		if n == 0 {
+			callsWithBlocks(cb, first, [3]string{"c1", "echo", `{}`})
+			return nil
+		}
+		return &llm.BlocksRejectedError{Err: errors.New("resend failed")}
+	}}
+	l := &Loop{Client: s, Tools: newRegistry(&fakeTool{name: "echo", safe: true, readOnly: true}), Limits: DefaultLimits(), SpillDir: t.TempDir()}
+	msgs, res, err := l.Run(context.Background(), userMsg("go"))
+	if err == nil || res.StopReason != StopError {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	for i, m := range msgs {
+		if m.ProviderBlocks != nil {
+			t.Fatalf("message %d kept rejected blocks", i)
+		}
+	}
+	if !res.HistoryEdited {
+		t.Fatal("the strip reached no snapshot, and the result does not say so")
 	}
 }
