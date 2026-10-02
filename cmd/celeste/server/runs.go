@@ -2,9 +2,10 @@ package server
 
 import (
 	"context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"sync/atomic"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
 
 // maxTrackedRuns bounds the registry. Completed runs are retained so a caller

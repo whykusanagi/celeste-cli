@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +19,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
