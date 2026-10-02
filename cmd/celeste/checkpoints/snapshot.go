@@ -297,25 +297,28 @@ func (sm *SnapshotManager) Cleanup() error {
 const (
 	lockFile  = "index.lock"
 	lockWait  = 10 * time.Second
-	lockStale = 30 * time.Second
+	lockStale = 2 * time.Minute
 	lockRetry = 10 * time.Millisecond
 )
 
 // lockSession serializes changes to dir's index across processes (two
 // windows on one resumed session, celeste revert beside a chat): it
 // creates dir/index.lock exclusively, waiting up to lockWait, and removes a
-// lock older than lockStale (left by a process that died holding it). A
+// lock older than lockStale (left by a process that died holding it; far
+// longer than any checkpoint takes, so a live lock is never taken over). A
 // session directory that does not exist has nothing to lock unless create.
 // The returned function releases the lock.
 func lockSession(dir string, create bool) (func(), error) {
-	if create {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, fmt.Errorf("cannot create checkpoint directory: %w", err)
-		}
-	}
 	path := filepath.Join(dir, lockFile)
 	deadline := time.Now().Add(lockWait)
 	for {
+		if create {
+			// Every attempt: another process's refused first checkpoint
+			// may have removed the directory meanwhile.
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return nil, fmt.Errorf("cannot create checkpoint directory: %w", err)
+			}
+		}
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			_ = f.Close()
