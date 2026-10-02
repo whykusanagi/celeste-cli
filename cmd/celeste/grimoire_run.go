@@ -33,6 +33,9 @@ func initProject(dir string, args []string, out io.Writer) error {
 	fs.SetOutput(out)
 	agents := fs.Bool("agents", false, "also write AGENTS.md (build and test commands for coding agents)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil // the usage is printed
+		}
 		return err
 	}
 	steps := []func(string) (string, error){grimoire.Init}

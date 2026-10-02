@@ -112,6 +112,13 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links outside the repository)", p))
 			continue
 		}
+		// Inside the repository a link may only reach another context
+		// file, never .git: AGENTS.md -> .env or CLAUDE.md -> .git/config
+		// would send the cloner's local secrets to the model.
+		if !isContextFileName(filepath.Base(real)) || within(filepath.Join(realRoot, ".git"), real) {
+			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links to a file that is not AGENTS.md or CLAUDE.md)", p))
+			continue
+		}
 		info, err := os.Stat(real)
 		if err != nil || !info.Mode().IsRegular() || seen[real] {
 			continue
@@ -125,6 +132,9 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 		text, cut, ok := readCapped(real, budget, info.Size())
 		if !ok {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (not UTF-8 text)", p))
+			continue
+		}
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
 		rel, err := filepath.Rel(root, p)
@@ -190,6 +200,15 @@ func RenderContextFiles(files []ContextFile) string {
 }
 
 // within reports whether path is dir or inside it (both already resolved).
+func isContextFileName(name string) bool {
+	for _, n := range contextFileNames {
+		if strings.EqualFold(name, n) {
+			return true
+		}
+	}
+	return false
+}
+
 func within(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)

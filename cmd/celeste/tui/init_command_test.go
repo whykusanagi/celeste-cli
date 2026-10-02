@@ -41,3 +41,22 @@ func TestInitCommandWritesTheGrimoire(t *testing.T) {
 		t.Fatalf("/init agents should report the existing .grimoire and the new AGENTS.md:\n%s", last)
 	}
 }
+
+// /grimoire shows the context-file warnings (a cut or skipped file), as
+// celeste grimoire does.
+func TestGrimoireCommandShowsContextFileWarnings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte(strings.Repeat("a", 40<<10)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := newCompactTestApp(t)
+	m = m.SetWorkDir(ws)
+	m, _ = step(t, m, SendMessageMsg{Content: "/grimoire"})
+	msgs := m.DebugMessages()
+	if last := msgs[len(msgs)-1].Content; !strings.Contains(last, "⚠ ") || !strings.Contains(last, "cut to") {
+		t.Fatalf("/grimoire should show the cap warning:\n%.300s", last[len(last)-min(300, len(last)):])
+	}
+}

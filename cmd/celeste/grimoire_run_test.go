@@ -55,3 +55,18 @@ func TestShowGrimoireIncludesContextFiles(t *testing.T) {
 		t.Fatalf("output:\n%s", out.String())
 	}
 }
+
+// celeste init -h prints the usage and is not an error.
+func TestInitProjectHelp(t *testing.T) {
+	ws := t.TempDir()
+	var out bytes.Buffer
+	if err := initProject(ws, []string{"-h"}, &out); err != nil {
+		t.Fatalf("-h must not be an error: %v", err)
+	}
+	if !strings.Contains(out.String(), "-agents") {
+		t.Fatalf("-h should print the usage:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(ws, ".grimoire")); !os.IsNotExist(err) {
+		t.Fatal("-h must not write anything")
+	}
+}

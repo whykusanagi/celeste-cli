@@ -180,3 +180,67 @@ func TestContextFilesSymlinksStayInTheRepo(t *testing.T) {
 		t.Fatalf("the escaping symlink must warn once: %v", warns)
 	}
 }
+
+// A symlink inside the repository may only reach another context file: a
+// committed AGENTS.md -> .env or CLAUDE.md -> .git/config would otherwise
+// send the cloner's local secrets to the model.
+func TestContextFilesSymlinksOnlyReachContextFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	root := t.TempDir()
+	mk(t, filepath.Join(root, ".git", "config"), "url = https://token@example.invalid/x")
+	mk(t, filepath.Join(root, ".env"), "SECRET=abc")
+	if err := os.Symlink(".env", filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Skip(err)
+	}
+	ws := filepath.Join(root, "s")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", ".git", "config"), filepath.Join(ws, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	files, warns := ContextFiles(ws)
+	rendered := RenderContextFiles(files)
+	if strings.Contains(rendered, "SECRET") || strings.Contains(rendered, "token") {
+		t.Fatalf("a symlink to a non-context file was read:\n%s", rendered)
+	}
+	if len(files) != 0 {
+		t.Fatalf("got %d files", len(files))
+	}
+	if len(warns) != 2 {
+		t.Fatalf("each skipped symlink must warn: %v", warns)
+	}
+	for _, w := range warns {
+		if !strings.Contains(w, "not AGENTS.md or CLAUDE.md") {
+			t.Fatalf("warning: %q", w)
+		}
+	}
+}
+
+// A symlink into .git is refused even when its target is named AGENTS.md.
+func TestContextFilesSymlinksNeverReachIntoGit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	root := t.TempDir()
+	mk(t, filepath.Join(root, ".git", "AGENTS.md"), "inside git")
+	if err := os.Symlink(filepath.Join(".git", "AGENTS.md"), filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Skip(err)
+	}
+	files, warns := ContextFiles(root)
+	if len(files) != 0 || len(warns) != 1 {
+		t.Fatalf("files %d, warnings %v", len(files), warns)
+	}
+}
+
+// An empty or whitespace-only context file is not context.
+func TestContextFilesSkipBlankFiles(t *testing.T) {
+	ws := t.TempDir()
+	mk(t, filepath.Join(ws, "AGENTS.md"), " \n\t\n")
+	mk(t, filepath.Join(ws, "CLAUDE.md"), "")
+	if files, _ := ContextFiles(ws); len(files) != 0 {
+		t.Fatalf("blank files were rendered: %q", RenderContextFiles(files))
+	}
+}

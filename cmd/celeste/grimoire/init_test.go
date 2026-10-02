@@ -136,21 +136,27 @@ func TestInitLeavesGitignoreAlone(t *testing.T) {
 }
 
 // Ruling 6: a project grimoire or a context file between the git root and
-// the workspace is project context; the global grimoire and anything above
-// the git root are not.
+// the workspace is project context; the global grimoire is not. A .grimoire
+// above the git root is loaded too, so it counts (no misleading /init hint).
 func TestHasProjectContext(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	mk(t, filepath.Join(home, ".celeste", "grimoire.md"), "# global\n")
 	outer := t.TempDir()
-	mk(t, filepath.Join(outer, ".grimoire"), "# above the root\n")
 	ws := filepath.Join(outer, "repo")
 	if err := os.MkdirAll(filepath.Join(ws, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if HasProjectContext(ws) {
-		t.Fatal("only the global grimoire and one above the git root: no project context")
+		t.Fatal("only the global grimoire: no project context")
+	}
+	mk(t, filepath.Join(outer, ".grimoire"), "# above the root\n")
+	if !HasProjectContext(ws) {
+		t.Fatal("a .grimoire above the git root is loaded, so it is project context")
+	}
+	if err := os.Remove(filepath.Join(outer, ".grimoire")); err != nil {
+		t.Fatal(err)
 	}
 	mk(t, filepath.Join(ws, "CLAUDE.md"), "x")
 	if !HasProjectContext(ws) {

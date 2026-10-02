@@ -244,19 +244,13 @@ func Init(dir string) (string, error) {
 }
 
 // HasProjectContext reports a project grimoire (.grimoire, .grimoire.local,
-// .celeste/grimoire/*.md) or a context file (AGENTS.md, CLAUDE.md) between
-// the git root and the workspace (2.0 W4, ruling 6). The global
-// ~/.celeste/grimoire.md is not project context.
+// .celeste/grimoire/*.md) that LoadAll would load, or a context file
+// (AGENTS.md, CLAUDE.md) between the git root and the workspace (2.0 W4,
+// ruling 6). The global ~/.celeste/grimoire.md is not project context.
 func HasProjectContext(workspace string) bool {
-	_, dirs, ok := contextDirs(workspace)
-	if !ok {
-		return false
-	}
-	for _, d := range dirs {
-		if fileExists(filepath.Join(d, ".grimoire")) || fileExists(filepath.Join(d, ".grimoire.local")) {
-			return true
-		}
-		if frags, _ := filepath.Glob(filepath.Join(d, ".celeste", "grimoire", "*.md")); len(frags) > 0 {
+	sources, _ := Discover(workspace)
+	for _, src := range sources {
+		if src.Priority != PriorityGlobal {
 			return true
 		}
 	}
