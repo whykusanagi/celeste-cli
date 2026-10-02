@@ -159,6 +159,17 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		return errResult(err.Error()), nil
 	}
 
+	// Anchor verification, before anything is checkpointed or written: the
+	// region must be in the new dest, and a cross-file move must remove one
+	// occurrence of it from source (the text may also appear elsewhere
+	// there). Byte-exact, no model involvement.
+	if !strings.Contains(newDest, region) {
+		return errResult("verification failed: spliced region not found in dest"), nil
+	}
+	if op == "move" && !sameFile && strings.Count(sourceAfter, region) >= strings.Count(source, region) {
+		return errResult("verification failed: region still present in source after move"), nil
+	}
+
 	// Checkpoint the files this call writes, now that both regions
 	// resolved, immediately before writing (2.0 F4): the destination, and
 	// for a cross-file move the source first. Any failure below puts them
@@ -193,15 +204,6 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		if err := writeFileFunc(sourcePath, []byte(sourceAfter), 0644); err != nil {
 			return fail(fmt.Sprintf("write source: %s", err))
 		}
-	}
-
-	// Anchor verification: the region must now be present in dest, and (for a
-	// cross-file move) absent from source. Byte-exact, no model involvement.
-	if !strings.Contains(newDest, region) {
-		return fail("verification failed: spliced region not found in dest after write")
-	}
-	if op == "move" && !sameFile && strings.Contains(sourceAfter, region) {
-		return fail("verification failed: region still present in source after move")
 	}
 
 	if t.tracker != nil {

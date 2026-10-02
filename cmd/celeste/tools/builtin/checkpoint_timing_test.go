@@ -189,3 +189,18 @@ func TestSpliceFileMoveBetweenTwoNamesOfOneFile(t *testing.T) {
 	assert.Equal(t, "2\n3\n1\n", get(t, a))
 	assert.Len(t, sm.Entries(), 1, "one file, one checkpoint")
 }
+
+// A move whose region text also appears elsewhere in the source is not a
+// failed verification: only the region's own occurrence is removed.
+func TestSpliceFileMoveOfARepeatedRegion(t *testing.T) {
+	ws, sm := timingSetup(t)
+	src, dst := filepath.Join(ws, "a.txt"), filepath.Join(ws, "b.txt")
+	put(t, src, "a\nX\nb\nX\n")
+	put(t, dst, "x\n")
+	splice := NewSpliceFileTool(ws, WithSpliceFileSnapshots(sm))
+	res := run(t, splice, context.Background(), map[string]any{"op": "move", "source": "a.txt", "dest": "b.txt", "start_line": 2, "end_line": 2})
+	require.False(t, res.Error, res.Content)
+	assert.Equal(t, "a\nb\nX\n", get(t, src))
+	assert.Equal(t, "x\nX\n", get(t, dst))
+	assert.Len(t, sm.Entries(), 2)
+}
