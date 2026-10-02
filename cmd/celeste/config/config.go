@@ -791,11 +791,20 @@ func Load() (*Config, error) {
 		}
 	}
 
-	if reconcileLoaded(config) {
+	// A config the user made read-only is reconciled in memory only.
+	if reconcileLoaded(config) && !readOnlyFile(configFile) {
 		_ = Save(config)
 	}
 
 	return config, nil
+}
+
+// readOnlyFile reports an existing file without owner write permission: one
+// the user made read-only, which an atomic save (rename over it) would
+// replace regardless, so automatic saves leave it alone.
+func readOnlyFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().Perm()&0o200 == 0
 }
 
 // reconcileLoaded applies the post-read validation every loaded config gets,
@@ -837,11 +846,7 @@ func reconcileLoaded(config *Config) (dirty bool) {
 // owner write permission is left as it is: the user made it read-only, and
 // the atomic rename would replace it regardless of its mode.
 func persistReconciled(path string, config *Config) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode().Perm()&0o200 == 0 {
+	if readOnlyFile(path) {
 		return nil
 	}
 	data, err := os.ReadFile(path)

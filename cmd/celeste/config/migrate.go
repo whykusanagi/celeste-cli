@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -107,6 +108,9 @@ var (
 	failedMigrations   = map[string]bool{}
 )
 
+// errReadOnly is migrateFile's reason for not saving a read-only config.
+var errReadOnly = errors.New("the file is read-only")
+
 // migrateFile runs migrateLegacyKeys on a config file's bytes, prints one
 // note per migrated key and saves the result in place with the file's
 // current permissions. It returns the bytes to parse: the migrated ones even
@@ -131,7 +135,11 @@ func migrateFile(path string, data []byte) []byte {
 	// explicit save, so a crash mid-write must never leave a truncated,
 	// unparseable config behind (review finding, #144 W6b). The write keeps
 	// the file's mode and lands on a symlink's target, not the link (I3).
-	if err := atomicfile.WriteKeepMode(path, out, 0o600); err != nil {
+	err := errReadOnly
+	if !readOnlyFile(path) { // the rename would replace a read-only file anyway
+		err = atomicfile.WriteKeepMode(path, out, 0o600)
+	}
+	if err != nil {
 		MigrationWarn(fmt.Sprintf("could not save the migrated config %s: %v", path, err))
 		failedMigrationsMu.Lock()
 		failedMigrations[path] = true

@@ -35,3 +35,53 @@ func TestPersistReconciledLeavesAReadOnlyProfile(t *testing.T) {
 		t.Errorf("mode = %v, want still read-only", info.Mode().Perm())
 	}
 }
+
+// The default config.json gets the same rule when Load reconciles it.
+func TestLoadLeavesAReadOnlyDefaultConfig(t *testing.T) {
+	home := stateHome(t)
+	path := filepath.Join(home, ".celeste", "config.json")
+	const orig = `{"base_url": "https://api.openai.com/v1", "model": ""}`
+	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model == "" {
+		t.Fatal("the empty model was not reconciled in memory")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != orig {
+		t.Errorf("read-only config.json rewritten: %s", got)
+	}
+}
+
+// Load's legacy-key migration leaves a read-only config as it is too (it
+// still loads, migrated in memory).
+func TestMigrationLeavesAReadOnlyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	const orig = `{"model": "m", "runtime_mode": "claw"}`
+	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	out := migrateFile(path, []byte(orig))
+	if string(out) == orig {
+		t.Fatal("nothing migrated in memory")
+	}
+	if got, _ := os.ReadFile(path); string(got) != orig {
+		t.Errorf("read-only config rewritten by migration: %s", got)
+	}
+}
