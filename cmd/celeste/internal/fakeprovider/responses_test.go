@@ -3,6 +3,7 @@ package fakeprovider
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -53,10 +54,10 @@ func TestResponsesStreamsReasoningTextAndCalls(t *testing.T) {
 		ToolCalls: []ToolCall{{ID: "call_a", Name: "read_file", Args: `{"path":"a.go"}`}},
 	})
 	evs := events(t, srv.BaseURL()+"/responses", `{"model":"m","input":[]}`)
-	want := "response.created," +
+	want := "response.created,response.in_progress," +
 		"response.output_item.added,response.output_item.done," +
-		"response.output_item.added,response.output_text.delta,response.output_item.done," +
-		"response.output_item.added,response.function_call_arguments.delta,response.output_item.done," +
+		"response.output_item.added,response.content_part.added,response.output_text.delta,response.output_text.done,response.content_part.done,response.output_item.done," +
+		"response.output_item.added,response.function_call_arguments.delta,response.function_call_arguments.done,response.output_item.done," +
 		"response.completed"
 	if got := types(evs); got != want {
 		t.Fatalf("events = %s\nwant     %s", got, want)
@@ -159,5 +160,42 @@ func TestServerHandleAndUnknownRoutes(t *testing.T) {
 	}
 	if n := len(srv.Requests()); n != 2 {
 		t.Fatalf("requests recorded = %d, want 2", n)
+	}
+}
+
+// An error event ends the stream with the scripted code and message;
+// FailCode overrides response.failed's default server_error.
+func TestResponsesErrorEventAndFailCode(t *testing.T) {
+	srv := NewOpenAIResponses(t,
+		Turn{Error: "slow down", FailCode: "rate_limit_exceeded"},
+		Turn{Fail: "bad prompt", FailCode: "invalid_prompt"},
+	)
+	evs := events(t, srv.BaseURL()+"/responses", `{}`)
+	last := evs[len(evs)-1]
+	if last["type"] != "error" || last["code"] != "rate_limit_exceeded" || last["message"] != "slow down" {
+		t.Fatalf("error event = %v", last)
+	}
+	evs = events(t, srv.BaseURL()+"/responses", `{}`)
+	last = evs[len(evs)-1]
+	if code := last["response"].(map[string]any)["error"].(map[string]any)["code"]; code != "invalid_prompt" {
+		t.Fatalf("failed code = %v", code)
+	}
+}
+
+// Drop closes the connection in the middle of an event, without ending the
+// chunked body: the client's read fails with io.ErrUnexpectedEOF.
+func TestResponsesDropCutsMidEvent(t *testing.T) {
+	srv := NewOpenAIResponses(t, Turn{Text: "partial", Drop: true})
+	resp, err := http.Post(srv.BaseURL()+"/responses", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("read err = %v, want io.ErrUnexpectedEOF", err)
+	}
+	if !strings.Contains(string(b), "response.output_text.delta") || strings.Contains(string(b), "response.completed") {
+		t.Fatalf("body = %s", b)
 	}
 }

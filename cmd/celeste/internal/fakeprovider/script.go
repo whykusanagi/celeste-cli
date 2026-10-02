@@ -23,10 +23,20 @@ type Turn struct {
 	Incomplete string
 	// Fail ends a Responses stream with response.failed carrying this message.
 	Fail string
+	// Error ends a Responses stream with an "error" event carrying this
+	// message.
+	Error string
+	// FailCode is the code of Fail's response.failed or Error's event
+	// (default "server_error").
+	FailCode string
 	// Truncate closes a Responses stream before any terminal event.
 	Truncate bool
-	Status   int
-	Body     string
+	// Drop closes the connection in the middle of the first event after the
+	// output items, without ending the chunked body (the client reads
+	// io.ErrUnexpectedEOF).
+	Drop   bool
+	Status int
+	Body   string
 }
 
 type ToolCall struct{ ID, Name, Args string }

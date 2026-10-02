@@ -1,6 +1,7 @@
 package fakeprovider
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 	"testing"
@@ -43,6 +44,7 @@ func writeResponses(w http.ResponseWriter, turn Turn) {
 		return r
 	}
 	ev("response.created", map[string]any{"response": response("in_progress", []any{})})
+	ev("response.in_progress", map[string]any{"response": response("in_progress", []any{})})
 
 	output := []any{}
 	item := func(added map[string]any, deltas func(itemID string, index int), done map[string]any) {
@@ -63,7 +65,12 @@ func writeResponses(w http.ResponseWriter, turn Turn) {
 		id := "msg_" + strconv.Itoa(len(output))
 		item(map[string]any{"id": id, "type": "message", "role": "assistant", "status": "in_progress", "content": []any{}},
 			func(itemID string, index int) {
+				ev("response.content_part.added", map[string]any{"item_id": itemID, "output_index": index, "content_index": 0,
+					"part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
 				ev("response.output_text.delta", map[string]any{"item_id": itemID, "output_index": index, "content_index": 0, "delta": turn.Text})
+				ev("response.output_text.done", map[string]any{"item_id": itemID, "output_index": index, "content_index": 0, "text": turn.Text})
+				ev("response.content_part.done", map[string]any{"item_id": itemID, "output_index": index, "content_index": 0,
+					"part": map[string]any{"type": "output_text", "text": turn.Text, "annotations": []any{}}})
 			},
 			map[string]any{"id": id, "type": "message", "role": "assistant", "status": "completed",
 				"content": []any{map[string]any{"type": "output_text", "text": turn.Text, "annotations": []any{}}}})
@@ -73,16 +80,25 @@ func writeResponses(w http.ResponseWriter, turn Turn) {
 		item(map[string]any{"id": id, "type": "function_call", "call_id": tc.ID, "name": tc.Name, "arguments": "", "status": "in_progress"},
 			func(itemID string, index int) {
 				ev("response.function_call_arguments.delta", map[string]any{"item_id": itemID, "output_index": index, "delta": tc.Args})
+				ev("response.function_call_arguments.done", map[string]any{"item_id": itemID, "output_index": index, "arguments": tc.Args})
 			},
 			map[string]any{"id": id, "type": "function_call", "call_id": tc.ID, "name": tc.Name, "arguments": tc.Args, "status": "completed"})
 	}
 
+	code := turn.FailCode
+	if code == "" {
+		code = "server_error"
+	}
 	switch {
 	case turn.Truncate:
 		return
+	case turn.Drop:
+		dropMidEvent(w)
+	case turn.Error != "":
+		ev("error", map[string]any{"code": code, "message": turn.Error, "param": nil})
 	case turn.Fail != "":
 		r := response("failed", output)
-		r["error"] = map[string]any{"code": "server_error", "message": turn.Fail}
+		r["error"] = map[string]any{"code": code, "message": turn.Fail}
 		ev("response.failed", map[string]any{"response": r})
 	case turn.Incomplete != "":
 		r := response("incomplete", output)
@@ -91,4 +107,22 @@ func writeResponses(w http.ResponseWriter, turn Turn) {
 	default:
 		ev("response.completed", map[string]any{"response": response("completed", output)})
 	}
+}
+
+// dropMidEvent writes half an event, then closes the connection without
+// ending the chunked body, as a connection lost mid-reply does.
+func dropMidEvent(w http.ResponseWriter) {
+	_, _ = io.WriteString(w, "event: response.output_text.delta\ndata: {\"type\":\"resp")
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		return
+	}
+	conn, _, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	_ = conn.Close()
 }
