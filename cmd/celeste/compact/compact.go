@@ -31,6 +31,16 @@ const (
 	perMessageOverhead = 4
 )
 
+// minSavings is the least a proactive prune must save: minSavingsTokens, or
+// a tenth of the window when that is smaller. A fixed 20k on a 40k window
+// (protected tail 10k) almost never fired (#234).
+func minSavings(window int) int {
+	if s := window / 10; s < minSavingsTokens {
+		return s
+	}
+	return minSavingsTokens
+}
+
 // EstimateTokens approximates the tokens a message costs: its text, tool-call
 // arguments and a small per-message overhead (about 4 characters per token).
 func EstimateTokens(msg tui.ChatMessage) int {
@@ -225,7 +235,7 @@ func Plan(msgs []tui.ChatMessage, opts Options) Result {
 		res.Elided++
 	}
 
-	if !opts.Force && res.SavedTokens < minSavingsTokens && res.SavedTokens < needed {
+	if !opts.Force && res.SavedTokens < minSavings(opts.Window) && res.SavedTokens < needed {
 		// Not worth breaking the prompt cache for.
 		return Result{}
 	}

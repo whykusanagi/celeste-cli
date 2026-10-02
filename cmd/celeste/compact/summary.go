@@ -26,6 +26,16 @@ const (
 	summaryClose = "</compacted-context>"
 )
 
+// KeepFor is how much of the newest history a summary keeps verbatim on a
+// window: keepTokens, or a quarter of the window when that is smaller. An
+// unknown window (0) keeps keepTokens.
+func KeepFor(window int) int {
+	if q := window / 4; window > 0 && q < keepTokens {
+		return q
+	}
+	return keepTokens
+}
+
 // SummarySystemPrompt is the structured template the summarizer fills in.
 // The goal is restated from the original request because it is the one
 // thing a chain of summaries most easily drifts from.
@@ -55,6 +65,9 @@ Be specific and factual; keep paths, identifiers and error text exact. If a prev
 type SummaryOptions struct {
 	// KeepTokens of the newest history stay verbatim (default 20k).
 	KeepTokens int
+	// Window is the model's context window. When KeepTokens is 0 the kept
+	// tail is KeepFor(Window) (#234).
+	Window int
 	// Focus is an optional instruction from /compact [focus].
 	Focus string
 	// All summarizes the whole history, keeping no tail (/handoff).
@@ -108,7 +121,11 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 	}
 	cut := len(msgs)
 	if !opts.All {
-		cut = CutIndex(msgs, opts.KeepTokens)
+		keep := opts.KeepTokens
+		if keep <= 0 {
+			keep = KeepFor(opts.Window)
+		}
+		cut = CutIndex(msgs, keep)
 	}
 	if cut <= 0 {
 		return msgs, SummaryResult{}, ErrNothingToSummarize
