@@ -4,6 +4,7 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,16 +41,26 @@ const (
 	CodeInvalidParams  = -32602
 	CodeMethodNotFound = -32601
 	CodeInternal       = -32603
-	CodeBusy           = -32002
+	// CodeBusy is implementation-defined; ACP v1 already uses -32000 (auth
+	// required), -32002 (resource not found) and -32800 (cancelled).
+	CodeBusy = -32001
 )
 
 // maxLine is the longest incoming line (ruling 1).
 const maxLine = 64 << 20
 
+// keepOfLongLine is how much of an oversized line is kept to find its id.
+const keepOfLongLine = 4 << 10
+
 // Conn is a bidirectional JSON-RPC 2.0 connection over newline-delimited
 // JSON (ACP's framing): it serves incoming requests and notifications to a
 // Handler and lets the agent send its own requests and notifications.
 type Conn struct {
+	// Logf, when set before Serve, logs lines the connection drops (their
+	// length and why, never their content) and recovered Notify panics.
+	Logf func(format string, args ...any)
+
+	maxLine int
 	r       io.Reader
 	w       io.Writer
 	h       Handler
@@ -76,7 +87,7 @@ type response struct {
 
 // NewConn returns a connection that reads r and writes w; Serve starts it.
 func NewConn(r io.Reader, w io.Writer, h Handler) *Conn {
-	return &Conn{r: r, w: w, h: h, pending: map[int64]chan response{}, closed: make(chan struct{})}
+	return &Conn{maxLine: maxLine, r: r, w: w, h: h, pending: map[int64]chan response{}, closed: make(chan struct{})}
 }
 
 // write sends one message as one line; writes are serialized (ruling 2).
@@ -91,53 +102,193 @@ func (c *Conn) write(v any) error {
 	return err
 }
 
-// idOfMalformed finds the id of a line that is not valid JSON, so the
-// parse error can be answered (ruling 1).
-var idOfMalformed = regexp.MustCompile(`"id"\s*:\s*("[^"\\]*"|-?\d+)`)
+func (c *Conn) logf(format string, args ...any) {
+	if c.Logf != nil {
+		c.Logf(format, args...)
+	}
+}
 
-// Serve reads messages until EOF or ctx ends; requests run on their own
-// goroutines (ruling 2). Pending Calls fail once it returns.
-func (c *Conn) Serve(ctx context.Context) error {
-	defer close(c.closed)
-	sc := bufio.NewScanner(c.r)
-	sc.Buffer(make([]byte, 64<<10), maxLine)
-	for sc.Scan() {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var m message
-		if err := json.Unmarshal(line, &m); err != nil {
-			if id := idOfMalformed.FindSubmatch(line); id != nil {
-				// Answered off the read loop, like every response, so a
-				// client that writes before it reads cannot stall it.
-				answer := map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(append([]byte(nil), id[1]...)),
-					"error": &RPCError{Code: CodeParseError, Message: "parse error: " + err.Error()}}
-				go func() { _ = c.write(answer) }()
+// idKey matches an "id" member; topLevelID keeps only one at depth 1.
+var idKey = regexp.MustCompile(`"id"\s*:\s*("[^"\\]*"|-?\d+)`)
+
+// topLevelID finds the id of a line that is not valid JSON, so the error
+// can be answered (ruling 1). Only an "id" member of the outermost object
+// counts: one nested in params belongs to something else, and answering it
+// could fail an unrelated request of the client's.
+func topLevelID(line []byte) json.RawMessage {
+	matches := idKey.FindAllSubmatchIndex(line, -1)
+	if matches == nil {
+		return nil
+	}
+	depth, inString, escaped, mi := 0, false, false, 0
+	for i := 0; i < len(line) && mi < len(matches); i++ {
+		if !inString && i == matches[mi][0] {
+			if depth == 1 {
+				m := matches[mi]
+				return json.RawMessage(append([]byte(nil), line[m[2]:m[3]]...))
 			}
-			continue
+			mi++
 		}
-		if m.JSONRPC != "2.0" {
-			if m.Method != "" && len(m.ID) > 0 {
-				answer := map[string]any{"jsonrpc": "2.0", "id": m.ID,
-					"error": &RPCError{Code: CodeInvalidRequest, Message: `invalid request: jsonrpc must be "2.0"`}}
-				go func() { _ = c.write(answer) }()
-			}
-			continue
+		for mi < len(matches) && matches[mi][0] <= i {
+			mi++ // this match starts inside a string
 		}
+		b := line[i]
 		switch {
-		case m.Method != "" && len(m.ID) > 0:
-			go c.serveRequest(ctx, m)
-		case m.Method != "":
-			c.h.Notify(m.Method, m.Params)
-		case len(m.ID) > 0:
-			c.deliver(m)
+		case escaped:
+			escaped = false
+		case inString && b == '\\':
+			escaped = true
+		case b == '"':
+			inString = !inString
+		case inString:
+		case b == '{' || b == '[':
+			depth++
+		case b == '}' || b == ']':
+			depth--
 		}
 	}
-	return sc.Err()
+	return nil
+}
+
+type readResult struct {
+	line    []byte
+	tooLong bool
+	err     error
+}
+
+// readLine reads one line without its newline. A line longer than max is
+// read to its end but only its first keepOfLongLine bytes are returned.
+func readLine(br *bufio.Reader, max int) (line []byte, tooLong bool, err error) {
+	for {
+		frag, err := br.ReadSlice('\n')
+		if !tooLong {
+			line = append(line, frag...)
+			if len(line) > max+1 { // +1: the newline
+				tooLong, line = true, prefix(line)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		line = bytes.TrimRight(line, "\r\n")
+		if !tooLong && len(line) > max {
+			tooLong, line = true, prefix(line)
+		}
+		return line, tooLong, err
+	}
+}
+
+// prefix keeps the start of an oversized line, enough to find its id.
+func prefix(line []byte) []byte {
+	return line[:min(len(line), keepOfLongLine):min(len(line), keepOfLongLine)]
+}
+
+// readLines feeds Serve until the reader fails or Serve stops listening.
+func (c *Conn) readLines(out chan<- readResult, stop <-chan struct{}) {
+	br := bufio.NewReaderSize(c.r, 64<<10)
+	send := func(r readResult) bool {
+		select {
+		case out <- r:
+			return true
+		case <-stop:
+			return false
+		}
+	}
+	for {
+		line, tooLong, err := readLine(br, c.maxLine)
+		if (len(line) > 0 || tooLong) && !send(readResult{line: line, tooLong: tooLong}) {
+			return
+		}
+		if err != nil {
+			send(readResult{err: err})
+			return
+		}
+	}
+}
+
+// Serve reads messages until EOF or ctx ends; requests run on their own
+// goroutines (ruling 2). Pending Calls fail once it returns. When ctx ends
+// Serve returns at once; its read goroutine exits when the reader next
+// returns (the caller closes it, or the process exits). A line longer than
+// the 64 MiB cap is dropped, answered -32600 if its id can be found, and
+// the connection keeps serving.
+func (c *Conn) Serve(ctx context.Context) error {
+	defer close(c.closed)
+	lines := make(chan readResult)
+	stop := make(chan struct{})
+	defer close(stop)
+	go c.readLines(lines, stop)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case r := <-lines:
+			if r.err == io.EOF {
+				return nil
+			}
+			if r.err != nil {
+				return r.err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			c.serveLine(ctx, r.line, r.tooLong)
+		}
+	}
+}
+
+// answerError answers id with an error off the read loop, like every
+// response, so a client that writes before it reads cannot stall it.
+func (c *Conn) answerError(id json.RawMessage, code int, msg string) {
+	answer := map[string]any{"jsonrpc": "2.0", "id": id, "error": &RPCError{Code: code, Message: msg}}
+	go func() { _ = c.write(answer) }()
+}
+
+func (c *Conn) serveLine(ctx context.Context, line []byte, tooLong bool) {
+	if tooLong {
+		msg := fmt.Sprintf("invalid request: line longer than %d bytes", c.maxLine)
+		if id := topLevelID(line); id != nil {
+			c.answerError(id, CodeInvalidRequest, msg)
+			return
+		}
+		c.logf("acp: dropped a line longer than %d bytes", c.maxLine)
+		return
+	}
+	var m message
+	if err := json.Unmarshal(line, &m); err != nil {
+		if id := topLevelID(line); id != nil {
+			c.answerError(id, CodeParseError, "parse error: "+err.Error())
+			return
+		}
+		c.logf("acp: dropped a malformed line (%d bytes): %v", len(line), err)
+		return
+	}
+	if m.JSONRPC != "2.0" {
+		if m.Method != "" && len(m.ID) > 0 {
+			c.answerError(m.ID, CodeInvalidRequest, `invalid request: jsonrpc must be "2.0"`)
+			return
+		}
+		c.logf("acp: dropped a message that is not JSON-RPC 2.0 (%d bytes)", len(line))
+		return
+	}
+	switch {
+	case m.Method != "" && len(m.ID) > 0:
+		go c.serveRequest(ctx, m)
+	case m.Method != "":
+		c.notify(m)
+	case len(m.ID) > 0:
+		c.deliver(m)
+	}
+}
+
+// notify runs the Notify handler, recovering a panic as requests do.
+func (c *Conn) notify(m message) {
+	defer func() {
+		if p := recover(); p != nil {
+			c.logf("acp: notification %s panicked: %v", m.Method, p)
+		}
+	}()
+	c.h.Notify(m.Method, m.Params)
 }
 
 func (c *Conn) serveRequest(ctx context.Context, m message) {
