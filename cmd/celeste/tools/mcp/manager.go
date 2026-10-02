@@ -33,6 +33,7 @@ type Manager struct {
 	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
 	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
 	home        string              // the user's home: its configs alone may set "trusted"
+	connecting  map[string]bool     // servers with a connectClient in flight
 	mu          sync.Mutex
 }
 
@@ -49,6 +50,7 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		toolNames:  make(map[string][]string),
 		origins:    make(map[string]string),
 		home:       userHome(),
+		connecting: make(map[string]bool),
 	}
 }
 
@@ -92,13 +94,7 @@ func NewManagerMulti(paths []string, registry *tools.Registry) *Manager {
 // If the config file does not exist, it returns nil (no MCP configured).
 // If a server fails to connect, it logs a warning and continues with others.
 func (m *Manager) Start(ctx context.Context) error {
-	var cfg *MCPConfig
-	var err error
-	if len(m.configPaths) > 0 {
-		cfg, err = LoadMerged(m.configPaths)
-	} else {
-		cfg, err = LoadConfig(m.configPath)
-	}
+	cfg, err := m.loadConfig()
 	if err != nil {
 		return fmt.Errorf("load MCP config: %w", err)
 	}
@@ -133,10 +129,48 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+// loadConfig reads the manager's config: the merged discovery paths, or
+// the single configPath with each server's Origin set to it (so trust and
+// RegisterGlobalInto know where it came from).
+func (m *Manager) loadConfig() (*MCPConfig, error) {
+	if len(m.configPaths) > 0 {
+		return LoadMerged(m.configPaths)
+	}
+	cfg, err := LoadConfig(m.configPath)
+	if err != nil {
+		return nil, err
+	}
+	if m.configPath != "" {
+		for name, sc := range cfg.Servers {
+			sc.Origin = m.configPath
+			cfg.Servers[name] = sc
+		}
+	}
+	return cfg, nil
+}
+
 // connectClient initializes an already-built client, discovers + registers its
 // tools, and records bookkeeping. The caller holds no lock; connectClient locks
 // only while mutating manager maps. trusted honours the tools' readOnlyHint.
 func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string, trusted bool) error {
+	// One connect per server at a time: a second one racing it would
+	// register nothing (Add refuses the names the first holds) yet replace
+	// its client, leaving tools Disconnect never removes.
+	m.mu.Lock()
+	_, live := m.clients[name]
+	if live || m.connecting[name] {
+		m.mu.Unlock()
+		client.Close()
+		return fmt.Errorf("connect %q: already connected or connecting", name)
+	}
+	m.connecting[name] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.connecting, name)
+		m.mu.Unlock()
+	}()
+
 	if err := client.Initialize(ctx); err != nil {
 		client.Close()
 		return fmt.Errorf("initialize %q: %w", name, err)

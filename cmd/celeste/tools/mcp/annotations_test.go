@@ -173,3 +173,41 @@ func TestRegisterIntoNeverReplaces(t *testing.T) {
 		t.Fatal("RegisterInto replaced a tool the registry held")
 	}
 }
+
+// A second connect of a server while the first is still in flight is
+// refused and closes its own client: two clients for one name would leave
+// tools that Disconnect never removes.
+func TestConnectClientRefusesAConnectInFlight(t *testing.T) {
+	registry := tools.NewRegistry()
+	mgr := NewManager("", registry)
+	mgr.connecting["srv"] = true
+	mt := &mockTransport{responses: []*Response{makeInitResponse(), makeToolsListResponse("t")}}
+	if err := mgr.connectClient(context.Background(), "srv", NewClient(mt, "celeste", "1.0"), "stdio", false); err == nil {
+		t.Fatal("a connect while one is in flight must fail")
+	}
+	if !mt.closed || registry.Count() != 0 || mgr.IsConnected("srv") {
+		t.Fatalf("closed=%v tools=%d connected=%v", mt.closed, registry.Count(), mgr.IsConnected("srv"))
+	}
+}
+
+// The single-file config (NewManager(path)) records each server's origin,
+// so "trusted" in the home config is honoured there too.
+func TestSingleConfigStampsOrigin(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".celeste", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"mine":{"command":"x","trusted":true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(path, tools.NewRegistry())
+	m.home = home
+	cfg, err := m.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Servers["mine"]; sc.Origin != path || !m.trusts(sc) {
+		t.Fatalf("server = %+v, trusted=%v", sc, m.trusts(sc))
+	}
+}

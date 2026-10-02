@@ -1290,7 +1290,9 @@ func runSkillExecuteCommand(args []string) {
 	execCwd, _ := os.Getwd()
 	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil)
 	homeDir, _ := os.UserHomeDir()
-	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
+	}
 
 	// Execute skill
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1341,7 +1343,9 @@ func runSkillsCommand(args []string) {
 	registry := tools.NewRegistry()
 	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
 	homeDir, _ := os.UserHomeDir()
-	_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
+	}
 
 	// Execute skill if --exec provided
 	if *exec != "" {
@@ -1393,7 +1397,9 @@ func runSkillsCommand(args []string) {
 	if *reload {
 		registry = tools.NewRegistry()
 		builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
-		_ = registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills"))
+		if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
+			fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
+		}
 		fmt.Printf("Reloaded %d skills from disk\n", registry.Count())
 		return
 	}
