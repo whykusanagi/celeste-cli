@@ -67,6 +67,7 @@ type Runner struct {
 	// watchdog is the watchdog mode and oracle answers its ballot (2.0 W3).
 	watchdog string
 	oracle   decide.Oracle
+	gateMode string // completion_gate (2.0 W3)
 }
 
 // compactMessages keeps the history inside the window (#174). It prunes old
@@ -454,6 +455,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		firstRunID: firstRunID,
 		rulesMode:  cfg.StreamRulesMode(),
 		watchdog:   cfg.WatchdogMode(),
+		gateMode:   cfg.CompletionGateMode(),
 		oracle: WatchdogOracle(cfg, llmConfig, options.Workspace, func(line string) {
 			fmt.Fprintf(errOut, "[agent] %s\n", line)
 		}),
@@ -625,7 +627,17 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 		state.ConsecutiveNoToolTurns++
 
-		if isCompletionResponse(state.LastAssistantResponse, state.Options) {
+		complete, vetoed := r.completion(ctx, state, res.FinalText, sess)
+		if vetoed {
+			// The gate appended its continue prompt: skip the generic one,
+			// and the no-tool-turn count restarts (as after a failed check).
+			state.ConsecutiveNoToolTurns = 0
+			if !state.Options.DisableCheckpoints {
+				_ = r.store.Save(state)
+			}
+			continue
+		}
+		if complete {
 			completed, err := r.handleCompletionCandidate(ctx, state)
 			if err != nil {
 				state.Status = StatusFailed

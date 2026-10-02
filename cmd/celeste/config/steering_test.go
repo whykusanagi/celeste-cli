@@ -26,3 +26,11 @@ func TestWatchdogModeDefaultsToOff(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletionGateModeDefaultsToShadow(t *testing.T) {
+	for in, want := range map[string]string{"": "shadow", "on": "on", "off": "shadow"} {
+		if got := (&Config{CompletionGate: in}).CompletionGateMode(); got != want {
+			t.Errorf("completion_gate %q = %q, want %q", in, got, want)
+		}
+	}
+}
