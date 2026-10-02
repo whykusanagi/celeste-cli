@@ -93,6 +93,7 @@ func Run(ctx context.Context, o Options) Result {
 	if err != nil {
 		return Result{ExitCode: -1, Err: err}
 	}
+	defer proctree.Release(cmd) // after Wait, the drain and any Kill below
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(out, r)

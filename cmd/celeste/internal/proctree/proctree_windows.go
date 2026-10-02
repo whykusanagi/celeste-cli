@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"weak"
 
 	"golang.org/x/sys/windows"
 )
@@ -29,6 +30,7 @@ const taskkillTimeout = 3 * time.Second
 // Start starts cmd as the root of its own process tree and makes cancelling
 // its context kill the whole tree. Use it instead of cmd.Start; it keeps
 // any SysProcAttr fields already set (callers may set CmdLine).
+// cmd must come from exec.CommandContext.
 //
 // The process starts suspended, joins a new Job Object and is then resumed,
 // so everything it starts is in the job before it can run: Kill ends the
@@ -56,15 +58,22 @@ func Start(cmd *exec.Cmd) error {
 	resumeErr := resume(pid)
 	t.mu.Unlock()
 	if job != 0 {
-		// The handle lives as long as cmd (through cmd.Cancel), so Kill
-		// works after Wait too. The job has no kill-on-close limit: closing
-		// the handle leaves running a background process that let go of
-		// the output, as on unix.
-		runtime.AddCleanup(t, func(h windows.Handle) { _ = windows.CloseHandle(h) }, job)
+		// Release closes the handle once the caller is done with cmd; the
+		// cleanup is the backstop for a caller that never calls it. The
+		// tree holds no reference to cmd, so the map entry doesn't keep
+		// cmd alive.
+		key := weak.Make(cmd)
+		trees.Store(key, t)
+		runtime.AddCleanup(cmd, func(k weak.Pointer[exec.Cmd]) {
+			if v, ok := trees.LoadAndDelete(k); ok {
+				v.(*tree).release()
+			}
+		}, key)
 	}
 	if resumeErr != nil {
 		_ = killRoot(cmd) // still suspended: it has started nothing
 		_ = cmd.Wait()
+		Release(cmd)
 		return fmt.Errorf("start %s: %w", cmd.Path, errors.Join(resumeErr, jobErr))
 	}
 	return nil
@@ -72,7 +81,8 @@ func Start(cmd *exec.Cmd) error {
 
 // Kill ends cmd's process tree. A command that never started, or has
 // already exited, is not an error. cmd must have been started by Start;
-// after Wait it still ends whatever the command left running in its job.
+// after Wait (until Release) it still ends whatever the command left
+// running in its job.
 func Kill(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
@@ -83,10 +93,34 @@ func Kill(cmd *exec.Cmd) error {
 	return killRoot(cmd)
 }
 
+// Release closes cmd's Job Object once the caller is done with cmd (after
+// Wait, and after any Kill). Processes still in the job keep running. It
+// is idempotent and safe against a concurrent Kill or cancel, which become
+// no-ops once it has run.
+func Release(cmd *exec.Cmd) {
+	if v, ok := trees.LoadAndDelete(weak.Make(cmd)); ok {
+		v.(*tree).release()
+	}
+}
+
+// trees maps each started command still holding a Job Object to its tree.
+var trees sync.Map // weak.Pointer[exec.Cmd] -> *tree
+
 // tree is one started command's Job Object.
 type tree struct {
-	mu  sync.Mutex
-	job windows.Handle // 0: no job, so kill falls back to taskkill /T
+	mu       sync.Mutex
+	job      windows.Handle // 0: no job, so kill falls back to taskkill /T
+	released bool
+}
+
+func (t *tree) release() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.job != 0 {
+		_ = windows.CloseHandle(t.job)
+		t.job = 0
+	}
+	t.released = true
 }
 
 func (t *tree) kill(cmd *exec.Cmd) error {
@@ -94,16 +128,20 @@ func (t *tree) kill(cmd *exec.Cmd) error {
 		return nil
 	}
 	t.mu.Lock()
-	job := t.job
-	t.mu.Unlock()
-	if job != 0 {
-		err := windows.TerminateJobObject(job, 1)
-		runtime.KeepAlive(t) // its cleanup closes job
+	if t.released {
+		t.mu.Unlock()
+		return nil
+	}
+	if t.job != 0 {
+		// Under the lock, so Release can't close the handle mid-call.
+		err := windows.TerminateJobObject(t.job, 1)
+		t.mu.Unlock()
 		if err != nil {
 			return fmt.Errorf("terminate job: %w", err)
 		}
 		return nil
 	}
+	t.mu.Unlock()
 	// Signal 0 only asks whether Wait has released the process (the only
 	// state it reports on Windows). Until then Go holds a handle to it, so
 	// its pid can't be reused; afterwards taskkill /T on that pid could end
@@ -135,6 +173,16 @@ func newJob(pid uint32) (windows.Handle, error) {
 	if err != nil {
 		return 0, fmt.Errorf("create job: %w", err)
 	}
+	// BREAKAWAY_OK lets a program that explicitly asks for
+	// CREATE_BREAKAWAY_FROM_JOB (installers, some MSBuild tooling) start
+	// outside the job instead of failing; such a process is no longer in
+	// the tree Kill ends. SILENT_BREAKAWAY_OK is not set: every other child
+	// stays in the job. A job that can't take the limit is still used, only
+	// stricter.
+	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK
+	_, _ = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)))
 	proc, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, pid)
 	if err != nil {
 		_ = windows.CloseHandle(job)
@@ -158,26 +206,34 @@ func resume(pid uint32) error {
 	defer windows.CloseHandle(snap)
 	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
 	resumed := 0
+	var last error
 	for err = windows.Thread32First(snap, &entry); err == nil; err = windows.Thread32Next(snap, &entry) {
 		if entry.OwnerProcessID != pid {
 			continue
 		}
-		th, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
-		if err != nil {
-			return fmt.Errorf("open thread: %w", err)
+		// A thread that can't be opened or resumed is skipped (and named
+		// if nothing could be resumed).
+		th, terr := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
+		if terr != nil {
+			last = fmt.Errorf("open thread %d: %w", entry.ThreadID, terr)
+			continue
 		}
-		_, err = windows.ResumeThread(th)
+		_, terr = windows.ResumeThread(th)
 		_ = windows.CloseHandle(th)
-		if err != nil {
-			return fmt.Errorf("resume thread: %w", err)
+		if terr != nil {
+			last = fmt.Errorf("resume thread %d: %w", entry.ThreadID, terr)
+			continue
 		}
 		resumed++
+	}
+	if resumed > 0 {
+		return nil
 	}
 	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
 		return fmt.Errorf("thread walk: %w", err)
 	}
-	if resumed == 0 {
-		return errors.New("no thread to resume")
+	if last != nil {
+		return last
 	}
-	return nil
+	return errors.New("no thread to resume")
 }

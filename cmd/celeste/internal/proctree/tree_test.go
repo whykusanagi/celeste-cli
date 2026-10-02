@@ -115,3 +115,21 @@ func TestKillBeforeStartIsANoop(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Release is idempotent, and a Kill after it is a no-op rather than an
+// error (on Windows the job handle is closed by then).
+func TestReleaseIsIdempotentAndKillAfterItIsANoop(t *testing.T) {
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^$")
+	if err := Start(cmd); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	Release(cmd)
+	Release(cmd)
+	if err := Kill(cmd); err != nil {
+		t.Fatal(err)
+	}
+	Release(exec.Command(os.Args[0])) // never started
+}

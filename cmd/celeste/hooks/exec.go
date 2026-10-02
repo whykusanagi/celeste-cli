@@ -80,6 +80,7 @@ func runHook(ctx context.Context, def Definition, dir string, payload map[string
 	// pid after the original group fully emptied — accepted. On Windows it
 	// terminates the hook's Job Object, which holds only the hook's tree.
 	_ = proctree.Kill(proc)
+	proctree.Release(proc)
 	if stdout.over {
 		// Applies to both protocols, including v1: 1.x had no stdout cap, so a
 		// v1 guard that floods stdout now fails closed even at exit 0 instead
