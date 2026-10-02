@@ -487,6 +487,8 @@ func TestCelesteStatusNoArgsUnchanged(t *testing.T) {
 		"uptime": true, "health": true, "workspace": true, "transport": true,
 		// #210: additive fields the plugin's celeste-context skill reads.
 		"grimoire": true, "project": true, "session_cost": true,
+		// 2.0 W3: additive steering fields.
+		"completions": true, "oracle": true, "rules": true,
 	}
 	for k := range payload {
 		if !want[k] {
