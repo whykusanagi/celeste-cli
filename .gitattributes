@@ -1,0 +1,3 @@
+# The sealed persona is byte-pinned by SOURCE.json; never convert line endings.
+cmd/celeste/prompts/persona/*.enc binary
+cmd/celeste/prompts/persona/SOURCE.json -text
