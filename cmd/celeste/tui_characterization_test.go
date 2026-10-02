@@ -179,12 +179,14 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 
 	// flipped in F3 (#211): the per-request transport trim (llm/trim.go) is
 	// gone, so the model receives exactly what the loop recorded:
-	// ctxmgr.CapToolResult's 131072-byte preview of the 204800-byte result,
-	// [head]["...full output saved to: <path>..."][512-byte tail], spill
-	// notice included, so it can recall the full output. Before F3 the 64 KiB
-	// trim cut the preview ahead of that notice ("original was 131072 bytes").
-	if len(content) != 131072 {
-		t.Fatalf("tool result on the wire = %d bytes, want CapToolResult's 131072-byte preview", len(content))
+	// ctxmgr.CapToolResult's preview of the 204800-byte result, at most
+	// 131072 bytes: SnipToolResult's [head][snipped marker naming "full
+	// output saved to: <path>"][tail], so it can recall the full output. The
+	// marker reserves room for the largest count it could print, so the
+	// preview can land a few bytes under the cap. Before F3 the 64 KiB trim
+	// cut the preview ahead of that notice ("original was 131072 bytes").
+	if len(content) > 131072 || len(content) < 131072-16 {
+		t.Fatalf("tool result on the wire = %d bytes, want CapToolResult's preview of at most 131072 bytes", len(content))
 	}
 	if strings.Contains(content, "for transport") {
 		t.Fatalf("the deleted transport trim still ran: %q", content[len(content)-600:])
@@ -196,7 +198,7 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	// Independently (and more directly) verify CapToolResult's own cap by
 	// reading the chat history's tool message via DebugMessages — that's
 	// what (AppModel) stored from the loop's capped tool message. It must be
-	// the capped preview itself: exactly CapToolResult's maxBytes (131072)
+	// the capped preview itself: at most CapToolResult's maxBytes (131072)
 	// and containing its spill notice, not the raw 204800-byte result.
 	var historyContent string
 	haveHistoryToolMsg := false
@@ -212,8 +214,8 @@ func TestTUISpillsHugeToolResult(t *testing.T) {
 	if !strings.Contains(historyContent, "full output saved to:") {
 		t.Fatalf("chat history tool result missing CapToolResult's own spill notice (len=%d): not capped", len(historyContent))
 	}
-	if len(historyContent) != 131072 {
-		t.Fatalf("chat history tool result len = %d, want CapToolResult's capped preview (131072 bytes)", len(historyContent))
+	if len(historyContent) > 131072 || len(historyContent) < 131072-16 {
+		t.Fatalf("chat history tool result len = %d, want CapToolResult's capped preview (at most 131072 bytes)", len(historyContent))
 	}
 
 	// Append-only (F3): the request carries the recorded message unchanged.

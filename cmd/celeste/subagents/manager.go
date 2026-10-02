@@ -18,6 +18,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 )
 
@@ -787,11 +788,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	if run.Result == "" {
 		run.Result = fmt.Sprintf("Subagent completed after %d turns (status: %s)", state.Turn, state.Status)
 	}
-	// Truncate oversized results to avoid blowing up the parent's context
-	const maxResultChars = 100_000
-	if len(run.Result) > maxResultChars {
-		run.Result = run.Result[:maxResultChars] + "\n\n[Result truncated at 100k chars]"
-	}
+	run.Result = capSubagentResult(run.Result)
 	m.mu.Unlock()
 
 	return run, nil
@@ -1081,4 +1078,17 @@ func (m *Manager) ListRuns() []*SubagentRun {
 		}
 	}
 	return runs
+}
+
+// maxResultBytes caps a subagent's result so it cannot blow up the parent's
+// context.
+const maxResultBytes = 100_000
+
+// capSubagentResult cuts an oversized result on a character boundary and
+// says so.
+func capSubagentResult(result string) string {
+	if len(result) <= maxResultBytes {
+		return result
+	}
+	return textutil.CutBytes(result, maxResultBytes) + "\n\n[Result truncated at 100k chars]"
 }

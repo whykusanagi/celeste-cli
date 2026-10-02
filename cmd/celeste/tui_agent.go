@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -408,7 +409,7 @@ func previewText(value string, limit int) string {
 	if limit <= 0 || len(text) <= limit {
 		return text
 	}
-	return text[:limit] + "\n...(truncated)"
+	return textutil.CutBytes(text, limit) + "\n...(truncated)"
 }
 
 // logAgentProgress writes agent progress events to the session log so they

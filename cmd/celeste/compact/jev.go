@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 )
 
@@ -40,7 +41,7 @@ func JevScore(ctx context.Context, c *jev.Client, goal, latest string, cands []C
 		args, _ := json.Marshal(cand.Args)
 		// Redact the whole body before cutting: a cut inside a secret would
 		// leave a fragment no pattern matches.
-		excerpt := cutRunes(jev.Redact(cand.Content), maxJevExcerpt)
+		excerpt := textutil.CutBytes(jev.Redact(cand.Content), maxJevExcerpt)
 		results[i] = result{Tool: cand.Name, Args: jev.Redact(string(args)), Excerpt: excerpt}
 		// Wording validated against jev-1.13 on 2026-09-25, including a
 		// prompt-injection result that asked to be kept (scored 0.03).

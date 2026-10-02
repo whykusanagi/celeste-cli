@@ -236,3 +236,29 @@ func TestSpillNoticeNamesRecallID(t *testing.T) {
 		t.Error("a missing spill file must be an error")
 	}
 }
+
+// CapToolResult is built on SnipToolResult: cuts fall on character
+// boundaries, the result fits maxBytes, and the marker names the spill file.
+func TestCapToolResult_RuneSafeAndBounded(t *testing.T) {
+	dir := t.TempDir()
+	result := "a" + strings.Repeat("セ", 20000) + "b"
+	const maxBytes = 4096
+	capped, wasCapped, err := CapToolResult(result, maxBytes, "s1", "c1", dir)
+	if err != nil || !wasCapped {
+		t.Fatalf("capped=%v err=%v", wasCapped, err)
+	}
+	if !utf8.ValidString(capped) {
+		t.Fatal("CapToolResult split a UTF-8 character")
+	}
+	if len(capped) > maxBytes {
+		t.Fatalf("capped is %d bytes, over maxBytes %d", len(capped), maxBytes)
+	}
+	for _, want := range []string{"TRUNCATED", "c1.txt", "recall_tool_result", `"s1/c1"`} {
+		if !strings.Contains(capped, want) {
+			t.Errorf("capped result lacks %q", want)
+		}
+	}
+	if !strings.HasPrefix(capped, "aセ") || !strings.HasSuffix(capped, "セb") {
+		t.Error("capped result lost its head or tail")
+	}
+}

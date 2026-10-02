@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -133,7 +133,7 @@ func describe(c Candidate) string {
 	for _, k := range []string{"path", "file", "command", "url", "query", "pattern"} {
 		if v, ok := c.Args[k].(string); ok && v != "" {
 			if len(v) > 60 {
-				v = cutRunes(v, 60) + "…"
+				v = textutil.CutBytes(v, 60) + "…"
 			}
 			return c.Name + " " + jev.Redact(v)
 		}
@@ -160,16 +160,5 @@ func goalAndLatest(msgs []tui.ChatMessage) (goal, latest string) {
 			latest = m.Content
 		}
 	}
-	return cutRunes(jev.Redact(goal), maxGoalChars), cutRunes(jev.Redact(latest), maxGoalChars)
-}
-
-// cutRunes cuts s to at most n bytes without splitting a UTF-8 sequence.
-func cutRunes(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	return textutil.CutBytes(jev.Redact(goal), maxGoalChars), textutil.CutBytes(jev.Redact(latest), maxGoalChars)
 }

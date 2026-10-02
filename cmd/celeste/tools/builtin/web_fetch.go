@@ -9,6 +9,7 @@ import (
 	"time"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -103,13 +104,19 @@ func (t *WebFetchTool) Execute(ctx context.Context, input map[string]any, progre
 		markdown = fmt.Sprintf("## Extraction Guidance\n%s\n\n---\n\n%s", prompt, markdown)
 	}
 
-	// Cap output at maxFetchBytes
-	if len(markdown) > maxFetchBytes {
-		markdown = markdown[:maxFetchBytes] + "\n\n[Content truncated at 32KB]"
-	}
+	markdown = capFetched(markdown)
 
 	return resultFromMap(map[string]any{
 		"url":     rawURL,
 		"content": markdown,
 	})
+}
+
+// capFetched cuts fetched content to maxFetchBytes on a character boundary
+// and says so.
+func capFetched(markdown string) string {
+	if len(markdown) <= maxFetchBytes {
+		return markdown
+	}
+	return textutil.CutBytes(markdown, maxFetchBytes) + "\n\n[Content truncated at 32KB]"
 }
