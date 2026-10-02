@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -910,6 +911,12 @@ func (b *AnthropicBackend) SendMessageStreamEvents(ctx context.Context, messages
 func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthropic.MessageParam {
 	var result []anthropic.MessageParam
 	key := b.providerKey()
+	// #239: fit every image to Anthropic's limits; a request with more than
+	// 20 images caps each at 2000 px (ruling 5).
+	lim := imagefit.Anthropic
+	if countToolImages(messages) > 20 {
+		lim = lim.WithMaxDim(2000)
+	}
 
 	for _, msg := range messages {
 		// Skip system messages — they are handled via the System parameter.
@@ -936,8 +943,12 @@ func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthrop
 			var blocks []anthropic.ContentBlockParamUnion
 
 			// Check for image metadata.
-			if img, ok := toolImageOf(msg.Metadata); ok {
-				blocks = append(blocks, anthropic.NewImageBlockBase64(img.MediaType(), img.B64))
+			if img, note, ok := fitToolImage(msg.Metadata, lim); ok {
+				if note != "" {
+					blocks = append(blocks, anthropic.NewTextBlock(note))
+				} else {
+					blocks = append(blocks, anthropic.NewImageBlockBase64(img.MediaType(), img.B64))
+				}
 			}
 
 			if msg.Content != "" {
@@ -989,11 +1000,15 @@ func (b *AnthropicBackend) convertMessages(messages []tui.ChatMessage) []anthrop
 			result = append(result, anthropic.NewUserMessage(toolResultBlock))
 
 			// If this tool result has image metadata, add it as an image block.
-			if img, ok := toolImageOf(msg.Metadata); ok {
-				result = append(result, anthropic.NewUserMessage(
-					anthropic.NewImageBlockBase64(img.MediaType(), img.B64),
-					anthropic.NewTextBlock(fmt.Sprintf("[Image from tool result: %s]", img.Name)),
-				))
+			if img, note, ok := fitToolImage(msg.Metadata, lim); ok {
+				if note != "" {
+					result = append(result, anthropic.NewUserMessage(anthropic.NewTextBlock(note)))
+				} else {
+					result = append(result, anthropic.NewUserMessage(
+						anthropic.NewImageBlockBase64(img.MediaType(), img.B64),
+						anthropic.NewTextBlock(fmt.Sprintf("[Image from tool result: %s]", img.Name)),
+					))
+				}
 			}
 		}
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -28,7 +29,7 @@ func TestResponsesInputNeutralHistory(t *testing.T) {
 		{Role: "tool", ToolCallID: "call_a", Name: "read_file", Content: "package a"},
 		{Role: "assistant", Content: "done"},
 	}
-	got, replayed := responsesInput(msgs, testRespKey)
+	got, replayed := responsesInput(msgs, testRespKey, imagefit.Universal)
 	assert.False(t, replayed)
 	assert.Equal(t, []string{
 		`{"type":"message","role":"system","content":"be brief"}`,
@@ -42,11 +43,11 @@ func TestResponsesInputNeutralHistory(t *testing.T) {
 
 func TestResponsesInputToolImage(t *testing.T) {
 	msgs := []tui.ChatMessage{{Role: "tool", ToolCallID: "c1", Content: "saw it",
-		Metadata: map[string]any{"type": "image", "base64": "QUJD", "format": "jpeg", "filename": "shot.jpg"}}}
-	got, _ := responsesInput(msgs, testRespKey)
+		Metadata: map[string]any{"type": "image", "base64": tinyJPEG, "format": "jpeg", "filename": "shot.jpg"}}}
+	got, _ := responsesInput(msgs, testRespKey, imagefit.Universal)
 	assert.Equal(t, []string{
 		`{"type":"function_call_output","call_id":"c1","output":"saw it"}`,
-		`{"type":"message","role":"user","content":[{"type":"input_text","text":"[Attached image from tool result: shot.jpg]"},{"type":"input_image","image_url":"data:image/jpeg;base64,QUJD","detail":"auto"}]}`,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"[Attached image from tool result: shot.jpg]"},{"type":"input_image","image_url":"data:image/jpeg;base64,` + tinyJPEG + `","detail":"auto"}]}`,
 	}, asStrings(got))
 }
 
@@ -60,7 +61,7 @@ func TestResponsesInputReplaysBlocksWithoutItemIDs(t *testing.T) {
 	asst := tui.AttachProviderBlocks(tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "call_a", Name: "read_file", Arguments: "{}"}}}, pb)
 	stored := string(asst.ProviderBlocks.Blocks[1])
 
-	got, replayed := responsesInput([]tui.ChatMessage{{Role: "user", Content: "go"}, asst}, testRespKey)
+	got, replayed := responsesInput([]tui.ChatMessage{{Role: "user", Content: "go"}, asst}, testRespKey, imagefit.Universal)
 	assert.True(t, replayed)
 	assert.Equal(t, []string{
 		`{"type":"message","role":"user","content":"go"}`,
@@ -81,7 +82,7 @@ func TestResponsesInputIgnoresOtherProvidersBlocks(t *testing.T) {
 	require.NoError(t, err)
 	asst := tui.AttachProviderBlocks(tui.ChatMessage{Role: "assistant", Content: "hi"}, pb)
 
-	got, replayed := responsesInput([]tui.ChatMessage{asst}, testRespKey)
+	got, replayed := responsesInput([]tui.ChatMessage{asst}, testRespKey, imagefit.Universal)
 	assert.False(t, replayed)
 	assert.Equal(t, []string{`{"type":"message","role":"assistant","content":"hi"}`}, asStrings(got))
 	assert.NotNil(t, asst.ProviderBlocks)
