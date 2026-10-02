@@ -21,6 +21,14 @@ type AnthropicBackend struct {
 	config         *Config
 	systemPrompt   string
 	thinkingConfig ThinkingConfig
+	// bindingControls: send the thinking-binding beta with drop_block on
+	// requests that replay thinking (2.0 W2 ruling 6). Set for Anthropic's
+	// own endpoint; cleared for good when the endpoint refuses the beta
+	// (ruling 9).
+	bindingControls bool
+	// promptChanged: the system prompt changed since the last request; the
+	// next one sends no blocks and reports BlocksRejected (ruling 10).
+	promptChanged bool
 }
 
 // NewAnthropicBackend creates a new Anthropic backend using the native SDK.
@@ -39,13 +47,19 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 	client := anthropic.NewClient(opts...)
 
 	return &AnthropicBackend{
-		client: &client,
-		config: config,
+		client:          &client,
+		config:          config,
+		bindingControls: config.BaseURL == "" || isAnthropicProvider(config.BaseURL),
 	}, nil
 }
 
-// SetSystemPrompt sets the system prompt (Celeste persona).
+// SetSystemPrompt sets the system prompt (Celeste persona). A change from
+// a previous prompt makes the next request drop replayed blocks: their
+// signatures cover the old prompt (2.0 W2 ruling 10).
 func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
+	if b.systemPrompt != "" && prompt != b.systemPrompt {
+		b.promptChanged = true
+	}
 	b.systemPrompt = prompt
 }
 
@@ -117,6 +131,64 @@ func (b *AnthropicBackend) maxTokens() int64 {
 	return 32768 // default for non-thinking requests
 }
 
+// replays reports whether any assistant message is sent as its blocks.
+func (b *AnthropicBackend) replays(messages []tui.ChatMessage) bool {
+	key := b.providerKey()
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			if _, ok := tui.ReplayBlocks(m, key); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// replaysThinking reports whether any replayed message carries a thinking
+// or redacted_thinking block.
+func (b *AnthropicBackend) replaysThinking(messages []tui.ChatMessage) bool {
+	key := b.providerKey()
+	for _, m := range messages {
+		if m.Role != "assistant" {
+			continue
+		}
+		raws, ok := tui.ReplayBlocks(m, key)
+		if !ok {
+			continue
+		}
+		for _, raw := range raws {
+			var head struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(raw, &head) == nil && (head.Type == "thinking" || head.Type == "redacted_thinking") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// prepare builds the request and its per-request options: the binding
+// beta with drop_block when ruling 6 applies.
+func (b *AnthropicBackend) prepare(messages []tui.ChatMessage, tools []tui.SkillDefinition) (anthropic.MessageNewParams, []option.RequestOption) {
+	params := b.buildParams(messages, tools)
+	if !b.bindingControls || !b.replaysThinking(messages) {
+		return params, nil
+	}
+	if params.Thinking.OfAdaptive == nil && params.Thinking.OfEnabled == nil {
+		if anthropicThinkingFamily(b.config.Model) != familyAlwaysOn {
+			return params, nil
+		}
+		// Always-on models take adaptive explicitly; block_binding needs a
+		// thinking object to sit in.
+		params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+	}
+	return params, []option.RequestOption{
+		option.WithHeaderAdd("anthropic-beta", thinkingBindingBeta),
+		option.WithJSONSet("thinking.block_binding", map[string]any{"prefix_mismatch_behavior": "drop_block"}),
+	}
+}
+
 // buildParams constructs the MessageNewParams shared by sync and streaming requests.
 func (b *AnthropicBackend) buildParams(messages []tui.ChatMessage, tools []tui.SkillDefinition) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
@@ -167,19 +239,49 @@ func (a *anthropicStream) Err() error                                 { return a
 func (a *anthropicStream) Close() error                               { return a.s.Close() }
 
 // open sends the request and reads its first event, so a request refused
-// before any output is known before anything reaches the caller. rejected
-// reports that the reply comes from a history whose blocks were dropped
-// (Task 5).
+// before any output is handled before anything reaches the caller:
+//   - after a system-prompt change, blocks are dropped (ruling 10);
+//   - a 400 about replayed thinking is resent once without blocks (ruling 8);
+//   - a 400 refusing the binding beta is resent once without it, and the
+//     beta is not sent again (ruling 9).
+//
+// rejected reports that the reply comes from a history whose blocks were
+// dropped; the caller passes it on as BlocksRejected.
 func (b *AnthropicBackend) open(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*anthropicStream, bool, error) {
-	s := b.client.Messages.NewStreaming(ctx, b.buildParams(messages, tools))
-	if s.Next() {
-		return &anthropicStream{s: s, primed: true}, false, nil
+	rejected := false
+	if b.promptChanged && hasProviderBlocks(messages) {
+		tui.LogInfo("anthropic: the system prompt changed; replayed blocks are dropped from here on")
+		messages = tui.StripProviderBlocks(messages)
+		rejected = true
 	}
-	if err := s.Err(); err != nil {
+	retriedStrip, retriedBeta := false, false
+	for {
+		params, opts := b.prepare(messages, tools)
+		s := b.client.Messages.NewStreaming(ctx, params, opts...)
+		if s.Next() {
+			b.promptChanged = false
+			return &anthropicStream{s: s, primed: true}, rejected, nil
+		}
+		err := s.Err()
+		if err == nil {
+			b.promptChanged = false
+			return &anthropicStream{s: s}, rejected, nil
+		}
 		s.Close()
-		return nil, false, err
+		body, bad := anthropicBadRequest(err)
+		switch {
+		case bad && !retriedStrip && b.replays(messages) && isThinkingRejection(body):
+			tui.LogInfo("anthropic: replayed thinking was refused; resending without it")
+			messages = tui.StripProviderBlocks(messages)
+			rejected, retriedStrip = true, true
+		case bad && !retriedBeta && len(opts) > 0 && isBindingBetaRejection(body):
+			tui.LogInfo("anthropic: the endpoint does not take " + thinkingBindingBeta + "; not sending it again")
+			b.bindingControls = false
+			retriedBeta = true
+		default:
+			return nil, rejected, err
+		}
 	}
-	return &anthropicStream{s: s}, false, nil
 }
 
 // messageCacheBreakpoints is how many of the newest messages get a

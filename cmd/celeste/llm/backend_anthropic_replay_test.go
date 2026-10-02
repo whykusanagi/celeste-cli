@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,4 +138,151 @@ func TestAnthropicReportsPrefixDrops(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want, res.BlocksRejected, res.Content)
 	}
+}
+
+const prefixMismatchBody = "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.\"}}"
+
+// historyWithThinking is a finished turn whose blocks b replays, then a new
+// user message.
+func historyWithThinking(t *testing.T, b *AnthropicBackend) []tui.ChatMessage {
+	t.Helper()
+	pb, err := tui.NewProviderBlocks(b.providerKey(), []json.RawMessage{
+		json.RawMessage(wantThinking),
+		json.RawMessage(`{"text":"earlier","type":"text"}`),
+	})
+	require.NoError(t, err)
+	return []tui.ChatMessage{
+		{Role: "user", Content: "hi"},
+		tui.AttachProviderBlocks(tui.ChatMessage{Role: "assistant", Content: "earlier"}, pb),
+		{Role: "user", Content: "again"},
+	}
+}
+
+func betaHeader(r fakeprovider.Request) string {
+	return strings.Join(r.Header.Values("Anthropic-Beta"), ",")
+}
+
+// Review Focus 2: the prefix-mismatch 400 is resent once without thinking
+// and the reply reports BlocksRejected so the loop strips the history.
+func TestAnthropicStripsAndRetriesOnPrefixMismatch(t *testing.T) {
+	srv := fakeprovider.NewAnthropic(t,
+		fakeprovider.Turn{Status: http.StatusBadRequest, Body: prefixMismatchBody},
+		fakeprovider.Turn{Text: "ok"},
+	)
+	c, b := newAnthropicTestClient(t, srv, "claude-opus-4-8")
+	res, err := c.SendMessageSync(context.Background(), historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", res.Content)
+	assert.True(t, res.BlocksRejected)
+	reqs := srv.Requests()
+	require.Len(t, reqs, 2)
+	assert.Contains(t, string(reqs[0].Raw), "sig-1")
+	assert.NotContains(t, string(reqs[1].Raw), "sig-1")
+	assert.Contains(t, string(reqs[1].Raw), `"earlier"`, "the resend keeps the neutral text")
+}
+
+// Without replayed blocks, or for another 400, nothing is retried. The
+// backend is called directly: the SDK's error text includes the fake's URL,
+// and a port such as 55003 would look like a 5xx to llm.Client's retry
+// classifier.
+func TestAnthropicOtherBadRequestsAreNotRetried(t *testing.T) {
+	srv := fakeprovider.NewAnthropic(t,
+		fakeprovider.Turn{Status: http.StatusBadRequest, Body: prefixMismatchBody},
+		fakeprovider.Turn{Status: http.StatusBadRequest, Body: `{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be at most 64000"}}`},
+	)
+	_, b := newAnthropicTestClient(t, srv, "claude-opus-4-8")
+	_, err := b.SendMessageSync(context.Background(), chatMsgs("no blocks here"), nil)
+	require.Error(t, err)
+	_, err = b.SendMessageSync(context.Background(), historyWithThinking(t, b), nil)
+	require.Error(t, err)
+	assert.Len(t, srv.Requests(), 2)
+}
+
+// Ruling 6: on Anthropic's endpoint a replaying request carries the beta
+// and drop_block; always-on models get an explicit adaptive thinking
+// parameter for it; requests that replay nothing are unchanged.
+func TestAnthropicSendsBindingControlsWhenReplayingThinking(t *testing.T) {
+	srv := fakeprovider.NewAnthropic(t, fakeprovider.Turn{Text: "a"}, fakeprovider.Turn{Text: "b"}, fakeprovider.Turn{Text: "c"})
+	c, b := newAnthropicTestClient(t, srv, "claude-opus-4-8")
+	b.bindingControls = true // the fake is on 127.0.0.1; pretend it is Anthropic's endpoint
+	c.SetThinkingConfig(ThinkingConfig{Enabled: true, Level: "high"})
+	ctx := context.Background()
+
+	_, err := c.SendMessageSync(ctx, historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	r := srv.Requests()[0]
+	assert.Equal(t, thinkingBindingBeta, betaHeader(r))
+	thinking := r.Body["thinking"].(map[string]any)
+	assert.Equal(t, "adaptive", thinking["type"])
+	assert.Equal(t, map[string]any{"prefix_mismatch_behavior": "drop_block"}, thinking["block_binding"])
+
+	_, err = c.SendMessageSync(ctx, chatMsgs("nothing to replay"), nil)
+	require.NoError(t, err)
+	r = srv.Requests()[1]
+	assert.Empty(t, betaHeader(r))
+	assert.NotContains(t, r.Body["thinking"].(map[string]any), "block_binding")
+
+	fable, fb := newAnthropicTestClient(t, srv, "claude-fable-5-1")
+	fb.bindingControls = true
+	_, err = fable.SendMessageSync(ctx, historyWithThinking(t, fb), nil)
+	require.NoError(t, err)
+	r = srv.Requests()[2]
+	assert.Equal(t, "adaptive", r.Body["thinking"].(map[string]any)["type"])
+	assert.Equal(t, thinkingBindingBeta, betaHeader(r))
+}
+
+// Review Focus 3: an endpoint that refuses the beta gets the request again
+// without it, and never sees the beta again.
+func TestAnthropicDropsTheBetaWhenRefused(t *testing.T) {
+	srv := fakeprovider.NewAnthropic(t,
+		fakeprovider.Turn{Status: http.StatusBadRequest, Body: `{"type":"error","error":{"type":"invalid_request_error","message":"thinking.block_binding: Extra inputs are not permitted"}}`},
+		fakeprovider.Turn{Text: "ok"},
+		fakeprovider.Turn{Text: "ok again"},
+	)
+	c, b := newAnthropicTestClient(t, srv, "claude-opus-4-8")
+	b.bindingControls = true
+	c.SetThinkingConfig(ThinkingConfig{Enabled: true, Level: "high"})
+	ctx := context.Background()
+
+	res, err := c.SendMessageSync(ctx, historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", res.Content)
+	assert.False(t, res.BlocksRejected, "the blocks were accepted; only the beta was not")
+	assert.False(t, b.bindingControls)
+	_, err = c.SendMessageSync(ctx, historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	reqs := srv.Requests()
+	require.Len(t, reqs, 3)
+	assert.Equal(t, thinkingBindingBeta, betaHeader(reqs[0]))
+	for _, r := range reqs[1:] {
+		assert.Empty(t, betaHeader(r))
+		assert.Contains(t, string(r.Raw), "sig-1", "the blocks still replay")
+	}
+}
+
+// Review Focus 1 (ruling 10): a system-prompt change strips once, then
+// blocks replay again.
+func TestAnthropicSystemPromptChangeStripsOnce(t *testing.T) {
+	srv := fakeprovider.NewAnthropic(t, fakeprovider.Turn{Text: "a"}, fakeprovider.Turn{Text: "b"}, fakeprovider.Turn{Text: "c"})
+	c, b := newAnthropicTestClient(t, srv, "claude-opus-4-8")
+	ctx := context.Background()
+
+	c.SetSystemPrompt("persona one") // the first prompt is not a change
+	res, err := c.SendMessageSync(ctx, historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	assert.False(t, res.BlocksRejected)
+
+	c.SetSystemPrompt("persona two")
+	res, err = c.SendMessageSync(ctx, historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	assert.True(t, res.BlocksRejected)
+
+	res, err = c.SendMessageSync(ctx, historyWithThinking(t, b), nil)
+	require.NoError(t, err)
+	assert.False(t, res.BlocksRejected)
+
+	reqs := srv.Requests()
+	assert.Contains(t, string(reqs[0].Raw), "sig-1")
+	assert.NotContains(t, string(reqs[1].Raw), "sig-1")
+	assert.Contains(t, string(reqs[2].Raw), "sig-1")
 }

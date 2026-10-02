@@ -2,7 +2,10 @@ package llm
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -103,4 +106,47 @@ func (c *anthropicCapture) prefixDropped() bool {
 		}
 	}
 	return dropped
+}
+
+// thinkingBindingBeta lets a request set thinking.block_binding and adds
+// input_transformations to responses (2.0 W2 ruling 6).
+const thinkingBindingBeta = "thinking-binding-controls-2026-08-01"
+
+// anthropicBadRequest returns the lower-cased body of a 400 from the API.
+func anthropicBadRequest(err error) (string, bool) {
+	var apiErr *anthropic.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest {
+		return strings.ToLower(apiErr.RawJSON()), true
+	}
+	return "", false
+}
+
+// isThinkingRejection reports a 400 about replayed thinking: the
+// prefix-mismatch rejection ("Invalid `signature` in `thinking` block …
+// bound to a different conversation"), a tampered signature, or thinking
+// blocks the request may not carry (ruling 8). body is lower-cased.
+func isThinkingRejection(body string) bool {
+	for _, s := range []string{"signature", "thinking block", "`thinking` block", "redacted_thinking"} {
+		if strings.Contains(body, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// isBindingBetaRejection reports a 400 refusing the binding controls: the
+// field, the header or the beta name (ruling 9). body is lower-cased;
+// callers test isThinkingRejection first.
+func isBindingBetaRejection(body string) bool {
+	return strings.Contains(body, "block_binding") || strings.Contains(body, "anthropic-beta") || strings.Contains(body, thinkingBindingBeta)
+}
+
+// hasProviderBlocks reports whether any message carries blocks.
+func hasProviderBlocks(messages []tui.ChatMessage) bool {
+	for _, m := range messages {
+		if m.ProviderBlocks != nil {
+			return true
+		}
+	}
+	return false
 }

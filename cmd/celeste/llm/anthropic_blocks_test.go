@@ -108,3 +108,31 @@ func TestAnthropicReplayOnlyForTheSameKey(t *testing.T) {
 	_, raw = requestBody(t, opus.buildParams(history, nil))
 	assert.Contains(t, raw, "sig-1")
 }
+
+func TestAnthropicRejectionClassifiers(t *testing.T) {
+	mismatch := strings.ToLower("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to drop_block. That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header.\"}}")
+	beta := strings.ToLower(`{"type":"error","error":{"type":"invalid_request_error","message":"thinking.block_binding: Extra inputs are not permitted"}}`)
+	unknownBeta := strings.ToLower(`{"type":"error","error":{"type":"invalid_request_error","message":"Unexpected value(s) thinking-binding-controls-2026-08-01 for the anthropic-beta header"}}`)
+	other := strings.ToLower(`{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be at most 64000"}}`)
+
+	assert.True(t, isThinkingRejection(mismatch))
+	assert.False(t, isThinkingRejection(beta), "thinking.block_binding is not a thinking block")
+	assert.False(t, isThinkingRejection(other))
+	assert.True(t, isBindingBetaRejection(beta))
+	assert.True(t, isBindingBetaRejection(unknownBeta))
+	assert.False(t, isBindingBetaRejection(other))
+}
+
+func TestAnthropicBindingControlsOnlyOnAnthropicsEndpoint(t *testing.T) {
+	for base, want := range map[string]bool{
+		"":                             true,
+		"https://api.anthropic.com":    true,
+		"https://api.anthropic.com/v1": true,
+		"http://127.0.0.1:9999":        false,
+		"https://proxy.example.test":   false,
+	} {
+		b, err := NewAnthropicBackend(&Config{APIKey: "k", BaseURL: base, Model: "claude-opus-4-8"})
+		require.NoError(t, err)
+		assert.Equal(t, want, b.bindingControls, base)
+	}
+}
