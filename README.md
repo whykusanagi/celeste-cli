@@ -796,7 +796,7 @@ Celeste CLI uses three config files in `~/.celeste/`:
   "timeout": 60,
   "skip_persona_prompt": false,
   "simulate_typing": true,
-  "typing_speed": 40
+  "typing_speed": 60
 }
 ```
 
@@ -822,11 +822,22 @@ Celeste CLI uses three config files in `~/.celeste/`:
 ```bash
 export CELESTE_API_KEY="sk-your-key"
 export CELESTE_API_ENDPOINT="https://api.openai.com/v1"
-export VENICE_API_KEY="your-venice-key"
 export TAROT_AUTH_TOKEN="Basic xxx"
 ```
 
-Environment variables take precedence over config files.
+Precedence is flag > environment variable > config file. `CELESTE_API_KEY`,
+`CELESTE_API_ENDPOINT` and `TAROT_AUTH_TOKEN` override `api_key`, `base_url`
+and `tarot_auth_token` for the profile you start with (`chat`, `message`,
+`agent`, `serve`). They apply to that run only: they are never written to a
+config file, and `/endpoint` switches to the target profile's own settings.
+A blank variable is ignored. `VENICE_API_KEY` is only a fallback for the
+`venice` endpoint when `skills.json` has no Venice key.
+
+### Typing animation
+
+`simulate_typing` (default `true`) types replies out with the corruption
+animation; `false` shows each reply at once. `typing_speed` is characters per
+second, 1-1000 (default 60, about 3 characters per animation tick).
 
 ### Config Commands
 
@@ -1475,7 +1486,7 @@ celeste config --skip-persona true
 **Solution:** Enable simulated typing:
 ```bash
 celeste config --simulate-typing true
-celeste config --typing-speed 40  # Adjust speed (chars per second)
+celeste config --typing-speed 60  # Adjust speed (1-1000 chars per second)
 ```
 
 ### Session Not Saving

@@ -168,10 +168,10 @@ Agent:
                                           Enable plan->execute->verify gating
 
 Environment Variables:
-  CELESTE_API_KEY         API key (overrides config)
-  CELESTE_API_ENDPOINT    API endpoint (overrides config)
-  VENICE_API_KEY          Venice.ai API key for NSFW mode
-  TAROT_AUTH_TOKEN        Tarot function auth token
+  CELESTE_API_KEY         API key (overrides the config file; a flag wins over both)
+  CELESTE_API_ENDPOINT    API endpoint (overrides the config file)
+  VENICE_API_KEY          Venice.ai API key for NSFW mode (fallback when skills.json has none)
+  TAROT_AUTH_TOKEN        Tarot function auth token (overrides the config file)
 
 Examples:
   celeste chat                           Start with default config
@@ -755,7 +755,7 @@ func runConfigCommand(args []string) {
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Skip persona prompt (true/false)")
 	simulateTyping := fs.String("simulate-typing", "", "Simulate typing (true/false)")
-	typingSpeed := fs.Int("typing-speed", 0, "Typing speed (chars/sec)")
+	typingSpeed := fs.Int("typing-speed", 0, "Typing speed in chars/sec (1-1000, default 60)")
 
 	// Google Cloud authentication flags
 	setGoogleCredentials := fs.String("set-google-credentials", "", "Set Google Cloud service account JSON file path")
