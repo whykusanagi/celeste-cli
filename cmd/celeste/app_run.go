@@ -74,6 +74,9 @@ func (defaultCommandRunner) RunMCP(args []string)           { runMCPCommand(args
 func (defaultCommandRunner) RunHooks(args []string)         { runHooksCommand(args) }
 
 func main() {
+	// A `go install` build becomes the official release binary first (W5
+	// rulings 25–27); on success this does not return on unix.
+	newUpgradeHook().beforeRun(os.Args)
 	os.Exit(run(os.Args[1:], defaultCommandRunner{}, os.Stdout, os.Stderr))
 }
 
@@ -151,6 +154,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunMCP(cmdArgs)
 	case "hooks":
 		runner.RunHooks(cmdArgs)
+	case "update":
+		return runUpdateCommand(cmdArgs, stdout, stderr)
 	case "help", "-h", "--help":
 		runner.PrintUsage()
 	case "version", "-v", "--version":
