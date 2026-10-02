@@ -37,7 +37,7 @@ func TestSyncLLMAppendsAndKeepsSystemLines(t *testing.T) {
 func TestSyncLLMReplacesPrunedToolResultsInPlace(t *testing.T) {
 	c := NewChatModel().AddUserMessage("go").
 		AddAssistantMessageWithToolCalls("", []ToolCallInfo{{ID: "c1", Name: "read_file"}}).
-		AddToolResult("c1", "read_file", "big").
+		AppendLLM(ChatMessage{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "big"}).
 		AddSystemMessage("note").
 		AddUserMessage("next")
 	c = c.SyncLLM([]ChatMessage{
@@ -137,7 +137,7 @@ func TestSyncLLMLastSkipsCompactedMessages(t *testing.T) {
 func TestSyncLLMKeepsAnEmptyToolResult(t *testing.T) {
 	c := NewChatModel().AddUserMessage("go").
 		AddAssistantMessageWithToolCalls("", []ToolCallInfo{{ID: "c1", Name: "read_file"}}).
-		AddToolResult("c1", "read_file", "").
+		AppendLLM(ChatMessage{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: ""}).
 		AddSystemMessage("note").
 		AddUserMessage("next")
 	c = c.SyncLLM([]ChatMessage{
@@ -167,7 +167,7 @@ func TestSyncLLMKeepLiveOnlyForAnAssistantOverAnAssistant(t *testing.T) {
 			name: "pruned tool result",
 			chat: NewChatModel().AddUserMessage("go").
 				AddAssistantMessageWithToolCalls("", []ToolCallInfo{{ID: "c1", Name: "read_file"}}).
-				AddToolResult("c1", "read_file", "big"),
+				AppendLLM(ChatMessage{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "big"}),
 			history: []ChatMessage{
 				{Role: "user", Content: "go"},
 				{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c1", Name: "read_file"}}},

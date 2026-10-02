@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
@@ -99,22 +98,15 @@ func (r *Runner) stopHook(ctx context.Context, state *RunState, continued *bool)
 	default:
 		return ""
 	}
-	if out.Decision != hooks.Deny {
-		return ""
+	instr, warning := hooks.StopContinuation(out, *continued, state.Options.MaxTurns-state.Turn,
+		hooks.StopScope{Event: event, Actor: "the agent", Unit: "run"})
+	if warning != "" {
+		r.warning(warning)
 	}
-	switch {
-	case *continued:
-		r.warning(fmt.Sprintf("a %s hook asked the agent to continue again; ignored (one continuation per run)", event))
-		return ""
-	case state.Turn >= state.Options.MaxTurns:
-		r.warning(fmt.Sprintf("a %s hook asked the agent to continue, but the run has no turns left", event))
-		return ""
+	if instr != "" {
+		*continued = true
 	}
-	*continued = true
-	if strings.TrimSpace(out.Reason) == "" {
-		return "Continue."
-	}
-	return out.Reason
+	return instr
 }
 
 // hookedSummarize wraps summarize with PreCompact the way

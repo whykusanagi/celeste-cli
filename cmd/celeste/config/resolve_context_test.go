@@ -27,7 +27,7 @@ func TestResolveContextLimit_HostedKeepsModelDefault(t *testing.T) {
 	if !known {
 		t.Error("a hosted provider's known model must stay known")
 	}
-	if want := GetModelLimit("fugu"); limit != want {
+	if want := ctxmgr.GetModelLimit("fugu"); limit != want {
 		t.Errorf("limit = %d, want %d", limit, want)
 	}
 }

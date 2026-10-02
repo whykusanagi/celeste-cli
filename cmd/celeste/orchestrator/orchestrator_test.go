@@ -64,7 +64,7 @@ func TestOrchestratorSkippedDebateIsNotTerminal(t *testing.T) {
 	cfg := &config.Config{Model: "p", Orchestrator: &config.OrchestratorConfig{Lanes: map[string]config.LaneConfig{
 		"code": {Primary: "p", Reviewer: "r"},
 	}}}
-	o := orchestrator.New(cfg, orchestrator.WithTrust(), orchestrator.WithRunnerFactory(func(model string) orchestrator.AgentRunner {
+	o := orchestrator.New(cfg, orchestrator.WithRunnerFactory(func(model string) orchestrator.AgentRunner {
 		if model == "r" {
 			return &fakeRunner{err: errors.New("reviewer down")}
 		}

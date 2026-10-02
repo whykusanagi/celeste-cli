@@ -28,13 +28,8 @@ const (
 // EdgeKind identifies the kind of relationship between symbols.
 type EdgeKind string
 
-const (
-	EdgeCalls      EdgeKind = "calls"
-	EdgeImports    EdgeKind = "imports"
-	EdgeImplements EdgeKind = "implements"
-	EdgeEmbeds     EdgeKind = "embeds"
-	EdgeReferences EdgeKind = "references"
-)
+// EdgeCalls is the only kind any parser emits (docs/CODEGRAPH.md).
+const EdgeCalls EdgeKind = "calls"
 
 // Symbol represents a code entity (function, type, interface, etc.).
 type Symbol struct {
@@ -620,50 +615,6 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 		files = append(files, f)
 	}
 	return files, rows.Err()
-}
-
-// LazyRedirectCandidate represents a function whose name implies complex behavior
-// but whose graph structure shows it's structurally trivial — a potential lazy redirect.
-type LazyRedirectCandidate struct {
-	Name      string
-	File      string
-	Line      int
-	Kind      string
-	OutEdges  int
-	InEdges   int
-	Signature string
-}
-
-// FindLazyRedirectCandidates returns functions/methods with low outgoing edges
-// (0-2) that are NOT known leaf patterns (constructors, getters, interface impls).
-// These are candidates for lazy redirect analysis via shingle/edge divergence.
-func (s *Store) FindLazyRedirectCandidates(includeTests bool) ([]LazyRedirectCandidate, error) {
-	query := `
-		SELECT s.id, s.name, s.file, s.line, s.kind, COALESCE(s.signature, ''),
-		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
-		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
-		FROM symbols s
-		WHERE s.kind IN ('function', 'method')
-		AND (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) <= 2
-		ORDER BY calls_out ASC, s.file, s.line
-	`
-
-	rows, err := s.db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("find lazy redirect candidates: %w", err)
-	}
-	defer rows.Close()
-
-	var results []LazyRedirectCandidate
-	for rows.Next() {
-		var id int64
-		var r LazyRedirectCandidate
-		if err := rows.Scan(&id, &r.Name, &r.File, &r.Line, &r.Kind, &r.Signature, &r.OutEdges, &r.InEdges); err != nil {
-			return nil, err
-		}
-		results = append(results, r)
-	}
-	return results, rows.Err()
 }
 
 // FindAllFunctionsWithEdges returns all functions/methods with their edge counts.

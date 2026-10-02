@@ -186,28 +186,6 @@ func (ga *GlobalAnalytics) UpdateFromSession(session *Session) {
 	ga.DailyUsage[dateKey].Cost += metrics.EstimatedCost
 }
 
-// GetTopModels returns the top N models by usage
-func (ga *GlobalAnalytics) GetTopModels(n int) []ModelStats {
-	// Convert map to slice
-	models := make([]ModelStats, 0, len(ga.ModelUsage))
-	for _, stats := range ga.ModelUsage {
-		model := *stats
-		// Store model name in a custom way (we'll add it to the string representation)
-		models = append(models, model)
-	}
-
-	// Sort by session count (descending)
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].SessionCount > models[j].SessionCount
-	})
-
-	// Return top N
-	if n > len(models) {
-		n = len(models)
-	}
-	return models[:n]
-}
-
 // GetTopModelNames returns the top N model names with their stats
 func (ga *GlobalAnalytics) GetTopModelNames(n int) []struct {
 	Name  string

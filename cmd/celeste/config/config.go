@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
 )
 
@@ -817,7 +818,11 @@ func Save(config *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	return os.WriteFile(configFile, data, 0644)
+	// Atomic, so a crash or a concurrent reader never sees half a config. An
+	// existing file keeps its mode (as os.WriteFile did). A new one is 0600:
+	// the temp file's mode is set exactly, not through the umask, and the
+	// config can hold an API key.
+	return atomicfile.WriteKeepMode(configFile, data, 0600)
 }
 
 // SaveNamed writes the config to a named profile file (config.<name>.json).
@@ -840,8 +845,9 @@ func SaveNamed(name string, config *Config) error {
 		return fmt.Errorf("failed to create config dir: %w", err)
 	}
 
-	// 0600: a named profile carries the API key inline.
-	return os.WriteFile(path, data, 0600)
+	// 0600: a named profile carries the API key inline. An existing file
+	// keeps its mode, as os.WriteFile did.
+	return atomicfile.WriteKeepMode(path, data, 0600)
 }
 
 // SaveSecrets saves API key to secrets file (backward compatibility).

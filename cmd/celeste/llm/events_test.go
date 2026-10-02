@@ -28,29 +28,6 @@ func TestStreamEventType_String(t *testing.T) {
 	}
 }
 
-func TestStreamEvent_IsToolEvent(t *testing.T) {
-	tests := []struct {
-		name     string
-		event    StreamEvent
-		expected bool
-	}{
-		{"content delta", StreamEvent{Type: EventContentDelta}, false},
-		{"tool use start", StreamEvent{Type: EventToolUseStart}, true},
-		{"tool use input delta", StreamEvent{Type: EventToolUseInputDelta}, true},
-		{"tool use done", StreamEvent{Type: EventToolUseDone}, true},
-		{"message done", StreamEvent{Type: EventMessageDone}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.event.IsToolEvent()
-			if got != tt.expected {
-				t.Errorf("IsToolEvent() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestStreamEvent_ContentDelta(t *testing.T) {
 	event := StreamEvent{
 		Type:         EventContentDelta,

@@ -77,12 +77,6 @@ func (s *Server) Requests() []Request {
 	return append([]Request(nil), s.requests...)
 }
 
-func (s *Server) Remaining() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.turns)
-}
-
 // Push appends turns to the script.
 func (s *Server) Push(turns ...Turn) {
 	s.mu.Lock()

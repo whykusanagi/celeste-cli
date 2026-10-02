@@ -123,12 +123,6 @@ func (ct *ContextTracker) GetWarningLevel() string {
 	return "ok"
 }
 
-// ShouldWarn returns true if a warning should be displayed.
-func (ct *ContextTracker) ShouldWarn() bool {
-	currentLevel := ct.GetWarningLevel()
-	return currentLevel != "ok" && currentLevel != ct.LastWarningLevel
-}
-
 // ShouldCompact returns true if auto-compaction should be triggered.
 func (ct *ContextTracker) ShouldCompact() bool {
 	return ct.GetUsagePercentage() >= 0.80
@@ -160,21 +154,6 @@ func (ct *ContextTracker) EstimateMessagesUntilLimit(avgTokensPerMsg int) int {
 	return tokensUntilWarn / avgTokensPerMsg
 }
 
-// GetStatusEmoji returns an emoji representing the current status.
-func (ct *ContextTracker) GetStatusEmoji() string {
-	level := ct.GetWarningLevel()
-	switch level {
-	case "critical":
-		return "\xf0\x9f\x94\xb4" // red circle
-	case "caution":
-		return "\xf0\x9f\x9f\xa0" // orange circle
-	case "warn":
-		return "\xf0\x9f\x9f\xa1" // yellow circle
-	default:
-		return "\xf0\x9f\x9f\xa2" // green circle
-	}
-}
-
 // GetWarningMessage returns a user-friendly warning message.
 func (ct *ContextTracker) GetWarningMessage() string {
 	level := ct.GetWarningLevel()
@@ -199,9 +178,4 @@ func (ct *ContextTracker) GetContextSummary() string {
 	percentage := ct.GetUsagePercentage() * 100
 
 	return fmt.Sprintf("%s/%s (%.1f%%)", current, max, percentage)
-}
-
-// MarkWarningShown updates the last warning level after displaying a warning.
-func (ct *ContextTracker) MarkWarningShown() {
-	ct.LastWarningLevel = ct.GetWarningLevel()
 }

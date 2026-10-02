@@ -106,10 +106,17 @@ The `code_graph` tool accepts a symbol name, direction (`callers`/`callees`/`bot
 
 ## Code Smell Detection
 
-Two structural heuristics built on the edge graph:
+`FindCodeSmells` (the `code_review` tool) runs one pass over every function and
+method with its edge counts and source body and reports these kinds:
 
-- **Stubs** (`FindStubs`): functions/methods with zero outgoing call edges. Candidates for dead code, placeholders, or trivially simple leaf functions.
-- **Lazy redirect candidates** (`FindLazyRedirectCandidates`): functions with 0-2 outgoing edges that aren't known leaf patterns (constructors, getters). Candidates for further shingle/edge divergence analysis.
+- `STUB`: a function with no outgoing calls (graph edges, or calls counted in
+  its body) that is not a known leaf pattern such as a constructor or getter.
+  This replaces the old `FindStubs` query.
+- `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
+  which has at most two outgoing calls and redirects instead, for example by
+  telling the user to use the CLI.
+- `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
+  checks on the body.
 
 ## LSH Banding (planned)
 
@@ -131,10 +138,8 @@ New `lsh_bands(band_id, band_hash, symbol_id)` SQLite table. Band hashes precomp
 
 ## Supported Edge Kinds
 
-Only `calls` is currently emitted by any parser. `imports`, `implements`,
-`embeds` and `references` are defined as edge-kind constants for future
-use but nothing writes them yet — interface implementations, embeds and
-type references are not tracked. Edges also resolve by bare symbol name
+Only `calls` exists. Imports, interface implementations, embeds and type
+references are not tracked as edges. Edges also resolve by bare symbol name
 (not package-qualified), so same-named functions in different packages
 can collapse onto one graph node.
 

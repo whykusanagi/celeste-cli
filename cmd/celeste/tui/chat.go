@@ -203,28 +203,6 @@ func (m ChatModel) AddSystemMessage(content string) ChatModel {
 	return m
 }
 
-// AddToolResult adds a tool result message to the chat.
-// Optional metadata maps can be passed to attach extra data (e.g. image base64).
-func (m ChatModel) AddToolResult(toolCallID, name, result string, metadata ...map[string]any) ChatModel {
-	msg := ChatMessage{
-		Role:       "tool",
-		Content:    result,
-		ToolCallID: toolCallID,
-		Name:       name,
-		Timestamp:  time.Now(),
-	}
-	if len(metadata) > 0 && metadata[0] != nil {
-		msg.Metadata = metadata[0]
-	}
-	m.messages = append(m.messages, msg)
-	m.updateContent()
-	// Only auto-scroll if user hasn't manually scrolled
-	if !m.userScrolled {
-		m.viewport.GotoBottom()
-	}
-	return m
-}
-
 // SetTypingActive marks whether the typing animation is running.
 // When true, the last assistant message skips Glamour markdown rendering
 // so that ANSI-styled corruption glyphs at the cursor don't break the layout.

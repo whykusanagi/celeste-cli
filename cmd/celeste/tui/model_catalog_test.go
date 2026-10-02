@@ -340,3 +340,21 @@ func runCatalogCmds(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
 	}
 	return m
 }
+
+// A client that cannot report its endpoint (only test fakes) switches
+// without fetching anything and is offered no tools, never the previous
+// endpoint's answer.
+func TestEndpointSwitch_NonReportingClientOffersNoTools(t *testing.T) {
+	m := NewApp(&fakeToolLLMClient{}).WithEndpoint("openai")
+	m.skillsEnabled = true
+	m, cmd := m.switchEndpoint("work")
+	if cmd != nil {
+		t.Error("want no command for a client that cannot report its endpoint")
+	}
+	if m.skillsEnabled {
+		t.Error("tools still offered after switching to an endpoint the client cannot describe")
+	}
+	if m.endpoint != "work" {
+		t.Errorf("endpoint = %q", m.endpoint)
+	}
+}

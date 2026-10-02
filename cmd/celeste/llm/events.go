@@ -92,16 +92,6 @@ type StreamEvent struct {
 	FinishReason string
 }
 
-// IsToolEvent returns true if this event relates to a tool use block.
-func (e StreamEvent) IsToolEvent() bool {
-	switch e.Type {
-	case EventToolUseStart, EventToolUseInputDelta, EventToolUseDone:
-		return true
-	default:
-		return false
-	}
-}
-
 // StreamEventCallback is called for each streaming event.
 type StreamEventCallback func(event StreamEvent)
 

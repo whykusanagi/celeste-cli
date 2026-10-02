@@ -36,7 +36,7 @@ func TestDiscoverAndRegister(t *testing.T) {
 	require.NoError(t, client.Initialize(context.Background()))
 
 	registry := tools.NewRegistry()
-	names, err := DiscoverAndRegister(context.Background(), client, registry, "test-server")
+	names, err := discoverAndRegister(context.Background(), client, registry, "test-server", nil)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"mcp__test-server__tool_a", "mcp__test-server__tool_b"}, names)
 
@@ -72,7 +72,7 @@ func TestDiscoverAndRegister_NoTools(t *testing.T) {
 	require.NoError(t, client.Initialize(context.Background()))
 
 	registry := tools.NewRegistry()
-	_, err := DiscoverAndRegister(context.Background(), client, registry, "empty-server")
+	_, err := discoverAndRegister(context.Background(), client, registry, "empty-server", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, registry.Count())
 }
@@ -97,7 +97,7 @@ func TestDiscoverAndRegister_ListError(t *testing.T) {
 	require.NoError(t, client.Initialize(context.Background()))
 
 	registry := tools.NewRegistry()
-	_, err := DiscoverAndRegister(context.Background(), client, registry, "bad-server")
+	_, err := discoverAndRegister(context.Background(), client, registry, "bad-server", nil)
 	assert.Error(t, err)
 	assert.Equal(t, 0, registry.Count())
 }
@@ -114,7 +114,7 @@ func TestDiscoverAndRegister_MarksHidden(t *testing.T) {
 
 	registry := tools.NewRegistry()
 	registry.SetDiscoveryMode(true)
-	_, err := DiscoverAndRegister(context.Background(), client, registry, "srv")
+	_, err := discoverAndRegister(context.Background(), client, registry, "srv", nil)
 	require.NoError(t, err)
 
 	// Registered but hidden under discovery mode.

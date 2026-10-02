@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -227,21 +226,15 @@ func (a *TUIClientAdapter) stopHook(t *chatTurn, final string, continued bool, t
 		}
 	})
 	out := a.hooks.Stop(ctx, final)
-	if out.Decision != hooks.Deny || t.ctx.Err() != nil {
+	if t.ctx.Err() != nil {
 		return ""
 	}
-	switch {
-	case continued:
-		t.box.put(tui.HookWarningMsg{Text: "a Stop hook asked the chat to continue again; ignored (one continuation per turn)"})
-		return ""
-	case turnsLeft <= 0:
-		t.box.put(tui.HookWarningMsg{Text: "a Stop hook asked the chat to continue, but the turn has no turns left"})
-		return ""
+	instr, warning := hooks.StopContinuation(out, continued, turnsLeft,
+		hooks.StopScope{Event: "Stop", Actor: "the chat", Unit: "turn"})
+	if warning != "" {
+		t.box.put(tui.HookWarningMsg{Text: warning})
 	}
-	if strings.TrimSpace(out.Reason) == "" {
-		return "Continue."
-	}
-	return out.Reason
+	return instr
 }
 
 // runOnce runs the loop once while a pump turns its events into the chat's

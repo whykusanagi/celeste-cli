@@ -91,7 +91,7 @@ type AppModel struct {
 	// reply, and left every subsequent chunk to pile up in a zombie buffer
 	// with no active ticker to render it. The session and the next LLM
 	// request would both see content_len=1 — the "O" truncation bug.
-	// See log /Users/kusanagi/.celeste/logs/celeste_2026-04-13.log for a
+	// See the 2026-04-13 session log (~/.celeste/logs/) for a
 	// captured reproduction.
 	streamDone bool
 
@@ -2119,7 +2119,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// time since turn start (which includes tool execution time).
 				m.streamStart = time.Now().Add(-msg.Duration)
 			}
-			// Feed the response through SimulatedTyping — same path as regular chat.
+			// Feed the response through the typing animation — same path as regular chat.
 			// Agent responses are not streamed (the whole text arrives in one
 			// msg.Text), so mark streamDone=true up front: the TickMsg
 			// tick-complete branch will commit as soon as typing catches up
@@ -2487,9 +2487,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}
-
-	case ProfileResolvedMsg:
-		m = m.applyProfile(msg)
 
 	case ErrorMsg:
 		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))

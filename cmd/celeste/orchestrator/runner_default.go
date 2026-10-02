@@ -36,11 +36,8 @@ func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, err
 	}
 	// The caller's approval (spec §4 F2: the orchestrator inherits its
 	// caller's Gate) and the run's shared environment.
-	switch r.lane.Approval {
-	case ApprovalPrompt:
+	if r.lane.Approval == ApprovalPrompt {
 		opts.PromptFunc = r.lane.Prompt
-	case ApprovalTrust:
-		opts.AutoApproveTools = true
 	}
 	opts.ParentEnv = r.lane.Env
 

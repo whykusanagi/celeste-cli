@@ -95,7 +95,7 @@ func runOrch(t *testing.T, o *Orchestrator, goal string) (*Result, *eventLog) {
 // Flipped in F2c Task 6 (spec §3.2): this was
 // TestOrchestratorSilentlyDeniesMutatingTools, the baseline of a bug where
 // the default runner set neither a prompt nor auto-approve. A headless
-// orchestrator (no WithPrompt, no WithTrust) still denies tools that need
+// orchestrator (no WithPrompt) still denies tools that need
 // approval, but no longer silently: Run says so in an event and records it
 // in Result.Approval.
 func TestOrchestratorHeadlessDeniesAndSaysSo(t *testing.T) {
@@ -162,19 +162,6 @@ func TestOrchestratorPromptDenyFinishesTheRun(t *testing.T) {
 	}
 }
 
-// WithTrust: invoking the orchestrator is the approval (no prompt).
-func TestOrchestratorTrustWritesWithoutPrompt(t *testing.T) {
-	ws := orchWorkspace(t)
-	srv := writeScript(t)
-	res, _ := runOrch(t, New(fakeOrchCfg(srv), WithTrust()), "write hi to out.txt")
-	if _, err := os.Stat(filepath.Join(ws, "out.txt")); err != nil {
-		t.Fatalf("out.txt not written under WithTrust: %v", err)
-	}
-	if res.Approval != ApprovalTrust {
-		t.Fatalf("Result.Approval = %v, want trust", res.Approval)
-	}
-}
-
 // The primary and reviewer lanes nest under one environment per run: repo
 // hooks are loaded (and reported as untrusted) once, not per lane.
 func TestOrchestratorLanesShareOneEnvironment(t *testing.T) {
@@ -195,7 +182,7 @@ func TestOrchestratorLanesShareOneEnvironment(t *testing.T) {
 	cfg.Orchestrator = &config.OrchestratorConfig{Lanes: map[string]config.LaneConfig{
 		"code": {Primary: "fake-model", Reviewer: "fake-model"},
 	}}
-	res, log := runOrch(t, New(cfg, WithTrust()), "fix the bug in main.go")
+	res, log := runOrch(t, New(cfg), "fix the bug in main.go")
 	if res.Verdict == nil {
 		t.Fatal("the reviewer lane did not run")
 	}
@@ -219,7 +206,7 @@ func TestOrchestratorClosesLanesBeforeTheTerminalEvent(t *testing.T) {
 		lanes = orig(cfg, ws, opts)
 		return lanes
 	}
-	o := New(fakeOrchCfg(srv), WithTrust())
+	o := New(fakeOrchCfg(srv))
 	var atEnd error
 	o.OnEvent(func(e OrchestratorEvent) {
 		if e.Kind == EventComplete {
@@ -259,7 +246,7 @@ func TestOrchestratorDefenseUsesThePrimarysEndpoint(t *testing.T) {
 	cfg.Orchestrator = &config.OrchestratorConfig{DebateRounds: 1, Lanes: map[string]config.LaneConfig{
 		"code": {Primary: "fake-primary", PrimaryBaseURL: primary.BaseURL(), PrimaryAPIKey: "pk", Reviewer: "fake-model"},
 	}}
-	_, log := runOrch(t, New(cfg, WithTrust()), "fix the bug in main.go")
+	_, log := runOrch(t, New(cfg), "fix the bug in main.go")
 	if !strings.Contains(log.texts(), "revised") {
 		t.Fatalf("no defense turn in the events:\n%s", log.texts())
 	}

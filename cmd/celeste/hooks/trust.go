@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
 // TrustStatus is whether a source may run without asking.
@@ -134,36 +136,12 @@ func (s *TrustStore) Approve(src Source) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(s.path, append(data, '\n')); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	if err := atomicfile.Write(s.path, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
 	s.data = fresh
 	return nil
-}
-
-// writeFileAtomic writes data to a 0600 temp file beside path, syncs it and
-// renames it over path, so a crash never leaves a half-written trust file.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".trusted-*.json") // created 0600
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name) // no-op after a successful rename
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
 }

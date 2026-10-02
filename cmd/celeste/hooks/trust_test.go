@@ -45,7 +45,7 @@ func TestTrustFileIsPrivateAndAtomic(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Dir(TrustPath(home)))
 	require.NoError(t, err)
 	for _, e := range entries {
-		assert.False(t, strings.HasPrefix(e.Name(), ".trusted-"), "temp file left behind: %s", e.Name())
+		assert.False(t, strings.Contains(e.Name(), ".tmp-"), "temp file left behind: %s", e.Name())
 	}
 	if runtime.GOOS == "windows" {
 		t.Skip("file mode bits are not POSIX on Windows")

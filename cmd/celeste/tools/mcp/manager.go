@@ -192,7 +192,7 @@ func (m *Manager) Disconnect(name string) error {
 }
 
 // RegisterInto registers every connected server's tools in dst, hidden until
-// find_tools activates them (as DiscoverAndRegister does), and returns how
+// find_tools activates them (as discoverAndRegister does), and returns how
 // many it added. A nested run's registry uses it to share this manager's
 // clients instead of starting its own servers. Tools a server adds later are
 // not mirrored; the nested registry is a snapshot.

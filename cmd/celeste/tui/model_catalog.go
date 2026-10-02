@@ -173,44 +173,21 @@ func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 		}
 	}
 
-	// The provider is the one the client now talks to (2.0 F2e): a client
-	// that reports its endpoint has just loaded the endpoint's config
-	// (config.<name>.json, whose base URL may belong to another provider
-	// than the name suggests), so when it reports a known provider, that
-	// provider gates the tools. For any other client a name that is not a
-	// provider is a profile, read off the Update goroutine
-	// (resolveProfile); until it arrives no tools are offered, never the
-	// previous provider's answer.
-	_, isProvider := providers.GetProvider(m.provider)
+	// The provider is the one the client now talks to (2.0 F2e): the client
+	// has just loaded the endpoint's config (config.<name>.json, whose base
+	// URL may belong to another provider than the name suggests), so when it
+	// reports a known provider, that provider gates the tools. A client that
+	// cannot report its endpoint (none in production: the chat's adapter
+	// does) is offered no tools rather than the previous endpoint's answer.
+	m.skillsEnabled = false
+	var cmd tea.Cmd
 	if src, ok := m.llmClient.(ActiveEndpointer); ok {
 		if p := src.ActiveEndpoint().Provider; p != "" {
 			if _, known := providers.GetProvider(p); known {
 				m.provider = p
 			}
 		}
-	}
-
-	var cmd tea.Cmd
-	if _, ok := m.llmClient.(ActiveEndpointer); ok {
 		m, cmd = m.adoptActiveModel() // an unknown provider offers no tools
-	} else if !isProvider {
-		m.skillsEnabled = false
-		cmd = resolveProfile(m.endpoint)
-	} else if caps, ok := providers.GetProvider(m.provider); ok {
-		// A client that can't say its endpoint gets the registry's model.
-		if model := caps.PreferredToolModel; model != "" || caps.DefaultModel != "" {
-			if model == "" {
-				model = caps.DefaultModel
-			}
-			m.model = model
-			m.header = m.header.SetModel(m.model)
-			if canSwitch {
-				if err := switcher.ChangeModel(m.model); err != nil {
-					LogInfo(fmt.Sprintf("Error changing model: %v", err))
-				}
-			}
-		}
-		m.skillsEnabled = providers.ToolsEnabledForModel(m.provider, m.model)
 	}
 	LogInfo(fmt.Sprintf("Provider: %s, model: %s, skills enabled: %v", m.provider, m.model, m.skillsEnabled))
 

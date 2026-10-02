@@ -18,26 +18,17 @@ func (e *promptBlockedError) Error() string {
 
 // chatStopHook asks Stop hooks whether a finished call may end, and returns
 // the instruction to continue with, or "" to finish. This is MCP agent
-// mode's rule (agent/hooks.go stopHook): a deny is honoured once per call
-// and only while turns remain; later ones are reported and ignored.
+// mode's rule (hooks.StopContinuation): a deny is honoured once per call
+// and only while turns remain; later ones are reported and ignored. The
+// instruction is trimmed, as MCP chat always sent it.
 func chatStopHook(ctx context.Context, h *hooks.Runner, final string, continued bool, turnsLeft int, warn func(string)) string {
 	if !h.Has(hooks.EventStop) {
 		return ""
 	}
-	out := h.Stop(ctx, final)
-	if out.Decision != hooks.Deny {
-		return ""
+	instr, warning := hooks.StopContinuation(h.Stop(ctx, final), continued, turnsLeft,
+		hooks.StopScope{Event: "Stop", Actor: "the chat", Unit: "call"})
+	if warning != "" {
+		warn(warning)
 	}
-	switch {
-	case continued:
-		warn("a Stop hook asked the chat to continue again; ignored (one continuation per call)")
-		return ""
-	case turnsLeft <= 0:
-		warn("a Stop hook asked the chat to continue, but the call has no turns left")
-		return ""
-	}
-	if r := strings.TrimSpace(out.Reason); r != "" {
-		return r
-	}
-	return "Continue."
+	return strings.TrimSpace(instr)
 }
