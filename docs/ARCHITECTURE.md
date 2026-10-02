@@ -645,6 +645,8 @@ type ProviderBlocks struct {
 }
 ```
 
+**Anthropic thinking (W2).** A reply that holds a `thinking`, `redacted_thinking` or `compaction` block keeps all its content blocks, as the SDK accumulator rebuilt them from the stream, under `anthropic-messages|<endpoint>|<model>`. Later requests send them unchanged as the assistant turn's content. A budget-thinking model runs a tool-loop continuation with thinking off only when that turn does not replay. History changes under replayed thinking are handled three ways: the `thinking-binding-controls-2026-08-01` beta with `drop_block` on Anthropic's endpoint (dropped blocks are logged from `input_transformations` and reported as `BlocksRejected`), a single resend without blocks after a prefix-mismatch 400, and one strip after a system-prompt change.
+
 ### Storage Format
 
 ```
