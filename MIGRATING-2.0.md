@@ -78,6 +78,14 @@ without a warning.
 | Automatic `.grimoire` / `.gitignore` creation (chat, MCP `mode: "chat"` and `mode: "agent"`) | Stops. Nothing is written into your project unless you ask: `/init` (or `celeste init`) writes `.grimoire`, `/init agents` (or `celeste init --agents`) also writes `AGENTS.md`. The chat suggests `/init` once per session when the project has no context. Existing `.grimoire` files are read as before. |
 | The `project-init` "first visit" memory | No longer created. Existing ones stay. |
 | `AGENTS.md` / `CLAUDE.md` | Read from the workspace up to the git root and added to the project context under the grimoire (the grimoire wins on conflict). 32 KiB per file, 64 KiB in all. |
+## MCP client
+
+| 1.x | 2.0 |
+|---|---|
+| MCP `readOnlyHint` | Ignored unless the server is marked `"trusted": true`. A trusted server's tools that set `readOnlyHint: true` count as read-only, so they run without asking in default mode. `"trusted"` is read only from your home-level configs (`~/.celeste/mcp.json`, `~/.claude/mcp.json`, `~/.cursor/mcp.json`); in a project's `.mcp.json` or `.celeste/mcp.json` it has no effect. Set it only for servers you control. |
+| Two MCP servers whose names sanitize to the same tool name (`a.b` and `a_b`) | The first one connected keeps the tool; the other server's tool is not registered, with a warning naming both. Disconnecting the second server no longer removes the first one's tool. |
+| A custom JSON tool (`~/.celeste/skills/*.json`) named like a built-in tool or another custom tool | No longer replaces it: the built-in (or the first file, in directory order) keeps the name, the file is skipped with a warning, and the other files still load. Rename the tool to use it. |
+
 ## OpenAI uses the Responses API
 
 | 1.x | 2.0 |
