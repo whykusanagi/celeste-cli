@@ -642,11 +642,11 @@ func (a *TUIClientAdapter) jevShadow() *jev.Client {
 	}
 	c, err := jev.NewFromEnv()
 	if err != nil {
-		tui.LogInfo("jev shadow disabled: " + err.Error())
+		tui.LogInfo("jev prune disabled: " + err.Error())
 		return nil
 	}
 	c.Workspace, _ = os.Getwd() // paths in excerpts are sent relative to it
-	tui.LogInfo("jev shadow on: redacted excerpts of old tool results are sent to TypeSafe")
+	tui.LogInfo("jev prune " + a.baseConfig.JevPruneMode() + ": redacted excerpts of old tool results are sent to TypeSafe")
 	a.jev = c
 	return c
 }

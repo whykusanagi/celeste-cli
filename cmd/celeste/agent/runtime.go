@@ -478,7 +478,7 @@ func jevShadowClient(mode, workspace string, errOut io.Writer) *jev.Client {
 	}
 	c, err := jev.NewFromEnv()
 	if err != nil {
-		fmt.Fprintf(errOut, "[agent] jev shadow disabled: %v\n", err)
+		fmt.Fprintf(errOut, "[agent] jev prune disabled: %v\n", err)
 		return nil
 	}
 	c.Workspace = workspace
