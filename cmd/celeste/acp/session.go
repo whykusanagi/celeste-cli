@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
@@ -32,15 +34,24 @@ type session struct {
 	client       *llm.Client
 	systemPrompt string
 	store        *config.Session
+	// compactor keeps the history inside the window (ruling 12); its
+	// budget spans the session's prompts.
+	compactor *compactor
 
 	// running is set while a prompt runs (ruling 2: one at a time).
 	running atomic.Bool
+	// spillSeq numbers spilled tool results across the session's prompts
+	// (one Loop each), so a repeated call ID never overwrites a spill.
+	spillSeq atomic.Int64
 
 	mu sync.Mutex
 	// history is the conversation; only the running prompt replaces it.
 	history []tui.ChatMessage
 	// cancel stops the running prompt (session/cancel); nil when idle.
 	cancel context.CancelFunc
+	// arrivedN counts prompts received but not started; cancelN is how
+	// many of them a session/cancel cancelled before they started.
+	arrivedN, cancelN int
 	// allow holds the tools the editor's user allowed always (ruling 8).
 	allow map[string]bool
 	// pendingHooks are the untrusted repo hook sources Setup skipped
@@ -116,7 +127,15 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 	prompt := env.SystemPrompt("", nil)
 	client.SetSystemPrompt(prompt)
 
+	pruned, err := compact.DefaultStore()
+	if err != nil {
+		warn("pruned tool results cannot be kept (" + err.Error() + "); pruning is off")
+		pruned = nil
+	}
+	summarize := agent.SmallModelSummarizer(llm.ConfigFrom(s.cfg), s.cfg.ResolveSmallModel())
+
 	s.env, s.client, s.systemPrompt = env, client, prompt
+	s.compactor = newCompactor(s.cfg, prompt, pruned, summarize, env.Hooks, a.logf)
 	return nil
 }
 
@@ -170,14 +189,55 @@ func (s *session) close() {
 	}
 }
 
-// cancelPrompt cancels the running prompt, if any.
+// cancelPrompt cancels the running prompt, if any, and the prompts that
+// arrived before the cancel but have not started yet.
 func (s *session) cancelPrompt() {
 	s.mu.Lock()
 	cancel := s.cancel
+	s.cancelN = s.arrivedN
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// arrived counts a session/prompt read off the connection.
+func (s *session) arrived() {
+	s.mu.Lock()
+	s.arrivedN++
+	s.mu.Unlock()
+}
+
+// dequeue uncounts an arrived prompt that will not run; it reports
+// whether a session/cancel had cancelled it.
+func (s *session) dequeue() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dequeueLocked()
+}
+
+func (s *session) dequeueLocked() bool {
+	if s.arrivedN > 0 {
+		s.arrivedN--
+	}
+	if s.cancelN > 0 {
+		s.cancelN--
+		return true
+	}
+	return false
+}
+
+// begin starts a prompt: it uncounts it and installs its cancel func in
+// one step, so a session/cancel either finds the func or marks the prompt
+// cancelled. False when a cancel came first.
+func (s *session) begin(cancel context.CancelFunc) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dequeueLocked() {
+		return false
+	}
+	s.cancel = cancel
+	return true
 }
 
 // maxToolContent caps the tool result text a tool_call_update carries
@@ -189,13 +249,17 @@ const maxToolContent = 8 << 10
 // stop reason answered when the turn ends.
 func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptResult, *RPCError) {
 	if !s.running.CompareAndSwap(false, true) {
+		s.dequeue()
 		return nil, &RPCError{Code: CodeBusy, Message: "a prompt is already running in this session"}
 	}
 	defer s.running.Store(false)
 	pctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if !s.begin(cancel) {
+		// session/cancel came after this prompt but before it started.
+		return &PromptResult{StopReason: StopCancelled}, nil
+	}
 	s.mu.Lock()
-	s.cancel = cancel
 	history := append(append([]tui.ChatMessage(nil), s.history...),
 		tui.ChatMessage{Role: "user", Content: text, Timestamp: time.Now()})
 	s.mu.Unlock()
@@ -236,12 +300,14 @@ func (s *session) newLoop(a *Agent, st *promptState) *loop.Loop {
 		lim.MaxTurns = s.cfg.MaxToolIterations
 	}
 	return &loop.Loop{
-		Client:      s.client,
-		Tools:       s.env.Registry,
-		Limits:      lim,
-		Gate:        s.gate(a, st),
-		CheckPrompt: loop.HookPromptCheck(s.env.Hooks),
-		SessionID:   "acp-" + s.id,
+		Client:       s.client,
+		Tools:        s.env.Registry,
+		Limits:       lim,
+		Gate:         s.gate(a, st),
+		Compact:      s.compactor,
+		CheckPrompt:  loop.HookPromptCheck(s.env.Hooks),
+		SessionID:    "acp-" + s.id,
+		SpillCounter: &s.spillSeq,
 	}
 }
 
@@ -250,9 +316,46 @@ type promptState struct {
 	mu sync.Mutex
 	// blocked is why a UserPromptSubmit hook blocked the prompt.
 	blocked string
+	// calls are the prompt's tool calls by ID: the gate waits until the
+	// editor was sent a call's tool_call before asking about it.
+	calls map[string]*callInfo
 }
 
-func newPromptState() *promptState { return &promptState{} }
+// callInfo is one tool call as the editor was shown it.
+type callInfo struct {
+	sent  chan struct{} // closed once its tool_call update was sent
+	title string
+	kind  string
+	locs  []Location
+	input map[string]any
+}
+
+func newPromptState() *promptState { return &promptState{calls: map[string]*callInfo{}} }
+
+// call returns the call's entry, creating it.
+func (st *promptState) call(id string) *callInfo {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	ci := st.calls[id]
+	if ci == nil {
+		ci = &callInfo{sent: make(chan struct{})}
+		st.calls[id] = ci
+	}
+	return ci
+}
+
+// shown records that the editor was sent the call's tool_call.
+func (st *promptState) shown(id string, info callInfo) {
+	ci := st.call(id)
+	st.mu.Lock()
+	select {
+	case <-ci.sent: // a repeated ID: keep the first
+	default:
+		ci.title, ci.kind, ci.locs, ci.input = info.title, info.kind, info.locs, info.input
+		close(ci.sent)
+	}
+	st.mu.Unlock()
+}
 
 // update sends one session/update to the editor.
 func (s *session) update(a *Agent, u any) {
@@ -269,15 +372,23 @@ func (s *session) onEvent(a *Agent, st *promptState, ev loop.Event) {
 			s.update(a, AgentMessageChunk(ev.Text))
 		}
 	case loop.EventToolStart:
+		id := callID(ev.Call)
+		info := callInfo{
+			title: toolTitle(ev.Call.Name, ev.Call.Input),
+			kind:  toolKind(ev.Call.Name),
+			locs:  toolLocations(ev.Call.Input, s.cwd),
+			input: ev.Call.Input,
+		}
 		s.update(a, ToolCall{
 			SessionUpdate: UpdateToolCall,
-			ToolCallID:    callID(ev.Call),
-			Title:         toolTitle(ev.Call.Name, ev.Call.Input),
-			Kind:          toolKind(ev.Call.Name),
+			ToolCallID:    id,
+			Title:         info.title,
+			Kind:          info.kind,
 			Status:        ToolStatusInProgress,
-			Locations:     toolLocations(ev.Call.Input, s.cwd),
-			RawInput:      ev.Call.Input,
+			Locations:     info.locs,
+			RawInput:      info.input,
 		})
+		st.shown(id, info)
 	case loop.EventToolResult:
 		status := ToolStatusCompleted
 		if ev.IsError {
@@ -376,38 +487,79 @@ func (s *session) finish(a *Agent, st *promptState, lim loop.Limits, res loop.Re
 	return &PromptResult{StopReason: StopEndTurn}, nil
 }
 
+// shownWait bounds how long a permission ask waits for its call's
+// tool_call update to be sent (the pump sends it just before the call runs).
+const shownWait = 2 * time.Second
+
 // gate is the prompt's permission Gate (ruling 8): it asks the editor with
-// session/request_permission. Anything but an allow is a deny.
+// session/request_permission about the pending call. "Always allow" adds
+// the tool to the session's allow set (never to permissions.json): later
+// asks for it are answered without a request. A reject, a cancelled
+// outcome, a transport error or the prompt ending is a deny.
 func (s *session) gate(a *Agent, st *promptState) loop.Gate {
 	return loop.GateFunc(func(ctx context.Context, req tools.PermissionRequest) tools.PermissionResponse {
 		deny := tools.PermissionResponse{Decision: "deny"}
+		allow := tools.PermissionResponse{Decision: "allow_once"}
 		if ctx.Err() != nil {
 			return deny
 		}
-		id := tools.CallIDFromContext(ctx)
-		if id == "" {
-			id = "call_" + req.ToolName
+		if s.allowed(req.ToolName) {
+			return allow
 		}
-		title := req.ToolName
-		if req.InputSummary != "" {
-			title = toolTitle(req.ToolName, map[string]any{"path": req.InputSummary})
+		tc := ToolCallUpdate{Title: summaryTitle(req.ToolName, req.InputSummary), Kind: toolKind(req.ToolName), Status: ToolStatusPending}
+		if id := tools.CallIDFromContext(ctx); id != "" {
+			tc.ToolCallID = id
+			ci := st.call(id)
+			wait := time.NewTimer(shownWait)
+			select {
+			case <-ci.sent:
+				st.mu.Lock()
+				tc.Title, tc.Kind, tc.Locations, tc.RawInput = ci.title, ci.kind, ci.locs, ci.input
+				st.mu.Unlock()
+			case <-wait.C:
+			case <-ctx.Done():
+				wait.Stop()
+				return deny
+			}
+			wait.Stop()
+		} else {
+			tc.ToolCallID = "call_" + req.ToolName
 		}
 		params := RequestPermissionParams{
 			SessionID: s.id,
-			ToolCall:  ToolCallUpdate{ToolCallID: id, Title: title, Kind: toolKind(req.ToolName), Status: ToolStatusPending},
+			ToolCall:  tc,
 			Options: []PermissionOption{
 				{OptionID: OptionAllowOnce, Name: "Allow", Kind: OptionAllowOnce},
+				{OptionID: OptionAllowAlways, Name: "Always allow " + req.ToolName, Kind: OptionAllowAlways},
 				{OptionID: OptionRejectOnce, Name: "Reject", Kind: OptionRejectOnce},
 			},
 		}
 		var out RequestPermissionResult
 		if err := a.call(ctx, "session/request_permission", params, &out); err != nil {
-			a.logf("acp: session %s: permission request for %s: %v", s.id, req.ToolName, err)
+			if ctx.Err() == nil {
+				a.logf("acp: session %s: permission request for %s: %v", s.id, req.ToolName, err)
+			}
 			return deny
 		}
-		if out.Outcome.Outcome == OutcomeSelected && out.Outcome.OptionID == OptionAllowOnce {
-			return tools.PermissionResponse{Decision: "allow_once"}
+		if ctx.Err() != nil || out.Outcome.Outcome != OutcomeSelected {
+			return deny
+		}
+		switch out.Outcome.OptionID {
+		case OptionAllowOnce:
+			return allow
+		case OptionAllowAlways:
+			s.mu.Lock()
+			s.allow[req.ToolName] = true
+			s.mu.Unlock()
+			return allow
 		}
 		return deny
 	})
+}
+
+// allowed reports the editor's user allowed tool always in this session.
+func (s *session) allowed(tool string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.allow[tool]
 }

@@ -192,6 +192,22 @@ func (a *Agent) Notify(method string, params json.RawMessage) {
 	}
 }
 
+// Received implements Receiver: a session/prompt is counted as arrived
+// before its goroutine starts, so a session/cancel read right after it
+// cancels it even if it has not started yet.
+func (a *Agent) Received(method string, params json.RawMessage) {
+	if method != "session/prompt" {
+		return
+	}
+	var p PromptParams
+	if json.Unmarshal(params, &p) != nil { // Request answers the error
+		return
+	}
+	if s := a.session(p.SessionID); s != nil {
+		s.arrived()
+	}
+}
+
 // prompt answers session/prompt.
 func (a *Agent) prompt(ctx context.Context, p PromptParams) (any, *RPCError) {
 	s := a.session(p.SessionID)
@@ -200,11 +216,13 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams) (any, *RPCError) {
 	}
 	text, err := promptText(p.Prompt, a.logf)
 	if err != nil {
+		s.dequeue()
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 	}
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		s.dequeue()
 		return nil, &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
 	}
 	a.prompts.Add(1)

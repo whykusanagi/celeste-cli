@@ -115,6 +115,12 @@ func toolTitle(name string, input map[string]any) string {
 	return name
 }
 
+// summaryTitle is a title from a permission request's input summary, used
+// when the call's own title is not known.
+func summaryTitle(name, summary string) string {
+	return toolTitle(name, map[string]any{"path": summary})
+}
+
 // toolLocations is the file a call touches, when its input has a path:
 // absolute, relative paths resolved against the workspace (ACP locations
 // are absolute).
