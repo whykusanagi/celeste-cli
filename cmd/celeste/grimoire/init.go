@@ -57,7 +57,8 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 		if _, err := os.Stat(filepath.Join(dir, "tsconfig.json")); err == nil {
 			lang = "typescript"
 		}
-		c := &langCandidate{language: lang, testCmd: "npm test", buildCmd: "npm run build", hasManifest: true}
+		// npm run build fails without a build script: named only with one.
+		c := &langCandidate{language: lang, testCmd: "npm test", hasManifest: true}
 		var pkg map[string]any
 		if err := json.Unmarshal(data, &pkg); err == nil {
 			if name, ok := pkg["name"].(string); ok {
@@ -69,6 +70,9 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 				}
 				if lint, ok := scripts["lint"].(string); ok {
 					c.lintCmd = lint
+				}
+				if _, ok := scripts["build"].(string); ok {
+					c.buildCmd = "npm run build"
 				}
 			}
 		}
