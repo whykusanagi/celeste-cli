@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -365,4 +366,64 @@ func TestStoreSeesAnotherProcessesChanges(t *testing.T) {
 	require.NoError(t, snap(sm, b))
 	assert.Equal(t, []string{b}, sm.Files(), "the entry the other process reverted stays gone")
 	assert.Len(t, newSnapshotManagerWithBase(sm.Dir()).Entries(), 1)
+}
+
+// Two processes on one session (two stores on one directory, each with its
+// own mutex): the session lock keeps every entry either records.
+func TestTwoStoresOnOneSessionLoseNothing(t *testing.T) {
+	sm, dir := store(t)
+	other := newSnapshotManagerWithBase(sm.Dir())
+	var wg sync.WaitGroup
+	errs := make(chan error, 40)
+	for s, m := range []*SnapshotManager{sm, other} {
+		p := filepath.Join(dir, fmt.Sprintf("p%d.txt", s))
+		write(t, p, "x")
+		wg.Add(1)
+		go func(m *SnapshotManager, p string) {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				errs <- snap(m, p)
+			}
+		}(m, p)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	assert.Len(t, newSnapshotManagerWithBase(sm.Dir()).Entries(), 40)
+	assert.Len(t, backups(t, sm.Dir()), 40)
+	_, err := os.Stat(filepath.Join(sm.Dir(), "index.lock"))
+	assert.True(t, os.IsNotExist(err), "the lock is released")
+}
+
+// A lock left by a process that died is taken over once it is stale.
+func TestStaleSessionLockIsTakenOver(t *testing.T) {
+	sm, dir := store(t)
+	require.NoError(t, os.MkdirAll(sm.Dir(), 0o700))
+	lock := filepath.Join(sm.Dir(), "index.lock")
+	write(t, lock, "")
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(lock, old, old))
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "x")
+	require.NoError(t, snap(sm, f))
+	assert.Len(t, sm.Entries(), 1)
+}
+
+// A rollback after a write that changed nothing (it failed up front, as on
+// a read-only file) drops the entry without rewriting the file.
+func TestRollbackOfAnUnchangedFileOnlyDropsTheEntry(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "same")
+	c, err := sm.Checkpoint(f, "call_1")
+	require.NoError(t, err)
+	before, err := os.Stat(f)
+	require.NoError(t, err)
+	require.NoError(t, c.Rollback())
+	after, err := os.Stat(f)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "the file was not replaced")
+	assert.Empty(t, sm.Entries())
 }

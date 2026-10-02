@@ -4,6 +4,7 @@
 package checkpoints
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,6 +103,21 @@ func (c *Checkpoint) Entry() Entry { return c.entry }
 func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	_, dirErr := os.Stat(sm.dir)
+	unlock, err := lockSession(sm.dir, true)
+	if err != nil {
+		return nil, err
+	}
+	c, err := sm.checkpointLocked(path, messageID)
+	unlock()
+	if err != nil && errors.Is(dirErr, os.ErrNotExist) {
+		_ = os.Remove(sm.dir) // created for the lock only: leave nothing behind
+	}
+	return c, err
+}
+
+// checkpointLocked is Checkpoint under sm.mu and the session lock.
+func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint, error) {
 	sm.reloadLocked()
 
 	e := Entry{MessageID: messageID, Path: path, Version: sm.nextVersionLocked(path), Time: time.Now().UTC()}
@@ -148,6 +164,11 @@ func (c *Checkpoint) Rollback() error {
 	sm := c.sm
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	unlock, err := lockSession(sm.dir, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	sm.reloadLocked()
 	for i := len(sm.entries) - 1; i >= 0; i-- {
 		if sameEntry(sm.entries[i], c.entry) {
@@ -161,6 +182,11 @@ func (c *Checkpoint) Rollback() error {
 func (sm *SnapshotManager) Revert(path string) (Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	unlock, err := lockSession(sm.dir, false)
+	if err != nil {
+		return Entry{}, err
+	}
+	defer unlock()
 	sm.reloadLocked()
 	for i := len(sm.entries) - 1; i >= 0; i-- {
 		if samePath(sm.entries[i].Path, path) {
@@ -175,6 +201,11 @@ func (sm *SnapshotManager) Revert(path string) (Entry, error) {
 func (sm *SnapshotManager) RevertLast() (Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	unlock, err := lockSession(sm.dir, false)
+	if err != nil {
+		return Entry{}, err
+	}
+	defer unlock()
 	sm.reloadLocked()
 	if len(sm.entries) == 0 {
 		return Entry{}, errors.New("no file changes to undo in this session")
@@ -190,6 +221,11 @@ func (sm *SnapshotManager) RevertLast() (Entry, error) {
 func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	unlock, err := lockSession(sm.dir, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	sm.reloadLocked()
 	first := -1
 	for i, e := range sm.entries {
@@ -258,6 +294,49 @@ func (sm *SnapshotManager) Cleanup() error {
 	return nil
 }
 
+const (
+	lockFile  = "index.lock"
+	lockWait  = 10 * time.Second
+	lockStale = 30 * time.Second
+	lockRetry = 10 * time.Millisecond
+)
+
+// lockSession serializes changes to dir's index across processes (two
+// windows on one resumed session, celeste revert beside a chat): it
+// creates dir/index.lock exclusively, waiting up to lockWait, and removes a
+// lock older than lockStale (left by a process that died holding it). A
+// session directory that does not exist has nothing to lock unless create.
+// The returned function releases the lock.
+func lockSession(dir string, create bool) (func(), error) {
+	if create {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("cannot create checkpoint directory: %w", err)
+		}
+	}
+	path := filepath.Join(dir, lockFile)
+	deadline := time.Now().Add(lockWait)
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_ = f.Close()
+			return func() { _ = os.Remove(path) }, nil
+		}
+		if !create && errors.Is(err, os.ErrNotExist) {
+			if _, derr := os.Stat(dir); errors.Is(derr, os.ErrNotExist) {
+				return func() {}, nil
+			}
+		}
+		// Held by someone else, or (Windows) being deleted: wait.
+		if info, serr := os.Stat(path); serr == nil && time.Since(info.ModTime()) > lockStale {
+			_ = os.Remove(path) // then retry below
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("cannot lock checkpoint index in %s: %w", dir, err)
+		}
+		time.Sleep(lockRetry)
+	}
+}
+
 // reloadLocked takes the index on disk as the truth: another process
 // (celeste revert, a second window on the same session) may have changed
 // it since this store last read or wrote it. An index that cannot be read
@@ -298,6 +377,11 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
+	}
+	if cur, err := os.ReadFile(e.Path); err == nil && bytes.Equal(cur, data) {
+		// Already as checkpointed (a write that failed before changing a
+		// byte, e.g. on a read-only file): nothing to restore.
+		return nil
 	}
 	perm := os.FileMode(0o644)
 	if info, err := os.Stat(src); err == nil {
