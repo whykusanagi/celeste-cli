@@ -1,5 +1,5 @@
 ---
-condition: (?im)\b(onii[- ]?chan|darling|senpai|cutie|sweetie)\b|[♡💜🖤]|\*(giggles?|smirks?|grins?|winks?|purrs?|pouts?|teases?)\*|\b(fufu+|ufufu+|ara ara|kukuku)\b|\w~+\s*$
+condition: (?im)\b(onii[- ]?chan|darling|senpai|cutie|sweetie)\b|[♡💜🖤]|\*(giggles?|smirks?|grins?|winks?|purrs?|pouts?|teases?)\*|\b(fufu+|ufufu+|ara ara|kukuku)\b|[\p{L}\p{N}]~+\s*$
 scope: tool_args:write_file.content, tool_args:patch_file.new_string
 action: append
 repeat: after-gap:5

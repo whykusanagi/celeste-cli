@@ -184,6 +184,9 @@ func TestBuiltinVoiceInFilesExemptions(t *testing.T) {
 		{".gitignore", "notes.txt~\n", false},
 		{"build.sh", "cp a b~\n", false},
 		{"notes.txt", "all done~\n", true},
+		{"notes.txt", "\u5b8c\u4e86~\n", true},
+		{"README.md", "the ~~old~~\n", false},
+		{"README.md", "Use ~~foo~~ instead of bar.\n", false},
 		{"setup.sh", "echo done, darling\n", true},
 	}
 	for _, c := range cases {

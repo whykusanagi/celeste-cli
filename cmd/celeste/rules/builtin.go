@@ -45,6 +45,7 @@ func Builtins() []*Rule {
 var (
 	fencedBlock = regexp.MustCompile("(?s)```.*?(```|$)|(?s)~~~.*?(~~~|$)")
 	quoteLine   = regexp.MustCompile(`(?m)^[ \t]*>.*$`)
+	strike      = regexp.MustCompile(`~~[^~\n]+~~`) // markdown strikethrough
 )
 
 // voiceInFileGuard fires only on voice outside fenced code and quotation
@@ -61,6 +62,7 @@ func voiceInFileGuard(_ *Facts, h Hit) bool {
 	content, _ := fieldText(h.Call.Input[h.Scope.Field])
 	content = fencedBlock.ReplaceAllString(content, "")
 	content = quoteLine.ReplaceAllString(content, "")
+	content = strike.ReplaceAllString(content, "")
 	if tildeIsSyntax(p) {
 		// A trailing ~ is a backup pattern, a home directory or a LaTeX
 		// tie there, never a sung word.
