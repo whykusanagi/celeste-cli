@@ -59,7 +59,9 @@ replaces it with a new file of the same mode, so other hard links to it,
 another user's ownership, extended attributes and ACLs are not kept. When
 celeste is not permitted to create files in the file's directory, it
 overwrites the file in place instead, which keeps all of them but is not
-atomic: if that write fails halfway, the file is left partly written.
+atomic. It does so only when it can read the file's current contents, and
+puts them back if the write fails halfway; if that fails too, the error
+says so and the file may be left partly written.
 
 Each checkpoint also records the file's size and SHA-256 as celeste's write
 left it. `/undo` and `celeste revert` compare the file with that before
