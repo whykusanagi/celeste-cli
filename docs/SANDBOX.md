@@ -26,7 +26,7 @@ Every `bash` command runs in its own process group, and a timeout or cancel kill
 - the git directories of the repository the workspace is in, when they are outside it: a linked worktree's (`git worktree add`, which is also how isolated subagents run) git dir and the repository's shared `.git`, or the `.git` above a workspace that is a subdirectory of a repository. Without them `git add` and `git commit` fail. Like the workspace's own `.git`, this includes `.git/hooks` and `.git/config`;
 - the temp directories: `$TMPDIR` (or the system default), `/tmp` and, on macOS, `/private/tmp`;
 - your user cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux), which holds Go's build cache;
-- these build caches, when they exist: `~/.npm`, `~/go/pkg/mod`, `~/.cargo/registry`, `~/.gradle/caches`, `~/.m2/repository`;
+- these build caches, when they exist: `~/go/pkg` (for each `$GOPATH` entry when it is set: its `pkg`; plus `$GOMODCACHE` when set), `~/.cargo` (or `$CARGO_HOME`), `~/.gradle` (or `$GRADLE_USER_HOME`), `~/.npm` and `~/.m2/repository`. The Cargo and Gradle homes are writable whole, since Cargo takes its lock there and the Gradle wrapper and daemon live beside the caches; that includes `~/.cargo/bin` and Gradle's init scripts. These locations are read from celeste's environment, not from `go env`'s config file;
 - on macOS, `/dev/null`, `/dev/tty` and `/dev/fd/*`. On Linux the sandbox has its own `/dev`, and `/run` is an empty temporary directory (the systemd resolver directory stays visible, read-only, so DNS keeps working).
 
 Everything else is read-only to the command. Paths are compared after resolving symlinks.

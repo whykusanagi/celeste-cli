@@ -71,11 +71,57 @@ func TestDefaultWritableIncludesWorkspaceTempAndCache(t *testing.T) {
 			t.Errorf("DefaultWritable lacks %s: %v", want, got)
 		}
 	}
-	if slices.Contains(got, Resolve(filepath.Join(home, ".cargo", "registry"))) {
+	if slices.Contains(got, Resolve(filepath.Join(home, ".cargo"))) {
 		t.Errorf("a cache dir that does not exist is left out: %v", got)
 	}
 	if !slices.IsSorted(got) || len(slices.Compact(slices.Clone(got))) != len(got) {
 		t.Errorf("not sorted and de-duplicated: %v", got)
+	}
+}
+
+// Review Important 2: whole tool homes, not just their download caches:
+// go get writes go/pkg/sumdb, cargo locks .cargo/.package-cache and the
+// gradle wrapper writes .gradle/wrapper. A custom location wins.
+func TestDefaultWritableCoversWholeToolCaches(t *testing.T) {
+	home := t.TempDir()
+	for _, k := range []string{"GOPATH", "GOMODCACHE", "CARGO_HOME", "GRADLE_USER_HOME"} {
+		t.Setenv(k, "")
+	}
+	for _, d := range []string{filepath.Join("go", "pkg", "sumdb"), filepath.Join(".cargo", "registry"), filepath.Join(".gradle", "wrapper")} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := DefaultWritable(home, t.TempDir())
+	for _, want := range []string{filepath.Join(home, "go", "pkg"), filepath.Join(home, ".cargo"), filepath.Join(home, ".gradle")} {
+		if !slices.Contains(got, Resolve(want)) {
+			t.Errorf("DefaultWritable lacks %s: %v", want, got)
+		}
+	}
+	if slices.Contains(got, Resolve(filepath.Join(home, "go"))) {
+		t.Errorf("go/bin is not a cache; only go/pkg is writable: %v", got)
+	}
+
+	gopath1, gopath2, modcache, cargo, gradle := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	for _, d := range []string{filepath.Join(gopath1, "pkg"), filepath.Join(gopath2, "pkg")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GOPATH", gopath1+string(os.PathListSeparator)+gopath2)
+	t.Setenv("GOMODCACHE", modcache)
+	t.Setenv("CARGO_HOME", cargo)
+	t.Setenv("GRADLE_USER_HOME", gradle)
+	got = DefaultWritable(home, t.TempDir())
+	for _, want := range []string{filepath.Join(gopath1, "pkg"), filepath.Join(gopath2, "pkg"), modcache, cargo, gradle} {
+		if !slices.Contains(got, Resolve(want)) {
+			t.Errorf("DefaultWritable lacks %s: %v", want, got)
+		}
+	}
+	for _, not := range []string{filepath.Join(home, "go", "pkg"), filepath.Join(home, ".cargo"), filepath.Join(home, ".gradle")} {
+		if slices.Contains(got, Resolve(not)) {
+			t.Errorf("a custom location replaces the default %s: %v", not, got)
+		}
 	}
 }
 
