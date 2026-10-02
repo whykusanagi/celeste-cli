@@ -366,7 +366,9 @@ func SaveSkillsConfig(skillsConfig *Config) error {
 		return fmt.Errorf("failed to marshal skills config: %w", err)
 	}
 
-	return os.WriteFile(skillsFile, data, 0600) // Restrictive permissions for secrets
+	// Atomic and exactly 0600: skills.json holds API keys, and a torn write
+	// would lose every one of them.
+	return atomicfile.Write(skillsFile, data, 0600)
 }
 
 // Environment overrides. Precedence is flag > environment > config file.
@@ -845,7 +847,8 @@ func persistReconciled(path string, config *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0600)
+	// Atomic; an existing profile keeps its mode, a new one is 0600.
+	return atomicfile.WriteKeepMode(path, out, 0600)
 }
 
 // deprecatedModels maps the Grok models xAI routes to the cost-prohibitive
@@ -955,7 +958,8 @@ func SaveSecrets(config *Config) error {
 		return fmt.Errorf("failed to marshal secrets: %w", err)
 	}
 
-	return os.WriteFile(secretsFile, data, 0600) // More restrictive permissions for secrets
+	// Atomic and exactly 0600, even over an older file with a looser mode.
+	return atomicfile.Write(secretsFile, data, 0600)
 }
 
 // ConfigLoader provides configuration values to tools.

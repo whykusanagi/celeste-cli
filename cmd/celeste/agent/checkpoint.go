@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -56,7 +57,9 @@ func (s *CheckpointStore) Save(state *RunState) error {
 	}
 
 	path := filepath.Join(s.runsDir, state.RunID+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// Atomic, so --resume never reads a torn checkpoint; 0600 like sessions,
+	// since it holds the run's whole transcript.
+	if err := atomicfile.Write(path, data, 0600); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
 	return nil
