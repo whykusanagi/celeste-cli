@@ -735,3 +735,24 @@ func TestSessionFilesAreOwnerOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
+
+// /session delete|merge|rename take the id from the user: it must name a
+// file in the sessions directory, never a path out of it.
+func TestSessionIDsCannotEscapeTheSessionsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	manager := NewSessionManager()
+	victim := filepath.Join(home, ".celeste", "config.json")
+	require.NoError(t, os.WriteFile(victim, []byte(`{}`), 0o600))
+	for _, id := range []string{"../config", "..", "a/b", `a\b`, "", ".", "../sessions/../config"} {
+		assert.Error(t, manager.Delete(id), "Delete(%q)", id)
+		_, err := manager.Load(id)
+		assert.Error(t, err, "Load(%q)", id)
+	}
+	_, err := os.Stat(victim)
+	assert.NoError(t, err, "config.json must survive")
+	bad := manager.NewSession()
+	bad.ID = "../config"
+	assert.Error(t, manager.Save(bad))
+}

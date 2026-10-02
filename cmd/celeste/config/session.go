@@ -115,8 +115,21 @@ func (m *SessionManager) NewSession() *Session {
 	}
 }
 
+// validSessionID rejects an id that is not a plain file name: a user's
+// /session delete ../config must not reach outside the sessions directory.
+func validSessionID(id string) error {
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id ||
+		strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return fmt.Errorf("invalid session id %q", id)
+	}
+	return nil
+}
+
 // Save saves a session to disk.
 func (m *SessionManager) Save(session *Session) error {
+	if err := validSessionID(session.ID); err != nil {
+		return err
+	}
 	session.UpdatedAt = time.Now()
 	session.TokenCount = EstimateSessionTokens(session)
 
@@ -144,6 +157,9 @@ func (m *SessionManager) Save(session *Session) error {
 
 // Load loads a session by ID.
 func (m *SessionManager) Load(id string) (*Session, error) {
+	if err := validSessionID(id); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(m.sessionsDir, id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -241,6 +257,9 @@ func (m *SessionManager) List() ([]Session, error) {
 
 // Delete deletes a session by ID.
 func (m *SessionManager) Delete(id string) error {
+	if err := validSessionID(id); err != nil {
+		return err
+	}
 	path := filepath.Join(m.sessionsDir, id+".json")
 	return os.Remove(path)
 }
