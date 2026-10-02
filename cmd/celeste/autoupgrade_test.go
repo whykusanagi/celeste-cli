@@ -159,7 +159,7 @@ func TestAutoUpgradeNeverDownloadsForASourceBuild(t *testing.T) {
 			r.hook.beforeRun([]string{"celeste", "chat"})
 			<-r.hook.background()
 			if n := r.server.Requests(); n != 0 {
-				t.Fatalf("%d requests from a %v build", n, r.hook.kind)
+				t.Fatalf("%d requests from a %s build", n, kindName(r.hook.kind))
 			}
 			if len(*r.execs) != 0 || r.exeBytes(t) != "go install build" || r.stderr.Len() != 0 {
 				t.Fatalf("execs %d, stderr %q", len(*r.execs), r.stderr.String())

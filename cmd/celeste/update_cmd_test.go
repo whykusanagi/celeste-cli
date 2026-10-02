@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -36,10 +37,10 @@ func TestUpdateRefusesASourceBuild(t *testing.T) {
 		s, exe := useFakeRelease(t, "v2.1.0", kind, "")
 		code, _, stderr := runUpdate()
 		if code != 1 || !strings.Contains(stderr, "built from source") {
-			t.Fatalf("%v: exit %d, stderr %q", kind, code, stderr)
+			t.Fatalf("%s: exit %d, stderr %q", kindName(kind), code, stderr)
 		}
 		if s.Requests() != 0 {
-			t.Fatalf("%v: a source build reached the network", kind)
+			t.Fatalf("%s: a source build reached the network", kindName(kind))
 		}
 		if b, _ := os.ReadFile(exe); string(b) != "go install build" {
 			t.Fatal("a source build was replaced")
@@ -109,4 +110,15 @@ func TestUpdateVerifyDist(t *testing.T) {
 	if code, _, stderr := runUpdate("--verify-dist", t.TempDir()); code != 2 || !strings.Contains(stderr, "--tag") {
 		t.Fatalf("no tag: exit %d, stderr %q", code, stderr)
 	}
+}
+
+// kindName names a selfupdate.Kind in failure messages; Kind has no String
+// method.
+func kindName(k selfupdate.Kind) string {
+	names := map[selfupdate.Kind]string{selfupdate.Source: "Source", selfupdate.Module: "Module",
+		selfupdate.Keyed: "Keyed", selfupdate.Official: "Official"}
+	if n, ok := names[k]; ok {
+		return n
+	}
+	return fmt.Sprintf("Kind(%d)", int(k))
 }

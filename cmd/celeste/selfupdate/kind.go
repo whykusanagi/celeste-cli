@@ -30,18 +30,6 @@ const (
 	Official
 )
 
-func (k Kind) String() string {
-	switch k {
-	case Module:
-		return "module"
-	case Keyed:
-		return "keyed"
-	case Official:
-		return "official"
-	}
-	return "source"
-}
-
 // ErrBadTag is a version string that is not a release tag.
 var ErrBadTag = errors.New("not a release tag")
 

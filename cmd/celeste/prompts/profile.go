@@ -121,8 +121,8 @@ func currentPersona() *personaSet {
 // UsePersonaSource makes the process run the persona sealed in fsys
 // (SOURCE.json and celeste_<profile>.enc at its root) under hexKey, and
 // returns the function that restores the previous one. It exists for
-// tests (promptstest.Install): every package can exercise decryption and
-// realistic profile sizes with the public test key, never the real one.
+// tests: they exercise decryption and realistic profile sizes with the
+// public test key (personacrypttest), never the real one.
 func UsePersonaSource(fsys fs.FS, hexKey string) (restore func()) {
 	prev := personaOverride.Swap(loadPersona(fsys, hexKey))
 	return func() { personaOverride.Store(prev) }
