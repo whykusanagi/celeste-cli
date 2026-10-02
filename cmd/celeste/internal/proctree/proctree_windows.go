@@ -97,7 +97,9 @@ func (t *tree) kill(cmd *exec.Cmd) error {
 	job := t.job
 	t.mu.Unlock()
 	if job != 0 {
-		if err := windows.TerminateJobObject(job, 1); err != nil {
+		err := windows.TerminateJobObject(job, 1)
+		runtime.KeepAlive(t) // its cleanup closes job
+		if err != nil {
 			return fmt.Errorf("terminate job: %w", err)
 		}
 		return nil
