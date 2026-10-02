@@ -74,6 +74,11 @@ Releases are signed by a signing subkey certified under the primary key, so
 `gpg --verify` reports the subkey id while trust flows from the primary
 fingerprint you confirmed.
 
+Once the archive checks out and is extracted (on macOS, after the quarantine
+step below), you can also confirm the binary carries Celeste's official
+persona: `./celeste persona verify` prints `official persona: ...` and exits 0.
+A source or `go install` build reports the public persona only and exits 1.
+
 ## Launching on macOS
 
 The macOS binary is ad-hoc signed (not yet notarized through Apple), so macOS

@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
 )
 
 func (r *Runner) persistArtifacts(state *RunState) {
@@ -155,27 +156,36 @@ func captureGitWorkspaceArtifacts(workspace string, timeout time.Duration) (stri
 		timeout = 30 * time.Second
 	}
 
-	if out, err := runShellCommand(workspace, timeout, "git rev-parse --is-inside-work-tree"); err != nil || !strings.Contains(out, "true") {
+	if out, err := runGit(workspace, timeout, "rev-parse", "--is-inside-work-tree"); err != nil || !strings.Contains(out, "true") {
 		return "", ""
 	}
 
-	statusOut, _ := runShellCommand(workspace, timeout, "git status --porcelain")
-	diffOut, _ := runShellCommand(workspace, timeout, "git diff --no-ext-diff")
+	statusOut, _ := runGit(workspace, timeout, "status", "--porcelain")
+	diffOut, _ := runGit(workspace, timeout, "diff", "--no-ext-diff")
 	return statusOut, diffOut
 }
 
-func runShellCommand(workdir string, timeout time.Duration, command string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+// gitMaxOutput bounds one git call's output in memory. It is far above any
+// realistic patch, so git_diff.patch is not cut; a var so tests can lower it.
+var gitMaxOutput = 64 << 20
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = workdir
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("command timed out: %s", command)
+// runGit runs git directly (no shell) through shellrun: its own process
+// group, killed whole on timeout, and a child of git still holding the
+// output pipe after git exits is given shellrun.WaitDelay, then killed.
+// Output over gitMaxOutput ends with a trailer saying it was cut, so a cut
+// patch is never taken for a whole one.
+func runGit(workdir string, timeout time.Duration, args ...string) (string, error) {
+	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, args...), Timeout: timeout, MaxOutput: gitMaxOutput})
+	if res.Truncated {
+		res.Output += fmt.Sprintf("\n# celeste: output truncated at %d bytes\n", gitMaxOutput)
 	}
-	if err != nil {
-		return string(out), err
+	switch {
+	case res.TimedOut:
+		return res.Output, fmt.Errorf("git %s timed out", strings.Join(args, " "))
+	case res.Err != nil:
+		return res.Output, res.Err
+	case res.ExitCode != 0:
+		return res.Output, fmt.Errorf("git %s: exit status %d", strings.Join(args, " "), res.ExitCode)
 	}
-	return string(out), nil
+	return res.Output, nil
 }
