@@ -99,7 +99,12 @@ func Run(ctx context.Context, o Options) Result {
 	defer r.Close()
 	cmd.Stdout, cmd.Stderr = w, w
 	cmd.WaitDelay = WaitDelay // bounds the stdin copy goroutine
-	err = proctree.Start(cmd)
+	if kind != "" {
+		// Sandboxed: also out of celeste's terminal session (no /dev/tty).
+		err = proctree.StartSession(cmd)
+	} else {
+		err = proctree.Start(cmd)
+	}
 	_ = w.Close()
 	if err != nil {
 		return Result{ExitCode: -1, Err: err, Sandbox: kind}

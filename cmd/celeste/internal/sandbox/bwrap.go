@@ -13,8 +13,9 @@ import (
 // session buses among them, reach outside the sandbox) except the systemd
 // resolver directory /etc/resolv.conf often points into, then each
 // writable directory that exists bound read-write. --unshare-pid is what
-// lets an unprivileged bwrap mount /proc; the command still runs in the
-// caller's process group, so a timeout kills it whole.
+// lets an unprivileged bwrap mount /proc; --new-session takes the command
+// off the terminal. bwrap itself leads the runner's new session and
+// process group, so a timeout kills it whole.
 func BwrapArgs(p Policy, command string) []string {
 	args := []string{
 		"--ro-bind", "/", "/",
@@ -31,7 +32,9 @@ func BwrapArgs(p Policy, command string) []string {
 	if !p.Network {
 		args = append(args, "--unshare-net")
 	}
-	args = append(args, "--unshare-pid", "--die-with-parent")
+	// --new-session: no controlling terminal to type into (TIOCSTI,
+	// CVE-2017-5226).
+	args = append(args, "--unshare-pid", "--new-session", "--die-with-parent")
 	if p.Workspace != "" {
 		args = append(args, "--chdir", p.Workspace)
 	}

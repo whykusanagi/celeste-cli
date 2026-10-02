@@ -22,6 +22,7 @@ func TestBwrapArgs(t *testing.T) {
 		"--bind", b, b,
 		"--unshare-net",
 		"--unshare-pid",
+		"--new-session",
 		"--die-with-parent",
 		"--chdir", a,
 		"--", "sh", "-c", "echo hi",
