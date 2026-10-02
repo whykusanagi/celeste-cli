@@ -1,31 +1,35 @@
 package builtin
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 )
 
-// stampGrimoireMetadata reads a .grimoire file, updates or inserts the metadata
-// comment block (<!-- ... -->) with current timestamp, git hash, branch,
-// commit count, and code graph stats. Called automatically by write_file and
-// patch_file when the target is a .grimoire file.
-func stampGrimoireMetadata(grimoirePath string) {
-	data, err := os.ReadFile(grimoirePath)
+// stampGrimoireMetadata updates or inserts the metadata comment block
+// (<!-- ... -->) of the .grimoire file the call just wrote: grimoire.GrimoireMeta
+// (timestamp, git hash, branch, commit count) plus the code graph index line.
+// Called by write_file and patch_file when the target is a .grimoire file.
+// targetPath is the path as the workspace names it (the project the index
+// belongs to); realPath is the checked path the edit wrote, and the stamp
+// reads and writes that one through writeFileFunc, as the edit did.
+func stampGrimoireMetadata(targetPath, realPath string) {
+	data, err := os.ReadFile(realPath)
 	if err != nil {
 		return
 	}
 
 	content := string(data)
-	dir := filepath.Dir(grimoirePath)
+	dir := filepath.Dir(targetPath)
 
-	// Build metadata block
-	meta := buildGrimoireMeta(dir)
+	meta := grimoire.GrimoireMeta(dir)
+	if indexInfo := getIndexInfo(dir); indexInfo != "" {
+		meta = strings.TrimSuffix(meta, "-->\n") + fmt.Sprintf("index: %s\n", indexInfo) + "-->\n"
+	}
 
 	// Replace existing metadata block or prepend
 	if startIdx := strings.Index(content, "<!--"); startIdx >= 0 {
@@ -41,56 +45,15 @@ func stampGrimoireMetadata(grimoirePath string) {
 		content = meta + "\n" + content
 	}
 
-	_ = os.WriteFile(grimoirePath, []byte(content), 0644)
-}
-
-func buildGrimoireMeta(dir string) string {
-	var sb strings.Builder
-	sb.WriteString("<!--\n")
-	sb.WriteString(fmt.Sprintf("last_updated: %s\n", time.Now().Format("2006-01-02 15:04:05")))
-
-	if hash := stampGitCmd(dir, "rev-parse", "--short", "HEAD"); hash != "" {
-		sb.WriteString(fmt.Sprintf("git_hash: %s\n", hash))
-	}
-	if branch := stampGitCmd(dir, "rev-parse", "--abbrev-ref", "HEAD"); branch != "" {
-		sb.WriteString(fmt.Sprintf("git_branch: %s\n", branch))
-	}
-	if count := stampGitCmd(dir, "rev-list", "--count", "HEAD"); count != "" {
-		sb.WriteString(fmt.Sprintf("git_commit_count: %s\n", count))
-	}
-
-	// Include code graph index info if available
-	if indexInfo := getIndexInfo(dir); indexInfo != "" {
-		sb.WriteString(fmt.Sprintf("index: %s\n", indexInfo))
-	}
-
-	sb.WriteString("-->\n")
-	return sb.String()
-}
-
-func stampGitCmd(dir string, args ...string) string {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	_ = writeFileFunc(realPath, []byte(content), 0644)
 }
 
 // getIndexInfo returns code graph database info for the given project directory.
 func getIndexInfo(projectDir string) string {
-	homeDir, _ := os.UserHomeDir()
-	if homeDir == "" {
+	if home, _ := os.UserHomeDir(); home == "" {
 		return ""
 	}
-
-	// Compute project hash (mirrors codegraph.DefaultIndexPath)
-	hash := sha256.Sum256([]byte(projectDir))
-	hexHash := hex.EncodeToString(hash[:8])
-	dbPath := filepath.Join(homeDir, ".celeste", "projects", hexHash, "codegraph.db")
-
-	info, err := os.Stat(dbPath)
+	info, err := os.Stat(codegraph.IndexPath(projectDir))
 	if err != nil {
 		return ""
 	}
