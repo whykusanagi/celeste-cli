@@ -116,6 +116,9 @@ type Config struct {
 	// or goes beyond what was asked (2.0 W3): "shadow" logs, "on" turns an
 	// allowed call into an Ask (never the reverse). Off by default.
 	JevGate string `json:"jev_gate,omitempty"`
+	// JevRoute picks /orchestrate's lane with a Jev choice question (2.0
+	// W3): "shadow" logs, "on" uses it. Off by default.
+	JevRoute string `json:"jev_route,omitempty"`
 	// Oracle picks the judge for steering questions (2.0 W3):
 	// "heuristic" (default), "llm" (the small model) or "jev". The
 	// watchdog ballot asks it.

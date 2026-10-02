@@ -50,3 +50,11 @@ func TestJevGateModeDefaultsToOff(t *testing.T) {
 		}
 	}
 }
+
+func TestJevRouteModeDefaultsToOff(t *testing.T) {
+	for in, want := range map[string]string{"": "off", "shadow": "shadow", "on": "on", "maybe": "off"} {
+		if got := (&Config{JevRoute: in}).JevRouteMode(); got != want {
+			t.Errorf("jev_route %q = %q, want %q", in, got, want)
+		}
+	}
+}
