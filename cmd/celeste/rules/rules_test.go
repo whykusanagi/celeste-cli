@@ -429,3 +429,21 @@ func TestBuiltinDestructiveBashEvasions(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectorsMatchTheBuiltins(t *testing.T) {
+	if !VoiceLeak("main.go", "// ok darling") || VoiceLeak("docs/voice.md", "darling") || VoiceLeak("a.go", "package a") {
+		t.Error("VoiceLeak disagrees with persona-voice-in-files")
+	}
+	for cmd, want := range map[string]bool{
+		"git push --force":            true,
+		"git push --force-with-lease": false,
+		"rm -rf /":                    true,
+		"rm -rf build":                false,
+		"go test ./...":               false,
+		"bash -c 'git push -f'":       true,
+	} {
+		if got := Destructive(cmd); got != want {
+			t.Errorf("Destructive(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}
