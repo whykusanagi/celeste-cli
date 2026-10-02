@@ -89,6 +89,8 @@ func TestUpdateConfigSwitchesTransport(t *testing.T) {
 func TestUpdateConfigKeepsBackendWhenNothingChanged(t *testing.T) {
 	c := NewClient(&Config{APIKey: "k", BaseURL: "https://api.openai.com/v1", Model: "gpt-5"}, nil)
 	before := c.backend
-	c.UpdateConfig(&Config{APIKey: "k", BaseURL: "https://api.openai.com/v1", Model: "gpt-5", Timeout: time.Minute})
+	next := &Config{APIKey: "k", BaseURL: "https://api.openai.com/v1", Model: "gpt-5"}
+	c.UpdateConfig(next)
 	assert.Same(t, before, c.backend)
+	assert.Same(t, next, c.GetConfig())
 }
