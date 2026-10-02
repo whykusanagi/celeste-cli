@@ -163,7 +163,11 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		SessionID:    fmt.Sprintf("tui-%d", os.Getpid()), // spill directory, as before
 		SpillCounter: &a.spillSeq,
 		CheckPrompt:  a.checkPrompt,
-		Steering:     a.steering().Steering(),
+	}
+	if s := a.steering(); s != nil {
+		// The watchdog judges progress against this turn's prompt.
+		s.SetGoal(lastUserText(req.History))
+		l.Steering = s
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
@@ -171,6 +175,17 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		l.Compact = t.compactor
 	}
 	return l
+}
+
+// lastUserText is the newest visible user message: the turn's prompt.
+func lastUserText(history []tui.ChatMessage) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if hidden, _ := m.Metadata["hidden"].(bool); m.Role == "user" && !hidden {
+			return m.Content
+		}
+	}
+	return ""
 }
 
 // runTurn is the turn's goroutine. A Stop hook's deny continues the turn

@@ -27,3 +27,8 @@ func (c *Config) OracleMode() string {
 func (c *Config) StreamRulesMode() string {
 	return mode(c.StreamRules, ModeShadow, ModeOff, ModeShadow, ModeOn)
 }
+
+// WatchdogMode is watchdog: "off" (default), "shadow" or "on".
+func (c *Config) WatchdogMode() string {
+	return mode(c.Watchdog, ModeOff, ModeOff, ModeShadow, ModeOn)
+}

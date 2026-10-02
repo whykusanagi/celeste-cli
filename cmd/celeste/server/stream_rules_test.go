@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 )
 
 func resultText(t *testing.T, raw json.RawMessage) string {
@@ -67,5 +69,25 @@ func TestStreamRuleDroppedRepliesCountInSessionCost(t *testing.T) {
 				t.Fatalf("session_cost = %+v after %d requests (one dropped)", sc, n)
 			}
 		})
+	}
+}
+
+// One MCP chat call's steering: nothing when stream rules and the
+// watchdog are both off; the watchdog alone is enough for a session.
+func TestChatSteeringFollowsTheConfig(t *testing.T) {
+	cfg, ws := contractCfg(t, nil)
+	env, err := loop.Setup(loop.ModeMCPChat, cfg.CelesteConfig, ws, loop.SetupOptions{Warn: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	c := *cfg.CelesteConfig
+	c.StreamRules, c.Watchdog = "off", "off"
+	if chatSteering(context.Background(), &c, env, "hi", ws) != nil {
+		t.Error("both off must give no steering")
+	}
+	c.Watchdog = "shadow"
+	if chatSteering(context.Background(), &c, env, "hi", ws) == nil {
+		t.Error("the watchdog alone needs a session")
 	}
 }

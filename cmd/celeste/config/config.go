@@ -108,11 +108,14 @@ type Config struct {
 	JevPrune string `json:"jev_prune,omitempty"`
 	// Oracle picks the judge for steering questions (2.0 W3):
 	// "heuristic" (default), "llm" (the small model) or "jev". The
-	// watchdog (W3-2) is its first user; nothing in this build asks it.
+	// watchdog ballot asks it.
 	Oracle string `json:"oracle,omitempty"`
 	// StreamRules: "shadow" (default) matches stream rules and logs, "on"
 	// acts, "off" skips them (2.0 W3).
-	StreamRules  string `json:"stream_rules,omitempty"`
+	StreamRules string `json:"stream_rules,omitempty"`
+	// Watchdog: the ballot every 3 turns (2.0 W3): "off" (default),
+	// "shadow" (asked and logged) or "on" (steers).
+	Watchdog     string `json:"watchdog,omitempty"`
 	Timeout      int    `json:"timeout"`                 // seconds
 	ContextLimit int    `json:"context_limit,omitempty"` // Optional: Override context window size
 
