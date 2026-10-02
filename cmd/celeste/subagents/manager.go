@@ -59,6 +59,10 @@ type SubagentRun struct {
 	EndedAt      time.Time `json:"ended_at,omitempty"`
 	Turns        int       `json:"turns"`
 	CheckpointID string    `json:"checkpoint_id,omitempty"` // run id to resume from on failure
+	// Type is the subagent type spawn_agent asked for (2.0 W4e); "" for a
+	// run spawned without one (Manager.Spawn), which keeps the untyped
+	// behaviour.
+	Type Type `json:"type,omitempty"`
 
 	// sliders is the persona override for this run's voice modulation, or
 	// nil for slider.json. It replaces the slider block in the subagent's
@@ -273,6 +277,7 @@ type SpawnOptions struct {
 	IsolateWorktree bool                 // run this subagent in its own git worktree (#32)
 	BackgroundAfter time.Duration        // >0: auto-transition to background if the subagent runs longer than this (#30). 0 = always foreground (unchanged).
 	Sliders         *config.SliderConfig // persona override for the subagent's voice modulation; nil = slider.json
+	Type            Type                 // subagent type (2.0 W4e); "" = untyped
 }
 
 // Spawn creates and runs a subagent with the given goal. It blocks until the
@@ -316,6 +321,7 @@ func (m *Manager) buildRun(goal, workspace string, opts SpawnOptions) (*Subagent
 		DependsOn: opts.DependsOn,
 		StartedAt: time.Now(),
 		sliders:   opts.Sliders,
+		Type:      opts.Type,
 	}
 
 	if opts.TaskID != "" {
@@ -397,6 +403,7 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 		DependsOn: opts.DependsOn,
 		StartedAt: time.Now(),
 		sliders:   opts.Sliders,
+		Type:      opts.Type,
 	}
 
 	if opts.TaskID != "" {
@@ -575,17 +582,22 @@ func (m *Manager) SpawnWithOptions(ctx context.Context, goal string, workspace s
 // default of 20. agentID names the subagent for SubagentStop hooks (the ID
 // spawn_agent returned); parent is the manager's shared environment (nil
 // only in tests that never run).
-func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback, sliders *config.SliderConfig, agentID string, parent loop.Nester) agent.Options {
+func (m *Manager) buildAgentOptions(workspace string, maxTurns int, turnCb TurnCallback, sliders *config.SliderConfig, agentID string, parent loop.Nester, typ Type) agent.Options {
 	if maxTurns <= 0 {
 		maxTurns = 20
 	}
+	// The type picks the model, the tools and whether the persona is
+	// composed (2.0 W4e). Untyped and general runs use the agent model
+	// (reasoning/tool-capable if set; falls back to the chat model) — task
+	// e8775b91 — with every tool and the persona.
+	profile := profileFor(typ, m.cfg)
 	opts := agent.Options{
-		Workspace: workspace,
-		MaxTurns:  maxTurns,
-		// Route subagent work to the agent model (reasoning/tool-capable if set;
-		// falls back to chat model) — task e8775b91.
-		Model:   m.cfg.ResolveAgentModel(),
-		Verbose: false,
+		Workspace:   workspace,
+		MaxTurns:    maxTurns,
+		Model:       profile.Model,
+		ToolFilter:  profile.Allow,
+		SkipPersona: profile.SkipPersona,
+		Verbose:     false,
 		// Subagents are headless — spawning them is the user's approval, so they
 		// run in Trust mode (allow all tools). Without this, every write/exec tool
 		// resolves to "Ask" with no prompt and is denied, so the subagent can't
@@ -725,7 +737,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		m.mu.Unlock()
 		return run, fmt.Errorf("create subagent: %w", err)
 	}
-	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders, run.ID, parent)
+	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders, run.ID, parent, run.Type)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {
@@ -995,6 +1007,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	// run isn't in memory (e.g. after a process restart).
 	workspace := m.workspace
 	var sliders *config.SliderConfig
+	var typ Type
 	// SubagentStop's agent_id stays the ID spawn_agent returned. After a
 	// restart the original run is unknown and the checkpoint ID is all
 	// there is.
@@ -1004,6 +1017,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		if r.CheckpointID == checkpointID && r.Workspace != "" {
 			workspace = r.Workspace
 			sliders = r.sliders
+			typ = r.Type
 			agentID = r.ID
 			break
 		}
@@ -1014,7 +1028,7 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	if err != nil {
 		return nil, fmt.Errorf("create runner for resume: %w", err)
 	}
-	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders, agentID, parent)
+	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders, agentID, parent, typ)
 
 	runner, err := agent.NewRunner(m.cfg, agentOpts, &outBuf, &errBuf)
 	if err != nil {

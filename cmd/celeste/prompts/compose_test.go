@@ -138,3 +138,17 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// SkipPersona (a typed explore or review subagent, 2.0 W4e) leaves out the
+// persona, voice boundary and sliders and keeps the agent contract and
+// project context.
+func TestComposeSkipPersona(t *testing.T) {
+	composeEnv(t, false)
+	got := Compose(ComposeOptions{Mode: ModeAgent, SkipPersona: true, Contract: testContract, ProjectContext: "PROJECT", GitSnapshot: "GIT"})
+	if strings.Contains(got, personaCore()) || strings.Contains(got, voiceBoundaryPrompt) {
+		t.Fatalf("persona present with SkipPersona:\n%s", got)
+	}
+	if !strings.HasPrefix(got, testContract) || !strings.Contains(got, "PROJECT") || !strings.Contains(got, "GIT") {
+		t.Fatalf("contract, context or git missing:\n%s", got)
+	}
+}

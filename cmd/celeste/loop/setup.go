@@ -411,26 +411,33 @@ func (e *Env) setupCodeGraph(ws string) string {
 	return idx.ProjectSummary()
 }
 
-// SystemPrompt composes the mode's system prompt: persona (unless skipped),
+// SystemPrompt composes the mode's system prompt: persona,
 // contract (agent mode), sliders, project context and git state.
 func (e *Env) SystemPrompt(contract string, sliders *config.SliderConfig) string {
-	return e.compose(e.ProjectContext, contract, sliders)
+	return e.compose(e.ProjectContext, contract, sliders, false)
+}
+
+// SystemPromptOpts is SystemPrompt that can also leave the persona out for
+// this one prompt (a typed subagent's SkipPersona, 2.0 W4e).
+func (e *Env) SystemPromptOpts(contract string, sliders *config.SliderConfig, skipPersona bool) string {
+	return e.compose(e.ProjectContext, contract, sliders, skipPersona)
 }
 
 // SystemPromptWithSession is SystemPrompt with one run's SessionStart
 // context added to the project context, under the TUI's heading. The Env is
 // not changed.
 func (e *Env) SystemPromptWithSession(session, contract string, sliders *config.SliderConfig) string {
-	return e.compose(withSessionContext(e.ProjectContext, session), contract, sliders)
+	return e.compose(withSessionContext(e.ProjectContext, session), contract, sliders, false)
 }
 
-func (e *Env) compose(projectContext, contract string, sliders *config.SliderConfig) string {
+func (e *Env) compose(projectContext, contract string, sliders *config.SliderConfig, skipPersona bool) string {
 	pm := prompts.ModeChat
 	if e.Mode == ModeAgent {
 		pm = prompts.ModeAgent
 	}
 	return prompts.Compose(prompts.ComposeOptions{
 		Mode:           pm,
+		SkipPersona:    skipPersona,
 		Contract:       contract,
 		Sliders:        sliders,
 		ProjectContext: projectContext,

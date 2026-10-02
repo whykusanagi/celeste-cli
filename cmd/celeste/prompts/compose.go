@@ -30,6 +30,10 @@ Your voice, personality and the voice modulation below apply only to prose you a
 // ComposeOptions describes one system prompt.
 type ComposeOptions struct {
 	Mode Mode
+	// SkipPersona leaves out the persona core, voice boundary, user identity,
+	// sliders and chat rules. Only the internal persona-off lanes set it (a
+	// typed explore or review subagent, 2.0 W4e); no config turns it on.
+	SkipPersona bool
 	// Contract is the agent operating contract. Used in ModeAgent only.
 	Contract string
 	// Sliders overrides slider.json for this prompt (a subagent's persona
@@ -54,6 +58,25 @@ var confirmActionsEnabled = func() bool {
 // Order: persona core (byte-stable, so the prefix stays cacheable), voice
 // boundary, user identity, sliders, mode contract, project context, git.
 func Compose(opts ComposeOptions) string {
+	var sections []string
+	if !opts.SkipPersona {
+		sections = append(sections, personaSection(opts))
+	}
+	if opts.Mode == ModeAgent && opts.Contract != "" {
+		sections = append(sections, opts.Contract)
+	}
+	if opts.ProjectContext != "" {
+		sections = append(sections, "# Project Context (.grimoire)\n\n"+opts.ProjectContext)
+	}
+	if opts.GitSnapshot != "" {
+		sections = append(sections, opts.GitSnapshot)
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+// personaSection is the persona core, voice boundary, user identity,
+// sliders and, in chat, the chat rules.
+func personaSection(opts ComposeOptions) string {
 	persona := []string{personaCore(), voiceBoundaryPrompt}
 	if user := ComposeUserPrompt(config.LoadUser()); user != "" {
 		persona = append(persona, user)
@@ -72,17 +95,7 @@ func Compose(opts ComposeOptions) string {
 		}
 	}
 
-	sections := []string{strings.TrimRight(strings.Join(persona, "\n"), "\n")}
-	if opts.Mode == ModeAgent && opts.Contract != "" {
-		sections = append(sections, opts.Contract)
-	}
-	if opts.ProjectContext != "" {
-		sections = append(sections, "# Project Context (.grimoire)\n\n"+opts.ProjectContext)
-	}
-	if opts.GitSnapshot != "" {
-		sections = append(sections, opts.GitSnapshot)
-	}
-	return strings.Join(sections, "\n\n")
+	return strings.TrimRight(strings.Join(persona, "\n"), "\n")
 }
 
 // personaCore returns the persona text from the essence.
