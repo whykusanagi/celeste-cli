@@ -1,8 +1,11 @@
 package builtin
 
 import (
+	"path"
 	"regexp"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
 )
 
 // checkDangerousCommand inspects a shell command for dangerous patterns.
@@ -49,6 +52,12 @@ func checkDangerousCommand(command string) string {
 		if p.pattern.MatchString(command) {
 			return p.reason
 		}
+	}
+	// The regexes above stay as a backstop; this reads the command as a
+	// shell does, so quoting, \rm, split or long flags, flags after the
+	// path, ~ and $HOME, and nested sh -c / eval / $( ) do not slip past.
+	if destructiveRm(command) {
+		return "recursive rm on system or home paths is not permitted"
 	}
 
 	// === SENSITIVE FILE ACCESS ===
@@ -128,4 +137,93 @@ func checkDangerousCommand(command string) string {
 	}
 
 	return ""
+}
+
+// destructiveRm reports whether any command in the line, nested ones
+// included, is a recursive forced rm of a system or home path. Every word
+// that resolves to rm starts a check of the words after it, so wrappers
+// (xargs, timeout 5, nice -n 5) do not hide it. Nesting deeper than
+// shellparse.MaxDepth counts as destructive.
+func destructiveRm(command string) bool {
+	return shellparse.Walk(command, func(words []string) bool {
+		for i, w := range words {
+			if shellparse.CommandName(w) == "rm" && rmRecursiveForceSystem(words[i+1:]) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// rmRecursiveForceSystem: rm's arguments ask for a recursive (-r, -R,
+// --recursive) and forced (-f, --force) delete, flags anywhere, and at
+// least one target is a system or home path.
+func rmRecursiveForceSystem(args []string) bool {
+	recursive, force := false, false
+	var targets []string
+	endOfFlags := false
+	for k := 0; k < len(args); k++ {
+		a := args[k]
+		switch {
+		case !endOfFlags && isShellRedirect(a):
+			t := strings.TrimLeft(strings.TrimLeft(a, "0123456789&"), "<>")
+			if t == "" || t == "|" {
+				k++ // "> file": the target is the next word
+			}
+		case endOfFlags:
+			targets = append(targets, a)
+		case a == "--":
+			endOfFlags = true
+		case a == "--recursive":
+			recursive = true
+		case a == "--force":
+			force = true
+		case strings.HasPrefix(a, "--"):
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			recursive = recursive || strings.ContainsAny(a, "rR")
+			force = force || strings.Contains(a, "f")
+		default:
+			targets = append(targets, a)
+		}
+	}
+	if !recursive || !force {
+		return false
+	}
+	for _, t := range targets {
+		if systemOrHomePath(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// isShellRedirect: >, >>, 2>, &>, 2>&1, >file, <file ...
+func isShellRedirect(w string) bool {
+	t := strings.TrimLeft(w, "0123456789&")
+	return strings.HasPrefix(t, ">") || strings.HasPrefix(t, "<")
+}
+
+// systemOrHomePath: any absolute path, or a home directory itself (~,
+// ~user, $HOME, ${HOME}, with or without a trailing / or /*) or a path
+// that climbs out of it (~/..). Paths below home (~/project/build) are not.
+func systemOrHomePath(t string) bool {
+	if strings.HasPrefix(t, "/") {
+		return true
+	}
+	var rest string
+	switch {
+	case strings.HasPrefix(t, "${HOME}"):
+		rest = strings.TrimPrefix(t, "${HOME}")
+	case strings.HasPrefix(t, "$HOME"):
+		rest = strings.TrimPrefix(t, "$HOME")
+	case strings.HasPrefix(t, "~"):
+		// ~ or ~user: the user name runs to the first slash.
+		if i := strings.IndexByte(t, '/'); i >= 0 {
+			rest = t[i:]
+		}
+	default:
+		return false
+	}
+	rest = strings.TrimSuffix(rest, "*")
+	return path.Clean("/"+rest) == "/"
 }
