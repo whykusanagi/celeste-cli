@@ -88,20 +88,41 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 	if !ok {
 		return nil, nil
 	}
+	// Context files are repo content: one that is (or goes through) a
+	// symlink must resolve inside the repository, so a cloned repo cannot
+	// send an arbitrary file to the model. Each real file is read once
+	// (CLAUDE.md -> AGENTS.md is common).
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
 	var out []ContextFile
 	var warns []string
 	total := 0
 	for _, p := range ContextFilePaths(workspace) {
-		info, err := os.Stat(p)
-		if err != nil || !info.Mode().IsRegular() {
+		if _, err := os.Lstat(p); err != nil {
 			continue
 		}
+		real, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			continue
+		}
+		if !within(realRoot, real) {
+			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links outside the repository)", p))
+			continue
+		}
+		info, err := os.Stat(real)
+		if err != nil || !info.Mode().IsRegular() || seen[real] {
+			continue
+		}
+		seen[real] = true
 		budget := min(contextFileCap, contextTotalCap-total)
 		if budget <= 0 {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (the %d KiB total is used)", p, contextTotalCap>>10))
 			continue
 		}
-		text, cut, ok := readCapped(p, budget, info.Size())
+		text, cut, ok := readCapped(real, budget, info.Size())
 		if !ok {
 			warns = append(warns, fmt.Sprintf("context files: %s skipped (not UTF-8 text)", p))
 			continue
@@ -166,4 +187,10 @@ func RenderContextFiles(files []ContextFile) string {
 		}
 	}
 	return b.String()
+}
+
+// within reports whether path is dir or inside it (both already resolved).
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

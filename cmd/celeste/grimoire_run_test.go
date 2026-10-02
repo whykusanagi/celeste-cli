@@ -36,3 +36,22 @@ func TestInitProjectAgentsFlag(t *testing.T) {
 		t.Fatal("nothing left to write must be an error")
 	}
 }
+
+// celeste grimoire shows the context files under the grimoire, and is not
+// "empty" when only an AGENTS.md exists.
+func TestShowGrimoireIncludesContextFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte("use tabs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := showGrimoire(ws, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "# Project instructions") || !strings.Contains(out.String(), "use tabs") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+}

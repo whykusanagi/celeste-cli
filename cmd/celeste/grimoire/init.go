@@ -259,13 +259,9 @@ func HasProjectContext(workspace string) bool {
 		if frags, _ := filepath.Glob(filepath.Join(d, ".celeste", "grimoire", "*.md")); len(frags) > 0 {
 			return true
 		}
-		for _, name := range contextFileNames {
-			if fileExists(filepath.Join(d, name)) {
-				return true
-			}
-		}
 	}
-	return false
+	files, _ := ContextFiles(workspace)
+	return len(files) > 0
 }
 
 // AgentsTemplate is a starting AGENTS.md for the detected project.

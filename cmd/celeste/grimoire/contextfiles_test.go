@@ -143,3 +143,40 @@ func TestContextFilesSkipBinary(t *testing.T) {
 }
 
 func utf8ValidString(s string) bool { return strings.ToValidUTF8(s, "") == s }
+
+// A context file is repo content: a symlink may point inside the repository
+// (CLAUDE.md -> AGENTS.md is common, and is read once), never outside it.
+func TestContextFilesSymlinksStayInTheRepo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	outer := t.TempDir()
+	secret := filepath.Join(outer, "secret.txt")
+	mk(t, secret, "TOP SECRET")
+	root := filepath.Join(outer, "repo")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mk(t, filepath.Join(root, "AGENTS.md"), "shared rules")
+	if err := os.Symlink("AGENTS.md", filepath.Join(root, "CLAUDE.md")); err != nil {
+		t.Skip(err)
+	}
+	ws := filepath.Join(root, "sub")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(ws, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	files, warns := ContextFiles(ws)
+	var got []string
+	for _, f := range files {
+		got = append(got, filepath.ToSlash(f.Rel)+"="+f.Content)
+	}
+	if strings.Join(got, ",") != "AGENTS.md=shared rules" {
+		t.Fatalf("got %v", got)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "outside the repository") {
+		t.Fatalf("the escaping symlink must warn once: %v", warns)
+	}
+}

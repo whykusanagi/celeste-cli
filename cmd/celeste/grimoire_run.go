@@ -68,27 +68,46 @@ func runGrimoireCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
 		os.Exit(1)
 	}
-
-	g, err := grimoire.LoadAll(cwd)
-	if err != nil {
+	if err := showGrimoire(cwd, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading grimoire: %v\n", err)
 		os.Exit(1)
 	}
+}
 
-	if g.IsEmpty() {
-		fmt.Println("No .grimoire found. Run `celeste init` to create one.")
-		return
+// showGrimoire prints the merged grimoire and then the AGENTS.md /
+// CLAUDE.md section the project context carries under it (2.0 W4).
+func showGrimoire(dir string, out io.Writer) error {
+	g, err := grimoire.LoadAll(dir)
+	if err != nil {
+		return err
 	}
-
-	// Show sources
-	if len(g.Sources) > 0 {
-		fmt.Println("Sources:")
-		for _, s := range g.Sources {
-			fmt.Printf("  - %s\n", s)
+	files, warns := grimoire.ContextFiles(dir)
+	for _, w := range warns {
+		fmt.Fprintln(out, "⚠ "+w)
+	}
+	if g.IsEmpty() && len(files) == 0 {
+		fmt.Fprintln(out, "No .grimoire, AGENTS.md or CLAUDE.md found. Run `celeste init` to create a .grimoire.")
+		return nil
+	}
+	sources := append([]string(nil), g.Sources...)
+	for _, f := range files {
+		sources = append(sources, f.Path)
+	}
+	if len(sources) > 0 {
+		fmt.Fprintln(out, "Sources:")
+		for _, s := range sources {
+			fmt.Fprintf(out, "  - %s\n", s)
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
-
-	// Show rendered grimoire
-	fmt.Print(g.Render())
+	if !g.IsEmpty() {
+		fmt.Fprint(out, g.Render())
+	}
+	if section := grimoire.RenderContextFiles(files); section != "" {
+		if !g.IsEmpty() {
+			fmt.Fprintln(out)
+		}
+		fmt.Fprint(out, section)
+	}
+	return nil
 }
