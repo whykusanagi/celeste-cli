@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
+	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
@@ -31,6 +34,8 @@ type Manager struct {
 	transports  map[string]string
 	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
 	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
+	home        string              // the user's home: its configs alone may set "trusted"
+	connecting  map[string]bool     // servers with a connectClient in flight
 	mu          sync.Mutex
 }
 
@@ -46,7 +51,35 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		transports: make(map[string]string),
 		toolNames:  make(map[string][]string),
 		origins:    make(map[string]string),
+		home:       userHome(),
+		connecting: make(map[string]bool),
 	}
+}
+
+func userHome() string {
+	h, _ := os.UserHomeDir()
+	return h
+}
+
+// trusts reports whether cfg's "trusted": true is honoured: only when it
+// came from one of the home-level configs (GlobalConfigPaths). A server of
+// unknown origin, or from a workspace's .mcp.json or .celeste/mcp.json,
+// cannot vouch for itself (2.0 W4).
+func (m *Manager) trusts(cfg ServerConfig) bool {
+	if !cfg.Trusted || cfg.Origin == "" || m.home == "" {
+		return false
+	}
+	return isGlobalConfig(m.home, cfg.Origin)
+}
+
+// isGlobalConfig reports whether path is one of home's GlobalConfigPaths.
+func isGlobalConfig(home, path string) bool {
+	for _, p := range GlobalConfigPaths(home) {
+		if filepath.Clean(p) == filepath.Clean(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewManagerMulti creates a Manager that merges MCP config from multiple
@@ -63,13 +96,7 @@ func NewManagerMulti(paths []string, registry *tools.Registry) *Manager {
 // If the config file does not exist, it returns nil (no MCP configured).
 // If a server fails to connect, it logs a warning and continues with others.
 func (m *Manager) Start(ctx context.Context) error {
-	var cfg *MCPConfig
-	var err error
-	if len(m.configPaths) > 0 {
-		cfg, err = LoadMerged(m.configPaths)
-	} else {
-		cfg, err = LoadConfig(m.configPath)
-	}
+	cfg, err := m.loadConfig()
 	if err != nil {
 		return fmt.Errorf("load MCP config: %w", err)
 	}
@@ -81,13 +108,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	totalTools := 0
 	connectedServers := 0
 
-	for name, serverCfg := range cfg.Servers {
-		// Opt-in: skip servers not explicitly enabled before spawning any
-		// process or opening any connection, so they cost nothing at startup.
-		if !serverCfg.Enabled {
-			continue
-		}
-		if err := m.Connect(ctx, name, serverCfg); err != nil {
+	for _, name := range startOrder(cfg.Servers) {
+		if err := m.Connect(ctx, name, cfg.Servers[name]); err != nil {
 			log.Printf("[mcp] warning: %v", err)
 			continue
 		}
@@ -104,15 +126,68 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+// startOrder returns the enabled servers' names, sorted. Connecting in a
+// fixed order means the server whose name sorts first keeps a tool name two
+// servers sanitize to (e.g. "a.b" and "a_b") on every launch. Servers not
+// explicitly enabled are skipped before any process is spawned or connection
+// opened, so they cost nothing at startup.
+func startOrder(servers map[string]ServerConfig) []string {
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(servers)) {
+		if servers[name].Enabled {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// loadConfig reads the manager's config: the merged discovery paths, or
+// the single configPath with each server's Origin set to it (so trust and
+// RegisterGlobalInto know where it came from).
+func (m *Manager) loadConfig() (*MCPConfig, error) {
+	if len(m.configPaths) > 0 {
+		return LoadMerged(m.configPaths)
+	}
+	cfg, err := LoadConfig(m.configPath)
+	if err != nil {
+		return nil, err
+	}
+	if m.configPath != "" {
+		for name, sc := range cfg.Servers {
+			sc.Origin = m.configPath
+			cfg.Servers[name] = sc
+		}
+	}
+	return cfg, nil
+}
+
 // connectClient initializes an already-built client, discovers + registers its
 // tools, and records bookkeeping. The caller holds no lock; connectClient locks
-// only while mutating manager maps.
-func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string) error {
+// only while mutating manager maps. trusted honours the tools' readOnlyHint.
+func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string, trusted bool) error {
+	// One connect per server at a time: a second one racing it would
+	// register nothing (Add refuses the names the first holds) yet replace
+	// its client, leaving tools Disconnect never removes.
+	m.mu.Lock()
+	_, live := m.clients[name]
+	if live || m.connecting[name] {
+		m.mu.Unlock()
+		client.Close()
+		return fmt.Errorf("connect %q: already connected or connecting", name)
+	}
+	m.connecting[name] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.connecting, name)
+		m.mu.Unlock()
+	}()
+
 	if err := client.Initialize(ctx); err != nil {
 		client.Close()
 		return fmt.Errorf("initialize %q: %w", name, err)
 	}
-	names, err := discoverAndRegister(ctx, client, m.registry, name, m.liveClient)
+	names, err := discoverAndRegister(ctx, client, m.registry, name, m.liveClient, trusted)
 	if err != nil {
 		client.Close()
 		return err
@@ -141,7 +216,7 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) er
 	if err != nil {
 		return fmt.Errorf("create transport for %q: %w", name, err)
 	}
-	if err := m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport); err != nil {
+	if err := m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport, m.trusts(cfg)); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -234,7 +309,11 @@ func (m *Manager) registerInto(dst *tools.Registry, keep func(server string) boo
 	n := 0
 	for _, name := range names {
 		if t, ok := m.registry.Get(name); ok {
-			dst.Register(t)
+			// Add, never Register: a name dst already holds stays its own.
+			if err := dst.Add(t); err != nil {
+				log.Printf("[mcp] %v", err)
+				continue
+			}
 			dst.SetHidden(name, true)
 			n++
 		}

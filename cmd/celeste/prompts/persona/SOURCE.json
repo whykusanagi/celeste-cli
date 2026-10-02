@@ -1,43 +1,43 @@
 {
   "format": "celeste-persona/v1 aes-256-gcm",
-  "core_commit": "8b87206e1a8d5d0e57395928bf1fe36b8fa4be11",
+  "core_commit": "e7fc118e0d7a5ece1ed05743be53999f5e16145e",
   "container_commit": "27d88d01cc43e22f4ec68d0a6e68b2649ac813d0",
   "key_id": "08d86f504d6dae4f",
   "profiles": [
     {
       "profile": "full",
       "file": "celeste_full.enc",
-      "ciphertext_bytes": 43582,
-      "ciphertext_sha256": "e5c3e86b6748addeee702860eba289a6595390b69613bd73f0921d85edcdf683",
-      "plaintext_bytes": 43550,
-      "plaintext_sha256": "cbb908c1666a7bd45ee9a7aecd0a4e425b2ffa7dda387b2ff9d2e85ea89f94ce",
-      "approx_tokens": 10523
+      "ciphertext_bytes": 43972,
+      "ciphertext_sha256": "e795334ec70bfa208c3f4851a2077d2c07f7749682e090556e7e93370b4f9064",
+      "plaintext_bytes": 43940,
+      "plaintext_sha256": "3e3d6138d300ce4812843e8780cd7eec8d163475eb815a5ceba333de28c5e84f",
+      "approx_tokens": 10613
     },
     {
       "profile": "spine",
       "file": "celeste_spine.enc",
-      "ciphertext_bytes": 28641,
-      "ciphertext_sha256": "2579fca90757d8c814e599cb27747865ab5523728818fb22bd0cbb36f129997c",
-      "plaintext_bytes": 28609,
-      "plaintext_sha256": "812faa06808a6ac01c56ef5ac0d24c92855cd1241a70b0401c6e26423992f8a2",
-      "approx_tokens": 6920
+      "ciphertext_bytes": 29031,
+      "ciphertext_sha256": "f1c4746c2d5ac4aecdce56955fada765b3ade9a82d60d6c9de410891a41c0711",
+      "plaintext_bytes": 28999,
+      "plaintext_sha256": "546596f0525348af241f5d1efe61c2b359c0160fed67f12feb6daa8a65e411b3",
+      "approx_tokens": 7009
     },
     {
       "profile": "lite",
       "file": "celeste_lite.enc",
-      "ciphertext_bytes": 12626,
-      "ciphertext_sha256": "ed419b0c642477b98a8138daf85da3e0e13eefd30068c0b89856ed21f252a87a",
-      "plaintext_bytes": 12594,
-      "plaintext_sha256": "26c99d07fbffa77e15746bd989455898d5717de1ec3eee12ad1173b56de730ec",
-      "approx_tokens": 3027
+      "ciphertext_bytes": 13016,
+      "ciphertext_sha256": "788d6fff1e3dda722f7b3dd0f2e18762c9965f5725d1dcb46e451452af1adb75",
+      "plaintext_bytes": 12984,
+      "plaintext_sha256": "82e754b472dc23cb5d8c6c07d22b8e4f396826815ab9d7ae858eeab19e5bbf49",
+      "approx_tokens": 3117
     },
     {
       "profile": "off",
       "file": "celeste_off.enc",
       "ciphertext_bytes": 618,
-      "ciphertext_sha256": "4dffc912145ec9b0b9c43030e65544d96befb7df5229eae9c09260e7c63da9fd",
+      "ciphertext_sha256": "5c2c6251fa6ec29e26e58924a26eeb118e178c2b2029ff9c601e5430b8a98f28",
       "plaintext_bytes": 586,
-      "plaintext_sha256": "f2edd0e60a757e4ad234f08dab0ddb338ce3b3af028ca001221ff6ddb850e93e",
+      "plaintext_sha256": "dceccb131684834a4c0b262485bcbf7b79c1553972ff7b9fd4788cfc882bf917",
       "approx_tokens": 95
     }
   ]

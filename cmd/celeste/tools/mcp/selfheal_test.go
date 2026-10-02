@@ -19,7 +19,7 @@ func TestMirroredToolUsesTheReconnectedClient(t *testing.T) {
 	mgr := NewManager("", src)
 	connect := func(extra ...*Response) *mockTransport {
 		mt := &mockTransport{responses: append([]*Response{makeInitResponse(), makeToolsListResponse("echo")}, extra...)}
-		require.NoError(t, mgr.connectClient(context.Background(), "srv", NewClient(mt, "celeste", "1.0"), "stdio"))
+		require.NoError(t, mgr.connectClient(context.Background(), "srv", NewClient(mt, "celeste", "1.0"), "stdio", false))
 		return mt
 	}
 	old := connect()

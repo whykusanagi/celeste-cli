@@ -23,7 +23,7 @@ const (
 	ProfileFull  Profile = "full"  // the whole tier-0 corpus: chat, MCP chat, ACP
 	ProfileSpine Profile = "spine" // the agent-run cut
 	ProfileLite  Profile = "lite"  // the small-window floor
-	ProfileOff   Profile = "off"   // the voice boundary rule only: review and research lanes
+	ProfileOff   Profile = "off"   // the voice boundary rule only; PersonaOff (compose.go) puts identity and honesty before it
 )
 
 // Profiles lists every profile, largest first.
