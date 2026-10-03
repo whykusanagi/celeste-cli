@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // KindRepoSandbox is the "sandbox" object of a workspace's
@@ -46,4 +47,17 @@ func CheckRepoSandbox(configPath string) error {
 		return errors.New("refusing a symlinked .celeste/config.json; copy the file instead")
 	}
 	return refuseSymlinkedRepoComponents(configPath, filepath.Dir(filepath.Dir(configPath)))
+}
+
+// SourceFile is the file a trust source was read from: its path without
+// the "#stream-rules" or "#sandbox" suffix that keeps it apart from other
+// trust entries for the same file.
+func SourceFile(src Source) string {
+	switch src.Kind {
+	case KindRepoStreamRules:
+		return strings.TrimSuffix(src.Path, streamRulesSuffix)
+	case KindRepoSandbox:
+		return strings.TrimSuffix(src.Path, sandboxSuffix)
+	}
+	return src.Path
 }

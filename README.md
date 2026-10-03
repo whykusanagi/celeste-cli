@@ -51,6 +51,8 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 > orchestrator adds a reviewer model on top of the agent. Editors that speak the Agent Client Protocol
 > (Zed, JetBrains) can run Celeste as their agent with `celeste acp`.
 
+**In your editor:** `celeste acp` runs celeste as an Agent Client Protocol agent for Zed and the JetBrains IDEs: the editor's agent panel drives the chat, with tool calls, plans and permission prompts shown in the editor. See [docs/ACP.md](docs/ACP.md) for the setup.
+
 ---
 
 ## 🚀 Quick Start
@@ -1615,6 +1617,7 @@ Comprehensive documentation for developers and contributors:
 - **[TESTING.md](docs/TESTING.md)** - Testing guide with examples, coverage reports, and best practices
 - **[CONTRIBUTING.md](docs/CONTRIBUTING.md)** - How to contribute: adding skills, providers, and commands
 - **[LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md)** - Provider compatibility matrix and setup guides
+- **[ACP.md](docs/ACP.md)** - Using celeste in Zed and JetBrains (`celeste acp`)
 - **[STYLE_GUIDE.md](docs/STYLE_GUIDE.md)** - Code formatting standards and conventions
 
 ### Test Coverage (v1.2.0)

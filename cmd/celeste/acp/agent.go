@@ -111,6 +111,13 @@ func (a *Agent) newStore() *config.Session {
 	return a.deps.Sessions.NewSession()
 }
 
+// loadStore reads a session record; an invalid ID is an error.
+func (a *Agent) loadStore(id string) (*config.Session, error) {
+	a.storeMu.Lock()
+	defer a.storeMu.Unlock()
+	return a.deps.Sessions.Load(id)
+}
+
 // saveStore writes a session record.
 func (a *Agent) saveStore(s *config.Session) error {
 	a.storeMu.Lock()
@@ -118,11 +125,12 @@ func (a *Agent) saveStore(s *config.Session) error {
 	return a.deps.Sessions.Save(s)
 }
 
-// addSession registers s; false once the agent is closed.
+// addSession registers s; false once the agent is closed or when a
+// session with its ID is already open.
 func (a *Agent) addSession(s *session) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.closed {
+	if a.closed || a.sessions[s.id] != nil {
 		return false
 	}
 	a.sessions[s.id] = s
@@ -165,6 +173,16 @@ func (a *Agent) Request(ctx context.Context, method string, params json.RawMessa
 			return nil, err
 		}
 		return NewSessionResult{SessionID: s.id}, nil
+	case "session/load":
+		var p LoadSessionParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		if err := a.loadSession(ctx, p); err != nil {
+			return nil, err
+		}
+		// The schema's LoadSessionResponse is an object, all fields optional.
+		return struct{}{}, nil
 	case "session/prompt":
 		var p PromptParams
 		if err := decodeParams(params, &p); err != nil {
@@ -219,20 +237,29 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams) (any, *RPCError) {
 		s.dequeue()
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 	}
-	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
+	if !a.hold() {
 		s.dequeue()
 		return nil, &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
 	}
-	a.prompts.Add(1)
-	a.mu.Unlock()
 	defer a.prompts.Done()
 	res, rerr := s.prompt(ctx, a, text)
 	if rerr != nil {
 		return nil, rerr
 	}
 	return res, nil
+}
+
+// hold counts work on a session that Close must wait for (a prompt, or a
+// load rebuilding an open session's Env); false once the agent is closed.
+// The caller calls a.prompts.Done when it ends.
+func (a *Agent) hold() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.prompts.Add(1)
+	return true
 }
 
 // connection is the attached Conn, or nil.
@@ -262,9 +289,8 @@ func (a *Agent) call(ctx context.Context, method string, params, result any) err
 
 // initialize answers with the agent's latest protocol version whatever the
 // client asked for (the client disconnects if it cannot speak it), and the
-// capabilities of ruling 5: embedded context yes, images and audio no.
-// loadSession is false until session/load is served (W4f-3): an editor
-// told true offers to reopen threads and each attempt would fail.
+// capabilities of ruling 5: embedded context yes, images and audio no;
+// session/load is served (ruling 11).
 func (a *Agent) initialize(p InitializeParams) InitializeResult {
 	if p.ProtocolVersion != ProtocolVersion {
 		a.logf("acp: client asked for protocol version %d; answering %d", p.ProtocolVersion, ProtocolVersion)
@@ -272,7 +298,7 @@ func (a *Agent) initialize(p InitializeParams) InitializeResult {
 	return InitializeResult{
 		ProtocolVersion: ProtocolVersion,
 		AgentCapabilities: AgentCapabilities{
-			LoadSession:        false,
+			LoadSession:        true,
 			PromptCapabilities: PromptCapabilities{EmbeddedContext: true},
 		},
 		AuthMethods: []AuthMethod{},
