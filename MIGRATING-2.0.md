@@ -1,5 +1,17 @@
 # Migrating to celeste 2.0
 
+Before you start, back up `~/.celeste` (for example `cp -R ~/.celeste ~/.celeste-1x-backup`).
+2.0 removes or renames a few config keys the first time any celeste command
+(`celeste chat`, `celeste config --show`, ...) loads that config file; the
+sections below say which. Then install 2.0 and check it:
+
+```bash
+go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
+which celeste          # the same $GOPATH/bin/celeste (or ~/go/bin/celeste) as 1.x
+celeste version        # prints 2.x; on a go install build this also upgrades it (below)
+celeste persona verify # official persona: ...
+```
+
 ## Install path
 
 2.0 moved the Go module to `github.com/whykusanagi/celeste-cli/v2`, so `go install`
@@ -65,9 +77,9 @@ protocol, and asks before running a repository's hooks. See [docs/HOOKS.md](docs
 
 | 1.x | 2.0 |
 |---|---|
-| Grimoire `## Hooks` sections | Still read, as protocol v1 (`sh -c`, as before). Your files are never rewritten. `~/.celeste/grimoire.md` is trusted; a project's `.grimoire` hooks need approval. |
+| Grimoire `## Hooks` sections | Still read, as protocol v1 (`sh -c`, as before); no conversion is needed, and your files are never rewritten. `~/.celeste/grimoire.md` is trusted; a project's `.grimoire` hooks need approval. Moving to `hooks.json` is optional. |
 | A repository's hooks ran without asking | The chat asks once per file before it opens and records the approval in `~/.celeste/trusted.json`. Changing a hook's command, matcher, timeout or protocol asks again. |
-| | Non-interactive runs (agent runs, MCP chat, `celeste acp`, piped input) never ask: untrusted repository hooks are skipped with a warning. Approve them ahead of time with `celeste hooks trust` (`--yes` for scripts and CI); `celeste hooks list` shows each source and its status. |
+| | Non-interactive runs (agent runs, MCP chat, `celeste acp`, piped input) never ask: untrusted repository hooks are skipped with a warning. Approve them ahead of time, from the repository: `celeste hooks list` shows each source and its status, `celeste hooks trust` approves this directory's untrusted sources (asks y/N), and `celeste hooks trust --yes [path]` approves without asking (scripts, CI). |
 | Pre-tool hooks ran after the permission prompt | They run before it, after a deny-only pass, so a hook's side effects can happen even if you then deny the call. A hook's `ask` forces the prompt; in a headless run that means deny. |
 | Hooks inherited every `CELESTE_*` variable and any amount of output | They don't inherit `CELESTE_*` variables. Output over 1 MiB fails the hook, including a v1 hook that exits 0. A tool input too large for the environment is left out (`CELESTE_TOOL_INPUT_TRUNCATED=1`), never cut short. |
 | A grimoire hook with a tab or other control character | Skipped. Hooks run in their source's project root. |

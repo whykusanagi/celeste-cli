@@ -16,6 +16,11 @@ whykusanagi <me@whykusanagi.xyz>
 The spaced form above and the compact `940490EF09DA31322BF7FD83875849AB1D541C55`
 are the same value; `gpg` accepts the compact form.
 
+Releases are signed with the signing subkey
+`F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB` (key id `A6BB54DDC70EE8FB`), certified
+by the primary key above. From 2.0 on, each release tag is also a GPG-signed tag
+made with the same subkey (`git tag -v v2.0.0`).
+
 ## Verify the download
 
 From the same release, download into one folder: the binary archive
@@ -34,7 +39,8 @@ gpg --fingerprint 940490EF09DA31322BF7FD83875849AB1D541C55
 
 # 3. Cross-check that SAME fingerprint against an independent channel, so you are
 #    not trusting only the repo copy. This prints GitHub's copy of the key; its
-#    primary fingerprint must equal the value in step 2:
+#    primary fingerprint must equal the value in step 2, and it lists the [S]
+#    signing subkey F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB:
 curl -fsSL https://github.com/whykusanagi.gpg | gpg --show-keys --with-fingerprint
 #   (a third source, if the key is published there: gpg --keyserver keys.openpgp.org \
 #    --recv-keys 940490EF09DA31322BF7FD83875849AB1D541C55)
@@ -77,7 +83,32 @@ fingerprint you confirmed.
 Once the archive checks out and is extracted (on macOS, after the quarantine
 step below), you can also confirm the binary carries Celeste's official
 persona: `./celeste persona verify` prints `official persona: ...` and exits 0.
-A source or `go install` build reports the public persona only and exits 1.
+A build from a checkout reports the public persona only and exits 1.
+
+A `go install` build upgrades itself to the official binary on its first run
+(below). `celeste persona verify` reports on the binary as it is and never
+downloads, so to check a fresh `go install` build, run `celeste version` first
+(it upgrades), then `celeste persona verify`.
+
+## What `go install` and `celeste update` check
+
+A `go install` build of celeste replaces itself with the official release binary
+of the same version on its first run, and `celeste update` installs newer
+releases. Both download only over HTTPS from github.com and GitHub's release-asset
+hosts, and install nothing unless all of these pass, using the release key
+compiled into celeste (the same key as above, including the signing subkey):
+
+1. `checksums.txt.asc` is a good signature over `checksums.txt`;
+2. `manifest.json.asc` is a good signature over `manifest.json`, the manifest's
+   `tag` is the version being installed, and the archive's SHA-256 it lists equals
+   the one in `checksums.txt`;
+3. the archive's SHA-256 matches;
+4. the binary in the archive is one regular file with the expected name (`celeste`, or `celeste.exe` on Windows).
+
+On any failure the installed binary is left as it was. Builds from a checkout
+never download anything. Set `CELESTE_NO_AUTO_UPGRADE=1` to turn the automatic
+replacement off; you can still verify and install releases by hand as described
+above.
 
 ## Launching on macOS
 
@@ -90,6 +121,8 @@ xattr -dr com.apple.quarantine ./celeste
 ```
 
 You do this once. A future release may be Apple-notarized, which removes the step.
+
+Then put the binary on your `PATH`, for example `mkdir -p ~/.local/bin && mv ./celeste ~/.local/bin/`.
 
 Linux and other platforms extract the same way (`tar xzf <archive>`); the
 `xattr` quarantine step is macOS-only.

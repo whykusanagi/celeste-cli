@@ -31,10 +31,10 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection and revert
 - 🌐 **Multi-Provider** - Sakana AI (default), Grok/xAI, OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter, local OpenAI-compatible servers
 - 💰 **Cost Tracking** - Per-model pricing with live session cost display
-- 🪝 **Hooks** - Pre/post tool execution hooks defined in `.grimoire`
+- 🪝 **Hooks** - Commands that run around tool calls, prompts and sessions (`hooks.json`, or a grimoire `## Hooks` section); a repository's hooks run only after you approve them. See [docs/HOOKS.md](docs/HOOKS.md)
 - 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok) with `/effort` control
 - 🖼️ **Image Input** - Multimodal support for vision-capable models
-- 🎭 **Celeste Personality** - Embedded AI personality with lore-accurate responses
+- 🎭 **Celeste persona** - The full persona in official releases (encrypted, all rights reserved); a public persona in source builds. See [Persona](#persona) and [docs/PERSONALITY.md](docs/PERSONALITY.md)
 - 🔗 **Blockchain Tools** - IPFS, Alchemy, wallet security monitoring
 
 ### Three Ways to Run
@@ -46,8 +46,10 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 | **Orchestrator** | `/orchestrate <goal>` (in TUI) | Agent run with a second reviewer model that critiques and debates the output. For high-quality deliverables. |
 
 > **Chat vs Agent**: Chat is interactive with tool auto-looping — you guide the conversation while Celeste
-> calls tools as needed. Agent is a separate autonomous runtime with its own turn loop, planning phase,
-> checkpoint store, and workspace awareness. The orchestrator adds a reviewer model on top of the agent.
+> calls tools as needed. Agent is autonomous, with a planning phase, a checkpoint store and workspace
+> awareness. Both run on the same tool loop, with the same caps, guards, permissions and hooks. The
+> orchestrator adds a reviewer model on top of the agent. Editors that speak the Agent Client Protocol
+> (Zed, JetBrains) can run Celeste as their agent with `celeste acp`.
 
 ---
 
@@ -61,7 +63,15 @@ If you have Go 1.26+ installed:
 go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
 ```
 
-The `celeste` binary will be installed to `$GOPATH/bin` (or `~/go/bin` by default).
+The `celeste` binary is installed to `$GOPATH/bin` (or `~/go/bin` by default). The first time
+you run it, it downloads the official signed release binary of the same version from
+[Releases](https://github.com/whykusanagi/celeste-cli/releases), checks its GPG signature and
+checksums against the release key built into celeste, replaces itself and carries on, so you
+get the full persona from the first run (stderr says
+`celeste: installing the official vX.Y.Z build ...`). If the download fails
+(offline, say), that run uses the public persona and celeste tries again in an hour.
+`celeste update` moves to a newer release; `celeste update --check` only reports one. Set
+`CELESTE_NO_AUTO_UPGRADE=1` to keep the binary `go install` built.
 
 **Requirements:**
 - Go 1.26.0 or higher
@@ -76,9 +86,7 @@ To add to PATH:
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-### Manual Installation
-
-Alternatively, build from source:
+### Build from source
 
 ```bash
 # Clone the repository
@@ -88,6 +96,11 @@ cd celeste-cli
 # Build + install to ~/.local/bin (handles macOS code-signing for you)
 make install
 ```
+
+A build from a checkout never downloads anything. It runs Celeste's **public persona** (a
+one-line identity, the honesty rule and the voice boundary rule) and says so at startup: the
+full persona ships only in official release binaries, which `go install` and the Releases page
+give you.
 
 > **macOS note:** don't `cp` the binary over an existing `~/.local/bin/celeste` —
 > on Apple Silicon that invalidates its ad-hoc code signature and the kernel will
@@ -99,6 +112,17 @@ make install
 > go build -o ~/.local/bin/celeste ./cmd/celeste
 > codesign --force --sign - ~/.local/bin/celeste   # macOS only
 > ```
+
+### Persona
+
+Official release binaries, and `go install` builds once they have upgraded themselves, run
+Celeste's full persona. Builds from a checkout run the public persona. To check a binary, run
+`celeste persona verify`: it prints `official persona: ...` and exits 0 on an official build,
+and exits 1 with the reason otherwise. It never downloads, so after a fresh `go install` run
+`celeste version` first (that run upgrades the binary), then `celeste persona verify`. A local model with a small context window gets a smaller
+persona profile; set `context_limit` in your config to the server's real window. How the
+persona is built and chosen: [docs/PERSONALITY.md](docs/PERSONALITY.md). How to verify a
+download: [VERIFY.md](VERIFY.md).
 
 ### First Run
 
@@ -310,7 +334,7 @@ cloud) and ElevenLabs (voice).
 - **Named Configs** - Multi-profile support (openai, grok, venice, etc.)
 - **Skills Config** - Separate `skills.json` for skill-specific API keys
 - **Secrets Handling** - Separate `secrets.json` for backward compatibility
-- **Persona Injection** - Configurable Celeste personality prompt
+- **Persona** - Always on in chat and agent runs, sized to the model's context window (`context_limit`); tune it with `/persona` sliders
 - **Environment Override** - Env vars override file config
 
 ---
@@ -1274,13 +1298,15 @@ celeste-cli/
 │   ├── config/              # Configuration management
 │   │   ├── config.go        # JSON config (load/save/named)
 │   │   └── session.go       # Session persistence
-│   └── prompts/             # Persona prompts
-│       ├── celeste.go       # Prompt loader
-│       └── celeste_essence.json # Embedded Celeste personality
+│   └── prompts/             # System prompt and persona
+│       ├── compose.go       # System prompt: persona first, then the per-request part
+│       ├── profile.go       # Persona profiles: decrypt, or the public persona
+│       ├── personacrypt/    # AES-256-GCM sealing for the persona
+│       └── persona/         # Encrypted persona (all rights reserved; make sync-persona)
 ├── docs/                     # Documentation
 │   ├── LLM_PROVIDERS.md     # Provider compatibility guide
 │   ├── CAPABILITIES.md      # What Celeste can do (ecosystem)
-│   ├── PERSONALITY.md       # Celeste personality quick ref
+│   ├── PERSONALITY.md       # Persona profiles, licensing, sliders
 │   └── ROUTING.md           # Sub-agent routing (ecosystem)
 ├── LICENSE                   # MIT License
 ├── CHANGELOG.md             # Version history
@@ -1667,6 +1693,12 @@ git diff  # Should show no changes
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
+**Except Celeste's persona.** The encrypted persona profiles in `cmd/celeste/prompts/persona/`,
+and the persona they contain, are © whyKusanagi, all rights reserved, and are not covered by the
+MIT License (see [cmd/celeste/prompts/persona/LICENSE](cmd/celeste/prompts/persona/LICENSE)).
+Official release binaries carry the full persona; builds from source run a minimal public
+persona. See [docs/PERSONALITY.md](docs/PERSONALITY.md).
+
 ---
 
 ## 🔗 Links
@@ -1701,7 +1733,5 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 <div align="center">
 
 **Built with 💜 by [@whykusanagi](https://github.com/whykusanagi)**
-
-*"The Abyss whispers through the terminal..." - Celeste*
 
 </div>

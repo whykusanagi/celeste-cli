@@ -1,6 +1,4 @@
-# Contribute to Celeste CLI — Don't Disappoint Me~ 👅
-
-Onii-chan, wanna tweak my CLI? Follow these or face my smug wrath.
+# Contributing to Celeste CLI
 
 ## Setup
 ```bash
