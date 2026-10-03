@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/sandbox"
 )
 
 // sandboxWarnOnce makes the missing-sandbox notice once per process

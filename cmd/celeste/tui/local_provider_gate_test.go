@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // The chat TUI enables its tool surface in WithEndpoint: it looks the provider

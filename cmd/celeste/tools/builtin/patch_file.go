@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // maxPatchLiteralBytes is the ceiling on a single new_string literal. Beyond it,

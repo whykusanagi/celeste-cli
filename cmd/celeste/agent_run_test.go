@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/hooktest"
 )
 
 // runCLIAgent runs `celeste agent` on a goal against srv, with a temp HOME

@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit/imagefittest"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit/imagefittest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // imageLoop is a user prompt, an assistant read_file call and its result

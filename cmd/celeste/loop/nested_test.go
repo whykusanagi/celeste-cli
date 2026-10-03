@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 // goWorkspace is a tiny Go module, so the code graph has something to index.

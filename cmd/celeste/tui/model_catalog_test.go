@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // endpointClient is a fake LLM client whose active endpoint the test sets,

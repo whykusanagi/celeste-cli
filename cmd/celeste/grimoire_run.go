@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
 )
 
 // runInitCommand handles "celeste init [--agents]".

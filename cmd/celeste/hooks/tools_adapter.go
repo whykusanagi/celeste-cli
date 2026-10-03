@@ -3,7 +3,7 @@ package hooks
 import (
 	"context"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // ToolHooks adapts r for tools.Registry.SetHookRunner. It is nil when no

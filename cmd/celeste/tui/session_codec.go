@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 )
 
 // SessionMessagesFromChat converts the chat history into the form sessions

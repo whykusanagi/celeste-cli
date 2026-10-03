@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
 const (

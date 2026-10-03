@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
 )
 
 func TestParseFileDefaults(t *testing.T) {

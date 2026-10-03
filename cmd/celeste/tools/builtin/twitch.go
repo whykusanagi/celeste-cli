@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // TwitchTool checks if a Twitch streamer is live.

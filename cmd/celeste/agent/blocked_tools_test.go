@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // stubTool is the minimum a tool needs to be registered and permission-checked.

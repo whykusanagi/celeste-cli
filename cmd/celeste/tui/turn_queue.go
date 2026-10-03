@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // turnActive reports whether a turn is still running: a request streaming,

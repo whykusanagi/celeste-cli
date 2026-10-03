@@ -8,3 +8,8 @@ cmd/celeste/prompts/persona/SOURCE.json -text
 whykusanagi.asc -text
 cmd/celeste/selfupdate/release_key.asc -text
 cmd/celeste/selfupdate/testdata/** -text
+
+# Docs and go.mod are read by tests that match exact lines; keep LF on every OS
+# (a Windows checkout with CRLF broke the header and module-line matches).
+*.md text eol=lf
+go.mod text eol=lf

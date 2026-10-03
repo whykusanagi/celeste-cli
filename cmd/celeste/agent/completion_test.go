@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/steer"
 )
 
 func TestMarkerOnLine(t *testing.T) {

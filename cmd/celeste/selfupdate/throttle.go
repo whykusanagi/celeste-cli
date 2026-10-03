@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // retryAfter is how long a failed upgrade of one tag waits (ruling 27).

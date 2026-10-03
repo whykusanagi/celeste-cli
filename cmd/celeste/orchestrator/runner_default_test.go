@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt/personacrypttest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt/personacrypttest"
 )
 
 // Orchestrator lanes (the primary, the debate reviewer and the defense)

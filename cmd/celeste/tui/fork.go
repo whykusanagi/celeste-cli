@@ -3,7 +3,7 @@ package tui
 import (
 	"fmt"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // fork runs /fork (2.0 W4 ruling 3): save the session, continue in a new

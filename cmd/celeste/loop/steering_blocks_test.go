@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // A steering re-run keeps the accepted reply's ProviderBlocks and none of

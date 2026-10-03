@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/hooktest"
 )
 
 func testRunner(t *testing.T, defs ...Definition) (*Runner, *[]string) {

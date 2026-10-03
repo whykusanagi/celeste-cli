@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 )
 
 // Jev is the TypeSafe System One oracle. The state goes to a third party:

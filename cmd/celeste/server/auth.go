@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 const tokenLength = 32 // 32 bytes = 64 hex chars

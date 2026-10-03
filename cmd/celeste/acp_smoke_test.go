@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
 )
 
 // smokeClient drives a celeste acp process over its real stdin and stdout,

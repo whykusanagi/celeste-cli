@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // strictProvider fronts a fake provider and rejects any model but served,

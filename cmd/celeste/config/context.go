@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 )
 
 // ContextTracker monitors token usage and context window status for a session.

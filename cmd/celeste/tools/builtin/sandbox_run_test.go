@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/sandbox"
 )
 
 // Review Focus 1.

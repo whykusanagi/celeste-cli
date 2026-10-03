@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
 )
 
 // runPersonaCommand is `celeste persona verify` (W5 ruling 20). It exits 0

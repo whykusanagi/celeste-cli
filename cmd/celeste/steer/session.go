@@ -11,12 +11,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
 )
 
 // DefaultEvery is the ballot's cadence, in requests (spec: every 3 turns).

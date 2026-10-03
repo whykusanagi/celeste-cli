@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 func userMsg(s string) []Message { return []Message{{Role: "user", Content: s}} }

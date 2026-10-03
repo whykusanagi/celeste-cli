@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 )
 
 // statusFields is the part of celeste_status that #210 adds.

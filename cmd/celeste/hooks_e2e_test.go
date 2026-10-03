@@ -13,12 +13,12 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 func hookDef(t *testing.T, ev hooks.Event, matcher string, args ...string) hooks.Definition {

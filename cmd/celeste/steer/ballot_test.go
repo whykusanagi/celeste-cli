@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 )
 
 func TestJudgeBandsAndSeverity(t *testing.T) {

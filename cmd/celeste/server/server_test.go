@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 func TestRegisterTool(t *testing.T) {

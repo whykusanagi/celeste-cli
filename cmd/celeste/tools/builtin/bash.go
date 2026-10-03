@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/sandbox"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 const maxCommandOutput = 64_000

@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // Config keys celeste 2.0 removed or renamed (#144, spec §6.2).

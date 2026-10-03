@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 func lastUser(msgs []Message) string {

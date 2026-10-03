@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 func execLoop(t *testing.T, ts ...tools.Tool) *Loop {

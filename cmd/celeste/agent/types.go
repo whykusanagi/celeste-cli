@@ -5,12 +5,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // runIDSeq makes run IDs unique even when two runs are created within the

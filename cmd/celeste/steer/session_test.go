@@ -9,11 +9,11 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // script is a loop.LLM that plays one reply per request: text, or a tool

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 )
 
 func TestJevScoreBuildsRequestAndMapsAnswers(t *testing.T) {

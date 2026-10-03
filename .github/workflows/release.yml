@@ -65,7 +65,7 @@ jobs:
         # celeste update and the go install upgrade (W5 ruling 29).
         # -trimpath: without it the toolchain copies the whole -ldflags
         # string, key included, into the binary's build info.
-        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release -X github.com/whykusanagi/celeste-cli/cmd/celeste/prompts.personaKey=${PERSONA_KEY}"
+        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release -X github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts.personaKey=${PERSONA_KEY}"
         build() { GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" ./cmd/celeste; }
         build linux amd64 celeste-linux-amd64
         build linux arm64 celeste-linux-arm64

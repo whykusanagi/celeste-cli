@@ -8,10 +8,10 @@ import (
 	"sort"
 	"time"
 
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 type CheckpointStore struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // ModelAssignment describes which models to use for a given run.

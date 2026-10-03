@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // needsAPIKey reports whether cfg needs a non-empty api_key before a run can

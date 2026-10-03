@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/promptstest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/promptstest"
 )
 
 // personaRunner is a runner on the fake provider with a context_limit, a

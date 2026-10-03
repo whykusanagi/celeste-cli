@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 )
 
 // ContextBarModel renders a thin status bar showing token budget usage.

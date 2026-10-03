@@ -3,7 +3,7 @@ package builtin
 import (
 	"context"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 )
 
 // ShellOptions is one model-chosen shell command for RunShell.

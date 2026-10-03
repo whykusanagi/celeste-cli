@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
 )
 
 // newAskChecker returns a Checker that always returns Ask for any non-read-only tool.

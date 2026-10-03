@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
 )
 
 // stampGrimoireMetadata updates or inserts the metadata comment block

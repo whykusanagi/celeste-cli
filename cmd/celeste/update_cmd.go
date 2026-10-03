@@ -8,8 +8,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate"
 )
 
 // newUpdater and updateKind are variables so tests point `celeste update`

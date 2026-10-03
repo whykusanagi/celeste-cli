@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 func TestCheckpointLoadRejectsPathTraversal(t *testing.T) {

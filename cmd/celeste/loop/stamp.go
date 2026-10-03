@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 // ConfigStamp fingerprints (path, mtime, size) the config files Setup bakes

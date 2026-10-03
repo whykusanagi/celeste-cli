@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
 )
 
 // completionHealth counts this process's completion calls (celeste chat,

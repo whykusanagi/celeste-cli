@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // guardDivisor: a persona profile may take at most a quarter of the

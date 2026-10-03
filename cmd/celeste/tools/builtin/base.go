@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // BaseTool provides a reusable base implementation of the tools.Tool interface.

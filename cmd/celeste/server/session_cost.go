@@ -5,8 +5,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 )
 
 // sessionCost adds up the tokens and priced cost of every LLM request this

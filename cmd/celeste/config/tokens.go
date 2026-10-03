@@ -9,8 +9,8 @@ import (
 	"log"
 	"sync"
 
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // ModelLimits is kept as an alias for backward compatibility.

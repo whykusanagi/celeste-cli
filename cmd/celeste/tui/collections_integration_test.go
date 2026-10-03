@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/collections"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // TestCollectionsModel_Integration tests the collections TUI model with real API calls

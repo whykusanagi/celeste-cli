@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite the golden prompt files in testdata/")

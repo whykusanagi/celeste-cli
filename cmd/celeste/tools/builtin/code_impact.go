@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // CodeImpactTool analyzes the blast radius of code changes.

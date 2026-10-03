@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // PermissionConfig holds the persistent permission configuration.

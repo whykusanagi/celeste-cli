@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // ProviderBlocks is a message's content as one provider returned it (2.0

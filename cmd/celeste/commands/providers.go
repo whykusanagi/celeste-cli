@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // HandleProvidersCommand handles the /providers command and its subcommands.

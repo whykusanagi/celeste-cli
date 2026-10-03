@@ -3,7 +3,7 @@ package builtin
 import (
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // Builtins register with Register (programmer-controlled names); none may

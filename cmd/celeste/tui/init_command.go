@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
 )
 
 // projectDir is the session's workspace: the work dir the chat was started

@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/agent"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/agent"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 )
 
 // recursionMarker is injected into subagent messages to detect and block

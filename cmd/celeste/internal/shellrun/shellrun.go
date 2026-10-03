@@ -15,8 +15,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/proctree"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/sandbox"
 )
 
 // WaitDelay bounds how long a finished or killed shell's output pipes may

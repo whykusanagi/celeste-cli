@@ -20,10 +20,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
 
 // Entry is one checkpoint: Path as it was before a tool changed it.

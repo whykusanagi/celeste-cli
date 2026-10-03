@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
 
 // FileChange represents the diff stats for a single file.

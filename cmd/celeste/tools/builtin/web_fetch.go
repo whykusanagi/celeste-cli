@@ -9,8 +9,8 @@ import (
 	"time"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // maxFetchBytes is the maximum output size for web_fetch results (32KB).

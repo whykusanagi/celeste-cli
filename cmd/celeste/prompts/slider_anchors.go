@@ -15,7 +15,7 @@
 //   - P6: no external style lifts.
 package prompts
 
-import "github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+import "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 
 // flirtAnchors controls how forward / teasing Celeste is.
 var flirtAnchors = [4]string{

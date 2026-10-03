@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/sandbox"
 )
 
 // Review Focus 3.

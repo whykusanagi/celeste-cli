@@ -5,12 +5,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // compactTrigger is the PreCompact/PostCompact trigger of a compaction the

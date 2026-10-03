@@ -7,8 +7,8 @@ package promptstest
 import (
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt/personacrypttest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt/personacrypttest"
 )
 
 // Install makes the process run the test persona until t ends. The persona

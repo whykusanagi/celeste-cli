@@ -62,7 +62,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 If you have Go 1.26+ installed:
 
 ```bash
-go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
+go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
 ```
 
 The `celeste` binary is installed to `$GOPATH/bin` (or `~/go/bin` by default). The first time

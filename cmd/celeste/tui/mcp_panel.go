@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 // MCPPanelModel displays MCP server connection status and tool counts, and

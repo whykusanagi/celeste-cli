@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
 )
 
 func TestCodeReviewTool_Execute(t *testing.T) {

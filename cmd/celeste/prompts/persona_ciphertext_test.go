@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt"
 )
 
 // The committed ciphertext is exactly what SOURCE.json records, checked

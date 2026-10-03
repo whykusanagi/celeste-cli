@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 )
 
 func (r *Runner) persistArtifacts(state *RunState) {

@@ -1,6 +1,6 @@
 // Package ctxmgr provides automatic context window management for Celeste CLI.
 // The package name is ctxmgr (not context) to avoid collision with the stdlib
-// context package. Import path: github.com/whykusanagi/celeste-cli/cmd/celeste/context
+// context package. Import path: github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context
 package ctxmgr
 
 import (

@@ -1,6 +1,6 @@
 package decide
 
-import "github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+import "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 
 // New returns the oracle the config's `oracle` key names, Guarded for use:
 // "llm" asks the small model through complete, "jev" asks TypeSafe (key

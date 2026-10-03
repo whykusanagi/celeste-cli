@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // Message is one chat message. The loop copies the history it is given and

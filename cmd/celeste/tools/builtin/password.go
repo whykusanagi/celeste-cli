@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // PasswordTool generates secure random passwords.

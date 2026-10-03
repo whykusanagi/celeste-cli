@@ -9,8 +9,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // The chat turn protocol (2.0 F2d). A turn is one loop.Loop run, started by

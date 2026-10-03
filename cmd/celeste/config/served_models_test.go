@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 func TestResolveServedModels(t *testing.T) {

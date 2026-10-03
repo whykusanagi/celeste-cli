@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // compactTrigger is PreCompact/PostCompact's trigger for the agent's own

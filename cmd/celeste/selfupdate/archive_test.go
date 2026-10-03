@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate/selfupdatetest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate/selfupdatetest"
 )
 
 // Ruling 30: the contract table, checked against the helper's independent copy.

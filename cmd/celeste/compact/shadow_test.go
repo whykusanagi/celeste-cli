@@ -8,9 +8,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 func TestShadowReportComparesRulesAndJev(t *testing.T) {

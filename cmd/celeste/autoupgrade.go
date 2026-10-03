@@ -10,8 +10,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate"
 )
 
 // selfupdatedEnv marks a process started by a self-upgrade, so it never

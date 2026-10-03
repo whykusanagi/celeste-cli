@@ -10,8 +10,8 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // CompactionSupport is what a live probe learned about an endpoint's

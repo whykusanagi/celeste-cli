@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellparse"
 )
 
 // destructivePatterns: raw disk access, recursive deletes of system paths

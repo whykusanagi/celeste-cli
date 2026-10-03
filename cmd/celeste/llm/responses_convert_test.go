@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 const testRespKey = "openai-responses|http://example.test/v1|gpt-test"

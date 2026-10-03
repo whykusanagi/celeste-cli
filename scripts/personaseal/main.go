@@ -22,7 +22,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt"
 )
 
 // personaDir is where the sealed persona lives, relative to the repository.

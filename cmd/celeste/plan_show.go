@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/builtin"
 )
 
 // noPlanText is what /plan show and celeste plan say without a plan.

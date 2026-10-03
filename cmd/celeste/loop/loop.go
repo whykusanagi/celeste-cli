@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/compact"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // Run drives turns until the model answers without tools, a limit or guard

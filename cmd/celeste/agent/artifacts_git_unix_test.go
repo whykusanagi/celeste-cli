@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gittest"
 )
 
 func TestCaptureGitWorkspaceArtifactsReadsStatusAndDiff(t *testing.T) {

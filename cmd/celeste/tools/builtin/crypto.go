@@ -3,7 +3,7 @@ package builtin
 import (
 	"context"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // --- IPFS Tool ---

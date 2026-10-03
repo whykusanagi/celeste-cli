@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
 )
 
 // A rule hit's log line never carries a secret from the matched command:

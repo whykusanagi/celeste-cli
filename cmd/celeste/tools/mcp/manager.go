@@ -11,7 +11,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // ServerInfo contains health/status information for a connected MCP server.

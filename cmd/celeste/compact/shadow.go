@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // maxGoalChars caps the goal and latest message sent to Jev.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 func TestCharsPerTickFromTypingSpeed(t *testing.T) {

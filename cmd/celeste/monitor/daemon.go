@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/builtin"
 )
 
 // Daemon manages the background wallet monitoring process

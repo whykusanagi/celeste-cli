@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // CatalogModel is one model a provider serves now, from its /models listing.

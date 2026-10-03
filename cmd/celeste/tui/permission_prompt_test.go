@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
 )
 
 // TestBuildPattern_MatchesViaMatchRule verifies that the pattern returned by

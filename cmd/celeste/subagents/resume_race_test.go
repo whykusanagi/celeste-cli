@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
 )
 
 // A resumed run is registered before it finishes, so its final fields are

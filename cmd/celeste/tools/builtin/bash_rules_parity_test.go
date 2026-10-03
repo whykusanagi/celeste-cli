@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
 )
 
 // The advisory destructive-bash rule and the watchdog's unsafe heuristic
