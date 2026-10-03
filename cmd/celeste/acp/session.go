@@ -16,6 +16,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
@@ -59,6 +60,9 @@ type session struct {
 	// pendingHooks are the untrusted repo hook sources Setup skipped
 	// (ruling 9); W4f-3 asks the editor's user about them.
 	pendingHooks []hooks.Source
+	// notice is the small-window guard's message (W5 ruling 7), shown
+	// once at the start of the session's first prompt; "" once shown.
+	notice string
 }
 
 // newSession answers session/new (rulings 3-4): a celeste session whose ID
@@ -129,7 +133,11 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 	client := llm.NewClient(llmCfg, env.Registry)
 	client.SetToolMode(tools.ModeChat)
 	env.StartSession(ctx, "acp")
-	prompt := env.SystemPrompt("", nil)
+	// The persona steps down for a small window (W5 guard); its notice
+	// goes to the editor with the first prompt, never to stderr.
+	window, _ := config.ResolveContextLimit(s.cfg.BaseURL, s.cfg.Model, s.cfg.ContextLimit)
+	sp := env.SystemPrompt(loop.PromptOptions{Window: window})
+	prompt := sp.String()
 	client.SetSystemPrompt(prompt)
 
 	pruned, err := compact.DefaultStore()
@@ -139,7 +147,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 	}
 	summarize := agent.SmallModelSummarizer(llm.ConfigFrom(s.cfg), s.cfg.ResolveSmallModel())
 
-	s.env, s.client, s.systemPrompt = env, client, prompt
+	s.env, s.client, s.systemPrompt, s.notice = env, client, prompt, sp.Notice
 	s.compactor = newCompactor(s.cfg, prompt, pruned, summarize, env.Hooks, a.logf)
 	return nil
 }
@@ -272,7 +280,13 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.mu.Lock()
 	history := append(append([]tui.ChatMessage(nil), s.history...),
 		tui.ChatMessage{Role: "user", Content: text, Timestamp: time.Now()})
+	notice := s.notice
+	s.notice = ""
 	s.mu.Unlock()
+	if notice != "" {
+		// Shown to the editor's user only; the model never sees it.
+		s.update(a, AgentMessageChunk(prompts.NoticePrefix+notice+"\n\n"))
+	}
 	defer func() {
 		s.mu.Lock()
 		s.cancel = nil
