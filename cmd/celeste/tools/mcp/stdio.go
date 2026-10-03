@@ -31,7 +31,14 @@ type StdioTransport struct {
 // args are the command-line arguments.
 // env is an optional map of environment variables (supports ${VAR} expansion).
 func NewStdioTransport(command string, args []string, env map[string]string) (*StdioTransport, error) {
+	return newStdioTransport("", command, args, env)
+}
+
+// newStdioTransport is NewStdioTransport with the child's working
+// directory (empty: celeste's own).
+func newStdioTransport(dir, command string, args []string, env map[string]string) (*StdioTransport, error) {
 	cmd := exec.Command(command, args...)
+	cmd.Dir = dir
 
 	// Build environment: inherit current env + add custom vars
 	if len(env) > 0 {

@@ -333,7 +333,7 @@ func (m *Manager) createTransport(cfg ServerConfig) (Transport, error) {
 		if cfg.Command == "" {
 			return nil, fmt.Errorf("stdio transport requires a command")
 		}
-		return NewStdioTransport(cfg.Command, cfg.Args, cfg.Env)
+		return newStdioTransport(cfg.Dir, cfg.Command, cfg.Args, cfg.Env)
 	case "http":
 		if cfg.URL == "" {
 			return nil, fmt.Errorf("HTTP transport requires a URL")

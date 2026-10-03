@@ -99,6 +99,7 @@ Commands:
   grimoire                Show the resolved project grimoire (all layers merged)
   index [status|rebuild|reset]  Manage code graph index
   serve                   Start MCP server (stdio or SSE transport)
+  acp                     Run as an Agent Client Protocol agent over stdio (Zed, JetBrains)
   wallet-monitor          Manage wallet security monitoring daemon
   costs                   Show session cost breakdown
   memories                List memories for current project

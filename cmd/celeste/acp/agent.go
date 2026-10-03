@@ -3,7 +3,9 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 )
@@ -25,14 +27,21 @@ type Deps struct {
 type Agent struct {
 	deps Deps
 
-	mu     sync.Mutex
-	conn   *Conn
-	closed bool
+	mu       sync.Mutex
+	conn     *Conn
+	closed   bool
+	sessions map[string]*session
+	// prompts counts running prompts; Close waits for them.
+	prompts sync.WaitGroup
+
+	// storeMu serializes the session store: SessionManager is not safe for
+	// concurrent use, and requests run on their own goroutines.
+	storeMu sync.Mutex
 }
 
 // NewAgent returns an agent; Attach gives it the connection it answers on.
 func NewAgent(deps Deps) *Agent {
-	return &Agent{deps: deps}
+	return &Agent{deps: deps, sessions: map[string]*session{}}
 }
 
 // Attach sets the connection the agent sends its requests and
@@ -43,18 +52,88 @@ func (a *Agent) Attach(c *Conn) {
 	a.conn = c
 }
 
-// Close shuts the agent down: later requests are answered with an
-// internal error.
+// closeWait bounds how long Close waits for cancelled prompts to finish.
+const closeWait = 10 * time.Second
+
+// Close shuts the agent down: later requests are answered with an internal
+// error, running prompts are cancelled (and waited for, briefly), and every
+// session's Env is closed. Nothing is logged once it returns.
 func (a *Agent) Close() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
 	a.closed = true
+	sessions := a.sessions
+	a.sessions = map[string]*session{}
+	a.mu.Unlock()
+	for _, s := range sessions {
+		s.cancelPrompt()
+	}
+	done := make(chan struct{})
+	go func() { a.prompts.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(closeWait):
+	}
+	for _, s := range sessions {
+		s.close()
+	}
 }
 
 func (a *Agent) logf(format string, args ...any) {
-	if a.deps.Logf != nil {
+	a.mu.Lock()
+	closed := a.closed
+	a.mu.Unlock()
+	if a.deps.Logf != nil && !closed {
 		a.deps.Logf(format, args...)
 	}
+}
+
+// loadConfig is celeste's config (Deps.Config).
+func (a *Agent) loadConfig() (*config.Config, error) {
+	if a.deps.Config == nil {
+		return nil, errors.New("no config loader")
+	}
+	cfg, err := a.deps.Config()
+	if err == nil && cfg == nil {
+		err = errors.New("no config")
+	}
+	return cfg, err
+}
+
+// newStore starts a celeste session record (its ID is the sessionId,
+// ruling 3).
+func (a *Agent) newStore() *config.Session {
+	a.storeMu.Lock()
+	defer a.storeMu.Unlock()
+	return a.deps.Sessions.NewSession()
+}
+
+// saveStore writes a session record.
+func (a *Agent) saveStore(s *config.Session) error {
+	a.storeMu.Lock()
+	defer a.storeMu.Unlock()
+	return a.deps.Sessions.Save(s)
+}
+
+// addSession registers s; false once the agent is closed.
+func (a *Agent) addSession(s *session) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.sessions[s.id] = s
+	return true
+}
+
+// session returns the session with id, or nil.
+func (a *Agent) session(id string) *session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sessions[id]
 }
 
 // Request implements Handler.
@@ -76,18 +155,116 @@ func (a *Agent) Request(ctx context.Context, method string, params json.RawMessa
 		// celeste authenticates with its own config and keys; it
 		// advertises no methods, so there is nothing to do.
 		return struct{}{}, nil
+	case "session/new":
+		var p NewSessionParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		s, err := a.newSession(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		return NewSessionResult{SessionID: s.id}, nil
+	case "session/prompt":
+		var p PromptParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err
+		}
+		return a.prompt(ctx, p)
 	}
 	return nil, &RPCError{Code: CodeMethodNotFound, Message: "method not found: " + method}
 }
 
-// Notify implements Handler.
-func (a *Agent) Notify(method string, _ json.RawMessage) {
-	a.logf("acp: ignoring notification %s", method)
+// Notify implements Handler. It runs on the read loop and never blocks.
+func (a *Agent) Notify(method string, params json.RawMessage) {
+	switch method {
+	case "session/cancel":
+		var p CancelParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			a.logf("acp: session/cancel with invalid params: %v", err)
+			return
+		}
+		if s := a.session(p.SessionID); s != nil {
+			s.cancelPrompt()
+		}
+	default:
+		a.logf("acp: ignoring notification %s", method)
+	}
+}
+
+// Received implements Receiver: a session/prompt is counted as arrived
+// before its goroutine starts, so a session/cancel read right after it
+// cancels it even if it has not started yet.
+func (a *Agent) Received(method string, params json.RawMessage) {
+	if method != "session/prompt" {
+		return
+	}
+	var p PromptParams
+	if json.Unmarshal(params, &p) != nil { // Request answers the error
+		return
+	}
+	if s := a.session(p.SessionID); s != nil {
+		s.arrived()
+	}
+}
+
+// prompt answers session/prompt.
+func (a *Agent) prompt(ctx context.Context, p PromptParams) (any, *RPCError) {
+	s := a.session(p.SessionID)
+	if s == nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "unknown session " + p.SessionID}
+	}
+	text, err := promptText(p.Prompt, a.logf)
+	if err != nil {
+		s.dequeue()
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		s.dequeue()
+		return nil, &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
+	}
+	a.prompts.Add(1)
+	a.mu.Unlock()
+	defer a.prompts.Done()
+	res, rerr := s.prompt(ctx, a, text)
+	if rerr != nil {
+		return nil, rerr
+	}
+	return res, nil
+}
+
+// connection is the attached Conn, or nil.
+func (a *Agent) connection() *Conn {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.conn
+}
+
+// notify sends a notification to the editor.
+func (a *Agent) notify(method string, params any) error {
+	c := a.connection()
+	if c == nil {
+		return errors.New("acp: no connection")
+	}
+	return c.Notify(method, params)
+}
+
+// call sends a request to the editor and waits for its answer.
+func (a *Agent) call(ctx context.Context, method string, params, result any) error {
+	c := a.connection()
+	if c == nil {
+		return errors.New("acp: no connection")
+	}
+	return c.Call(ctx, method, params, result)
 }
 
 // initialize answers with the agent's latest protocol version whatever the
 // client asked for (the client disconnects if it cannot speak it), and the
 // capabilities of ruling 5: embedded context yes, images and audio no.
+// loadSession is false until session/load is served (W4f-3): an editor
+// told true offers to reopen threads and each attempt would fail.
 func (a *Agent) initialize(p InitializeParams) InitializeResult {
 	if p.ProtocolVersion != ProtocolVersion {
 		a.logf("acp: client asked for protocol version %d; answering %d", p.ProtocolVersion, ProtocolVersion)
@@ -95,7 +272,7 @@ func (a *Agent) initialize(p InitializeParams) InitializeResult {
 	return InitializeResult{
 		ProtocolVersion: ProtocolVersion,
 		AgentCapabilities: AgentCapabilities{
-			LoadSession:        true,
+			LoadSession:        false,
 			PromptCapabilities: PromptCapabilities{EmbeddedContext: true},
 		},
 		AuthMethods: []AuthMethod{},

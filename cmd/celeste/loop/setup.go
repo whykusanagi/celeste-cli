@@ -112,6 +112,10 @@ type SetupOptions struct {
 	// (non-interactive modes never approve, F0); nil there means a terminal
 	// prompt when stdin and stderr are terminals.
 	Approve hooks.ApproveFunc
+	// GlobalMCPOnly skips the workspace's MCP configs in ModeChat too, as
+	// every other mode does: a chat whose user cannot be asked before a
+	// repo's server starts (ACP, where the editor passes its own servers).
+	GlobalMCPOnly bool
 }
 
 // Setup builds the registry, MCP clients, custom skills, permission checker,
@@ -289,12 +293,12 @@ func (e *Env) RefreshDiscovery() {
 }
 
 // setupMCP starts the configured MCP servers. Only the TUI loads workspace
-// configs (<ws>/.mcp.json, <ws>/.celeste/mcp.json): every other mode runs
-// without an interactive user, and a repo's config would otherwise run an
-// arbitrary command unasked.
+// configs (<ws>/.mcp.json, <ws>/.celeste/mcp.json), and not with
+// GlobalMCPOnly: every other mode runs without an interactive user, and a
+// repo's config would otherwise run an arbitrary command unasked.
 func (e *Env) setupMCP(ws, home string) {
 	paths := mcp.DiscoverConfigPaths(ws, home)
-	if e.Mode != ModeChat {
+	if e.Mode != ModeChat || e.opts.GlobalMCPOnly {
 		paths = e.globalMCPConfigs(paths, home)
 	}
 	e.MCP = mcp.NewManagerMulti(paths, e.Registry)
