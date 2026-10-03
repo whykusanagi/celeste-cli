@@ -67,3 +67,20 @@ func TestCheckRepoSandboxRefusesSymlinks(t *testing.T) {
 		t.Fatal("a symlinked .celeste directory is refused")
 	}
 }
+
+func TestSourceFileStripsTheTrustSuffix(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".celeste", "config.json")
+	g := filepath.Join(t.TempDir(), ".grimoire")
+	for _, tc := range []struct {
+		src  Source
+		want string
+	}{
+		{SandboxSource(p, `{"enabled":false}`), p},
+		{Source{Path: g + streamRulesSuffix, Kind: KindRepoStreamRules}, g},
+		{Source{Path: p, Kind: KindRepo}, p},
+	} {
+		if got := SourceFile(tc.src); got != tc.want {
+			t.Errorf("SourceFile(%q) = %q, want %q", tc.src.Path, got, tc.want)
+		}
+	}
+}

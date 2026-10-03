@@ -53,7 +53,13 @@ func testConfig(srv *fakeprovider.Server, maxIter int) func() (*config.Config, e
 
 func newTestClient(t *testing.T, cfg func() (*config.Config, error)) *testClient {
 	t.Helper()
-	home := t.TempDir()
+	return newTestClientIn(t, cfg, t.TempDir())
+}
+
+// newTestClientIn starts an agent and its client with home as HOME: a
+// second agent in the same home sees the first one's sessions.
+func newTestClientIn(t *testing.T, cfg func() (*config.Config, error), home string) *testClient {
+	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	inR, inW := io.Pipe()
@@ -227,4 +233,16 @@ func (c *testClient) agentText() string {
 		}
 	}
 	return b.String()
+}
+
+// updateKinds is the sessionUpdate of every recorded update, in order.
+func (c *testClient) updateKinds() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.updates))
+	for _, u := range c.updates {
+		k, _ := u["sessionUpdate"].(string)
+		out = append(out, k)
+	}
+	return out
 }
