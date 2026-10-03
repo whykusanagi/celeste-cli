@@ -16,6 +16,7 @@ Core docs for the Go CLI agent. Upgrading from 1.x: [MIGRATING-2.0.md](../MIGRAT
 - [SANDBOX.md](SANDBOX.md): The optional OS sandbox for `bash`.
 - [SUBAGENTS.md](SUBAGENTS.md): Typed subagents.
 - [STEERING.md](STEERING.md): Stream rules.
+- [PLAN_MODE.md](PLAN_MODE.md): `/plan` and `celeste plan`.
 
 ## Setup
 - [ALCHEMY_SETUP.md](ALCHEMY_SETUP.md) | [IPFS_SETUP.md](IPFS_SETUP.md) | [VERTEX_AI_SETUP.md](VERTEX_AI_SETUP.md)

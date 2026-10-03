@@ -29,10 +29,11 @@ func TestMigratingCoversEveryBreakingChange(t *testing.T) {
 		`"trusted": true`,         // W4a-3
 		"sandbox.enabled",         // W4c-2
 		"/rewind", "/fork",        // W4d-1
-		"celeste acp",      // W4f
-		"## Images",        // #239
-		"permissions.json", // F2c
-		"UserPromptSubmit", // F2e
+		"celeste acp",        // W4f
+		"## Images",          // #239
+		"permissions.json",   // F2c
+		"UserPromptSubmit",   // F2e
+		"/plan", "plan.json", // W4e-2
 	} {
 		if !strings.Contains(doc, must) {
 			t.Errorf("MIGRATING-2.0.md does not mention %q", must)
