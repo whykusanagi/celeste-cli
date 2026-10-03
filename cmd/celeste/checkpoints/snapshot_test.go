@@ -202,6 +202,58 @@ func TestRewindTo(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// /rewind (2.0 W4 ruling 5): from the first entry of any of the IDs on;
+// check sees what would be undone and can stop it; IDs with no entry
+// undo nothing.
+func TestRewindToAnyIf(t *testing.T) {
+	sm, dir := store(t)
+	f := filepath.Join(dir, "a.txt")
+	write(t, f, "v0")
+	for i, id := range []string{"call_1", "call_2", "call_3"} {
+		c, err := sm.Checkpoint(f, id)
+		require.NoError(t, err)
+		write(t, f, fmt.Sprintf("v%d", i+1))
+		require.NoError(t, c.Commit())
+	}
+	undone, err := sm.RewindToAnyIf([]string{"read_9"}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, undone)
+
+	stop := errors.New("stop")
+	var seen []Entry
+	_, err = sm.RewindToAnyIf([]string{"call_3", "call_2"}, func(es []Entry) error { seen = es; return stop })
+	assert.ErrorIs(t, err, stop)
+	require.Len(t, seen, 2)
+	assert.Equal(t, "call_2", seen[0].MessageID)
+	assert.Equal(t, "v3", read(t, f), "a refused rewind changes nothing")
+	require.Len(t, sm.Entries(), 3)
+
+	undone, err = sm.RewindToAnyIf([]string{"call_3", "call_2"}, nil)
+	require.NoError(t, err)
+	require.Len(t, undone, 2)
+	assert.Equal(t, "v1", read(t, f))
+}
+
+// A missing backup stops a rewind before it restores anything.
+func TestRewindToAnyIfChecksBackupsFirst(t *testing.T) {
+	sm, dir := store(t)
+	a, b := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
+	write(t, a, "a0")
+	write(t, b, "b0")
+	for _, c := range []struct{ path, id, after string }{{a, "call_1", "a1"}, {b, "call_2", "b1"}} {
+		cp, err := sm.Checkpoint(c.path, c.id)
+		require.NoError(t, err)
+		write(t, c.path, c.after)
+		require.NoError(t, cp.Commit())
+	}
+	es := sm.Entries()
+	require.NoError(t, os.Remove(filepath.Join(sm.Dir(), es[0].Backup)))
+	_, err := sm.RewindToAnyIf([]string{"call_1"}, nil)
+	require.Error(t, err)
+	assert.Equal(t, "b1", read(t, b), "nothing is restored when a backup is missing")
+	assert.Len(t, sm.Entries(), 2)
+}
+
 // #200: the files-modified list.
 func TestFilesAreSortedAndUnique(t *testing.T) {
 	sm, dir := store(t)
@@ -749,4 +801,49 @@ func TestRestoreDoesNotWriteInPlaceOnOtherTempErrors(t *testing.T) {
 	_, err := sm.RevertLast()
 	assert.ErrorIs(t, err, noSpace)
 	assert.Equal(t, "after", read(t, f))
+}
+
+// W4 review 4: the store remembers which calls' entries the cap evicted,
+// so a rewind can say that part of it was too old to restore.
+func TestEvictedRemembersEvictedCalls(t *testing.T) {
+	sm, dir := store(t)
+	sm.maxCount = 2
+	f := filepath.Join(dir, "a.txt")
+	for i := 1; i <= 4; i++ {
+		write(t, f, fmt.Sprintf("v%d", i))
+		c, err := sm.Checkpoint(f, fmt.Sprintf("call_%d", i))
+		require.NoError(t, err)
+		require.NoError(t, c.Commit())
+	}
+	assert.True(t, sm.Evicted([]string{"call_9", "call_2"}))
+	assert.False(t, sm.Evicted([]string{"call_3", "call_4", "call_9"}))
+	assert.False(t, sm.Evicted(nil))
+	assert.True(t, newSnapshotManagerWithBase(sm.Dir()).Evicted([]string{"call_1"}), "the record is on disk")
+	assert.Len(t, backups(t, sm.Dir()), 2, "the record is not a backup")
+
+	_, err := sm.RewindToAnyIf([]string{"call_2", "call_3", "call_4"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "v3", read(t, f), "the oldest remaining match is restored")
+}
+
+func TestEvictedRecordIsBounded(t *testing.T) {
+	sm, dir := store(t)
+	sm.maxCount = 1
+	f := filepath.Join(dir, "a.txt")
+	for i := 0; i < maxEvictedIDs+5; i++ {
+		write(t, f, "x")
+		c, err := sm.Checkpoint(f, fmt.Sprintf("call_%d", i))
+		require.NoError(t, err)
+		require.NoError(t, c.Commit())
+	}
+	assert.False(t, sm.Evicted([]string{"call_0"}), "the oldest IDs drop out of the record")
+	assert.True(t, sm.Evicted([]string{fmt.Sprintf("call_%d", maxEvictedIDs+3)}))
+}
+
+// A store with no directory reports ErrDisabled for a rewind.
+func TestDisabledStoreRewindIsErrDisabled(t *testing.T) {
+	sm := newSnapshotManagerWithBase("")
+	_, err := sm.RewindToAnyIf([]string{"call_1"}, nil)
+	assert.ErrorIs(t, err, ErrDisabled)
+	assert.False(t, sm.Evicted([]string{"call_1"}))
 }

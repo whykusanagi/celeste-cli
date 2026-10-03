@@ -3,11 +3,15 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-var errCheckpointsOff = errors.New("file checkpoints are off in this session")
+// errCheckpointsOff is the TUI's sentinel, so /rewind can tell "off" from
+// a failed restore.
+var errCheckpointsOff = tui.ErrCheckpointsOff
 
 // undoWarning is a change /undo refused to undo, and the file's state then.
 type undoWarning struct {
@@ -75,4 +79,91 @@ func (a *TUIClientAdapter) SessionChanges() (string, error) {
 		return "", err
 	}
 	return checkpoints.FormatChanges(changes, a.workspace), nil
+}
+
+// rewindWarning is a change /rewind refused to overwrite, and the files'
+// states then.
+type rewindWarning struct {
+	first  checkpoints.Entry
+	states map[string]checkpoints.FileState
+}
+
+// RewindTo implements tui.Checkpointer (/rewind, 2.0 W4 ruling 5): every
+// change from the first one made by any of callIDs onward is undone,
+// newest first, and the files restored are returned. When none of the
+// calls changed a file nothing happens. As with /undo, when a file is no
+// longer as celeste's last change left it, the first /rewind leaves
+// everything alone and says so; the same /rewind again, with the files
+// still as warned about, overwrites them.
+func (a *TUIClientAdapter) RewindTo(callIDs []string) (tui.RewindResult, error) {
+	if a.snapshots == nil {
+		return tui.RewindResult{}, errCheckpointsOff
+	}
+	confirm := a.rewindConfirm
+	a.rewindConfirm = nil
+	undone, err := a.snapshots.RewindToAnyIf(callIDs, func(es []checkpoints.Entry) error {
+		// The newest entry of each file is the change the file should
+		// still show.
+		newest := map[string]checkpoints.Entry{}
+		var order []string
+		for _, e := range es {
+			if _, ok := newest[e.Path]; !ok {
+				order = append(order, e.Path)
+			}
+			newest[e.Path] = e
+		}
+		states := map[string]checkpoints.FileState{}
+		var changed []checkpoints.Entry
+		for _, p := range order {
+			e := newest[p]
+			now, ch, err := checkpoints.Changed(e)
+			if err != nil {
+				return err
+			}
+			states[p] = now
+			if ch {
+				changed = append(changed, e)
+			}
+		}
+		if len(changed) == 0 {
+			return nil
+		}
+		if confirm != nil && checkpoints.SameEntry(confirm.first, es[0]) && sameStates(confirm.states, states) {
+			return nil
+		}
+		a.rewindConfirm = &rewindWarning{first: es[0], states: states}
+		var names []string
+		for _, e := range changed {
+			names = append(names, checkpoints.DisplayPath(a.workspace, e.Path))
+		}
+		return fmt.Errorf("%s changed after celeste's last change (or celeste cannot tell); the same /rewind again overwrites them with their state before those turns", strings.Join(names, ", "))
+	})
+	if errors.Is(err, checkpoints.ErrDisabled) {
+		return tui.RewindResult{}, fmt.Errorf("%w: %v", errCheckpointsOff, err)
+	}
+	var res tui.RewindResult
+	seen := map[string]bool{}
+	for _, e := range undone {
+		name := checkpoints.DisplayPath(a.workspace, e.Path)
+		if !seen[name] {
+			seen[name] = true
+			res.Restored = append(res.Restored, name)
+		}
+	}
+	if err == nil {
+		res.Partial = a.snapshots.Evicted(callIDs)
+	}
+	return res, err
+}
+
+func sameStates(a, b map[string]checkpoints.FileState) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || w != v {
+			return false
+		}
+	}
+	return true
 }

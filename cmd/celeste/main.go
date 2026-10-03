@@ -300,6 +300,8 @@ type TUIClientAdapter struct {
 	snapshots   *checkpoints.SnapshotManager
 	workspace   string
 	undoConfirm *undoWarning
+	// rewindConfirm is what a first /rewind refused to overwrite (2.0 W4).
+	rewindConfirm *rewindWarning
 
 	// state renders the authoritative state for summaries (#200); the
 	// chat Env's RenderState. Nil adds none.
@@ -1622,11 +1624,14 @@ func runSingleMessage(message string) {
 
 // SessionManagerAdapter adapts config.SessionManager to tui.SessionManager interface.
 type SessionManagerAdapter struct {
-	manager *config.SessionManager
+	manager   *config.SessionManager
+	workspace string // recorded on every new session (2.0 W4 ruling 1)
 }
 
 func (a *SessionManagerAdapter) NewSession() interface{} {
-	return a.manager.NewSession()
+	s := a.manager.NewSession()
+	s.Workspace = a.workspace
+	return s
 }
 
 func (a *SessionManagerAdapter) Save(session interface{}) error {
