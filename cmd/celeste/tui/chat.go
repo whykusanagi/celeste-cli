@@ -58,6 +58,22 @@ func (m ChatModel) SetSize(width, height int) ChatModel {
 	return m
 }
 
+// shrunk is the panel h rows tall for one frame, without re-rendering its
+// content: View uses it to make room for a modal. A panel following the
+// conversation keeps its newest lines in view.
+func (m ChatModel) shrunk(h int) ChatModel {
+	if !m.ready || h >= m.height {
+		return m
+	}
+	atBottom := m.viewport.AtBottom()
+	m.height = h
+	m.viewport.Height = h
+	if atBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
 // Init implements the Init method for ChatModel (partial tea.Model).
 func (m ChatModel) Init() tea.Cmd {
 	return nil

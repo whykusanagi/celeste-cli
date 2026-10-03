@@ -818,7 +818,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toolProgress.SetSize(m.width, 0)
 		m.contextBar.SetSize(m.width, 0)
 		m.permissionPrompt.SetSize(m.width, 0)
-		m.askPrompt.SetSize(m.width, 0)
+		// The ask modal may take what is left after the fixed rows and a
+		// few rows of chat (or split panel), so a tall question scrolls
+		// inside it instead of running off the top of the screen.
+		m.askPrompt.SetSize(m.width, max(m.height-askReservedRows, 4))
 		m.mcpPanel.SetSize(m.width, m.height-10)
 
 		// Resize split panel if active: available height = total minus header/status/input
@@ -2577,9 +2580,11 @@ func (m AppModel) View() string {
 	sections = append(sections, m.header.View())
 
 	// Chat panel (flexible height) — or session picker when in sessions mode
+	chatIdx := -1
 	if m.viewMode == "sessions" && m.sessionPanel != nil {
 		sections = append(sections, m.sessionPanel.View())
 	} else {
+		chatIdx = len(sections)
 		sections = append(sections, m.chat.View())
 	}
 
@@ -2648,8 +2653,32 @@ func (m AppModel) View() string {
 	// Status bar (fixed, 1 line)
 	sections = append(sections, m.status.View())
 
+	// Overlays (tool cards, modals) come out of the chat's rows: a view
+	// taller than the terminal loses its top lines, header first and then
+	// the start of a modal's question.
+	if chatIdx >= 0 && m.height > 0 {
+		total := 0
+		for _, s := range sections {
+			total += lipgloss.Height(s)
+		}
+		if over := total - m.height; over > 0 {
+			h := max(m.chat.height-over, minChatRowsUnderOverlay)
+			sections[chatIdx] = m.chat.shrunk(h).View()
+		}
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
+
+const (
+	// askReservedRows is what the ask modal leaves on screen: the chat
+	// view's fixed rows (a 2-row header, 3-row input, skills, status line,
+	// hints and status bar: 9) plus a few rows of chat. It also covers the
+	// split-panel view (5 fixed rows, a 5-row panel minimum).
+	askReservedRows = 9 + 3
+	// minChatRowsUnderOverlay is the least chat an overlay leaves.
+	minChatRowsUnderOverlay = 1
+)
 
 func (m AppModel) getAvailableSkills() []SkillDefinition {
 	if m.llmClient == nil {
