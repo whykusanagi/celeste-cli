@@ -25,6 +25,14 @@ type Handler interface {
 	Notify(method string, params json.RawMessage)
 }
 
+// Receiver is an optional Handler hook: Received runs on the read loop when
+// a request arrives, before the goroutine that serves it starts, so a
+// notification read after the request (session/cancel) is handled knowing
+// the request came first. It must not block.
+type Receiver interface {
+	Received(method string, params json.RawMessage)
+}
+
 // RPCError is a JSON-RPC 2.0 error object.
 type RPCError struct {
 	Code    int    `json:"code"`
@@ -273,12 +281,28 @@ func (c *Conn) serveLine(ctx context.Context, line []byte, tooLong bool) {
 	}
 	switch {
 	case m.Method != "" && len(m.ID) > 0:
+		c.received(m)
 		go c.serveRequest(ctx, m)
 	case m.Method != "":
 		c.notify(m)
 	case len(m.ID) > 0:
 		c.deliver(m)
 	}
+}
+
+// received runs the handler's Received hook, if it has one, recovering a
+// panic.
+func (c *Conn) received(m message) {
+	r, ok := c.h.(Receiver)
+	if !ok {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			c.logf("acp: receiving %s panicked: %v", m.Method, p)
+		}
+	}()
+	r.Received(m.Method, m.Params)
 }
 
 // notify runs the Notify handler, recovering a panic as requests do.

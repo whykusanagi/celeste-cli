@@ -118,6 +118,10 @@ func (f *fakeRunner) RunHooks(args []string) {
 	f.lastCall = "hooks"
 	f.lastArgs = args
 }
+func (f *fakeRunner) RunACP(args []string) {
+	f.lastCall = "acp"
+	f.lastArgs = args
+}
 
 func TestRun_NoArgs_LaunchesChatDirectly(t *testing.T) {
 	r := &fakeRunner{hasDefaultConfig: true}

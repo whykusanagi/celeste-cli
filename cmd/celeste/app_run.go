@@ -38,6 +38,7 @@ type commandRunner interface {
 	RunRevert(args []string)
 	RunMCP(args []string)
 	RunHooks(args []string)
+	RunACP(args []string)
 }
 
 type defaultCommandRunner struct{}
@@ -72,6 +73,7 @@ func (defaultCommandRunner) RunPlan(args []string)          { runPlanCommand(arg
 func (defaultCommandRunner) RunRevert(args []string)        { runRevertCommand(args) }
 func (defaultCommandRunner) RunMCP(args []string)           { runMCPCommand(args) }
 func (defaultCommandRunner) RunHooks(args []string)         { runHooksCommand(args) }
+func (defaultCommandRunner) RunACP(args []string)           { runACPCommand(args) }
 
 func main() {
 	// A `go install` build becomes the official release binary first (W5
@@ -154,6 +156,8 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunMCP(cmdArgs)
 	case "hooks":
 		runner.RunHooks(cmdArgs)
+	case "acp":
+		runner.RunACP(cmdArgs)
 	case "update":
 		return runUpdateCommand(cmdArgs, stdout, stderr)
 	case "persona":

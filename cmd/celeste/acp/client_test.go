@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -23,18 +24,30 @@ type rpcReply struct {
 // records session/update notifications and answers permission requests.
 type testClient struct {
 	t       *testing.T
+	agent   *Agent
+	home    string
 	in      io.Writer
 	mu      sync.Mutex
 	nextID  int
 	waiting map[int]chan rpcReply
 	updates []map[string]any
-	// permit answers session/request_permission; nil selects "allow_once".
+	// permit answers session/request_permission; nil selects "allow_once",
+	// and a permit returning nil never answers.
 	permit func(params map[string]any) map[string]any
+	// logs are the agent's log lines.
+	logMu sync.Mutex
+	logs  []string
 }
 
+// testConfig points celeste at srv; a nil srv is for tests that never send
+// a prompt (any request then fails to connect).
 func testConfig(srv *fakeprovider.Server, maxIter int) func() (*config.Config, error) {
+	base := "http://127.0.0.1:1/v1"
+	if srv != nil {
+		base = srv.BaseURL()
+	}
 	return func() (*config.Config, error) {
-		return &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10, MaxToolIterations: maxIter}, nil
+		return &config.Config{APIKey: "k", BaseURL: base, Model: "fake-model", Timeout: 10, MaxToolIterations: maxIter}, nil
 	}
 }
 
@@ -45,15 +58,34 @@ func newTestClient(t *testing.T, cfg func() (*config.Config, error)) *testClient
 	t.Setenv("USERPROFILE", home)
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	agent := NewAgent(Deps{Config: cfg, Sessions: config.NewSessionManager(), Home: home, Logf: t.Logf})
+	c := &testClient{t: t, home: home, in: inW, waiting: map[int]chan rpcReply{}}
+	logf := func(format string, args ...any) {
+		t.Logf(format, args...)
+		c.logMu.Lock()
+		c.logs = append(c.logs, fmt.Sprintf(format, args...))
+		c.logMu.Unlock()
+	}
+	agent := NewAgent(Deps{Config: cfg, Sessions: config.NewSessionManager(), Home: home, Logf: logf})
+	c.agent = agent
 	conn := NewConn(inR, outW, agent)
 	agent.Attach(conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	go conn.Serve(ctx)
-	c := &testClient{t: t, in: inW, waiting: map[int]chan rpcReply{}}
 	t.Cleanup(func() { cancel(); inW.Close(); outR.Close(); agent.Close() })
 	go c.read(bufio.NewReader(outR))
 	return c
+}
+
+// logged reports whether a log line contains sub.
+func (c *testClient) logged(sub string) bool {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	for _, l := range c.logs {
+		if strings.Contains(l, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *testClient) send(v any) {
@@ -86,11 +118,20 @@ func (c *testClient) read(r *bufio.Reader) {
 			c.updates = append(c.updates, m.Params["update"].(map[string]any))
 			c.mu.Unlock()
 		case m.Method == "session/request_permission":
-			answer := map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow_once"}}
-			if c.permit != nil {
-				answer = c.permit(m.Params)
-			}
-			c.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": answer})
+			// Answered off the read loop, as an editor does: a permit that
+			// holds its answer must not stop the client reading.
+			c.mu.Lock()
+			permit := c.permit
+			c.mu.Unlock()
+			go func(id json.RawMessage, params map[string]any) {
+				answer := map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow_once"}}
+				if permit != nil {
+					answer = permit(params)
+				}
+				if answer != nil { // nil: never answer
+					c.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": answer})
+				}
+			}(m.ID, m.Params)
 		case m.Method == "":
 			var id int
 			_ = json.Unmarshal(m.ID, &id)
@@ -145,6 +186,18 @@ func (c *testClient) newSession(ws string) string {
 		SessionID string `json:"sessionId"`
 	}
 	_ = json.Unmarshal(res, &out)
+	return out.SessionID
+}
+
+// sessionIDOf reads session/new's sessionId.
+func sessionIDOf(t *testing.T, res json.RawMessage) string {
+	t.Helper()
+	var out struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil || out.SessionID == "" {
+		t.Fatalf("session/new = %s (%v)", res, err)
+	}
 	return out.SessionID
 }
 
