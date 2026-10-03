@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
 )
 
@@ -31,6 +32,11 @@ type Session struct {
 	UsageMetrics *UsageMetrics `json:"usage_metrics,omitempty"` // Detailed usage tracking
 	Provider     string        `json:"provider,omitempty"`      // Provider (openai, venice, etc)
 	MaxContext   int           `json:"max_context,omitempty"`   // Model's max context window
+
+	// Workspace is the absolute directory the chat ran in (2.0 W4 ruling
+	// 1): `celeste resume` and /session list show this project's
+	// sessions first. Older sessions have none.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // SessionMessage represents a message in a session.
@@ -521,6 +527,7 @@ type SessionSummary struct {
 	UpdatedAt    time.Time      `json:"updated_at"`
 	FirstMessage string         `json:"first_message,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
+	Workspace    string         `json:"workspace,omitempty"`
 }
 
 // Summarize returns a summary of the session.
@@ -532,6 +539,7 @@ func (s *Session) Summarize() SessionSummary {
 		CreatedAt:    s.CreatedAt,
 		UpdatedAt:    s.UpdatedAt,
 		Metadata:     s.Metadata,
+		Workspace:    s.Workspace,
 	}
 
 	// Get first user message as preview
@@ -552,6 +560,65 @@ func (s *Session) Summarize() SessionSummary {
 	}
 
 	return summary
+}
+
+// SetWorkspace records the directory the session runs in.
+func (s *Session) SetWorkspace(ws string) { s.Workspace = ws }
+
+// GetWorkspace is the directory the session ran in ("" for older sessions).
+func (s *Session) GetWorkspace() string { return s.Workspace }
+
+// projectRoot is dir's git root, or dir itself (absolute, cleaned)
+// outside a repository.
+func projectRoot(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return filepath.Clean(dir)
+	}
+	if root, ok := grimoire.GitRoot(abs); ok {
+		return root
+	}
+	return abs
+}
+
+// SameProject reports whether two workspaces are the same project: the
+// same git root, or the same directory when neither is in a repository
+// (2.0 W4 ruling 1). An empty workspace is no project.
+func SameProject(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return projectRoot(a) == projectRoot(b)
+}
+
+// SortForWorkspace splits sessions into ws's project's and the rest, each
+// newest first (2.0 W4 ruling 2).
+func SortForWorkspace(sessions []Session, ws string) (mine, others []Session) {
+	var root string
+	if ws != "" {
+		root = projectRoot(ws)
+	}
+	roots := map[string]string{}
+	for _, s := range sessions {
+		if root != "" && s.Workspace != "" {
+			r, ok := roots[s.Workspace]
+			if !ok {
+				r = projectRoot(s.Workspace)
+				roots[s.Workspace] = r
+			}
+			if r == root {
+				mine = append(mine, s)
+				continue
+			}
+		}
+		others = append(others, s)
+	}
+	newest := func(ss []Session) {
+		sort.SliceStable(ss, func(i, j int) bool { return ss[i].UpdatedAt.After(ss[j].UpdatedAt) })
+	}
+	newest(mine)
+	newest(others)
+	return mine, others
 }
 
 // SetName updates the session name.

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,4 +136,38 @@ func TestGoogleOutboundOmitsAbsentThoughtSignature(t *testing.T) {
 			assert.Empty(t, p.ThoughtSignature)
 		}
 	}
+}
+
+// W4 review 1: every call gets its own ID. Named "call_<tool>", every
+// write_file of a session shared one, and /rewind could not tell the
+// turns' file changes apart.
+func TestGoogleFunctionCallIDsAreUnique(t *testing.T) {
+	backend := &GoogleBackend{}
+	fc := &genai.FunctionCall{Name: "write_file", Args: map[string]any{"path": "a.go"}}
+	a := backend.convertFunctionCallToResult(fc, nil)
+	b := backend.convertFunctionCallToResult(fc, nil)
+	assert.NotEqual(t, a.ID, b.ID)
+	assert.True(t, strings.HasPrefix(a.ID, "call_write_file_"), a.ID)
+
+	withID := backend.convertFunctionCallToResult(&genai.FunctionCall{ID: "fc-123", Name: "ls"}, nil)
+	assert.Equal(t, "fc-123", withID.ID, "an ID the API supplies is kept")
+}
+
+// The function response is named after the function it answers (paired by
+// the call ID), not after the call ID.
+func TestGoogleFunctionResponseNamesTheFunction(t *testing.T) {
+	backend := &GoogleBackend{}
+	contents := backend.convertMessagesToGenAI([]tui.ChatMessage{
+		{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: "call_write_file_17", Name: "write_file", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "call_write_file_17", Content: "ok"},
+		{Role: "tool", ToolCallID: "orphan", Name: "ls", Content: "x"},
+		{Role: "tool", ToolCallID: "call_legacy", Content: "y"},
+	})
+	require.Len(t, contents, 4)
+	names := []string{}
+	for _, c := range contents[1:] {
+		require.NotNil(t, c.Parts[0].FunctionResponse)
+		names = append(names, c.Parts[0].FunctionResponse.Name)
+	}
+	assert.Equal(t, []string{"write_file", "ls", "call_legacy"}, names)
 }

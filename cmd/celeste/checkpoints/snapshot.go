@@ -91,6 +91,11 @@ var errNoCheckpoint = errors.New("no checkpoint")
 const (
 	indexFile         = "index.json"
 	defaultMaxEntries = 100
+	// evictedFile lists the call IDs (MessageID) of entries the cap
+	// evicted, newest last, at most maxEvictedIDs of them: a rewind of
+	// those calls can then say part of it was too old to restore.
+	evictedFile   = "evicted.json"
+	maxEvictedIDs = 1000
 )
 
 // SnapshotManager is one session's checkpoints: its backups and index.json
@@ -244,6 +249,9 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint
 	for _, old := range evicted {
 		sm.removeBackup(old)
 	}
+	if err := sm.recordEvicted(evicted); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: recording evicted checkpoints: %v\n", err)
+	}
 	return &Checkpoint{sm: sm, entry: e}, nil
 }
 
@@ -332,7 +340,7 @@ func (sm *SnapshotManager) RevertLastIf(check func(Entry) error) (Entry, error) 
 // refuses while a write in this process is between Checkpoint and Commit.
 func (sm *SnapshotManager) undoNewest(check func(Entry) error, match func(Entry) bool, none error) (Entry, error) {
 	if sm.dir == "" {
-		return Entry{}, errDisabled
+		return Entry{}, ErrDisabled
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -364,39 +372,142 @@ func (sm *SnapshotManager) undoNewest(check func(Entry) error, match func(Entry)
 // for messageID to the newest (W4's /rewind) and returns them in that
 // order. On an error it stops and returns what it undid so far.
 func (sm *SnapshotManager) RewindTo(messageID string) ([]Entry, error) {
+	if messageID == "" {
+		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
+	}
+	undone, found, err := sm.rewind([]string{messageID}, nil)
+	if err == nil && !found {
+		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
+	}
+	return undone, err
+}
+
+// RewindToAnyIf is RewindTo from the first entry recorded for any of ids
+// (2.0 W4's /rewind, ruling 5). check (when not nil) first sees the
+// entries it would undo, oldest first, under the store's locks; an error
+// from it undoes nothing and is returned. When no entry has one of ids it
+// undoes nothing and returns no error.
+func (sm *SnapshotManager) RewindToAnyIf(ids []string, check func([]Entry) error) ([]Entry, error) {
+	undone, _, err := sm.rewind(ids, check)
+	return undone, err
+}
+
+func (sm *SnapshotManager) rewind(ids []string, check func([]Entry) error) (undone []Entry, found bool, err error) {
 	if sm.dir == "" {
-		return nil, errDisabled
+		return nil, false, ErrDisabled
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			want[id] = true
+		}
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if sm.writeInProgressLocked() {
-		return nil, errWriteInProgress
+		return nil, false, errWriteInProgress
 	}
 	unlock, err := lockSession(sm.dir, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer unlock()
 	sm.reloadLocked()
 	first := -1
 	for i, e := range sm.entries {
-		if messageID != "" && e.MessageID == messageID {
+		if want[e.MessageID] {
 			first = i
 			break
 		}
 	}
 	if first < 0 {
-		return nil, fmt.Errorf("no checkpoint for message %q in this session", messageID)
+		return nil, false, nil
 	}
-	var undone []Entry
+	if check != nil {
+		if err := check(append([]Entry(nil), sm.entries[first:]...)); err != nil {
+			return nil, true, err
+		}
+	}
+	// Every backup must be there before anything is restored, so a
+	// missing one stops the rewind before it starts rather than halfway.
+	for _, e := range sm.entries[first:] {
+		if e.Backup == "" {
+			continue
+		}
+		p, err := sm.backupPath(e)
+		if err == nil {
+			_, err = os.Stat(p)
+		}
+		if err != nil {
+			return nil, true, fmt.Errorf("cannot rewind: the backup of %s is unusable: %w", e.Path, err)
+		}
+	}
+	// A restore that fails stops here: the entries undone so far are gone,
+	// the failed one and older ones stay, so the same rewind again resumes.
 	for i := len(sm.entries) - 1; i >= first; i-- {
 		e := sm.entries[i]
 		if err := sm.undoLocked(i); err != nil {
-			return undone, err
+			return undone, true, err
 		}
 		undone = append(undone, e)
 	}
-	return undone, nil
+	return undone, true, nil
+}
+
+// Evicted reports whether the cap evicted an entry recorded for any of ids
+// (see evictedFile): a rewind of them cannot restore every change.
+func (sm *SnapshotManager) Evicted(ids []string) bool {
+	if sm.dir == "" || len(ids) == 0 {
+		return false
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	gone := map[string]bool{}
+	for _, id := range readEvicted(sm.dir) {
+		gone[id] = true
+	}
+	for _, id := range ids {
+		if id != "" && gone[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// recordEvicted adds the call IDs of evicted entries to evictedFile.
+// Callers hold sm.mu and the session lock.
+func (sm *SnapshotManager) recordEvicted(evicted []Entry) error {
+	var ids []string
+	for _, e := range evicted {
+		if e.MessageID != "" {
+			ids = append(ids, e.MessageID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	all := append(readEvicted(sm.dir), ids...)
+	if len(all) > maxEvictedIDs {
+		all = all[len(all)-maxEvictedIDs:]
+	}
+	data, err := json.Marshal(all)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(filepath.Join(sm.dir, evictedFile), append(data, '\n'), 0o600)
+}
+
+// readEvicted is dir's evictedFile; missing or unreadable is empty.
+func readEvicted(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, evictedFile))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	if json.Unmarshal(data, &ids) != nil {
+		return nil
+	}
+	return ids
 }
 
 // SameEntry reports whether a and b are the same checkpoint.
@@ -642,7 +753,7 @@ var inPlaceWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
 // reads, and no cleanup deletes, a file outside the directory.
 func (sm *SnapshotManager) backupPath(e Entry) (string, error) {
 	b := e.Backup
-	if b == "" || b != filepath.Base(b) || !filepath.IsLocal(b) || strings.EqualFold(b, indexFile) {
+	if b == "" || b != filepath.Base(b) || !filepath.IsLocal(b) || strings.EqualFold(b, indexFile) || strings.EqualFold(b, evictedFile) {
 		return "", fmt.Errorf("invalid backup name %q in the checkpoint index", b)
 	}
 	return filepath.Join(sm.dir, b), nil

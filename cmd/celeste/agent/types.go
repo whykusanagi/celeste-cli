@@ -95,9 +95,10 @@ type Options struct {
 	// registry (Registry.Retain); a call to any other tool fails as unknown.
 	// The parent's registry is never touched. Typed subagents set it (2.0 W4e).
 	ToolFilter func(tools.Tool) bool `json:"-"`
-	// PersonaLevel is the system prompt's persona level: empty is the full
-	// persona; the explore and review subagent types and orchestrator lanes
-	// set prompts.PersonaOff (identity, honesty rule and voice boundary). The
+	// PersonaLevel is the system prompt's persona level: empty is agent
+	// mode's profile (spine, stepped down on a small window, W5); the
+	// explore and review subagent types and orchestrator lanes set
+	// prompts.PersonaOff (identity, honesty rule and voice boundary). The
 	// agent contract stays.
 	PersonaLevel prompts.PersonaLevel `json:"-"`
 	// PromptFunc asks the user to approve a tool the permission policy

@@ -272,6 +272,8 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 	case HookWarningMsg:
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
+	case PersonaNoticeMsg:
+		m.chat = m.chat.AddSystemMessage(msg.Text)
 	case RuleInterruptMsg:
 		if !m.interrupted {
 			if m.typingContent != "" {

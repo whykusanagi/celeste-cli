@@ -82,6 +82,7 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 		home:      e.home,
 		shared:    e.shared,
 		nested:    true,
+		window:    e.window,
 	}
 	if opts.Warn != nil {
 		c.opts.Warn, c.opts.Notice = opts.Warn, opts.Warn
@@ -146,6 +147,7 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 		return c, nil
 	}
 	c.ProjectContext = e.ProjectContext
+	c.Memories = e.Memories
 	c.Rules = e.Rules
 	c.GitSnapshot = c.captureGit(ws)
 	if e.Indexer != nil {

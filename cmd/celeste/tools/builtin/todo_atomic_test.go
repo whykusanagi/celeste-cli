@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 )
@@ -32,6 +33,11 @@ func TestTodoStoreSaveIsAtomic(t *testing.T) {
 		data, err := os.ReadFile(path)
 		var v map[string]any
 		if err != nil {
+			// Windows refuses a read while the rename replaces the file
+			// (a sharing violation): the reader saw nothing, not a torn file.
+			if runtime.GOOS == "windows" {
+				continue
+			}
 			failure = "read: " + err.Error()
 		} else if err := json.Unmarshal(data, &v); err != nil {
 			failure = fmt.Sprintf("torn tasks.json (%d bytes): %v", len(data), err)
