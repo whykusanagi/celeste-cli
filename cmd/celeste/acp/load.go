@@ -17,7 +17,7 @@ func (a *Agent) loadSession(ctx context.Context, p LoadSessionParams) *RPCError 
 		return rerr
 	}
 	if s := a.session(p.SessionID); s != nil {
-		return a.replayOpen(s, p)
+		return a.replayOpen(ctx, s, cwd, p)
 	}
 	store, err := a.loadStore(p.SessionID)
 	if err != nil {
@@ -44,7 +44,7 @@ func (a *Agent) loadSession(ctx context.Context, p LoadSessionParams) *RPCError 
 		s.close()
 		// A concurrent load of the same session won, or the agent closed.
 		if open := a.session(p.SessionID); open != nil {
-			return a.replayOpen(open, p)
+			return a.replayOpen(ctx, open, cwd, p)
 		}
 		return &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
 	}
@@ -52,14 +52,30 @@ func (a *Agent) loadSession(ctx context.Context, p LoadSessionParams) *RPCError 
 	return nil
 }
 
-// replayOpen replays a session this agent has open. Its Env stays: the
-// editor's MCP servers were connected at session/new.
-func (a *Agent) replayOpen(s *session, p LoadSessionParams) *RPCError {
-	if s.running.Load() {
+// replayOpen replays a session this agent has open. Its Env is rebuilt
+// when the editor sends another cwd or MCP servers of its own; otherwise it
+// stays. The session is held like a running prompt meanwhile, so no prompt
+// interleaves with the replay.
+func (a *Agent) replayOpen(ctx context.Context, s *session, cwd string, p LoadSessionParams) *RPCError {
+	if !a.hold() {
+		return &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
+	}
+	defer a.prompts.Done()
+	if !s.running.CompareAndSwap(false, true) {
 		return &RPCError{Code: CodeBusy, Message: "a prompt is already running in this session"}
 	}
-	if len(p.McpServers) > 0 {
-		a.logf("acp: session %s is already open; the MCP servers sent with session/load are ignored", s.id)
+	defer s.running.Store(false)
+	if cwd != s.cwd || len(p.McpServers) > 0 {
+		oldCwd, oldServers := s.cwd, s.mcpServers
+		s.cwd, s.mcpServers = cwd, p.McpServers
+		if rerr := s.rebuildEnv(ctx, a); rerr != nil {
+			s.cwd, s.mcpServers = oldCwd, oldServers
+			return rerr
+		}
+		s.store.SetWorkspace(cwd)
+		if err := a.saveStore(s.store); err != nil {
+			a.logf("acp: session %s: saving the loaded session: %v", s.id, err)
+		}
 	}
 	s.mu.Lock()
 	history := append([]tui.ChatMessage(nil), s.history...)
@@ -70,16 +86,12 @@ func (a *Agent) replayOpen(s *session, p LoadSessionParams) *RPCError {
 
 // replay sends the conversation to the editor (ruling 11): user prompts as
 // user_message_chunk, assistant text as agent_message_chunk, and each tool
-// call with its result as one tool_call, completed or failed. Messages the
-// chat hides (summaries, the app's directives) are not shown.
+// call with its result as one tool_call, completed or failed. A call's
+// result is looked up among the tool messages right after it, so a call ID
+// a provider reused in another turn never borrows that turn's result.
+// Messages the chat hides (summaries, the app's directives) are not shown.
 func (s *session) replay(a *Agent, msgs []tui.ChatMessage) {
-	results := map[string]tui.ChatMessage{}
-	for _, m := range msgs {
-		if m.Role == "tool" && m.ToolCallID != "" {
-			results[m.ToolCallID] = m
-		}
-	}
-	for _, m := range msgs {
+	for i, m := range msgs {
 		if hidden, _ := m.Metadata["hidden"].(bool); hidden {
 			continue
 		}
@@ -91,6 +103,12 @@ func (s *session) replay(a *Agent, msgs []tui.ChatMessage) {
 		case "assistant":
 			if m.Content != "" {
 				s.update(a, AgentMessageChunk(m.Content))
+			}
+			results := map[string]tui.ChatMessage{}
+			for j := i + 1; j < len(msgs) && msgs[j].Role == "tool"; j++ {
+				if _, seen := results[msgs[j].ToolCallID]; !seen {
+					results[msgs[j].ToolCallID] = msgs[j]
+				}
 			}
 			for _, tc := range m.ToolCalls {
 				s.update(a, s.replayedCall(tc, results))
@@ -110,15 +128,15 @@ func (s *session) replayedCall(tc tui.ToolCallInfo, results map[string]tui.ChatM
 		ToolCallID:    tc.ID,
 		Title:         toolTitle(tc.Name, input),
 		Kind:          toolKind(tc.Name),
-		Status:        ToolStatusCompleted,
+		Status:        ToolStatusFailed, // no saved result: it never finished
 		Locations:     toolLocations(input, s.cwd),
 	}
 	if input != nil {
 		call.RawInput = input
 	}
 	if r, ok := results[tc.ID]; ok {
-		if failedResult(r.Content) {
-			call.Status = ToolStatusFailed
+		if !failedResult(r.Content) {
+			call.Status = ToolStatusCompleted
 		}
 		call.Content = []ToolCallContent{TextToolContent(capText(r.Content, maxToolContent))}
 	}

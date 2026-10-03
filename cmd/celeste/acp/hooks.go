@@ -56,7 +56,9 @@ func (s *session) askHooks(ctx context.Context, a *Agent) {
 			a.logf("acp: session %s: storing trust for %s: %v (trusted for this session only)", s.id, src.Path, err)
 		}
 	}
-	s.rebuildEnv(context.WithoutCancel(ctx), a)
+	if rerr := s.rebuildEnv(context.WithoutCancel(ctx), a); rerr != nil {
+		a.logf("acp: session %s: rebuilding the session with the trusted hooks: %s", s.id, rerr.Message)
+	}
 }
 
 // askHook sends one hook file's question. ok is false when the question
@@ -105,16 +107,16 @@ func (s *session) askHook(ctx context.Context, a *Agent, src hooks.Source) (trus
 	return out.Outcome.OptionID == OptionAllowAlways, true
 }
 
-// rebuildEnv runs the session's Setup again (the trusted hooks now load)
-// and closes the old Env. A failure keeps the old Env. The small-window
-// notice is not shown twice.
-func (s *session) rebuildEnv(ctx context.Context, a *Agent) {
+// rebuildEnv runs the session's Setup again (trusted hooks now load; a
+// new cwd or new editor MCP servers apply) and closes the old Env. A
+// failure keeps the old Env. The small-window notice is not shown twice.
+// Only the goroutine holding the session (s.running) calls it.
+func (s *session) rebuildEnv(ctx context.Context, a *Agent) *RPCError {
 	s.mu.Lock()
 	old, shown := s.env, s.notice == ""
 	s.mu.Unlock()
 	if rerr := a.setupEnv(ctx, s); rerr != nil {
-		a.logf("acp: session %s: rebuilding the session with the trusted hooks: %s", s.id, rerr.Message)
-		return
+		return rerr
 	}
 	if shown {
 		s.mu.Lock()
@@ -124,4 +126,5 @@ func (s *session) rebuildEnv(ctx context.Context, a *Agent) {
 	if old != nil {
 		old.Close()
 	}
+	return nil
 }

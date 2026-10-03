@@ -9,6 +9,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
 func loadParams(sid, cwd string) map[string]any {
@@ -149,5 +150,56 @@ func TestLoadOpenSessionReplays(t *testing.T) {
 	}
 	if got := len(c.updatesOf(UpdateAgentMessageChunk)); got != n+1 || len(c.updatesOf(UpdateUserMessageChunk)) != 1 {
 		t.Fatalf("replay of an open session: %v", c.updateKinds())
+	}
+}
+
+// Loading an open session from another folder rebuilds its Env there: the
+// next prompt never works on the old tree.
+func TestLoadOpenSessionInAnotherCwdRebuilds(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	sid := c.newSession(t.TempDir())
+	ws2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws2, ".grimoire"), []byte("## Bindings\n- second-folder-marker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.call("session/load", loadParams(sid, ws2)); err != nil {
+		t.Fatal(err)
+	}
+	s := c.agent.session(sid)
+	s.mu.Lock()
+	cwd, prompt := s.cwd, s.systemPrompt
+	s.mu.Unlock()
+	if cwd != filepath.Clean(ws2) || !strings.Contains(prompt, "second-folder-marker") {
+		t.Fatalf("after load in another folder: cwd = %q, prompt has marker = %v", cwd, strings.Contains(prompt, "second-folder-marker"))
+	}
+	if got, _ := config.NewSessionManager().Load(sid); got == nil || got.GetWorkspace() != filepath.Clean(ws2) {
+		t.Fatal("the session record's workspace was not updated")
+	}
+}
+
+// Replay pairs a call with the result right after it: a call ID reused in
+// a later turn keeps its own result, and a call without a saved result
+// replays as failed.
+func TestReplayPairsResultsByTurn(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	s := c.agent.session(c.newSession(t.TempDir()))
+	call := func(id string) []tui.ToolCallInfo {
+		return []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: `{"path":"a.txt"}`}}
+	}
+	s.replay(c.agent, []tui.ChatMessage{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: call("c1")},
+		{Role: "tool", ToolCallID: "c1", Content: "first-result"},
+		{Role: "assistant", ToolCalls: call("c1")},
+		{Role: "tool", ToolCallID: "c1", Content: "second-result"},
+		{Role: "assistant", ToolCalls: call("c2")},
+	})
+	waitFor(t, func() bool { return len(c.updatesOf(UpdateToolCall)) == 3 })
+	calls := c.updatesOf(UpdateToolCall)
+	if !strings.Contains(mustJSON(calls[0]["content"]), "first-result") || !strings.Contains(mustJSON(calls[1]["content"]), "second-result") {
+		t.Fatalf("results paired wrongly: %+v", calls)
+	}
+	if calls[0]["status"] != "completed" || calls[2]["status"] != "failed" {
+		t.Fatalf("statuses = %v %v", calls[0]["status"], calls[2]["status"])
 	}
 }

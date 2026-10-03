@@ -237,20 +237,29 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams) (any, *RPCError) {
 		s.dequeue()
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 	}
-	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
+	if !a.hold() {
 		s.dequeue()
 		return nil, &RPCError{Code: CodeInternal, Message: "the agent is shutting down"}
 	}
-	a.prompts.Add(1)
-	a.mu.Unlock()
 	defer a.prompts.Done()
 	res, rerr := s.prompt(ctx, a, text)
 	if rerr != nil {
 		return nil, rerr
 	}
 	return res, nil
+}
+
+// hold counts work on a session that Close must wait for (a prompt, or a
+// load rebuilding an open session's Env); false once the agent is closed.
+// The caller calls a.prompts.Done when it ends.
+func (a *Agent) hold() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.prompts.Add(1)
+	return true
 }
 
 // connection is the attached Conn, or nil.
