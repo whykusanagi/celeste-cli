@@ -332,6 +332,29 @@ func TestMCPChatStalenessIsPerCall(t *testing.T) {
 	}
 }
 
+// The MCP chat path runs patch_file through the same parser: a model that
+// fills every schema field (Sakana Fugu) sends edits:[] beside
+// old_string/new_string, then old_string:"" beside edits[]; both edit.
+func TestMCPChatPatchWithEmptyOtherShape(t *testing.T) {
+	fp := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: `{"path":"a.txt"}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p1", Name: "patch_file", Args: `{"path":"a.txt","old_string":"one","new_string":"ONE","replace_all":false,"edits":[]}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p2", Name: "patch_file", Args: `{"path":"a.txt","old_string":"","new_string":"","replace_all":false,"edits":[{"old_string":"two","new_string":"TWO","replace_all":false}]}`}}},
+		fakeprovider.Turn{Text: "patched"},
+	)
+	cfg, ws := contractCfg(t, fp)
+	target := filepath.Join(ws, "a.txt")
+	writeFile(t, target, "one\ntwo\n")
+	srv := chatServer(t, cfg)
+	if _, err := srv.runChatMode(context.Background(), cfg.CelesteConfig, "patch", ws); err != nil {
+		t.Fatal(err)
+	}
+	reqs := fp.Requests()
+	if b, _ := os.ReadFile(target); string(b) != "ONE\nTWO\n" {
+		t.Fatalf("file = %q (p1 %q, p2 %q)", b, toolContent(reqs[2], "p1"), toolContent(reqs[3], "p2"))
+	}
+}
+
 // A call cancelled before it starts spends no provider request and builds
 // no Env.
 func TestMCPChatCancelledCallIsAChatError(t *testing.T) {
