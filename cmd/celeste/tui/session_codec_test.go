@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 )
 
 // Sessions keep tool calls, tool results and the hidden/compacted flags, so

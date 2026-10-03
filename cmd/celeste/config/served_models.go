@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // ModelPinned reports whether model resolution is off for this config:

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/costs"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/memories"
 )
 
 func runCostsCommand(args []string) {

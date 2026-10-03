@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	ctxmgr "github.com/whykusanagi/celeste-cli/cmd/celeste/context"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 )
 
 // A fresh profile inherits the seed default's model, so pointing one at a local

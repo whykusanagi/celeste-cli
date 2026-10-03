@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // lateRunner emits two events during RunGoal and more from a goroutine it

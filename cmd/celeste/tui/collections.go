@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/collections"
 )
 
 // CollectionsModel is the TUI model for collections management

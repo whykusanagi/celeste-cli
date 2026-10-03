@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
 )
 
 // laneKeywords maps keyword → lane. First match wins.

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // GlobalAnalytics tracks cumulative usage across all sessions

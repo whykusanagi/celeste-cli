@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing/fstest"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt"
 )
 
 // Key is the public test key. It is not, and must never become, the real

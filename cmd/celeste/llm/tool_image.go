@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // toolImage is the image a tool result carries in its metadata (type

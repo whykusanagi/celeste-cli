@@ -17,16 +17,16 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/commands"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/textutil"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/collections"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/venice"
 )
 
 // The typing animation ticks at 20fps; typing_speed (see typing_settings.go,

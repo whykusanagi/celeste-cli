@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/collections"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/collections"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // HandleCollectionsCommand handles the collections command and its subcommands.

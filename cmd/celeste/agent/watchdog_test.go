@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // The watchdog's oracle is built only when the watchdog is on or in

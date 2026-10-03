@@ -11,7 +11,7 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // OpenAIBackend implements LLMBackend using the go-openai SDK.

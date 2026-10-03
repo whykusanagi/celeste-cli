@@ -17,7 +17,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 // Notifier sends a single JSON-RPC notification back to the MCP client.

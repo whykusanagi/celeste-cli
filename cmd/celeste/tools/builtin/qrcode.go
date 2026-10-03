@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/skip2/go-qrcode"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // QRCodeTool generates QR codes from text.

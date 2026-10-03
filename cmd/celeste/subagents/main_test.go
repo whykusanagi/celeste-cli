@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gittest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/hooktest"
 )
 
 func TestMain(m *testing.M) {

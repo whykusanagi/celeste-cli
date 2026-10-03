@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
 )
 
 // RenderCodeGraphConstellation produces a structured dependency tree visualization

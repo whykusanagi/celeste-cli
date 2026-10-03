@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate/selfupdatetest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate/selfupdatetest"
 )
 
 const upTag = "v2.0.0"

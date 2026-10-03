@@ -13,7 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt"
 )
 
 // Profile names one celeste-persona-container CLI build (W5, #173).
@@ -49,7 +49,7 @@ func (p *PersonaProfile) Tokens() int { return len(p.SystemPrompt) / 4 }
 // personaKey is the persona key, 64 hex characters. Only official release
 // builds set it:
 //
-//	-ldflags "-X github.com/whykusanagi/celeste-cli/cmd/celeste/prompts.personaKey=…"
+//	-ldflags "-X github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts.personaKey=…"
 //
 // (release.yml, from the CELESTE_PERSONA_KEY secret, with -trimpath so the
 // toolchain does not copy it into the build info). Source builds leave it

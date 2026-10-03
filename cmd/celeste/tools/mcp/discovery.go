@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // discoverAndRegister queries the MCP server for available tools via

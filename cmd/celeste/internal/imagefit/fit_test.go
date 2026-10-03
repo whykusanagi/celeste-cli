@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit/imagefittest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit/imagefittest"
 )
 
 func dims(t *testing.T, data []byte) (int, int) {

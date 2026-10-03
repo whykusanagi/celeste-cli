@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 )
 
 // A synchronous shadow report (the MCP chat's) asks Jev under the

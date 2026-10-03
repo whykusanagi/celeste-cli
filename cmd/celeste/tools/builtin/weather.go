@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // WeatherTool gets weather forecast for a location.

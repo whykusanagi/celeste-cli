@@ -10,8 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts/personacrypt/personacrypttest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/personacrypt/personacrypttest"
 )
 
 // useTestPersona installs the synthetic persona sealed under the public

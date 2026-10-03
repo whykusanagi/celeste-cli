@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // FindToolsTool lets the model search for and activate additional tools by

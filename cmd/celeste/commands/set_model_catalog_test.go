@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/providers"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 func veniceCatalogForTest(t *testing.T) {

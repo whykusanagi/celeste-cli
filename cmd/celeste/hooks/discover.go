@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
 
 // maxSourceBytes caps how much of a hook or grimoire file is read.

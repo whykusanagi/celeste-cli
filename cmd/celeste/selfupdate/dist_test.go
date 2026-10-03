@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate/selfupdatetest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate/selfupdatetest"
 )
 
 func writeDist(t *testing.T, files map[string][]byte) string {

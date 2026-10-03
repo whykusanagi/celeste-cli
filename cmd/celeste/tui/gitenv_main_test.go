@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gittest"
 )
 
 // TestMain isolates git: tests and the code under test run git, which must

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/checkpoints"
 )
 
 // patchEnv is a workspace with a tracker that has read every file it wrote.

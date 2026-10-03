@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 )
 
 // hooksCLI is the environment `celeste hooks` runs in, injectable for tests.

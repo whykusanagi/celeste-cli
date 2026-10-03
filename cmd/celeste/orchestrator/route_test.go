@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
 )
 
 // Whole-word matching (2.0 W3): "rust" is not in "trust", "api" not in

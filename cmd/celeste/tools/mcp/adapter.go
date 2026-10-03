@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 // maxToolNameLen is the longest tool name providers accept

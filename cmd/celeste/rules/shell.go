@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellparse"
 )
 
 // buildDirs are build output a project regenerates: removing one inside

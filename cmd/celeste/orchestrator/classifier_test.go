@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/orchestrator"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/orchestrator"
 )
 
 func TestClassifyKeywords(t *testing.T) {

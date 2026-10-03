@@ -3,7 +3,7 @@ package tui
 import (
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // typing_speed is in characters per second, as documented. The animation

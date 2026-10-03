@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellrun"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
 )
 
 // PermissionRequest describes a pending tool invocation that requires user approval.

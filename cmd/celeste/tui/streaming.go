@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui/theme"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui/theme"
 )
 
 // Corruption colors — sourced from the canonical corrupted-theme palette

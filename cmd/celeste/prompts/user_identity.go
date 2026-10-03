@@ -11,7 +11,7 @@ package prompts
 import (
 	"fmt"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // ComposeUserPrompt builds the user-identity prompt block.

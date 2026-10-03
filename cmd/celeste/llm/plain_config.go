@@ -1,6 +1,6 @@
 package llm
 
-import "github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+import "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 
 // Plain returns a copy of c for a one-shot completion that carries its own
 // system prompt (a summary, an oracle question): no xAI collections or

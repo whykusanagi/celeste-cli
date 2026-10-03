@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 )
 
 // A choice outside the question's options is no answer: the caller falls

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/gittest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gittest"
 )
 
 func initRepo(t *testing.T) string {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 )
 
 // guard trips when the same non-empty signature is observed limit times in

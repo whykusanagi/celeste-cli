@@ -32,7 +32,7 @@ GO_LDFLAGS := -X main.CommitSHA=$(COMMIT) $(LDFLAGS)
 # echoes the key. -trimpath keeps it out of the binary's build info, which
 # otherwise records the whole -ldflags string (go version -m).
 PERSONA_KEY_FILE ?= $(HOME)/.celeste/persona.key
-PERSONA_PKG := github.com/whykusanagi/celeste-cli/cmd/celeste/prompts
+PERSONA_PKG := github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts
 PERSONA_LDFLAG = $$(test -r "$(PERSONA_KEY_FILE)" && printf -- '-X $(PERSONA_PKG).personaKey=%s' "$$(tr -d ' \r\n' < "$(PERSONA_KEY_FILE)")")
 PERSONA_SAY = @if test -r "$(PERSONA_KEY_FILE)"; then echo "🔐 persona key found: this build carries the full persona"; else echo "ℹ no persona key: this build runs the public persona"; fi
 

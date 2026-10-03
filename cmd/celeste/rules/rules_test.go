@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/shellparse"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellparse"
 )
 
 func TestParseRuleFile(t *testing.T) {

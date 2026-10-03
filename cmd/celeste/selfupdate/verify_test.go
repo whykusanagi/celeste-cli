@@ -15,7 +15,7 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/selfupdate/selfupdatetest"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/selfupdate/selfupdatetest"
 )
 
 var signedData = []byte("a6cc94fd  celeste-darwin-amd64.tar.gz\n")

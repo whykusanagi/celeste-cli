@@ -2,7 +2,7 @@
 
 ## Bindings
 - This is a Go project
-- Module path: github.com/whykusanagi/celeste-cli
+- Module path: github.com/whykusanagi/celeste-cli/v2
 - Use standard library conventions
 
 ## Rituals

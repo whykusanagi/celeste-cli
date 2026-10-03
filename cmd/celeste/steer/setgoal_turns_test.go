@@ -3,7 +3,7 @@ package steer
 import (
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 )
 
 // A new goal starts a new watchdog history: the same tool call under the

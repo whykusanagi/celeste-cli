@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 )
 
 // CompleteFunc is one small-model call (compact.SummarizeFunc's shape).

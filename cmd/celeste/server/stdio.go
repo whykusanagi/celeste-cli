@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/mcp"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 // serveStdio runs the MCP server over stdin/stdout.

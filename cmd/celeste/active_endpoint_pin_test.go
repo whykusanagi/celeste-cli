@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 )
 
 // CELESTE_PIN_MODEL is read in one place (config.ModelPinned), with or

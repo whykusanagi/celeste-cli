@@ -21,7 +21,7 @@ func TestReleaseWorkflowInjectsAndVerifiesThePersonaKey(t *testing.T) {
 	wf := string(b)
 	for _, want := range []string{
 		"CELESTE_PERSONA_KEY: ${{ secrets.CELESTE_PERSONA_KEY }}",
-		"-X github.com/whykusanagi/celeste-cli/cmd/celeste/prompts.personaKey=",
+		"-X github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts.personaKey=",
 		"go build -trimpath",
 		"./dist/celeste-linux-amd64 persona verify",
 		`info="$(go version -m "$f")"`,

@@ -15,7 +15,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
 )
 
 type bench struct {

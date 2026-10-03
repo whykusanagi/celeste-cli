@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // StreamEventType identifies the kind of streaming event.

@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/decide"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
 )
 
 // The watchdog ballot's questions (spec §5 W3).

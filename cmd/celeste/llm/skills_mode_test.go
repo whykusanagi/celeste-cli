@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 type modeStubTool struct{ name string }

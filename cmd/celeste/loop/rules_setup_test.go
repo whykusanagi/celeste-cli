@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 )
 
 func ruleNames(env *Env) map[string]bool {

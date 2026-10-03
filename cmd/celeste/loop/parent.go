@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // Parent is the Env the nested runners of one owner share (the subagent

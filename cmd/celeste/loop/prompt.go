@@ -3,8 +3,8 @@ package loop
 import (
 	"context"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // UserPromptSubmit runs h's UserPromptSubmit hooks on msg. The chat, MCP

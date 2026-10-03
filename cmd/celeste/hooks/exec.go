@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/proctree"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/proctree"
 )
 
 const (

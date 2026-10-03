@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
 )
 
 func hooksCLIFixture(t *testing.T, in string, interactive bool) (hooksCLI, *bytes.Buffer, *bytes.Buffer) {

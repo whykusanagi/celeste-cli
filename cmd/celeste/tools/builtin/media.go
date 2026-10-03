@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/venice"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/venice"
 )
 
 // UpscaleImageTool upscales images using Venice.ai.

@@ -5,7 +5,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // LLMBackend defines the interface all LLM backends must implement.

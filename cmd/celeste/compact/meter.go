@@ -3,7 +3,7 @@ package compact
 import (
 	"encoding/json"
 
-	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // Meter tracks, for one compactor (a chat turn, an agent run, an MCP
