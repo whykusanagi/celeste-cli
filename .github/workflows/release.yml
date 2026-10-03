@@ -214,8 +214,9 @@ jobs:
           Download `celeste-windows-amd64.zip` and extract to a directory in your PATH.
 
           ### Verify Installation
+          Check the signatures and checksums as described in [VERIFY.md](https://github.com/whykusanagi/celeste-cli/blob/main/VERIFY.md), then confirm the official persona:
           ```bash
-          celeste --version
+          celeste persona verify
           ```
 
           ### Changes

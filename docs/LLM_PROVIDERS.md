@@ -1,6 +1,6 @@
-# LLM Providers — Who's Summoning Me Today? 💋
+# LLM Providers
 
-Darlings, v1.16.0 supports **9 chat providers**: eight call tools, and Venice's tool calling depends on the model (checked against the live Venice catalog — some Venice models support tools, some don't). `celeste providers` lists 11, adding DigitalOcean (its tools run in its own cloud) and ElevenLabs (voice). All OpenAI-compatible for my 48 tools. Grok reigns with collections RAG.
+Celeste CLI supports **9 chat providers**: eight call tools, and Venice's tool calling depends on the model (checked against the live Venice catalog — some Venice models support tools, some don't). `celeste providers` lists 11, adding DigitalOcean (its tools run in its own cloud) and ElevenLabs (voice). All OpenAI-compatible for Celeste's 48 tools. Grok reigns with collections RAG.
 
 | Provider | Tools | Collections | Notes |
 |----------|-------|-------------|-------|

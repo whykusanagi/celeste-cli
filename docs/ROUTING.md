@@ -14,7 +14,7 @@ flowchart TD
 
     Dispatch --> Agent["/agent → agent/runtime.go"]
     Dispatch --> Orch["/orchestrate → orchestrator/"]
-    Dispatch --> Plan["/plan → create .celeste/plan.md"]
+    Dispatch --> Plan["/plan → plan mode (approved plan in .celeste/plan.json)"]
     Dispatch --> Graph["/graph → graph browser view"]
     Dispatch --> Index["/index → dependency tree"]
     Dispatch --> Grim["/grimoire → read .grimoire"]

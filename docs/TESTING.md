@@ -1,6 +1,6 @@
-# Celeste's Testing Grimoire
+# Testing Celeste CLI
 
-Chaotic, teasing rituals for Celeste CLI perfection. Test thoroughly or face my wrath, cuties~ 💋
+How the Celeste CLI test suite is organised and run.
 
 ## Table of Contents
 
@@ -321,14 +321,14 @@ go test -v ./cmd/celeste/prompts/ -cover
 ```
 
 **What's tested**:
-- Loading persona essence (embedded and file-based)
-- System prompt generation
-- NSFW mode prompts
+- Encrypted persona against `SOURCE.json`, without a key (`TestPersonaCiphertext*`)
+- Decryption, the public-persona fallback and key-leak checks under a public test key
+- The small-window guard and the composed system prompt: persona first and byte-stable, then sliders and the per-request part (golden files)
 - Content generation prompts (Twitter, TikTok, YouTube, Discord)
-- Prompt consistency and structure
+- Key-gated checks of the real persona (`make persona-check`; skipped in CI)
 
 **Files**:
-- `celeste_test.go` (16 test functions)
+- `celeste_test.go`, `compose_test.go`, `guard_test.go`, `profile_test.go`, `persona_ciphertext_test.go`, `persona_real_test.go` (key-gated), `user_identity_test.go`
 
 ### Venice Package
 

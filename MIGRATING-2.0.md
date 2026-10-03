@@ -1,5 +1,92 @@
 # Migrating to celeste 2.0
 
+Before you start, back up `~/.celeste` (for example `cp -R ~/.celeste ~/.celeste-1x-backup`).
+2.0 removes or renames a few config keys the first time any celeste command
+(`celeste chat`, `celeste config --show`, ...) loads that config file; the
+sections below say which. Then install 2.0 and check it:
+
+```bash
+go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
+which celeste          # the same $GOPATH/bin/celeste (or ~/go/bin/celeste) as 1.x
+celeste version        # prints 2.x
+celeste update         # a go install build: installs the official binary (below)
+celeste persona verify # official persona: ...
+```
+
+## Install path
+
+2.0 moved the Go module to `github.com/whykusanagi/celeste-cli/v2`, so `go install`
+needs the new path:
+
+```bash
+go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
+```
+
+| 1.x | 2.0 |
+|---|---|
+| `go install` on the old path (without `/v2`) at `@latest` | Still installs the newest 1.x release, never 2.0. The last 1.x release prints, at most once a day on stderr, where 2.0 lives (`CELESTE_NO_V2_NOTICE=1` hides it). Install from the `/v2` path above. |
+| A signed binary from the [Releases](https://github.com/whykusanagi/celeste-cli/releases) page | Unchanged. Verify it as described in [VERIFY.md](VERIFY.md). |
+| Go code that imports celeste packages | Change the imports to `github.com/whykusanagi/celeste-cli/v2/cmd/...`. |
+
+## The persona
+
+Celeste's persona is not open source. Official release binaries carry the key that
+decrypts it; every other build runs a short public persona and says so. See
+[docs/PERSONALITY.md](docs/PERSONALITY.md).
+
+| 1.x | 2.0 |
+|---|---|
+| `~/.celeste/celeste_essence.json` | No longer read, and there is no replacement override. celeste logs once that it is ignored; you can delete it. |
+| Every build had the same persona | An official release binary (the Releases page, or a `go install` build after it upgrades itself, below) runs the full persona. A build from a checkout or a fork runs the public persona: one identity line, the rule against claiming an action a tool didn't report, and the voice boundary. It says so once at startup. |
+| No way to check | `celeste persona verify` prints `official persona: ...` and exits 0 on an official binary; it exits 1 and names the reason on any other build. |
+| One persona size for every model | The persona is picked by the model's context window: chat uses the `full` profile, agent runs `spine`. A profile larger than a quarter of the window steps down (`full`, `spine`, `lite`); `lite` stays while it fits in half the window, and below that only the identity, the honesty rule and the voice boundary stay. The chat, `celeste agent` and `celeste message` say once which profile they use. A local model with no `context_limit` counts as 8,192 tokens, so set `context_limit` in your config to the server's real window to get `full`. |
+
+## Self-update (`celeste update`)
+
+| 1.x | 2.0 |
+|---|---|
+| A `go install` build ran as built | The first time it runs a command (any but `help`, `version`, `update` and `persona`), a `go install` build of a release tag downloads the official release binary of the same version, checks its GPG signature and checksums with the release key built into celeste ([VERIFY.md](VERIFY.md) lists the checks), replaces itself and starts again, so it runs the full persona. One line on stderr says so. If the download fails, nothing is replaced, that run uses the public persona, and celeste tries again in an hour. `celeste serve` and `celeste acp` never replace themselves mid-run: they install the update for the next launch. |
+| | Set `CELESTE_NO_AUTO_UPGRADE=1` to keep the binary `go install` built. A build from a checkout (`make install`, `go build`) never downloads anything. |
+| No update command | `celeste update` installs the newest official release; `celeste update --check` only reports it. Neither ever downgrades. On a build from a checkout, both exit 1 and tell you to pull and rebuild. |
+
+## One tool loop
+
+Chat, `celeste agent`, the MCP `celeste` tool (`mode: "chat"` and `mode: "agent"`),
+`/agent`, subagents and `/orchestrate` lanes now run on the same tool loop, with the
+same caps, guards, permissions and hooks. These are intentional changes:
+
+| 1.x | 2.0 |
+|---|---|
+| Each mode had its own loop and rules | One loop. A run stops after 3 identical tool calls in a row, 6 turns without progress, or 3 turns of invalid arguments. The chat's 25-turn cap counts every model turn. |
+| Tool calls ran one at a time (agent runs, MCP chat) | Calls marked safe (reads, searches) run in parallel; their results keep the call order. |
+| One timeout for every tool in agent runs | Each tool has its own timeout: 45 s by default, `bash` and `generate_speech` 5 min, `spawn_agent` 10 min, `audio_render` 2 min. These override `--tool-timeout` in agent runs. |
+| Large tool results were trimmed on every request | A result over 128 KiB is saved whole to a file readable by you only (0600, in a 0700 directory, also in the chat; 1.x wrote 0644 files) and the conversation keeps 128 KiB of it, start and end. See "Sessions and agent checkpoints". |
+| Agent runs and MCP chat loaded only part of your setup | They also load hooks, custom tools (`~/.celeste/skills`), MCP servers from your home configs, memories, the grimoire and the code-graph summary. With 3 or more custom tools or a large MCP server, a run passes 40 tools and switches on tool discovery (`find_tools`). |
+| A repository's `.mcp.json` or `.celeste/mcp.json` started in every mode | Starts only in the interactive chat. Agent runs, MCP chat, `celeste acp` and subagents use your home-level MCP configs only. |
+| MCP chat sent a failed tool call to the model as plain text | It sends `{"error":true,"message":...,"tool":...}`. |
+| `/orchestrate` silently denied every tool that needed approval | It asks with the chat's permission prompt. A headless orchestrator still denies, and says so. "Always allow" from the `/agent` and `/orchestrate` prompts is saved to `permissions.json` like the chat's. |
+| A `permissions.json` that could not be parsed was replaced with defaults on the next save | It is never overwritten; the error shows as a warning. Saves are atomic. |
+| `UserPromptSubmit` hooks ran in the chat only | They also check the goal of `celeste agent`, MCP agent mode and `/agent`, and every MCP chat prompt. A `deny` stops the run before any model call. |
+| Esc during a chat turn could leave half a turn in history | Esc stops the turn; a partial reply stays on screen, and nothing half-finished is saved. Messages typed during a turn join it at the next tool boundary. |
+| `celeste agent` used the chat model | It uses `agent_model` when set, as subagents and MCP agent mode already did. |
+
+## Hooks
+
+1.x ran hooks from grimoire `## Hooks` sections. 2.0 adds `hooks.json`
+(`~/.celeste/hooks.json` or a repository's `.celeste/hooks.json`) with a JSON
+protocol, and asks before running a repository's hooks. See [docs/HOOKS.md](docs/HOOKS.md).
+
+| 1.x | 2.0 |
+|---|---|
+| Grimoire `## Hooks` sections | Still read, as protocol v1 (`sh -c`, as before); no conversion is needed, and your files are never rewritten. `~/.celeste/grimoire.md` is trusted; a project's `.grimoire` hooks need approval. Moving to `hooks.json` is optional. |
+| A repository's hooks ran without asking | The chat asks once per file before it opens and records the approval in `~/.celeste/trusted.json`. Changing a hook's command, matcher, timeout or protocol asks again. |
+| | Non-interactive runs (agent runs, MCP chat, `celeste acp`, piped input) never ask: untrusted repository hooks are skipped with a warning. Approve them ahead of time, from the repository: `celeste hooks list` shows each source and its status, `celeste hooks trust` approves this directory's untrusted sources (asks y/N), and `celeste hooks trust --yes [path]` approves without asking (scripts, CI). |
+| Pre-tool hooks ran after the permission prompt | They run before it, after a deny-only pass, so a hook's side effects can happen even if you then deny the call. A hook's `ask` forces the prompt; in a headless run that means deny. |
+| Hooks inherited every `CELESTE_*` variable and any amount of output | They don't inherit `CELESTE_*` variables. Output over 1 MiB fails the hook, including a v1 hook that exits 0. A tool input too large for the environment is left out (`CELESTE_TOOL_INPUT_TRUNCATED=1`), never cut short. |
+| A grimoire hook with a tab or other control character | Skipped. Hooks run in their source's project root. |
+| Tools could write `~/.celeste/hooks.json`, `grimoire.md` and `trusted.json` | File tools refuse to; reading them still works. `bash` commands that name them are denied (best effort). |
+| Agent runs, MCP chat and subagents ran no hooks | Your global hooks run everywhere; see "One tool loop". |
+
 ## Runtime mode (`classic` / `claw`) is gone
 
 Chat always runs tools in a loop, so `classic` and `claw` were the same program.
@@ -109,6 +196,7 @@ without a warning.
 | `/plan <goal>` wrote `.celeste/plan.md` via the model | `/plan` enters plan mode (read-only tools until you approve a plan); approved plans live in `.celeste/plan.json` and the todo list. See `docs/PLAN_MODE.md`. |
 | `/plan cancel` | Gone. `/plan off` leaves plan mode; delete `.celeste/plan.json` to drop an approved plan. |
 | `celeste plan` read `.celeste/plan.md`, `PLAN.md`, `plan.md`, `CODEBASE_FIX_PLAN.md` or `FIX_PLAN.md` | Shows `.celeste/plan.json` with todo status; a leftover `.celeste/plan.md` is shown with a note when there is no `plan.json`. Other files are no longer read. |
+
 ## Sandbox for `bash`
 
 The sandbox is new and off by default in 2.0, so nothing changes until you turn it on. See [docs/SANDBOX.md](docs/SANDBOX.md).
@@ -117,3 +205,29 @@ The sandbox is new and off by default in 2.0, so nothing changes until you turn 
 |---|---|
 | `bash` commands could write anywhere you can | Unchanged by default. With `"sandbox": {"enabled": true}` in `~/.celeste/config.json`, `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
 | Linux without bubblewrap, Windows | With the sandbox on: one warning (Linux) or log line (Windows), and commands run with the denylist only. |
+
+## Sessions: `/rewind` and `/fork`
+
+| 1.x | 2.0 |
+|---|---|
+| Session lists in creation order | `celeste resume`, `/session list` and the `/session` picker list this project's sessions first, marked `(this project)`. New sessions record their workspace; older session files load unchanged. |
+| No way to take back a prompt | `/rewind [n]` takes back the last n prompts: it restores the files those turns changed from the session's checkpoints, ends the chat before the n-th last prompt and puts that prompt back in the input box. Files changed by `bash` are not restored. It is refused across a `/compact` summary. |
+| | `/fork` continues in a copy of the session; the original stays as it was. |
+
+## Images
+
+| 1.x | 2.0 |
+|---|---|
+| An image too big for the provider failed the whole request (a 400 on Anthropic) | `read_file` reduces an image to a size every provider accepts (5 MB of base64, 8000 px on the long edge) and says it did, or refuses it with the limit named. When a request is sent, each provider's own limits are applied again, and an image that still can't fit is replaced with a short note. |
+| An animated GIF | Sent as its first frame where the provider takes no animation. |
+| WebP | Passed through when the provider accepts it, otherwise refused or replaced with a note. It is never converted: convert it to PNG or JPEG yourself. |
+| Many images in one Anthropic request | More than 20 images caps each at 2000 px. |
+
+## Editors: `celeste acp`
+
+`celeste acp` is new: an [Agent Client Protocol](https://agentclientprotocol.com)
+agent for editors such as Zed and JetBrains, over stdio. Each editor session gets
+the chat's tools, persona, hooks and project context for the editor's folder, and
+is saved as a celeste session. It skips untrusted repository hooks and the
+repository's MCP configs, and asks for tool permissions through the editor.
+Nothing changes for existing setups.

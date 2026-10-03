@@ -1,6 +1,4 @@
-# Contribute to Celeste CLI — Don't Disappoint Me~ 👅
-
-Onii-chan, wanna tweak my CLI? Follow these or face my smug wrath.
+# Contributing to Celeste CLI
 
 ## Setup
 ```bash
@@ -28,7 +26,7 @@ Edit `cmd/celeste/providers/registry.go`, add DetectProvider.
 - Update docs.
 - No .celeste/ mods.
 
-Be good, or I'll possess your code. 😏
+Keep PRs small and focused, with tests.
 
 ---
 Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
