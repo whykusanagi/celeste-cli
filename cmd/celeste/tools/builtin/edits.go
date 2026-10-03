@@ -40,7 +40,11 @@ func parseEdits(input map[string]any) ([]edit, error) {
 			hasEdits = false
 		}
 	}
+	// The single shape is present when either of its strings is.
 	_, hasOld := input["old_string"]
+	if _, hasNew := input["new_string"]; hasNew {
+		hasOld = true
+	}
 	if hasEdits && hasOld && emptyArg(input, "old_string") && emptyArg(input, "new_string") {
 		hasOld = false
 	}

@@ -140,6 +140,7 @@ func TestPatchRealConflictsStillRejected(t *testing.T) {
 	for name, input := range map[string]map[string]any{
 		"old beside edits":      {"path": "a.go", "old_string": "x", "new_string": "", "edits": edits},
 		"new beside edits":      {"path": "a.go", "old_string": "", "new_string": "y", "edits": edits},
+		"only new beside edits": {"path": "a.go", "new_string": "y", "edits": edits},
 		"both beside edits":     {"path": "a.go", "old_string": "x", "new_string": "y", "edits": edits},
 		"old beside JSON edits": {"path": "a.go", "old_string": "x", "new_string": "y", "edits": `[{"old_string":"x","new_string":"z"}]`},
 	} {
