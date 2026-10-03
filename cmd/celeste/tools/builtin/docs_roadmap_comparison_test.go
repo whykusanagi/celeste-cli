@@ -1,6 +1,8 @@
 package builtin
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -39,4 +41,93 @@ func checkNoLocalPaths(t *testing.T, file, doc string) {
 			t.Errorf("%s contains a local path fragment %q", file, p)
 		}
 	}
+}
+
+// The seven tools #176 and the 2.0 design compare celeste against.
+var comparedTools = []string{"Claude Code", "Codex CLI", "opencode", "Crush", "Gemini CLI", "oh-my-pi", "pi"}
+
+// docs/COMPARISON.md is a feature table against the seven tools: every row
+// fills every column (a cell that could not be checked says "unverified"),
+// every tool has sources, and celeste's numbers come from the code.
+func TestComparisonCoversSevenTools(t *testing.T) {
+	const file = "docs/COMPARISON.md"
+	doc := repoFile(t, file)
+	header := "| Feature | **Celeste** |"
+	for _, tool := range comparedTools {
+		header += " **" + tool + "** |"
+	}
+	lines := strings.Split(doc, "\n")
+	start := -1
+	for i, l := range lines {
+		if l == header {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("%s has no table with header %q", file, header)
+	}
+	features := map[string]bool{}
+	for _, row := range lines[start+2:] {
+		if !strings.HasPrefix(row, "|") {
+			break
+		}
+		cells := strings.Split(strings.Trim(row, "|"), "|")
+		if len(cells) != len(comparedTools)+2 {
+			t.Errorf("%s row %q has %d cells, want %d", file, row, len(cells), len(comparedTools)+2)
+			continue
+		}
+		for i, c := range cells {
+			if strings.TrimSpace(c) == "" {
+				t.Errorf("%s row %q has an empty cell %d; say \"unverified\" instead", file, row, i)
+			}
+		}
+		features[strings.Trim(strings.TrimSpace(cells[0]), "*")] = true
+	}
+	for _, f := range []string{
+		"Project context files", "Skills", "Hooks", "Permission model", "Sandbox",
+		"Compaction", "Checkpoints and rewind", "Subagents", "Plan mode",
+		"MCP client", "MCP server", "ACP", "LSP", "Providers", "Local models",
+		"Code graph and structural review", "Persona",
+	} {
+		if !features[f] {
+			t.Errorf("%s has no %q row", file, f)
+		}
+	}
+
+	at := strings.Index(doc, "\n## Sources\n")
+	if at < 0 {
+		t.Fatalf("%s has no Sources section", file)
+	}
+	sources := doc[at:]
+	if !strings.Contains(sources, "Retrieved") {
+		t.Errorf("%s Sources section gives no retrieval date", file)
+	}
+	for _, tool := range comparedTools {
+		if !strings.Contains(sources, "### "+tool+"\n") {
+			t.Errorf("%s Sources section has no list for %s", file, tool)
+		}
+	}
+
+	truth := computeTruths(t)
+	for _, c := range []claim{
+		{file, `\| \*\*Built-in tools\*\* \| (\d+) `, func(d docTruths) int { return d.allTools }, "built-in tools"},
+		{file, `(\d+) chat providers`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
+	} {
+		m := regexp.MustCompile(c.pattern).FindAllStringSubmatch(doc, -1)
+		if len(m) == 0 {
+			t.Errorf("%s: no %s claim matches %q", file, c.what, c.pattern)
+		}
+		for _, x := range m {
+			if got, _ := strconv.Atoi(x[1]); got != c.want(truth) {
+				t.Errorf("%s says %d %s; the code has %d", file, got, c.what, c.want(truth))
+			}
+		}
+	}
+	for _, stale := range []string{"April 2026", "OpenClaw", "Picobot"} {
+		if strings.Contains(doc, stale) {
+			t.Errorf("%s still mentions %q from the 1.x comparison", file, stale)
+		}
+	}
+	checkNoLocalPaths(t, file, doc)
 }
