@@ -106,7 +106,7 @@ func TestSetupStartSessionIsExplicit(t *testing.T) {
 	}
 	env.StartSession(context.Background(), "startup")
 	if !strings.Contains(env.ProjectContext, "# Session Start Hook Context\n\nsession-note-probe") ||
-		!strings.Contains(env.SystemPrompt("", nil), "session-note-probe") {
+		!strings.Contains(env.SystemPrompt(PromptOptions{}).String(), "session-note-probe") {
 		t.Fatalf("SessionStart context missing: %q", env.ProjectContext)
 	}
 	if env.Hooks == nil {
@@ -146,10 +146,10 @@ func TestSessionStartContextLeavesTheEnvAlone(t *testing.T) {
 	if env.ProjectContext != before {
 		t.Fatal("SessionStartContext changed the Env")
 	}
-	if sys := env.SystemPromptWithSession(got, "", nil); !strings.Contains(sys, "# Session Start Hook Context\n\nper-call-marker") {
+	if sys := env.SystemPrompt(PromptOptions{Session: got}).String(); !strings.Contains(sys, "# Session Start Hook Context\n\nper-call-marker") {
 		t.Fatalf("session context missing:\n%s", sys)
 	}
-	if strings.Contains(env.SystemPrompt("", nil), "per-call-marker") {
+	if strings.Contains(env.SystemPrompt(PromptOptions{}).String(), "per-call-marker") {
 		t.Fatal("SystemPrompt carries a call's session context")
 	}
 }

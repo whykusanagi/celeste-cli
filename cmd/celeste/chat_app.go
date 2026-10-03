@@ -126,7 +126,6 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		source = "resume"
 	}
 	env.StartSession(context.Background(), source)
-	client.SetSystemPrompt(env.SystemPrompt("", nil))
 
 	scanCollections(cfg)
 
@@ -138,6 +137,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		subMgr:         subMgr,
 		projectContext: env.ProjectContext,
 		gitSnapshot:    env.GitSnapshot,
+		memories:       env.Memories,
 		hooks:          env.Hooks,
 		rules:          env.Rules,
 		snapshots:      env.Snapshots,
@@ -145,6 +145,8 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 	tuiClient.lifeCtx, tuiClient.lifeCancel = context.WithCancel(context.Background())
 	tuiClient.gate = chatGate(registry)
+	// The persona is composed for the served model's window (W5 guard).
+	tuiClient.applySystemPrompt()
 
 	// Subagents and /agent nest under the chat's Env (2.0 F2e): they share
 	// its MCP clients (global servers only), hooks (this session's ID) and
@@ -181,7 +183,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// ruling 17). It is computed from state, not latched, so it shows once
 	// per chat and never reaches a turn.
 	if n := prompts.PersonaNotice(); n != "" {
-		app = app.WithSystemMessage("ℹ " + n)
+		app = app.WithSystemMessage(prompts.NoticePrefix + n)
 	}
 	// 2.0 W4 (ruling 6): nothing writes .grimoire implicitly any more, so a
 	// session in a project without context says how to add one.
@@ -190,6 +192,11 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	}
 
 	app = restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)
+	// A window too small for the full persona says so once (W5 ruling 7),
+	// after a restored endpoint has recomposed the prompt.
+	if n := tuiClient.takePersonaNotice(); n != "" {
+		app = app.WithSystemMessage(prompts.NoticePrefix + n)
+	}
 
 	if hist := currentSession.GetCommandHistory(); len(hist) > 0 {
 		app = app.WithCommandHistory(hist)

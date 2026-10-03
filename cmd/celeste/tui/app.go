@@ -2073,6 +2073,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
 		return m, nil
 
+	case PersonaNoticeMsg:
+		m.chat = m.chat.AddSystemMessage(msg.Text)
+		return m, nil
+
 	case ToolProgressMsg:
 		var cmd tea.Cmd
 		m.toolProgress, cmd = m.toolProgress.Update(msg)

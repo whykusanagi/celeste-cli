@@ -119,7 +119,8 @@ func TestSetupCoverage(t *testing.T) {
 	got["mcp.mcp_clients"] = mcpStarted()
 	_, got["mcp.custom_skills"] = env.Registry.Get("hello_skill")
 	got["mcp.hooks"] = strings.Contains(env.SessionStartContext(context.Background(), "startup"), "COVERAGE-HOOK")
-	got["mcp.memories"] = strings.Contains(env.ProjectContext, "coverage-memory")
+	// Memories follow git in the prompt, outside ProjectContext (W5 ruling 8).
+	got["mcp.memories"] = strings.Contains(env.SystemPrompt(loop.PromptOptions{}).String(), "coverage-memory")
 	got["mcp.code_graph_summary"] = strings.Contains(env.ProjectContext, "# Code Graph")
 	got["mcp.grimoire"] = strings.Contains(env.ProjectContext, "COVERAGE-GRIMOIRE")
 	got["mcp.context_files"] = strings.Contains(env.ProjectContext, "COVERAGE-AGENTS")
