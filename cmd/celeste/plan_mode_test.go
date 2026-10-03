@@ -244,3 +244,24 @@ func TestApprovedTodosSurviveALaterTodoCall(t *testing.T) {
 		t.Fatalf("todos = %+v", items)
 	}
 }
+
+// The adapter's own tool list (the skills panel's count) follows plan mode
+// like the loop's requests do: no submit_plan while it is off.
+func TestAdapterSkillsFollowPlanMode(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _ := chatApp(t, srv)
+	names := func() []string {
+		var out []string
+		for _, d := range deps.adapter.GetSkills() {
+			out = append(out, d.Name)
+		}
+		return out
+	}
+	if off := names(); !hasName(off, "write_file") || hasName(off, "submit_plan") {
+		t.Fatalf("plan mode off: skills = %v", off)
+	}
+	deps.adapter.SetPlanMode(true, "")
+	if on := names(); hasName(on, "write_file") || !hasName(on, "submit_plan") {
+		t.Fatalf("plan mode on: skills = %v", on)
+	}
+}

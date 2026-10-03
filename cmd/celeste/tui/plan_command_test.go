@@ -134,3 +134,52 @@ func TestRewindTakesThePlanInstructionWithItsPrompt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, idx)
 }
+
+// /plan cancel was 1.x's way out of a plan; it must not enter plan mode
+// and send "cancel" to the model.
+func TestPlanCancelIsGone(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		m, client := newPlanTestApp()
+		client.on, client.goal = on, "keep me"
+		m, _ = step(t, m, SendMessageMsg{Content: "/plan cancel"})
+		assert.Equal(t, on, client.on, "/plan cancel leaves the mode as it was")
+		assert.Equal(t, "keep me", client.goal)
+		assert.Empty(t, client.turns, "/plan cancel sends nothing to the model")
+		assert.Equal(t, "/plan cancel is gone: use /plan off (delete .celeste/plan.json to drop an approved plan)", lastSystemText(m))
+	}
+}
+
+// /plan with no goal while plan mode is on keeps the goal /plan <goal> set.
+func TestPlanAgainKeepsTheGoal(t *testing.T) {
+	m, client := newPlanTestApp()
+	client.on, client.goal = true, "add caching" // set by /plan add caching
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan"})
+	assert.True(t, client.on)
+	assert.Equal(t, "add caching", client.goal)
+	assert.Equal(t, "Plan mode is already on.", lastSystemText(m))
+}
+
+// A session saved mid-plan says so on resume (plan mode itself starts off),
+// so the model's plan-mode instructions are not left unexplained.
+func TestResumedPlanSessionSaysPlanModeWasOn(t *testing.T) {
+	hidden := ChatMessage{Role: "user", Content: PlanModeInstruction, Metadata: map[string]any{"hidden": true}}
+	prompt := ChatMessage{Role: "user", Content: "add caching"}
+	reply := ChatMessage{Role: "assistant", Content: "looking"}
+	approved := ChatMessage{Role: "tool", Name: "submit_plan", Content: "Plan approved: 2 todo items created (ids 1–2). Plan mode is off; start with step 1."}
+	for _, tc := range []struct {
+		name string
+		msgs []ChatMessage
+		want bool
+	}{
+		{"mid-plan", []ChatMessage{hidden, prompt, reply}, true},
+		{"approved", []ChatMessage{hidden, prompt, approved, reply}, false},
+		{"later prompt outside plan mode", []ChatMessage{hidden, prompt, reply, {Role: "user", Content: "thanks"}}, false},
+		{"never planned", []ChatMessage{prompt, reply}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newPlanTestApp()
+			m = m.WithMessages(tc.msgs)
+			assert.Equal(t, tc.want, lastSystemText(m) == planWasOnText, lastSystemText(m))
+		})
+	}
+}

@@ -243,5 +243,7 @@ func (t *SubmitPlanTool) Execute(ctx context.Context, input map[string]any, _ ch
 	if first != last {
 		ids = fmt.Sprintf("ids %d–%d", first, last)
 	}
+	// "Plan approved:" also tells the chat a resumed session's plan was
+	// approved (tui.planApprovedPrefix).
 	return tools.ToolResult{Content: fmt.Sprintf("Plan approved: %d todo items created (%s). Plan mode is off; start with step 1.", len(steps), ids)}, nil
 }

@@ -424,9 +424,10 @@ func (a *TUIClientAdapter) takePersonaNotice() string {
 	return n
 }
 
-// GetSkills implements tui.LLMClient.
+// GetSkills implements tui.LLMClient: the tools plan mode allows, as the
+// chat loop's requests offer them (no submit_plan while it is off).
 func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
-	return a.client.GetSkills()
+	return planFilter(a.client.GetSkills(), a.plan, a.registry)
 }
 
 // SwitchEndpoint switches to a different endpoint by loading its named config.

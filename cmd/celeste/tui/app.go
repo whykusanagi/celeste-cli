@@ -2823,6 +2823,7 @@ func (m AppModel) WithMessages(messages []ChatMessage) AppModel {
 	// Add a system message at the end indicating session was resumed
 	if len(messages) > 0 {
 		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("📂 Resumed session (%d messages)", len(messages)))
+		m = m.withPlanResumeNote(messages)
 	}
 
 	return m
@@ -3084,6 +3085,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				}
 				m.chat = m.chat.AddSystemMessage(
 					fmt.Sprintf("📂 Resumed session (%d messages)", msgCount))
+				m = m.withPlanResumeNote(m.chat.messages)
 			}
 		} else {
 			m.chat = m.chat.AddSystemMessage(
