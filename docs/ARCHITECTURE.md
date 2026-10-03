@@ -1,4 +1,4 @@
-# Kusanagi’s Celeste CLI Architecture: A Demon Noble’s Teasing Tour 😈💕
+# Celeste CLI Architecture
 
 Comprehensive system architecture for Celeste CLI.
 

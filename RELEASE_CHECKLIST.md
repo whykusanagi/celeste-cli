@@ -4,9 +4,11 @@ Reusable quality gate for releasing **celeste-cli** and **celesteops**. Work top
 to bottom; most gates have a copy-paste command. CI enforces the starred (★) ones
 too, but running them locally first avoids red pipelines.
 
-> Convention: this repo releases via **release-please** + signed tag builds. You
-> don't hand-tag or hand-bump versions. Merging the release-please PR cuts the
-> tag, which triggers the signed multi-platform build.
+> Convention: this repo releases via **release-please** + an owner-signed tag. You
+> don't hand-bump versions: release-please keeps the Release PR (version + CHANGELOG).
+> It never tags (`skip-github-release`): after the Release PR merges, the owner
+> pushes a GPG-signed tag on the merge commit, which triggers the signed
+> multi-platform build (§5).
 
 ---
 
@@ -74,11 +76,21 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
 - [ ] Commit type sets the bump: `feat:` → minor, `fix:` → patch, `feat!:` / `BREAKING CHANGE:` → major
 - [ ] Version constants left for release-please (don't hand-edit the `x-release-please-version` markers)
 - [ ] Version-dependent tests assert against the version constant, not a literal (so the auto-bump doesn't break CI)
-- [ ] Merge to `main` → review the release-please PR's generated CHANGELOG + version → merge it to tag
+- [ ] Merge to `main` → review the release-please PR's generated CHANGELOG + version → merge it (no tag or release is created)
+- [ ] **[owner]** Sign and push the tag on the merge commit with the signing subkey, then check it:
+  ```bash
+  git fetch origin
+  git tag -s vX.Y.Z -u 'F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB!' -m "celeste-cli X.Y.Z" <merge sha>
+  git tag -v vX.Y.Z          # Good signature, primary 9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55
+  git push origin vX.Y.Z     # runs release.yml: build, persona verify, sign, publish
+  ```
+- [ ] **[owner]** Relabel the merged Release PR, or release-please refuses to open the next one:
+  `gh pr edit <n> --remove-label "autorelease: pending" --add-label "autorelease: tagged"`
+- [ ] If release.yml fails (say at `Verify the persona`), nothing was published: fix the cause and re-run the workflow on the same tag (`gh run rerun`). Never move a pushed tag.
 
 ## 6. Signing & verification (celeste-* GPG)
 - [ ] Release artifacts are GPG-signed (`checksums.txt.asc`, `manifest.json.asc`)
-- [ ] The in-repo public key (`whykusanagi.asc`) includes the **current signing subkey**: releases are signed by a subkey GitHub/Keybase may not carry
+- [ ] The in-repo public key (`whykusanagi.asc`) includes the **current signing subkey** (`F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB`, expires 2027-12-07): releases and release tags are signed by it, and Keybase may not carry it
   ```bash
   gpg --show-keys --with-subkey-fingerprint whykusanagi.asc | grep '\[S\]'   # must be present + unexpired
   ```
@@ -94,6 +106,12 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
 - [ ] Update dependent repos / install docs / homebrew etc. if applicable
 - [ ] Watch CI and the issue tracker for early breakage
 
+## 8. celeste-cli 2.0.0 (major release)
+The maintainer's W7 release plan holds the full lists; work them from there rather than from a copy here.
+- [ ] **Go / no-go** (W7 plan, Task 14): every row is green, or carries the owner's written waiver on the release PR, before the release PR merges. It includes the persona gate (`celeste persona verify` on a keyed `make build` reports the official persona, and `go version -m` shows no `personaKey`), the `/v2` module PR, MIGRATING-2.0 and the docs, and the provider smoke runs.
+- [ ] **Post-release checks** (W7 plan, Task 16): the published assets verify as in `VERIFY.md` and the extracted binary's `celeste persona verify` reports the official persona; a clean `go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest` installs the official binary with `celeste update` (note: `celeste version` never upgrades) and then passes `celeste persona verify`; `celeste update --check` says up to date; the old 1.x install path still installs 1.x; the celeste-for-claude skills pass against the MCP contract goldens.
+- [ ] **v1.16.1** (the last 1.x release, from `release/1.x`) publishes **after** v2.0.0 and with `make_latest: false`, so `https://github.com/whykusanagi/celeste-cli/releases/latest` (what `celeste update` reads) keeps pointing at v2.0.0. Check the redirect after it publishes.
+
 ---
 
 ## Project-specific notes
@@ -107,7 +125,7 @@ quarantine-clear step in `VERIFY.md` accurate. Same GPG signing model as celeste
 is authoritative; GitHub serves the primary fingerprint as the trust anchor).
 
 ## Hard-won checks (things that actually bit us)
-- Signing **subkey** not published to GitHub/Keybase → verify from the repo key, not external sources.
+- Signing **subkey** missing from GitHub's copy of the key (it is published there now; Keybase may still lack it) → verify from the repo key (`whykusanagi.asc`), and use external sources only to cross-check the primary fingerprint.
 - `config --set-*` must target the `-config <name>` profile, not clobber the default.
 - Tool-output writers (TTS, exports) must honor `--workspace`, not the process cwd.
 - A turn must never declare more `tool_calls` than the tool results it returns (strict APIs 400).

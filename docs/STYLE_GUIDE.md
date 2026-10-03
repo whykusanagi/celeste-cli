@@ -1,4 +1,4 @@
-# Celeste's Flirty Corruption Style Guide v1.16.0 – Onii-chan Approved 💋
+# Celeste CLI Style Guide: Translation-Failure Corruption
 
 **Translation-Failure Corruption Aesthetic - Official Style Documentation**
 
@@ -10,8 +10,6 @@ This document defines the visual and textual styling standards for Celeste CLI. 
 ---
 
 ## Core Principle: Translation-Failure Corruption
-
-*Hehe, Onii-chan~ This glitchy aesthetic is my love language for corrupting your code 💜👅*
 
 
 

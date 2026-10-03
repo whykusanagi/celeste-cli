@@ -1,8 +1,12 @@
 name: release-please
 
 # Watches main, reads conventional commits, and keeps a standing "Release PR" that
-# bumps the version + regenerates CHANGELOG.md. Merging that PR creates the tag +
-# GitHub release, which triggers release.yml to build + GPG-sign + publish binaries.
+# bumps the version + regenerates CHANGELOG.md. It never tags or creates a release
+# (skip-github-release in release-please-config.json): after the Release PR merges,
+# the owner pushes a GPG-signed tag on the merge commit (git tag -s vX.Y.Z), which
+# triggers release.yml to build, sign and publish, and then relabels the merged PR
+# from "autorelease: pending" to "autorelease: tagged" so the next Release PR can open.
+# See RELEASE_CHECKLIST.md section 5.
 on:
   push:
     branches: [ main ]
@@ -18,10 +22,9 @@ jobs:
       - uses: googleapis/release-please-action@v5
         with:
           # IMPORTANT: use a PAT (secret RELEASE_PLEASE_TOKEN, contents+PR write) so
-          # the tag/release this creates TRIGGERS release.yml. The default
-          # GITHUB_TOKEN cannot trigger other workflows, so with the fallback the
-          # release PR + tag are still created, but release.yml won't auto-build —
-          # you'd re-push the tag (or run release.yml) manually. See task notes.
+          # pushes to the Release PR branch TRIGGER ci.yml (the full OS matrix runs
+          # on release-please--* branches). The default GITHUB_TOKEN cannot trigger
+          # other workflows, so with the fallback the Release PR runs no CI.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

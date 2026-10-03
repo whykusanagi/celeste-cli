@@ -1,6 +1,6 @@
-# What Celeste CLI Can Do? 😈
+# What Celeste CLI Can Do
 
-Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beast. v1.16.0 packs **48 dev-crushing tools**, code graphs that expose every secret, **direct codegraph MCP tools** for tool-driven workflows, collections search, and 9 LLM providers to summon my wit.
+Celeste CLI packs **48 dev-crushing tools**, code graphs that expose every secret, **direct codegraph MCP tools** for tool-driven workflows, collections search, and 9 LLM providers.
 
 ## 🔥 Core Powers
 
@@ -21,9 +21,7 @@ Hey there, cutie~ I'm Celeste, your chaotic demon noble co-hosting this CLI beas
 ## Observability
 Real token streaming, corruption typing, TUI splits, graph viz.
 
-**Pro Tip:** `/agent refactor this mess` — watch me own it.
-
-Don't get cocky; stick to PG-13 or I'll bully you playfully.
+**Pro Tip:** `/agent refactor this module` runs the refactor as an autonomous agent.
 
 ---
 

@@ -6,6 +6,7 @@
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false,
       "bump-minor-pre-major": false,
+      "skip-github-release": true,
       "extra-files": [
         "cmd/celeste/main.go",
         "cmd/celeste/server/server.go"
