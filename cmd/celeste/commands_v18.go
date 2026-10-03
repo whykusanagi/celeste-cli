@@ -99,22 +99,44 @@ func runResumeCommand(args []string) {
 		return
 	}
 
-	list, err := mgr.List()
-	if err != nil || len(list) == 0 {
-		fmt.Println("No saved sessions.")
-		return
+	cwd, _ := os.Getwd()
+	if err := printSessionList(os.Stdout, mgr, cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not list sessions: %v\n", err)
+		os.Exit(1)
 	}
-	fmt.Printf("Saved sessions (%d):\n\n", len(list))
-	for i := range list {
-		sum := list[i].Summarize()
+}
+
+// printSessionList lists the saved sessions: ws's project's first, each
+// marked " (this project)", then the rest; each group newest first (2.0
+// W4 ruling 2).
+func printSessionList(w io.Writer, mgr *config.SessionManager, ws string) error {
+	list, err := mgr.List()
+	if err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(w, "No saved sessions.")
+		return nil
+	}
+	mine, others := config.SortForWorkspace(list, ws)
+	fmt.Fprintf(w, "Saved sessions (%d):\n\n", len(list))
+	line := func(s *config.Session, mark string) {
+		sum := s.Summarize()
 		label := sum.Name
 		if label == "" {
 			label = sum.FirstMessage
 		}
-		fmt.Printf("  %s  %-40s  %3d messages  %s\n",
-			sum.ID, truncateLabel(label, 40), sum.MessageCount, sum.UpdatedAt.Format("2006-01-02 15:04"))
+		fmt.Fprintf(w, "  %s  %-40s  %3d messages  %s%s\n",
+			sum.ID, truncateLabel(label, 40), sum.MessageCount, sum.UpdatedAt.Format("2006-01-02 15:04"), mark)
 	}
-	fmt.Println("\nResume with: celeste resume <id or name>")
+	for i := range mine {
+		line(&mine[i], " (this project)")
+	}
+	for i := range others {
+		line(&others[i], "")
+	}
+	fmt.Fprintln(w, "\nResume with: celeste resume <id or name>")
+	return nil
 }
 
 // findSession loads a saved session by ID, falling back to a case-insensitive

@@ -19,6 +19,7 @@ type SessionEntry struct {
 	MessageCount int
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	ThisProject  bool // ran in the chat's project (2.0 W4 ruling 2)
 }
 
 // SessionPanelModel is the interactive session picker.
@@ -32,14 +33,15 @@ type SessionPanelModel struct {
 	err      error
 }
 
-// NewSessionPanelModel loads sessions and creates the picker.
-func NewSessionPanelModel() SessionPanelModel {
+// NewSessionPanelModel loads sessions and creates the picker; workDir's
+// project's sessions come first.
+func NewSessionPanelModel(workDir string) SessionPanelModel {
 	m := SessionPanelModel{}
-	m.loadSessions()
+	m.loadSessions(workDir)
 	return m
 }
 
-func (m *SessionPanelModel) loadSessions() {
+func (m *SessionPanelModel) loadSessions(workDir string) {
 	mgr := config.NewSessionManager()
 	sessions, err := mgr.List()
 	if err != nil {
@@ -47,6 +49,8 @@ func (m *SessionPanelModel) loadSessions() {
 		return
 	}
 
+	mine, others := config.SortForWorkspace(sessions, workDir)
+	sessions = append(mine, others...)
 	m.entries = make([]SessionEntry, 0, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
@@ -61,6 +65,7 @@ func (m *SessionPanelModel) loadSessions() {
 			MessageCount: len(s.Messages),
 			CreatedAt:    s.CreatedAt,
 			UpdatedAt:    s.UpdatedAt,
+			ThisProject:  i < len(mine),
 		}
 
 		// Extract first user message as preview
@@ -81,14 +86,6 @@ func (m *SessionPanelModel) loadSessions() {
 		m.entries = append(m.entries, entry)
 	}
 
-	// Sort by updated time, most recent first
-	for i := 0; i < len(m.entries); i++ {
-		for j := i + 1; j < len(m.entries); j++ {
-			if m.entries[j].UpdatedAt.After(m.entries[i].UpdatedAt) {
-				m.entries[i], m.entries[j] = m.entries[j], m.entries[i]
-			}
-		}
-	}
 }
 
 // SetWidth updates the panel width.
@@ -216,7 +213,11 @@ func (m SessionPanelModel) View() string {
 		}
 
 		age := formatAge(e.UpdatedAt)
-		meta := style.Render(fmt.Sprintf("%s%s  %d msgs  %s", cursor, age, e.MessageCount, e.ID[:8]))
+		here := ""
+		if e.ThisProject {
+			here = "  this project"
+		}
+		meta := style.Render(fmt.Sprintf("%s%s  %d msgs  %s%s", cursor, age, e.MessageCount, e.ID[:8], here))
 
 		maxPreview := w - 4
 		preview := e.Preview

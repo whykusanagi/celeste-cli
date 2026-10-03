@@ -654,7 +654,7 @@ type ProviderBlocks struct {
 `checkpoints.SnapshotManager` is one session's store: backups plus `index.json`, a JSON array of `{message_id, path, version, backup, time, after}` in `~/.celeste/checkpoints/<session>/`, rewritten atomically on every change under a per-session lock file. `loop.Setup` opens it for the run's `SessionID` (chat session, agent run, the MCP chat Env; `<mode>-<pid>-<config.UniqueNanoID>` when none is given); nested Envs (subagents, `/agent`) share their parent's.
 
 - **Timing.** `write_file`, `patch_file` and `splice_file` call `Checkpoint(path, callID)` after their input validated, immediately before writing; a successful write calls `Commit`, which records `after` = `{size, sha256}` of the file as the call left it; any failure after the checkpoint calls `Rollback`, which restores the file and drops the entry. Undo, revert and `RewindTo` refuse while a checkpoint of this process is open (between `Checkpoint` and `Commit`/`Rollback`, up to 2 minutes). `message_id` is the tool call's ID (`tools.CallIDFromContext`, set by the loop's `runGroup` for every call).
-- **Consumers.** `/undo` (`RevertLastIf`, through `tui.Checkpointer`; under the store's lock it asks before overwriting a file whose state differs from the entry's `after`, `Changed`), `/diff` (`ComputeDiff` + `FormatChanges`; sides over 4 MiB by size, binary files marked, oversized line comparisons by line count, per-file errors listed), `celeste revert` (`RevertFile` with the same check, overridden by `--force`; latest session by default), `/rewind` (`RewindTo`, W4), the files-modified list for compaction (`Files`, W1/#200).
+- **Consumers.** `/undo` (`RevertLastIf`, through `tui.Checkpointer`; under the store's lock it asks before overwriting a file whose state differs from the entry's `after`, `Changed`), `/diff` (`ComputeDiff` + `FormatChanges`; sides over 4 MiB by size, binary files marked, oversized line comparisons by line count, per-file errors listed), `celeste revert` (`RevertFile` with the same check, overridden by `--force`; latest session by default), `/rewind` (`RewindToAnyIf`, W4: from the first entry made by any of the rewound turns' tool calls, newest first, under the store's lock, with the same outside-change check as `/undo`), the files-modified list for compaction (`Files`, W1/#200).
 - **Restore.** Atomic (temporary file, rename), so other hard links, ownership, extended attributes and ACLs are not kept; in place (not atomic) when the file's directory refuses permission to create the temporary file and the file's current contents can be read; a failed in-place write puts those contents back.
 - **Limits.** At most 100 entries per session (the oldest is evicted with its backup); no byte limit on a backup.
 - **Retention.** The first store a process opens prunes sessions that are neither among the 20 most recently changed nor changed in the last 30 days.
@@ -701,7 +701,12 @@ The `openai` provider (and any provider whose registry entry sets `SupportsRespo
 - Unmarshal to Session struct
 - Restore message history
 
-**4. Export/Import** (`export.go`):
+**4. Workspace, fork and rewind (2.0 W4)**:
+- `Session.Workspace` is the absolute directory the chat ran in; `config.SameProject` compares git roots (or directories outside a repository), and `config.SortForWorkspace` orders `celeste resume`, `/session list` and the picker: this project's sessions first.
+- `/fork` saves the session and continues in a new one with a copy of its messages (`tui/fork.go`).
+- `/rewind [n]` (`tui/rewind.go`) finds the n-th last prompt (an LLM-visible, non-hidden, non-compacted user message that is not a summary), restores the files changed by the tool calls after it through `tui.Checkpointer.RewindTo`, and truncates the chat there; a compaction summary at or after that point refuses it.
+
+**5. Export/Import** (`export.go`):
 - Export sessions to custom location
 - Import from external files
 - Batch export/import
