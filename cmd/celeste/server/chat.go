@@ -63,7 +63,11 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// order. Both run under ctx, so a failed hook's warning lands on this
 	// call.
 	session := env.SessionStartContext(ctx, "startup")
-	system := env.SystemPromptWithSession(session, "", nil)
+	// The window is this call's served model's; a small one steps the
+	// persona down. The guard's notice is only logged: MCP responses are
+	// frozen (W5 ruling 7).
+	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	system := env.SystemPrompt(loop.PromptOptions{Session: session, Window: window}).String()
 	sessionID := "mcp-chat-" + config.UniqueNanoID()
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
 	sess := chatSteering(ctx, cfg, env, prompt, workspace)

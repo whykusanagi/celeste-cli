@@ -42,25 +42,10 @@ Before executing any action that creates, modifies, or generates content (writin
 Read-only operations (listing files, reading, searching, status checks) do not require confirmation.
 This applies to ALL write paths: direct file writes, subagent spawns for generation, bash commands that modify state.`
 
-// GetSystemPrompt returns the chat-mode system prompt without project
-// context. See Compose.
-func GetSystemPrompt() string {
-	return Compose(ComposeOptions{Mode: ModeChat})
-}
-
-// GetSystemPromptWithContext returns the chat-mode system prompt with
-// project context and git snapshot appended. See Compose.
-func GetSystemPromptWithContext(grimoireContent string, gitSnapshot string) string {
-	return Compose(ComposeOptions{
-		Mode:           ModeChat,
-		ProjectContext: grimoireContent,
-		GitSnapshot:    gitSnapshot,
-	})
-}
-
 // GetContentPrompt returns a prompt tailored for content generation.
-func GetContentPrompt(platform, format, tone, topic string) string {
-	basePrompt := GetSystemPrompt()
+// window is the model's resolved context window; 0 = unknown.
+func GetContentPrompt(window int, platform, format, tone, topic string) string {
+	basePrompt := Compose(ComposeOptions{Mode: ModeChat, Window: window}).String()
 
 	var contentAddendum strings.Builder
 	contentAddendum.WriteString("\n\nCONTENT GENERATION MODE:\n")

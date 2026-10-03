@@ -74,7 +74,7 @@ func TestRealPersonaSizes(t *testing.T) {
 func TestRealPersonaOffLevel(t *testing.T) {
 	useRealPersona(t)
 	tempHome(t)
-	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff})
+	got := Compose(ComposeOptions{Mode: ModeAgent, PersonaLevel: PersonaOff}).String()
 	want := publicIdentity + "\n\n" + publicHonesty + "\n\n" + mustProfile(ProfileOff).SystemPrompt
 	if !strings.HasPrefix(got, want) {
 		t.Fatal("off level is not identity + honesty + voice boundary") // never print persona text
@@ -84,5 +84,17 @@ func TestRealPersonaOffLevel(t *testing.T) {
 	}
 	if strings.Contains(got, mustProfile(ProfileFull).SystemPrompt) {
 		t.Error("off carries the full profile") // never print persona text
+	}
+}
+
+// The spec's windows hold on the real profile sizes, not just the test
+// persona's: 8,192 gives chat lite, 65,536 gives full; a window too small
+// for lite falls to off, never to nothing.
+func TestRealPersonaGuardWindows(t *testing.T) {
+	useRealPersona(t)
+	for window, want := range map[int]Profile{8192: ProfileLite, 65536: ProfileFull, 2048: ProfileOff} {
+		if pp, _ := selectProfile(ProfileFull, window); pp.Profile != want {
+			t.Errorf("full at %d: got %s, want %s", window, pp.Profile, want)
+		}
 	}
 }
