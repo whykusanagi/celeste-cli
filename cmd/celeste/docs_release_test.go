@@ -81,7 +81,39 @@ func TestVerifyDocCoversGoInstall(t *testing.T) {
 	requireAll(t, "VERIFY.md", doc,
 		"celeste persona verify", "CELESTE_NO_AUTO_UPGRADE=1",
 		"## What `go install` and `celeste update` check",
+		// The archives hold celeste-<os>-<arch> (selfupdate.Platforms).
+		"`celeste-<os>-<arch>`", "`celeste-windows-amd64.exe`",
+		"xattr -dr com.apple.quarantine ./celeste-darwin-arm64",
+		"mv ./celeste-darwin-arm64 ~/.local/bin/celeste",
 	)
+	requireNone(t, "VERIFY.md", doc,
+		"mv ./celeste ", "unpacks the `celeste` binary", "`./celeste persona verify`",
+		"quarantine ./celeste\n", "(`celeste`, or `celeste.exe`",
+	)
+}
+
+// The persona guard keeps lite while it fits in half the window
+// (prompts/guard.go), and the Plans table ends before the next heading.
+func TestMigratingPersonaGuardAndTables(t *testing.T) {
+	doc := repoDoc(t, "MIGRATING-2.0.md")
+	requireAll(t, "MIGRATING-2.0.md", doc, "`lite` stays while it fits in half the window")
+	if regexp.MustCompile(`\|\n#`).MatchString(doc) {
+		t.Error("MIGRATING-2.0.md: a table runs straight into a heading; add a blank line")
+	}
+}
+
+// /plan enters plan mode and approved plans live in .celeste/plan.json
+// (#292); the routing diagram must not send it to plan.md.
+func TestRoutingDocPlanMode(t *testing.T) {
+	doc := repoDoc(t, "docs/ROUTING.md")
+	requireNone(t, "docs/ROUTING.md", doc, "plan.md")
+	requireAll(t, "docs/ROUTING.md", doc, ".celeste/plan.json")
+}
+
+// The release page points users at VERIFY.md and persona verify.
+func TestReleaseNotesLinkVerify(t *testing.T) {
+	doc := repoDoc(t, ".github/workflows/release.yml")
+	requireAll(t, "release.yml", doc, "VERIFY.md", "celeste persona verify")
 }
 
 // `celeste version` (like help, update and persona) never runs the startup

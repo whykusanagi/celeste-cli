@@ -82,7 +82,7 @@ fingerprint you confirmed.
 
 Once the archive checks out and is extracted (on macOS, after the quarantine
 step below), you can also confirm the binary carries Celeste's official
-persona: `./celeste persona verify` prints `official persona: ...` and exits 0.
+persona: `./celeste-<os>-<arch> persona verify` (or `celeste persona verify` once it is on your `PATH`) prints `official persona: ...` and exits 0.
 A build from a checkout reports the public persona only and exits 1.
 
 A `go install` build upgrades itself to the official binary the first time you
@@ -105,7 +105,7 @@ compiled into celeste (the same key as above, including the signing subkey):
    `tag` is the version being installed, and the archive's SHA-256 it lists equals
    the one in `checksums.txt`;
 3. the archive's SHA-256 matches;
-4. the binary in the archive is one regular file with the expected name (`celeste`, or `celeste.exe` on Windows).
+4. the archive holds exactly one regular file with the platform's expected name (`celeste-<os>-<arch>`, or `celeste-windows-amd64.exe` on Windows).
 
 On any failure the installed binary is left as it was. Builds from a checkout
 never download anything. Set `CELESTE_NO_AUTO_UPGRADE=1` to turn the automatic
@@ -118,13 +118,13 @@ The macOS binary is ad-hoc signed (not yet notarized through Apple), so macOS
 quarantines it on first download. After verifying, extract and clear the flag:
 
 ```bash
-tar xzf celeste-darwin-arm64.tar.gz   # unpacks the `celeste` binary
-xattr -dr com.apple.quarantine ./celeste
+tar xzf celeste-darwin-arm64.tar.gz   # unpacks `celeste-darwin-arm64`
+xattr -dr com.apple.quarantine ./celeste-darwin-arm64
 ```
 
 You do this once. A future release may be Apple-notarized, which removes the step.
 
-Then put the binary on your `PATH`, for example `mkdir -p ~/.local/bin && mv ./celeste ~/.local/bin/`.
+Then put the binary on your `PATH`, for example `mkdir -p ~/.local/bin && mv ./celeste-darwin-arm64 ~/.local/bin/celeste`.
 
 Linux and other platforms extract the same way (`tar xzf <archive>`); the
 `xattr` quarantine step is macOS-only.

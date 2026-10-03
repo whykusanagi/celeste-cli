@@ -39,7 +39,7 @@ decrypts it; every other build runs a short public persona and says so. See
 | `~/.celeste/celeste_essence.json` | No longer read, and there is no replacement override. celeste logs once that it is ignored; you can delete it. |
 | Every build had the same persona | An official release binary (the Releases page, or a `go install` build after it upgrades itself, below) runs the full persona. A build from a checkout or a fork runs the public persona: one identity line, the rule against claiming an action a tool didn't report, and the voice boundary. It says so once at startup. |
 | No way to check | `celeste persona verify` prints `official persona: ...` and exits 0 on an official binary; it exits 1 and names the reason on any other build. |
-| One persona size for every model | The persona is picked by the model's context window: chat uses the `full` profile, agent runs `spine`. A profile larger than a quarter of the window steps down (`full`, `spine`, `lite`), and below that only the identity, the honesty rule and the voice boundary stay. The chat, `celeste agent` and `celeste message` say once which profile they use. A local model with no `context_limit` counts as 8,192 tokens, so set `context_limit` in your config to the server's real window to get `full`. |
+| One persona size for every model | The persona is picked by the model's context window: chat uses the `full` profile, agent runs `spine`. A profile larger than a quarter of the window steps down (`full`, `spine`, `lite`); `lite` stays while it fits in half the window, and below that only the identity, the honesty rule and the voice boundary stay. The chat, `celeste agent` and `celeste message` say once which profile they use. A local model with no `context_limit` counts as 8,192 tokens, so set `context_limit` in your config to the server's real window to get `full`. |
 
 ## Self-update (`celeste update`)
 
@@ -196,6 +196,7 @@ without a warning.
 | `/plan <goal>` wrote `.celeste/plan.md` via the model | `/plan` enters plan mode (read-only tools until you approve a plan); approved plans live in `.celeste/plan.json` and the todo list. See `docs/PLAN_MODE.md`. |
 | `/plan cancel` | Gone. `/plan off` leaves plan mode; delete `.celeste/plan.json` to drop an approved plan. |
 | `celeste plan` read `.celeste/plan.md`, `PLAN.md`, `plan.md`, `CODEBASE_FIX_PLAN.md` or `FIX_PLAN.md` | Shows `.celeste/plan.json` with todo status; a leftover `.celeste/plan.md` is shown with a note when there is no `plan.json`. Other files are no longer read. |
+
 ## Sandbox for `bash`
 
 The sandbox is new and off by default in 2.0, so nothing changes until you turn it on. See [docs/SANDBOX.md](docs/SANDBOX.md).
