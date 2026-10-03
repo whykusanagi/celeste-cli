@@ -43,6 +43,10 @@ func rewindTarget(msgs []ChatMessage, n int) (int, error) {
 	if idx < 0 {
 		return 0, errors.New("nothing to rewind")
 	}
+	// The plan-mode instruction belongs to the prompt it precedes (2.0 W4e).
+	if idx > 0 && isPlanInstruction(msgs[idx-1]) {
+		idx--
+	}
 	for _, m := range msgs[idx:] {
 		if isCompacted(m) || isSummary(m) {
 			return 0, errRewindCompacted

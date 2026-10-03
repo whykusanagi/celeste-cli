@@ -127,7 +127,8 @@ Interactive Commands (in chat mode):
   /undo                   Undo the last file change (repeat to go back)
   /grimoire               Show project grimoire
   /index                  Show code graph status
-  /plan [show]            Show current plan
+  /plan [goal]            Plan mode: read-only tools until you approve a plan
+  /plan off | show        Leave plan mode | show the plan and its todo status
   /effort <level>         Set reasoning effort (off/low/medium/high/max)
   /endpoint <name>        Switch AI provider endpoint
   /model <name>           Change the model

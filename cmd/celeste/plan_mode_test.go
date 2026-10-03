@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
@@ -96,5 +101,124 @@ func TestPlanModeOffKeepsTheFullToolSet(t *testing.T) {
 	offered := offeredTools(t, srv.Requests()[0])
 	if !hasName(offered, "write_file") || hasName(offered, "submit_plan") {
 		t.Fatalf("offered = %v", offered)
+	}
+}
+
+// Review Focus 4: approving the plan mid-turn offers the full tool set on
+// the same turn's next request; the todo list holds the steps.
+func TestApprovingThePlanEndsPlanModeMidTurn(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "submit_plan",
+			Args: `{"goal":"ship","steps":[{"title":"write tests"},{"title":"implement"}]}`}}},
+		fakeprovider.Turn{Text: "starting step 1"})
+	_, deps, ws := chatApp(t, srv)
+	var asked tools.AskRequest
+	deps.registry.SetAskFunc(func(_ context.Context, req tools.AskRequest) (tools.AskResponse, error) {
+		asked = req
+		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
+	})
+	deps.adapter.SetPlanMode(true, "")
+	runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("plan it"), Tools: true, Run: 1})
+	if !strings.HasPrefix(asked.Question, "Approve this plan?") {
+		t.Fatalf("the user was not asked: %+v", asked)
+	}
+	if deps.adapter.PlanMode() {
+		t.Fatal("approval should end plan mode")
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d", len(reqs))
+	}
+	if hasName(offeredTools(t, reqs[0]), "write_file") {
+		t.Fatal("the first request was in plan mode")
+	}
+	if !hasName(offeredTools(t, reqs[1]), "write_file") {
+		t.Fatal("after approval the same turn should offer write_file")
+	}
+	if !strings.Contains(fmt.Sprint(reqs[1].Body["messages"]), "Plan approved: 2 todo items created") {
+		t.Fatal("the model should see the approval")
+	}
+	if items := builtin.NewTodoStore(ws).List(); len(items) != 2 || items[1].Title != "implement" {
+		t.Fatalf("todos = %+v", items)
+	}
+	if _, err := builtin.LoadPlan(ws); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// "Keep planning" keeps plan mode for the rest of the turn.
+func TestKeepPlanningStaysInPlanMode(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "submit_plan", Args: `{"steps":[{"title":"x"}]}`}}},
+		fakeprovider.Turn{Text: "revising"})
+	_, deps, ws := chatApp(t, srv)
+	deps.registry.SetAskFunc(func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
+		return tools.AskResponse{Selected: []string{"Keep planning"}}, nil
+	})
+	deps.adapter.SetPlanMode(true, "")
+	runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("plan it"), Tools: true, Run: 1})
+	if !deps.adapter.PlanMode() {
+		t.Fatal("keep planning should stay in plan mode")
+	}
+	if hasName(offeredTools(t, srv.Requests()[1]), "write_file") {
+		t.Fatal("still planning: no write tools")
+	}
+	if _, err := os.Stat(builtin.PlanPath(ws)); err == nil {
+		t.Fatal("no plan file before approval")
+	}
+}
+
+// Review Focus 5: submit_plan exists only on the chat's registry.
+func TestSubmitPlanOnlyInTheChat(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, ws := chatApp(t, srv)
+	if _, ok := deps.registry.Get("submit_plan"); !ok {
+		t.Fatal("the chat should have submit_plan")
+	}
+	cfg := &config.Config{APIKey: "k", BaseURL: srv.BaseURL(), Model: "fake-model", Timeout: 10}
+	for _, mode := range []loop.Mode{loop.ModeAgent, loop.ModeMCPChat} {
+		env, err := loop.Setup(mode, cfg, ws, loop.SetupOptions{Warn: func(string) {}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ok := env.Registry.Get("submit_plan")
+		env.Close()
+		if ok {
+			t.Fatalf("%v mode registered submit_plan", mode)
+		}
+	}
+}
+
+// writePlanFixture writes an approved two-step plan with todo items, the
+// first done.
+func writePlanFixture(t *testing.T, ws string) {
+	t.Helper()
+	store := builtin.NewTodoStore(ws)
+	a := store.Create("write tests", "")
+	b := store.Create("implement", "minimal")
+	if _, err := store.Update(a.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	plan := builtin.PlanFile{Goal: "ship", Steps: []builtin.PlanStep{
+		{Title: "write tests", TodoID: a.ID}, {Title: "implement", Detail: "minimal", TodoID: b.ID}}}
+	data, _ := json.Marshal(plan)
+	if err := os.WriteFile(builtin.PlanPath(ws), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// /plan show (the adapter's ShowPlan) renders the plan with todo status.
+func TestShowPlanRendersTodoStatus(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, ws := chatApp(t, srv)
+	if got := deps.adapter.ShowPlan(); got != "No plan yet." {
+		t.Fatalf("empty workspace: %q", got)
+	}
+	writePlanFixture(t, ws)
+	got := deps.adapter.ShowPlan()
+	for _, want := range []string{"Plan: ship", "[x] 1. write tests", "[ ] 2. implement", "minimal"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ShowPlan lacks %q:\n%s", want, got)
+		}
 	}
 }

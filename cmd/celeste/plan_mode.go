@@ -115,3 +115,5 @@ func (a *TUIClientAdapter) SetPlanMode(on bool, goal string) {
 
 // PlanMode reports whether plan mode is on (tui.PlanModer).
 func (a *TUIClientAdapter) PlanMode() bool { return a.plan.active() }
+
+var _ tui.PlanModer = (*TUIClientAdapter)(nil)

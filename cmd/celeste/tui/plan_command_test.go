@@ -1,0 +1,136 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// planClient is a turn client with plan mode (PlanModer).
+type planClient struct {
+	*fakeToolLLMClient
+	on    bool
+	goal  string
+	shown string
+}
+
+func (c *planClient) SetPlanMode(on bool, goal string) { c.on, c.goal = on, goal }
+func (c *planClient) PlanMode() bool                   { return c.on }
+func (c *planClient) ShowPlan() string                 { return c.shown }
+
+func newPlanTestApp() (AppModel, *planClient) {
+	client := &planClient{fakeToolLLMClient: &fakeToolLLMClient{skills: []SkillDefinition{{Name: "tool_a"}}}}
+	m := NewApp(client)
+	m.skillsEnabled = true
+	m.statusLine = m.statusLine.SetWidth(160)
+	return m, client
+}
+
+func lastSystemText(m AppModel) string {
+	msgs := m.chat.messages
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "system" {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
+func TestPlanCommandTogglesPlanMode(t *testing.T) {
+	m, client := newPlanTestApp()
+	assert.NotContains(t, m.statusLineView(), "PLAN")
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan"})
+	assert.True(t, client.on)
+	assert.Empty(t, client.goal)
+	assert.Empty(t, client.turns, "/plan alone starts no turn")
+	assert.Equal(t, "Plan mode on: read-only tools until you approve a plan (/plan off to leave)", lastSystemText(m))
+	assert.Contains(t, m.statusLineView(), "PLAN")
+
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan off"})
+	assert.False(t, client.on)
+	assert.Contains(t, lastSystemText(m), "Plan mode off")
+	assert.NotContains(t, m.statusLineView(), "PLAN")
+
+	// The status follows the client: an approval mid-turn clears it.
+	client.on = true
+	assert.Contains(t, m.statusLineView(), "PLAN")
+	client.on = false
+	assert.NotContains(t, m.statusLineView(), "PLAN")
+}
+
+func TestPlanGoalSendsThePrompt(t *testing.T) {
+	m, client := newPlanTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan add caching"})
+	assert.True(t, client.on)
+	assert.Equal(t, "add caching", client.goal)
+	require.Len(t, client.turns, 1)
+	h := client.turns[0].req.History
+	require.GreaterOrEqual(t, len(h), 2)
+	last, before := h[len(h)-1], h[len(h)-2]
+	assert.Equal(t, "user", last.Role)
+	assert.Equal(t, "add caching", last.Content)
+	assert.Equal(t, PlanModeInstruction, before.Content)
+	hidden, _ := before.Metadata["hidden"].(bool)
+	assert.True(t, hidden, "the plan-mode instruction is hidden")
+	assert.Equal(t, "Planning...", m.status.text)
+}
+
+// Every prompt while plan mode is on carries the instruction; none after.
+func TestPlanModePromptsCarryTheInstruction(t *testing.T) {
+	m, client := newPlanTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan"})
+	m, _ = step(t, m, SendMessageMsg{Content: "look around"})
+	require.Len(t, client.turns, 1)
+	h := client.turns[0].req.History
+	require.GreaterOrEqual(t, len(h), 2)
+	assert.Equal(t, PlanModeInstruction, h[len(h)-2].Content)
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+
+	client.on = false // approved during the turn
+	m, _ = step(t, m, SendMessageMsg{Content: "go on"})
+	require.Len(t, client.turns, 2)
+	h = client.turns[1].req.History
+	assert.NotEqual(t, PlanModeInstruction, h[len(h)-2].Content)
+	n := 0
+	for _, msg := range h {
+		if msg.Content == PlanModeInstruction {
+			n++
+		}
+	}
+	assert.Equal(t, 1, n, "only the plan-mode prompt carried the instruction")
+	_ = m
+}
+
+func TestPlanShow(t *testing.T) {
+	m, client := newPlanTestApp()
+	client.shown = "Plan: ship\n[ ] 1. write tests"
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan show"})
+	assert.Equal(t, client.shown, lastSystemText(m))
+	assert.False(t, client.on, "/plan show does not enter plan mode")
+	assert.Empty(t, client.turns)
+}
+
+// Without plan-mode support (a client that is not a PlanModer), /plan says
+// so and starts nothing.
+func TestPlanCommandUnavailable(t *testing.T) {
+	m, client := newQueueTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan add caching"})
+	assert.Empty(t, client.turns)
+	assert.True(t, strings.Contains(lastSystemText(m), "unavailable"), lastSystemText(m))
+}
+
+// /rewind takes the plan-mode instruction back with its prompt.
+func TestRewindTakesThePlanInstructionWithItsPrompt(t *testing.T) {
+	msgs := []ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: PlanModeInstruction, Metadata: map[string]any{"hidden": true}},
+		{Role: "user", Content: "plan it"},
+		{Role: "assistant", Content: "planning"},
+	}
+	idx, err := rewindTarget(msgs, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 2, idx)
+}

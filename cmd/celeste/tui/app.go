@@ -452,6 +452,12 @@ func (m AppModel) syncStatusLine() AppModel {
 	return m
 }
 
+// statusLineView renders the status line with plan mode read from the
+// client at render time: an approval clears it from the run's goroutine.
+func (m AppModel) statusLineView() string {
+	return m.statusLine.SetPlan(m.planModeOn()).View()
+}
+
 // Update implements tea.Model.
 // Update implements tea.Model. After handling msg it sends the next queued
 // message if the turn has finished (#172).
@@ -1004,102 +1010,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "plan":
-				cwd, _ := os.Getwd()
-				planPaths := []string{
-					cwd + "/.celeste/plan.md",
-					cwd + "/CODEBASE_FIX_PLAN.md",
-					cwd + "/PLAN.md",
-					cwd + "/plan.md",
-					cwd + "/FIX_PLAN.md",
-				}
-
-				if len(cmd.Args) == 0 {
-					// No args: show current plan or say none found
-					found := false
-					for _, p := range planPaths {
-						data, err := os.ReadFile(p)
-						if err == nil {
-							relPath := strings.TrimPrefix(p, cwd+"/")
-							m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Plan (%s):\n\n%s", relPath, string(data)))
-							found = true
-							break
-						}
-					}
-					if !found {
-						m.chat = m.chat.AddSystemMessage("No plan found.\n\nUsage:\n  /plan <goal>    Create a plan\n  /plan show      Show current plan\n  /plan cancel    Delete plan")
-					}
-					return m, nil
-				}
-
-				subCmd := cmd.Args[0]
-				switch subCmd {
-				case "show":
-					found := false
-					for _, p := range planPaths {
-						data, err := os.ReadFile(p)
-						if err == nil {
-							relPath := strings.TrimPrefix(p, cwd+"/")
-							m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Plan (%s):\n\n%s", relPath, string(data)))
-							found = true
-							break
-						}
-					}
-					if !found {
-						m.chat = m.chat.AddSystemMessage("No plan found.")
-					}
-
-				case "cancel":
-					deleted := false
-					for _, p := range planPaths {
-						if err := os.Remove(p); err == nil {
-							relPath := strings.TrimPrefix(p, cwd+"/")
-							m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Plan cancelled: %s", relPath))
-							deleted = true
-							break
-						}
-					}
-					if !deleted {
-						m.chat = m.chat.AddSystemMessage("No active plan to cancel.")
-					}
-
-				default:
-					// /plan <goal> — ask Celeste to create a plan
-					goal := strings.Join(cmd.Args, " ")
-					planPath := cwd + "/.celeste/plan.md"
-
-					// Send as a user message with structured plan prompt
-					planPrompt := fmt.Sprintf(
-						"Create a structured plan for: %s\n\n"+
-							"Write the plan to %s using write_file. Format as a markdown checklist:\n"+
-							"```\n"+
-							"# Plan: %s\n\n"+
-							"- [ ] Step 1: ...\n"+
-							"- [ ] Step 2: ...\n"+
-							"- [ ] Step 3: ...\n"+
-							"```\n\n"+
-							"Use `- [ ]` for pending, `- [x]` for done, `- [>]` for in progress.\n"+
-							"Keep steps concrete and actionable. After writing the plan, show it to me.",
-						goal, planPath, goal,
-					)
-					m.chat = m.chat.AddUserMessage(planPrompt)
-
-					// Persist the user message
-					if m.currentSession != nil {
-						if cs, ok := m.currentSession.(*config.Session); ok {
-							cs.Messages = append(cs.Messages, config.SessionMessage{
-								Role: "user", Content: planPrompt, Timestamp: time.Now(),
-							})
-						}
-					}
-
-					// Send to the loop.
-					var turnCmd tea.Cmd
-					m, turnCmd = m.startTurn()
-					m.status = m.status.SetText("Planning...")
-					m.planning = m.turn != nil
-					return m, turnCmd
-				}
-				return m, nil
+				return m.planCommand(cmd.Args)
 
 			case "diff":
 				cp, ok := m.llmClient.(Checkpointer)
@@ -1867,7 +1778,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Add user message to chat
+		// Add user message to chat, after the hidden plan-mode instruction
+		// while plan mode is on (2.0 W4e).
+		m = m.withPlanInstruction()
 		m.chat = m.chat.AddUserMessage(content)
 		m.streaming = true
 		m.status = m.status.SetStreaming(true)
@@ -2723,7 +2636,7 @@ func (m AppModel) View() string {
 	}
 
 	// Segmented status line (git / project / model / effort / perms / session / skills)
-	sections = append(sections, m.statusLine.View())
+	sections = append(sections, m.statusLineView())
 
 	// Contextual key hints
 	hints := hintsFor(m.viewMode, m.mcpPanel.Active())

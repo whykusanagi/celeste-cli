@@ -71,7 +71,7 @@ func TestEnterStartsTheSpinner(t *testing.T) {
 
 // /plan's "Planning..." stays until the reply starts streaming.
 func TestPlanStatusStaysUntilTheReplyStreams(t *testing.T) {
-	m, _ := newQueueTestApp()
+	m, _ := newPlanTestApp()
 	m, _ = step(t, m, SendMessageMsg{Content: "/plan build a thing"})
 	require.NotNil(t, m.turn)
 	assert.Equal(t, "Planning...", m.status.text)
