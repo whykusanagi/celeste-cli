@@ -1,68 +1,160 @@
 # Celeste CLI Roadmap
 
-*Last updated: August 2026 (v1.16.0)*
+*Last updated: October 2026, for 2.0.*
 
-## Current Release: v1.16.0
+2.0 is the release that brings celeste level with the agentic coding CLIs it is
+compared against in [COMPARISON.md](COMPARISON.md) ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)),
+while keeping what none of them ship: the code graph with structural review, and
+MCP-server mode. What changed for existing users is in
+[MIGRATING-2.0.md](../MIGRATING-2.0.md); the details of each item are in
+[CHANGELOG.md](../CHANGELOG.md).
 
-### Shipped in v1.9.0 / v1.9.2
+This page promises no dates. "Next" lists what 2.0 deferred and where each item
+came from; an item moves when someone picks it up.
 
-- Everything from v1.8.x (40 tools, 7 LLM providers, code graph, MCP server mode, etc.)
-- **Direct codegraph MCP tools** — `celeste_index`, `celeste_code_search`,
-  `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` exposed as
-  first-class MCP tools that bypass the chat LLM and return verbatim results
-- **BM25 fused ranking** (additive, via Reciprocal Rank Fusion with k=60) alongside
-  the MinHash Jaccard signal — Q1 relevance flipped 2/10 → 8/10 on the grafana benchmark
-- **Tree-sitter TypeScript parser** (behind `//go:build cgo`) replacing the regex
-  generic parser for `.ts` and `.tsx`, with accurate `call_expression` edge resolution
-- **Structural feature rerank** — pure-Go rescoring on matched-token-ratio, edge
-  density, kind boost, zero-edge penalty
-- **Stopwords runtime integration** — celeste-stopwords v1.0.0 (CC BY 4.0) embedded
-  and applied at both index and query time
-- **Reasoning metadata** on every search result (`EdgeCount`, `PathFlags`,
-  `ConfidenceWarnings`, `MatchedTokens`) so downstream LLMs can audit findings
-- **Path-based post-ranking filter** demoting test/mock/generated/vendored/declaration
-  results below clean-path matches
-- **MinHash seed persistence** — signatures comparable across process boundaries
-- **MCP progress notifications** (`notifications/progress`) streaming from
-  long-running `celeste_index rebuild/update` operations
-- **Anthropic backend `max_tokens` 8192 → 32768** for the chat-mode path
-- **TUI streaming tick-complete race fix (v1.9.2)** — short first streaming chunks
-  no longer truncate assistant replies to 1 char
-- Companion artifact: [celeste-stopwords](https://github.com/whykusanagi/celeste-stopwords) v1.0.0
-- Companion app: [celeste-for-claude](https://github.com/whykusanagi/celeste-for-claude)
+## 2.0 (shipped)
 
-See [CHANGELOG.md](../CHANGELOG.md) for the full v1.9.0 bundle details and the
-`celeste-stopwords/results/` archives for per-task A/B validation.
+On `main`, to be tagged v2.0.0. One line per workstream.
 
-## v2.1.0 Planned
+- **One loop.** The chat, `celeste agent`, MCP chat and subagents run on the same
+  tool loop, with the same caps, permissions, hooks, MCP servers and memories in
+  every mode; concurrency-safe tools run in parallel.
+- **Hooks v2 and trust.** JSON over stdin/stdout with `additionalContext`;
+  `PreToolUse`, `PostToolUse`, `SessionStart`, `UserPromptSubmit`, `PreCompact`,
+  `PostCompact`, `Stop` and `SubagentStop`; a repository's hooks run only after
+  `celeste hooks trust`. See [HOOKS.md](HOOKS.md).
+- **Provider blocks.** A provider's own reply format is kept byte for byte in
+  history, session files and agent checkpoints.
+- **Checkpoints, `/undo`, `/rewind`, `revert`.** File checkpoints on disk per
+  session; `/undo`, `/diff`, `/rewind [n]`, `/fork` and `celeste revert`.
+- **Compaction.** A ladder that scales with the context window: prune old tool
+  results (never one the model has not seen), optional Jev pruning, then a
+  summary that carries an authoritative state block (todos, changed files, the
+  voice rule) ([#174](https://github.com/whykusanagi/celeste-cli/issues/174),
+  [#234](https://github.com/whykusanagi/celeste-cli/issues/234),
+  [#200](https://github.com/whykusanagi/celeste-cli/issues/200)). The OpenAI
+  backend probes for server compaction; using it is in "Next".
+- **Thinking replay.** Anthropic thinking blocks and OpenAI reasoning items are
+  sent back on later turns, also after `celeste resume`
+  ([#192](https://github.com/whykusanagi/celeste-cli/issues/192)).
+- **Steering and stream rules.** Regex rules on the streaming reply and on tool
+  arguments, a watchdog ballot, a completion gate, and opt-in Jev pruning,
+  gating and routing ([#175](https://github.com/whykusanagi/celeste-cli/issues/175)).
+  See [STEERING.md](STEERING.md).
+- **Persona profiles.** The persona ships encrypted in official builds, at four
+  levels (full, spine, lite, off); the level fits the context window, so small
+  local models never overflow; explore and review subagents run with it off;
+  `celeste persona verify` ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
+- **Responses API.** The `openai` provider uses OpenAI's Responses API, with a
+  Chat Completions fallback for endpoints that lack it.
+- **AGENTS.md and context files.** `AGENTS.md` and `CLAUDE.md` are read up to the
+  git root in every mode, under the grimoire; celeste no longer writes
+  `.grimoire` into a project; `/init` and `celeste init --agents` write them on
+  request.
+- **Edits.** `patch_file` takes several edits per call, all or nothing; a
+  whitespace-tolerant fallback returns a diff; writes are atomic; an existing file
+  must be read before it is edited.
+- **Shell and sandbox.** One shell runner with process-tree kill and an output
+  cap for `bash`, custom tools and `--verify-cmd`. Sandbox, opt-in for 2.0:
+  seatbelt on macOS and bubblewrap on Linux, with `"network": false`. See
+  [SANDBOX.md](SANDBOX.md).
+- **MCP client hardening.** External tools never replace a registered one;
+  `readOnlyHint` is honoured only from servers marked trusted in a home-level
+  config.
+- **Sessions.** Sessions record their workspace and list this project's first;
+  tool calls are persisted; `/rewind` and `/fork`.
+- **Typed subagents.** `spawn_agent` takes `explore`, `general` or `review`, each
+  with its own tool set, model and persona level, and returns a validated
+  `{summary, findings, files}` result. See [SUBAGENTS.md](SUBAGENTS.md).
+- **Plan mode.** In review
+  ([#292](https://github.com/whykusanagi/celeste-cli/pull/292)): read-only
+  exploration, `submit_plan` for approval, `/plan` and `celeste plan`. It ships in
+  2.0 if it merges before the release freeze, otherwise in 2.1.
+- **ACP.** `celeste acp` is an Agent Client Protocol agent for Zed and JetBrains:
+  prompts, streamed replies, tool calls, the editor's permission prompt and
+  cancel.
+- **Images.** `read_file` fits images to each provider's limits or refuses them
+  with the limit named ([#239](https://github.com/whykusanagi/celeste-cli/issues/239)).
+- **Surface cleanup.** The classic/claw runtime mode and `skip_persona_prompt`
+  are gone; local endpoints need no key; `celeste update` fetches the official
+  signed release.
 
-### Parser coverage (tracked as GitHub issues)
-- [ ] [#18 — Tree-sitter parser for Python](https://github.com/whykusanagi/celeste-cli/issues/18)
-- [ ] [#19 — Tree-sitter parser for Rust](https://github.com/whykusanagi/celeste-cli/issues/19)
-- [ ] Release workflow CGo cross-toolchain (zig-cc or native-runner matrix) so
-      pre-built binaries ship with the tree-sitter improvement instead of the stub
+## Next
 
-### Code Intelligence
-- [ ] LSP integration (go to definition, find references, rename)
-- [ ] Automatic stale-index detection with rebuild prompt
-- [ ] Pluggable embedding-based reranker (local llama.cpp bridge / ONNX) behind the
-      existing `Reranker` interface — no cloud dependency
+Each item names where it was deferred from. "The 2.0 design" means the 2.0
+release design's out-of-scope list; "the 2.0 plans" means the "Not in" section
+of the workstream plan named.
 
-### Agent & Planning
-- [ ] Unified plan + todo system (plan steps auto-create todos)
-- [ ] Agent mode progress streaming over MCP
-- [ ] Interactive permission prompts in TUI during agent mode
+### Compaction
 
-### Collections & RAG
-- [ ] Multi-provider collections (not just xAI)
-- [ ] Auto-index codebase into collections for RAG-enhanced development
-- [ ] Collection content preview in TUI
+- [ ] Provider server compaction: Anthropic server compaction and OpenAI
+      `/responses/compact` as a ladder rung ([#199](https://github.com/whykusanagi/celeste-cli/issues/199),
+      rung 2 of [#174](https://github.com/whykusanagi/celeste-cli/issues/174)).
+- [ ] Threshold and background compaction (the 2.0 plans: compaction).
 
-### TUI
-- [ ] Proper graph visualization (graphviz integration or canvas rendering)
-- [ ] Session resume from TUI
+### Context, skills and commands
 
-### Platform
-- [ ] `celeste models` command (query provider APIs for available models)
-- [ ] Plugin system for community tools
-- [ ] Web UI mode (browser-based TUI)
+- [ ] Agent Skills: `SKILL.md` directories in `~/.celeste/skills/*/` and
+      `.celeste/skills/`, name and description in the prompt, body on demand; the
+      JSON shell "skills" become commands ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+      `~/.celeste/skills/*.json` keeps loading until the move is done.
+- [ ] Repository-local commands (the 2.0 plans: context and skills).
+
+### Edits and diagnostics
+
+- [ ] LSP diagnostics after writes, starting with gopls and the TypeScript
+      server ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)); more
+      language servers after that (the 2.0 plans: edits and LSP).
+- [ ] Evaluate hash-anchored (hashline) edits for weaker and local models
+      ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+
+### Sandbox
+
+- [ ] Windows sandbox (the 2.0 plans: sandbox). Windows runs `bash` with the
+      denylist only.
+- [ ] Sandbox on by default. Turning it on is a breaking change, so it waits for
+      a major version.
+- [ ] Per-command network allowlists; sandboxing hooks and MCP servers (the 2.0
+      plans: sandbox).
+
+### Sessions and memory
+
+- [ ] A `recall_memory` tool, a memory store keyed on the git root, and memory
+      in agent mode ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+
+### ACP
+
+- [ ] `session/load` and hooks for editor sessions (ACP part 3,
+      [#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+- [ ] The editor's `fs/*` and `terminal/*` methods, session modes, and `http`/`sse`
+      MCP servers passed by the editor (the 2.0 plans: ACP).
+
+### Persona
+
+- [ ] Semantic retrieval for `persona_lore`; 2.0 ships BM25 with instrumentation
+      (the 2.0 design; [#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
+- [ ] The blind persona back-test ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
+
+### Providers
+
+- [ ] OpenAI `previous_response_id` server-side state (the 2.0 design).
+- [ ] Gemini `ThoughtSignature` folded into provider blocks (the 2.0 design).
+
+### Cleanup
+
+- [ ] One token estimator and one set of context thresholds
+      ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+- [ ] Split `tui/app.go`'s `update()` into one file per message type, with slash
+      commands in their own files ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+
+### Code graph
+
+- [ ] Release binaries with the tree-sitter parsers (a CGo cross-toolchain);
+      today's release builds are pure Go and use the fallback parsers.
+- [ ] Automatic stale-index detection with a rebuild prompt.
+- [ ] A pluggable local reranker (llama.cpp bridge or ONNX) behind the existing
+      `Reranker` interface, with no cloud dependency.
+
+### Not planned
+
+- A plugin marketplace or a web UI (the 2.0 design).
