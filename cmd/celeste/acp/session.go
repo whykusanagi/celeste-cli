@@ -82,7 +82,7 @@ func (a *Agent) newSession(ctx context.Context, p NewSessionParams) (*session, *
 	if rerr := a.setupEnv(ctx, s, p.McpServers); rerr != nil {
 		return nil, rerr
 	}
-	store.Metadata["workspace"] = cwd
+	store.SetWorkspace(cwd)
 	store.Metadata["source"] = "acp"
 	if err := a.saveStore(store); err != nil {
 		s.env.Close()

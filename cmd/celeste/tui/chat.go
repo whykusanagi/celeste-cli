@@ -347,10 +347,10 @@ func hideAll(in []ChatMessage) []ChatMessage {
 // RestoreMessages appends saved history as is, keeping tool calls, tool
 // results and metadata that the Add* helpers would drop. Answered user
 // messages are marked as past their UserPromptSubmit hooks, so resuming
-// does not re-check them (markAnsweredPromptsHooked).
+// does not re-check them (MarkAnsweredPromptsHooked).
 func (m ChatModel) RestoreMessages(msgs []ChatMessage) ChatModel {
 	msgs = append([]ChatMessage(nil), msgs...)
-	markAnsweredPromptsHooked(msgs)
+	MarkAnsweredPromptsHooked(msgs)
 	m.messages = append(m.messages, msgs...)
 	m.updateContent()
 	m.viewport.GotoBottom()

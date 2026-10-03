@@ -31,7 +31,7 @@ func TestNewSessionBuildsAnEnvForCwd(t *testing.T) {
 	if !strings.Contains(s.systemPrompt, "acp-grimoire-marker") {
 		t.Fatalf("system prompt lacks the workspace grimoire:\n%s", s.systemPrompt)
 	}
-	if got, _ := s.store.Metadata["workspace"].(string); got != filepath.Clean(ws) {
+	if got := s.store.GetWorkspace(); got != filepath.Clean(ws) {
 		t.Fatalf("session workspace = %q, want %q", got, ws)
 	}
 }
