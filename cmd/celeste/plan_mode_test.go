@@ -222,3 +222,25 @@ func TestShowPlanRendersTodoStatus(t *testing.T) {
 		}
 	}
 }
+
+// The plan's todo items and the todo tool share one store: a todo call
+// after approval (the same turn) keeps the plan's items.
+func TestApprovedTodosSurviveALaterTodoCall(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "submit_plan", Args: `{"steps":[{"title":"a"},{"title":"b"}]}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "t", Name: "todo", Args: `{"action":"update","id":1,"status":"in_progress"}`}}},
+		fakeprovider.Turn{Text: "working"})
+	_, deps, ws := chatApp(t, srv)
+	deps.registry.SetAskFunc(func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
+		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
+	})
+	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	deps.adapter.SetPlanMode(true, "")
+	runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("plan it"), Tools: true, Run: 1})
+	items := builtin.NewTodoStore(ws).List()
+	if len(items) != 2 || items[0].Status != "in_progress" {
+		t.Fatalf("todos = %+v", items)
+	}
+}

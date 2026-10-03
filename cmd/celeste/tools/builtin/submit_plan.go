@@ -81,6 +81,10 @@ type SubmitPlanTool struct {
 	// DefaultGoal, when set, supplies the goal a submission leaves out
 	// (the chat's /plan <goal>).
 	DefaultGoal func() string
+	// Todos is the store approved steps go to: the registry's todo tool's
+	// store when there is one, so the tool never overwrites them from a
+	// stale copy. Nil opens the workspace's list.
+	Todos *TodoStore
 }
 
 // NewSubmitPlanTool builds submit_plan for workspace. ask presents the
@@ -210,17 +214,25 @@ func (t *SubmitPlanTool) Execute(ctx context.Context, input map[string]any, _ ch
 		return tools.ToolResult{Content: planKeepResult}, nil
 	}
 
-	store := NewTodoStore(t.workspace)
+	store := t.Todos
+	if store == nil {
+		store = NewTodoStore(t.workspace)
+	}
 	for i := range steps {
 		steps[i].TodoID = store.Create(steps[i].Title, steps[i].Detail).ID
 	}
 	plan := PlanFile{Goal: goal, Steps: steps, ApprovedAt: time.Now().UTC()}
 	data, _ := json.MarshalIndent(plan, "", "  ")
 	path := PlanPath(t.workspace)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return tools.ToolResult{Content: "could not save the plan: " + err.Error(), Error: true}, nil
+	err = os.MkdirAll(filepath.Dir(path), 0o755)
+	if err == nil {
+		err = atomicfile.Write(path, append(data, '\n'), 0o644)
 	}
-	if err := atomicfile.Write(path, append(data, '\n'), 0o644); err != nil {
+	if err != nil {
+		// No plan, no todo items: take back the ones just created.
+		for _, s := range steps {
+			_ = store.Delete(s.TodoID)
+		}
 		return tools.ToolResult{Content: "could not save the plan: " + err.Error(), Error: true}, nil
 	}
 	if t.approved != nil {

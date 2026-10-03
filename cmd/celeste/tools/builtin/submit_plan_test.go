@@ -146,3 +146,26 @@ func TestSubmitPlanUsesDefaultGoal(t *testing.T) {
 		t.Fatalf("plan = %+v %v", plan, err)
 	}
 }
+
+// A plan that cannot be saved leaves no todo items behind.
+func TestSubmitPlanRollsBackTodosWhenThePlanCannotBeSaved(t *testing.T) {
+	ws := t.TempDir()
+	store := NewTodoStore(ws)
+	store.Create("existing", "")
+	// A directory where plan.json goes makes the write fail.
+	if err := os.MkdirAll(PlanPath(ws), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
+		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
+	}
+	tool := NewSubmitPlanTool(ws, ask, func() { t.Fatal("must not approve") })
+	tool.Todos = store
+	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil)
+	if !res.Error || !strings.Contains(res.Content, "could not save the plan") {
+		t.Fatalf("result = %+v", res)
+	}
+	if items := NewTodoStore(ws).List(); len(items) != 1 || items[0].Title != "existing" {
+		t.Fatalf("todos = %+v", items)
+	}
+}

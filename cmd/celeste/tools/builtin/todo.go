@@ -202,6 +202,11 @@ func NewTodoTool(workspace string) *TodoTool {
 	}
 }
 
+// Store is the tool's todo store. It keeps the list in memory, so anything
+// else that changes the same workspace's list while the tool is live must
+// go through it (submit_plan), or the tool's next save overwrites it.
+func (t *TodoTool) Store() *TodoStore { return t.store }
+
 // Execute runs the todo action.
 func (t *TodoTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
 	action := getStringArg(input, "action", "")

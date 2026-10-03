@@ -54,6 +54,12 @@ func (p *planState) currentGoal() string {
 func registerSubmitPlan(reg *tools.Registry, workspace string, plan *planState) {
 	t := builtin.NewSubmitPlanTool(workspace, reg.Ask, func() { plan.set(false, "") })
 	t.DefaultGoal = plan.currentGoal
+	// One todo list: the todo tool keeps it in memory.
+	if tt, ok := reg.Get("todo"); ok {
+		if todo, ok := tt.(*builtin.TodoTool); ok {
+			t.Todos = todo.Store()
+		}
+	}
 	reg.RegisterWithModes(t, tools.ModeChat)
 }
 
