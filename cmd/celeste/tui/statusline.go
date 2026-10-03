@@ -1,5 +1,5 @@
 // Package tui — statusline.go holds the segmented bottom status line
-// (git, project, model, effort, permission mode, session), its git poll
+// (plan mode, git, project, model, effort, permission mode, session), its git poll
 // plumbing, and the contextual key-hint row.
 package tui
 
@@ -29,6 +29,7 @@ type StatusLineModel struct {
 	permMode   string
 	session    string
 	skills     string // pre-formatted skills segment ("" hides it)
+	plan       bool   // plan mode is on (2.0 W4e)
 	width      int
 }
 
@@ -55,6 +56,9 @@ func (m StatusLineModel) SetEffort(effort string) StatusLineModel { m.effort = e
 
 // SetPermMode sets the permission-mode segment ("default"/"strict"/"trust").
 func (m StatusLineModel) SetPermMode(mode string) StatusLineModel { m.permMode = mode; return m }
+
+// SetPlan shows PLAN while plan mode is on.
+func (m StatusLineModel) SetPlan(on bool) StatusLineModel { m.plan = on; return m }
 
 // SetSession sets the session-name segment.
 func (m StatusLineModel) SetSession(name string) StatusLineModel { m.session = name; return m }
@@ -109,8 +113,12 @@ func (m StatusLineModel) View() string {
 	muted := lipgloss.NewStyle().Foreground(ColorTextMuted)
 	sep := muted.Render(" │ ")
 
+	planSeg := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render("PLAN")
 	if m.width < 80 {
 		var narrow []string
+		if m.plan {
+			narrow = append(narrow, planSeg)
+		}
 		if g := m.gitSegment(); g != "" {
 			narrow = append(narrow, g)
 		}
@@ -121,6 +129,9 @@ func (m StatusLineModel) View() string {
 	}
 
 	var segs []string
+	if m.plan {
+		segs = append(segs, planSeg)
+	}
 	if g := m.gitSegment(); g != "" {
 		segs = append(segs, g)
 	}

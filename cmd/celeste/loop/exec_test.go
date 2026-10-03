@@ -754,3 +754,33 @@ func TestLoopCapsLargeResultWhenSpillFails(t *testing.T) {
 		t.Fatalf("the cut does not say the output cannot be recalled: %q", got[len(got)-600:])
 	}
 }
+
+// Refuse settles a call before the registry: the tool never runs, and its
+// hooks and permission prompt are never reached (2.0 W4e plan mode).
+func TestRunCallsRefuseSettlesBeforeTheRegistry(t *testing.T) {
+	ran := false
+	w := &fakeTool{name: "w", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		ran = true
+		return tools.ToolResult{Content: "wrote"}, nil
+	}}
+	r := &fakeTool{name: "r", readOnly: true}
+	l := execLoop(t, w, r)
+	l.Refuse = func(name string) string {
+		if name == "w" {
+			return "plan mode is on"
+		}
+		return ""
+	}
+	out := run(l,
+		llm.ToolCallResult{ID: "1", Name: "w", Arguments: `{}`},
+		llm.ToolCallResult{ID: "2", Name: "r", Arguments: `{}`})
+	if ran {
+		t.Fatal("a refused call ran")
+	}
+	if got, want := out.messages[0].Content, errorEnvelope("w", "plan mode is on"); got != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+	if out.messages[1].Content != "ok:r" {
+		t.Fatalf("got %+v", out.messages[1])
+	}
+}

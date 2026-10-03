@@ -62,6 +62,10 @@ func (l *Loop) runCalls(ctx context.Context, calls []llm.ToolCallResult, lim Lim
 			p.call.Input = input
 			if _, ok := l.Tools.Get(c.Name); !ok {
 				p.settle(errorEnvelope(c.Name, fmt.Sprintf("tool '%s' not found", c.Name)))
+			} else if l.Refuse != nil {
+				if why := l.Refuse(c.Name); why != "" {
+					p.settle(errorEnvelope(c.Name, why))
+				}
 			}
 		}
 		l.emit(Event{Kind: EventToolStart, Call: p.call})

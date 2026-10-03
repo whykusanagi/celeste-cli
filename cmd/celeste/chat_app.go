@@ -116,6 +116,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	subMgr := subagents.NewManager(&served, cwd, isChild)
 	registry.RegisterWithModes(subagents.NewSpawnAgentTool(subMgr), tools.ModeAgent, tools.ModeChat)
 	registry.RegisterWithModes(subagents.NewPostMessageTool(subMgr, "parent"), tools.ModeAgent, tools.ModeChat)
+	// Plan mode's submit_plan (2.0 W4e): chat only.
+	plan := &planState{}
+	registerSubmitPlan(registry, env.Workspace, plan)
 	env.RefreshDiscovery()
 
 	chatCfg := llm.ConfigFrom(cfg)
@@ -142,6 +145,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		rules:          env.Rules,
 		snapshots:      env.Snapshots,
 		workspace:      env.Workspace,
+		plan:           plan,
 	}
 	tuiClient.lifeCtx, tuiClient.lifeCancel = context.WithCancel(context.Background())
 	tuiClient.gate = chatGate(registry)

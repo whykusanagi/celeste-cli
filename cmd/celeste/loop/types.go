@@ -274,6 +274,12 @@ type Loop struct {
 	// Advisor is jev_gate (2.0 W3; nil: none): it may turn an allowed call
 	// into an Ask, never the reverse.
 	Advisor tools.AskAdvisor
+	// Refuse, when set, is asked for every call to a known tool before it
+	// reaches the registry; a non-empty reason settles the call as an
+	// error without running it, its hooks or its permission check (the
+	// chat's plan mode, 2.0 W4e). It can only take calls away. It runs on
+	// Run's goroutine and is read at call time.
+	Refuse func(name string) string
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string

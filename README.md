@@ -943,6 +943,15 @@ celeste -config grok chat
 | `/clear` | Clear chat history (current session only) |
 | `/exit`, `/quit`, `/q` | Exit application |
 
+#### Plan Mode
+| Command | Action |
+|---------|--------|
+| `/plan [goal]` | Plan mode: read-only tools until you approve the plan Celeste submits (with a goal, also sends it as the prompt) |
+| `/plan off` | Leave plan mode |
+| `/plan show` | Show the approved plan (`.celeste/plan.json`) with each step's todo status; `celeste plan` does the same from the shell |
+
+Approving a plan turns its steps into todo items and ends plan mode. See [docs/PLAN_MODE.md](docs/PLAN_MODE.md).
+
 #### Provider & Model Management
 | Command | Action |
 |---------|--------|

@@ -106,7 +106,7 @@ Commands:
   remember "<text>"       Save a memory
   forget <name>           Delete a memory
   resume [session-id]     Resume a previous session
-  plan [show]             Show current plan from .celeste/plan.md
+  plan [show]             Show the approved plan (.celeste/plan.json) and its todo status
   revert <file> [--session id] [--force]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
   update [--check]        Install the latest official release (go install and release builds)
@@ -127,7 +127,8 @@ Interactive Commands (in chat mode):
   /undo                   Undo the last file change (repeat to go back)
   /grimoire               Show project grimoire
   /index                  Show code graph status
-  /plan [show]            Show current plan
+  /plan [goal]            Plan mode: read-only tools until you approve a plan
+  /plan off | show        Leave plan mode | show the plan and its todo status
   /effort <level>         Set reasoning effort (off/low/medium/high/max)
   /endpoint <name>        Switch AI provider endpoint
   /model <name>           Change the model
@@ -345,6 +346,10 @@ type TUIClientAdapter struct {
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
 
+	// plan is the chat's plan mode (2.0 W4e, plan_mode.go); nil (tests
+	// that build an adapter by hand) is never on.
+	plan *planState
+
 	// gate answers the chat loop's permission asks with the modal
 	// (chatGate); nil denies (tests that build an adapter by hand).
 	gate loop.Gate
@@ -419,9 +424,10 @@ func (a *TUIClientAdapter) takePersonaNotice() string {
 	return n
 }
 
-// GetSkills implements tui.LLMClient.
+// GetSkills implements tui.LLMClient: the tools plan mode allows, as the
+// chat loop's requests offer them (no submit_plan while it is off).
 func (a *TUIClientAdapter) GetSkills() []tui.SkillDefinition {
-	return a.client.GetSkills()
+	return planFilter(a.client.GetSkills(), a.plan, a.registry)
 }
 
 // SwitchEndpoint switches to a different endpoint by loading its named config.

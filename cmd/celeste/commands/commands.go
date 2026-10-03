@@ -905,7 +905,9 @@ Project:
   /index snapshot    Save graph state for later diffing
   /index diff        Show what changed since last snapshot
   /index impact      Blast radius analysis (changed symbols + callers)
-  /plan [show]       Show current plan
+  /plan [goal]       Plan mode: read-only tools until you approve a plan
+  /plan off          Leave plan mode
+  /plan show         Show the approved plan and its todo status
   /context           Show context/token usage
   /compact [focus]   Summarize older history to free context
   /handoff [focus]   Summarize this session into a new one
