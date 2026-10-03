@@ -27,13 +27,23 @@ type editOutcome struct {
 
 // parseEdits reads patch_file's two shapes (ruling 1): the top-level
 // old_string/new_string/replace_all, or edits[] of 1-50 such objects, never
-// both.
+// both. Models that fill every schema field send the shape they did not
+// mean as empty values, so an empty edits[] is absent, and beside a
+// non-empty edits[] so are an empty old_string and new_string.
 func parseEdits(input map[string]any) ([]edit, error) {
 	rawEdits, hasEdits := input["edits"]
 	if hasEdits && rawEdits == nil {
 		hasEdits = false
 	}
+	if hasEdits {
+		if arr, err := editsArray(rawEdits); err == nil && len(arr) == 0 {
+			hasEdits = false
+		}
+	}
 	_, hasOld := input["old_string"]
+	if hasEdits && hasOld && emptyArg(input, "old_string") && emptyArg(input, "new_string") {
+		hasOld = false
+	}
 	switch {
 	case hasEdits && hasOld:
 		return nil, errors.New("use either old_string/new_string or edits[], not both")
@@ -66,6 +76,12 @@ func parseEdits(input map[string]any) ([]edit, error) {
 		return []edit{e}, nil
 	}
 	return nil, errors.New("give old_string and new_string, or edits[]")
+}
+
+// emptyArg reports whether input[key] is missing, null or "".
+func emptyArg(input map[string]any, key string) bool {
+	v, ok := input[key]
+	return !ok || v == nil || v == ""
 }
 
 // editsArray accepts edits[] as an array, or as the JSON text of one (some
