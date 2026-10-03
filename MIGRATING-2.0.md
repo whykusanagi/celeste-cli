@@ -101,3 +101,12 @@ without a warning.
 |---|---|
 | Editing a file not read in the session (`patch_file`, `write_file` over an existing file or appending to it, `splice_file`) | Refused with `read_file <path> first: celeste edits an existing file only after reading it in this session`. Read the file, then edit it. Creating a new file needs no read. In MCP chat each call starts with no reads, so read the file in the same call. |
 | A file edited by `write_file`, `patch_file` or `splice_file` | Replaced through a temp file and a rename, keeping its mode. The replacement is a new file owned by you, so another user's ownership, extended attributes (such as macOS `com.apple.*`) and ACLs are not kept. A file in a directory celeste cannot write to can no longer be edited. |
+
+## Sandbox for `bash`
+
+The sandbox is new and off by default in 2.0, so nothing changes until you turn it on. See [docs/SANDBOX.md](docs/SANDBOX.md).
+
+| 1.x | 2.0 |
+|---|---|
+| `bash` commands could write anywhere you can | Unchanged by default. With `"sandbox": {"enabled": true}` in `~/.celeste/config.json`, `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
+| Linux without bubblewrap, Windows | With the sandbox on: one warning (Linux) or log line (Windows), and commands run with the denylist only. |

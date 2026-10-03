@@ -27,6 +27,10 @@ import (
 // up a cancelled call.
 const taskkillTimeout = 3 * time.Second
 
+// StartSession is Start: a Windows command never shares a Unix
+// controlling terminal.
+func StartSession(cmd *exec.Cmd) error { return Start(cmd) }
+
 // Start starts cmd as the root of its own process tree and makes cancelling
 // its context kill the whole tree. Use it instead of cmd.Start; it keeps
 // any SysProcAttr fields already set (callers may set CmdLine).

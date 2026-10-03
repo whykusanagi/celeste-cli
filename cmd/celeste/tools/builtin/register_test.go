@@ -10,7 +10,7 @@ import (
 
 func TestRegisterAll_DevToolsOnly(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil, nil)
 	// 6 dev tools + 2 web tools + 14 config-free skills = 22
 	assert.True(t, registry.Count() > 6, "expected more than 6 tools, got %d", registry.Count())
 	bash, ok := registry.Get("bash")
@@ -20,7 +20,7 @@ func TestRegisterAll_DevToolsOnly(t *testing.T) {
 
 func TestRegisterAll_WithModeFiltering(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil, nil)
 	agentTools := registry.GetTools(tools.ModeAgent)
 	// Agent should have dev tools but not chat-only skills like tarot
 	for _, tool := range agentTools {
@@ -31,7 +31,7 @@ func TestRegisterAll_WithModeFiltering(t *testing.T) {
 
 func TestRegisterAll_ChatModeHasSkills(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil, nil)
 	chatTools := registry.GetTools(tools.ModeChat)
 
 	// Chat mode should have dev tools + config-free skills
@@ -56,7 +56,7 @@ func TestRegisterAll_ChatModeHasSkills(t *testing.T) {
 
 func TestRegisterAll_NoWorkspace(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, "", nil, nil, nil)
+	RegisterAll(registry, "", nil, nil, nil, nil)
 	// Should only have config-free skills (no dev tools)
 	_, ok := registry.Get("bash")
 	assert.False(t, ok, "bash should not be registered without workspace")
@@ -66,7 +66,7 @@ func TestRegisterAll_NoWorkspace(t *testing.T) {
 
 func TestToolCount(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	RegisterAll(registry, t.TempDir(), nil, nil, nil, nil)
 	// 7 dev tools (incl. splice_file) + 2 git tools + 2 web tools + 1 save_memory + 14 config-free skills + 1 todo + 1 tts + 1 audio_render + 1 ask + 1 find_tools + 1 recall_tool_result = 32
 	// (config-dependent and code graph tools not registered when configLoader/indexer is nil)
 	assert.Equal(t, 32, registry.Count(), "expected 32 tools without configLoader")
@@ -104,7 +104,7 @@ const (
 
 func TestToolCountWithConfigLoader(t *testing.T) {
 	registry := tools.NewRegistry()
-	RegisterAll(registry, t.TempDir(), countingConfigLoader{}, nil, nil)
+	RegisterAll(registry, t.TempDir(), countingConfigLoader{}, nil, nil, nil)
 	assert.Equal(t, docsCoreToolCount, registry.Count(),
 		"README and docs/ advertise %d always-on built-in tools — update both together", docsCoreToolCount)
 }
@@ -129,9 +129,9 @@ func TestRegisterConfigToolsCompletesRegisterAll(t *testing.T) {
 		return out
 	}
 	all := tools.NewRegistry()
-	RegisterAll(all, ws, countingConfigLoader{}, nil, nil)
+	RegisterAll(all, ws, countingConfigLoader{}, nil, nil, nil)
 	split := tools.NewRegistry()
-	RegisterAll(split, ws, nil, nil, nil)
+	RegisterAll(split, ws, nil, nil, nil, nil)
 	RegisterConfigTools(split, countingConfigLoader{})
 	if got, want := names(split), names(all); !reflect.DeepEqual(got, want) {
 		t.Fatalf("split registration = %v\nwant %v", got, want)

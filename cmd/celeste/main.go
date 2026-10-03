@@ -1365,7 +1365,7 @@ func runSkillExecuteCommand(args []string) {
 	registry := tools.NewRegistry()
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	execCwd, _ := os.Getwd()
-	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil)
+	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil, nil)
 	homeDir, _ := os.UserHomeDir()
 	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
@@ -1418,7 +1418,7 @@ func runSkillsCommand(args []string) {
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	skillsCwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
+	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil, nil)
 	homeDir, _ := os.UserHomeDir()
 	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
@@ -1473,7 +1473,7 @@ func runSkillsCommand(args []string) {
 	// Handle reload subcommand
 	if *reload {
 		registry = tools.NewRegistry()
-		builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil)
+		builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil, nil)
 		if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 			fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
 		}

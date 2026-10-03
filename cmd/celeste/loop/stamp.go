@@ -29,6 +29,7 @@ func ConfigStamp(ws string) string {
 		filepath.Join(ws, ".grimoire.local"),
 		filepath.Join(ws, ".celeste", "grimoire"),
 		filepath.Join(ws, ".celeste", "hooks.json"),
+		filepath.Join(ws, ".celeste", "config.json"), // its "sandbox" settings (W4)
 		// Not the memory index: save_memory writes it on every call, and a
 		// full rebuild per save costs more than a summary a few minutes
 		// stale (the memory tools read live).

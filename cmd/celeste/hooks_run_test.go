@@ -198,3 +198,36 @@ func TestHooksTrustCoversStreamRules(t *testing.T) {
 		t.Errorf("hooks.Load must ignore stream rule sources: err=%v warns=%v", err, warns)
 	}
 }
+
+func TestHooksListShowsSandboxFile(t *testing.T) {
+	c, out, _ := hooksCLIFixture(t, "", false)
+	writeFile(t, filepath.Join(c.cwd, ".celeste"), "config.json", `{"sandbox":{"enabled":false}}`)
+	if code := hooksCommand([]string{"list"}, c); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	s := out.String()
+	if !strings.Contains(s, "config.json#sandbox") || !strings.Contains(s, "repo-sandbox, untrusted") {
+		t.Fatalf("list = %s", s)
+	}
+}
+
+func TestHooksTrustApprovesSandboxFile(t *testing.T) {
+	c, out, _ := hooksCLIFixture(t, "", false)
+	p := filepath.Join(c.cwd, ".celeste", "config.json")
+	writeFile(t, filepath.Dir(p), "config.json", `{"sandbox":{"writable":["build"]}}`)
+	if code := hooksCommand([]string{"trust", "--yes", p}, c); code != 0 {
+		t.Fatalf("exit %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "Trusted") {
+		t.Fatalf("out = %s", out.String())
+	}
+	srcs, _ := sandboxSources(c.cwd)
+	if len(srcs) != 1 || hooks.LoadTrust(c.home).Status(srcs[0]) != hooks.Trusted {
+		t.Fatalf("not trusted: %+v", srcs)
+	}
+	// A tightening-only file has nothing to trust.
+	writeFile(t, filepath.Dir(p), "config.json", `{"sandbox":{"network":false}}`)
+	if srcs, _ := sandboxSources(c.cwd); len(srcs) != 0 {
+		t.Fatalf("tightening listed: %+v", srcs)
+	}
+}

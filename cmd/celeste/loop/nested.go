@@ -97,7 +97,23 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	// and files-modified list include what a subagent or /agent changed.
 	c.Snapshots = e.Snapshots
 	c.Registry = tools.NewRegistry()
-	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots)
+	// The parent's sandbox in the same workspace; in another one, the
+	// user's settings and that workspace's own file, whose loosening needs
+	// its own trust (a child never asks: it is non-interactive) unless it is
+	// under the parent's workspace and the same object the parent trusted.
+	c.userSandbox = e.userSandbox
+	c.SandboxPolicy = e.SandboxPolicy
+	c.sandboxTrust = e.sandboxTrust
+	if ws != e.Workspace {
+		// A worktree lane under the parent's workspace carries the same
+		// file: the same sandbox object keeps the parent's trust decision.
+		if !within(e.Workspace, ws) {
+			c.sandboxTrust = ""
+		}
+		c.SandboxPolicy = c.resolveSandbox(c.userSandbox)
+	}
+	policy := c.SandboxPolicy
+	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots, &policy)
 	if err := c.Registry.LoadCustomTools(filepath.Join(c.home, ".celeste", "skills")); err != nil {
 		c.warn("custom skills: %v", err)
 	}

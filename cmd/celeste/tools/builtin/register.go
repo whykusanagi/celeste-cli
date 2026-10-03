@@ -4,12 +4,14 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
 // RegisterAll registers all built-in tools with the registry.
 // tracker and snapshots are optional; pass nil to disable file checkpointing.
-func RegisterAll(registry *tools.Registry, workspace string, configLoader ConfigLoader, tracker *checkpoints.FileTracker, snapshots *checkpoints.SnapshotManager) {
+// policy is bash's OS sandbox (2.0 W4); nil runs bash with the denylist alone.
+func RegisterAll(registry *tools.Registry, workspace string, configLoader ConfigLoader, tracker *checkpoints.FileTracker, snapshots *checkpoints.SnapshotManager, policy *sandbox.Policy) {
 	// Dev tools — available in Agent and Chat
 	if workspace != "" {
 		var readOpts []ReadFileOption
@@ -29,7 +31,7 @@ func RegisterAll(registry *tools.Registry, workspace string, configLoader Config
 			spliceOpts = append(spliceOpts, WithSpliceFileSnapshots(snapshots))
 		}
 
-		registry.RegisterWithModes(NewBashTool(workspace), tools.ModeAgent, tools.ModeChat)
+		registry.RegisterWithModes(NewBashTool(workspace, policy), tools.ModeAgent, tools.ModeChat)
 		registry.RegisterWithModes(NewReadFileTool(workspace, readOpts...), tools.ModeAgent, tools.ModeChat)
 		registry.RegisterWithModes(NewWriteFileTool(workspace, writeOpts...), tools.ModeAgent, tools.ModeChat)
 		registry.RegisterWithModes(NewPatchFileTool(workspace, patchOpts...), tools.ModeAgent, tools.ModeChat)

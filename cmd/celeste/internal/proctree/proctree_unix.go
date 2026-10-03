@@ -24,6 +24,22 @@ func Start(cmd *exec.Cmd) error {
 	return cmd.Start()
 }
 
+// StartSession is Start in a new session instead of only a new process
+// group: the command has no controlling terminal, so it cannot open
+// /dev/tty and type into celeste's prompts (TIOCSTI). The session leader
+// leads a process group of the same id, so Kill and cancelling the
+// context still end the whole group. The sandboxed shell runs use it.
+func StartSession(cmd *exec.Cmd) error {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	// setpgid fails on a session leader, so not both.
+	cmd.SysProcAttr.Setsid = true
+	cmd.SysProcAttr.Setpgid = false
+	cmd.Cancel = func() error { return Kill(cmd) }
+	return cmd.Start()
+}
+
 // Kill sends SIGKILL to cmd's process group. A command that never started,
 // or whose group is already gone, is not an error.
 //

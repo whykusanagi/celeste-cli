@@ -43,7 +43,7 @@ func TestExploreSubagentToolSet(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", t.TempDir())
 	reg := tools.NewRegistry()
-	builtin.RegisterAll(reg, t.TempDir(), nil, nil, nil)
+	builtin.RegisterAll(reg, t.TempDir(), nil, nil, nil, nil)
 	reg.Register(NewSubmitResultTool(&resultHolder{}))
 	reg.Register(stubTool{name: "spawn_agent"})
 	reg.Register(stubTool{name: "post_message"})

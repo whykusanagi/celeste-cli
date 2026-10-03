@@ -52,6 +52,17 @@ jobs:
         gofmt -l .
         test -z "$(gofmt -l .)"
 
+    # The sandbox's bubblewrap tests skip without a usable bwrap. Ubuntu
+    # 24.04 ships none and its AppArmor blocks unprivileged user
+    # namespaces, so install it and lift that restriction for the run.
+    - name: Install bubblewrap (sandbox tests)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq bubblewrap
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+        bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid --new-session true && echo "bwrap usable"
+
     - name: Run tests
       shell: bash
       run: go test -v -race -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
