@@ -32,8 +32,8 @@ func (a *Agent) loadSession(ctx context.Context, p LoadSessionParams) *RPCError 
 	// hooks then; the next prompt must not re-run them (F0, as the TUI's
 	// resume does).
 	tui.MarkAnsweredPromptsHooked(history)
-	s := &session{id: store.ID, cwd: cwd, cfg: cfg, store: store, allow: map[string]bool{}, history: history}
-	if rerr := a.setupEnv(ctx, s, p.McpServers); rerr != nil {
+	s := &session{id: store.ID, cwd: cwd, cfg: cfg, store: store, allow: map[string]bool{}, history: history, mcpServers: p.McpServers}
+	if rerr := a.setupEnv(ctx, s); rerr != nil {
 		return rerr
 	}
 	store.SetWorkspace(cwd)

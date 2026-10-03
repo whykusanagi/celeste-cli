@@ -58,8 +58,17 @@ type session struct {
 	// allow holds the tools the editor's user allowed always (ruling 8).
 	allow map[string]bool
 	// pendingHooks are the untrusted repo hook sources Setup skipped
-	// (ruling 9); W4f-3 asks the editor's user about them.
+	// (ruling 9); the session's first prompt asks the editor's user about
+	// them, and askedHooks is set once every one was answered.
 	pendingHooks []hooks.Source
+	askedHooks   bool
+	// trusted are the sources the editor's user trusted in this session:
+	// Setup runs them even if storing the trust failed. skipped are the
+	// ones the user skipped: never asked about again in this session.
+	trusted, skipped []hooks.Source
+	// mcpServers are the editor's MCP servers, connected again when the
+	// Env is rebuilt.
+	mcpServers []McpServer
 	// notice is the small-window guard's message (W5 ruling 7), shown
 	// once at the start of the session's first prompt; "" once shown.
 	notice string
@@ -78,8 +87,8 @@ func (a *Agent) newSession(ctx context.Context, p NewSessionParams) (*session, *
 		return nil, &RPCError{Code: CodeInternal, Message: "loading celeste's config: " + err.Error()}
 	}
 	store := a.newStore()
-	s := &session{id: store.ID, cwd: cwd, cfg: cfg, store: store, allow: map[string]bool{}}
-	if rerr := a.setupEnv(ctx, s, p.McpServers); rerr != nil {
+	s := &session{id: store.ID, cwd: cwd, cfg: cfg, store: store, allow: map[string]bool{}, mcpServers: p.McpServers}
+	if rerr := a.setupEnv(ctx, s); rerr != nil {
 		return nil, rerr
 	}
 	store.SetWorkspace(cwd)
@@ -111,7 +120,7 @@ func checkCwd(cwd string) (string, *RPCError) {
 // Warnings go to the log, never to stdout. Untrusted repo hooks are
 // recorded and skipped: Approve never blocks (ruling 9). Repo MCP configs
 // are skipped: only the user's global ones and the editor's start.
-func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *RPCError {
+func (a *Agent) setupEnv(ctx context.Context, s *session) *RPCError {
 	warn := func(msg string) { a.logf("acp: session %s: %s", s.id, msg) }
 	env, err := loop.Setup(loop.ModeChat, s.cfg, s.cwd, loop.SetupOptions{
 		SessionID: s.id,
@@ -125,7 +134,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 	if err != nil {
 		return &RPCError{Code: CodeInternal, Message: "setting up the session: " + err.Error()}
 	}
-	a.connectMCP(ctx, s.id, s.cwd, env, servers)
+	a.connectMCP(ctx, s.id, s.cwd, env, s.mcpServers)
 	env.RefreshDiscovery()
 
 	llmCfg := llm.ConfigFrom(s.cfg)
@@ -147,23 +156,40 @@ func (a *Agent) setupEnv(ctx context.Context, s *session, servers []McpServer) *
 	}
 	summarize := agent.SmallModelSummarizer(llm.ConfigFrom(s.cfg), s.cfg.ResolveSmallModel())
 
-	s.env, s.client, s.systemPrompt, s.notice = env, client, prompt, sp.Notice
-	s.compactor = newCompactor(s.cfg, prompt, pruned, summarize, env.Hooks, a.logf)
+	comp := newCompactor(s.cfg, prompt, pruned, summarize, env.Hooks, a.logf)
+	s.mu.Lock()
+	s.env, s.client, s.systemPrompt, s.notice, s.compactor = env, client, prompt, sp.Notice, comp
+	s.mu.Unlock()
 	return nil
 }
 
-// recordHook is the Env's hook approver: it never blocks, records the
-// source for the first prompt to ask about, and answers no, so Setup skips
-// it (F0, ruling 9).
+// sameSource reports a and b are the same hook file with the same content.
+func sameSource(a, b hooks.Source) bool {
+	return a.Path == b.Path && a.Kind == b.Kind && a.Hash == b.Hash
+}
+
+func hasSource(list []hooks.Source, src hooks.Source) bool {
+	for _, s := range list {
+		if sameSource(s, src) {
+			return true
+		}
+	}
+	return false
+}
+
+// recordHook is the Env's hook approver: it never blocks. A source the
+// editor's user trusted in this session runs; any other is recorded for
+// the first prompt to ask about and answered no, so Setup skips it (F0,
+// ruling 9).
 func (s *session) recordHook(src hooks.Source, _ hooks.TrustStatus) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, p := range s.pendingHooks {
-		if p.Path == src.Path && p.Kind == src.Kind {
-			return false
-		}
+	if hasSource(s.trusted, src) {
+		return true
 	}
-	s.pendingHooks = append(s.pendingHooks, src)
+	if !hasSource(s.skipped, src) && !hasSource(s.pendingHooks, src) {
+		s.pendingHooks = append(s.pendingHooks, src)
+	}
 	return false
 }
 
@@ -202,8 +228,11 @@ func (a *Agent) connectMCP(ctx context.Context, sid, cwd string, env *loop.Env, 
 
 // close releases the session's Env.
 func (s *session) close() {
-	if s.env != nil {
-		s.env.Close()
+	s.mu.Lock()
+	env := s.env
+	s.mu.Unlock()
+	if env != nil {
+		env.Close()
 	}
 }
 
@@ -277,6 +306,7 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 		// session/cancel came after this prompt but before it started.
 		return &PromptResult{StopReason: StopCancelled}, nil
 	}
+	s.askHooks(pctx, a)
 	s.mu.Lock()
 	history := append(append([]tui.ChatMessage(nil), s.history...),
 		tui.ChatMessage{Role: "user", Content: text, Timestamp: time.Now()})
