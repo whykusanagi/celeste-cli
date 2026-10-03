@@ -79,9 +79,25 @@ func TestPersonalityDocDescribesTheMechanism(t *testing.T) {
 func TestVerifyDocCoversGoInstall(t *testing.T) {
 	doc := repoDoc(t, "VERIFY.md")
 	requireAll(t, "VERIFY.md", doc,
-		"celeste version", "celeste persona verify", "CELESTE_NO_AUTO_UPGRADE=1",
+		"celeste persona verify", "CELESTE_NO_AUTO_UPGRADE=1",
 		"## What `go install` and `celeste update` check",
 	)
+}
+
+// `celeste version` (like help, update and persona) never runs the startup
+// self-upgrade (autoupgrade.go noUpgradeCommands), so no doc may tell a go
+// install user that it upgrades the binary; `celeste update` does.
+func TestDocsUpgradeAGoInstallBuildWithUpdate(t *testing.T) {
+	for _, name := range []string{"README.md", "VERIFY.md", "MIGRATING-2.0.md", "docs/PERSONALITY.md", "RELEASE_CHECKLIST.md"} {
+		doc := repoDoc(t, name)
+		requireNone(t, name, doc, "run `celeste version` first", "celeste version` first", "upgrades itself on `celeste version`", "this also upgrades it")
+		requireAll(t, name, doc, "celeste update")
+	}
+	for _, cmd := range []string{"help", "version", "update", "persona"} {
+		if !noUpgradeCommands[cmd] {
+			t.Fatalf("%s now runs the startup self-upgrade; revisit the docs this test pins", cmd)
+		}
+	}
 }
 
 // The release checklist points at the W7 go/no-go and post-release checks
@@ -96,7 +112,7 @@ func TestReleaseChecklistReferencesTheW7Checks(t *testing.T) {
 // authoring notes and the built-in stream rules (which match her voice on
 // purpose) are out of scope.
 func TestDocsDescribeThePersonaMechanismOnly(t *testing.T) {
-	rx := regexp.MustCompile(`succubus|oni-|[Oo]nii|\btwin\b|\bKusanagi\b|Operational Laws|\bLaws? [0-5]\b|pauldron|fraternal|Abyssal Intelligence|[Dd]emon [Nn]oble|VTuber|lore-accurate|Hehe|cutie~|I.m Celeste|smug wrath|The Abyss whispers`)
+	rx := regexp.MustCompile(`succubus|oni-|[Oo]nii|\btwin\b|\bKusanagi\b|Operational Laws|\bLaws? [0-5]\b|pauldron|fraternal|Abyssal Intelligence|[Dd]emon [Nn]oble|VTuber|lore-accurate|Hehe|cutie~|I.m Celeste|smug wrath|The Abyss whispers|face my wrath|cuties~|I.ll possess|I.ll bully|watch me own|Summoning Me|\bDarlings\b|\bmy \d+ tools`)
 	root := filepath.Join("..", "..")
 	skip := map[string]bool{
 		"CHANGELOG.md":                 true,

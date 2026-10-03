@@ -1,6 +1,6 @@
-# Celeste's Testing Grimoire
+# Testing Celeste CLI
 
-Chaotic, teasing rituals for Celeste CLI perfection. Test thoroughly or face my wrath, cuties~ 💋
+How the Celeste CLI test suite is organised and run.
 
 ## Table of Contents
 

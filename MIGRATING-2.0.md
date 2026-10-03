@@ -8,7 +8,8 @@ sections below say which. Then install 2.0 and check it:
 ```bash
 go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
 which celeste          # the same $GOPATH/bin/celeste (or ~/go/bin/celeste) as 1.x
-celeste version        # prints 2.x; on a go install build this also upgrades it (below)
+celeste version        # prints 2.x
+celeste update         # a go install build: installs the official binary (below)
 celeste persona verify # official persona: ...
 ```
 
@@ -44,7 +45,7 @@ decrypts it; every other build runs a short public persona and says so. See
 
 | 1.x | 2.0 |
 |---|---|
-| A `go install` build ran as built | On its first run, a `go install` build of a release tag downloads the official release binary of the same version, checks its GPG signature and checksums with the release key built into celeste ([VERIFY.md](VERIFY.md) lists the checks), replaces itself and starts again, so it runs the full persona. One line on stderr says so. If the download fails, nothing is replaced, that run uses the public persona, and celeste tries again in an hour. `celeste serve` and `celeste acp` never replace themselves mid-run: they install the update for the next launch. |
+| A `go install` build ran as built | The first time it runs a command (any but `help`, `version`, `update` and `persona`), a `go install` build of a release tag downloads the official release binary of the same version, checks its GPG signature and checksums with the release key built into celeste ([VERIFY.md](VERIFY.md) lists the checks), replaces itself and starts again, so it runs the full persona. One line on stderr says so. If the download fails, nothing is replaced, that run uses the public persona, and celeste tries again in an hour. `celeste serve` and `celeste acp` never replace themselves mid-run: they install the update for the next launch. |
 | | Set `CELESTE_NO_AUTO_UPGRADE=1` to keep the binary `go install` built. A build from a checkout (`make install`, `go build`) never downloads anything. |
 | No update command | `celeste update` installs the newest official release; `celeste update --check` only reports it. Neither ever downgrades. On a build from a checkout, both exit 1 and tell you to pull and rebuild. |
 

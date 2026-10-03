@@ -98,7 +98,7 @@ func TestDocsClaimsMatchCode(t *testing.T) {
 		{"README.md", "`celeste providers` lists (\\d+)", func(d docTruths) int { return d.registered }, "registered providers"},
 		{"README.md", `\((\d+)-turn safety cap\)`, func(docTruths) int { return config.DefaultMaxToolIterations }, "chat turn cap"},
 		{"docs/LLM_PROVIDERS.md", `supports \*\*(\d+) chat providers\*\*`, func(d docTruths) int { return d.chatProviders }, "chat providers"},
-		{"docs/LLM_PROVIDERS.md", `my (\d+) tools`, all, "built-in tools"},
+		{"docs/LLM_PROVIDERS.md", `Celeste's (\d+) tools`, all, "built-in tools"},
 		{"docs/LLM_PROVIDERS.md", "`celeste chat` \\(TUI\\) \\| (\\d+) built-in", func(d docTruths) int { return d.chatTools }, "chat-mode tools"},
 		{"docs/LLM_PROVIDERS.md", "`celeste agent` \\| (\\d+) built-in", func(d docTruths) int { return d.agentTools }, "agent-mode tools"},
 		{"docs/PROVIDER_AUDIT_MATRIX.md", `(\d+) chat providers`, func(d docTruths) int { return d.chatProviders }, "chat providers"},

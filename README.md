@@ -64,7 +64,8 @@ go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest
 ```
 
 The `celeste` binary is installed to `$GOPATH/bin` (or `~/go/bin` by default). The first time
-you run it, it downloads the official signed release binary of the same version from
+you run a command with it (`celeste chat`, say; `help`, `version`, `update` and `persona` don't
+count), it downloads the official signed release binary of the same version from
 [Releases](https://github.com/whykusanagi/celeste-cli/releases), checks its GPG signature and
 checksums against the release key built into celeste, replaces itself and carries on, so you
 get the full persona from the first run (stderr says
@@ -119,7 +120,7 @@ Official release binaries, and `go install` builds once they have upgraded thems
 Celeste's full persona. Builds from a checkout run the public persona. To check a binary, run
 `celeste persona verify`: it prints `official persona: ...` and exits 0 on an official build,
 and exits 1 with the reason otherwise. It never downloads, so after a fresh `go install` run
-`celeste version` first (that run upgrades the binary), then `celeste persona verify`. A local model with a small context window gets a smaller
+`celeste update` first (it installs the official binary), then `celeste persona verify`. A local model with a small context window gets a smaller
 persona profile; set `context_limit` in your config to the server's real window. How the
 persona is built and chosen: [docs/PERSONALITY.md](docs/PERSONALITY.md). How to verify a
 download: [VERIFY.md](VERIFY.md).

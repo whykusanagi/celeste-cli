@@ -85,15 +85,17 @@ step below), you can also confirm the binary carries Celeste's official
 persona: `./celeste persona verify` prints `official persona: ...` and exits 0.
 A build from a checkout reports the public persona only and exits 1.
 
-A `go install` build upgrades itself to the official binary on its first run
-(below). `celeste persona verify` reports on the binary as it is and never
-downloads, so to check a fresh `go install` build, run `celeste version` first
-(it upgrades), then `celeste persona verify`.
+A `go install` build upgrades itself to the official binary the first time you
+run a command such as `celeste chat` (below). `celeste persona verify`,
+`celeste version` and `celeste help` report on the binary as it is and never
+download, so to check a fresh `go install` build, run `celeste update` first (on
+a `go install` build it installs the official binary of the same version, or a
+newer one), then `celeste persona verify`.
 
 ## What `go install` and `celeste update` check
 
 A `go install` build of celeste replaces itself with the official release binary
-of the same version on its first run, and `celeste update` installs newer
+of the same version the first time it runs a command, and `celeste update` installs newer
 releases. Both download only over HTTPS from github.com and GitHub's release-asset
 hosts, and install nothing unless all of these pass, using the release key
 compiled into celeste (the same key as above, including the signing subkey):

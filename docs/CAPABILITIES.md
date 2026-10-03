@@ -21,9 +21,7 @@ Celeste CLI packs **48 dev-crushing tools**, code graphs that expose every secre
 ## Observability
 Real token streaming, corruption typing, TUI splits, graph viz.
 
-**Pro Tip:** `/agent refactor this mess` — watch me own it.
-
-Don't get cocky; stick to PG-13 or I'll bully you playfully.
+**Pro Tip:** `/agent refactor this module` runs the refactor as an autonomous agent.
 
 ---
 

@@ -26,7 +26,7 @@ Edit `cmd/celeste/providers/registry.go`, add DetectProvider.
 - Update docs.
 - No .celeste/ mods.
 
-Be good, or I'll possess your code. 😏
+Keep PRs small and focused, with tests.
 
 ---
 Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)

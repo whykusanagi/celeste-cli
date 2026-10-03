@@ -12,7 +12,8 @@ This page describes how the persona is built, chosen and verified. It does not r
 Official release binaries carry the key that decrypts the persona. celeste decrypts it in memory
 at startup and never writes it to disk.
 
-A `go install` build gets the official binary too. On its first run it downloads the official
+A `go install` build gets the official binary too. The first time it runs a command (any but
+`help`, `version`, `update` and `persona`), it downloads the official
 release binary of the same version, checks its GPG signature and checksums against the release
 key built into celeste, replaces itself and carries on. Set `CELESTE_NO_AUTO_UPGRADE=1` to keep
 the binary `go install` built. [VERIFY.md](../VERIFY.md) lists what is checked.
@@ -31,8 +32,9 @@ sends encrypted bytes to a model.
 `celeste persona verify` reports which one a binary runs. It prints
 `official persona: core <commit>, key id <id>; full ~N, spine ~N, lite ~N, off ~N tokens` and
 exits 0 when all four profiles decrypt and match `SOURCE.json`; otherwise it names the reason and
-exits 1. It never downloads anything, so on a fresh `go install` build run `celeste version`
-first (which upgrades it), then `celeste persona verify`.
+exits 1. It never downloads anything (nor do `celeste version` and `celeste help`), so on a
+fresh `go install` build run `celeste update` first (it installs the official binary), then
+`celeste persona verify`.
 
 **What the encryption is for.** It is a gate and a statement of the license, not secrecy: every
 official binary contains the key, and a determined person can extract it. Doing so doesn't grant
