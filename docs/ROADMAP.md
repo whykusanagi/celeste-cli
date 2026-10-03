@@ -23,7 +23,8 @@ On `main`, to be tagged v2.0.0. One line per workstream.
   `PreToolUse`, `PostToolUse`, `SessionStart`, `UserPromptSubmit`, `PreCompact`,
   `PostCompact`, `Stop` and `SubagentStop`; a repository's hooks run only after
   `celeste hooks trust`. See [HOOKS.md](HOOKS.md).
-- **Provider blocks.** A provider's own reply format is kept byte for byte in
+- **Provider blocks.** Where a backend returns its own reply format (Anthropic
+  thinking blocks, OpenAI Responses reasoning items), it is kept byte for byte in
   history, session files and agent checkpoints.
 - **Checkpoints, `/undo`, `/rewind`, `revert`.** File checkpoints on disk per
   session; `/undo`, `/diff`, `/rewind [n]`, `/fork` and `celeste revert`.
@@ -119,8 +120,9 @@ of the workstream plan named.
 
 ### Sessions and memory
 
-- [ ] A `recall_memory` tool, a memory store keyed on the git root, and memory
-      in agent mode ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+- [ ] A `recall_memory` tool, so the model can read a memory's body (today it
+      sees the memory index), and a memory store keyed on the git root rather
+      than the workspace ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
 
 ### ACP
 
