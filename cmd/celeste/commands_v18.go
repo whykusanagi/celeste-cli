@@ -167,29 +167,25 @@ func truncateLabel(s string, n int) string {
 
 func runPlanCommand(args []string) {
 	cwd, _ := os.Getwd()
-	planPaths := []string{
-		filepath.Join(cwd, ".celeste", "plan.md"),
-		filepath.Join(cwd, "CODEBASE_FIX_PLAN.md"),
-		filepath.Join(cwd, "PLAN.md"),
-		filepath.Join(cwd, "plan.md"),
-		filepath.Join(cwd, "FIX_PLAN.md"),
+	if code := planCLI(args, cwd, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
 	}
+}
 
-	// Find first existing plan
-	for _, p := range planPaths {
-		data, err := os.ReadFile(p)
-		if err == nil {
-			fmt.Printf("Plan (%s):\n\n%s\n", filepath.Base(p), string(data))
-			return
-		}
+const planCLIUsage = `Usage: celeste plan [show]
+
+Shows the plan approved in the chat's plan mode (.celeste/plan.json) with
+each step's todo status. Enter plan mode with /plan in the chat.`
+
+// planCLI is `celeste plan [show]` (2.0 W4e ruling 12): 0 after printing
+// the plan (or "No plan yet."), 2 for bad arguments.
+func planCLI(args []string, workspace string, stdout, stderr io.Writer) int {
+	if len(args) > 1 || (len(args) == 1 && args[0] != "show") {
+		fmt.Fprintln(stderr, planCLIUsage)
+		return 2
 	}
-
-	fmt.Println("No active plan found.")
-	fmt.Println()
-	fmt.Println("To create and execute plans:")
-	fmt.Println("  celeste agent <goal>    Autonomous planning + execution")
-	fmt.Println("  /plan <goal>            Ask Celeste to draft and write a plan (in interactive chat)")
-	fmt.Println("  celeste plan show       Show current plan")
+	fmt.Fprintln(stdout, planReport(workspace))
+	return 0
 }
 
 func runRevertCommand(args []string) {

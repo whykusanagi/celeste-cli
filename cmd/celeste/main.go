@@ -106,7 +106,7 @@ Commands:
   remember "<text>"       Save a memory
   forget <name>           Delete a memory
   resume [session-id]     Resume a previous session
-  plan [show]             Show current plan from .celeste/plan.md
+  plan [show]             Show the approved plan (.celeste/plan.json) and its todo status
   revert <file> [--session id] [--force]  Restore a file from its last checkpoint
   hooks [list|trust]      Inspect lifecycle hooks and approve repo hooks
   update [--check]        Install the latest official release (go install and release builds)
