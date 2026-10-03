@@ -37,7 +37,7 @@ type docTruths struct {
 func computeTruths(t *testing.T) docTruths {
 	t.Helper()
 	r := tools.NewRegistry()
-	RegisterAll(r, t.TempDir(), countingConfigLoader{}, nil, nil)
+	RegisterAll(r, t.TempDir(), countingConfigLoader{}, nil, nil, nil)
 	core := r.Count()
 	RegisterCodeGraphTools(r, nil)
 	codegraph := r.Count() - core

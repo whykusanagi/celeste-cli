@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 )
 
@@ -20,8 +22,9 @@ type hooksCLI struct {
 
 const hooksUsage = `Usage:
   celeste hooks list                  Show hook sources here and whether each is trusted
-  celeste hooks trust [--yes] [path]  Approve repo hooks (path: a directory, a .celeste/hooks.json
-                                      or grimoire file; default: the current directory)
+  celeste hooks trust [--yes] [path]  Approve repo hooks, stream rules and sandbox settings (path: a
+                                      directory, a .celeste/hooks.json, .celeste/config.json or
+                                      grimoire file; default: the current directory)
 `
 
 func runHooksCommand(args []string) {
@@ -71,7 +74,9 @@ func hooksList(c hooksCLI) int {
 		fmt.Fprintf(c.errOut, "Error: %v\n", err)
 		return 1
 	}
-	for _, w := range warnings {
+	sbx, sbxWarns := sandboxSources(c.cwd)
+	srcs = append(srcs, sbx...)
+	for _, w := range append(warnings, sbxWarns...) {
 		fmt.Fprintln(c.errOut, w)
 	}
 	if len(srcs) == 0 {
@@ -114,7 +119,7 @@ func hooksTrust(args []string, c hooksCLI) int {
 	if len(paths) == 1 {
 		target = paths[0]
 	}
-	srcs, warnings, err := hooks.SourcesAt(target, c.home)
+	srcs, warnings, err := trustSources(target, c.home)
 	for _, w := range warnings {
 		fmt.Fprintln(c.errOut, w)
 	}
@@ -171,4 +176,47 @@ func hooksTrust(args []string, c hooksCLI) int {
 		fmt.Fprintf(c.out, "Trusted %s\n", strconv.Quote(s.Path))
 	}
 	return code
+}
+
+// trustSources is what `celeste hooks trust` acts on: hooks.SourcesAt,
+// plus the workspace's sandbox settings for a directory, or only those for
+// a .celeste/config.json file.
+func trustSources(target, home string) ([]hooks.Source, []string, error) {
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return nil, nil, err
+	}
+	if filepath.Base(abs) == "config.json" && filepath.Base(filepath.Dir(abs)) == ".celeste" {
+		if _, err := os.Stat(abs); err != nil {
+			return nil, nil, err
+		}
+		srcs, warns := sandboxSources(filepath.Dir(filepath.Dir(abs)))
+		return srcs, warns, nil
+	}
+	srcs, warns, err := hooks.SourcesAt(abs, home)
+	if err != nil {
+		return srcs, warns, err
+	}
+	if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
+		sbx, sbxWarns := sandboxSources(abs)
+		srcs, warns = append(srcs, sbx...), append(warns, sbxWarns...)
+	}
+	return srcs, warns, nil
+}
+
+// sandboxSources is the trust source for workspace's .celeste/config.json
+// "sandbox" settings when they loosen the sandbox (tightening needs no
+// trust), refusing a symlinked file as loop.Setup does.
+func sandboxSources(workspace string) ([]hooks.Source, []string) {
+	s, path, body, err := config.LoadWorkspaceSandbox(workspace)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %v", strconv.Quote(path), err)}
+	}
+	if !s.Loosens() {
+		return nil, nil
+	}
+	if err := hooks.CheckRepoSandbox(path); err != nil {
+		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %v", strconv.Quote(path), err)}
+	}
+	return []hooks.Source{hooks.SandboxSource(path, body)}, nil
 }

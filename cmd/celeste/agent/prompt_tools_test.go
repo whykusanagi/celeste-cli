@@ -20,7 +20,7 @@ var promptToolRef = regexp.MustCompile(`(?:\bcall|\busing)\s+([a-z][a-z0-9_]*)|"
 // "tool not found" (#166).
 func TestAgentPromptToolsAreRegistered(t *testing.T) {
 	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, t.TempDir(), nil, nil, nil)
+	builtin.RegisterAll(registry, t.TempDir(), nil, nil, nil, nil)
 	registered := map[string]bool{}
 	for _, tool := range registry.GetTools(tools.ModeAgent) {
 		registered[tool.Name()] = true

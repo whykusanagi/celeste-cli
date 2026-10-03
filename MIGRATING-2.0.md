@@ -109,3 +109,11 @@ without a warning.
 | `/plan <goal>` wrote `.celeste/plan.md` via the model | `/plan` enters plan mode (read-only tools until you approve a plan); approved plans live in `.celeste/plan.json` and the todo list. See `docs/PLAN_MODE.md`. |
 | `/plan cancel` | Gone. `/plan off` leaves plan mode; delete `.celeste/plan.json` to drop an approved plan. |
 | `celeste plan` read `.celeste/plan.md`, `PLAN.md`, `plan.md`, `CODEBASE_FIX_PLAN.md` or `FIX_PLAN.md` | Shows `.celeste/plan.json` with todo status; a leftover `.celeste/plan.md` is shown with a note when there is no `plan.json`. Other files are no longer read. |
+## Sandbox for `bash`
+
+The sandbox is new and off by default in 2.0, so nothing changes until you turn it on. See [docs/SANDBOX.md](docs/SANDBOX.md).
+
+| 1.x | 2.0 |
+|---|---|
+| `bash` commands could write anywhere you can | Unchanged by default. With `"sandbox": {"enabled": true}` in `~/.celeste/config.json`, `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
+| Linux without bubblewrap, Windows | With the sandbox on: one warning (Linux) or log line (Windows), and commands run with the denylist only. |

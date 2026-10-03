@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 )
 
@@ -16,10 +17,13 @@ const maxCommandOutput = 64_000
 type BashTool struct {
 	BaseTool
 	workspace string
+	policy    *sandbox.Policy // nil: no OS sandbox (the denylist alone)
 }
 
 // NewBashTool creates a BashTool bound to the given workspace directory.
-func NewBashTool(workspace string) *BashTool {
+// Its commands run under policy's OS sandbox when it is enabled and one
+// is available (2.0 W4); nil runs them with the denylist alone.
+func NewBashTool(workspace string, policy *sandbox.Policy) *BashTool {
 	return &BashTool{
 		BaseTool: BaseTool{
 			ToolName:        "bash",
@@ -45,6 +49,7 @@ func NewBashTool(workspace string) *BashTool {
 			ExecTimeout:     5 * time.Minute,
 		},
 		workspace: workspace,
+		policy:    policy,
 	}
 }
 
@@ -66,7 +71,7 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 		timeoutSeconds = 300
 	}
 
-	res := RunShell(ctx, ShellOptions{Dir: t.workspace, Command: command, Timeout: time.Duration(timeoutSeconds) * time.Second})
+	res := RunShell(ctx, ShellOptions{Dir: t.workspace, Command: command, Timeout: time.Duration(timeoutSeconds) * time.Second, Policy: t.policy})
 	if res.Blocked != "" {
 		return tools.ToolResult{Error: true, Content: res.Blocked}, nil
 	}
@@ -88,6 +93,16 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 		result["error"] = "cancelled; the command and everything it started were killed"
 	case res.ExitCode != 0:
 		result["error"] = fmt.Sprintf("exit status %d", res.ExitCode)
+	}
+	if res.Sandbox != "" {
+		result["sandbox"] = res.Sandbox
+	}
+	if res.Hint != "" {
+		if e, ok := result["error"].(string); ok {
+			result["error"] = e + "; " + res.Hint
+		} else {
+			result["error"] = res.Hint
+		}
 	}
 
 	data, _ := json.Marshal(result)

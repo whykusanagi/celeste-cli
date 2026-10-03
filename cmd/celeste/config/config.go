@@ -223,6 +223,9 @@ type Config struct {
 	// Orchestrator settings
 	Orchestrator *OrchestratorConfig `json:"orchestrator,omitempty"`
 
+	// Sandbox is the OS sandbox for bash (2.0 W4); see Sandbox.
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
 	// envFile holds the values the file had for the fields ApplyEnvOverrides
 	// replaced, so a later Save writes the file's values, not the run's.
 	envFile *envFileValues

@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model. For regex rules on the model's own output (not on tool events), see [STEERING.md](STEERING.md); a project grimoire's `## Stream Rules` section is trusted with the same `celeste hooks trust`.
+Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model. For regex rules on the model's own output (not on tool events), see [STEERING.md](STEERING.md); a project grimoire's `## Stream Rules` section is trusted with the same `celeste hooks trust`, as is a workspace `.celeste/config.json` whose `sandbox` settings loosen the sandbox (see [SANDBOX.md](SANDBOX.md)).
 
 **Where hooks load.** The chat UI (`celeste chat`, `celeste resume`), every agent run and MCP chat load hooks: `celeste agent`, the MCP server's `celeste` tool in both `mode: "agent"` and `mode: "chat"`, `/agent` in the chat, subagents, and `/orchestrate` lanes.
 
@@ -162,6 +162,6 @@ Read the JSON payload from stdin instead — it is never re-interpreted by the s
 
 Celeste's own tools (`write_file`, `patch_file`, `splice_file`, and every other tool that writes through the same path resolution) refuse to write `~/.celeste/hooks.json`, `~/.celeste/grimoire.md` or `~/.celeste/trusted.json`, under any spelling (absolute, `~/`, `$HOME/`, `${HOME}/`, or a symlink that resolves to one of them), and refuse any `.celeste/trusted.json` wherever it is. `read_file` and search/list tools can still see these files — only writes are blocked.
 
-This is defence in depth, not the trust boundary: it stops Celeste's own tools from quietly rewriting your hook trust or global hooks, but a `bash` tool call can still reach these files with ordinary shell redirection until the sandboxed execution environment lands. The trust model in this document — approval keyed to a found path and a hash of the definitions — doesn't depend on this guard; it's a safety net on top.
+This is defence in depth, not the trust boundary: it stops Celeste's own tools from quietly rewriting your hook trust or global hooks, but a `bash` tool call can still reach these files with ordinary shell redirection unless the sandbox is on (`"sandbox": {"enabled": true}`, see [SANDBOX.md](SANDBOX.md)), which keeps `bash` writes inside the workspace, temp and cache directories. The trust model in this document — approval keyed to a found path and a hash of the definitions — doesn't depend on this guard; it's a safety net on top.
 
 A repo's own `.celeste/hooks.json` is not protected the same way: Celeste can write it (so you can ask Celeste to set up your project's hooks), and any edit simply re-prompts for approval the next time hooks load.

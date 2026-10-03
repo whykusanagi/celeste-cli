@@ -12,12 +12,12 @@ import (
 )
 
 func TestBashToolName(t *testing.T) {
-	bt := NewBashTool("/tmp")
+	bt := NewBashTool("/tmp", nil)
 	assert.Equal(t, "bash", bt.Name())
 }
 
 func TestBashToolProperties(t *testing.T) {
-	bt := NewBashTool("/tmp")
+	bt := NewBashTool("/tmp", nil)
 	assert.False(t, bt.IsReadOnly())
 	assert.False(t, bt.IsConcurrencySafe(nil))
 	assert.Equal(t, tools.InterruptCancel, bt.InterruptBehavior())
@@ -27,7 +27,7 @@ func TestBashToolExecuteSimpleCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash tool uses sh -c which is not available on Windows")
 	}
-	bt := NewBashTool(t.TempDir())
+	bt := NewBashTool(t.TempDir(), nil)
 	result, err := bt.Execute(context.Background(), map[string]any{
 		"command": "echo hello",
 	}, nil)
@@ -41,7 +41,7 @@ func TestBashToolExecuteSimpleCommand(t *testing.T) {
 }
 
 func TestBashToolSudoBlocking(t *testing.T) {
-	bt := NewBashTool("/tmp")
+	bt := NewBashTool("/tmp", nil)
 	result, err := bt.Execute(context.Background(), map[string]any{
 		"command": "sudo rm -rf /",
 	}, nil)
@@ -51,7 +51,7 @@ func TestBashToolSudoBlocking(t *testing.T) {
 }
 
 func TestBashToolSuBlocking(t *testing.T) {
-	bt := NewBashTool("/tmp")
+	bt := NewBashTool("/tmp", nil)
 	result, err := bt.Execute(context.Background(), map[string]any{
 		"command": "su root",
 	}, nil)
@@ -61,7 +61,7 @@ func TestBashToolSuBlocking(t *testing.T) {
 }
 
 func TestBashToolRequiredFieldValidation(t *testing.T) {
-	bt := NewBashTool("/tmp")
+	bt := NewBashTool("/tmp", nil)
 	result, err := bt.Execute(context.Background(), map[string]any{}, nil)
 	require.NoError(t, err)
 	assert.True(t, result.Error)
@@ -72,7 +72,7 @@ func TestBashToolTimeoutAndExitStatusKeepTheResultKeys(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash tool uses sh -c which is not available on Windows")
 	}
-	bt := NewBashTool(t.TempDir())
+	bt := NewBashTool(t.TempDir(), nil)
 	result, err := bt.Execute(context.Background(), map[string]any{"command": "sleep 5", "timeout_seconds": 1}, nil)
 	require.NoError(t, err)
 	var data map[string]any

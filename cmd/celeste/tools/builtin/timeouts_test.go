@@ -15,7 +15,7 @@ func TestLongRunningToolsCarryTheirTimeouts(t *testing.T) {
 		tool tools.Tool
 		want time.Duration
 	}{
-		{NewBashTool(ws), 5 * time.Minute},
+		{NewBashTool(ws, nil), 5 * time.Minute},
 		{NewTTSTool(ws), 5 * time.Minute},
 		{NewAudioProjectTool(ws), 2 * time.Minute},
 		{NewReadFileTool(ws), 45 * time.Second}, // no own timeout: the default

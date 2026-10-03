@@ -5,12 +5,17 @@ package shellrun
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 )
 
 // Review Focus 3.
@@ -133,5 +138,29 @@ func TestRunArgsDoesNotUseAShell(t *testing.T) {
 	res := Run(context.Background(), Options{Dir: t.TempDir(), Args: []string{"echo", "$HOME; true"}, Timeout: 5 * time.Second})
 	if res.Output != "$HOME; true\n" || res.ExitCode != 0 {
 		t.Fatalf("result = %+v", res)
+	}
+}
+
+// Review Minor 4: a sandboxed command runs in its own session, without
+// celeste's controlling terminal.
+func TestSandboxedRunHasItsOwnSession(t *testing.T) {
+	if _, ok := sandbox.Available(); !ok {
+		t.Skip("no OS sandbox here")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	mine, err := unix.Getsid(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := sandbox.Resolve(t.TempDir())
+	p := sandbox.Policy{Enabled: true, Workspace: ws, Writable: []string{ws}, Network: true}
+	res := Run(context.Background(), Options{Dir: ws, Command: `python3 -c 'import os; print(os.getsid(0))'`, Timeout: 10 * time.Second, Policy: &p})
+	if res.ExitCode != 0 || res.Sandbox == "" {
+		t.Fatalf("result = %+v", res)
+	}
+	if got := strings.TrimSpace(res.Output); got == strconv.Itoa(mine) {
+		t.Fatalf("the sandboxed command shares celeste's session %d", mine)
 	}
 }

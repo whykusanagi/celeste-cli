@@ -22,7 +22,7 @@ import (
 func trustRegistry(t *testing.T, workspace string) *tools.Registry {
 	t.Helper()
 	reg := tools.NewRegistry()
-	RegisterAll(reg, workspace, nil, nil, nil)
+	RegisterAll(reg, workspace, nil, nil, nil, nil)
 	reg.SetPermissionChecker(permissions.NewChecker(permissions.PermissionConfig{Mode: permissions.ModeTrust}))
 	return reg
 }

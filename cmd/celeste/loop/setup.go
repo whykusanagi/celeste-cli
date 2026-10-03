@@ -15,6 +15,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/memories"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
@@ -71,15 +72,26 @@ type Env struct {
 	// ~/.celeste/rules/*.md, then the grimoire's "## Stream Rules" (a repo
 	// grimoire's only once trusted, like a repo hook).
 	Rules *rules.Set
+	// SandboxPolicy is bash's OS sandbox (2.0 W4): defaults, the user's
+	// "sandbox" settings, then the workspace's (loosening only once
+	// trusted). A nested Env in the same workspace inherits it; one in
+	// another workspace resolves its own.
+	SandboxPolicy sandbox.Policy
 
 	opts        SetupOptions
-	window      int               // cfg's model's resolved context window (W5 guard); 0 = unknown
-	approve     hooks.ApproveFunc // resolved once by approver
-	approveSet  bool
-	permConfig  permissions.PermissionConfig
-	indexing    sync.WaitGroup     // a code-graph update that outlived its timeout
-	indexCancel context.CancelFunc // stops that update; nil until setupCodeGraph runs
-	closeOnce   sync.Once
+	userSandbox *config.Sandbox // the user's "sandbox" settings, for nested Envs
+	// sandboxTrust is the workspace "sandbox" object whose loosening this
+	// Env trusted (its own approval, or its parent's for a lane under the
+	// parent's workspace); a nested Env under this workspace with the same
+	// object reuses it. "" when none.
+	sandboxTrust string
+	window       int               // cfg's model's resolved context window (W5 guard); 0 = unknown
+	approve      hooks.ApproveFunc // resolved once by approver
+	approveSet   bool
+	permConfig   permissions.PermissionConfig
+	indexing     sync.WaitGroup     // a code-graph update that outlived its timeout
+	indexCancel  context.CancelFunc // stops that update; nil until setupCodeGraph runs
+	closeOnce    sync.Once
 
 	home string // the user's home: children load skills, permissions and hooks from it
 	// shared counts the Envs (a Setup Env and its Nested children) using one
@@ -153,7 +165,10 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	// agent run, the MCP chat Env; <mode>-<pid>-<nanos> when none was given.
 	env.Snapshots = checkpoints.NewSnapshotManager(opts.SessionID)
 	env.Registry = tools.NewRegistry()
-	builtin.RegisterAll(env.Registry, ws, nil, env.Files, env.Snapshots)
+	env.userSandbox = cfg.Sandbox
+	env.SandboxPolicy = env.resolveSandbox(env.userSandbox)
+	policy := env.SandboxPolicy
+	builtin.RegisterAll(env.Registry, ws, nil, env.Files, env.Snapshots, &policy)
 	if err := env.Registry.LoadCustomTools(filepath.Join(home, ".celeste", "skills")); err != nil {
 		env.warn("custom skills: %v", err)
 	}
