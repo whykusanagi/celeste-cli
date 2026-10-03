@@ -43,7 +43,7 @@ to the source and it gets fixed.
 | **Checkpoints and rewind** | `/undo`, `/diff`, `/rewind [n]`, `/fork`, `celeste revert`; `bash` changes not tracked | Checkpoint per prompt; `/rewind` (Esc Esc) restores code and/or conversation; Bash changes not tracked; `/branch` | `/fork`; file rewind unverified | Snapshots; `/undo` and `/redo` revert files (git repository) | unverified | `/rewind` (Esc Esc) for conversation and/or code; checkpointing | `checkpoint` and `rewind` tools; fork and resume sessions | Session tree: `/tree` returns to any point, branches in one file; file restore unverified |
 | **Subagents** | `spawn_agent` with types explore, general, review and a validated result; `/orchestrate` | Custom subagents; agent teams | Subagents and custom agents | General, Explore and Scout; @-mention or Task tool | unverified | Subagents, exposed as tools | `task` fans out parallel subagents, optionally in isolated worktrees, with schema-validated results | No (by design) |
 | **Plan mode** | `/plan`: read-only tools until an approved `submit_plan`; chat only | `plan` permission mode | `/plan` or Shift+Tab | Plan agent (edits and bash ask first) | unverified | Read-only Plan Mode (`--approval-mode=plan`) | `/plan`; a plan model role | No (by design) |
-| **MCP client** | stdio, SSE and streamable HTTP; `readOnlyHint` only from trusted servers | stdio, HTTP, SSE (deprecated), WebSocket | Yes (`codex mcp add`) | Local and remote servers | stdio, HTTP, SSE | Yes | Yes; discovers servers from other tools' configs | Yes since 1.0 (October 2026): stdio and streamable HTTP |
+| **MCP client** | stdio, SSE and streamable HTTP; `readOnlyHint` only from trusted servers | stdio, HTTP, SSE (deprecated), WebSocket | Yes (`codex mcp add`) | Local and remote servers | stdio, HTTP, SSE | Yes | Yes; discovers servers from other tools' configs | Yes (since 0.99; in 1.0, October 2026): stdio and streamable HTTP |
 | **MCP server** | `celeste serve`, with direct code-graph tools | `claude mcp serve` (its tools) | `codex mcp-server` | unverified | unverified | unverified | unverified | No |
 | **ACP** | `celeste acp` (no `session/load` yet) | Through Zed's adapter | Through an adapter | `opencode acp` | unverified | `gemini --acp` | `omp acp` | Through the `pi-acp` adapter |
 | **LSP** | Planned (diagnostics after writes) | Code-intelligence plugins (type errors after edits, symbol navigation) | unverified | Diagnostics as feedback; off by default | Yes (gopls, typescript-language-server, …) | unverified | Built in: diagnostics on every write, 14 operations | unverified |
@@ -91,8 +91,8 @@ tree-sitter queries and rewrites; it keeps no code graph or index.
 
 **pi.** Deliberately minimal: no subagents, no plan mode and no permission
 prompts by design, with safety left to containers. Extensions, Agent Skills, a
-branching session tree and, since its 1.0 release on 2 October 2026, a built-in
-MCP client. ACP comes through the `pi-acp` adapter.
+branching session tree and a built-in MCP client (since 0.99; part of the 1.0
+release on 1 October 2026). ACP comes through the `pi-acp` adapter.
 
 ## Sources
 
@@ -159,4 +159,5 @@ Retrieved 2026-10-02 unless noted. Celeste's column comes from this repository
 - Coding agent README: https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent
 - Docs: https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent/docs (`compaction.md`, `mcp.md`, `security.md`, `skills.md`, `providers.md`, `llama-cpp.md`)
 - 1.0 release coverage: https://www.theregister.com/ai-and-ml/2026/10/02/pi-coding-agent-pulls-a-180-and-adds-mcp-support/5300678
+- 1.0 release date (1 October 2026): https://gigazine.net/gsc_news/en/20261002-pi-1-0/
 - ACP agents list (`pi-acp`): https://agentclientprotocol.com/overview/agents

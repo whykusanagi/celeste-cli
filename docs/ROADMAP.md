@@ -63,7 +63,7 @@ On `main`, to be tagged v2.0.0. One line per workstream.
   `readOnlyHint` is honoured only from servers marked trusted in a home-level
   config.
 - **Sessions.** Sessions record their workspace and list this project's first;
-  tool calls are persisted; `/rewind` and `/fork`.
+  tool calls are persisted.
 - **Typed subagents.** `spawn_agent` takes `explore`, `general` or `review`, each
   with its own tool set, model and persona level, and returns a validated
   `{summary, findings, files}` result. See [SUBAGENTS.md](SUBAGENTS.md).

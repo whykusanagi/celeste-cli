@@ -72,7 +72,7 @@ func TestComparisonCoversSevenTools(t *testing.T) {
 		if !strings.HasPrefix(row, "|") {
 			break
 		}
-		cells := strings.Split(strings.Trim(row, "|"), "|")
+		cells := splitTableRow(row)
 		if len(cells) != len(comparedTools)+2 {
 			t.Errorf("%s row %q has %d cells, want %d", file, row, len(cells), len(comparedTools)+2)
 			continue
@@ -95,11 +95,22 @@ func TestComparisonCoversSevenTools(t *testing.T) {
 		}
 	}
 
+	// pi 1.0 shipped on Thursday 1 October 2026; MCP support arrived in 0.99.
+	if strings.Contains(doc, "2 October 2026") {
+		t.Errorf("%s dates pi 1.0 to 2 October 2026; it shipped on 1 October 2026", file)
+	}
+	if !strings.Contains(doc, "since 0.99") {
+		t.Errorf("%s does not say pi's MCP client arrived in 0.99", file)
+	}
+
 	at := strings.Index(doc, "\n## Sources\n")
 	if at < 0 {
 		t.Fatalf("%s has no Sources section", file)
 	}
 	sources := doc[at:]
+	if !strings.Contains(sources, "https://gigazine.net/gsc_news/en/20261002-pi-1-0/") {
+		t.Errorf("%s Sources section does not cite GIGAZINE for the pi 1.0 date", file)
+	}
 	if !strings.Contains(sources, "Retrieved") {
 		t.Errorf("%s Sources section gives no retrieval date", file)
 	}
@@ -130,4 +141,23 @@ func TestComparisonCoversSevenTools(t *testing.T) {
 		}
 	}
 	checkNoLocalPaths(t, file, doc)
+}
+
+// splitTableRow splits a Markdown table row into cells, keeping an escaped
+// pipe (\|) inside its cell.
+func splitTableRow(row string) []string {
+	const placeholder = "\x00"
+	row = strings.ReplaceAll(row, `\|`, placeholder)
+	cells := strings.Split(strings.Trim(row, "|"), "|")
+	for i, c := range cells {
+		cells[i] = strings.ReplaceAll(c, placeholder, `\|`)
+	}
+	return cells
+}
+
+func TestSplitTableRowKeepsEscapedPipes(t *testing.T) {
+	got := splitTableRow(`| a | b \| c | d |`)
+	if len(got) != 3 || strings.TrimSpace(got[1]) != `b \| c` {
+		t.Fatalf("splitTableRow = %q, want 3 cells with \"b \\| c\" in the middle", got)
+	}
 }
