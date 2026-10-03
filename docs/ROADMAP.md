@@ -66,10 +66,10 @@ On `main`, to be tagged v2.0.0. One line per workstream.
 - **Typed subagents.** `spawn_agent` takes `explore`, `general` or `review`, each
   with its own tool set, model and persona level, and returns a validated
   `{summary, findings, files}` result. See [SUBAGENTS.md](SUBAGENTS.md).
-- **Plan mode.** In review
-  ([#292](https://github.com/whykusanagi/celeste-cli/pull/292)): read-only
-  exploration, `submit_plan` for approval, `/plan` and `celeste plan`. It ships in
-  2.0 if it merges before the release freeze, otherwise in 2.1.
+- **Plan mode.** `/plan` restricts the chat to read-only tools until the model
+  submits a plan with `submit_plan`; approving it saves the plan, adds a todo per
+  step and continues with every tool; `celeste plan` shows it. See
+  [PLAN_MODE.md](PLAN_MODE.md).
 - **ACP.** `celeste acp` is an Agent Client Protocol agent for Zed and JetBrains:
   prompts, streamed replies, tool calls, the editor's permission prompt and
   cancel.

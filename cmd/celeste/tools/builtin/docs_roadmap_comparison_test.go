@@ -15,7 +15,7 @@ func TestRoadmapDescribes20(t *testing.T) {
 		"## 2.0 (shipped)",
 		"## Next",
 		// #176's Docs bullet: compaction, sandboxing and AGENTS.md as delivered.
-		"AGENTS.md", "Compaction", "Sandbox", "ACP",
+		"AGENTS.md", "Compaction", "Sandbox", "ACP", "PLAN_MODE.md",
 		// Deferred items, each named with its source.
 		"persona_lore", "previous_response_id", "ThoughtSignature",
 		"Windows sandbox", "LSP diagnostics", "Agent Skills",
