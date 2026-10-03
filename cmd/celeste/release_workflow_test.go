@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,5 +68,25 @@ func TestOnlyTheReleaseWorkflowReadsThePersonaKey(t *testing.T) {
 		if strings.Contains(string(b), "CELESTE_PERSONA_KEY") {
 			t.Errorf("%s references CELESTE_PERSONA_KEY", e.Name())
 		}
+	}
+}
+
+// Ruling 1: release-please opens the release PR but never creates the
+// release; the owner pushes a GPG-signed tag, which runs release.yml.
+func TestReleasePleaseLeavesTheTagToTheOwner(t *testing.T) {
+	data, err := os.ReadFile("../../release-please-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Packages map[string]struct {
+			SkipGitHubRelease bool `json:"skip-github-release"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Packages["."].SkipGitHubRelease {
+		t.Fatal(`release-please-config.json: packages["."]["skip-github-release"] must be true`)
 	}
 }
