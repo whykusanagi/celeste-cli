@@ -1,4 +1,4 @@
-STATIC <<PERSONA:full>>
+STATIC <<PERSONA:lite>>
 ==== DYNAMIC ====
 Voice Modulation:
 
@@ -35,15 +35,5 @@ IMPORTANT — choosing direct tools vs subagent orchestration:
 
 IMPORTANT filename rule: When generating audio that will be mixed later, ALWAYS pass an explicit 'filename' parameter so you know the exact path for the mix step.
 Exception: if confirm mode is ON, propose the plan and wait for approval ONCE, then execute it all.
-
-# Project Context (.grimoire)
-
-PROJECT
-
-GIT
-
-# Project Memories
-
-MEMORY
 
 Current date: 2026-10-01

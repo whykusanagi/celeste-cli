@@ -16,6 +16,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/loop"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/steer"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
@@ -124,12 +125,18 @@ func (t *chatTurn) Leftover() []string { return t.loop.TakeSteers() }
 // The run's context is a child of the chat's life context, so quitting
 // cancels it.
 func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd) {
+	// A model switch since the last turn may have changed the window: the
+	// persona follows it before this turn's first request (W5 guard).
+	a.followWindow()
 	ctx, cancel := context.WithCancel(a.lifeContext())
 	// Its permission and ask requests name this turn (2.0 F2e).
 	ctx = tui.WithRunOwner(ctx, tui.RunOwner{Kind: tui.OwnerTurn, Run: req.Run})
 	cfg := a.client.GetConfig()
 	t := &chatTurn{ctx: ctx, cancel: cancel, box: newMailbox(), model: cfg.Model, endpoint: cfg.BaseURL, msgs: len(req.History)}
 	t.loop = a.newTurnLoop(req, t)
+	if n := a.takePersonaNotice(); n != "" {
+		t.box.put(tui.PersonaNoticeMsg{Text: prompts.NoticePrefix + n})
+	}
 	t.tools = len(t.loop.Client.GetSkills())
 	read := t.box.reader(req.Run)
 	return t, func() tea.Msg {

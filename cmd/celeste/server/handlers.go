@@ -441,8 +441,11 @@ func registerCelesteContentTool(s *Server) {
 		registry := tools.NewRegistry()
 		client := llm.NewClient(llm.ConfigFrom(cfg), registry)
 
-		// Use the content-specific prompt variant
-		contentPrompt := prompts.GetContentPrompt("", format, "", "")
+		// Use the content-specific prompt variant. It steps down like chat
+		// on a small window; MCP responses never carry the guard's notice
+		// (W5 ruling 7: frozen shape), it is only logged.
+		window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+		contentPrompt := prompts.GetContentPrompt(window, "", format, "", "")
 		contentPrompt += fmt.Sprintf("\n\nOutput format: %s\n", format)
 
 		// Inject workspace grimoire if available (project-specific rules/context)

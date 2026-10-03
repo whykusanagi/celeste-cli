@@ -322,10 +322,19 @@ type TUIClientAdapter struct {
 	steerFor *config.Config
 	steerSet bool
 
-	// Session-start project context (grimoire, memories, code graph) and git
-	// snapshot, kept so a prompt refresh or endpoint switch doesn't drop them.
+	// Session-start project context (grimoire, context files, code graph),
+	// git snapshot and project memories, kept so a prompt refresh or
+	// endpoint switch doesn't drop them.
 	projectContext string
 	gitSnapshot    string
+	memories       string
+	// promptSet: the adapter composed the client's system prompt
+	// (applySystemPrompt), for promptWindow tokens. A turn on a model with
+	// another window recomposes it (W5 guard). personaNotice is the guard's
+	// notice, waiting for the chat to show it once.
+	promptSet     bool
+	promptWindow  int
+	personaNotice string
 	// hooks runs the session's lifecycle hooks (2.0 F0); nil allows all.
 	hooks *hooks.Runner
 	// lifeCtx lives as long as the chat app; Stop hooks use it, so they
@@ -350,10 +359,61 @@ type TUIClientAdapter struct {
 	spillSeq atomic.Int64
 }
 
-// systemPrompt composes the chat system prompt for the current config,
-// including the session's project context.
-func (a *TUIClientAdapter) systemPrompt() string {
-	return prompts.GetSystemPromptWithContext(a.projectContext, a.gitSnapshot)
+// liveWindow is the context window of the model the chat is on: the live
+// client's model (/set-model changes it, never baseConfig), with
+// context_limit honoured; 0 when there is no config.
+func (a *TUIClientAdapter) liveWindow() int {
+	cfg := a.baseConfig
+	if cfg == nil {
+		return 0
+	}
+	baseURL, model := cfg.BaseURL, cfg.Model
+	if a.client != nil {
+		lc := a.client.GetConfig()
+		baseURL, model = lc.BaseURL, lc.Model
+	}
+	window, _ := config.ResolveContextLimit(baseURL, model, cfg.ContextLimit)
+	return window
+}
+
+// applySystemPrompt composes the chat system prompt for the live model's
+// window, including the session's project context, and sets it. When the
+// small-window guard steps the persona down, its notice waits in
+// personaNotice for the chat to show (W5 ruling 7).
+func (a *TUIClientAdapter) applySystemPrompt() {
+	window := a.liveWindow()
+	p := prompts.Compose(prompts.ComposeOptions{
+		Mode:           prompts.ModeChat,
+		Window:         window,
+		ProjectContext: a.projectContext,
+		GitSnapshot:    a.gitSnapshot,
+		Memories:       a.memories,
+	})
+	a.client.SetSystemPrompt(p.String())
+	a.promptSet, a.promptWindow = true, window
+	// A compose on chat's own profile drops a pending notice from an earlier
+	// step-down that no longer applies.
+	if p.Profile == prompts.ProfileFor(prompts.ModeChat) {
+		a.personaNotice = ""
+	} else if p.Notice != "" {
+		a.personaNotice = p.Notice
+	}
+}
+
+// followWindow recomposes the prompt when the model in use has another
+// window than the prompt was composed for (a /set-model, a resumed
+// session's model), so the next request carries the right profile.
+func (a *TUIClientAdapter) followWindow() {
+	if a.promptSet && a.liveWindow() != a.promptWindow {
+		a.applySystemPrompt()
+	}
+}
+
+// takePersonaNotice returns the guard's pending notice once.
+func (a *TUIClientAdapter) takePersonaNotice() string {
+	n := a.personaNotice
+	a.personaNotice = ""
+	return n
 }
 
 // GetSkills implements tui.LLMClient.
@@ -451,8 +511,9 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	a.baseConfig = cfg
 	a.summarize = nil // built for the old endpoint's small model
 
-	// Recompose the prompt for the new config, keeping the project context.
-	a.client.SetSystemPrompt(a.systemPrompt())
+	// Recompose the prompt for the new config and its window, keeping the
+	// project context.
+	a.applySystemPrompt()
 	tui.LogInfo("✓ Celeste persona prompt re-injected after endpoint switch")
 
 	// Log the switch with masked API key
@@ -735,15 +796,7 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	}
 	// The kept tail scales with the window of the model in use (#234):
 	// /set-model changes the live client's config, never baseConfig.
-	window := 0
-	if cfg := a.baseConfig; cfg != nil {
-		baseURL, model := cfg.BaseURL, cfg.Model
-		if a.client != nil {
-			lc := a.client.GetConfig()
-			baseURL, model = lc.BaseURL, lc.Model
-		}
-		window, _ = config.ResolveContextLimit(baseURL, model, cfg.ContextLimit)
-	}
+	window := a.liveWindow()
 	state := ""
 	if a.state != nil {
 		state = a.state()
@@ -786,7 +839,7 @@ func (a *TUIClientAdapter) HandoffContext(ctx context.Context, msgs []tui.ChatMe
 // RefreshSystemPrompt recomposes and re-injects the system prompt.
 // Called after /confirm, /user, or other prompt-affecting changes.
 func (a *TUIClientAdapter) RefreshSystemPrompt() {
-	a.client.SetSystemPrompt(a.systemPrompt())
+	a.applySystemPrompt()
 	tui.LogInfo("✓ System prompt refreshed (confirm/user/persona change)")
 }
 
@@ -1538,7 +1591,14 @@ func runSingleMessage(message string) {
 	// Initialize LLM client
 	client := llm.NewClient(llm.ConfigFrom(cfg), nil)
 
-	client.SetSystemPrompt(prompts.GetSystemPrompt())
+	// The persona steps down for a small window, and says so on stderr
+	// (W5 ruling 7).
+	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	sp := prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat, Window: window})
+	if sp.Notice != "" {
+		fmt.Fprintln(os.Stderr, prompts.NoticePrefix+sp.Notice)
+	}
+	client.SetSystemPrompt(sp.String())
 
 	// Send message. Cancel-only ctx; the client owns the per-attempt deadline
 	// (cfg.GetTimeout()) so timeout retries get a fresh, non-expired context.
