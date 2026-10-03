@@ -167,13 +167,14 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 	}
 	lim.KeepToolMetadata = true
 	l := &loop.Loop{
-		Client:       chatLLM{client: a.client, tools: req.Tools},
+		Client:       chatLLM{client: a.client, tools: req.Tools, plan: a.plan, reg: a.registry},
 		Tools:        a.registry,
 		Limits:       lim,
 		Gate:         a.gate,
 		SessionID:    fmt.Sprintf("tui-%d", os.Getpid()), // spill directory, as before
 		SpillCounter: &a.spillSeq,
 		CheckPrompt:  a.checkPrompt,
+		Refuse:       planRefusal(a.plan, a.registry),
 	}
 	goal := lastUserText(req.History)
 	if s := a.steering(); s != nil {
@@ -423,10 +424,14 @@ func (a *TUIClientAdapter) doneMsg(t *chatTurn, res loop.Result, err error) tui.
 }
 
 // chatLLM is the chat's loop.LLM: the shared client, offering no tools when
-// the chat has them off (NSFW mode, a provider without function calling).
+// the chat has them off (NSFW mode, a provider without function calling),
+// and only the plan-mode tools while plan mode is on (read per request, so
+// an approval mid-turn offers the full set on the next one).
 type chatLLM struct {
 	client *llm.Client
 	tools  bool
+	plan   *planState
+	reg    *tools.Registry
 }
 
 func (c chatLLM) SendMessageStreamEvents(ctx context.Context, msgs []tui.ChatMessage, defs []tui.SkillDefinition, cb llm.StreamEventCallback) error {
@@ -437,7 +442,7 @@ func (c chatLLM) GetSkills() []tui.SkillDefinition {
 	if !c.tools {
 		return nil
 	}
-	return c.client.GetSkills()
+	return planFilter(c.client.GetSkills(), c.plan, c.reg)
 }
 
 // chatCompactor is the chat's loop.Compactor: before every request it

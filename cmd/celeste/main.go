@@ -345,6 +345,10 @@ type TUIClientAdapter struct {
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
 
+	// plan is the chat's plan mode (2.0 W4e, plan_mode.go); nil (tests
+	// that build an adapter by hand) is never on.
+	plan *planState
+
 	// gate answers the chat loop's permission asks with the modal
 	// (chatGate); nil denies (tests that build an adapter by hand).
 	gate loop.Gate
