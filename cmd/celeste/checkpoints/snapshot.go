@@ -91,6 +91,11 @@ var errNoCheckpoint = errors.New("no checkpoint")
 const (
 	indexFile         = "index.json"
 	defaultMaxEntries = 100
+	// evictedFile lists the call IDs (MessageID) of entries the cap
+	// evicted, newest last, at most maxEvictedIDs of them: a rewind of
+	// those calls can then say part of it was too old to restore.
+	evictedFile   = "evicted.json"
+	maxEvictedIDs = 1000
 )
 
 // SnapshotManager is one session's checkpoints: its backups and index.json
@@ -244,6 +249,9 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint
 	for _, old := range evicted {
 		sm.removeBackup(old)
 	}
+	if err := sm.recordEvicted(evicted); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: recording evicted checkpoints: %v\n", err)
+	}
 	return &Checkpoint{sm: sm, entry: e}, nil
 }
 
@@ -332,7 +340,7 @@ func (sm *SnapshotManager) RevertLastIf(check func(Entry) error) (Entry, error) 
 // refuses while a write in this process is between Checkpoint and Commit.
 func (sm *SnapshotManager) undoNewest(check func(Entry) error, match func(Entry) bool, none error) (Entry, error) {
 	if sm.dir == "" {
-		return Entry{}, errDisabled
+		return Entry{}, ErrDisabled
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -386,7 +394,7 @@ func (sm *SnapshotManager) RewindToAnyIf(ids []string, check func([]Entry) error
 
 func (sm *SnapshotManager) rewind(ids []string, check func([]Entry) error) (undone []Entry, found bool, err error) {
 	if sm.dir == "" {
-		return nil, false, errDisabled
+		return nil, false, ErrDisabled
 	}
 	want := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -444,6 +452,62 @@ func (sm *SnapshotManager) rewind(ids []string, check func([]Entry) error) (undo
 		undone = append(undone, e)
 	}
 	return undone, true, nil
+}
+
+// Evicted reports whether the cap evicted an entry recorded for any of ids
+// (see evictedFile): a rewind of them cannot restore every change.
+func (sm *SnapshotManager) Evicted(ids []string) bool {
+	if sm.dir == "" || len(ids) == 0 {
+		return false
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	gone := map[string]bool{}
+	for _, id := range readEvicted(sm.dir) {
+		gone[id] = true
+	}
+	for _, id := range ids {
+		if id != "" && gone[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// recordEvicted adds the call IDs of evicted entries to evictedFile.
+// Callers hold sm.mu and the session lock.
+func (sm *SnapshotManager) recordEvicted(evicted []Entry) error {
+	var ids []string
+	for _, e := range evicted {
+		if e.MessageID != "" {
+			ids = append(ids, e.MessageID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	all := append(readEvicted(sm.dir), ids...)
+	if len(all) > maxEvictedIDs {
+		all = all[len(all)-maxEvictedIDs:]
+	}
+	data, err := json.Marshal(all)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(filepath.Join(sm.dir, evictedFile), append(data, '\n'), 0o600)
+}
+
+// readEvicted is dir's evictedFile; missing or unreadable is empty.
+func readEvicted(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, evictedFile))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	if json.Unmarshal(data, &ids) != nil {
+		return nil
+	}
+	return ids
 }
 
 // SameEntry reports whether a and b are the same checkpoint.
@@ -689,7 +753,7 @@ var inPlaceWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
 // reads, and no cleanup deletes, a file outside the directory.
 func (sm *SnapshotManager) backupPath(e Entry) (string, error) {
 	b := e.Backup
-	if b == "" || b != filepath.Base(b) || !filepath.IsLocal(b) || strings.EqualFold(b, indexFile) {
+	if b == "" || b != filepath.Base(b) || !filepath.IsLocal(b) || strings.EqualFold(b, indexFile) || strings.EqualFold(b, evictedFile) {
 		return "", fmt.Errorf("invalid backup name %q in the checkpoint index", b)
 	}
 	return filepath.Join(sm.dir, b), nil

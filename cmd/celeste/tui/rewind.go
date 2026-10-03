@@ -86,6 +86,23 @@ func callIDsAfter(msgs []ChatMessage, idx int) []string {
 	return ids
 }
 
+// reusedCallID reports whether one of ids (the rewound turns' calls) is
+// also the ID of a call before idx. Some backends reuse IDs (Gemini's were
+// "call_<tool>" before 2.0, local OpenAI-compatible servers may count
+// from 0 each turn), and older saved sessions keep them.
+func reusedCallID(msgs []ChatMessage, idx int, ids []string) bool {
+	before := map[string]bool{}
+	for _, id := range callIDsAfter(msgs[:idx], -1) {
+		before[id] = true
+	}
+	for _, id := range ids {
+		if before[id] {
+			return true
+		}
+	}
+	return false
+}
+
 // rewind runs /rewind [n] (ruling 4): restore the files, truncate the chat
 // before the n-th last prompt, put that prompt back in the input box and
 // save. Nothing changes when the files cannot be restored.
@@ -109,29 +126,48 @@ func (m AppModel) rewind(args []string) AppModel {
 		m.chat = m.chat.AddSystemMessage("Rewind: " + err.Error())
 		return m
 	}
-	var restored []string
+	var res RewindResult
+	checkpointsOff := false
 	if ids := callIDsAfter(msgs, idx); len(ids) > 0 {
 		if cp, ok := m.llmClient.(Checkpointer); ok {
-			if restored, err = cp.RewindTo(ids); err != nil {
+			if reusedCallID(msgs, idx, ids) {
+				// The store's first entry for a reused ID may be a kept
+				// turn's: restoring from it would undo that turn's changes
+				// too (W4 review 1).
+				m.chat = m.chat.AddSystemMessage("Rewind: this provider reuses tool call IDs, so celeste cannot tell which file changes belong to those turns; nothing was changed. Use /undo to take back file changes one at a time.")
+				return m
+			}
+			res, err = cp.RewindTo(ids)
+			switch {
+			case errors.Is(err, ErrCheckpointsOff):
+				checkpointsOff = true
+			case err != nil:
 				line := "Rewind: restoring files failed: " + err.Error()
-				if len(restored) > 0 {
-					line += fmt.Sprintf(" (already restored: %s; the chat was not changed)", strings.Join(restored, ", "))
+				if len(res.Restored) > 0 {
+					line += fmt.Sprintf(" (already restored: %s; the chat was not changed)", strings.Join(res.Restored, ", "))
 				}
 				m.chat = m.chat.AddSystemMessage(line)
 				return m
 			}
 		}
 	}
+	restored := res.Restored
 	rewound := promptsFrom(msgs, idx)
 	promptText := msgs[idx].Content
 	m.chat = m.chat.Clear().RestoreMessages(msgs[:idx])
 	m.input = m.input.SetValue(promptText)
 	m.persistSession()
 	line := fmt.Sprintf("Rewound %d prompt(s); ", rewound)
-	if len(restored) == 0 {
-		line += "no files were changed by those turns."
-	} else {
+	switch {
+	case checkpointsOff:
+		line += "file checkpoints are off; files were not restored."
+	case len(restored) == 0:
+		line += "no checkpointed file changes found for those turns."
+	default:
 		line += fmt.Sprintf("restored %d file change(s): %s.", len(restored), strings.Join(restored, ", "))
+	}
+	if res.Partial {
+		line += " Some changes were too old to restore; check /diff."
 	}
 	if spawnedAfter(msgs, idx) {
 		// A subagent's writes are filed under its own call IDs, which

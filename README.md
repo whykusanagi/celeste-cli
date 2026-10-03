@@ -1104,6 +1104,8 @@ In the chat:
 
 `/rewind` cannot go back past a `/compact` summary, and does not restore files changed by shell commands. A subagent's changes are restored only when the rewound turns changed a file themselves before it ran; `/diff` shows what is left.
 
+File checkpoints (`/undo`, `/diff`, `/rewind`) stay with the session the chat started in: after `/fork`, `/session new` or `/session resume`, changes are still filed under that first session, so resuming the fork in a later run finds none of them, and resuming the original can undo the fork's changes. `/rewind` refuses to restore files when the provider reused a tool call ID from an earlier turn (Gemini sessions saved before 2.0, some local servers); use `/undo` there. With checkpoints off (no home directory) it rewinds the chat and leaves the files.
+
 ### Skills Management
 
 ```bash

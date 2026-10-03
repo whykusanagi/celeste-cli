@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,7 +338,7 @@ func TestRewindWithoutWritesChangesNoFiles(t *testing.T) {
 	before := len(deps.env.Snapshots.Entries())
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/rewind 1"}},
 		func(m tea.Model) bool { return hasChatLine(m, "Rewound 1 prompt(s)") }, 30*time.Second)
-	if !hasChatLine(m, "no files were changed by those turns") {
+	if !hasChatLine(m, "no checkpointed file changes found for those turns") {
 		t.Fatalf("chat = %+v", chatMessages(m))
 	}
 	if n := len(deps.env.Snapshots.Entries()); n != before {
@@ -368,12 +370,85 @@ func TestRewindAsksBeforeOverwritingAnOutsideChange(t *testing.T) {
 		t.Fatalf("first /rewind err = %v", err)
 	}
 	fileIs(t, f, "edited by hand")
-	paths, err := a.RewindTo([]string{"call_1"})
-	if err != nil || len(paths) != 1 || paths[0] != "a.txt" {
-		t.Fatalf("second /rewind = %v, %v", paths, err)
+	res, err := a.RewindTo([]string{"call_1"})
+	if err != nil || len(res.Restored) != 1 || res.Restored[0] != "a.txt" || res.Partial {
+		t.Fatalf("second /rewind = %+v, %v", res, err)
 	}
 	fileIs(t, f, "v0")
-	if paths, err := a.RewindTo([]string{"call_1"}); err != nil || len(paths) != 0 {
-		t.Fatalf("nothing left: %v, %v", paths, err)
+	if res, err := a.RewindTo([]string{"call_1"}); err != nil || len(res.Restored) != 0 {
+		t.Fatalf("nothing left: %+v, %v", res, err)
+	}
+}
+
+// W4 review 1: Gemini named every call "call_<tool>", so each turn's
+// write_file had the ID "call_write_file". /rewind 1 must not undo turn
+// 1's change too: it refuses and every file stays.
+func TestRewindWithReusedCallIDsKeepsTheEarlierTurnsFiles(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "call_write_file", Name: "write_file", Args: `{"path":"a.go","content":"package a\n"}`}}},
+		fakeprovider.Turn{Text: "Wrote a."},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "call_write_file", Name: "write_file", Args: `{"path":"b.go","content":"package b\n"}`}}},
+		fakeprovider.Turn{Text: "Wrote b."},
+	)
+	m, deps, ws := chatApp(t, srv)
+	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write a.go"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "Wrote a." && turnIdle(m) }, 30*time.Second)
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write b.go"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "Wrote b." && turnIdle(m) }, 30*time.Second)
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/rewind 1"}},
+		func(m tea.Model) bool { return hasChatLine(m, "Rewind:") }, 30*time.Second)
+	if !hasChatLine(m, "reuses tool call IDs") {
+		t.Fatalf("chat = %+v", chatMessages(m))
+	}
+	fileIs(t, filepath.Join(ws, "a.go"), "package a\n")
+	fileIs(t, filepath.Join(ws, "b.go"), "package b\n")
+	if lastAssistant(m) != "Wrote b." {
+		t.Fatal("a refused rewind must leave the chat as it was")
+	}
+}
+
+// W4 review 3: with no home or cache directory the store is disabled;
+// /rewind is told checkpoints are off, so it still rewinds the chat.
+func TestChatAdapterRewindWithADisabledStore(t *testing.T) {
+	for _, k := range []string{"HOME", "USERPROFILE", "XDG_CACHE_HOME", "LocalAppData", "home"} {
+		t.Setenv(k, "")
+	}
+	sm := checkpoints.NewSnapshotManager("chat-off")
+	if sm.Dir() != "" {
+		t.Skipf("this platform still has a checkpoint root: %s", sm.Dir())
+	}
+	a := &TUIClientAdapter{snapshots: sm, workspace: t.TempDir()}
+	if _, err := a.RewindTo([]string{"call_1"}); !errors.Is(err, tui.ErrCheckpointsOff) {
+		t.Fatalf("err = %v, want tui.ErrCheckpointsOff", err)
+	}
+	if _, err := (&TUIClientAdapter{}).RewindTo([]string{"call_1"}); !errors.Is(err, tui.ErrCheckpointsOff) {
+		t.Fatalf("no store: err = %v, want tui.ErrCheckpointsOff", err)
+	}
+}
+
+// W4 review 4: a rewound call whose change the cap evicted makes the
+// result partial.
+func TestChatAdapterRewindReportsEvictedChanges(t *testing.T) {
+	checkpointHome(t)
+	ws := t.TempDir()
+	f := filepath.Join(ws, "a.txt")
+	if err := os.WriteFile(f, []byte("v0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sm := checkpoints.NewSnapshotManager("chat-evict")
+	for i := 0; i <= 100; i++ {
+		checkpointed(t, sm, f, fmt.Sprintf("call_%d", i), fmt.Sprintf("v%d", i+1))
+	}
+	a := &TUIClientAdapter{snapshots: sm, workspace: ws}
+	res, err := a.RewindTo([]string{"call_0", "call_100"})
+	if err != nil || !res.Partial || len(res.Restored) != 1 {
+		t.Fatalf("rewind = %+v, %v", res, err)
+	}
+	res, err = a.RewindTo([]string{"call_99"})
+	if err != nil || res.Partial {
+		t.Fatalf("nothing evicted among these: %+v, %v", res, err)
 	}
 }

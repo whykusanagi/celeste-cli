@@ -6,9 +6,12 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/checkpoints"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
 
-var errCheckpointsOff = errors.New("file checkpoints are off in this session")
+// errCheckpointsOff is the TUI's sentinel, so /rewind can tell "off" from
+// a failed restore.
+var errCheckpointsOff = tui.ErrCheckpointsOff
 
 // undoWarning is a change /undo refused to undo, and the file's state then.
 type undoWarning struct {
@@ -92,9 +95,9 @@ type rewindWarning struct {
 // longer as celeste's last change left it, the first /rewind leaves
 // everything alone and says so; the same /rewind again, with the files
 // still as warned about, overwrites them.
-func (a *TUIClientAdapter) RewindTo(callIDs []string) ([]string, error) {
+func (a *TUIClientAdapter) RewindTo(callIDs []string) (tui.RewindResult, error) {
 	if a.snapshots == nil {
-		return nil, errCheckpointsOff
+		return tui.RewindResult{}, errCheckpointsOff
 	}
 	confirm := a.rewindConfirm
 	a.rewindConfirm = nil
@@ -135,16 +138,22 @@ func (a *TUIClientAdapter) RewindTo(callIDs []string) ([]string, error) {
 		}
 		return fmt.Errorf("%s changed after celeste's last change (or celeste cannot tell); the same /rewind again overwrites them with their state before those turns", strings.Join(names, ", "))
 	})
-	var paths []string
+	if errors.Is(err, checkpoints.ErrDisabled) {
+		return tui.RewindResult{}, fmt.Errorf("%w: %v", errCheckpointsOff, err)
+	}
+	var res tui.RewindResult
 	seen := map[string]bool{}
 	for _, e := range undone {
 		name := checkpoints.DisplayPath(a.workspace, e.Path)
 		if !seen[name] {
 			seen[name] = true
-			paths = append(paths, name)
+			res.Restored = append(res.Restored, name)
 		}
 	}
-	return paths, err
+	if err == nil {
+		res.Partial = a.snapshots.Evicted(callIDs)
+	}
+	return res, err
 }
 
 func sameStates(a, b map[string]checkpoints.FileState) bool {

@@ -31,8 +31,9 @@ func Root() string {
 
 var noRootWarning sync.Once
 
-// errDisabled: there is no directory to keep checkpoints in (see Root).
-var errDisabled = errors.New("file checkpoints are disabled: no home or cache directory")
+// ErrDisabled is returned by a store with no directory to keep checkpoints
+// in (see Root): checkpoints are off.
+var ErrDisabled = errors.New("file checkpoints are disabled: no home or cache directory")
 
 // SessionDir is sessionID's directory under root (ruling 5), or "" (no
 // checkpoints) when root is "".
@@ -134,7 +135,7 @@ func lastChange(dir string) time.Time {
 // (celeste revert without --session). Paths match as pathutil.Same does.
 func LatestSessionFor(root, path string) (string, error) {
 	if root == "" {
-		return "", errDisabled
+		return "", ErrDisabled
 	}
 	des, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -168,7 +169,7 @@ func LatestSessionFor(root, path string) (string, error) {
 // that entry first, as in RevertIf.
 func RevertFile(root, path, sessionID string, check func(Entry) error) (string, Entry, error) {
 	if root == "" {
-		return sessionID, Entry{}, errDisabled
+		return sessionID, Entry{}, ErrDisabled
 	}
 	if sessionID == "" {
 		latest, err := LatestSessionFor(root, path)

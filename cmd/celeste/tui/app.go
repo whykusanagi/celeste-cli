@@ -5,6 +5,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -307,12 +308,27 @@ type PromptRefresher interface {
 // checkpoints; UndoLastChange and SessionChanges return the text to show.
 // RewindTo (2.0 W4 ruling 5, /rewind) restores, newest first, every change
 // from the first one made by any of callIDs onward and returns the files
-// it restored; none of them made a change: nothing, no error.
+// it restored; none of them made a change: nothing, no error. With
+// checkpoints off it returns an error that is ErrCheckpointsOff.
 type Checkpointer interface {
 	UndoLastChange() (string, error)
 	SessionChanges() (string, error)
-	RewindTo(callIDs []string) ([]string, error)
+	RewindTo(callIDs []string) (RewindResult, error)
 }
+
+// RewindResult is what Checkpointer.RewindTo restored.
+type RewindResult struct {
+	// Restored names the files restored (also on an error: those
+	// restored before it).
+	Restored []string
+	// Partial: the store had already evicted the changes of some of the
+	// calls (its cap), so they were not restored.
+	Partial bool
+}
+
+// ErrCheckpointsOff: this session keeps no file checkpoints (no store, or
+// no home directory to keep them in).
+var ErrCheckpointsOff = errors.New("file checkpoints are off in this session")
 
 // EndpointSwitcher interface for clients that support dynamic endpoint switching.
 type EndpointSwitcher interface {

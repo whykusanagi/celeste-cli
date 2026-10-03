@@ -802,3 +802,48 @@ func TestRestoreDoesNotWriteInPlaceOnOtherTempErrors(t *testing.T) {
 	assert.ErrorIs(t, err, noSpace)
 	assert.Equal(t, "after", read(t, f))
 }
+
+// W4 review 4: the store remembers which calls' entries the cap evicted,
+// so a rewind can say that part of it was too old to restore.
+func TestEvictedRemembersEvictedCalls(t *testing.T) {
+	sm, dir := store(t)
+	sm.maxCount = 2
+	f := filepath.Join(dir, "a.txt")
+	for i := 1; i <= 4; i++ {
+		write(t, f, fmt.Sprintf("v%d", i))
+		c, err := sm.Checkpoint(f, fmt.Sprintf("call_%d", i))
+		require.NoError(t, err)
+		require.NoError(t, c.Commit())
+	}
+	assert.True(t, sm.Evicted([]string{"call_9", "call_2"}))
+	assert.False(t, sm.Evicted([]string{"call_3", "call_4", "call_9"}))
+	assert.False(t, sm.Evicted(nil))
+	assert.True(t, newSnapshotManagerWithBase(sm.Dir()).Evicted([]string{"call_1"}), "the record is on disk")
+	assert.Len(t, backups(t, sm.Dir()), 2, "the record is not a backup")
+
+	_, err := sm.RewindToAnyIf([]string{"call_2", "call_3", "call_4"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "v3", read(t, f), "the oldest remaining match is restored")
+}
+
+func TestEvictedRecordIsBounded(t *testing.T) {
+	sm, dir := store(t)
+	sm.maxCount = 1
+	f := filepath.Join(dir, "a.txt")
+	for i := 0; i < maxEvictedIDs+5; i++ {
+		write(t, f, "x")
+		c, err := sm.Checkpoint(f, fmt.Sprintf("call_%d", i))
+		require.NoError(t, err)
+		require.NoError(t, c.Commit())
+	}
+	assert.False(t, sm.Evicted([]string{"call_0"}), "the oldest IDs drop out of the record")
+	assert.True(t, sm.Evicted([]string{fmt.Sprintf("call_%d", maxEvictedIDs+3)}))
+}
+
+// A store with no directory reports ErrDisabled for a rewind.
+func TestDisabledStoreRewindIsErrDisabled(t *testing.T) {
+	sm := newSnapshotManagerWithBase("")
+	_, err := sm.RewindToAnyIf([]string{"call_1"}, nil)
+	assert.ErrorIs(t, err, ErrDisabled)
+	assert.False(t, sm.Evicted([]string{"call_1"}))
+}

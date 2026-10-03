@@ -72,12 +72,13 @@ type fakeRewindClient struct {
 	fakeCheckpointClient
 	rewound  [][]string
 	restored []string
+	partial  bool
 	err      error
 }
 
-func (f *fakeRewindClient) RewindTo(ids []string) ([]string, error) {
+func (f *fakeRewindClient) RewindTo(ids []string) (RewindResult, error) {
 	f.rewound = append(f.rewound, ids)
-	return f.restored, f.err
+	return RewindResult{Restored: f.restored, Partial: f.partial}, f.err
 }
 
 func rewindApp(client LLMClient) AppModel {
@@ -111,7 +112,7 @@ func TestRewindCommandWithoutFileChanges(t *testing.T) {
 	m := sendCommand(rewindApp(client), "/rewind")
 	require.Equal(t, [][]string{{"r1"}}, client.rewound)
 	assert.Equal(t, "now read them", m.input.Value())
-	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Rewound 1 prompt(s); no files were changed by those turns."))
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Rewound 1 prompt(s); no checkpointed file changes found for those turns."))
 	llm := m.chat.GetLLMMessages()
 	assert.Equal(t, "written", llm[len(llm)-1].Content)
 }
@@ -151,4 +152,46 @@ func TestRewindCommandWarnsAboutSubagents(t *testing.T) {
 	})
 	m = sendCommand(m, "/rewind")
 	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Subagents ran in those turns; check /diff"))
+}
+
+// A backend that reuses tool call IDs (Gemini named every call
+// "call_<tool>") cannot tell the rewound turns' changes from earlier
+// ones: the rewind is refused and nothing changes.
+func TestRewindRefusesToolCallIDsReusedFromKeptTurns(t *testing.T) {
+	client := &fakeRewindClient{restored: []string{"a.go"}}
+	m := NewApp(client)
+	m.chat = m.chat.RestoreMessages([]ChatMessage{
+		prompt("create a.go"),
+		{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "call_write_file", Name: "write_file"}}},
+		{Role: "tool", ToolCallID: "call_write_file", Content: "ok"},
+		{Role: "assistant", Content: "created a"},
+		prompt("create b.go"),
+		{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "call_write_file", Name: "write_file"}}},
+		{Role: "tool", ToolCallID: "call_write_file", Content: "ok"},
+		{Role: "assistant", Content: "created b"},
+	})
+	m = sendCommand(m, "/rewind")
+	assert.Empty(t, client.rewound, "no file may be restored")
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "reuses tool call IDs"))
+	llm := m.chat.GetLLMMessages()
+	assert.Equal(t, "created b", llm[len(llm)-1].Content, "the chat must not change")
+	assert.Equal(t, "", m.input.Value())
+}
+
+// Checkpoints off (no home directory): the chat still rewinds, and the
+// line says the files were not restored.
+func TestRewindWithCheckpointsOffRewindsTheChat(t *testing.T) {
+	client := &fakeRewindClient{err: ErrCheckpointsOff}
+	m := sendCommand(rewindApp(client), "/rewind")
+	assert.Equal(t, "now read them", m.input.Value())
+	llm := m.chat.GetLLMMessages()
+	assert.Equal(t, "written", llm[len(llm)-1].Content)
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Rewound 1 prompt(s); file checkpoints are off; files were not restored."))
+}
+
+// Changes of the rewound turns that the store already evicted are named.
+func TestRewindSaysWhenSomeChangesWereTooOld(t *testing.T) {
+	client := &fakeRewindClient{restored: []string{"b.go"}, partial: true}
+	m := sendCommand(rewindApp(client), "/rewind 2")
+	assert.True(t, hasSystemMessageContaining(m.chat.GetMessages(), "Some changes were too old to restore; check /diff."))
 }
