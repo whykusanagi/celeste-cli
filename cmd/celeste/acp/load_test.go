@@ -1,0 +1,238 @@
+package acp
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
+)
+
+func loadParams(sid, cwd string) map[string]any {
+	return map[string]any{"sessionId": sid, "cwd": cwd, "mcpServers": []any{}}
+}
+
+// Review Focus 4: an editor reopened on yesterday's thread sees it again,
+// tool calls included, and the next prompt continues with the whole
+// history (ruling 11).
+func TestLoadReplaysAndContinues(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r1", Name: "read_file", Args: `{"path":"a.txt"}`}}},
+		fakeprovider.Turn{Text: "It says load-marker."},
+		fakeprovider.Turn{Text: "Still here."})
+	home := t.TempDir()
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "a.txt"), []byte("load-marker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := newTestClientIn(t, testConfig(srv, 0), home)
+	sid := first.newSession(ws)
+	if res, err := first.call("session/prompt", textPrompt(sid, "what does a.txt say?")); err != nil || stopReason(t, res) != "end_turn" {
+		t.Fatalf("first prompt = %s %v", res, err)
+	}
+
+	// The editor restarts: a fresh agent over the same home.
+	c := newTestClientIn(t, testConfig(srv, 0), home)
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.call("session/load", loadParams(sid, ws))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res) != "{}" {
+		t.Fatalf("session/load = %s, want {}", res)
+	}
+	if got, want := c.updateKinds(), []string{UpdateUserMessageChunk, UpdateToolCall, UpdateAgentMessageChunk}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replayed updates = %v, want %v", got, want)
+	}
+	user := c.updatesOf(UpdateUserMessageChunk)[0]["content"].(map[string]any)
+	if user["text"] != "what does a.txt say?" {
+		t.Fatalf("user chunk = %+v", user)
+	}
+	call := c.updatesOf(UpdateToolCall)[0]
+	if call["toolCallId"] != "r1" || call["status"] != "completed" || call["kind"] != "read" ||
+		call["title"] != "read_file: a.txt" || !strings.Contains(mustJSON(call["content"]), "load-marker") {
+		t.Fatalf("replayed tool_call = %+v", call)
+	}
+	if got := c.agentText(); got != "It says load-marker." {
+		t.Fatalf("replayed agent text = %q", got)
+	}
+
+	if res, err := c.call("session/prompt", textPrompt(sid, "and now?")); err != nil || stopReason(t, res) != "end_turn" {
+		t.Fatalf("prompt after load = %s %v", res, err)
+	}
+	reqs := srv.Requests()
+	body := string(reqs[len(reqs)-1].Raw)
+	for _, want := range []string{"what does a.txt say?", `"r1"`, "load-marker", "It says load-marker.", "and now?"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the request after load lacks %q:\n%s", want, body)
+		}
+	}
+	// The continued thread is saved under the same session.
+	data, rerr := os.ReadFile(filepath.Join(home, ".celeste", "sessions", sid+".json"))
+	if rerr != nil || !strings.Contains(string(data), "Still here.") {
+		t.Fatalf("saved session after load = %s (%v)", data, rerr)
+	}
+}
+
+// A failed tool call replays as failed.
+func TestLoadReplaysAFailedToolCall(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r1", Name: "read_file", Args: `{"path":"missing.txt"}`}}},
+		fakeprovider.Turn{Text: "No such file."})
+	home := t.TempDir()
+	ws := t.TempDir()
+	first := newTestClientIn(t, testConfig(srv, 0), home)
+	sid := first.newSession(ws)
+	if _, err := first.call("session/prompt", textPrompt(sid, "read missing.txt")); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClientIn(t, testConfig(srv, 0), home)
+	if _, err := c.call("session/load", loadParams(sid, ws)); err != nil {
+		t.Fatal(err)
+	}
+	calls := c.updatesOf(UpdateToolCall)
+	if len(calls) != 1 || calls[0]["status"] != "failed" {
+		t.Fatalf("replayed tool_call = %+v", calls)
+	}
+}
+
+func TestLoadUnknownSession(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	ws := t.TempDir()
+	for _, sid := range []string{"no-such-session", "../escape", ""} {
+		if _, err := c.call("session/load", loadParams(sid, ws)); err == nil || err.Code != CodeInvalidParams {
+			t.Fatalf("load %q: error = %v, want %d", sid, err, CodeInvalidParams)
+		}
+	}
+	if _, err := c.call("session/load", loadParams("x", "relative")); err == nil || err.Code != CodeInvalidParams {
+		t.Fatalf("relative cwd: error = %v", err)
+	}
+}
+
+// The session record carries the editor's folder as its Workspace (W4d-1),
+// so `celeste resume` lists editor threads with their project.
+func TestSessionWorkspaceIsRecorded(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	ws := t.TempDir()
+	sid := c.newSession(ws)
+	got, err := config.NewSessionManager().Load(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetWorkspace() != filepath.Clean(ws) {
+		t.Fatalf("workspace = %q, want %q", got.GetWorkspace(), ws)
+	}
+}
+
+// Loading a session this agent already has open replays its history
+// without building a second Env.
+func TestLoadOpenSessionReplays(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "open-reply"})
+	c := newTestClient(t, testConfig(srv, 0))
+	ws := t.TempDir()
+	sid := c.newSession(ws)
+	if _, err := c.call("session/prompt", textPrompt(sid, "hello")); err != nil {
+		t.Fatal(err)
+	}
+	before := c.agent.session(sid)
+	n := len(c.updatesOf(UpdateAgentMessageChunk))
+	if _, err := c.call("session/load", loadParams(sid, ws)); err != nil {
+		t.Fatal(err)
+	}
+	if c.agent.session(sid) != before {
+		t.Fatal("loading an open session replaced it")
+	}
+	if got := len(c.updatesOf(UpdateAgentMessageChunk)); got != n+1 || len(c.updatesOf(UpdateUserMessageChunk)) != 1 {
+		t.Fatalf("replay of an open session: %v", c.updateKinds())
+	}
+}
+
+// Loading an open session from another folder rebuilds its Env there: the
+// next prompt never works on the old tree.
+func TestLoadOpenSessionInAnotherCwdRebuilds(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	sid := c.newSession(t.TempDir())
+	ws2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws2, ".grimoire"), []byte("## Bindings\n- second-folder-marker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.call("session/load", loadParams(sid, ws2)); err != nil {
+		t.Fatal(err)
+	}
+	s := c.agent.session(sid)
+	s.mu.Lock()
+	cwd, prompt := s.cwd, s.systemPrompt
+	s.mu.Unlock()
+	if cwd != filepath.Clean(ws2) || !strings.Contains(prompt, "second-folder-marker") {
+		t.Fatalf("after load in another folder: cwd = %q, prompt has marker = %v", cwd, strings.Contains(prompt, "second-folder-marker"))
+	}
+	if got, _ := config.NewSessionManager().Load(sid); got == nil || got.GetWorkspace() != filepath.Clean(ws2) {
+		t.Fatal("the session record's workspace was not updated")
+	}
+}
+
+// Replay pairs a call with the result right after it: a call ID reused in
+// a later turn keeps its own result, and a call without a saved result
+// replays as failed.
+func TestReplayPairsResultsByTurn(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	s := c.agent.session(c.newSession(t.TempDir()))
+	call := func(id string) []tui.ToolCallInfo {
+		return []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: `{"path":"a.txt"}`}}
+	}
+	s.replay(c.agent, []tui.ChatMessage{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: call("c1")},
+		{Role: "tool", ToolCallID: "c1", Content: "first-result"},
+		{Role: "assistant", ToolCalls: call("c1")},
+		{Role: "tool", ToolCallID: "c1", Content: "second-result"},
+		{Role: "assistant", ToolCalls: call("c2")},
+	})
+	waitFor(t, func() bool { return len(c.updatesOf(UpdateToolCall)) == 3 })
+	calls := c.updatesOf(UpdateToolCall)
+	if !strings.Contains(mustJSON(calls[0]["content"]), "first-result") || !strings.Contains(mustJSON(calls[1]["content"]), "second-result") {
+		t.Fatalf("results paired wrongly: %+v", calls)
+	}
+	if calls[0]["status"] != "completed" || calls[2]["status"] != "failed" {
+		t.Fatalf("statuses = %v %v", calls[0]["status"], calls[2]["status"])
+	}
+}
+
+// An editor that resends the same MCP servers on every load keeps the
+// session's Env (no MCP restart, no SessionStart re-run); a different
+// list rebuilds it.
+func TestLoadSameServersKeepsEnv(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	ws := t.TempDir()
+	servers := []any{map[string]any{"type": "http", "name": "h", "url": "https://example.invalid/mcp"}}
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.call("session/new", map[string]any{"cwd": ws, "mcpServers": servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := sessionIDOf(t, res)
+	s := c.agent.session(sid)
+	envOf := func() any { s.mu.Lock(); defer s.mu.Unlock(); return s.env }
+	before := envOf()
+	if _, err := c.call("session/load", map[string]any{"sessionId": sid, "cwd": ws, "mcpServers": servers}); err != nil {
+		t.Fatal(err)
+	}
+	if envOf() != before {
+		t.Fatal("reloading with the same MCP servers rebuilt the Env")
+	}
+	other := []any{map[string]any{"type": "http", "name": "h2", "url": "https://example.invalid/mcp"}}
+	if _, err := c.call("session/load", map[string]any{"sessionId": sid, "cwd": ws, "mcpServers": other}); err != nil {
+		t.Fatal(err)
+	}
+	if envOf() == before {
+		t.Fatal("reloading with other MCP servers kept the old Env")
+	}
+}

@@ -126,12 +126,12 @@ func CapLoadedToolResults(msgs []ChatMessage, maxBytes int) []ChatMessage {
 	return out
 }
 
-// markAnsweredPromptsHooked marks every user message that something came
+// MarkAnsweredPromptsHooked marks every user message that something came
 // after as past its UserPromptSubmit hooks: it was sent in an earlier run
 // (sessions do not store the mark). Trailing user messages (a prompt kept
 // after an interrupt, or steers that never went out) stay unchecked, so the
 // next send checks them (2.0 F0).
-func markAnsweredPromptsHooked(msgs []ChatMessage) {
+func MarkAnsweredPromptsHooked(msgs []ChatMessage) {
 	last := len(msgs) - 1
 	for last >= 0 && msgs[last].Role == "user" {
 		last--

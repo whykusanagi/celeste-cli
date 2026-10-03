@@ -27,8 +27,8 @@ func TestInitialize(t *testing.T) {
 		t.Fatal(err)
 	}
 	pc := got.AgentCapabilities.PromptCapabilities
-	// loadSession stays false until session/load lands (W4f-3).
-	if got.ProtocolVersion != 1 || got.AgentCapabilities.LoadSession || !pc.EmbeddedContext ||
+	// session/load is served (W4f-3), so loadSession is advertised.
+	if got.ProtocolVersion != 1 || !got.AgentCapabilities.LoadSession || !pc.EmbeddedContext ||
 		pc.Image == nil || *pc.Image || pc.Audio == nil || *pc.Audio {
 		t.Fatalf("initialize = %s", res)
 	}
