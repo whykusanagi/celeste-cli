@@ -23,16 +23,34 @@ func TestModulePathIsV2(t *testing.T) {
 	}
 }
 
+// preV2Path matches the pre-/v2 module path where a go install or go get
+// line would spell it: a package under it, or the bare module at a version.
+var preV2Path = regexp.MustCompile(`github\.com/whykusanagi/celeste-cli(/cmd/|@)`)
+
+func TestPreV2PathMatcher(t *testing.T) {
+	for line, want := range map[string]bool{
+		"go install github.com/whykusanagi/celeste-cli/cmd/celeste@latest":    true,
+		"go get github.com/whykusanagi/celeste-cli@latest":                    true,
+		"go get github.com/whykusanagi/celeste-cli@v1.9.0":                    true,
+		"go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest": false,
+		"go get github.com/whykusanagi/celeste-cli/v2@latest":                 false,
+		"https://github.com/whykusanagi/celeste-cli/releases":                 false,
+	} {
+		if got := preV2Path.MatchString(line); got != want {
+			t.Errorf("preV2Path.MatchString(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
 // Every go install line and -X flag in the docs and build files uses the
 // module path in go.mod.
 func TestInstallLinesUseTheModulePath(t *testing.T) {
-	old := regexp.MustCompile(`github\.com/whykusanagi/celeste-cli/cmd/`)
 	for _, f := range []string{"../../README.md", "../../scripts/README.md", "../../Makefile", "../../.github/workflows/release.yml", "../../MIGRATING-2.0.md"} {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loc := old.FindIndex(data); loc != nil {
+		if loc := preV2Path.FindIndex(data); loc != nil {
 			t.Errorf("%s still uses the pre-/v2 path near %q", f, data[loc[0]:min(len(data), loc[1]+30)])
 		}
 	}
