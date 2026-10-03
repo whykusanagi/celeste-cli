@@ -12,6 +12,7 @@ import (
 
 	genai "google.golang.org/genai"
 
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -402,6 +403,17 @@ func (b *GoogleBackend) Close() error {
 func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*genai.Content {
 	var contents []*genai.Content
 
+	// A function response names the function it answers: find it by the
+	// call ID among the assistant's calls.
+	callNames := map[string]string{}
+	for _, msg := range messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" && tc.Name != "" {
+				callNames[tc.ID] = tc.Name
+			}
+		}
+	}
+
 	// Skip system prompt - it's handled via SystemInstruction in config
 	for _, msg := range messages {
 		if msg.Role == "system" {
@@ -420,7 +432,14 @@ func (b *GoogleBackend) convertMessagesToGenAI(messages []tui.ChatMessage) []*ge
 		if msg.Role == "tool" {
 			// Tool responses need special handling in Google format
 			// They should be added as function response parts
-			part := genai.NewPartFromFunctionResponse(msg.ToolCallID, map[string]any{
+			name := callNames[msg.ToolCallID]
+			if name == "" {
+				name = msg.Name
+			}
+			if name == "" {
+				name = msg.ToolCallID // no call to pair it with: as before
+			}
+			part := genai.NewPartFromFunctionResponse(name, map[string]any{
 				"result": msg.Content,
 			})
 
@@ -592,8 +611,14 @@ func convertTypeToGenAI(typeStr string) genai.Type {
 // ToolCallResult format. The signature comes from the enclosing Part, not the
 // FunctionCall, so callers pass part.ThoughtSignature alongside it.
 func (b *GoogleBackend) convertFunctionCallToResult(fc *genai.FunctionCall, thoughtSignature []byte) ToolCallResult {
-	// Generate a tool call ID (Google doesn't provide one)
-	toolCallID := fmt.Sprintf("call_%s", fc.Name)
+	// Keep an ID the API supplies; otherwise make one unique per call.
+	// "call_<name>" alone repeats for every call of a tool, and /rewind
+	// maps file changes to turns by call ID (2.0 W4). The response is
+	// paired with its call by name (convertMessagesToGenAI), not by ID.
+	toolCallID := fc.ID
+	if toolCallID == "" {
+		toolCallID = fmt.Sprintf("call_%s_%s", fc.Name, config.UniqueNanoID())
+	}
 
 	// Convert arguments to JSON string
 	argsJSON := "{}"
