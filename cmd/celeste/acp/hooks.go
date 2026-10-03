@@ -61,12 +61,14 @@ func (s *session) askHooks(ctx context.Context, a *Agent) {
 	}
 }
 
-// askHook sends one hook file's question. ok is false when the question
+// askHook sends one trust question: a repo hook file, a grimoire's
+// stream rules or a workspace config's sandbox loosening (which the Env
+// asks through the same approver). ok is false when the question
 // went unanswered (the prompt was cancelled or the editor went away).
 func (s *session) askHook(ctx context.Context, a *Agent, src hooks.Source) (trust, ok bool) {
-	rules := src.Kind == hooks.KindRepoStreamRules
-	path := strings.TrimSuffix(src.Path, "#stream-rules")
-	if rel, err := filepath.Rel(s.cwd, path); err == nil && !strings.HasPrefix(rel, "..") {
+	file := hooks.SourceFile(src)
+	path := file
+	if rel, err := filepath.Rel(s.cwd, file); err == nil && within(rel) {
 		path = rel
 	}
 	var desc strings.Builder
@@ -74,10 +76,15 @@ func (s *session) askHook(ctx context.Context, a *Agent, src hooks.Source) (trus
 	title := fmt.Sprintf("Run repository hooks from %s?", path)
 	warning := "These commands run on this machine with your permissions."
 	trustName := "Trust these hooks"
-	if rules {
+	switch src.Kind {
+	case hooks.KindRepoStreamRules:
 		title = fmt.Sprintf("Apply the stream rules in %s?", path)
 		warning = "These rules can stop replies, re-run turns and add instructions the model follows."
 		trustName = "Trust these rules"
+	case hooks.KindRepoSandbox:
+		title = fmt.Sprintf("Apply the sandbox settings in %s?", path)
+		warning = "These settings loosen the sandbox bash commands run in (more writable directories, the network, or no sandbox)."
+		trustName = "Trust these settings"
 	}
 	params := RequestPermissionParams{
 		SessionID: s.id,
@@ -87,7 +94,7 @@ func (s *session) askHook(ctx context.Context, a *Agent, src hooks.Source) (trus
 			Kind:       ToolKindExecute,
 			Status:     ToolStatusPending,
 			Content:    []ToolCallContent{TextToolContent(desc.String() + "\n" + warning)},
-			Locations:  []Location{{Path: strings.TrimSuffix(src.Path, "#stream-rules")}},
+			Locations:  []Location{{Path: file}},
 		},
 		Options: []PermissionOption{
 			{OptionID: OptionAllowAlways, Name: trustName, Kind: OptionAllowAlways},
@@ -105,6 +112,12 @@ func (s *session) askHook(ctx context.Context, a *Agent, src hooks.Source) (trus
 		return false, false
 	}
 	return out.Outcome.OptionID == OptionAllowAlways, true
+}
+
+// within reports whether rel, a path relative to the session's cwd, stays
+// inside it. A file or folder named like "..cache" in the cwd does.
+func within(rel string) bool {
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // rebuildEnv runs the session's Setup again (trusted hooks now load; a

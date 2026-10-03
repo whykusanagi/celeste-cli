@@ -69,7 +69,7 @@ Each session starts its own set of MCP servers, the global ones included, and st
 
 Hooks follow the same trust rules as everywhere (see [HOOKS.md](HOOKS.md)): your global `~/.celeste/hooks.json` always runs, and a repository's hooks (`.celeste/hooks.json`, a project grimoire's hooks or `## Stream Rules`) run only once trusted.
 
-An untrusted repository hook file is skipped when the session starts. At the session's **first prompt**, celeste asks through the editor's permission prompt, once per file, showing its commands: **Trust these hooks** stores the approval (as `celeste hooks trust` does) and the hooks run in that same prompt; **Skip** runs the prompt without them, and celeste does not ask again in that session. A trusted file that changes is untrusted again until approved. You can also trust a repository ahead of time with `celeste hooks trust` in its folder.
+An untrusted repository hook file is skipped when the session starts. At the session's **first prompt**, celeste asks through the editor's permission prompt, once per file, showing its commands: **Trust these hooks** stores the approval (as `celeste hooks trust` does) and the hooks run in that same prompt; **Skip** runs the prompt without them, and celeste does not ask again in that session. A trusted file that changes is untrusted again until approved. A repository's `.celeste/config.json` sandbox loosening (`"enabled": false`, `"network": true` or extra `"writable"` paths) is asked about the same way, as **Trust these settings**; Skip keeps the sandbox as it was. You can also trust a repository ahead of time with `celeste hooks trust` in its folder. A session reopened in another folder asks about that folder's files at its next prompt.
 
 ## Logs
 

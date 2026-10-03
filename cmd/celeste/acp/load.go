@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/tui"
 )
@@ -53,8 +54,9 @@ func (a *Agent) loadSession(ctx context.Context, p LoadSessionParams) *RPCError 
 }
 
 // replayOpen replays a session this agent has open. Its Env is rebuilt
-// when the editor sends another cwd or MCP servers of its own; otherwise it
-// stays. The session is held like a running prompt meanwhile, so no prompt
+// when the editor sends another cwd or another MCP server list; otherwise
+// it stays (an editor resending the same servers restarts nothing). The
+// session is held like a running prompt meanwhile, so no prompt
 // interleaves with the replay.
 func (a *Agent) replayOpen(ctx context.Context, s *session, cwd string, p LoadSessionParams) *RPCError {
 	if !a.hold() {
@@ -65,11 +67,23 @@ func (a *Agent) replayOpen(ctx context.Context, s *session, cwd string, p LoadSe
 		return &RPCError{Code: CodeBusy, Message: "a prompt is already running in this session"}
 	}
 	defer s.running.Store(false)
-	if cwd != s.cwd || len(p.McpServers) > 0 {
+	if moved := cwd != s.cwd; moved || !sameServers(p.McpServers, s.mcpServers) {
 		oldCwd, oldServers := s.cwd, s.mcpServers
+		s.mu.Lock()
+		oldPending, oldAsked := s.pendingHooks, s.askedHooks
+		if moved {
+			// The new folder's untrusted sources are asked about at the
+			// next prompt; the old folder's are no longer asked about.
+			// Answers given in this session (matched by hash) stay.
+			s.pendingHooks, s.askedHooks = nil, false
+		}
+		s.mu.Unlock()
 		s.cwd, s.mcpServers = cwd, p.McpServers
 		if rerr := s.rebuildEnv(ctx, a); rerr != nil {
 			s.cwd, s.mcpServers = oldCwd, oldServers
+			s.mu.Lock()
+			s.pendingHooks, s.askedHooks = oldPending, oldAsked
+			s.mu.Unlock()
 			return rerr
 		}
 		s.store.SetWorkspace(cwd)
@@ -82,6 +96,15 @@ func (a *Agent) replayOpen(ctx context.Context, s *session, cwd string, p LoadSe
 	s.mu.Unlock()
 	s.replay(a, history)
 	return nil
+}
+
+// sameServers reports whether two editor MCP server lists are the same
+// (an absent list and an empty one are).
+func sameServers(a, b []McpServer) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // replay sends the conversation to the editor (ruling 11): user prompts as

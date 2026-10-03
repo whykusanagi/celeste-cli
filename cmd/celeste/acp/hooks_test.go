@@ -12,6 +12,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/hooktest"
+	"github.com/whykusanagi/celeste-cli/cmd/celeste/internal/sandbox"
 )
 
 // repoWithPromptHook is a workspace whose .celeste/hooks.json adds marker
@@ -176,5 +177,153 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("condition never held")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// repoWithSandboxOff is a workspace whose .celeste/config.json turns the
+// bash sandbox off: a loosening that applies only once trusted.
+func repoWithSandboxOff(t *testing.T) string {
+	t.Helper()
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".celeste", "config.json"), []byte(`{"sandbox":{"enabled":false}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
+
+// trustAsks answers every repo trust ask (hooks, rules, sandbox) with
+// answer and every tool ask with allow_once, recording the trust asks.
+func trustAsks(h *hookAsks) func(map[string]any) map[string]any {
+	return func(p map[string]any) map[string]any {
+		tc := p["toolCall"].(map[string]any)
+		if id, _ := tc["toolCallId"].(string); strings.HasPrefix(id, "hooks_") {
+			h.mu.Lock()
+			h.asks = append(h.asks, p)
+			h.mu.Unlock()
+			return selected(h.answer)
+		}
+		return selected(OptionAllowOnce)
+	}
+}
+
+// A repository's sandbox loosening is asked about as sandbox settings,
+// never as hooks, and names the real config file: Skip keeps the sandbox
+// as it was, Trust stores the approval and the loosening applies.
+func TestRepoSandboxAsk(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		answer string
+	}{{"skip", OptionRejectOnce}, {"trust", OptionAllowAlways}} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "one"})
+			c := newTestClient(t, testConfig(srv, 0))
+			h := &hookAsks{answer: tc.answer}
+			c.permit = trustAsks(h)
+			ws := repoWithSandboxOff(t)
+			sid := c.newSession(ws)
+			if res, err := c.call("session/prompt", textPrompt(sid, "first")); err != nil || stopReason(t, res) != "end_turn" {
+				t.Fatalf("prompt = %s %v", res, err)
+			}
+			if h.count() != 1 {
+				t.Fatalf("trust asks = %d, want 1", h.count())
+			}
+			ask := h.asks[0]
+			call := ask["toolCall"].(map[string]any)
+			title, _ := call["title"].(string)
+			body := mustJSON(call["content"])
+			opts := mustJSON(ask["options"])
+			rel := filepath.Join(".celeste", "config.json")
+			if title != "Apply the sandbox settings in "+rel+"?" {
+				t.Fatalf("title = %q", title)
+			}
+			if !strings.Contains(body, "loosen the sandbox") || strings.Contains(body, "These commands run") {
+				t.Fatalf("body = %s", body)
+			}
+			if !strings.Contains(opts, `"Trust these settings"`) || strings.Contains(opts, "hooks") {
+				t.Fatalf("options = %s", opts)
+			}
+			locs := call["locations"].([]any)
+			loc, _ := locs[0].(map[string]any)["path"].(string)
+			if loc != filepath.Join(ws, ".celeste", "config.json") {
+				t.Fatalf("location = %q, want the config file", loc)
+			}
+			if _, err := os.Stat(loc); err != nil {
+				t.Fatalf("location does not exist: %v", err)
+			}
+			s := c.agent.session(sid)
+			s.mu.Lock()
+			enabled := s.env.SandboxPolicy.Enabled
+			s.mu.Unlock()
+			if tc.answer == OptionRejectOnce {
+				if enabled != sandbox.DefaultEnabled {
+					t.Fatalf("Skip changed the sandbox: enabled = %v", enabled)
+				}
+				data, _ := os.ReadFile(hooks.TrustPath(c.home))
+				if strings.Contains(string(data), "#sandbox") {
+					t.Fatal("Skip stored trust")
+				}
+				return
+			}
+			if enabled {
+				t.Fatal("Trust did not apply the repository's sandbox settings")
+			}
+			data, err := os.ReadFile(hooks.TrustPath(c.home))
+			if err != nil || !strings.Contains(string(data), "#sandbox") {
+				t.Fatalf("trust store = %s (%v)", data, err)
+			}
+		})
+	}
+}
+
+// A session reloaded in another folder asks about that folder's hooks at
+// its next prompt, and never about the old folder's.
+func TestReloadInAnotherFolderAsksItsHooks(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "one"}, fakeprovider.Turn{Text: "two"})
+	c := newTestClient(t, testConfig(srv, 0))
+	h := &hookAsks{answer: OptionAllowAlways}
+	c.permit = h.permit
+	sid := c.newSession(t.TempDir())
+	if _, err := c.call("session/prompt", textPrompt(sid, "first")); err != nil {
+		t.Fatal(err)
+	}
+	if h.count() != 0 {
+		t.Fatalf("asks in a folder without hooks = %d", h.count())
+	}
+	ws2 := repoWithPromptHook(t, "SECOND-FOLDER-HOOK")
+	if _, err := c.call("session/load", loadParams(sid, ws2)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.call("session/prompt", textPrompt(sid, "second")); err != nil {
+		t.Fatal(err)
+	}
+	if h.count() != 1 {
+		t.Fatalf("asks after reloading in a folder with hooks = %d, want 1", h.count())
+	}
+	reqs := srv.Requests()
+	if !strings.Contains(string(reqs[len(reqs)-1].Raw), "SECOND-FOLDER-HOOK") {
+		t.Fatal("the trusted hook of the new folder did not run")
+	}
+}
+
+// Pending asks of the old folder are dropped when a session is reloaded
+// elsewhere: the user is never asked about a file outside the new cwd.
+func TestReloadDropsOldFolderAsks(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "one"})
+	c := newTestClient(t, testConfig(srv, 0))
+	h := &hookAsks{answer: OptionRejectOnce}
+	c.permit = h.permit
+	ws1 := repoWithPromptHook(t, "OLD")
+	sid := c.newSession(ws1)
+	if _, err := c.call("session/load", loadParams(sid, t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.call("session/prompt", textPrompt(sid, "first")); err != nil {
+		t.Fatal(err)
+	}
+	if h.count() != 0 {
+		t.Fatalf("asked about the old folder's hooks: %v", h.asks)
 	}
 }

@@ -203,3 +203,36 @@ func TestReplayPairsResultsByTurn(t *testing.T) {
 		t.Fatalf("statuses = %v %v", calls[0]["status"], calls[2]["status"])
 	}
 }
+
+// An editor that resends the same MCP servers on every load keeps the
+// session's Env (no MCP restart, no SessionStart re-run); a different
+// list rebuilds it.
+func TestLoadSameServersKeepsEnv(t *testing.T) {
+	c := newTestClient(t, testConfig(nil, 0))
+	ws := t.TempDir()
+	servers := []any{map[string]any{"type": "http", "name": "h", "url": "https://example.invalid/mcp"}}
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.call("session/new", map[string]any{"cwd": ws, "mcpServers": servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := sessionIDOf(t, res)
+	s := c.agent.session(sid)
+	envOf := func() any { s.mu.Lock(); defer s.mu.Unlock(); return s.env }
+	before := envOf()
+	if _, err := c.call("session/load", map[string]any{"sessionId": sid, "cwd": ws, "mcpServers": servers}); err != nil {
+		t.Fatal(err)
+	}
+	if envOf() != before {
+		t.Fatal("reloading with the same MCP servers rebuilt the Env")
+	}
+	other := []any{map[string]any{"type": "http", "name": "h2", "url": "https://example.invalid/mcp"}}
+	if _, err := c.call("session/load", map[string]any{"sessionId": sid, "cwd": ws, "mcpServers": other}); err != nil {
+		t.Fatal(err)
+	}
+	if envOf() == before {
+		t.Fatal("reloading with other MCP servers kept the old Env")
+	}
+}
