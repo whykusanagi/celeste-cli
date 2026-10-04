@@ -571,6 +571,20 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onCatalogReady(ready), nil
 	}
 
+	// A text burst in a sub-view (#320): the skills filter takes it as
+	// text, graph search as typed letters; the other views act on single
+	// keys and drop it, so a pasted word neither reads as a named key nor
+	// runs its letters as commands ("dog" would delete a session).
+	if k, ok := msg.(tea.KeyMsg); ok && isTextBurst(k) && m.viewMode != "chat" {
+		switch {
+		case m.viewMode == "skills":
+		case m.viewMode == "graph" && m.graphModel != nil && m.graphModel.searching:
+			return m.typeEach(k)
+		default:
+			return m, nil
+		}
+	}
+
 	// Route to collections view if in that mode
 	if m.viewMode == "collections" {
 		switch msg := msg.(type) {
@@ -646,7 +660,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else if m.viewMode == "graph" {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
-			if msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc" {
+			// While searching, q is a letter of the query and esc ends the
+			// search; the graph view handles both.
+			searching := m.graphModel != nil && m.graphModel.searching
+			if !searching && (msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc") {
 				m.viewMode = "chat"
 				return m, nil
 			}
@@ -761,6 +778,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// The MCP panel and the selector act on single keys too (#320).
+		if isTextBurst(msg) && (m.mcpPanel.Active() || m.selectorActive) {
+			return m, nil
+		}
+
 		// If MCP panel is active, route keys to it
 		if m.mcpPanel.Active() {
 			var cmd tea.Cmd
@@ -777,11 +799,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Esc on an empty input interrupts a running turn (#172). With text in
 		// the input, Esc keeps its old meaning (clear the draft).
-		if msg.String() == "esc" && m.turnActive() && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions() {
+		if keyName(msg) == "esc" && m.turnActive() && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions() {
 			return m.interrupt(), nil
 		}
 
-		switch msg.String() {
+		// keyName: a text burst names no key and goes to the input (#320).
+		switch keyName(msg) {
 		case "ctrl+c":
 			if m.turn != nil || m.cancelFunc != nil {
 				// Active operation running: cancel it. Double Ctrl+C within 3s quits.
@@ -3288,7 +3311,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				sb.WriteString("  /session resume \"<name>\"   - Load session by name\n")
 				sb.WriteString("  /session rename <id> <name> - Rename a session\n")
 				sb.WriteString("  /session delete <id>       - Delete a session\n")
-				m.chat = m.chat.AddSystemMessage(sb.String())
+				m.chat = m.chat.AddPlainSystemMessage(sb.String())
 			}
 		} else {
 			m.chat = m.chat.AddSystemMessage(

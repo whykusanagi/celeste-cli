@@ -209,3 +209,26 @@ func TestForkCopiesTheSessionAndSwitches(t *testing.T) {
 	forked, _ = mgr.mgr.Load(fork.ID)
 	assert.Len(t, forked.Messages, 5)
 }
+
+// #315: the /session list footer keeps its <id> and <name> placeholders
+// when rendered (the markdown renderer took them for HTML tags).
+func TestSessionListFooterRendersPlaceholders(t *testing.T) {
+	m, _, _ := newSessionTestApp(t)
+	m, _ = step(t, m, SendMessageMsg{Content: "/session list"})
+	msgs := m.chat.GetMessages()
+	require.NotEmpty(t, msgs)
+	last := msgs[len(msgs)-1]
+	require.Contains(t, last.Content, "Commands:")
+
+	out := stripANSI(m.chat.renderMessageOpt(last, 100, false))
+	for _, want := range []string{
+		"/session resume <id>",
+		`/session resume "<name>"`,
+		"/session rename <id> <name>",
+		"/session delete <id>",
+	} {
+		assert.Contains(t, out, want)
+	}
+	// One command per line, indented as written.
+	assert.Contains(t, out, "\n  /session delete <id>")
+}
