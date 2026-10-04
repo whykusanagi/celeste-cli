@@ -16,7 +16,7 @@ other value is an error that lists the three types.
 
 | Type | Tools | Persona | Model |
 |------|-------|---------|-------|
-| `explore` | Every read-only tool except `spawn_agent` and `post_message`, plus `submit_result`. No `bash`, no file writes, no `todo` or `save_memory`, and no MCP tools (celeste cannot tell whether an MCP tool changes anything). | off | `small_model` (falls back to `model`) |
+| `explore` | Every read-only tool except `spawn_agent` and `post_message`, plus `submit_result`. No `bash`, no file writes, no `todo` or `save_memory`, and only those MCP tools that a server marked `"trusted": true` in a home-level config declares `readOnlyHint: true` (a project's `.mcp.json` cannot mark a server trusted; see [MIGRATING-2.0.md](../MIGRATING-2.0.md#mcp-client)). | off | `small_model` (falls back to `model`) |
 | `review` | `read_file`, `list_files`, `search`, `git_status`, `git_log`, every built-in `code_*` tool, and `submit_result` (a custom or MCP tool named `code_*` is not included) | off | `agent_model` (falls back to `model`) |
 | `general` | Everything a subagent had before types existed, plus `submit_result` | on, with the `persona` slider override when given | `agent_model` (falls back to `model`) |
 

@@ -20,12 +20,20 @@ func TestRoadmapDescribes20(t *testing.T) {
 		"persona_lore", "previous_response_id", "ThoughtSignature",
 		"Windows sandbox", "LSP diagnostics", "Agent Skills",
 		"server compaction", "#199",
+		// The 2.1 issues filed when the #176 epic closed.
+		"#302", "#303", "#304", "#305", "#306", "#307", "#308",
+		"#309", "#310", "#311", "#312",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/ROADMAP.md does not mention %q", want)
 		}
 	}
-	for _, stale := range []string{"Current Release: v1.16.0", "v2.1.0 Planned", "Last updated: August 2026"} {
+	for _, stale := range []string{
+		"Current Release: v1.16.0", "v2.1.0 Planned", "Last updated: August 2026",
+		// Spec-coverage audit G1-G3, G8: shipped in 2.0, or never shipped.
+		"`session/load` and hooks for editor sessions", "- [ ] The blind persona back-test",
+		"2.0 ships BM25", "never overflow",
+	} {
 		if strings.Contains(doc, stale) {
 			t.Errorf("docs/ROADMAP.md still says %q", stale)
 		}
@@ -135,7 +143,7 @@ func TestComparisonCoversSevenTools(t *testing.T) {
 			}
 		}
 	}
-	for _, stale := range []string{"April 2026", "OpenClaw", "Picobot"} {
+	for _, stale := range []string{"April 2026", "OpenClaw", "Picobot", "no `session/load` yet"} {
 		if strings.Contains(doc, stale) {
 			t.Errorf("%s still mentions %q from the 1.x comparison", file, stale)
 		}

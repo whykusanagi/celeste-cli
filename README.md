@@ -31,7 +31,9 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 💾 **Session Persistence** - JSONL auto-save, resume, file checkpointing with stale detection and revert
 - 🌐 **Multi-Provider** - Sakana AI (default), Grok/xAI, OpenAI, Anthropic (native SDK), Gemini, Venice.ai, Vertex AI, OpenRouter, local OpenAI-compatible servers
 - 💰 **Cost Tracking** - Per-model pricing with live session cost display
-- 🪝 **Hooks** - Commands that run around tool calls, prompts and sessions (`hooks.json`, or a grimoire `## Hooks` section); a repository's hooks run only after you approve them. See [docs/HOOKS.md](docs/HOOKS.md)
+- 🪝 **Hooks** - Commands that run around tool calls, prompts and sessions (`hooks.json`, or a grimoire `## Hooks` section); a repository's hooks run only after you approve them (`celeste hooks list`, `celeste hooks trust`). See [docs/HOOKS.md](docs/HOOKS.md)
+- 🧱 **Sandbox (opt-in)** - `bash` can run under the OS sandbox (seatbelt on macOS, bubblewrap on Linux), writing only to the workspace, temp directories and build caches, with the network optionally cut. See [docs/SANDBOX.md](docs/SANDBOX.md)
+- ↩️ **Checkpoints** - Every file change is checkpointed per session: `/undo`, `/diff` and `/rewind` in the chat, `celeste revert <file>` from the shell
 - 🧠 **Extended Thinking** - Leverage reasoning tokens (Claude, Gemini, Grok) with `/effort` control
 - 🖼️ **Image Input** - Multimodal support for vision-capable models
 - 🎭 **Celeste persona** - The full persona in official releases (encrypted, all rights reserved); a public persona in source builds. See [Persona](#persona) and [docs/PERSONALITY.md](docs/PERSONALITY.md)
@@ -58,6 +60,10 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 ## 🚀 Quick Start
 
 ### Quick Install (Recommended)
+
+> **Upgrading from 1.x?** Read [MIGRATING-2.0.md](MIGRATING-2.0.md) first: it lists every
+> 2.0 change that can affect an existing setup (install path, persona, hooks, config keys,
+> environment variables, custom tools, the permission prompt) and what to do about each.
 
 If you have Go 1.26+ installed:
 
@@ -305,6 +311,7 @@ sends none. Tools from MCP servers and custom skills come on top, in both modes.
 
 ### Session Management
 - **Conversation Persistence** - Auto-save and resume sessions seamlessly
+- **File Revert** - `celeste revert <file> [--session id] [--force]` restores a file from the latest session that changed it
 - **Message History** - Full conversation logging with timestamps
 - **Session Listing** - Browse and load previous sessions by ID
 - **Session Clearing** - Bulk delete sessions when needed
@@ -1625,6 +1632,18 @@ Comprehensive documentation for developers and contributors:
 - **[LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md)** - Provider compatibility matrix and setup guides
 - **[ACP.md](docs/ACP.md)** - Using celeste in Zed and JetBrains (`celeste acp`)
 - **[STYLE_GUIDE.md](docs/STYLE_GUIDE.md)** - Code formatting standards and conventions
+
+### Upgrading and Features
+
+- **[MIGRATING-2.0.md](MIGRATING-2.0.md)** - Upgrading from 1.x: every change that can affect an existing setup
+- **[HOOKS.md](docs/HOOKS.md)** - `hooks.json`, grimoire hooks, approving a repository's hooks (`celeste hooks`)
+- **[SANDBOX.md](docs/SANDBOX.md)** - The optional OS sandbox for `bash`
+- **[SUBAGENTS.md](docs/SUBAGENTS.md)** - Typed subagents (`explore`, `review`, `general`)
+- **[PLAN_MODE.md](docs/PLAN_MODE.md)** - `/plan` and `celeste plan`
+- **[STEERING.md](docs/STEERING.md)** - Stream rules, the watchdog and the completion gate
+- **[PERSONALITY.md](docs/PERSONALITY.md)** - Persona profiles, the public persona, `celeste persona verify`
+- **[ROADMAP.md](docs/ROADMAP.md)** - What 2.0 shipped and what comes next
+- **[COMPARISON.md](docs/COMPARISON.md)** - Feature comparison with other coding agents
 
 ### Test Coverage (v1.2.0)
 

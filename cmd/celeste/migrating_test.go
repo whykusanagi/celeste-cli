@@ -34,6 +34,9 @@ func TestMigratingCoversEveryBreakingChange(t *testing.T) {
 		"permissions.json",   // F2c
 		"UserPromptSubmit",   // F2e
 		"/plan", "plan.json", // W4e-2
+		"CELESTE_API_KEY", "CELESTE_API_ENDPOINT", "TAROT_AUTH_TOKEN", // #244
+		"## Custom tools", "64,000 bytes", "2 minutes", // #271
+		"## Permission prompt", "Esc always denies", // #299
 	} {
 		if !strings.Contains(doc, must) {
 			t.Errorf("MIGRATING-2.0.md does not mention %q", must)
