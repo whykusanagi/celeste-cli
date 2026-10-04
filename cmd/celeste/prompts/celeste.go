@@ -3,6 +3,7 @@ package prompts
 
 import (
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -43,9 +44,14 @@ Read-only operations (listing files, reading, searching, status checks) do not r
 This applies to ALL write paths: direct file writes, subagent spawns for generation, bash commands that modify state.`
 
 // GetContentPrompt returns a prompt tailored for content generation.
-// window is the model's resolved context window; 0 = unknown.
+// window is the model's resolved context window; 0 = unknown. The prompt
+// has no room for the guard's notice, so it is logged (#321).
 func GetContentPrompt(window int, platform, format, tone, topic string) string {
-	basePrompt := Compose(ComposeOptions{Mode: ModeChat, Window: window}).String()
+	composed := Compose(ComposeOptions{Mode: ModeChat, Window: window})
+	if composed.Notice != "" {
+		log.Printf("[persona] %s", composed.Notice)
+	}
+	basePrompt := composed.String()
 
 	var contentAddendum strings.Builder
 	contentAddendum.WriteString("\n\nCONTENT GENERATION MODE:\n")

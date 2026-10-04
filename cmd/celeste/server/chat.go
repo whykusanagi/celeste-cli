@@ -67,7 +67,11 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// persona down. The guard's notice is only logged: MCP responses are
 	// frozen (W5 ruling 7).
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
-	system := env.SystemPrompt(loop.PromptOptions{Session: session, Window: window}).String()
+	sp := env.SystemPrompt(loop.PromptOptions{Session: session, Window: window})
+	if sp.Notice != "" {
+		log.Printf("[persona] %s", sp.Notice)
+	}
+	system := sp.String()
 	sessionID := "mcp-chat-" + config.UniqueNanoID()
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
 	sess := chatSteering(ctx, cfg, env, prompt, workspace)
