@@ -30,6 +30,22 @@ func TestMarkerOnLine(t *testing.T) {
 		"I will say TASK_COMPLETE when the tests pass.":                 false,
 		"Not yet: TASK_COMPLETE comes after the build.\nRunning it now": false,
 		"": false,
+		// #330: models that print progress markers (the agent prompt asks
+		// for STEP_DONE: <n>) on the lines before the completion marker.
+		"STEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\n- files: hello.txt\n- checks: read it back": true,
+		"STEP_DONE: 1\nSTEP_DONE: 2\n\n**TASK_COMPLETE:** done\nSummary follows.":                  true,
+		"step_done: 1\ntask_complete: done\nnotes":                                                 true,
+		// Only progress markers before the completion marker are skipped.
+		"Wrote it.\nTASK_COMPLETE: done\nSTEP_DONE: 3":         false,
+		"STEP_DONE: 1\nTASK_COMPLETE_LATER: after tests\nmore": false,
+		"STEP_DONE: 1": false,
+		"STEP_DONE: 1\nSTEP_DONE: 2\nTASK_COMPLETE": true,
+		// A reasoning block whose opening tag the chat template sent
+		// (qwen3 on servers without a reasoning parser): only the reply
+		// after </think> is judged.
+		"The user wants hello.txt.\nI will answer TASK_COMPLETE: after.\n</think>\n\nSTEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\nfiles: hello.txt": true,
+		"TASK_COMPLETE: fixed the </think> parser\ndetails":                        true,
+		"Okay, TASK_COMPLETE: is what I must say.\n</think>\nStill working.\nmore": false,
 	} {
 		if got := markerOnLine(text, o); got != want {
 			t.Errorf("markerOnLine(%q) = %v, want %v", text, got, want)
@@ -89,6 +105,35 @@ func TestCompletionGateShadowKeepsTheOldCheck(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "completion gate (shadow): would reject") {
 		t.Errorf("errOut = %q", errOut.String())
+	}
+}
+
+// qwen3Final is a qwen3:14b-style final reply from the 2.0 local smoke
+// (#328 L8): a progress marker on the line before the completion marker,
+// then the deliverables.
+const qwen3Final = "STEP_DONE: 1\nTASK_COMPLETE: Created hello.txt with the requested greeting.\n\n- Files: hello.txt (new)\n- Commands: cat hello.txt -> hello world\n- Risks: none"
+
+// #330: the shadow gate agrees with the old check on a reply whose
+// progress markers come before TASK_COMPLETE, with the reasoning streamed
+// as Ollama sends it (a separate reasoning field) or inlined in <think>.
+func TestCompletionGateAcceptsProgressMarkersBeforeTheMarker(t *testing.T) {
+	for name, final := range map[string]fakeprovider.Turn{
+		"reasoning field": {ReasoningDeltas: []string{"The file is written and read back. ", "I should finish with TASK_COMPLETE: now."}, Deltas: []string{"STEP_DONE: 1\n", qwen3Final[len("STEP_DONE: 1\n"):]}},
+		"inline think":    {Deltas: []string{"<think>\nI wrote hello.txt; reply TASK_COMPLETE: next.\n</think>\n\n", qwen3Final}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, mode := range []string{"shadow", "on"} {
+				srv := fakeprovider.NewOpenAI(t, final)
+				r, errOut := steerRunner(t, srv, func(c *config.Config) { c.CompletionGate = mode })
+				st, err := r.RunGoal(context.Background(), "write hello.txt")
+				if err != nil || st.Status != StatusCompleted || len(srv.Requests()) != 1 {
+					t.Fatalf("%s: status=%s requests=%d err=%v", mode, st.Status, len(srv.Requests()), err)
+				}
+				if strings.Contains(errOut.String(), "completion gate (shadow)") {
+					t.Errorf("%s: the gate disagreed: %q", mode, errOut.String())
+				}
+			}
+		})
 	}
 }
 

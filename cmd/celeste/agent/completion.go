@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -60,8 +61,24 @@ func (r *Runner) completion(ctx context.Context, state *RunState, final string, 
 
 // markerOnLine reports the completion marker at the start of the reply's
 // first or last non-empty line, after markdown decoration (*, _, #, >, `).
-// Without RequireCompletionMarker any non-empty reply completes, as before.
+// Progress-marker lines before it (STEP_DONE: 1, as the agent prompt asks
+// for) do not count as the first line (#330), and reasoning a server left
+// in the reply, closed by a </think> whose opening tag the chat template
+// sent (qwen3 without a reasoning parser), may come before the reply that
+// is judged. Without RequireCompletionMarker any non-empty reply
+// completes, as before.
 func markerOnLine(text string, o Options) bool {
+	if markerIn(text, o) {
+		return true
+	}
+	if reply, ok := afterLeakedThink(text); ok {
+		return markerIn(reply, o)
+	}
+	return false
+}
+
+// markerIn is markerOnLine for a reply with no leaked reasoning.
+func markerIn(text string, o Options) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false
@@ -82,8 +99,39 @@ func markerOnLine(text string, o Options) bool {
 	if len(lines) == 0 {
 		return false
 	}
-	return startsWithMarker(lines[0], marker) || startsWithMarker(lines[len(lines)-1], marker)
+	if startsWithMarker(lines[len(lines)-1], marker) {
+		return true
+	}
+	for _, l := range lines {
+		if startsWithMarker(l, marker) {
+			return true
+		}
+		if !progressMarker.MatchString(l) {
+			return false
+		}
+	}
+	return false
 }
+
+// progressMarker is an upper-snake token and a colon at the start of an
+// (upper-cased) line: STEP_DONE: 1, PLAN_STEP: 2. TASK_COMPLETED: and the
+// like match too, so a near-miss of the marker is skipped, never taken.
+var progressMarker = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+\s*:`)
+
+// afterLeakedThink returns the text after a </think> line that no <think>
+// opened: the reasoning of a model whose chat template sent the opening
+// tag, left in the reply by a server without a reasoning parser. A leading
+// <think> block is stripped by the backend already, and a </think> inside
+// a line is prose about the tag.
+func afterLeakedThink(text string) (string, bool) {
+	loc := leakedThinkClose.FindStringIndex(text)
+	if loc == nil || strings.Contains(text[:loc[0]], "<think>") {
+		return "", false
+	}
+	return text[loc[1]:], true
+}
+
+var leakedThinkClose = regexp.MustCompile(`(?m)^[ \t]*</think>[ \t]*$`)
 
 // startsWithMarker: line begins with marker as a whole token, so
 // TASK_COMPLETED or TASK_COMPLETE_LATER do not count.
