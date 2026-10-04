@@ -216,6 +216,11 @@ func ToolFitNotice(fit ToolFit, window int) string {
 	if _, seen := toolFitSeen.LoadOrStore(fmt.Sprintf("%d/%d@%d", len(fit.Defs), fit.Total, window), true); seen {
 		return ""
 	}
+	size := config.FormatTokenCount(window)
+	if fit.Dropped == 0 {
+		return fmt.Sprintf("Tools: the context window (%s tokens) is too small for all the tool definitions next to the system prompt as they are, so all %d tools are sent with short descriptions. If the model's window is larger, set context_limit in your config.",
+			size, fit.Total)
+	}
 	return fmt.Sprintf("Tools: the context window (%s tokens) is too small for all the tool definitions next to the system prompt, so %d of %d tools are sent, with short descriptions; find_tools activates any of the others. If the model's window is larger, set context_limit in your config.",
-		config.FormatTokenCount(window), len(fit.Defs), fit.Total)
+		size, len(fit.Defs), fit.Total)
 }

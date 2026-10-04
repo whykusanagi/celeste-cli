@@ -164,6 +164,11 @@ func TestToolFitNoticeOnce(t *testing.T) {
 	if again := ToolFitNotice(fit, 8_111); again != "" {
 		t.Fatalf("second notice %q", again)
 	}
+	// Nothing dropped, only shortened: it does not claim a subset.
+	all := ToolFitNotice(ToolFit{Reduced: true, Total: 23, Defs: make([]tui.SkillDefinition, 23)}, 8_111)
+	if strings.Contains(all, "23 of 23") || !strings.Contains(all, "all 23 tools are sent with short descriptions") {
+		t.Fatalf("notice %q", all)
+	}
 	if ToolFitNotice(ToolFit{Total: 3, Defs: make([]tui.SkillDefinition, 3)}, 8_111) != "" {
 		t.Fatal("an unreduced fit has a notice")
 	}
