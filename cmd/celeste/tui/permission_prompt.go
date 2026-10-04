@@ -18,7 +18,15 @@ type PermissionPromptModel struct {
 	riskLevel    string
 	response     chan PermissionResponse
 	width        int
+	// typed is set by a printable key that is not one of the prompt's
+	// (typing meant for the input, a paste). While it is set every
+	// printable key is text, so the a in "/plan off" allows nothing, and
+	// a hint says how to answer; Enter clears it.
+	typed bool
 }
+
+// permissionTypedHint is shown while typed keys are being ignored.
+const permissionTypedHint = "Typing is ignored here. Press a, A, d or D (Enter to dismiss this hint, Esc denies)"
 
 // NewPermissionPromptModel creates a new permission prompt model.
 func NewPermissionPromptModel() PermissionPromptModel {
@@ -49,10 +57,15 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 		m.inputSummary = msg.InputSummary
 		m.riskLevel = msg.RiskLevel
 		m.response = msg.Response
+		m.typed = false
 
 	case tea.KeyMsg:
 		if !m.active {
 			break
+		}
+		if msg.Paste || msg.Type == tea.KeySpace || (msg.Type == tea.KeyRunes && m.typed) {
+			m.typed = true
+			return m, nil
 		}
 		var resp PermissionResponse
 		switch msg.String() {
@@ -72,8 +85,15 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 				Decision: "always_deny",
 				Pattern:  m.buildPattern(),
 			}
+		case "enter":
+			// There is no default answer: Enter only clears the hint.
+			m.typed = false
+			return m, nil
 		default:
-			// Ignore unrecognized keys
+			// Any other printable key is typing; other keys do nothing.
+			if msg.Type == tea.KeyRunes {
+				m.typed = true
+			}
 			return m, nil
 		}
 		// Send response and deactivate
@@ -110,20 +130,16 @@ func (m PermissionPromptModel) buildPattern() string {
 	return m.toolName
 }
 
-// View renders the permission prompt dialog.
+// View renders the permission prompt dialog: a closed box exactly as wide
+// as the terminal (44 columns at least), long lines wrapped inside it.
 func (m PermissionPromptModel) View() string {
 	if !m.active {
 		return ""
 	}
 
-	w := m.width
-	if w < 40 {
-		w = 44
-	}
-	innerW := w - 6
-	if innerW < 30 {
-		innerW = 30
-	}
+	w := max(m.width, 44)
+	inner := w - 2     // between the side borders
+	textW := inner - 4 // two columns of padding on each side
 
 	borderStyle := lipgloss.NewStyle().Foreground(ColorBorderGlow)
 	titleStyle := lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true)
@@ -142,49 +158,33 @@ func (m PermissionPromptModel) View() string {
 		riskStyle = lipgloss.NewStyle().Foreground(ColorSuccess)
 	}
 
-	hRule := strings.Repeat("─", innerW)
+	side := borderStyle.Render("│")
+	var lines []string
+	// row adds s, wrapped to the box, one bordered row per line.
+	row := func(s string) {
+		for _, l := range strings.Split(lipgloss.NewStyle().Width(textW).Render(s), "\n") {
+			fill := max(textW-lipgloss.Width(l), 0)
+			lines = append(lines, side+"  "+l+strings.Repeat(" ", fill)+"  "+side)
+		}
+	}
+
 	title := " Permission Required "
+	topFill := max(inner-1-lipgloss.Width(title), 0)
+	lines = append(lines, borderStyle.Render("╭─")+titleStyle.Render(title)+borderStyle.Render(strings.Repeat("─", topFill)+"╮"))
 
-	// Top border
-	topFill := innerW - len(title)
-	if topFill < 0 {
-		topFill = 0
-	}
-	top := borderStyle.Render("╭─") + titleStyle.Render(title) + borderStyle.Render(strings.Repeat("─", topFill)+"╮")
-
-	// Content lines
-	pad := func(s string) string {
-		visible := len(s) // approximate; lipgloss styled strings are longer
-		_ = visible
-		return borderStyle.Render("│") + "  " + s + borderStyle.Render("")
-	}
-
-	// Summary line
-	summaryLine := pad(textStyle.Render(fmt.Sprintf("%s wants to run: %s", m.toolName, m.inputSummary)))
-	riskLine := pad(textStyle.Render("Risk: ") + riskStyle.Render(m.riskLevel))
-	blankLine := borderStyle.Render("│") + strings.Repeat(" ", innerW+2) + borderStyle.Render("│")
-	_ = blankLine
+	row(textStyle.Render(fmt.Sprintf("%s wants to run: %s", m.toolName, m.inputSummary)))
+	row(textStyle.Render("Risk: ") + riskStyle.Render(m.riskLevel))
+	lines = append(lines, side+strings.Repeat(" ", inner)+side)
 
 	pattern := m.buildPattern()
-	optA := pad(keyStyle.Render("[a]") + mutedStyle.Render(" Allow once"))
-	optAA := pad(keyStyle.Render("[A]") + mutedStyle.Render(fmt.Sprintf(" Always allow %q", pattern)))
-	optD := pad(keyStyle.Render("[d]") + mutedStyle.Render(" Deny (also Esc)"))
-	optDD := pad(keyStyle.Render("[D]") + mutedStyle.Render(fmt.Sprintf(" Always deny %q", pattern)))
-
-	// Bottom border
-	bot := borderStyle.Render("╰" + hRule + "──╯")
-
-	lines := []string{
-		top,
-		summaryLine,
-		riskLine,
-		"",
-		optA,
-		optAA,
-		optD,
-		optDD,
-		bot,
+	row(keyStyle.Render("[a]") + mutedStyle.Render(" Allow once"))
+	row(keyStyle.Render("[A]") + mutedStyle.Render(fmt.Sprintf(" Always allow %q", pattern)))
+	row(keyStyle.Render("[d]") + mutedStyle.Render(" Deny (also Esc)"))
+	row(keyStyle.Render("[D]") + mutedStyle.Render(fmt.Sprintf(" Always deny %q", pattern)))
+	if m.typed {
+		row(lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(permissionTypedHint))
 	}
 
+	lines = append(lines, borderStyle.Render("╰"+strings.Repeat("─", inner)+"╯"))
 	return strings.Join(lines, "\n")
 }
