@@ -64,7 +64,7 @@ Be specific and factual; keep paths, identifiers and error text exact. If a prev
 // SummaryOptions controls a summary.
 type SummaryOptions struct {
 	// KeepTokens of the newest history stay verbatim; 0 means
-	// KeepFor(Window).
+	// KeepWithin(Window, Overhead).
 	KeepTokens int
 	// Window is the model's context window; it sizes the kept tail when
 	// KeepTokens is 0 (#234).
@@ -73,6 +73,10 @@ type SummaryOptions struct {
 	Focus string
 	// All summarizes the whole history, keeping no tail (/handoff).
 	All bool
+	// Overhead is the fixed prefix (system prompt, tool schemas) the
+	// requests carry; on a crowded window it shrinks the kept tail
+	// (KeepWithin). 0 keeps KeepFor(Window).
+	Overhead int
 	// State is RenderState's output, appended inside the summary's
 	// <compacted-context> (#200). "" adds nothing.
 	State string
@@ -127,7 +131,7 @@ func Summarize(ctx context.Context, msgs []tui.ChatMessage, opts SummaryOptions,
 	if !opts.All {
 		keep := opts.KeepTokens
 		if keep <= 0 {
-			keep = KeepFor(opts.Window)
+			keep = KeepWithin(opts.Window, opts.Overhead)
 		}
 		cut = CutIndex(msgs, keep)
 	}
