@@ -62,13 +62,16 @@ func TestRun_MessageHelpEdges(t *testing.T) {
 	}
 }
 
-// Subcommands with their own flag parsing keep their own -h handling.
-func TestRun_FlagSubcommandsKeepTheirHelp(t *testing.T) {
-	for _, cmd := range []string{"agent", "config", "serve", "session", "skills", "init", "acp"} {
+// A leading -- is left alone on subcommands that parse flags: their flag
+// parser treats it as the end of the flags itself.
+func TestRun_DashDashReachesFlagSubcommands(t *testing.T) {
+	for _, cmd := range []string{"agent", "config", "session", "index", "chat"} {
 		r := &fakeRunner{}
 		var out, errBuf bytes.Buffer
-		run([]string{cmd, "-h"}, r, &out, &errBuf)
+		run([]string{cmd, "--", "x"}, r, &out, &errBuf)
 		assert.Equal(t, cmd, r.lastCall)
-		assert.Equal(t, []string{"-h"}, r.lastArgs)
+		if cmd != "chat" {
+			assert.Equal(t, []string{"--", "x"}, r.lastArgs, cmd)
+		}
 	}
 }

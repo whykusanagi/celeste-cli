@@ -12,7 +12,6 @@ type SkillsModel struct {
 	currentInput string
 	width        int
 	height       int
-	menuState    string
 
 	endpoint       string
 	model          string
@@ -41,11 +40,6 @@ func (s SkillsModel) SetCurrentInput(input string) SkillsModel {
 func (s SkillsModel) SetSize(width, height int) SkillsModel {
 	s.width = width
 	s.height = height
-	return s
-}
-
-func (s SkillsModel) SetMenuState(state string) SkillsModel {
-	s.menuState = state
 	return s
 }
 
@@ -82,12 +76,6 @@ func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, 
 	s.disabledReason = reason
 	return s
 }
-
-// Count reports the loaded-skill count (surfaced in the status line).
-func (s SkillsModel) Count() int { return s.skillsCount }
-
-// Enabled reports whether skills are enabled (surfaced in the status line).
-func (s SkillsModel) Enabled() bool { return s.skillsEnabled }
 
 // collapsedView renders only meaningful transient signal — a running/failed/
 // completed skill — and nothing when idle, so the chat area reclaims the space.
@@ -129,10 +117,6 @@ func (s SkillsModel) View() string {
 
 	if !s.skillsEnabled && s.disabledReason != "" {
 		lines = append(lines, "Reason: "+truncateLine(s.disabledReason, 90))
-	}
-
-	if s.menuState != "" {
-		lines = append(lines, "Mode: "+s.menuState)
 	}
 
 	if hint := skillsInputHint(s.currentInput, s.nsfw, s.skillsEnabled); hint != "" {

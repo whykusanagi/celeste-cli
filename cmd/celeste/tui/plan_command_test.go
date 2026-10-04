@@ -43,24 +43,24 @@ func lastSystemText(m AppModel) string {
 
 func TestPlanCommandTogglesPlanMode(t *testing.T) {
 	m, client := newPlanTestApp()
-	assert.NotContains(t, m.statusLineView(), "PLAN")
+	assert.NotContains(t, m.statusLineView(0), "PLAN")
 	m, _ = step(t, m, SendMessageMsg{Content: "/plan"})
 	assert.True(t, client.on)
 	assert.Empty(t, client.goal)
 	assert.Empty(t, client.turns, "/plan alone starts no turn")
 	assert.Equal(t, "Plan mode on: read-only tools until you approve a plan (/plan off to leave)", lastSystemText(m))
-	assert.Contains(t, m.statusLineView(), "PLAN")
+	assert.Contains(t, m.statusLineView(0), "PLAN")
 
 	m, _ = step(t, m, SendMessageMsg{Content: "/plan off"})
 	assert.False(t, client.on)
 	assert.Contains(t, lastSystemText(m), "Plan mode off")
-	assert.NotContains(t, m.statusLineView(), "PLAN")
+	assert.NotContains(t, m.statusLineView(0), "PLAN")
 
 	// The status follows the client: an approval mid-turn clears it.
 	client.on = true
-	assert.Contains(t, m.statusLineView(), "PLAN")
+	assert.Contains(t, m.statusLineView(0), "PLAN")
 	client.on = false
-	assert.NotContains(t, m.statusLineView(), "PLAN")
+	assert.NotContains(t, m.statusLineView(0), "PLAN")
 }
 
 func TestPlanGoalSendsThePrompt(t *testing.T) {
