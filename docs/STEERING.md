@@ -143,9 +143,12 @@ skips it.
 `completion_gate`: `shadow` (default) or `on`. With `on`, an agent run
 completes only when its reply starts or ends with a line beginning with
 the word `TASK_COMPLETE` (a mention mid-sentence, or `TASK_COMPLETED`,
-does not count). Progress-marker lines such as `STEP_DONE: 1` before it
-do not count as the first line, and reasoning a local server left in the
-reply, up to a `</think>` line, is skipped. When the watchdog is on, the gate also asks the ballot
+does not count). Progress-marker lines before it, upper-snake markers
+such as `STEP_DONE: 1` (a marker without an underscore, like `STEP: 1`,
+does not count), are not taken as the first line. Reasoning a local
+server left in the reply, up to a `</think>` line, is skipped, and such
+reasoning with no reply after it never completes the run. When the
+watchdog is on, the gate also asks the ballot
 before it accepts the completion and sends the run back if the ballot
 finds an unchecked claim of success. It sends a run back at most once,
 and never a run with verification commands (the runtime checks those

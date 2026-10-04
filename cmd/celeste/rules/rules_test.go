@@ -327,6 +327,67 @@ func TestBuiltinTaskCompleteAcrossDeltas(t *testing.T) {
 	}
 }
 
+// A reply longer than the kept context: the scan window then starts
+// mid-line, and a TASK_COMPLETE mentioned mid-sentence right after the
+// cut is not a line start (#330 review I1).
+func TestBuiltinTaskCompleteMidSentencePastTheKeptContext(t *testing.T) {
+	m := builtinMatcher(t)
+	m.ToolResult("write_file", false)
+	m.StartRequest()
+	var hits []Hit
+	hits = append(hits, m.Text(strings.Repeat("a", 4000)+" I will reply with")...)
+	hits = append(hits, m.Flush()...)
+	rest := " TASK_COMPLETE once the tests pass."
+	hits = append(hits, m.Text(rest+strings.Repeat("b", scanBack-len(rest)))...)
+	hits = append(hits, m.Text("\n")...)
+	hits = append(hits, m.Flush()...)
+	if len(hits) != 0 {
+		t.Errorf("a mid-sentence mention fired: %q", names(hits))
+	}
+	// A real line start after a long line still fires.
+	hits = append(hits[:0], m.Text("TASK_COMPLETE: done\n")...)
+	hits = append(hits, m.Flush()...)
+	if names(hits) != "task-complete-before-verify" {
+		t.Errorf("a declared marker after a long line: hits = %q", names(hits))
+	}
+}
+
+// A batch that ends inside a word does not judge the word yet:
+// TASK_COMPLETE then D in the next delta is TASK_COMPLETED (#330 review I2).
+func TestBuiltinTaskCompleteSplitWordWaitsForTheRest(t *testing.T) {
+	m := builtinMatcher(t)
+	m.ToolResult("write_file", false)
+	m.StartRequest()
+	var hits []Hit
+	for _, d := range []string{"STEP_DONE: 1", "\nTASK_COMPLETE", "D: not the marker\n"} {
+		hits = append(hits, m.Text(d)...)
+	}
+	hits = append(hits, m.Flush()...)
+	if len(hits) != 0 {
+		t.Errorf("TASK_COMPLETED split across batches fired: %q", names(hits))
+	}
+	// The scanEvery threshold reached right after the marker.
+	m = builtinMatcher(t)
+	m.ToolResult("write_file", false)
+	m.StartRequest()
+	hits = append(hits[:0], m.Text(strings.Repeat("x", scanEvery)+"\nTASK_COMPLETE")...)
+	hits = append(hits, m.Text("D: not the marker")...)
+	hits = append(hits, m.Flush()...)
+	if len(hits) != 0 {
+		t.Errorf("TASK_COMPLETED split at the size threshold fired: %q", names(hits))
+	}
+	// The marker as the last bytes of the stream is judged by Flush.
+	m = builtinMatcher(t)
+	m.ToolResult("write_file", false)
+	m.StartRequest()
+	hits = append(hits[:0], m.Text("TASK_")...)
+	hits = append(hits, m.Text("COMPLETE")...)
+	hits = append(hits, m.Flush()...)
+	if names(hits) != "task-complete-before-verify" {
+		t.Errorf("a marker ending the stream: hits = %q", names(hits))
+	}
+}
+
 func TestBuiltinDestructiveBash(t *testing.T) {
 	for cmd, fire := range map[string]bool{
 		"git push --force origin main":            true,

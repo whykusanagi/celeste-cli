@@ -44,8 +44,11 @@ func TestMarkerOnLine(t *testing.T) {
 		// (qwen3 on servers without a reasoning parser): only the reply
 		// after </think> is judged.
 		"The user wants hello.txt.\nI will answer TASK_COMPLETE: after.\n</think>\n\nSTEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\nfiles: hello.txt": true,
-		"TASK_COMPLETE: fixed the </think> parser\ndetails":                        true,
-		"TASK_COMPLETE: escaped the tag:\n</think>\n":                              true,
+		"TASK_COMPLETE: fixed the </think> parser\ndetails": true,
+		// Reasoning cut off right after </think> (max_tokens) has no
+		// reply to judge: it never completes (#330 review M1).
+		"TASK_COMPLETE: escaped the tag:\n</think>\n":                              false,
+		"TASK_COMPLETE: I think I am done, but let me check.\n</think>\n":          false,
 		"TASK_COMPLETE: after verify\n</think>\nStill checking":                    false,
 		"Okay, TASK_COMPLETE: is what I must say.\n</think>\nStill working.\nmore": false,
 	} {
@@ -56,6 +59,9 @@ func TestMarkerOnLine(t *testing.T) {
 	o.RequireCompletionMarker = false
 	if !markerOnLine("any reply", o) {
 		t.Error("without RequireCompletionMarker any reply completes")
+	}
+	if markerOnLine("I am done.\n</think>\n", o) {
+		t.Error("leaked reasoning with no reply after it completed")
 	}
 }
 

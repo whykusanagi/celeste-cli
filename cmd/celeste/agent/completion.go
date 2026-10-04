@@ -65,10 +65,11 @@ func (r *Runner) completion(ctx context.Context, state *RunState, final string, 
 // for) do not count as the first line (#330), and reasoning a server left
 // in the reply, closed by a </think> whose opening tag the chat template
 // sent (qwen3 without a reasoning parser), is not judged: only the reply
-// after it, when there is one. Without RequireCompletionMarker any
-// non-empty reply completes, as before.
+// after it. Reasoning with nothing after its </think> (a stream cut off
+// by max_tokens) has no reply and never completes. Without
+// RequireCompletionMarker any non-empty reply completes, as before.
 func markerOnLine(text string, o Options) bool {
-	if reply, ok := afterLeakedThink(text); ok && strings.TrimSpace(reply) != "" {
+	if reply, ok := afterLeakedThink(text); ok {
 		return markerIn(reply, o)
 	}
 	return markerIn(text, o)
