@@ -69,3 +69,24 @@ func TestCtrlKKeepsManualScrollPosition(t *testing.T) {
 	assert.Equal(t, 0, m.chat.viewport.YOffset)
 	assert.Contains(t, auditView(m), "question 0")
 }
+
+// A message stamped later than the turns after it (a compaction summary is
+// stamped when it is made, ahead of the tail it keeps) must not pull those
+// turns' tool calls up to itself: each call stays in its own turn.
+func TestCtrlKToolLogStaysInTurnAfterCompaction(t *testing.T) {
+	m := toolTurns(newAuditApp(t, &fakeAgentLLMClient{}, 120, 40), 4)
+	m.chat = m.chat.ApplySummary(4, []ChatMessage{{Role: "user", Content: "s", Timestamp: time.Now()}})
+	m = pressCtrlK(m)
+	// The whole chat, not just the visible window.
+	vp := m.chat.viewport
+	vp.Height = 10000
+	vp.GotoTop()
+	full := vp.View()
+	for _, i := range []int{2, 3} {
+		call := strings.LastIndex(full, fmt.Sprintf("read_file_%d", i))
+		q := strings.Index(full, fmt.Sprintf("question %d", i))
+		a := strings.Index(full, fmt.Sprintf("answer %d done", i))
+		assert.Greater(t, call, q, "read_file_%d after its question", i)
+		assert.Less(t, call, a, "read_file_%d before its answer", i)
+	}
+}

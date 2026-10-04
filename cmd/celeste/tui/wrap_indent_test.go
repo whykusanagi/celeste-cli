@@ -50,6 +50,27 @@ func TestWrapTextHangingIndent(t *testing.T) {
 			want:  []string{"one two three", "four five six", "seven"},
 		},
 		{
+			name:  "two spaces after a sentence are not a column",
+			in:    "Fix this.  Then also refactor the whole package and its tests",
+			width: 30,
+			want: []string{
+				"Fix this. Then also refactor",
+				"the whole package and its",
+				"tests",
+			},
+		},
+		{
+			name:  "an indent past half the width is clamped, not dropped",
+			in:    strings.Repeat(" ", 12) + "return nil, fmt.Errorf(err)",
+			width: 20,
+			want: []string{
+				strings.Repeat(" ", 10) + "return",
+				strings.Repeat(" ", 10) + "nil,",
+				strings.Repeat(" ", 10) + "fmt.Errorf",
+				strings.Repeat(" ", 10) + "(err)",
+			},
+		},
+		{
 			name:  "a line that fits is untouched",
 			in:    "  /plan off       Leave plan mode",
 			width: 76,

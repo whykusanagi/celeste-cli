@@ -525,8 +525,21 @@ func (m *ChatModel) updateContent() {
 		}
 	}
 
+	// A message can be stamped later than the ones after it (a compaction
+	// summary is stamped when it is made, ahead of the tail it keeps), so
+	// each message flushes calls older than the oldest stamp from it to the
+	// end, not its own: it never pulls in calls from the turns after it.
+	bound := make([]time.Time, len(m.messages))
+	var oldest time.Time
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if ts := m.messages[i].Timestamp; !ts.IsZero() && (oldest.IsZero() || ts.Before(oldest)) {
+			oldest = ts
+		}
+		bound[i] = oldest
+	}
+
 	for i, msg := range m.messages {
-		emitCalls(msg.Timestamp, false)
+		emitCalls(bound[i], false)
 		// Don't render tool results in UI - they're for LLM only
 		if msg.Role == "tool" {
 			continue
@@ -666,9 +679,10 @@ func wrapText(text string, width int) string {
 // column stays as written on the first row and the rest wraps beside it;
 // continuation rows are indented to that column. The hanging column is the
 // start of the rightmost column (text after a run of two or more spaces)
-// in the left half of the row, or else the line's own indent: a two-column
-// help row hangs under its description, a table row under its last column,
-// and prose keeps its indent.
+// in the left half of the row (two spaces after a sentence end do not
+// count), or else the line's own indent, clamped to half the row: a
+// two-column help row hangs under its description, a table row under its
+// last column, and prose and pasted code keep their indent.
 func wrapLine(line string, width int) string {
 	head, tail := splitHang(line, width)
 	col := lipgloss.Width(head)
@@ -693,10 +707,12 @@ func splitHang(line string, width int) (head, tail string) {
 	body := strings.TrimLeft(line, " ")
 	indent := len(line) - len(body)
 	limit := width / 2
-	cut := 0
-	if lipgloss.Width(line[:indent]) <= limit {
-		cut = indent
+	if indent > limit {
+		// Deeply indented (pasted code): keep as much indent as leaves
+		// half the row for text, on every row.
+		return strings.Repeat(" ", limit), body
 	}
+	cut := indent
 	for i := indent; i < len(line); {
 		if line[i] != ' ' {
 			i++
@@ -706,7 +722,8 @@ func splitHang(line string, width int) (head, tail string) {
 		for j < len(line) && line[j] == ' ' {
 			j++
 		}
-		if j-i >= 2 && j < len(line) {
+		// Two spaces after a sentence end are prose, not a column.
+		if j-i >= 2 && j < len(line) && !strings.ContainsRune(".!?", rune(line[i-1])) {
 			if lipgloss.Width(line[:j]) > limit {
 				break
 			}
