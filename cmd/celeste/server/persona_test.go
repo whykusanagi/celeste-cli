@@ -91,3 +91,32 @@ func TestMCPChatSmallWindowLogsTheNoticeOnce(t *testing.T) {
 		t.Fatalf("want the notice logged once, got %d: %q", got, logs.String())
 	}
 }
+
+// #310: MCP chat on a small window sends a fitted tool set and logs the
+// tool notice once, never in the response (context_limit 8196 is used by
+// no other test).
+func TestMCPChatSmallWindowFitsTheTools(t *testing.T) {
+	promptstest.Install(t)
+	var logs bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "hi"}, fakeprovider.Turn{Text: "hi"})
+	cfg, ws := contractCfg(t, srv)
+	cfg.CelesteConfig.ContextLimit = 8196
+	for i := int64(1); i <= 2; i++ {
+		out := call(t, cfg, rpc{i, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "hello", "mode": "chat", "workspace": ws}}})
+		if strings.Contains(string(out[i]), "too small for all the tool definitions") {
+			t.Fatal("the tool notice reached the MCP response")
+		}
+	}
+	if got := strings.Count(logs.String(), "too small for all the tool definitions"); got != 1 {
+		t.Fatalf("want the tool notice logged once, got %d: %q", got, logs.String())
+	}
+	reqs := srv.Requests()
+	defs, _ := reqs[len(reqs)-1].Body["tools"].([]any)
+	if len(defs) == 0 || len(defs) >= 40 {
+		t.Fatalf("%d tools sent at 8,196", len(defs))
+	}
+}

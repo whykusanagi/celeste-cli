@@ -143,6 +143,11 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 	if c := newChatCompactor(cfg, system, client.GetSkills(), env.Workspace); c != nil {
 		l.Compact = c
 	}
+	// A window too small for every tool schema gets a core set; the
+	// server log says so once (#310).
+	if n := client.TakeToolNotice(); n != "" {
+		log.Printf("celeste chat: %s", n)
+	}
 	return l
 }
 

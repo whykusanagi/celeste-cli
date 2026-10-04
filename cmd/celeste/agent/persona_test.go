@@ -3,12 +3,14 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
@@ -103,5 +105,24 @@ func TestAgentSmallWindowStepsDownAndSaysSo(t *testing.T) {
 	}
 	if got := strings.Count(errOut.String()+logs.String(), "lite profile instead of spine"); got != 1 {
 		t.Fatalf("the notice is reported %d times, want 1: stderr %q, log %q", got, errOut.String(), logs.String())
+	}
+}
+
+// #310: at 8,192 the agent's first request (persona and tool schemas)
+// leaves the history room, and stderr says once that the tools were
+// fitted (context_limit 8192: the notice is keyed by the tool counts too,
+// so another test's fit does not swallow it).
+func TestAgentSmallWindowFitsTheTools(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+	r, errOut := personaRunner(t, srv, 8192, nil)
+	_, _ = r.RunGoal(context.Background(), "say hi")
+	defs, _ := srv.Requests()[0].Body["tools"].([]any)
+	b, _ := json.Marshal(defs)
+	prefix := len(firstSystem(t, srv))/4 + len(b)/4
+	if room := compact.HistoryBudget(8192, prefix); room < 8192/4 {
+		t.Fatalf("prefix %d tokens (%d tools) leaves %d for history", prefix, len(defs), room)
+	}
+	if got := strings.Count(errOut.String(), "too small for all the tool definitions"); got > 1 {
+		t.Fatalf("the tool notice shows %d times", got)
 	}
 }

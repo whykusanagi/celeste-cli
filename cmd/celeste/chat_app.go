@@ -151,6 +151,9 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	tuiClient.gate = chatGate(registry)
 	// The persona is composed for the served model's window (W5 guard).
 	tuiClient.applySystemPrompt()
+	// The tool schemas follow the same window: a small one gets a core set
+	// (#310).
+	client.SetWindowFunc(tuiClient.liveWindow)
 
 	// Subagents and /agent nest under the chat's Env (2.0 F2e): they share
 	// its MCP clients (global servers only), hooks (this session's ID) and
@@ -199,6 +202,11 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// A window too small for the full persona says so once (W5 ruling 7),
 	// after a restored endpoint has recomposed the prompt.
 	if n := tuiClient.takePersonaNotice(); n != "" {
+		app = app.WithSystemMessage(prompts.NoticePrefix + n)
+	}
+	// So does a window too small for every tool schema (#310).
+	tuiClient.GetSkills()
+	if n := client.TakeToolNotice(); n != "" {
 		app = app.WithSystemMessage(prompts.NoticePrefix + n)
 	}
 

@@ -332,6 +332,15 @@ func (r *Registry) Activate(names ...string) {
 	}
 }
 
+// Activated reports whether find_tools activated name this session. It
+// holds whether or not discovery mode is on: the small-window tool fit
+// (compact.FitTools) keeps an activated tool even when it drops others.
+func (r *Registry) Activated(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.activated[name]
+}
+
 // Get returns a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	r.mu.RLock()

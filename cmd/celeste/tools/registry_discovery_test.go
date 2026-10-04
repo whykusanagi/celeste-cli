@@ -62,3 +62,13 @@ func TestRegistry_DiscoveryModeOn_HidesUntilActivated(t *testing.T) {
 	r.Activate("buried")
 	require.Contains(t, names(r.GetTools(ModeChat)), "buried", "activation restores visibility")
 }
+
+// Activated holds with discovery mode off too: the small-window tool fit
+// keeps what find_tools activated (#310).
+func TestActivatedWithoutDiscoveryMode(t *testing.T) {
+	r := NewRegistry()
+	r.Register(stubTool{name: "x", desc: "x"})
+	assert.False(t, r.Activated("x"))
+	r.Activate("x")
+	assert.True(t, r.Activated("x"))
+}

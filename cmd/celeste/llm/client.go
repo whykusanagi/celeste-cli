@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
@@ -42,6 +44,11 @@ type Client struct {
 	// toolMode selects which registered tools GetSkills offers the model.
 	// The zero value is tools.ModeChat.
 	toolMode tools.RuntimeMode
+	// windowFn, when set, is the context window GetSkills fits the tools
+	// to; nil resolves it from config (SetWindowFunc).
+	windowFn func() int
+	// toolNotice is the tool fit's pending one-time notice (TakeToolNotice).
+	toolNotice string
 }
 
 // Config holds LLM client configuration.
@@ -60,6 +67,10 @@ type Config struct {
 	// Google Cloud authentication (for Gemini/Vertex AI)
 	GoogleCredentialsFile string // Path to service account JSON file
 	GoogleUseADC          bool   // Use Application Default Credentials
+
+	// ContextLimit is the user's context_limit (0: resolved from the model
+	// and endpoint). GetSkills fits the tool schemas to the window (#310).
+	ContextLimit int
 
 	// Collections (xAI only)
 	Collections *config.CollectionsConfig
@@ -80,6 +91,7 @@ func ConfigFrom(cfg *config.Config) *Config {
 		TypingSpeed:           cfg.TypingSpeed,
 		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
 		GoogleUseADC:          cfg.GoogleUseADC,
+		ContextLimit:          cfg.ContextLimit,
 		Collections:           cfg.Collections,
 		XAIFeatures:           cfg.XAIFeatures,
 	}
@@ -443,12 +455,53 @@ func (c *Client) SetToolMode(mode tools.RuntimeMode) {
 	c.toolMode = mode
 }
 
-// GetSkills returns the tools the model may call in this client's mode.
+// SetWindowFunc makes GetSkills fit the tools to the window fn returns
+// (the chat follows its live model and context_limit). fn is called
+// without the client's lock held, so it may call the client.
+func (c *Client) SetWindowFunc(fn func() int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.windowFn = fn
+}
+
+// GetSkills returns the tools the model may call in this client's mode,
+// fitted to the context window next to the system prompt
+// (compact.FitTools): on a small window a core set with short
+// descriptions, plus any tool find_tools activated. When that reduces the
+// set, the one-time notice waits for TakeToolNotice.
 func (c *Client) GetSkills() []tui.SkillDefinition {
 	c.mu.RLock()
-	mode := c.toolMode
+	mode, cfg, system, windowFn := c.toolMode, c.config, c.systemPrompt, c.windowFn
 	c.mu.RUnlock()
-	return skillDefinitions(c.registry, mode)
+	defs := skillDefinitions(c.registry, mode)
+	window := 0
+	switch {
+	case windowFn != nil:
+		window = windowFn()
+	case cfg != nil:
+		window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	}
+	var pinned func(string) bool
+	if c.registry != nil {
+		pinned = c.registry.Activated
+	}
+	fit := compact.FitTools(defs, window, ctxmgr.EstimateTokens(system), pinned)
+	if n := compact.ToolFitNotice(fit, window); n != "" {
+		c.mu.Lock()
+		c.toolNotice = n
+		c.mu.Unlock()
+	}
+	return fit.Defs
+}
+
+// TakeToolNotice returns the tool fit's pending notice once ("" when there
+// is none). The caller shows it, as it shows the persona guard's.
+func (c *Client) TakeToolNotice() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.toolNotice
+	c.toolNotice = ""
+	return n
 }
 
 // skillDefinitions converts the registry's tools for mode into skill

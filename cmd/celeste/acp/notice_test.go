@@ -37,11 +37,15 @@ func TestSmallWindowNoticeShownOnce(t *testing.T) {
 	if _, err := c.call("session/prompt", textPrompt(sid, "again")); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(c.agentText(), prompts.NoticePrefix); got != 1 {
-		t.Fatalf("notice shown %d times, want once: %q", got, c.agentText())
+	// The persona's notice and the tool fit's (#310), once each.
+	if !strings.Contains(first, prompts.NoticePrefix+"Tools: ") {
+		t.Fatalf("first prompt's agent text = %q, want the tool notice too", first)
+	}
+	if got := strings.Count(c.agentText(), prompts.NoticePrefix); got != 2 {
+		t.Fatalf("notices shown %d times, want two, once each: %q", got, c.agentText())
 	}
 	for i, r := range srv.Requests() {
-		if strings.Contains(string(r.Raw), "Persona: using") || strings.Contains(string(r.Raw), "Persona: even") {
+		if strings.Contains(string(r.Raw), "Persona: using") || strings.Contains(string(r.Raw), "Persona: even") || strings.Contains(string(r.Raw), "Tools: the context") {
 			t.Fatalf("request %d carries the notice to the model", i)
 		}
 	}

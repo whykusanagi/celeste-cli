@@ -509,7 +509,11 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		}
 	}
 	// The tool schemas the run offers count too (#234 item 1).
+	// On a small window they are a fitted core set, said once (#310).
 	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, compact.DefinitionTokens(client.GetSkills()))
+	if n := client.TakeToolNotice(); n != "" {
+		fmt.Fprintln(errOut, prompts.NoticePrefix+n)
+	}
 
 	return &Runner{
 		client:    client,
