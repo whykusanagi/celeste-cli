@@ -45,6 +45,8 @@ func TestMarkerOnLine(t *testing.T) {
 		// after </think> is judged.
 		"The user wants hello.txt.\nI will answer TASK_COMPLETE: after.\n</think>\n\nSTEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\nfiles: hello.txt": true,
 		"TASK_COMPLETE: fixed the </think> parser\ndetails":                        true,
+		"TASK_COMPLETE: escaped the tag:\n</think>\n":                              true,
+		"TASK_COMPLETE: after verify\n</think>\nStill checking":                    false,
 		"Okay, TASK_COMPLETE: is what I must say.\n</think>\nStill working.\nmore": false,
 	} {
 		if got := markerOnLine(text, o); got != want {

@@ -64,17 +64,14 @@ func (r *Runner) completion(ctx context.Context, state *RunState, final string, 
 // Progress-marker lines before it (STEP_DONE: 1, as the agent prompt asks
 // for) do not count as the first line (#330), and reasoning a server left
 // in the reply, closed by a </think> whose opening tag the chat template
-// sent (qwen3 without a reasoning parser), may come before the reply that
-// is judged. Without RequireCompletionMarker any non-empty reply
-// completes, as before.
+// sent (qwen3 without a reasoning parser), is not judged: only the reply
+// after it, when there is one. Without RequireCompletionMarker any
+// non-empty reply completes, as before.
 func markerOnLine(text string, o Options) bool {
-	if markerIn(text, o) {
-		return true
-	}
-	if reply, ok := afterLeakedThink(text); ok {
+	if reply, ok := afterLeakedThink(text); ok && strings.TrimSpace(reply) != "" {
 		return markerIn(reply, o)
 	}
-	return false
+	return markerIn(text, o)
 }
 
 // markerIn is markerOnLine for a reply with no leaked reasoning.
