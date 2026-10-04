@@ -5,6 +5,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -28,6 +29,9 @@ type PermissionPromptModel struct {
 	// letter instead of allowing. Deny keys answer at once. Decision ""
 	// means nothing is picked.
 	pick PermissionResponse
+	// pickAt is when a or A picked; an Enter in the same burst is part of
+	// a paste ("a" and a newline), not a confirmation (#326).
+	pickAt time.Time
 }
 
 // permissionTypedHint is shown while typed keys are being ignored. d and D
@@ -83,12 +87,14 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 		switch msg.String() {
 		case "a":
 			m.pick = PermissionResponse{Decision: "allow_once"}
+			m.pickAt = keyClock()
 			return m, nil
 		case "A":
 			m.pick = PermissionResponse{
 				Decision: "always_allow",
 				Pattern:  m.buildPattern(),
 			}
+			m.pickAt = keyClock()
 			return m, nil
 		case "d", "esc", "ctrl+c":
 			// Esc and Ctrl+C dismiss the modal as a denial, so a waiting
@@ -104,6 +110,12 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 			// so otherwise it only clears the hint.
 			if m.pick.Decision == "" {
 				m.typed = false
+				return m, nil
+			}
+			if inBurst(m.pickAt) {
+				// "a" and a newline pasted together: typing.
+				m.typed = true
+				m.pick = PermissionResponse{}
 				return m, nil
 			}
 			resp = m.pick
