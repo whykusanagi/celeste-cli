@@ -853,3 +853,35 @@ func TestChatCompactorJevOnAsksBeforeTheRequest(t *testing.T) {
 		t.Fatal("jev_prune on: Jev was not asked inside the turn")
 	}
 }
+
+// A local reasoning model's thinking reaches the chat as ThinkingMsg, in
+// order before the reply, and never as reply text or history (L4).
+func TestRunTurnDeliversThinkingBeforeTheReply(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{
+		ReasoningDeltas: []string{"Okay, ", "the user wants a greeting."},
+		Deltas:          []string{"<think>more</think>", "Hi, darling."},
+	})
+	_, deps, _ := chatApp(t, srv)
+	msgs := runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("hello"), Tools: true, Run: 3})
+	var thinking, text strings.Builder
+	for _, m := range msgs {
+		switch m := m.(type) {
+		case tui.ThinkingMsg:
+			if text.Len() > 0 {
+				t.Fatal("thinking after reply text")
+			}
+			thinking.WriteString(m.Delta)
+		case tui.StreamChunkMsg:
+			text.WriteString(m.Chunk.Content)
+		case tui.HistoryMsg:
+			for _, h := range m.History {
+				if strings.Contains(h.Content, "Okay") || strings.Contains(h.Content, "more") {
+					t.Fatalf("reasoning in history: %+v", h)
+				}
+			}
+		}
+	}
+	if thinking.String() != "Okay, the user wants a greeting.more" || text.String() != "Hi, darling." {
+		t.Fatalf("thinking %q, reply %q", thinking.String(), text.String())
+	}
+}
