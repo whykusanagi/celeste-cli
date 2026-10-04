@@ -9,7 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
@@ -304,5 +308,73 @@ func TestApprovedPlanTodosGetTicked(t *testing.T) {
 	}
 	if got := deps.adapter.ShowPlan(); !strings.Contains(got, "[x] 1. write tests") {
 		t.Fatalf("plan show = %s", got)
+	}
+}
+
+// approvePlanTurn runs a turn in plan mode whose submit_plan is approved,
+// then the model replies; it returns the turn and the provider. wrap runs
+// the turn (readTurnLog, or nil to just run it).
+func approvePlanTurn(t *testing.T, window int, wrap func(*testing.T, func()) string) (*chatTurn, *fakeprovider.Server, *chatDeps) {
+	t.Helper()
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "submit_plan",
+			Args: `{"goal":"ship","steps":[{"title":"write tests"}]}`}}},
+		fakeprovider.Turn{Text: "starting step 1"})
+	_, deps, _ := chatApp(t, srv)
+	deps.registry.SetAskFunc(func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
+		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
+	})
+	deps.adapter.SetPlanMode(true, "")
+	req := tui.TurnRequest{History: userTurn("plan it"), Tools: true, Run: 1, Window: window}
+	var h tui.TurnHandle
+	run := func() {
+		var cmd tea.Cmd
+		h, cmd = deps.adapter.RunTurn(req)
+		drainTurn(t, cmd, req)
+	}
+	if wrap != nil {
+		wrap(t, run)
+	} else {
+		run()
+	}
+	return h.(*chatTurn), srv, deps
+}
+
+// #360: after approval the turn's log reports the full tool set for the
+// rest of the turn, not the plan-mode count it started with.
+func TestApprovalRefreshesTheLoggedToolCount(t *testing.T) {
+	var log string
+	_, srv, _ := approvePlanTurn(t, 0, func(t *testing.T, run func()) string {
+		log = readTurnLog(t, run)
+		return log
+	})
+	var counts []string
+	for _, line := range strings.Split(log, "\n") {
+		if i := strings.Index(line, "LLM_REQUEST: "); i >= 0 {
+			f := strings.Fields(line[i:])
+			counts = append(counts, f[3]) // "LLM_REQUEST:", n, "messages,", tools
+		}
+	}
+	reqs := srv.Requests()
+	if len(counts) != 2 || len(reqs) != 2 {
+		t.Fatalf("logged %v for %d requests", counts, len(reqs))
+	}
+	for i, req := range reqs {
+		if want := fmt.Sprint(len(offeredTools(t, req))); counts[i] != want {
+			t.Fatalf("request %d logged %s tools, offered %s", i+1, counts[i], want)
+		}
+	}
+}
+
+// #360: the context meter counts the tool definitions each request
+// actually carries: after approval, the full set's.
+func TestApprovalRefreshesTheMeteredToolDefinitions(t *testing.T) {
+	turn, _, deps := approvePlanTurn(t, 1_000_000, nil)
+	if turn.compactor == nil {
+		t.Fatal("no compactor with a window")
+	}
+	want := ctxmgr.EstimateTokens(deps.adapter.client.SystemPrompt()) + compact.DefinitionTokens(deps.adapter.GetSkills())
+	if got := turn.compactor.meter.Overhead; got != want {
+		t.Fatalf("meter overhead = %d, want the full set's %d", got, want)
 	}
 }

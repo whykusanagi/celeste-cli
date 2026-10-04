@@ -105,7 +105,6 @@ type chatTurn struct {
 	compactor *chatCompactor // nil without a context window
 	model     string         // for costs and the log; set on the Update goroutine
 	endpoint  string         // for the log
-	tools     int            // tool definitions offered, for the log
 	msgs      int            // pump goroutine only: the last snapshot's length, for the log
 	compacted bool           // pump goroutine only: a prune since the last snapshot
 	start     sync.Once
@@ -137,7 +136,6 @@ func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd
 	if n := a.takePersonaNotice(); n != "" {
 		t.box.put(tui.PersonaNoticeMsg{Text: prompts.NoticePrefix + n})
 	}
-	t.tools = len(t.loop.Client.GetSkills())
 	read := t.box.reader(req.Run)
 	return t, func() tea.Msg {
 		t.start.Do(func() {
@@ -192,13 +190,17 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 	}
 	if req.Window > 0 {
 		// Jev is resolved here, on the Update goroutine, once per turn.
-		// The meter counts the system prompt and tool schemas (#234).
-		overhead := ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(l.Client.GetSkills())
+		// The meter counts the system prompt and tool schemas (#234);
+		// the schemas are re-counted before each request, since approving
+		// a plan mid-turn offers the full set from then on (#360).
+		system := ctxmgr.EstimateTokens(a.client.SystemPrompt())
+		client := l.Client
+		overhead := func() int { return system + compact.DefinitionTokens(client.GetSkills()) }
 		jevMode := config.ModeOff
 		if a.baseConfig != nil {
 			jevMode = a.baseConfig.JevPruneMode()
 		}
-		t.compactor = &chatCompactor{a: a, window: req.Window, meter: compact.NewMeter(overhead), jev: a.jevShadow(), jevMode: jevMode}
+		t.compactor = &chatCompactor{a: a, window: req.Window, meter: compact.NewMeter(overhead()), overhead: overhead, jev: a.jevShadow(), jevMode: jevMode}
 		l.Compact = t.compactor
 	}
 	return l
@@ -312,7 +314,9 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 	case loop.EventTurnStart:
 		*first = true
 		tui.LogInfo(fmt.Sprintf("→ Sending request to: %s (model: %s)", t.endpoint, t.model))
-		tui.LogLLMRequest(t.msgs, t.tools)
+		// Read per request: approving a plan mid-turn changes the
+		// offered set for the rest of the turn (#360).
+		tui.LogLLMRequest(t.msgs, len(t.loop.Client.GetSkills()))
 		return []tea.Msg{tui.TurnStartMsg{Turn: ev.Turn}}
 	case loop.EventThinking:
 		return []tea.Msg{tui.ThinkingMsg{Delta: ev.Text}}
@@ -460,14 +464,20 @@ type chatCompactor struct {
 	jevMode string      // jev_prune when the turn started: "on" scores in the loop
 	window  int
 	meter   *compact.Meter // Run's goroutine only (#234)
-	saved   atomic.Int64   // the tokens the last prune freed, for the chat's count (read by the pump)
-	over    atomic.Bool
+	// overhead is the fixed tokens of the next request (system prompt and
+	// the tool definitions it offers); nil keeps the meter's (#360).
+	overhead func() int
+	saved    atomic.Int64 // the tokens the last prune freed, for the chat's count (read by the pump)
+	over     atomic.Bool
 }
 
 func (c *chatCompactor) Compact(ctx context.Context, history []tui.ChatMessage, last *llm.TokenUsage, force bool) ([]tui.ChatMessage, []string, bool) {
 	prompt := 0
 	if last != nil {
 		prompt = last.PromptTokens
+	}
+	if c.overhead != nil {
+		c.meter.Overhead = c.overhead()
 	}
 	c.meter.Observe(history, prompt)
 	out := c.a.compactWith(ctx, history, c.window, c.meter.Used(history), c.meter.Unseen(history), force, c.jev, c.jevMode)
