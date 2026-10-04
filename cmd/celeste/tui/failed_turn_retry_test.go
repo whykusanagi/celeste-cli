@@ -39,7 +39,7 @@ func TestNewPromptAfterAFailedTurnKeepsTheUnansweredOne(t *testing.T) {
 	m, client := newQueueTestApp()
 	m, _ = step(t, m, SendMessageMsg{Content: "hello"})
 	m, _ = feed(t, m, TurnDoneMsg{Stop: "error", Err: errors.New("boom")})
-	m, _ = step(t, m, SendMessageMsg{Content: "are you there?"})
+	_, _ = step(t, m, SendMessageMsg{Content: "are you there?"})
 	require.Len(t, client.turns, 2)
 	assert.Equal(t, 2, userCount(client.turns[1].req.History))
 }
@@ -63,7 +63,7 @@ func TestFailedTurnAfterToolCallsIsNotReused(t *testing.T) {
 	m, _ = step(t, m, SendMessageMsg{Content: "hello"})
 	m = toolTurn(t, m, "call_a")
 	m, _ = feed(t, m, TurnDoneMsg{Stop: "error", Err: errors.New("boom")})
-	m, _ = step(t, m, SendMessageMsg{Content: "hello"})
+	_, _ = step(t, m, SendMessageMsg{Content: "hello"})
 	require.Len(t, client.turns, 2)
 	assert.Equal(t, 2, userCount(client.turns[1].req.History))
 }
