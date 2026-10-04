@@ -1361,8 +1361,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// View() renders m.config's cached ConfirmActions instead
 					// of reloading from disk (#144 W6b review, I1); keep it
-					// current so the toggle takes effect immediately.
-					m.config = cfg
+					// current so the toggle takes effect immediately. Only the
+					// flag is copied: cfg is config.json's, and replacing the
+					// session config with it would drop the active profile.
+					if m.config == nil {
+						m.config = cfg
+					} else {
+						m.config.ConfirmActions = cfg.ConfirmActions
+					}
 					if refresher, ok := m.llmClient.(PromptRefresher); ok {
 						refresher.RefreshSystemPrompt()
 					}

@@ -233,6 +233,10 @@ type Config struct {
 	// sandboxFrom is set when Sandbox was filled in from config.json for a
 	// named profile; see inheritUserSandbox.
 	sandboxFrom *sandboxInherit
+
+	// profile is the named profile this config was read from by LoadNamed
+	// ("" = config.json), so a save can go back to that file (#324).
+	profile string
 }
 
 // CollectionsConfig holds collections settings
@@ -476,6 +480,7 @@ func LoadNamed(name string) (*Config, error) {
 	}
 
 	config := DefaultConfig()
+	config.profile = name
 	configPath := NamedConfigPath(name)
 
 	// Load named config file
@@ -984,6 +989,55 @@ func SaveNamed(name string, config *Config) error {
 	// 0600: a named profile carries the API key inline. An existing file
 	// keeps its mode, as os.WriteFile did.
 	return atomicfile.WriteKeepMode(path, data, 0600)
+}
+
+// SaveCollections writes cfg's collections block back to the file cfg was
+// loaded from: the named profile LoadNamed read, or config.json. Only the
+// "collections" key changes; every other key stays as the file has it, so
+// nothing a load merged in (config.json's sandbox, skills.json and
+// secrets.json values, defaults) is copied into the wrong file (#324).
+func SaveCollections(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("no config to save")
+	}
+	path := NamedConfigPath(cfg.profile)
+	raw := map[string]json.RawMessage{}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("failed to parse %s: %w", filepath.Base(path), err)
+		}
+		if raw == nil { // the file holds JSON null
+			raw = map[string]json.RawMessage{}
+		}
+	case os.IsNotExist(err) && cfg.profile == "":
+		// No config.json yet: create one holding just the collections.
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return fmt.Errorf("failed to create config dir: %w", err)
+		}
+	case os.IsNotExist(err):
+		// Writing only the collections would leave a profile with no
+		// provider or key; never create one here.
+		return fmt.Errorf("config '%s' not found at %s: %w", cfg.profile, path, err)
+	default:
+		return err
+	}
+	if cfg.Collections == nil {
+		delete(raw, "collections")
+	} else {
+		b, err := json.Marshal(cfg.Collections)
+		if err != nil {
+			return fmt.Errorf("failed to marshal collections: %w", err)
+		}
+		raw["collections"] = b
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	// Atomic; an existing file keeps its mode, a new one is 0600.
+	return atomicfile.WriteKeepMode(path, out, 0600)
 }
 
 // SaveSecrets saves API key to secrets file (backward compatibility).

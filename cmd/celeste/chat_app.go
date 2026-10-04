@@ -256,7 +256,7 @@ func scanCollections(cfg *config.Config) {
 				}
 				if pruned > 0 {
 					cfg.Collections.ActiveCollections = kept
-					_ = config.Save(cfg)
+					_ = config.SaveCollections(cfg)
 					fmt.Fprintf(os.Stderr, "📚 Pruned %d stale collection IDs from config\n", pruned)
 				}
 			}

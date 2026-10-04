@@ -83,9 +83,11 @@ func (m *Manager) ListCollections() ([]Collection, error) {
 	return m.client.ListCollections()
 }
 
-// SaveConfig saves the configuration to disk
+// SaveConfig saves the collections settings to the file the config was
+// loaded from (the active named profile, or config.json); see
+// config.SaveCollections.
 func (m *Manager) SaveConfig() error {
-	return config.Save(m.config)
+	return config.SaveCollections(m.config)
 }
 
 // ValidateDocument checks if a document is valid for upload
