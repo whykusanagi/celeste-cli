@@ -3062,9 +3062,10 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 			m.claimWorkspace(s)
 			m.currentSession = s
 
-			// Clear chat
+			// Clear chat, and the old session's token counts with it
 			m.chat = m.chat.Clear()
 			m.untrackPlan()
+			m = m.resetContextForNewSession()
 
 			// Show success with short ID
 			if summary := s.SummarizeRaw(); summary != nil {

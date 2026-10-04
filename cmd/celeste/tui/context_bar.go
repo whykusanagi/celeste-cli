@@ -46,6 +46,13 @@ func (m ContextBarModel) Update(msg tea.Msg) (ContextBarModel, tea.Cmd) {
 	return m, nil
 }
 
+// resetUsage zeroes the usage and turn count for a new session, keeping the
+// window size so the bar still shows.
+func (m ContextBarModel) resetUsage() ContextBarModel {
+	m.usedTokens, m.usagePercent, m.turnCount = 0, 0, 0
+	return m
+}
+
 // View renders the context budget bar.
 func (m ContextBarModel) View() string {
 	if m.maxTokens == 0 {
