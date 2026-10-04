@@ -63,7 +63,6 @@ type StateChange struct {
 	ImageModel     *string
 	ClearHistory   bool
 	NewSession     bool           // signals the TUI to create a new session after clearing chat
-	MenuState      *string        // "status", "commands", "skills"
 	SessionAction  *SessionAction // Session management operations
 	ShowSelector   *SelectorData  // Show interactive selector
 }
@@ -117,7 +116,9 @@ func Parse(input string) *Command {
 	return cmd
 }
 
-// Execute executes a command and returns the result.
+// Execute executes a command and returns the result. The TUI handles
+// /tools, /skills, /menu, /context, /stats and /export itself, with the app
+// state they need, and never passes them here.
 func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 	if ctx == nil {
 		ctx = &CommandContext{}
@@ -126,8 +127,6 @@ func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 	switch strings.ToLower(cmd.Name) {
 	case "nsfw":
 		return handleNSFW(cmd, ctx)
-	case "tools":
-		return handleSkills(cmd, ctx)
 	case "safe":
 		return handleSafe(cmd)
 	case "endpoint":
@@ -142,38 +141,10 @@ func Execute(cmd *Command, ctx *CommandContext) *CommandResult {
 		return handleClear(cmd)
 	case "help":
 		return handleHelp(cmd, ctx)
-	case "menu":
-		return handleMenu(cmd)
-	case "skills":
-		return handleSkills(cmd, ctx)
 	case "providers":
 		return HandleProvidersCommand(cmd, ctx)
 	case "session":
 		return handleSession(cmd, ctx)
-	case "context":
-		// Note: HandleContextCommand requires contextTracker from app state
-		// This will be called from app.go with proper context
-		return &CommandResult{
-			Success:      false,
-			Message:      "⚠️ /context command requires app context - this should be handled by the TUI",
-			ShouldRender: true,
-		}
-	case "stats":
-		// Note: HandleStatsCommand requires contextTracker from app state
-		// This will be called from app.go with proper context
-		return &CommandResult{
-			Success:      false,
-			Message:      "⚠️ /stats command requires app context - this should be handled by the TUI",
-			ShouldRender: true,
-		}
-	case "export":
-		// Note: HandleExportCommand requires currentSession from app state
-		// This will be called from app.go with proper context
-		return &CommandResult{
-			Success:      false,
-			Message:      "⚠️ /export command requires app context - this should be handled by the TUI",
-			ShouldRender: true,
-		}
 	default:
 		return &CommandResult{
 			Success:      false,
@@ -1023,105 +994,6 @@ func IsContentPolicyRefusal(response string) bool {
 	}
 
 	return false
-}
-
-// handleMenu handles the /menu command (toggle commands menu).
-func handleMenu(cmd *Command) *CommandResult {
-	menuState := "commands"
-	return &CommandResult{
-		Success:      true,
-		Message:      "", // Don't render message - just change state
-		ShouldRender: false,
-		StateChange: &StateChange{
-			MenuState: &menuState,
-		},
-	}
-}
-
-// handleSkills handles the /skills command (toggle skills menu).
-func handleSkills(cmd *Command, ctx *CommandContext) *CommandResult {
-	// If no arguments, show skills menu
-	if len(cmd.Args) == 0 {
-		menuState := "skills"
-		return &CommandResult{
-			Success:      true,
-			Message:      "", // Don't render message - just change state
-			ShouldRender: false,
-			StateChange: &StateChange{
-				MenuState: &menuState,
-			},
-		}
-	}
-
-	// Handle subcommands
-	subcommand := strings.ToLower(cmd.Args[0])
-
-	switch subcommand {
-	case "list":
-		return handleSkillsList()
-	case "delete":
-		if len(cmd.Args) < 2 {
-			return &CommandResult{
-				Success:      false,
-				Message:      "Usage: /skills delete <skill_name>",
-				ShouldRender: true,
-			}
-		}
-		return handleSkillsDelete(cmd.Args[1])
-	case "info":
-		if len(cmd.Args) < 2 {
-			return &CommandResult{
-				Success:      false,
-				Message:      "Usage: /skills info <skill_name>",
-				ShouldRender: true,
-			}
-		}
-		return handleSkillsInfo(cmd.Args[1])
-	case "reload":
-		return handleSkillsReload()
-	default:
-		return &CommandResult{
-			Success:      false,
-			Message:      fmt.Sprintf("Unknown /skills subcommand: %s\n\nAvailable: list, delete <name>, info <name>, reload", subcommand),
-			ShouldRender: true,
-		}
-	}
-}
-
-// handleSkillsList shows all registered skills with count
-func handleSkillsList() *CommandResult {
-	return &CommandResult{
-		Success:      false,
-		Message:      "⚠️ /skills list requires app context - this should be handled by the TUI",
-		ShouldRender: true,
-	}
-}
-
-// handleSkillsDelete removes a skill from the registry
-func handleSkillsDelete(name string) *CommandResult {
-	return &CommandResult{
-		Success:      false,
-		Message:      fmt.Sprintf("⚠️ /skills delete requires app context - this should be handled by the TUI\n\nSkill to delete: %s", name),
-		ShouldRender: true,
-	}
-}
-
-// handleSkillsInfo shows detailed information about a skill
-func handleSkillsInfo(name string) *CommandResult {
-	return &CommandResult{
-		Success:      false,
-		Message:      fmt.Sprintf("⚠️ /skills info requires app context - this should be handled by the TUI\n\nSkill to query: %s", name),
-		ShouldRender: true,
-	}
-}
-
-// handleSkillsReload reloads skills from disk
-func handleSkillsReload() *CommandResult {
-	return &CommandResult{
-		Success:      false,
-		Message:      "⚠️ /skills reload requires app context - this should be handled by the TUI",
-		ShouldRender: true,
-	}
 }
 
 // sessionRef is a session ID or name from the words after the action; a name

@@ -1652,10 +1652,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
 				}
 
-				if result.StateChange.MenuState != nil {
-					m.skills = m.skills.SetMenuState(*result.StateChange.MenuState)
-				}
-
 				// Handle session actions
 				if result.StateChange.SessionAction != nil {
 					m = m.handleSessionAction(result.StateChange.SessionAction)

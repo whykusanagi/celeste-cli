@@ -12,7 +12,6 @@ type SkillsModel struct {
 	currentInput string
 	width        int
 	height       int
-	menuState    string
 
 	endpoint       string
 	model          string
@@ -41,11 +40,6 @@ func (s SkillsModel) SetCurrentInput(input string) SkillsModel {
 func (s SkillsModel) SetSize(width, height int) SkillsModel {
 	s.width = width
 	s.height = height
-	return s
-}
-
-func (s SkillsModel) SetMenuState(state string) SkillsModel {
-	s.menuState = state
 	return s
 }
 
@@ -129,10 +123,6 @@ func (s SkillsModel) View() string {
 
 	if !s.skillsEnabled && s.disabledReason != "" {
 		lines = append(lines, "Reason: "+truncateLine(s.disabledReason, 90))
-	}
-
-	if s.menuState != "" {
-		lines = append(lines, "Mode: "+s.menuState)
 	}
 
 	if hint := skillsInputHint(s.currentInput, s.nsfw, s.skillsEnabled); hint != "" {
