@@ -18,6 +18,21 @@ type PlanModer interface {
 	ShowPlan() string
 }
 
+// PlanUntracker is a client that follows an approved plan's progress
+// (#325). The app calls UntrackPlan when it replaces the conversation
+// (/clear, /session new, resume or clear): the new chat is not carrying
+// out the old plan, so its progress reminder stops.
+type PlanUntracker interface {
+	UntrackPlan()
+}
+
+// untrackPlan stops the client's plan progress reminder, if it has one.
+func (m AppModel) untrackPlan() {
+	if pu, ok := m.llmClient.(PlanUntracker); ok {
+		pu.UntrackPlan()
+	}
+}
+
 // PlanModeInstruction precedes each prompt while plan mode is on, as a
 // hidden user message (ruling 9).
 const PlanModeInstruction = "Plan mode: investigate with read-only tools, then call submit_plan with concrete, ordered steps. Do not change files or run commands until the plan is approved."

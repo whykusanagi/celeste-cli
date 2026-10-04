@@ -237,3 +237,56 @@ func TestApprovedPlanTickedAsItGoesGetsNoReminder(t *testing.T) {
 		}
 	}
 }
+
+// The reminder is capped per plan: after planMaxReminders unanswered
+// reminders the plan is no longer tracked, so a plan the user moved away
+// from does not nag for the rest of the process.
+func TestPlanProgressReminderIsCappedPerPlan(t *testing.T) {
+	p, _, steps := trackedPlan(t)
+	got := 0
+	for i := 0; i < 20*planIdleTurns; i++ {
+		if _, ok := p.progressReminder(); ok {
+			got++
+		}
+	}
+	if got != planMaxReminders {
+		t.Fatalf("%d reminders, want %d", got, planMaxReminders)
+	}
+	if p.tracking() {
+		t.Fatal("still tracked after the cap")
+	}
+	// A new approval starts a fresh count.
+	p.track(steps)
+	got = 0
+	for i := 0; i < 20*planIdleTurns; i++ {
+		if _, ok := p.progressReminder(); ok {
+			got++
+		}
+	}
+	if got != planMaxReminders {
+		t.Fatalf("after a new approval: %d reminders, want %d", got, planMaxReminders)
+	}
+}
+
+// Replacing the conversation (/clear, /session new, resume) untracks the
+// plan through the adapter: no reminder after it, and the turn's steering
+// is no longer wrapped.
+func TestUntrackPlanStopsTheReminder(t *testing.T) {
+	p, _, _ := trackedPlan(t)
+	var _ tui.PlanUntracker = (*TUIClientAdapter)(nil)
+	a := &TUIClientAdapter{plan: p}
+	a.UntrackPlan()
+	if p.tracking() {
+		t.Fatal("still tracked")
+	}
+	for i := 0; i < 4*planIdleTurns; i++ {
+		if _, ok := p.progressReminder(); ok {
+			t.Fatal("reminder after untrack")
+		}
+	}
+	if withPlanProgress(nil, p) != nil {
+		t.Fatal("steering still wrapped after untrack")
+	}
+	// Nil plan state (no todo tool) is a no-op.
+	(&TUIClientAdapter{}).UntrackPlan()
+}

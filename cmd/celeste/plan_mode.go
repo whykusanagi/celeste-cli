@@ -30,11 +30,12 @@ type planState struct {
 	todos *builtin.TodoStore
 	// pmu guards the progress reminder's state: the steps of the plan
 	// approved in this process, their last todo statuses, and the tool
-	// turns since those changed.
-	pmu   sync.Mutex
-	steps []builtin.PlanStep
-	last  string
-	idle  int
+	// turns since those changed, and the reminders this plan has had.
+	pmu      sync.Mutex
+	steps    []builtin.PlanStep
+	last     string
+	idle     int
+	reminded int
 }
 
 func (p *planState) set(on bool, goal string) {

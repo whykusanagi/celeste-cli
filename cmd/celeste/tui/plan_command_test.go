@@ -11,14 +11,16 @@ import (
 // planClient is a turn client with plan mode (PlanModer).
 type planClient struct {
 	*fakeToolLLMClient
-	on    bool
-	goal  string
-	shown string
+	on        bool
+	goal      string
+	shown     string
+	untracked int
 }
 
 func (c *planClient) SetPlanMode(on bool, goal string) { c.on, c.goal = on, goal }
 func (c *planClient) PlanMode() bool                   { return c.on }
 func (c *planClient) ShowPlan() string                 { return c.shown }
+func (c *planClient) UntrackPlan()                     { c.untracked++ }
 
 func newPlanTestApp() (AppModel, *planClient) {
 	client := &planClient{fakeToolLLMClient: &fakeToolLLMClient{skills: []SkillDefinition{{Name: "tool_a"}}}}
@@ -182,4 +184,36 @@ func TestResumedPlanSessionSaysPlanModeWasOn(t *testing.T) {
 			assert.Equal(t, tc.want, lastSystemText(m) == planWasOnText, lastSystemText(m))
 		})
 	}
+}
+
+// Replacing the conversation stops the approved plan's progress reminder:
+// a new or resumed chat is not carrying out the old plan (#325).
+func TestReplacingTheChatUntracksThePlan(t *testing.T) {
+	for _, tc := range []struct {
+		name, cmd string
+		resume    bool
+	}{
+		{"/clear", "/clear", false},
+		{"legacy clear", "clear", false},
+		{"/session new", "/session new", false},
+		{"/session clear", "/session clear", false},
+		{"/session resume", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, other := newSessionTestApp(t)
+			client := &planClient{fakeToolLLMClient: &fakeToolLLMClient{}}
+			m.llmClient = client
+			cmd := tc.cmd
+			if tc.resume {
+				cmd = "/session resume " + other.ID
+			}
+			m, _ = step(t, m, SendMessageMsg{Content: cmd})
+			assert.Positive(t, client.untracked, sessChatText(m))
+		})
+	}
+	// Commands that keep the conversation keep the plan.
+	m, client := newPlanTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan show"})
+	_ = m
+	assert.Zero(t, client.untracked)
 }
