@@ -191,6 +191,9 @@ type AppModel struct {
 
 	// planning keeps /plan's "Planning..." status until the reply streams.
 	planning bool
+	// thinkingChars counts the reasoning (runes) the current request has
+	// streamed, for the status bar's thinking count (L4).
+	thinkingChars int
 	// stopHookRunning is set while the Stop hook decides whether the turn
 	// may end; heldReady is the "Ready" status it shows when the turn ends.
 	stopHookRunning bool
@@ -2526,8 +2529,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else if m.streaming {
 			// Just streaming (waiting for response) - show animated status
-			if !m.planning {
-				m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
+			if !m.planning || m.thinkingChars > 0 {
+				m.status = m.status.SetText(m.waitingStatus())
 			}
 			cmds = append(cmds, m.tick(typingTickInterval*2))
 		}

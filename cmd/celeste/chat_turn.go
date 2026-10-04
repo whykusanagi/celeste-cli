@@ -314,6 +314,8 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		tui.LogInfo(fmt.Sprintf("→ Sending request to: %s (model: %s)", t.endpoint, t.model))
 		tui.LogLLMRequest(t.msgs, t.tools)
 		return []tea.Msg{tui.TurnStartMsg{Turn: ev.Turn}}
+	case loop.EventThinking:
+		return []tea.Msg{tui.ThinkingMsg{Delta: ev.Text}}
 	case loop.EventTextDelta:
 		chunk := tui.StreamChunkMsg{Chunk: tui.StreamChunk{Content: ev.Text, IsFirst: *first}}
 		*first = false

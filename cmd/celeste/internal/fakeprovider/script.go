@@ -16,7 +16,15 @@ import (
 type Turn struct {
 	Text      string
 	ToolCalls []ToolCall
-	Thinking  *Thinking // Anthropic only
+	// Deltas, for chat completions, streams the content as these deltas,
+	// one chunk each, in place of Text.
+	Deltas []string
+	// ReasoningDeltas, for chat completions, streams these deltas before
+	// the content in the delta field ReasoningField ("reasoning", as Ollama
+	// sends it, when empty; "reasoning_content" as DeepSeek and vLLM do).
+	ReasoningDeltas []string
+	ReasoningField  string
+	Thinking        *Thinking // Anthropic only
 	// RedactedThinking adds an Anthropic redacted_thinking block with this
 	// data right after the thinking block.
 	RedactedThinking string
