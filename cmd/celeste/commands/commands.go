@@ -875,6 +875,9 @@ Tip: Ask the uncensored LLM to write detailed NSFW prompts, then use
 Chat:
   /clear             Clear conversation history
   /help              Show this help message
+  /menu              Open the command menu
+  /session           Open the session picker
+  /session <sub>     new, resume, list, clear, merge, info, rename, delete
   /endpoint <name>   Switch AI provider (openai, venice, grok, google)
   /persona           Personality sliders (flirt, warmth, speech, lewdness)
   /user              Show current user identity
@@ -894,12 +897,14 @@ Chat:
   /config set-model   Set LLM model (e.g. grok-build-0.1)
   /config set-url     Set API base URL
   /model <name>      Change the model
+  /providers         List AI providers (--tools, info <name>, current)
 
 Project:
   /memories          List project memories
   /grimoire          Show project grimoire and AGENTS.md / CLAUDE.md
   /init [agents]     Create .grimoire (and AGENTS.md) for this project
   /index             Show code graph status
+  /graph             Browse the code graph
   /index rebuild     Full re-index (populates LSH + BM25)
   /index update      Incremental re-index (changed files only)
   /index snapshot    Save graph state for later diffing
@@ -916,20 +921,25 @@ Project:
   /rewind [n]        Take back the last n prompts and the file changes they made
   /fork              Continue in a copy of this session (the original is kept)
   /costs             Show session costs
+  /stats             Show usage statistics
+  /export [format]   Export the session (json, md, csv)
+  /collections       Manage xAI collections
+  /mcp               Show MCP server status and tools
 
 Agent & Orchestrator:
   /agent <goal>      Run autonomous task loop
   /agent list-runs   List checkpointed agent runs
   /agent resume <id> Resume an existing agent run
-  /orch <goal>       Multi-model orchestrated run
+  /orch <goal>       Multi-model orchestrated run (also /orchestrate)
 
 Settings:
   /effort <level>    Set reasoning effort (off/low/medium/high/max)
   /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
   /safe              Return to safe mode
+  /set-model <model> Set the image generation model (NSFW mode)
 
 Tools:
-  /tools             Browse available tools interactively
+  /tools, /skills    Browse available tools interactively
 
 Examples:
   /agent fix tests       → Run autonomous code-fix loop

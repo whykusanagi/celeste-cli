@@ -88,6 +88,7 @@ Commands:
   message <text>          Send a single message and exit
   config                  View/modify configuration
   skills                  List and manage skills
+  skill <name> [--args]   Execute a skill
   providers               List and query AI providers
   agent                   Run autonomous agent loops for complex tasks
   persona verify          Check that this binary carries the official persona
@@ -100,6 +101,8 @@ Commands:
   index [status|rebuild|reset]  Manage code graph index
   serve                   Start MCP server (stdio or SSE transport)
   acp                     Run as an Agent Client Protocol agent over stdio (Zed, JetBrains)
+  mcp install [--client <name>]  Register celeste as an MCP server in Claude Desktop, Claude Code, Cursor, Codex
+  collections <subcommand>  Manage xAI collections (create/list/upload/delete/enable/disable/show)
   wallet-monitor          Manage wallet security monitoring daemon
   costs                   Show session cost breakdown
   memories                List memories for current project
@@ -116,22 +119,42 @@ Commands:
 Interactive Commands (in chat mode):
   /help                   Show available commands
   /clear                  Clear chat history
+  /menu                   Open the command menu
   /config                 Show current configuration
   /tools, /skills         Browse available tools
   /agent <goal>           Run autonomous task loop
-  /orch <goal>            Multi-model orchestrated run
+  /agents                 List spawned subagents (resume <id> | kill <id>)
+  /orch, /orchestrate <goal>  Multi-model orchestrated run
+  /session                Open the session picker (new/resume/list/merge/...)
   /memories               List project memories
   /costs                  Show session costs
+  /stats                  Show usage statistics
+  /export [format]        Export the session (json, md, csv)
   /context                Show context/token usage
+  /compact [focus]        Summarize older history to free context
+  /handoff [focus]        Summarize this session into a new one
   /diff                   List the files this session changed
   /undo                   Undo the last file change (repeat to go back)
+  /rewind [n]             Take back the last n prompts and their file changes
+  /fork                   Continue in a copy of this session
+  /init [agents]          Create .grimoire (and AGENTS.md) for this project
   /grimoire               Show project grimoire
   /index                  Show code graph status
+  /graph                  Browse the code graph
+  /mcp                    Show connected MCP servers
+  /collections            Manage xAI collections
   /plan [goal]            Plan mode: read-only tools until you approve a plan
   /plan off | show        Leave plan mode | show the plan and its todo status
+  /confirm                Toggle confirm mode (propose actions before executing)
   /effort <level>         Set reasoning effort (off/low/medium/high/max)
   /endpoint <name>        Switch AI provider endpoint
+  /providers              List AI providers
   /model <name>           Change the model
+  /persona                Personality sliders
+  /user [name|reset]      Show or set how Celeste addresses you
+  /voice                  ElevenLabs TTS settings
+  /nsfw, /safe            Switch to NSFW mode (Venice.ai) | back to safe mode
+  /set-model <model>      Set the image generation model (NSFW mode)
   exit, quit, q           Exit the application
 
 Keyboard Shortcuts:
