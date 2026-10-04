@@ -77,12 +77,6 @@ func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, 
 	return s
 }
 
-// Count reports the loaded-skill count (surfaced in the status line).
-func (s SkillsModel) Count() int { return s.skillsCount }
-
-// Enabled reports whether skills are enabled (surfaced in the status line).
-func (s SkillsModel) Enabled() bool { return s.skillsEnabled }
-
 // collapsedView renders only meaningful transient signal — a running/failed/
 // completed skill — and nothing when idle, so the chat area reclaims the space.
 func (s SkillsModel) collapsedView() string {
