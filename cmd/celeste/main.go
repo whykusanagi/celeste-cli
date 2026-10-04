@@ -85,14 +85,14 @@ Global Flags:
 
 Commands:
   chat                    Launch interactive TUI mode
-  message <text>          Send a single message and exit
+  message <text>          Send a single message and exit (alias: msg)
   config                  View/modify configuration
   skills                  List and manage skills
   skill <name> [--args]   Execute a skill
   providers               List and query AI providers
   agent                   Run autonomous agent loops for complex tasks
   persona verify          Check that this binary carries the official persona
-  session                 Manage conversation sessions
+  session                 Manage conversation sessions (alias: sessions)
   context                 Show context/token usage
   stats                   Show usage statistics
   export                  Export session data
@@ -154,7 +154,8 @@ Interactive Commands (in chat mode):
   /user [name|reset]      Show or set how Celeste addresses you
   /voice                  ElevenLabs TTS settings
   /nsfw, /safe            Switch to NSFW mode (Venice.ai) | back to safe mode
-  /set-model <model>      Set the image generation model (NSFW mode)
+  /set-model [model]      List or set the chat model (the image model in NSFW mode)
+  /list-models            List models (also /image-model, the old name for /set-model)
   exit, quit, q           Exit the application
 
 Keyboard Shortcuts:

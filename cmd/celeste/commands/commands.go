@@ -796,83 +796,9 @@ func handleClear(cmd *Command) *CommandResult {
 	}
 }
 
-// handleHelp handles the /help command.
-func handleHelp(cmd *Command, ctx *CommandContext) *CommandResult {
-	var helpText string
-
-	// Version header
-	versionHeader := ""
-	if ctx.Version != "" {
-		versionHeader = fmt.Sprintf("Celeste CLI v%s", ctx.Version)
-		if ctx.Build != "" {
-			versionHeader += fmt.Sprintf(" (%s)", ctx.Build)
-		}
-		versionHeader += "\n\n"
-	}
-
-	if ctx.NSFWMode {
-		// NSFW Mode Help
-		helpText = versionHeader + `🔥 NSFW Mode - Venice.ai Uncensored
-
-Media Generation Commands:
-  image: <prompt>              Generate images with current model
-                               Example: image: cyberpunk cityscape at night
-
-  anime: <prompt>              Generate anime-style images (wai-Illustrious)
-                               Example: anime: magical girl with sword
-
-  dream: <prompt>              High-quality dream-like images (hidream)
-                               Example: dream: surreal landscape
-
-  image[model]: <prompt>       Use specific model for one generation
-                               Example: image[nano-banana-pro]: futuristic city
-
-Model Management:
-  /set-model <model>           Set default image generation model
-                               Example: /set-model wai-Illustrious
-                               Run without args to see all models
-
-Chat Commands:
-  /safe                        Return to safe mode (OpenAI)
-  /clear                       Clear conversation history
-  /diff                        List the files this session changed
-  /undo                        Undo the last file change (repeat to go back)
-  /rewind [n]                  Take back the last n prompts and the file changes they made
-  /fork                        Continue in a copy of this session (the original is kept)
-  /help                        Show this help message
-
-Current Configuration:
-  • Endpoint: Venice.ai (https://api.venice.ai/api/v1)
-  • Chat Model: the one Venice serves as its default
-  • Image Model: Use /set-model to configure
-  • Downloads: ~/Downloads
-  • Quality: 40 steps, CFG 12.0, PNG format
-
-Available Image Models:
-  • lustify-sdxl - NSFW image generation (default)
-  • wai-Illustrious - Anime style
-  • hidream - Dream-like quality
-  • nano-banana-pro - Alternative model
-  • venice-sd35 - Stable Diffusion 3.5
-  • lustify-v7 - Lustify v7
-  • qwen-image - Qwen vision model
-
-Image Quality Parameters (defaults):
-  • Steps: 40 (1-50, higher = more detail)
-  • CFG Scale: 12.0 (0-20, higher = stronger prompt adherence)
-  • Size: 1024x1024 (up to 1280x1280)
-  • Format: PNG (lossless)
-  • Safe Mode: Disabled (no NSFW blurring)
-
-Configure downloads_dir in ~/.celeste/skills.json to change save location.
-
-Tip: Ask the uncensored LLM to write detailed NSFW prompts, then use
-"image: [paste prompt]" to generate from that description!`
-	} else {
-		// Safe Mode Help
-		helpText = versionHeader + `Available Commands:
-
-Chat:
+// chatCommandsHelp lists every slash command, grouped. /help shows it in both
+// modes; help_coverage_test checks it against the dispatch tables (#313).
+const chatCommandsHelp = `Chat:
   /clear             Clear conversation history
   /help              Show this help message
   /menu              Open the command menu
@@ -936,12 +862,80 @@ Settings:
   /effort <level>    Set reasoning effort (off/low/medium/high/max)
   /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
   /safe              Return to safe mode
-  /set-model <model> Set the image generation model (NSFW mode)
+  /set-model [model] List or set the chat model (the image model in NSFW mode)
+  /list-models       List models (also /image-model, the old name for /set-model)
 
 Tools:
   /tools, /skills    Browse available tools interactively
+`
 
-Examples:
+// handleHelp handles the /help command.
+func handleHelp(cmd *Command, ctx *CommandContext) *CommandResult {
+	var helpText string
+
+	// Version header
+	versionHeader := ""
+	if ctx.Version != "" {
+		versionHeader = fmt.Sprintf("Celeste CLI v%s", ctx.Version)
+		if ctx.Build != "" {
+			versionHeader += fmt.Sprintf(" (%s)", ctx.Build)
+		}
+		versionHeader += "\n\n"
+	}
+
+	if ctx.NSFWMode {
+		// NSFW Mode Help
+		helpText = versionHeader + `🔥 NSFW Mode - Venice.ai Uncensored
+
+Media Generation Commands:
+  image: <prompt>              Generate images with current model
+                               Example: image: cyberpunk cityscape at night
+
+  anime: <prompt>              Generate anime-style images (wai-Illustrious)
+                               Example: anime: magical girl with sword
+
+  dream: <prompt>              High-quality dream-like images (hidream)
+                               Example: dream: surreal landscape
+
+  image[model]: <prompt>       Use specific model for one generation
+                               Example: image[nano-banana-pro]: futuristic city
+
+Model Management:
+  /set-model <model>           Set default image generation model
+                               Example: /set-model wai-Illustrious
+                               Run without args to see all models
+
+Current Configuration:
+  • Endpoint: Venice.ai (https://api.venice.ai/api/v1)
+  • Chat Model: the one Venice serves as its default
+  • Image Model: Use /set-model to configure
+  • Downloads: ~/Downloads
+  • Quality: 40 steps, CFG 12.0, PNG format
+
+Available Image Models:
+  • lustify-sdxl - NSFW image generation (default)
+  • wai-Illustrious - Anime style
+  • hidream - Dream-like quality
+  • nano-banana-pro - Alternative model
+  • venice-sd35 - Stable Diffusion 3.5
+  • lustify-v7 - Lustify v7
+  • qwen-image - Qwen vision model
+
+Image Quality Parameters (defaults):
+  • Steps: 40 (1-50, higher = more detail)
+  • CFG Scale: 12.0 (0-20, higher = stronger prompt adherence)
+  • Size: 1024x1024 (up to 1280x1280)
+  • Format: PNG (lossless)
+  • Safe Mode: Disabled (no NSFW blurring)
+
+Configure downloads_dir in ~/.celeste/skills.json to change save location.
+
+Tip: Ask the uncensored LLM to write detailed NSFW prompts, then use
+"image: [paste prompt]" to generate from that description!` +
+			"\n\nEvery chat command works in NSFW mode too:\n\n" + chatCommandsHelp
+	} else {
+		// Safe Mode Help
+		helpText = versionHeader + "Available Commands:\n\n" + chatCommandsHelp + "\n\n" + `Examples:
   /agent fix tests       → Run autonomous code-fix loop
   /orch write a script   → Multi-model orchestrated run
   /endpoint google       → Switch to Google Vertex AI

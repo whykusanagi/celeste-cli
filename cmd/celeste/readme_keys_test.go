@@ -46,7 +46,7 @@ func TestReadmeAnthropicTokenTracking(t *testing.T) {
 	}
 	full, _, _ := strings.Cut(tracking, "**No Support**")
 	requireAll(t, "README token tracking (full support)", full, "Anthropic Claude")
-	requireNone(t, "README.md", readme, "automatic tracking isn't wired up")
+	requireNone(t, "README.md", readme, "automatic tracking isn't wired up", "(Anthropic native API, ElevenLabs)")
 }
 
 // The README's comparison carries docs/COMPARISON.md's list of what celeste

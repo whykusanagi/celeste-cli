@@ -71,14 +71,14 @@ func usageSection(t *testing.T, heading string) string {
 func TestUsageListsEveryDispatchedCommand(t *testing.T) {
 	cmds := usageSection(t, "Commands:")
 	for _, names := range runDispatchCases(t) {
-		ok := false
-		for _, n := range names {
-			if regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(n) + `\b`).MatchString(cmds) {
-				ok = true
-			}
-		}
-		if !ok {
+		if !regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(names[0]) + `\b`).MatchString(cmds) {
 			t.Errorf("celeste help's Commands section lacks %q", names[0])
+		}
+		// Aliases are named too; -h/--help and -v/--version are flags.
+		for _, alias := range names[1:] {
+			if !strings.HasPrefix(alias, "-") && !regexp.MustCompile(`\b`+regexp.QuoteMeta(alias)+`\b`).MatchString(cmds) {
+				t.Errorf("celeste help's Commands section lacks the alias %q", alias)
+			}
 		}
 	}
 }

@@ -1059,7 +1059,7 @@ Approving a plan turns its steps into todo items and ends plan mode. See [docs/P
 /export json
 ```
 
-**Note:** When using providers without token tracking (Anthropic native API, ElevenLabs), Celeste CLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
+**Note:** When using a provider without token tracking (ElevenLabs), Celeste CLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
 
 ### Autonomous Agent Mode
 

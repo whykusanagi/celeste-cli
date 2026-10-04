@@ -98,12 +98,24 @@ func TestDispatchedCommandsAreKnown(t *testing.T) {
 	}
 }
 
-// The in-chat /help lists every known slash command (#313).
+// The in-chat /help, in safe and in NSFW mode, lists every known slash
+// command and every name the dispatch tables accept, aliases included (#313).
 func TestHelpListsEveryKnownCommand(t *testing.T) {
-	res := commands.Execute(&commands.Command{Name: "help"}, &commands.CommandContext{})
-	for _, name := range knownCommands {
-		if !regexp.MustCompile(`/` + regexp.QuoteMeta(name) + `\b`).MatchString(res.Message) {
-			t.Errorf("/help lacks /%s", name)
+	names := append([]string(nil), knownCommands...)
+	for _, clauses := range [][][]string{
+		switchCaseNames(t, "app.go", "cmd.Name"),
+		switchCaseNames(t, "../commands/commands.go", "strings.ToLower(cmd.Name)"),
+	} {
+		for _, clause := range clauses {
+			names = append(names, clause...)
+		}
+	}
+	for _, nsfw := range []bool{false, true} {
+		res := commands.Execute(&commands.Command{Name: "help"}, &commands.CommandContext{NSFWMode: nsfw})
+		for _, name := range names {
+			if !regexp.MustCompile(`/` + regexp.QuoteMeta(name) + `\b`).MatchString(res.Message) {
+				t.Errorf("/help (nsfw=%v) lacks /%s", nsfw, name)
+			}
 		}
 	}
 }
