@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
-// The audit's two terminal sizes (docs/superpowers/notes/2026-10-03-tui-audit.md).
+// The two terminal sizes of the 2.0 TUI audit (80x24, 120x40).
 var auditSizes = []struct{ w, h int }{{80, 24}, {120, 40}}
 
 // assertFitsWidth fails when any row of view is wider than w: the terminal
@@ -171,11 +172,13 @@ func TestSessionPickerFillsTheChatArea(t *testing.T) {
 }
 
 // V10: a tool description with blank lines (code_review's) stays on its
-// row in the skills browser; the browser keeps its height and width.
+// row in the skills browser; the browser keeps its height and width, even
+// with an MCP tool whose name is longer than the 25-cell name column.
 func TestSkillsBrowserMultilineDescriptionKeepsItsRow(t *testing.T) {
 	skills := []SkillDefinition{
 		{Name: "code_review", Description: "Automated code review using structural graph analysis.\n\nAnalyzes every function in the codebase\tfor stubs."},
 		{Name: "base64_decode", Description: "Decode a base64 string"},
+		{Name: "mcp__celeste-ops__document_decision_cancel", Description: "Cancel a pending decision on a document and record why it was dropped"},
 		{Name: "weather", Description: "Récupère la météo — prévisions détaillées pour une ville donnée, avec vent, humidité et alertes régionales"},
 	}
 	for _, sz := range auditSizes {
@@ -191,7 +194,7 @@ func TestSkillsBrowserMultilineDescriptionKeepsItsRow(t *testing.T) {
 			if !strings.Contains(ln, "code_review") {
 				continue
 			}
-			if !strings.Contains(ln, "structural graph") || !strings.Contains(lines[i+1], "weather") {
+			if !strings.Contains(ln, "structural graph") || !strings.Contains(lines[i+1], "mcp__celeste-ops") {
 				t.Fatalf("%dx%d: code_review's description broke its row:\n%s", sz.w, sz.h, stripANSI(view))
 			}
 			if sz.w >= 120 && !strings.Contains(ln, "analysis. Analyzes every") {
@@ -309,5 +312,68 @@ func TestChatWrapsUnbrokenPaths(t *testing.T) {
 				t.Fatalf("%dx%d: the path was cut:\n%s", sz.w, sz.h, stripANSI(view))
 			}
 		}
+	}
+}
+
+// The chat's own session is marked in the picker, and d or Backspace on it
+// deletes nothing: the chat keeps writing to that ID.
+func TestSessionPickerKeepsTheCurrentSession(t *testing.T) {
+	isolatedHome(t)
+	workDir := t.TempDir()
+	ids := savePickerSessions(t, workDir)
+	p := NewSessionPanelModel(workDir).SetWidth(80).SetHeight(15)
+	cur := p.entries[0].ID
+	p = p.WithCurrent(cur)
+	if plain := stripANSI(p.View()); !strings.Contains(plain, "(current)") {
+		t.Fatalf("the picker does not mark the current session:\n%s", plain)
+	}
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("d")}, {Type: tea.KeyBackspace}, {Type: tea.KeyDelete}} {
+		p, _ = p.Update(key)
+		if p.Deleted() != "" || len(p.entries) != len(ids) {
+			t.Fatalf("%s deleted the current session %s", key, cur)
+		}
+	}
+	if plain := stripANSI(p.View()); !strings.Contains(plain, "current session") {
+		t.Fatalf("the picker does not say why nothing was deleted:\n%s", plain)
+	}
+	// Another session still deletes.
+	p, _ = p.Update(tea.KeyMsg{Type: tea.KeyDown})
+	other := p.entries[p.cursor].ID
+	p, _ = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if p.Deleted() != other {
+		t.Fatalf("d on another session deleted %q, want %q", p.Deleted(), other)
+	}
+}
+
+// PgDn moves the cursor by the page the picker shows, so it never skips
+// entries that were never on screen.
+func TestSessionPickerPageKeysMoveOnePage(t *testing.T) {
+	isolatedHome(t)
+	workDir := t.TempDir()
+	mgr := config.NewSessionManager()
+	for i := 0; i < 30; i++ {
+		sess := mgr.NewSession()
+		sess.ID = fmt.Sprintf("17910900123490%05d", i)
+		sess.Workspace = workDir
+		if err := mgr.Save(sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := NewSessionPanelModel(workDir).SetWidth(80).SetHeight(15)
+	page := (15 - 5) / sessionRowsPerEntry
+	p, _ = p.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if p.cursor != page {
+		t.Fatalf("PgDn moved the cursor to %d, want %d (one page)", p.cursor, page)
+	}
+	p, _ = p.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	if p.cursor != 0 {
+		t.Fatalf("PgUp moved the cursor to %d, want 0", p.cursor)
+	}
+}
+
+// The /mcp box fits a terminal narrower than 44 columns.
+func TestMCPPanelFitsANarrowTerminal(t *testing.T) {
+	for _, w := range []int{30, 40} {
+		assertFitsWidth(t, mcpPanelAt(w).View(), w)
 	}
 }

@@ -31,6 +31,8 @@ type SessionPanelModel struct {
 	height   int
 	selected string // ID of selected session (empty = none)
 	deleted  string // ID of deleted session
+	current  string // ID of the chat's own session: marked, never deleted
+	notice   string // shown in place of the key hints until the next key
 	err      error
 }
 
@@ -99,6 +101,13 @@ func (m SessionPanelModel) SetHeight(h int) SessionPanelModel {
 	return m
 }
 
+// WithCurrent marks id as the chat's own session: its row says (current)
+// and d or Backspace on it deletes nothing.
+func (m SessionPanelModel) WithCurrent(id string) SessionPanelModel {
+	m.current = id
+	return m
+}
+
 // Selected returns the ID of the session the user chose (empty if none).
 func (m SessionPanelModel) Selected() string { return m.selected }
 
@@ -109,6 +118,7 @@ func (m SessionPanelModel) Deleted() string { return m.deleted }
 func (m SessionPanelModel) Update(msg tea.Msg) (SessionPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		m.notice = ""
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
@@ -119,21 +129,23 @@ func (m SessionPanelModel) Update(msg tea.Msg) (SessionPanelModel, tea.Cmd) {
 				m.cursor++
 			}
 		case "pgup":
-			m.cursor -= 10
+			m.cursor -= m.pageSize()
 			if m.cursor < 0 {
 				m.cursor = 0
 			}
 		case "pgdown":
-			m.cursor += 10
+			m.cursor += m.pageSize()
 			if m.cursor >= len(m.entries) {
-				m.cursor = len(m.entries) - 1
+				m.cursor = max(len(m.entries)-1, 0)
 			}
 		case "enter":
 			if len(m.entries) > 0 {
 				m.selected = m.entries[m.cursor].ID
 			}
 		case "d", "delete", "backspace":
-			if len(m.entries) > 0 {
+			if len(m.entries) > 0 && m.current != "" && m.entries[m.cursor].ID == m.current {
+				m.notice = "That is the current session; switch away from it to delete it."
+			} else if len(m.entries) > 0 {
 				m.deleted = m.entries[m.cursor].ID
 				// Remove from display
 				m.entries = append(m.entries[:m.cursor], m.entries[m.cursor+1:]...)
@@ -173,6 +185,18 @@ func (m SessionPanelModel) fill(lines []string) string {
 // sessionRowsPerEntry is one meta row (age, messages, ID) and one preview row.
 const sessionRowsPerEntry = 2
 
+// sessionChromeRows are the 3 title rows and the 2 "more" rows.
+const sessionChromeRows = 5
+
+// pageSize is how many entries the picker shows at once; PgUp/PgDn move
+// the cursor by that much.
+func (m SessionPanelModel) pageSize() int {
+	if m.height <= 0 {
+		return 10
+	}
+	return max((m.height-sessionChromeRows)/sessionRowsPerEntry, 1)
+}
+
 func (m SessionPanelModel) body() []string {
 	if m.err != nil {
 		return []string{fmt.Sprintf("Error loading sessions: %v", m.err)}
@@ -189,18 +213,18 @@ func (m SessionPanelModel) body() []string {
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6b7280"))
 
+	hint := hintStyle.Render("↑/↓ navigate  PgUp/PgDn page  Enter resume  d delete  Esc close")
+	if m.notice != "" {
+		hint = lipgloss.NewStyle().Foreground(ColorError).Render(m.notice)
+	}
 	lines := []string{
 		titleStyle.Render(fmt.Sprintf("Sessions (%d)", len(m.entries))),
-		hintStyle.Render("↑/↓ navigate  PgUp/PgDn page  Enter resume  d delete  Esc close"),
+		hint,
 		"",
 	}
 
-	// A page of entries around the cursor: what fits under the 3 title rows
-	// and the 2 "more" rows.
-	pageSize := 10
-	if m.height > 0 {
-		pageSize = max((m.height-len(lines)-2)/sessionRowsPerEntry, 1)
-	}
+	// A page of entries around the cursor.
+	pageSize := m.pageSize()
 
 	start := 0
 	if m.cursor >= pageSize {
@@ -241,6 +265,9 @@ func (m SessionPanelModel) body() []string {
 		here := ""
 		if e.ThisProject {
 			here = "  this project"
+		}
+		if m.current != "" && e.ID == m.current {
+			here += "  (current)"
 		}
 		// The whole ID: rows from one day share their leading digits, and
 		// /session resume takes the ID as shown.

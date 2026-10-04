@@ -202,6 +202,10 @@ func (m MCPPanelModel) View() string {
 	if w < 44 {
 		w = 44
 	}
+	// Never wider than the terminal, however narrow.
+	if m.width > 0 && w > m.width {
+		w = m.width
+	}
 	innerW := w - 2
 
 	borderStyle := lipgloss.NewStyle().Foreground(ColorBorderPurple)

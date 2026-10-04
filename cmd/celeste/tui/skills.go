@@ -231,14 +231,21 @@ func (m SkillsBrowserModel) View() string {
 		}
 		// One row per skill: blank lines and tabs in a description collapse.
 		desc := fitWidth(collapseSpace(skill.Description), descWidth)
+		// The name column is cut as well as padded: MCP tool names
+		// (mcp__<server>__<tool>) often run past 25 cells.
+		name := padRight(skill.Name, 25)
+		var row string
 		if i == m.cursor {
-			b.WriteString(lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true).
-				Render(fmt.Sprintf("%s%-25s  %s", cursor, skill.Name, desc)))
+			row = lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true).
+				Render(fmt.Sprintf("%s%s  %s", cursor, name, desc))
 		} else {
-			name := lipgloss.NewStyle().Foreground(ColorPurple).Render(fmt.Sprintf("%s%-25s", cursor, skill.Name))
-			b.WriteString(name + lipgloss.NewStyle().Foreground(ColorPurpleDeep).Render("  "+desc))
+			row = lipgloss.NewStyle().Foreground(ColorPurple).Render(cursor+name) +
+				lipgloss.NewStyle().Foreground(ColorPurpleDeep).Render("  "+desc)
 		}
-		b.WriteString("\n")
+		if m.width > 0 {
+			row = fitWidth(row, m.width)
+		}
+		b.WriteString(row + "\n")
 	}
 
 	// Full description of the highlighted skill (list rows are truncated).

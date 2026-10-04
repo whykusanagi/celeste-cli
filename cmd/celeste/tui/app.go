@@ -869,6 +869,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewMode = "sessions"
 				panel := NewSessionPanelModel(m.workDir)
 				panel = panel.SetWidth(m.width).SetHeight(m.height)
+				if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+					panel = panel.WithCurrent(s.ID)
+				}
 				m.sessionPanel = &panel
 				return m, nil
 			}
