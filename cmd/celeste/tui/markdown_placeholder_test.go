@@ -53,6 +53,22 @@ func TestEscapeHTMLLikePlaceholders(t *testing.T) {
 		"```\n<x>\n```\nthen <y>": "```\n<x>\n```\nthen \\<y>",
 		"close </div> too":        `close \</div> too`,
 		"``two <ticks>`` and <z>": "``two <ticks>`` and \\<z>",
+		// Indented code blocks are code: escapes would show.
+		"Example:\n\n    <div>hi</div>\n\n**bold** <b>": "Example:\n\n    <div>hi</div>\n\n**bold** \\<b>",
+		"Example:\n\n\t<div>hi</div>\n\t<p>":            "Example:\n\n\t<div>hi</div>\n\t<p>",
+		// Four spaces with no blank line before is a paragraph continuation.
+		"text\n    <id>": "text\n    \\<id>",
+		// Inside a list, an indented paragraph is list content, not code.
+		"- item\n\n    more <id>": "- item\n\n    more \\<id>",
+		// A longer fence is not closed by a shorter one.
+		"````\n```\nstill <code>\n````\nafter <x>": "````\n```\nstill <code>\n````\nafter \\<x>",
+		"~~~~\n~~~ <a>\n~~~~~\n<b>":                "~~~~\n~~~ <a>\n~~~~~\n\\<b>",
+		// A closing fence has nothing after its run but whitespace.
+		"```\n```go <c>\n```  \n<d>": "```\n```go <c>\n```  \n\\<d>",
+		// Autolinks stay links.
+		"see <https://example.com> and <id>": "see <https://example.com> and \\<id>",
+		"mail <someone@example.com> now":     "mail <someone@example.com> now",
+		"not a link <a b:c>":                 "not a link \\<a b:c>",
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, escapeHTMLLikeTags(in), in)
