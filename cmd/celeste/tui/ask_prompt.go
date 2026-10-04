@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,6 +33,10 @@ type AskPromptModel struct {
 	// footer says how to answer; the next Enter only clears it, so typed
 	// text plus Enter never answers. An arrow clears it too.
 	typed bool
+	// pickAt is when the last printable modal key (a number, j, k, a
+	// space) arrived; zero after any other key. An Enter in the same
+	// burst is part of a paste, not a choice (#326).
+	pickAt time.Time
 }
 
 // askTypedHint replaces the footer while typed keys are being ignored.
@@ -64,6 +69,7 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 		m.selected = 0
 		m.offset = 0
 		m.typed = false
+		m.pickAt = time.Time{}
 		m.checked = map[int]bool{}
 
 	case tea.KeyMsg:
@@ -78,6 +84,15 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 			m.selected = 0
 			break
 		}
+		pickAt := m.pickAt
+		m.pickAt = time.Time{}
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+			// Stamped when Update handles the key, not when it arrived: if
+			// the loop stalls and a real pick and its Enter are handled
+			// back to back, the Enter reads as a paste and the user presses
+			// it again. That fails safe.
+			m.pickAt = keyClock() // a key a paste can contain
+		}
 		switch msg.String() {
 		case "up", "k":
 			m.typed = false
@@ -90,7 +105,7 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 				m.selected++
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			// A number moves the cursor to that option; Enter still answers.
+			// A number moves the cursor to that option; a later Enter answers.
 			if n := int(msg.Runes[0] - '1'); n < len(m.options) {
 				m.selected = n
 			}
@@ -105,6 +120,12 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 		case "enter":
 			if m.typed {
 				m.typed = false
+				break
+			}
+			if inBurst(pickAt) {
+				// "2" and a newline pasted together: typing, not a choice.
+				m.typed = true
+				m.selected = 0
 				break
 			}
 			m.send(m.collect())
