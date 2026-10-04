@@ -1,0 +1,24 @@
+ ✨ Celeste CLI────────────────────────────────────────────Press Ctrl+C to exit
+────────────────────────────────────────────────────────────────────────────────
+╭──────────────────────────────────────╮╭──────────────────────────────────────╮
+│ AGENT ACTIONS                        ││ code output                          │
+│ ● ── no lane matched · default mode… ││ I will print a greeting.             │
+│ ● [fugu] primary agent               ││ a very long line of model output th… │
+│ ● [fugu] turn 1/50                   ││                                      │
+│ ● [fugu] ↩ turn 1 with a long summa… ││                                      │
+│ ● ⚙ bash                             ││                                      │
+│                                      ││                                      │
+╰──────────────────────────────────────╯╰──────────────────────────────────────╯
+╭─ Permission Required ────────────────────────────────────────────────────────╮
+│  bash wants to run: printf 'hi\n'                                            │
+│  Risk: write                                                                 │
+│                                                                              │
+│  [a] Allow once (then Enter)                                                 │
+│  [A] Always allow "bash" (then Enter)                                        │
+│  [d] Deny (also Esc)                                                         │
+│  [D] Always deny "bash"                                                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Orchestrator: ⚙ bash
+❯ Type a message or 'help'...
+❯
+❯

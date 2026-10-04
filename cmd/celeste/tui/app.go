@@ -831,10 +831,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Resize split panel if active: available height = total minus header/status/input
 		if m.splitPanel != nil {
-			panelH := m.height - 5 // header(1) + status(1) + input(3)
-			if panelH < 5 {
-				panelH = 5
-			}
+			panelH, _ := m.splitPanelRows(lipgloss.Height(m.header.View()), lipgloss.Height(m.status.View())+lipgloss.Height(m.input.View()), nil)
 			m.splitPanel.Resize(m.width, panelH)
 		}
 
@@ -2193,10 +2190,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 
 		if m.splitPanel == nil {
-			panelH := m.height - 5 // header(1) + status(1) + input(3)
-			if panelH < 5 {
-				panelH = 5
-			}
+			panelH, _ := m.splitPanelRows(lipgloss.Height(m.header.View()), lipgloss.Height(m.status.View())+lipgloss.Height(m.input.View()), nil)
 			m.splitPanel = NewSplitPanel(m.width, panelH)
 		}
 		m.splitPanelMode = true
@@ -2579,15 +2573,20 @@ func (m AppModel) View() string {
 		if m.askPrompt.Active() {
 			modals = append(modals, m.askPrompt.View())
 		}
+		header, status, input := m.header.View(), m.status.View(), m.input.View()
 		panel := *m.splitPanel
-		for _, v := range modals {
-			panel.height -= lipgloss.Height(v)
+		rows, showHeader := m.splitPanelRows(lipgloss.Height(header), lipgloss.Height(status)+lipgloss.Height(input), modals)
+		panel.height = rows
+		if m.width > 0 {
+			panel.width = m.width
 		}
-		if panel.height < 5 {
-			panel.height = 5
+		var sections []string
+		if showHeader {
+			sections = append(sections, header)
 		}
-		sections := append([]string{m.header.View(), panel.View()}, modals...)
-		sections = append(sections, m.status.View(), m.input.View())
+		sections = append(sections, panel.View())
+		sections = append(sections, modals...)
+		sections = append(sections, status, input)
 		return lipgloss.JoinVertical(lipgloss.Left, sections...)
 	}
 
@@ -2688,11 +2687,35 @@ func (m AppModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
+// minSplitPanelRows is the shortest split panel: its borders and one row.
+const minSplitPanelRows = 3
+
+// splitPanelRows sizes the split panel in the split view (V21): the
+// terminal's rows less the header (headerRows), the status and input
+// (footRows) and any open modals, so the view fills the terminal exactly
+// and the prompt and input stay on screen. When that leaves less than
+// minSplitPanelRows the header goes first (showHeader false); the panel
+// never gets fewer.
+func (m AppModel) splitPanelRows(headerRows, footRows int, modals []string) (rows int, showHeader bool) {
+	if m.height <= 0 && m.splitPanel != nil {
+		return max(m.splitPanel.height, minSplitPanelRows), true
+	}
+	rest := m.height - footRows
+	for _, v := range modals {
+		rest -= lipgloss.Height(v)
+	}
+	if rest-headerRows >= minSplitPanelRows {
+		return rest - headerRows, true
+	}
+	return max(rest, minSplitPanelRows), false
+}
+
 const (
 	// askReservedRows is what the ask modal leaves on screen: the chat
 	// view's fixed rows (a 2-row header, 3-row input, skills, status line,
 	// hints and status bar: 9) plus a few rows of chat. It also covers the
-	// split-panel view (5 fixed rows, a 5-row panel minimum).
+	// split-panel view (a 2-row header, status and 3-row input: 6 fixed
+	// rows, and a minSplitPanelRows panel).
 	askReservedRows = 9 + 3
 	// minChatRowsUnderOverlay is the least chat an overlay leaves.
 	minChatRowsUnderOverlay = 1
