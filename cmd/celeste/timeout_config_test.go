@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -30,5 +31,20 @@ func TestTimeoutLine(t *testing.T) {
 func TestConfigHelpNamesSetTimeout(t *testing.T) {
 	if !strings.Contains(usageText, "--set-timeout") {
 		t.Error("help does not mention --set-timeout")
+	}
+}
+
+// The local-model guide documents the timeout behaviour (L1).
+func TestLocalGuideDocumentsTimeouts(t *testing.T) {
+	data, err := os.ReadFile("../../docs/LLM_PROVIDERS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	local := doc[strings.Index(doc, "## Local models"):]
+	for _, must := range []string{"### Timeouts", "--set-timeout", "600", "30 minutes", "-request-timeout"} {
+		if !strings.Contains(local, must) {
+			t.Errorf("the local-model section does not mention %q", must)
+		}
 	}
 }

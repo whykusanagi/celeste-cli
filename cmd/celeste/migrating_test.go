@@ -37,6 +37,7 @@ func TestMigratingCoversEveryBreakingChange(t *testing.T) {
 		"CELESTE_API_KEY", "CELESTE_API_ENDPOINT", "TAROT_AUTH_TOKEN", // #244
 		"## Custom tools", "64,000 bytes", "2 minutes", // #271
 		"## Permission prompt", "Esc always denies", // #299
+		"## Request timeout", "--set-timeout", "600", // local smoke L1/L3/L5
 	} {
 		if !strings.Contains(doc, must) {
 			t.Errorf("MIGRATING-2.0.md does not mention %q", must)
