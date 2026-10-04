@@ -156,6 +156,8 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 		}
 	}
 
+	result.Content = stripThink(result.Content) // L4: reasoning inlined by the server
+
 	// Convert tool calls
 	for _, tc := range toolCalls {
 		result.ToolCalls = append(result.ToolCalls, ToolCallResult{
@@ -201,13 +203,16 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 
 	var toolCalls []openai.ToolCall
 	var usage *TokenUsage
+	var think thinkSplitter
 	isFirst := true
 
 	for {
 		response, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
+			rest, _ := think.Flush()
 			// Send final chunk with usage data if available
 			callback(StreamChunk{
+				Content:      rest,
 				IsFinal:      true,
 				FinishReason: "stop",
 				ToolCalls:    convertToolCalls(toolCalls),
@@ -233,9 +238,9 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 				IsFirst: isFirst,
 			}
 
-			// Handle content delta
+			// Handle content delta, without inlined <think> reasoning
 			if choice.Delta.Content != "" {
-				chunk.Content = choice.Delta.Content
+				chunk.Content, _ = think.Write(choice.Delta.Content)
 			}
 
 			// Handle tool calls
@@ -331,6 +336,14 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	var toolCallsByIndex []toolCallState
 	var usage *TokenUsage
 	var finishReason string
+	// think keeps reasoning a server inlines as <think>…</think> out of
+	// the reply (L4).
+	var think thinkSplitter
+	emitContent := func(text string) {
+		if text != "" {
+			callback(StreamEvent{Type: EventContentDelta, ContentDelta: text})
+		}
+	}
 
 	for {
 		response, err := stream.Recv()
@@ -353,10 +366,8 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 		for _, choice := range response.Choices {
 			// Handle content delta
 			if choice.Delta.Content != "" {
-				callback(StreamEvent{
-					Type:         EventContentDelta,
-					ContentDelta: choice.Delta.Content,
-				})
+				text, _ := think.Write(choice.Delta.Content)
+				emitContent(text)
 			}
 
 			// Handle tool calls
@@ -418,6 +429,9 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 			}
 		}
 	}
+
+	rest, _ := think.Flush()
+	emitContent(rest)
 
 	// Emit ToolUseDone for each accumulated indexed tool call
 	for _, tc := range toolCallsByIndex {
@@ -482,6 +496,11 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 
 	// Convert messages
 	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			// Reasoning a server inlined as <think>…</think> is never sent
+			// back as content (L4): history saved before it was stripped.
+			msg.Content = stripThink(msg.Content)
+		}
 		// Skip messages with empty content (except tool calls which can have empty content)
 		if msg.Content == "" && len(msg.ToolCalls) == 0 && msg.Role != "tool" {
 			// Skip empty messages to prevent API errors (Grok requires content field)
