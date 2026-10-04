@@ -183,6 +183,10 @@ func compare(o oldSide, c *FileChange) error {
 	return nil
 }
 
+// noFinalNewline marks a last line with no newline after it, so a change
+// that only adds or removes the final newline counts as +1 -1, as in git.
+const noFinalNewline = "\x00no newline at end of file"
+
 // splitLines splits s into its lines. The empty string after a final
 // newline is not a line (V20): "hello\n" and "hello" are one line each,
 // and an empty file has none.
@@ -190,7 +194,11 @@ func splitLines(s string) []string {
 	if s == "" {
 		return nil
 	}
-	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+	if !strings.HasSuffix(s, "\n") {
+		lines[len(lines)-1] += noFinalNewline
+	}
+	return lines
 }
 
 // diffStats computes insertion and deletion counts between two sets of lines

@@ -41,6 +41,11 @@ func TestComputeDiffCountsTrailingNewlineFiles(t *testing.T) {
 		{"appended line", ptr("a\n"), ptr("a\nb\n"), 1, 0},
 		{"changed line", ptr("a\nb\n"), ptr("a\nc\n"), 1, 1},
 		{"deleted two-line file", ptr("a\nb\n"), nil, 0, 2},
+		// Only the final newline changes: git counts the last line as
+		// changed, +1 -1, not +0 -0.
+		{"final newline added", ptr("a\nb"), ptr("a\nb\n"), 1, 1},
+		{"final newline removed", ptr("a\nb\n"), ptr("a\nb"), 1, 1},
+		{"unchanged without final newline", ptr("a\nb"), ptr("a\nb"), 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

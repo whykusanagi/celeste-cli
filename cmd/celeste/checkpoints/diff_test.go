@@ -18,10 +18,10 @@ func TestComputeDiff_Insertions(t *testing.T) {
 	sm := newSnapshotManagerWithBase(backupDir)
 
 	srcFile := filepath.Join(dir, "source.txt")
-	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2"), 0644))
+	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\n"), 0644))
 
 	require.NoError(t, snap(sm, srcFile))
-	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3\nline4"), 0644))
+	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3\nline4\n"), 0644))
 
 	changes, err := sm.ComputeDiff()
 	require.NoError(t, err)
@@ -37,10 +37,10 @@ func TestComputeDiff_Deletions(t *testing.T) {
 	sm := newSnapshotManagerWithBase(backupDir)
 
 	srcFile := filepath.Join(dir, "source.txt")
-	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
+	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3\n"), 0644))
 
 	require.NoError(t, snap(sm, srcFile))
-	require.NoError(t, os.WriteFile(srcFile, []byte("line1"), 0644))
+	require.NoError(t, os.WriteFile(srcFile, []byte("line1\n"), 0644))
 
 	changes, err := sm.ComputeDiff()
 	require.NoError(t, err)
@@ -111,11 +111,11 @@ func TestComputeDiff_Mixed(t *testing.T) {
 	sm := newSnapshotManagerWithBase(backupDir)
 
 	srcFile := filepath.Join(dir, "source.txt")
-	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3"), 0644))
+	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nline2\nline3\n"), 0644))
 
 	require.NoError(t, snap(sm, srcFile))
 	// Replace line2 with lineX and add line4
-	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nlineX\nline3\nline4"), 0644))
+	require.NoError(t, os.WriteFile(srcFile, []byte("line1\nlineX\nline3\nline4\n"), 0644))
 
 	changes, err := sm.ComputeDiff()
 	require.NoError(t, err)
