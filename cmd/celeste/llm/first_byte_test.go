@@ -148,3 +148,33 @@ func TestConfigFirstByteBudget(t *testing.T) {
 		}
 	}
 }
+
+// The first-byte budget runs from the request, not from the headers: a
+// server that sends its headers late and its body later still fails once
+// the budget is spent.
+func TestFirstByteBudgetIsNotExtendedByHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+		fmt.Fprint(w, sseChunk(`{"content":"late"}`))
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		w.(http.Flusher).Flush()
+	}))
+	t.Cleanup(srv.Close)
+	_, err := streamText(t, firstByteClient(srv.URL, 50*time.Millisecond, 350*time.Millisecond))
+	if !errors.Is(err, ErrStalled) || !strings.Contains(err.Error(), "first byte") {
+		t.Fatalf("err = %v, want a first-byte stall: 500ms to the first byte exceeds the 350ms budget", err)
+	}
+}

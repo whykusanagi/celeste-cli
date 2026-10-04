@@ -68,6 +68,15 @@ func withStall(parent context.Context, idle, first time.Duration) (ctx context.C
 
 func (w *stallWatch) touch() { w.last.Store(time.Now().UnixNano()) }
 
+// headers records that the response headers arrived. They are activity
+// for the stall timeout, but not reply data: while a longer first-byte
+// budget runs, it keeps counting from the request.
+func (w *stallWatch) headers() {
+	if w.started.Load() || w.first == w.idle {
+		w.touch()
+	}
+}
+
 // data records reply data. The first call ends the first-byte wait: the
 // timer re-arms for the stall timeout, which applies from then on.
 func (w *stallWatch) data() {
@@ -124,7 +133,7 @@ func (t stallTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, err
 	}
 	if w, ok := req.Context().Value(stallKey{}).(*stallWatch); ok {
-		w.touch() // the headers arrived
+		w.headers()
 		resp.Body = &stallBody{ReadCloser: resp.Body, w: w}
 	}
 	return resp, nil

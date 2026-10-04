@@ -145,8 +145,9 @@ Hosted providers keep 60 s by default, for the first byte as for the rest of
 the reply, so a dead connection still fails after a minute of silence.
 
 `celeste agent` uses the same timeout. `-request-timeout <seconds>` bounds each
-whole model turn (without it, the 30-minute cap does); a request that sends
-nothing for the profile's `timeout` still fails first.
+whole model turn (without it, the 30-minute cap does); a request that goes
+silent for the profile's `timeout` mid-reply, or (on a local server) gets no
+first byte within its first-byte budget, still fails first.
 
 If a turn fails before any reply, its message stays in the chat. Send the same
 text again to retry it: the request carries it once, not twice.
