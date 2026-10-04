@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
@@ -23,6 +24,20 @@ type fakeCompactClient struct {
 	summaries []string
 	handoffs  []string
 	sumErr    error
+	// summaryCap is what SummaryTimeout reports; deadlines records how far
+	// away each summary's and handoff's deadline was (#345).
+	summaryCap time.Duration
+	deadlines  []time.Duration
+}
+
+func (f *fakeCompactClient) SummaryTimeout() time.Duration { return f.summaryCap }
+
+func (f *fakeCompactClient) recordDeadline(ctx context.Context) {
+	if dl, ok := ctx.Deadline(); ok {
+		f.deadlines = append(f.deadlines, time.Until(dl))
+	} else {
+		f.deadlines = append(f.deadlines, 0)
+	}
 }
 
 func (f *fakeCompactClient) CompactContext(msgs []ChatMessage, window, used int, force bool) CompactOutcome {
@@ -45,7 +60,8 @@ func (f *fakeCompactClient) CompactContext(msgs []ChatMessage, window, used int,
 	return out
 }
 
-func (f *fakeCompactClient) SummarizeContext(_ context.Context, msgs []ChatMessage, focus string) (SummaryOutcome, error) {
+func (f *fakeCompactClient) SummarizeContext(ctx context.Context, msgs []ChatMessage, focus string) (SummaryOutcome, error) {
+	f.recordDeadline(ctx)
 	f.summaries = append(f.summaries, focus)
 	if f.sumErr != nil {
 		return SummaryOutcome{}, f.sumErr
@@ -58,7 +74,8 @@ func (f *fakeCompactClient) SummarizeContext(_ context.Context, msgs []ChatMessa
 	}, nil
 }
 
-func (f *fakeCompactClient) HandoffContext(_ context.Context, msgs []ChatMessage, focus string) (string, error) {
+func (f *fakeCompactClient) HandoffContext(ctx context.Context, msgs []ChatMessage, focus string) (string, error) {
+	f.recordDeadline(ctx)
 	f.handoffs = append(f.handoffs, focus)
 	if f.sumErr != nil {
 		return "", f.sumErr
@@ -256,5 +273,35 @@ func TestAutomaticSummarySkipSaysSo(t *testing.T) {
 	last := shown[len(shown)-1]
 	if !strings.Contains(last.Content, "Summary skipped") {
 		t.Fatalf("last line = %q, want the skip notice", last.Content)
+	}
+}
+
+// #345: a summary and a handoff are bounded by the client's request cap,
+// the one a chat turn gets, not a fixed 3 minutes; a client that reports
+// none gets the default 30-minute cap.
+func TestSummaryDeadlineIsTheClientCap(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cap      time.Duration
+		min, max time.Duration
+	}{
+		{"client cap", 60 * time.Minute, 59 * time.Minute, 60 * time.Minute},
+		{"default cap", 0, 29 * time.Minute, 30 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, client := newCompactTestApp(t)
+			client.summaryCap = tc.cap
+			m = runToolTurn(t, m)
+			m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+			m, cmd := step(t, m, SendMessageMsg{Content: "/compact"})
+			m = runCmd(t, m, cmd)
+			m, cmd = step(t, m, SendMessageMsg{Content: "/handoff"})
+			_ = runCmd(t, m, cmd)
+			require.Len(t, client.deadlines, 2, "one summary and one handoff")
+			for _, left := range client.deadlines {
+				assert.GreaterOrEqual(t, left, tc.min)
+				assert.LessOrEqual(t, left, tc.max)
+			}
+		})
 	}
 }

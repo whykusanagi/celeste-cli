@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
@@ -108,5 +109,44 @@ func TestCompactorNoSummaryLoopAt32k(t *testing.T) {
 	}
 	if _, _, changed := c.Compact(context.Background(), history, nil, false); !changed || called != 1 {
 		t.Fatalf("changed=%v summaries=%d for ~10k of history under a 16.5k prefix at 32k", changed, called)
+	}
+}
+
+// #345: the summary is bounded by the session client's request cap, the one
+// a chat turn gets, not a fixed 3 minutes. A local server's 600 s stall
+// timeout gives 30 minutes; a 20-minute one gives an hour.
+func TestCompactorSummaryDeadlineIsTheClientCap(t *testing.T) {
+	big := strings.Repeat("word ", 4000)
+	var history []tui.ChatMessage
+	for i := 0; i < 8; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		history = append(history, tui.ChatMessage{Role: role, Content: big})
+	}
+	for _, tc := range []struct {
+		cfg      *config.Config
+		min, max time.Duration
+	}{
+		{&config.Config{BaseURL: "http://localhost:11434/v1", Model: "fake-model", ContextLimit: 20000}, 29 * time.Minute, 30 * time.Minute},
+		{&config.Config{Model: "fake-model", ContextLimit: 20000, Timeout: 1200}, 59 * time.Minute, 60 * time.Minute},
+	} {
+		var left time.Duration
+		summarize := func(ctx context.Context, _, _ string) (string, error) {
+			dl, ok := ctx.Deadline()
+			if !ok {
+				t.Error("summary context has no deadline")
+			}
+			left = time.Until(dl)
+			return "the summary", nil
+		}
+		c := newCompactor(tc.cfg, "system", &compact.Store{Dir: t.TempDir()}, summarize, nil, t.Logf)
+		if _, _, changed := c.Compact(context.Background(), history, nil, false); !changed {
+			t.Fatal("nothing compacted")
+		}
+		if left < tc.min || left > tc.max {
+			t.Fatalf("timeout %v: summary deadline %v away, want within [%v, %v]", tc.cfg.GetTimeout(), left, tc.min, tc.max)
+		}
 	}
 }

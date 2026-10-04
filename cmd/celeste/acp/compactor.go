@@ -17,9 +17,6 @@ import (
 // loop starts (the agent runtime's too).
 const compactTrigger = "auto"
 
-// summaryTimeout bounds one compaction summary request.
-const summaryTimeout = 3 * time.Minute
-
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
 
 // compactor is a session's loop.Compactor (ruling 12): the agent runtime's
@@ -34,6 +31,9 @@ type compactor struct {
 	summarize compact.SummarizeFunc // nil: no summary rung
 	hooks     *hooks.Runner         // PreCompact/PostCompact; nil: none
 	logf      func(string, ...any)  // never nil
+	// summaryTimeout bounds one summary: the request cap of the session's
+	// client config, which the summarizer's client is built from (#345).
+	summaryTimeout time.Duration
 }
 
 // newCompactor builds a session's compactor: the window from the config
@@ -50,6 +50,8 @@ func newCompactor(cfg *config.Config, systemPrompt string, store *compact.Store,
 		summarize: summarize,
 		hooks:     h,
 		logf:      logf,
+		// session.go builds the summarizer from llm.ConfigFrom(cfg).
+		summaryTimeout: llm.ConfigFrom(cfg).RequestCap(),
 	}
 }
 
@@ -81,7 +83,7 @@ func (c *compactor) Compact(ctx context.Context, history []tui.ChatMessage, usag
 		return msgs, notes, changed
 	}
 	summarize, blocked := c.hookedSummarize()
-	sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
+	sctx, cancel := context.WithTimeout(ctx, c.summaryTimeout)
 	out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: c.budget.ModelLimit, Overhead: overhead}, summarize)
 	cancel()
 	if reason := blocked(); reason != "" {

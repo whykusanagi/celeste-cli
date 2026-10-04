@@ -11,8 +11,28 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
-// summaryTimeout bounds a compaction summary request.
-const summaryTimeout = 3 * time.Minute
+// defaultSummaryTimeout bounds a summary when the client reports no cap of
+// its own: llm.MaxRequestDuration of the default 60 s stall timeout.
+const defaultSummaryTimeout = 30 * time.Minute
+
+// SummaryTimeouter is a client that knows how long one summary request may
+// run: its request cap, the bound a chat turn gets (#345). The summary
+// client fails a request that stalls for its stall timeout before that.
+type SummaryTimeouter interface {
+	SummaryTimeout() time.Duration
+}
+
+// summaryTimeout bounds a compaction summary or a handoff: the client's
+// request cap, else defaultSummaryTimeout. A fixed 3 minutes cut off a cold
+// local model's summary while its chat turns succeeded (#345).
+func (m AppModel) summaryTimeout() time.Duration {
+	if c, ok := m.llmClient.(SummaryTimeouter); ok {
+		if d := c.SummaryTimeout(); d > 0 {
+			return d
+		}
+	}
+	return defaultSummaryTimeout
+}
 
 // ContextSummarizedMsg delivers a compaction summary written in the
 // background (#174).
@@ -80,8 +100,9 @@ func (m AppModel) startSummaryAs(focus string, manual bool, trigger string) (App
 	m.summarizing = true
 	m.chat = m.chat.AddSystemMessage("🗜 Summarizing older context…")
 	snapshot := append([]ChatMessage(nil), msgs...)
+	timeout := m.summaryTimeout()
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), compactTriggerKey{}, trigger), summaryTimeout)
+		ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), compactTriggerKey{}, trigger), timeout)
 		defer cancel()
 		out, err := c.SummarizeContext(ctx, snapshot, focus)
 		return ContextSummarizedMsg{
@@ -216,8 +237,9 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 	m.summarizing = true
 	m.chat = m.chat.AddSystemMessage("🤝 Writing handoff notes…")
 	snapshot := append([]ChatMessage(nil), msgs...)
+	timeout := m.summaryTimeout()
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), summaryTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		text, err := c.HandoffContext(ctx, snapshot, focus)
 		return HandoffReadyMsg{

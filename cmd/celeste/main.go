@@ -808,6 +808,15 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 	return a.summarize, nil
 }
 
+// SummaryTimeout implements tui.SummaryTimeouter: the request cap of the
+// summarizer's client, built from baseConfig (#345).
+func (a *TUIClientAdapter) SummaryTimeout() time.Duration {
+	if a.baseConfig == nil {
+		return (*llm.Config)(nil).RequestCap()
+	}
+	return llm.PlainConfigFrom(a.baseConfig).RequestCap()
+}
+
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
 
 // SummarizeContext implements tui.ContextCompactor: it summarizes all but
