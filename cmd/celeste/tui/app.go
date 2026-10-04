@@ -434,9 +434,9 @@ func (m AppModel) SetMCPManager(manager *mcp.Manager, configs map[string]mcp.Ser
 }
 
 // syncStatusLine copies non-git AppModel state (project, model, effort,
-// permission mode, session) into the status line. Git fields are set separately
-// by the GitStatusMsg handler; plan mode and skills are read at render time
-// by statusLineView.
+// permission mode) into the status line. Git fields are set separately by the
+// GitStatusMsg handler; plan mode, skills and the session name are read at
+// render time by statusLineView, so /clear, /fork and /handoff show at once.
 func (m AppModel) syncStatusLine() AppModel {
 	sl := m.statusLine.
 		SetProject(filepath.Base(m.workDir)).
@@ -445,21 +445,29 @@ func (m AppModel) syncStatusLine() AppModel {
 	if m.permChecker != nil {
 		sl = sl.SetPermMode(m.permChecker.Mode().String())
 	}
-	if s, ok := m.currentSession.(*config.Session); ok && s != nil {
-		sl = sl.SetSession(s.Name)
-	}
 	m.statusLine = sl
 	return m
+}
+
+// statusSessionName is the session segment: the current session's name, or
+// "" when it has none.
+func (m AppModel) statusSessionName() string {
+	if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+		return s.Name
+	}
+	return ""
 }
 
 // statusLineView renders the status line with plan mode read from the
 // client at render time: an approval clears it from the run's goroutine.
 // The skills segment is also read here, from the tools a turn would offer
-// (V1: it used to copy the skills panel, which only View() configured).
+// (V1: it used to copy the skills panel, which only View() configured), and
+// so is the session name (V16: it used to wait for the next git poll).
 func (m AppModel) statusLineView() string {
 	return m.statusLine.
 		SetPlan(m.planModeOn()).
 		SetSkills(m.toolsOffered(), len(m.getAvailableSkills())).
+		SetSession(m.statusSessionName()).
 		View()
 }
 

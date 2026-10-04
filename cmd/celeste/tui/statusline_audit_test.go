@@ -109,3 +109,29 @@ func TestStatusLineNarrowNeverWraps(t *testing.T) {
 		t.Errorf("narrow status line is %d rows, want 1:\n%s", h, out)
 	}
 }
+
+// V16: after /clear starts a new session, the status line drops the old
+// session's name at once instead of waiting for the next git poll.
+func TestStatusLineSessionFollowsClear(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m := newAuditApp(t, &fakeToolLLMClient{}, sz.w, sz.h)
+			mgr := &diskSessions{mgr: config.NewSessionManager()}
+			current := mgr.mgr.NewSession()
+			current.Name = "night-session"
+			m = m.SetSessionManager(mgr, current)
+			updated, _ := m.Update(GitStatusMsg{Repo: false})
+			m = updated.(AppModel)
+			if row := statusRow(t, auditView(m)); !strings.Contains(row, "night-session") {
+				t.Fatalf("status row before /clear = %q", row)
+			}
+
+			m = auditSend(t, m, "/clear")
+			frame := auditView(m)
+			if row := statusRow(t, frame); strings.Contains(row, "night-session") {
+				t.Errorf("status row after /clear still shows the old session: %q", row)
+			}
+			assertFrameFits(t, frame, sz.w, sz.h)
+		})
+	}
+}
