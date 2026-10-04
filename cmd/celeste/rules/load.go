@@ -19,8 +19,8 @@ type Section struct {
 // the grimoire's "## Stream Rules" sections in order. A later rule
 // replaces an earlier one of the same name,
 // and enabled: false removes it. A file that does not parse is skipped with
-// a warning; so is a rule whose only scope is thinking (no backend streams
-// thinking at 2.0).
+// a warning; so is a rule whose only scope is thinking (thinking-scope rules
+// are not wired to the model's reasoning yet).
 func Load(home string, grimoire []Section, warn func(string)) *Set {
 	if warn == nil {
 		warn = func(string) {}
@@ -32,7 +32,7 @@ func Load(home string, grimoire []Section, warn func(string)) *Set {
 			return
 		}
 		if onlyThinking(r) {
-			warn(fmt.Sprintf("stream rule %s (%s): scope thinking never fires in this build; skipped", r.Name, r.Source))
+			warn(fmt.Sprintf("stream rule %s (%s): scope thinking is not wired to the model's reasoning yet; skipped", r.Name, r.Source))
 			return
 		}
 		byName[r.Name] = r

@@ -17,7 +17,7 @@ type ScopeKind string
 
 const (
 	ScopeText     ScopeKind = "text"      // the model's streamed reply
-	ScopeThinking ScopeKind = "thinking"  // no backend streams thinking at 2.0: parsed, never fires
+	ScopeThinking ScopeKind = "thinking"  // not wired to the reasoning stream yet: parsed, never fires
 	ScopeToolArgs ScopeKind = "tool_args" // one argument of one tool's calls
 )
 
