@@ -1626,6 +1626,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if result.StateChange.ClearHistory {
 					m.chat = m.chat.Clear()
+					m.untrackPlan()
 				}
 				if result.StateChange.NewSession {
 					m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
@@ -1680,6 +1681,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "clear":
 			m.chat = m.chat.Clear()
+			m.untrackPlan()
 			m.status = m.status.SetText("Chat cleared")
 			return m, nil
 		case "help":
@@ -3064,6 +3066,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 			// Clear chat
 			m.chat = m.chat.Clear()
+			m.untrackPlan()
 
 			// Show success with short ID
 			if summary := s.SummarizeRaw(); summary != nil {
@@ -3105,6 +3108,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 				// Clear current chat
 				m.chat = m.chat.Clear()
+				m.untrackPlan()
 
 				// Restore messages
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
@@ -3245,6 +3249,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		if refresher, ok := m.llmClient.(PromptRefresher); ok {
 			refresher.RefreshSystemPrompt()
 		}
+		m.untrackPlan()
 		m.chat = m.chat.AddSystemMessage("🗑️  Session cleared, new session started")
 
 	case "merge":
