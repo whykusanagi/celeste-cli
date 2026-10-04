@@ -190,6 +190,21 @@ func TestWithRetryStallIsNotRetried(t *testing.T) {
 	}
 }
 
+// A provider that already reports the stall (its error wraps ErrStalled)
+// gets the stall message once, not twice.
+func TestWithRetryStallMessageIsNotRepeated(t *testing.T) {
+	err := withRetry(context.Background(), retryOpts{stall: 20 * time.Millisecond, timeout: time.Minute}, func(ctx context.Context) error {
+		<-ctx.Done()
+		return fmt.Errorf("%w after 20.4ms", context.Cause(ctx))
+	}, func(time.Duration) {})
+	if !errors.Is(err, ErrStalled) {
+		t.Fatalf("err = %v, want ErrStalled", err)
+	}
+	if n := strings.Count(err.Error(), ErrStalled.Error()); n != 1 {
+		t.Fatalf("stall message appears %d times: %v", n, err)
+	}
+}
+
 // However steadily a reply streams, one request is still bounded.
 func TestWithRetryHardCapBoundsAStreamingAttempt(t *testing.T) {
 	err := withRetry(context.Background(), retryOpts{stall: 30 * time.Millisecond, timeout: 80 * time.Millisecond}, func(ctx context.Context) error {

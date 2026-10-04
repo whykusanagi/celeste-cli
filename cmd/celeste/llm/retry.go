@@ -191,7 +191,12 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 		// model that is still busy (a local model prefilling) or a connection
 		// that is gone.
 		if attemptStalled {
-			return fmt.Errorf("%w for %s (the stall timeout); a slow local model may need longer: raise it with `celeste config --set-timeout <seconds>`: %w", ErrStalled, opts.stall, err)
+			const hint = "%w for %s (the stall timeout); a slow local model may need longer: raise it with `celeste config --set-timeout <seconds>`"
+			// A provider error that already says it stalled adds nothing.
+			if errors.Is(err, ErrStalled) {
+				return fmt.Errorf(hint, ErrStalled, opts.stall)
+			}
+			return fmt.Errorf(hint+": %w", ErrStalled, opts.stall, err)
 		}
 		if attemptTimedOut && opts.stall > 0 {
 			return fmt.Errorf("request still running after %s, the most one request may take; shorten the request: %w", opts.timeout, err)
