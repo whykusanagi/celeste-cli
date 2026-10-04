@@ -31,9 +31,21 @@ var ModelLimits = map[string]int{
 	"claude-opus-4-8":   1000000,
 	"claude-opus-4-7":   1000000,
 	"claude-opus-4-6":   1000000,
+	"claude-sonnet-5-5": 1000000,
 	"claude-sonnet-5":   1000000,
 	"claude-sonnet-4-6": 1000000,
 	"claude-haiku-4-5":  200000,
+	// Dated snapshot IDs and the 4.5-and-earlier line (#319). The registry's
+	// default Anthropic model is a dated ID, so it fell back to the 128K
+	// guess. These are 200K without the 1M-context beta, which celeste
+	// never sends.
+	"claude-haiku-4-5-20251001":  200000,
+	"claude-sonnet-4-5":          200000,
+	"claude-sonnet-4-5-20250929": 200000,
+	"claude-opus-4-5":            200000,
+	"claude-opus-4-5-20251101":   200000,
+	"claude-opus-4-1":            200000,
+	"claude-opus-4-1-20250805":   200000,
 	// xAI Grok — current generation (from /v1/models API, 2026-04)
 	"grok-build-0.1":              256000,  // grok code model — 256K context
 	"grok-4-1-fast":               2000000, // dead (migrated away on load); kept for old logs
@@ -50,6 +62,12 @@ var ModelLimits = map[string]int{
 	"fugu":                1000000,
 	"fugu-ultra":          1000000,
 	"fugu-ultra-20260615": 1000000, // dated alias pin of fugu-ultra
+	// Google defaults (AI Studio alias and the Vertex default): 1M input.
+	"gemini-flash-latest": 1048576,
+	"gemini-2.0-flash":    1048576,
+	// OpenRouter's default, under its vendor-prefixed ID (OpenRouter lists
+	// a 1,047,576-token window for it).
+	"openai/gpt-4.1-nano": 1047576,
 	// Venice-unique models (from docs.venice.ai/models/text, 2026-04)
 	"venice-uncensored":                    32000,
 	"venice-uncensored-role-play":          128000,
