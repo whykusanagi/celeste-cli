@@ -39,8 +39,8 @@ func tallAskApp(t *testing.T, h int) tea.Model {
 	m, _ = m.Update(AskRequestMsg{
 		Question: tallPlanQuestion(12),
 		Options: []AskOption{
-			{Label: "Approve and start", Description: "Save the plan."},
 			{Label: "Keep planning", Description: "Stay in plan mode."},
+			{Label: "Approve and start", Description: "Save the plan."},
 		},
 		Response: make(chan AskResponseMsg, 1),
 	})

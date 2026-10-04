@@ -30,7 +30,9 @@ func TestSubmitPlanApproveWritesPlanAndTodos(t *testing.T) {
 		!strings.Contains(asked.Question, "2. implement") {
 		t.Fatalf("question = %q", asked.Question)
 	}
-	if len(asked.Options) != 2 || asked.Options[0].Label != "Approve and start" || asked.Options[1].Label != "Keep planning" {
+	// The safe answer comes first: the ask modal pre-selects the first
+	// option, and Enter on the default must never approve.
+	if len(asked.Options) != 2 || asked.Options[0].Label != "Keep planning" || asked.Options[1].Label != "Approve and start" {
 		t.Fatalf("options = %+v", asked.Options)
 	}
 	plan, err := LoadPlan(ws)
