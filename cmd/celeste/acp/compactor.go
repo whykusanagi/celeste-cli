@@ -64,23 +64,25 @@ func (c *compactor) Compact(ctx context.Context, history []tui.ChatMessage, usag
 	if last := c.budget.LastPromptTokens; last > used {
 		used = last // the provider's count includes tool schemas the estimate misses
 	}
+	overhead = used - compact.Estimate(msgs) // the prefix as the provider counts it
 	var notes []string
 	changed := false
 	if c.store != nil {
-		pruned, res := compact.Prune(msgs, compact.Options{Window: c.budget.ModelLimit, Used: used, Force: force}, c.store)
+		pruned, res := compact.Prune(msgs, compact.Options{Window: c.budget.ModelLimit, Used: used, Overhead: overhead, Force: force}, c.store)
 		if res.Pruned() {
 			msgs, changed = pruned, true
 			c.budget.RecordCompaction(compact.Estimate(msgs))
 			notes = append(notes, "context compacted: "+res.Summary())
 		}
 	}
-	stillOver := compact.Estimate(msgs)+overhead > compact.Threshold(c.budget.ModelLimit)
+	// Over the overhead-aware threshold with history to replace (L2).
+	stillOver := compact.NeedsSummary(msgs, c.budget.ModelLimit, compact.Estimate(msgs)+overhead)
 	if c.summarize == nil || !(stillOver || (force && !changed)) {
 		return msgs, notes, changed
 	}
 	summarize, blocked := c.hookedSummarize()
 	sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-	out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{}, summarize)
+	out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: c.budget.ModelLimit, Overhead: overhead}, summarize)
 	cancel()
 	if reason := blocked(); reason != "" {
 		notes = append(notes, "compaction blocked by a PreCompact hook: "+reason)
