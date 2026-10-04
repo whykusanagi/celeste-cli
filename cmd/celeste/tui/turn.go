@@ -472,8 +472,8 @@ func (m AppModel) onTurnDone(msg TurnDoneMsg) (AppModel, tea.Cmd) {
 		m.chat = m.chat.AddSystemMessage(msg.Notice)
 		m.status = m.status.SetText("Stopped")
 	case msg.Stop == "error" && msg.Err != nil:
-		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
-		line := fmt.Sprintf("Error: %v", msg.Err)
+		m.status = m.status.SetText("Error: " + errorText(msg.Err))
+		line := "Error: " + errorText(msg.Err)
 		var unanswered bool
 		if m.chat, unanswered = m.chat.MarkUnanswered(); unanswered {
 			line += "\nYour message got no reply. To retry, send it again: it is not sent twice."

@@ -1678,7 +1678,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.modelTrial, m.modelBeforeTrial = *result.StateChange.Model, m.model
 					m.model = *result.StateChange.Model
 					m.modelPinned = result.StateChange.PinModel
-					m.header = m.header.SetModel(m.model)
+					m.header = m.header.SetModel(m.model).SetModelUnverified(result.StateChange.ModelUnverified)
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to %s", m.model))
 
 					// A ToolsPerModel provider (Venice) only knows tool
@@ -2436,9 +2436,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.Err != nil {
-			m.status = m.status.SetText(fmt.Sprintf("Agent error: %v", msg.Err))
+			m.status = m.status.SetText("Agent error: " + errorText(msg.Err))
 			if strings.TrimSpace(msg.Output) == "" {
-				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %v", msg.Err))
+				m.chat = m.chat.AddSystemMessage("❌ Agent error: " + errorText(msg.Err))
 			}
 		} else {
 			m.status = m.status.SetText("Agent run complete")
@@ -2609,7 +2609,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case ErrorMsg:
-		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
+		m.status = m.status.SetText("Error: " + errorText(msg.Err))
 	}
 
 	// Keep ticks alive while tool progress entries are active so spinners
@@ -3480,6 +3480,7 @@ type HeaderModel struct {
 	imageModel       string           // Image generation model (NSFW mode)
 	autoRouted       bool             // Whether the last message was auto-routed
 	skillsEnabled    bool             // Whether skills/function calling is available
+	modelUnverified  bool             // a /set-model --force name nothing validated (V5)
 	contextIndicator ContextIndicator // Token usage display
 	showContext      bool             // Whether to show context usage
 }
@@ -3507,9 +3508,20 @@ func (m HeaderModel) SetEndpoint(endpoint string) HeaderModel {
 	return m
 }
 
-// SetModel sets the current model.
+// SetModel sets the current model. A new model is verified until
+// SetModelUnverified says otherwise.
 func (m HeaderModel) SetModel(model string) HeaderModel {
+	if model != m.model {
+		m.modelUnverified = false
+	}
 	m.model = model
+	return m
+}
+
+// SetModelUnverified marks the current model as one nothing validated (a
+// /set-model --force name no catalog lists): the header shows "?", not ✓.
+func (m HeaderModel) SetModelUnverified(unverified bool) HeaderModel {
+	m.modelUnverified = unverified
 	return m
 }
 
@@ -3575,7 +3587,9 @@ func (m HeaderModel) View() string {
 		}
 		// Add capability indicator
 		modelDisplay := m.model
-		if m.skillsEnabled {
+		if m.modelUnverified {
+			modelDisplay += " ?" // forced, never validated
+		} else if m.skillsEnabled {
 			modelDisplay += " ✓" // Checkmark for skills enabled
 		} else {
 			modelDisplay += " ⚠" // Warning for no skills
@@ -3717,7 +3731,8 @@ func oneLine(s string) string {
 }
 
 // errorText is err's message for the status bar and chat, which already
-// say "Error: ". go-openai's API errors begin "error, status code: …".
+// say "Error: ". go-openai's API errors begin "error, status code: …", at
+// the start or, wrapped, after the wrapper's own "…: ".
 func errorText(err error) string {
 	if err == nil {
 		return ""
@@ -3726,7 +3741,7 @@ func errorText(err error) string {
 	if len(msg) > 7 && strings.EqualFold(msg[:7], "error, ") {
 		msg = msg[7:]
 	}
-	return msg
+	return strings.ReplaceAll(msg, ": error, status code: ", ": status code: ")
 }
 
 // getWarningStyle returns the appropriate style for the warning level.
