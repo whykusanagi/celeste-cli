@@ -559,8 +559,10 @@ When the modal appears, press one of:
 | `D` | Always deny this tool (persists a deny rule) |
 
 Nothing is pre-selected: Enter on its own does nothing. Typing into the
-modal never answers it. A key after `a` or `A` cancels the pick, and any
-other printable key (or a paste) is ignored with a hint until you press Enter.
+modal never answers it. Any printable key after `a` or `A` cancels the pick
+(Esc denies). Any other printable key (or a paste) starts typing mode: every
+key, `d` and `D` included, is ignored with a hint until you press Enter, and
+Esc still denies.
 
 In headless or non-TUI contexts, any tool that would trigger the modal is **denied by default** — the gate cannot be silently bypassed.
 

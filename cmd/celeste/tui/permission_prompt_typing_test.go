@@ -151,3 +151,20 @@ func TestPermissionPromptBorderIsClosed(t *testing.T) {
 var ansiSeq = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 
 func stripANSI(s string) string { return ansiSeq.ReplaceAllString(s, "") }
+
+// While typing, d and D are text too (prose like "hello Dan" must not save
+// an always-deny rule), so the hint must not promise they deny at once: it
+// says to press Enter first, and that Esc denies now.
+func TestPermissionPromptTypedHintMatchesKeys(t *testing.T) {
+	ch := make(chan PermissionResponse, 1)
+	m := openPermission(ch, 200)
+	m = typePermission(m, "/x")
+	view := stripANSI(m.View())
+	assert.Contains(t, view, "Press Enter, then a or A and Enter to allow, or d or D to deny")
+	assert.Contains(t, view, "Esc denies now")
+	for _, key := range []rune{'d', 'D'} {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		_, ok := pendingPermission(ch)
+		require.False(t, ok, "%c answered while typing", key)
+	}
+}

@@ -30,8 +30,10 @@ type PermissionPromptModel struct {
 	pick PermissionResponse
 }
 
-// permissionTypedHint is shown while typed keys are being ignored.
-const permissionTypedHint = "Typing is ignored here. Press a or A then Enter to allow, d or D to deny (Enter dismisses this hint, Esc denies)"
+// permissionTypedHint is shown while typed keys are being ignored. d and D
+// are text here too (prose like "hello Dan" must not save a deny rule), so
+// the prompt's keys work again only after Enter; Esc denies at once.
+const permissionTypedHint = "Typing is ignored here. Press Enter, then a or A and Enter to allow, or d or D to deny (Esc denies now)"
 
 // NewPermissionPromptModel creates a new permission prompt model.
 func NewPermissionPromptModel() PermissionPromptModel {
