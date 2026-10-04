@@ -189,6 +189,69 @@ func (m ChatModel) DropUser(content string, ts time.Time) ChatModel {
 	return m
 }
 
+// MetaUnanswered marks a prompt whose turn failed before anything followed
+// it (L5). Sending the same text again retries that prompt instead of
+// adding a second copy.
+const MetaUnanswered = "unanswered"
+
+// lastPrompt returns the index of the last LLM message, skipping an empty
+// reply bubble, when it is a visible user prompt; otherwise -1.
+func (m ChatModel) lastPrompt() int {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == "system" || isCompacted(msg) || IsEmptyReply(msg) {
+			continue
+		}
+		if hidden, _ := msg.Metadata["hidden"].(bool); msg.Role != "user" || hidden {
+			return -1
+		}
+		return i
+	}
+	return -1
+}
+
+// withMeta returns m with message i's metadata key set to v (nil deletes
+// it). The map is copied: the loop's history may share it.
+func (m ChatModel) withMeta(i int, key string, v any) ChatModel {
+	msgs := append([]ChatMessage(nil), m.messages...)
+	meta := make(map[string]any, len(msgs[i].Metadata)+1)
+	for k, val := range msgs[i].Metadata {
+		meta[k] = val
+	}
+	if v == nil {
+		delete(meta, key)
+	} else {
+		meta[key] = v
+	}
+	msgs[i].Metadata = meta
+	m.messages = msgs
+	return m
+}
+
+// MarkUnanswered marks the last prompt unanswered when a failed turn added
+// nothing after it, and reports whether it did.
+func (m ChatModel) MarkUnanswered() (ChatModel, bool) {
+	i := m.lastPrompt()
+	if i < 0 {
+		return m, false
+	}
+	return m.withMeta(i, MetaUnanswered, true), true
+}
+
+// ReuseUnanswered reports whether the last prompt is an unanswered one with
+// this content; if so it clears the mark, so the retry sends that prompt
+// rather than a copy of it.
+func (m ChatModel) ReuseUnanswered(content string) (ChatModel, bool) {
+	i := m.lastPrompt()
+	if i < 0 || m.messages[i].Content != content {
+		return m, false
+	}
+	if u, _ := m.messages[i].Metadata[MetaUnanswered].(bool); !u {
+		return m, false
+	}
+	return m.withMeta(i, MetaUnanswered, nil), true
+}
+
 // AddAssistantMessage adds an assistant message to the chat.
 func (m ChatModel) AddAssistantMessage(content string) ChatModel {
 	return m.AddAssistantMessageWithToolCalls(content, nil)
