@@ -171,3 +171,43 @@ func TestSubmitPlanRollsBackTodosWhenThePlanCannotBeSaved(t *testing.T) {
 		t.Fatalf("todos = %+v", items)
 	}
 }
+
+// #325: the approval tells the model which todo id each step became and
+// how to tick it, so it updates the list as it works. The ids are the
+// store's real ones, not 1..n.
+func TestSubmitPlanApprovalTellsTheModelHowToTickSteps(t *testing.T) {
+	ws := t.TempDir()
+	store := NewTodoStore(ws)
+	store.Create("existing", "")
+	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
+		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
+	}
+	tool := NewSubmitPlanTool(ws, ask, func() {})
+	tool.Todos = store
+	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{
+		map[string]any{"title": "write tests"}, map[string]any{"title": "implement"},
+	}}, nil)
+	if res.Error || !strings.HasPrefix(res.Content, "Plan approved: 2 todo items created") {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, want := range []string{
+		"1. write tests (todo id 2)",
+		"2. implement (todo id 3)",
+		`{"action":"update","id":<id>,"status":"in_progress"}`,
+		`{"action":"update","id":<id>,"status":"done"}`,
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("approval lacks %q:\n%s", want, res.Content)
+		}
+	}
+}
+
+// #325: the todo tool's description says plan steps are todo items to tick.
+func TestTodoDescriptionCoversPlanSteps(t *testing.T) {
+	d := NewTodoTool("").Description()
+	for _, want := range []string{"submit_plan", "in_progress when you start", "done as soon as you finish"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("todo description lacks %q:\n%s", want, d)
+		}
+	}
+}

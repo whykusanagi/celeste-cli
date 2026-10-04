@@ -240,12 +240,24 @@ func (t *SubmitPlanTool) Execute(ctx context.Context, input map[string]any, _ ch
 	if t.approved != nil {
 		t.approved()
 	}
-	first, last := steps[0].TodoID, steps[len(steps)-1].TodoID
-	ids := fmt.Sprintf("id %d", first)
-	if first != last {
-		ids = fmt.Sprintf("ids %d–%d", first, last)
-	}
 	// "Plan approved:" also tells the chat a resumed session's plan was
 	// approved (tui.planApprovedPrefix).
-	return tools.ToolResult{Content: fmt.Sprintf("Plan approved: %d todo items created (%s). Plan mode is off; start with step 1.", len(steps), ids)}, nil
+	return tools.ToolResult{Content: approvedResult(steps)}, nil
+}
+
+// approvedResult is submit_plan's result for an approved plan: the steps
+// with the todo id each became, and how to tick them (#325: without the
+// ids and the exact call, models carried out the plan and never updated
+// the list).
+func approvedResult(steps []PlanStep) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Plan approved: %d todo items created. Plan mode is off; start with step 1.\n\n", len(steps))
+	b.WriteString("Each step is a todo item. Keep its status current with the todo tool as you work:\n")
+	b.WriteString(`- when you start a step: todo {"action":"update","id":<id>,"status":"in_progress"}` + "\n")
+	b.WriteString(`- as soon as it is finished, before the next step: todo {"action":"update","id":<id>,"status":"done"}` + "\n\n")
+	b.WriteString("Steps:\n")
+	for i, s := range steps {
+		fmt.Fprintf(&b, "%d. %s (todo id %d)\n", i+1, s.Title, s.TodoID)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

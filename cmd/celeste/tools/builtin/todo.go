@@ -159,6 +159,8 @@ func NewTodoTool(workspace string) *TodoTool {
 			ToolDescription: "Manage a persistent task list for tracking work.\n\n" +
 				"Tasks persist to .celeste/tasks.json so they survive session restarts and compaction.\n" +
 				"Use this to break complex work into steps and track progress.\n\n" +
+				"An approved plan's steps (submit_plan) are todo items: update each one to in_progress when you start it " +
+				"and to done as soon as you finish it, before moving on, so the user can follow your progress.\n\n" +
 				"Actions:\n" +
 				"- create: Add a new task (requires title)\n" +
 				"- update: Change task status by ID (pending, in_progress, done)\n" +

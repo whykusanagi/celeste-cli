@@ -265,3 +265,44 @@ func TestAdapterSkillsFollowPlanMode(t *testing.T) {
 		t.Fatalf("plan mode on: skills = %v", on)
 	}
 }
+
+// #325: after approval the model is told each step's todo id and how to
+// tick it, and a model that follows that (scripted here) ticks the plan's
+// items through the todo tool on the same turn.
+func TestApprovedPlanTodosGetTicked(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "p", Name: "submit_plan",
+			Args: `{"steps":[{"title":"write tests"},{"title":"implement"}]}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "t1", Name: "todo", Args: `{"action":"update","id":1,"status":"in_progress"}`}}},
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "t2", Name: "todo", Args: `{"action":"update","id":1,"status":"done"}`}}},
+		fakeprovider.Turn{Text: "step 1 done"})
+	_, deps, ws := chatApp(t, srv)
+	deps.registry.SetAskFunc(func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
+		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
+	})
+	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
+		return tools.PermissionResponse{Decision: "allow_once"}
+	})
+	deps.adapter.SetPlanMode(true, "")
+	runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("plan it"), Tools: true, Run: 1})
+	reqs := srv.Requests()
+	if len(reqs) != 4 {
+		t.Fatalf("requests = %d", len(reqs))
+	}
+	if !hasName(offeredTools(t, reqs[1]), "todo") {
+		t.Fatal("after approval the todo tool should be offered")
+	}
+	seen := fmt.Sprint(reqs[1].Body["messages"])
+	for _, want := range []string{"1. write tests (todo id 1)", "2. implement (todo id 2)", `"status":"done"`} {
+		if !strings.Contains(seen, want) {
+			t.Fatalf("the approval the model saw lacks %q:\n%s", want, seen)
+		}
+	}
+	items := builtin.NewTodoStore(ws).List()
+	if len(items) != 2 || items[0].Status != "done" || items[1].Status != "pending" {
+		t.Fatalf("todos = %+v", items)
+	}
+	if got := deps.adapter.ShowPlan(); !strings.Contains(got, "[x] 1. write tests") {
+		t.Fatalf("plan show = %s", got)
+	}
+}
