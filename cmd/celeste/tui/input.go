@@ -33,9 +33,9 @@ var knownSubcommands = map[string][]string{
 	"voice":   {"list", "set-key", "set-voice"},
 	"user":    {"reset"},
 	"session": {"new", "resume", "list", "clear", "merge", "info", "rename", "delete"},
-	"agent":   {"list-runs", "resume", "kill"},
+	"agent":   {"list-runs", "resume"}, // kill lives on /agents (W-A1)
 	"agents":  {"resume", "kill"},
-	"plan":    {"off", "show"},
+	"plan":    {"off", "show", "help"},
 	"init":    {"agents"},
 }
 

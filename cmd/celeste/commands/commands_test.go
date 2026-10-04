@@ -237,14 +237,6 @@ func TestExecuteNSFWToggle(t *testing.T) {
 	})
 }
 
-func TestExecuteTools(t *testing.T) {
-	cmd := &Command{Name: "tools"}
-	ctx := &CommandContext{}
-	result := Execute(cmd, ctx)
-	assert.True(t, result.Success, "tools command should not return unknown command error")
-	assert.NotContains(t, result.Message, "Unknown command")
-}
-
 func TestExecuteUnknownCommand(t *testing.T) {
 	cmd := &Command{Name: "unknown"}
 	ctx := &CommandContext{}

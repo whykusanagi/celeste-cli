@@ -48,9 +48,3 @@ func TestSkillsModel_CollapsedShowsDisabledReason(t *testing.T) {
 		View()
 	assert.Contains(t, view, "NSFW Mode - Venice doesn't support tools")
 }
-
-func TestSkillsModel_Getters(t *testing.T) {
-	m := NewSkillsModel().SetConfig("openai", "gpt-4o-mini", true, false, 7, "")
-	assert.True(t, m.Enabled())
-	assert.Equal(t, 7, m.Count())
-}

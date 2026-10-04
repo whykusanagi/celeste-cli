@@ -550,6 +550,13 @@ func wrapText(text string, width int) string {
 			result.WriteString("\n")
 		}
 
+		// A line that already fits is kept as written, so the column
+		// alignment of command help and tables survives.
+		if lipgloss.Width(line) <= width {
+			result.WriteString(strings.TrimRight(line, " \t"))
+			continue
+		}
+
 		words := strings.Fields(line)
 		if len(words) == 0 {
 			continue

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // summaryTimeout bounds a compaction summary request.
@@ -246,11 +248,24 @@ func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 		}
 	}
 	m.chat = m.chat.Clear()
+	m = m.resetContextForNewSession()
+	m.input = m.input.SetValue(msg.Text)
+	m.chat = m.chat.AddSystemMessage("🤝 New session started. The handoff notes are in the input: edit them and press Enter to send.")
+	return m
+}
+
+// resetContextForNewSession starts the token tracking over for the session
+// /handoff, /clear or /session new just opened: a fresh tracker bound to it (the old one kept writing
+// the old session's token count and turn counter), a zeroed header, and a
+// context bar that keeps only the window size (V15).
+func (m AppModel) resetContextForNewSession() AppModel {
 	if m.contextTracker != nil {
+		if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+			m.contextTracker = config.NewContextTracker(s, m.contextTracker.Model, m.contextTracker.MaxTokens)
+		}
 		m.contextTracker.CurrentTokens = 0
 		m.header = m.header.SetContextUsage(0, m.contextTracker.MaxTokens)
 	}
-	m.input = m.input.SetValue(msg.Text)
-	m.chat = m.chat.AddSystemMessage("🤝 New session started. The handoff notes are in the input: edit them and press Enter to send.")
+	m.contextBar = m.contextBar.resetUsage()
 	return m
 }

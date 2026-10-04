@@ -94,6 +94,9 @@ func (a *TUIClientAdapter) RunAgentCommand(args []string, run uint64) tea.Cmd {
 			return tui.AgentCommandResultMsg{Output: agentUsage(), Err: fmt.Errorf("missing arguments"), AgentRun: run}
 		}
 	}
+	// Every case but resume answers without running the agent; the TUI's
+	// isAgentInfoCommand must list the same words, or the chat announces
+	// a run that never starts (TestAgentInfoCommandsMatchRunAgentCommand).
 	sub := strings.ToLower(strings.TrimSpace(args[0]))
 	switch sub {
 	case "help", "--help", "-h":
