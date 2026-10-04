@@ -185,6 +185,9 @@ type AppModel struct {
 	agentActive bool
 	agentRun    uint64
 	agentSeq    uint64
+	// agentInfoOnly: the current /agent command only reports (help,
+	// list-runs), so its result does not say a run completed (N5).
+	agentInfoOnly bool
 
 	// The run each modal belongs to (none: it stays until answered). When
 	// that run ends, its modal is answered (deny, cancelled) and closed, so
@@ -981,7 +984,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				// list-runs and help only report; a goal or resume runs the agent.
-				if !isAgentInfoCommand(cmd.Args[0]) {
+				m.agentInfoOnly = isAgentInfoCommand(cmd.Args[0])
+				if !m.agentInfoOnly {
 					m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
 				}
 
@@ -2442,9 +2446,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.TrimSpace(msg.Output) == "" {
 				m.chat = m.chat.AddSystemMessage("❌ Agent error: " + errorText(msg.Err))
 			}
+		} else if m.agentInfoOnly {
+			m.status = m.status.SetText("Ready") // nothing ran (N5)
 		} else {
 			m.status = m.status.SetText("Agent run complete")
 		}
+		m.agentInfoOnly = false
 
 		m.persistSession()
 
