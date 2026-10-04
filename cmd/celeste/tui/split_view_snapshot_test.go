@@ -24,7 +24,7 @@ func splitViewWithPrompt(t *testing.T, w, h int) string {
 	t.Setenv("USERPROFILE", home)
 	var m tea.Model = NewApp(nil)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: w, Height: h})
-	m, _ = m.Update(OrchestratorEventMsg{Kind: 0, Lane: "unknown", Text: "10% confidence"})
+	m, _ = m.Update(OrchestratorEventMsg{Kind: 0, Lane: "unknown", Text: "no lane matched · default model"})
 	m, _ = m.Update(OrchestratorEventMsg{Kind: 1, Lane: "unknown", Model: "fugu", Text: "primary agent"})
 	m, _ = m.Update(OrchestratorEventMsg{Kind: 1, Model: "fugu", Text: "turn 1/50"})
 	m, _ = m.Update(OrchestratorEventMsg{Kind: 1, Model: "fugu", Text: "↩ turn 1 with a long summary line that runs well past the width of the left pane at either size", Response: "I will print a greeting.\n" + strings.Repeat("a very long line of model output that must be cut at the pane edge ", 4)})

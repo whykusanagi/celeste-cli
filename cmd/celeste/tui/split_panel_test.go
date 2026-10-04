@@ -76,3 +76,24 @@ func TestSplitPanelViewIsExactlyItsSize(t *testing.T) {
 		}
 	}
 }
+
+// Under 40 columns the feed alone is shown: an entry holding newlines (a
+// multi-line verdict) must not make it taller than the panel.
+func TestSplitPanelNarrowCapsRowsNotEntries(t *testing.T) {
+	p := NewSplitPanel(30, 4)
+	p.AddAction("first")
+	p.AddAction("verdict line 1\nverdict line 2\nverdict line 3")
+	p.AddAction("last")
+	lines := strings.Split(p.View(), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("narrow view is %d rows, want 4: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[3], "last") || !strings.Contains(lines[0], "verdict line 1") {
+		t.Errorf("narrow view = %q, want the latest 4 rows", lines)
+	}
+	for i, l := range lines {
+		if w := ansi.StringWidth(l); w > 30 {
+			t.Errorf("row %d is %d wide", i, w)
+		}
+	}
+}

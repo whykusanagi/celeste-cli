@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -311,13 +312,14 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 // 40 columns: still no wider or taller than the panel.
 func (s *SplitPanel) viewNarrow() string {
 	rows := max(s.height, 1)
-	acts := s.actions
-	if len(acts) > rows {
-		acts = acts[len(acts)-rows:]
+	// Cap rows, not entries: an entry may hold several lines (a verdict).
+	var lines []string
+	for i := len(s.actions) - 1; i >= 0 && len(lines) < rows; i-- {
+		parts := strings.Split(s.actions[i], "\n")
+		for j := len(parts) - 1; j >= 0 && len(lines) < rows; j-- {
+			lines = append(lines, fitLine(parts[j], s.width))
+		}
 	}
-	lines := make([]string, len(acts))
-	for i, a := range acts {
-		lines[i] = fitLine(a, s.width)
-	}
+	slices.Reverse(lines)
 	return strings.Join(lines, "\n")
 }

@@ -2200,10 +2200,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Kind {
 		case 0: // EventClassified
 			if msg.Lane == "unknown" {
-				// No lane keyword matched: say so, not "unknown" with
-				// the heuristic's placeholder confidence.
-				m.splitPanel.AddAction("── no lane matched · default model ──")
-				m.status = m.status.SetText("Orchestrator: no lane matched · default model")
+				// No lane keyword matched: show the orchestrator's text
+				// for that, not the lane name "unknown".
+				m.splitPanel.AddAction(fmt.Sprintf("── %s ──", msg.Text))
+				m.status = m.status.SetText("Orchestrator: " + msg.Text)
 			} else {
 				m.splitPanel.AddAction(fmt.Sprintf("── %s · %s ──", msg.Lane, msg.Text))
 				m.status = m.status.SetText(fmt.Sprintf("Orchestrator: [%s] %s", msg.Lane, msg.Text))
@@ -2224,7 +2224,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Response != "" {
 				m.splitPanel.SetOutput(msg.Response)
 			}
-			statusText := fmt.Sprintf("Orchestrator: %s", msg.Text)
+			statusText := "Orchestrator: " + msg.Text
+			if msg.Model != "" {
+				statusText = fmt.Sprintf("Orchestrator: [%s] %s", msg.Model, msg.Text)
+			}
 			if m.orchInputTokens > 0 {
 				statusText += fmt.Sprintf(" · ↑%s ↓%s total", formatOrchestratorTokens(m.orchInputTokens), formatOrchestratorTokens(m.orchOutputTokens))
 			}
