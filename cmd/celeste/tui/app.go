@@ -449,6 +449,22 @@ func (m AppModel) syncStatusLine() AppModel {
 	return m
 }
 
+// costsSummary is the /costs text. Before the first reply the context bar
+// has no numbers yet, so it falls back to the tracker, and says the limit is
+// unknown rather than "0 limit" when neither knows it (V13).
+func (m AppModel) costsSummary() string {
+	used, limit := m.contextBar.usedTokens, m.contextBar.maxTokens
+	if limit == 0 && m.contextTracker != nil {
+		used, limit = m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens
+	}
+	tokens := fmt.Sprintf("%d used / %d limit", used, limit)
+	if limit == 0 {
+		tokens = fmt.Sprintf("%d used (limit known after the first reply)", used)
+	}
+	return fmt.Sprintf("Session Costs:\n  Tokens: %s\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
+		tokens, m.contextBar.turnCount)
+}
+
 // statusSessionName is the session segment: the current session's name, or
 // "" when it has none.
 func (m AppModel) statusSessionName() string {
@@ -1089,8 +1105,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "costs":
-				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Session Costs:\n  Tokens: %d used / %d limit\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
-					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount))
+				m.chat = m.chat.AddSystemMessage(m.costsSummary())
 				return m, nil
 
 			case "init":
