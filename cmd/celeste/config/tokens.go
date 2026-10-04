@@ -6,7 +6,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"sync"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
@@ -95,7 +94,8 @@ func UnknownContextNotice(model string, limit int) string {
 	if _, seen := unknownContextWarned.LoadOrStore(model, true); seen {
 		return ""
 	}
-	msg := fmt.Sprintf("Unknown model %q: assuming a %s context window. Set \"context_limit\" in your config if that's wrong.", model, FormatTokenCount(limit))
-	log.Printf("[config] %s", msg)
-	return msg
+	// Not logged here: the standard logger writes to the terminal, under
+	// the TUI's alternate screen, where it left fragments of this line
+	// (#319). Callers show it: the TUI in the chat, the agent on stderr.
+	return fmt.Sprintf("Unknown model %q: assuming a %s context window. Set \"context_limit\" in your config if that's wrong.", model, FormatTokenCount(limit))
 }

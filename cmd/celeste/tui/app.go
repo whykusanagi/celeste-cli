@@ -2779,7 +2779,10 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 					m.contextTracker = config.NewContextTracker(configSession, model, resolved)
 					if !known {
 						if notice := config.UnknownContextNotice(model, resolved); notice != "" {
-							m.chat = m.chat.AddSystemMessage("⚠️ " + notice)
+							// "⚠" without the emoji selector: width
+							// functions disagree on "⚠️" (#319).
+							LogInfo(notice)
+							m.chat = m.chat.AddSystemMessage("⚠ " + notice)
 						}
 					}
 				} else {
