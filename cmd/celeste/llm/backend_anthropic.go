@@ -48,6 +48,7 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 
 	opts := []option.RequestOption{
 		option.WithAPIKey(config.APIKey),
+		option.WithHTTPClient(newHTTPClient()),
 	}
 	if base := anthropicSDKBaseURL(config.BaseURL); base != "" {
 		opts = append(opts, option.WithBaseURL(base))
