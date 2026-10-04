@@ -1275,7 +1275,9 @@ func runConfigCommand(args []string) {
 			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
 		} else {
 			limit, known := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, 0)
-			if known {
+			if known && providers.DetectProvider(cfg.BaseURL) == "local" {
+				fmt.Printf("  Context Limit:     %d tokens (reported by the server)\n", limit)
+			} else if known {
 				fmt.Printf("  Context Limit:     %d tokens (model default)\n", limit)
 			} else {
 				fmt.Printf("  Context Limit:     %d tokens (fallback, model unknown, set --set-context-limit)\n", limit)

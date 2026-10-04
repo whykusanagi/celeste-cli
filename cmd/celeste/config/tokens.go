@@ -70,7 +70,9 @@ func FormatTokenCount(tokens int) string {
 // ResolveContextLimit returns the effective context window and whether that
 // number is actually knowledge.
 //
-// An explicit override always wins. Local endpoints get ctxmgr.LocalDefaultLimit
+// An explicit override always wins. A local endpoint whose server reports
+// its window (the probe EnableLocalWindowProbe installs) gets that.
+// Otherwise local endpoints get ctxmgr.LocalDefaultLimit
 // even when the model name is in the table: a local server names its model
 // whatever it likes, so a hit is coincidence. That mattered in practice — a
 // fresh profile inherits the seed default's model (fugu), so pointing it at a
@@ -81,6 +83,10 @@ func ResolveContextLimit(baseURL, model string, override int) (limit int, known 
 		return override, true
 	}
 	if providers.DetectProvider(baseURL) == "local" {
+		// The server's own answer, when it gives one (#310).
+		if n := localWindow(baseURL, model); n > 0 {
+			return n, true
+		}
 		return ctxmgr.LocalDefaultLimit, false
 	}
 	return LookupModelLimit(model)

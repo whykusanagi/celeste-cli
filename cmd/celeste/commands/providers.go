@@ -368,7 +368,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "local":
 		output.WriteString("  • mlx-vlm, Ollama, LM Studio, llama.cpp\n")
 		output.WriteString("  • Set the model your server expects (mlx-vlm wants the full path)\n")
-		output.WriteString("  • Set context_limit: the window is unknown (8192 fallback)\n")
+		output.WriteString("  • The window is the one the server reports (Ollama, llama.cpp, LM Studio); otherwise set context_limit (8192 fallback)\n")
 		output.WriteString("  • Cost shows $0: local models have no pricing\n")
 	case "elevenlabs":
 		output.WriteString("  • Voice synthesis API\n")
