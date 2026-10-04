@@ -994,10 +994,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.agentSeq++
 				m.agentRun = m.agentSeq
 				m.status = m.status.SetStreaming(true)
-				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				// list-runs and help only report; a goal or resume runs the agent.
 				m.agentInfoOnly = isAgentInfoCommand(cmd.Args[0])
 				if !m.agentInfoOnly {
+					m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 					m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
 				}
 
@@ -1452,7 +1452,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, func() tea.Msg {
 						voices, err := fetchElevenLabsVoices(apiKey)
 						if err != nil {
-							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Failed: %v", err)}
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: "Failed: " + errorText(err)}
 						}
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: voices}
 					}
@@ -1505,7 +1505,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, func() tea.Msg {
 						result, err := resumer.ResumeSubagent(context.Background(), checkpointID)
 						if err != nil {
-							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resume failed: %v", err)}
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: "Resume failed: " + errorText(err)}
 						}
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resumed subagent completed.\n\n%s", result)}
 					}
@@ -2397,8 +2397,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streaming = false
 			m.splitPanelMode = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText(fmt.Sprintf("Orchestrator error: %s", msg.Text))
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ %s", msg.Text))
+			text := cleanErrorText(msg.Text)
+			m.status = m.status.SetText("Orchestrator error: " + text)
+			m.chat = m.chat.AddSystemMessage("❌ " + text)
 			m.persistSession()
 		}
 
@@ -3581,8 +3582,9 @@ func (m HeaderModel) View() string {
 			modelDisplay += " ?" // forced, never validated
 		} else if m.skillsEnabled {
 			modelDisplay += " ✓" // Checkmark for skills enabled
-		} else {
-			modelDisplay += " ⚠" // Warning for no skills
+		}
+		if !m.skillsEnabled {
+			modelDisplay += " ⚠" // Warning for no skills, verified or not
 		}
 		endpointInfo += ModelStyle.Render(modelDisplay)
 	}
@@ -3727,7 +3729,12 @@ func errorText(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
+	return cleanErrorText(err.Error())
+}
+
+// cleanErrorText is errorText for an error already turned into text (an
+// orchestrator error event carries only its message).
+func cleanErrorText(msg string) string {
 	if len(msg) > 7 && strings.EqualFold(msg[:7], "error, ") {
 		msg = msg[7:]
 	}

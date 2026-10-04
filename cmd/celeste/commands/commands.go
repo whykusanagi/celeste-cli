@@ -403,7 +403,7 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 			StateChange: &StateChange{
 				Model:           &modelName,
 				PinModel:        true,
-				ModelUnverified: !served,
+				ModelUnverified: forceModel && !served,
 			},
 		}
 	}

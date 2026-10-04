@@ -116,6 +116,23 @@ func (m AppModel) onCatalogReady(msg catalogReadyMsg) AppModel {
 		r.RefreshServedModels()
 	}
 	m, _ = m.resolveFromMemory()
+	return m.verifyServedModel(src.ActiveEndpoint())
+}
+
+// verifyServedModel drops the unverified mark of a /set-model --force model
+// once the endpoint's loaded catalog lists it.
+func (m AppModel) verifyServedModel(ep ActiveEndpoint) AppModel {
+	if !m.header.modelUnverified || m.model == "" {
+		return m
+	}
+	cat, _, ok := providers.MemoryCatalog(ep.Provider, ep.BaseURL, ep.APIKey)
+	if !ok {
+		return m
+	}
+	if _, served := providers.FindServed(cat, m.model); served {
+		m.header = m.header.SetModelUnverified(false)
+		m.persistSession()
+	}
 	return m
 }
 
@@ -157,7 +174,11 @@ func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 	m.provider = endpoint // provider names match endpoint names
 	m.modelPinned = false // a /set-model --force pin belongs to the old endpoint
 	m.modelTrial, m.modelBeforeTrial = "", ""
-	m.safe = nil // /safe after another endpoint switches by name
+	// The /nsfw snapshot is kept only while NSFW mode stays on (/endpoint
+	// venice in NSFW mode); any other switch makes it stale.
+	if !(endpoint == "venice" && m.nsfwMode) {
+		m.safe = nil
+	}
 	m.status = m.status.SetText(fmt.Sprintf("Switched to %s", m.endpoint))
 
 	// Leaving Venice turns NSFW mode off.

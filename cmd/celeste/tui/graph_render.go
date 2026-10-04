@@ -14,8 +14,8 @@ import (
 // the text it is shown in (the chat's ChatModel.TextWidth): the banner rules
 // fit inside it (N8).
 func RenderCodeGraphConstellation(indexer *codegraph.Indexer, width int) string {
-	if width < 20 {
-		width = 20
+	if width < 4 {
+		width = 4 // the rules are width-2 wide; never wider than the chat
 	}
 
 	stats, err := indexer.Stats()
