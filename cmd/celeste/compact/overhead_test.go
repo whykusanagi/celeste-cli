@@ -198,3 +198,21 @@ func TestPlanAimsAtTheOverheadAwareThreshold(t *testing.T) {
 		t.Fatalf("pruned %s under the overhead-aware threshold", res.Summary())
 	}
 }
+
+// The urgent floor: any history before the kept tail besides a previous
+// summary counts; the tail alone, or a summary alone, does not.
+func TestHasHistoryToSummarize(t *testing.T) {
+	const window = 32_768
+	tail := []tui.ChatMessage{msg("user", strings.Repeat("a", 4*12_000))}
+	if HasHistoryToSummarize(tail, window, smokeOverhead) {
+		t.Fatal("one huge message is all kept tail")
+	}
+	prev := append(SummaryMessages("the summary", "", true), tail...)
+	if HasHistoryToSummarize(prev, window, smokeOverhead) {
+		t.Fatal("only the previous summary sits before the tail")
+	}
+	head := append([]tui.ChatMessage{msg("user", "start"), msg("assistant", "ok")}, tail...)
+	if !HasHistoryToSummarize(head, window, smokeOverhead) {
+		t.Fatal("two messages before the tail can be summarized when urgent")
+	}
+}

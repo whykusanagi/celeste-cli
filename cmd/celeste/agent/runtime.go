@@ -117,9 +117,10 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	// ceiling leaves the reply room: halfway from the threshold to the
 	// window, so it never takes more than half the threshold's reserve.
 	ceiling := threshold + (r.budget.ModelLimit-threshold)/2
-	if next > ceiling {
+	if next > ceiling && compact.HasHistoryToSummarize(msgs, r.budget.ModelLimit, overhead) {
 		// The reply has no room: try whatever a summary can free, even
-		// a small head (Summarize refuses one that would not shrink).
+		// a small head (Summarize refuses one that would not shrink),
+		// but never one with nothing before the kept tail.
 		stillOver = true
 	}
 	if unseen := meter.Unseen(msgs); stillOver && !force && unseen > 0 && unseen <= len(msgs) &&

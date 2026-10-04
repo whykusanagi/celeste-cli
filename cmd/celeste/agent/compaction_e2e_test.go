@@ -519,3 +519,24 @@ func TestAgentNoSummaryLoopAt32k(t *testing.T) {
 		t.Fatalf("summarized %d times with ~8.5k of history under a 16.5k prefix", summaries)
 	}
 }
+
+// Past the ceiling with only a previous summary before the kept tail, the
+// urgent rung does not call the summarizer: it would only re-summarize the
+// summary.
+func TestAgentUrgentSummaryNeedsHistory(t *testing.T) {
+	runner, _ := newCompactionRunner(t, &windowBackend{}, 32_768)
+	runner.budget.SystemPromptTokens, runner.budget.ToolDefinitionTokens = 7_500, 9_000
+	var summaries int
+	runner.summarize = func(context.Context, string, string) (string, error) {
+		summaries++
+		return "## Goal\nread", nil
+	}
+	// A previous summary, then one request bigger than the history room.
+	msgs := compact.SummaryMessages("## Goal\nread\n"+strings.Repeat("s", 4_000), "", true)
+	msgs = append(msgs, tui.ChatMessage{Role: "user", Content: "read this\n" + strings.Repeat("y", 4*12_000)})
+	c := &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	c.Compact(context.Background(), msgs, nil, false)
+	if summaries != 0 {
+		t.Fatalf("re-summarized the previous summary %d times", summaries)
+	}
+}

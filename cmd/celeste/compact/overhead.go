@@ -66,6 +66,14 @@ func NeedsSummary(msgs []tui.ChatMessage, window, used int) bool {
 	return summarizable(msgs, KeepWithin(window, overhead), min(minSummaryTokens, window/16))
 }
 
+// HasHistoryToSummarize reports whether a summary sized for window and
+// overhead (KeepWithin) would have anything besides a previous summary to
+// replace. It is the floor for an urgent summary, one that must free what
+// it can because the request leaves the reply no room.
+func HasHistoryToSummarize(msgs []tui.ChatMessage, window, overhead int) bool {
+	return summarizable(msgs, KeepWithin(window, max(overhead, 0)), 1)
+}
+
 // summarizable reports whether the history before the kept tail (keep
 // tokens, as Summarize cuts it) holds at least minTokens besides a previous
 // summary and its acknowledgement.
