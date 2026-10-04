@@ -103,7 +103,9 @@ func checkSplitGolden(t *testing.T, name, plain string) {
 	if err != nil {
 		t.Fatalf("read snapshot (run with -update-split to create it): %v", err)
 	}
-	if string(want) != got {
+	// A Windows checkout converts the golden to CRLF (core.autocrlf); the
+	// rendered view itself uses LF, so compare the text.
+	if strings.ReplaceAll(string(want), "\r\n", "\n") != got {
 		t.Errorf("split view differs from %s:\n--- got\n%s--- want\n%s", path, got, want)
 	}
 }
