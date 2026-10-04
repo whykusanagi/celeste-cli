@@ -19,20 +19,30 @@ type MenuItem struct {
 	Description string
 }
 
+// menuItems are the commands /menu offers. Selecting one sends "/<name>"
+// with no arguments, so each must do something useful bare; exit quits
+// (TestMenuListsKnownAnd20Commands). The menu has no
+// scrolling, so the list stays within a 24-row terminal; /help lists the
+// rest.
 var menuItems = []MenuItem{
 	{"help", "Show available commands"},
 	{"clear", "Clear chat history"},
-	{"config", "Show current configuration"},
-	{"tools", "Show available skills"},
-	{"skills", "Show available skills (interactive)"},
-	{"collections", "Manage Collections (xAI RAG)"},
-	{"menu", "Show this command menu"},
+	{"session", "Pick a saved session"},
+	{"plan", "Plan mode: read-only tools until you approve a plan"},
+	{"diff", "List the files this session changed"},
+	{"undo", "Undo the last file change"},
+	{"rewind", "Take back the last prompt and its file changes"},
+	{"fork", "Continue in a copy of this session"},
+	{"compact", "Summarize older history to free context"},
+	{"handoff", "Summarize this session into a new one"},
 	{"context", "Show context/token usage"},
-	{"stats", "Show usage statistics"},
-	{"session", "Manage conversation sessions"},
-	{"export", "Export session data"},
-	{"agent", "Run autonomous agent loop"},
-	{"providers", "List AI providers"},
+	{"costs", "Show session costs"},
+	{"memories", "Manage project memories"},
+	{"grimoire", "Show the project grimoire"},
+	{"index", "Show code graph status"},
+	{"tools", "Browse available tools"},
+	{"mcp", "Show MCP servers and tools"},
+	{"persona", "Personality sliders"},
 	{"exit", "Exit the application"},
 }
 
