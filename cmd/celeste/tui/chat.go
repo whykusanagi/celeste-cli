@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -362,6 +363,9 @@ func (m ChatModel) UpdateFunctionResult(id, name, result string) ChatModel {
 		}
 	}
 	m.updateContent()
+	if m.showSkillCalls && !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
@@ -461,9 +465,15 @@ func (m ChatModel) Clear() ChatModel {
 }
 
 // ToggleSkillCalls toggles the visibility of skill call logs.
+// A chat following the conversation stays at the bottom, so the latest
+// reply and tool log stay on screen (#351); a scrolled-up one keeps its
+// place.
 func (m ChatModel) ToggleSkillCalls() ChatModel {
 	m.showSkillCalls = !m.showSkillCalls
 	m.updateContent()
+	if !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
@@ -494,7 +504,42 @@ func (m *ChatModel) updateContent() {
 		}
 	}
 
+	// With the logs shown, each tool call sits in the turn it ran in:
+	// before the first message newer than it, so the latest reply and its
+	// tool log end the chat together (#351). Calls newer than every
+	// message come last.
+	var calls []FunctionCall
+	if m.showSkillCalls {
+		calls = append(calls, m.functionCalls...)
+		sort.SliceStable(calls, func(a, b int) bool { return calls[a].Timestamp.Before(calls[b].Timestamp) })
+	}
+	next := 0
+	emitCalls := func(before time.Time, all bool) {
+		start := next
+		for next < len(calls) && (all || calls[next].Timestamp.Before(before)) {
+			lines = append(lines, m.renderFunctionCall(calls[next], contentWidth))
+			next++
+		}
+		if next > start {
+			lines = append(lines, "")
+		}
+	}
+
+	// A message can be stamped later than the ones after it (a compaction
+	// summary is stamped when it is made, ahead of the tail it keeps), so
+	// each message flushes calls older than the oldest stamp from it to the
+	// end, not its own: it never pulls in calls from the turns after it.
+	bound := make([]time.Time, len(m.messages))
+	var oldest time.Time
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if ts := m.messages[i].Timestamp; !ts.IsZero() && (oldest.IsZero() || ts.Before(oldest)) {
+			oldest = ts
+		}
+		bound[i] = oldest
+	}
+
 	for i, msg := range m.messages {
+		emitCalls(bound[i], false)
 		// Don't render tool results in UI - they're for LLM only
 		if msg.Role == "tool" {
 			continue
@@ -514,12 +559,7 @@ func (m *ChatModel) updateContent() {
 		lines = append(lines, "") // Spacing between messages
 	}
 
-	// Render function calls (only if showSkillCalls is true)
-	if m.showSkillCalls {
-		for _, call := range m.functionCalls {
-			lines = append(lines, m.renderFunctionCall(call, contentWidth))
-		}
-	}
+	emitCalls(time.Time{}, true)
 
 	content := strings.Join(lines, "\n")
 	m.viewport.SetContent(content)
@@ -551,9 +591,9 @@ func (m ChatModel) renderMessageOpt(msg ChatMessage, width int, skipMarkdown boo
 	// Try markdown rendering for assistant messages
 	var styledContent string
 	if msg.plain {
-		// As written: lipgloss wraps long lines but keeps the indentation
-		// and column alignment that wrapText would collapse.
-		styledContent = MessageRoleStyle(msg.Role).Width(width - 2).Render(msg.Content)
+		// As written, never through markdown; wrapText keeps the indent
+		// and column alignment of rows wider than the chat.
+		styledContent = MessageRoleStyle(msg.Role).Render(wrapText(msg.Content, width-2))
 	} else if !skipMarkdown && (msg.Role == "assistant" || msg.Role == "system") {
 		rendered := renderMarkdown(msg.Content, width-2)
 		if rendered != msg.Content {
@@ -617,61 +657,113 @@ func (m ChatModel) renderFunctionCall(call FunctionCall, width int) string {
 	return FunctionCallStyle.Width(width - 4).Render(content)
 }
 
-// wrapText wraps text to the specified width.
+// wrapText wraps text to the specified width. A line that fits is kept as
+// written; a longer one wraps with a hanging indent (wrapLine), so command
+// help and tables keep their indent and columns (#350).
 func wrapText(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
-
-	var result strings.Builder
 	lines := strings.Split(text, "\n")
-
 	for i, line := range lines {
-		if i > 0 {
-			result.WriteString("\n")
-		}
-
-		// A line that already fits is kept as written, so the column
-		// alignment of command help and tables survives.
 		if lipgloss.Width(line) <= width {
-			result.WriteString(strings.TrimRight(line, " \t"))
+			lines[i] = strings.TrimRight(line, " \t")
 			continue
 		}
-
-		words := strings.Fields(line)
-		if len(words) == 0 {
-			continue
-		}
-
-		currentLine := ""
-		for _, word := range words {
-			// A word wider than the chat (a path from /init or /export)
-			// breaks across rows instead of being cut at the edge.
-			if lipgloss.Width(word) > width {
-				if currentLine != "" {
-					result.WriteString(currentLine + "\n")
-				}
-				parts := breakWord(word, width)
-				for _, p := range parts[:len(parts)-1] {
-					result.WriteString(p + "\n")
-				}
-				currentLine = parts[len(parts)-1]
-				continue
-			}
-			switch {
-			case currentLine == "":
-				currentLine = word
-			case lipgloss.Width(currentLine)+1+lipgloss.Width(word) <= width:
-				currentLine += " " + word
-			default:
-				result.WriteString(currentLine + "\n")
-				currentLine = word
-			}
-		}
-		result.WriteString(currentLine)
+		lines[i] = wrapLine(line, width)
 	}
+	return strings.Join(lines, "\n")
+}
 
-	return result.String()
+// wrapLine wraps one line wider than width. The text up to its hanging
+// column stays as written on the first row and the rest wraps beside it;
+// continuation rows are indented to that column. The hanging column is the
+// start of the rightmost column (text after a run of two or more spaces)
+// in the left half of the row (two spaces after a sentence end do not
+// count), or else the line's own indent, clamped to half the row: a
+// two-column help row hangs under its description, a table row under its
+// last column, and prose and pasted code keep their indent.
+func wrapLine(line string, width int) string {
+	head, tail := splitHang(line, width)
+	col := lipgloss.Width(head)
+	rows := wrapWords(strings.Fields(tail), width-col)
+	if len(rows) == 0 {
+		return strings.TrimRight(head, " \t")
+	}
+	pad := strings.Repeat(" ", col)
+	for i := range rows {
+		if i == 0 {
+			rows[i] = head + rows[i]
+		} else {
+			rows[i] = pad + rows[i]
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
+// splitHang splits line at its hanging column (see wrapLine): head is kept
+// as written, tail is the text that wraps.
+func splitHang(line string, width int) (head, tail string) {
+	body := strings.TrimLeft(line, " ")
+	indent := len(line) - len(body)
+	limit := width / 2
+	if indent > limit {
+		// Deeply indented (pasted code): keep as much indent as leaves
+		// half the row for text, on every row.
+		return strings.Repeat(" ", limit), body
+	}
+	cut := indent
+	for i := indent; i < len(line); {
+		if line[i] != ' ' {
+			i++
+			continue
+		}
+		j := i
+		for j < len(line) && line[j] == ' ' {
+			j++
+		}
+		// Two spaces after a sentence end are prose, not a column.
+		if j-i >= 2 && j < len(line) && !strings.ContainsRune(".!?", rune(line[i-1])) {
+			if lipgloss.Width(line[:j]) > limit {
+				break
+			}
+			cut = j
+		}
+		i = j
+	}
+	return line[:cut], line[cut:]
+}
+
+// wrapWords fills rows of at most width cells with words. A word wider than
+// the row (a path from /init or /export) breaks across rows instead of
+// being cut at the edge.
+func wrapWords(words []string, width int) []string {
+	var rows []string
+	cur := ""
+	for _, word := range words {
+		if lipgloss.Width(word) > width {
+			if cur != "" {
+				rows = append(rows, cur)
+			}
+			parts := breakWord(word, width)
+			rows = append(rows, parts[:len(parts)-1]...)
+			cur = parts[len(parts)-1]
+			continue
+		}
+		switch {
+		case cur == "":
+			cur = word
+		case lipgloss.Width(cur)+1+lipgloss.Width(word) <= width:
+			cur += " " + word
+		default:
+			rows = append(rows, cur)
+			cur = word
+		}
+	}
+	if cur != "" {
+		rows = append(rows, cur)
+	}
+	return rows
 }
 
 // breakWord splits a word wider than width (it may carry ANSI styling)
