@@ -34,6 +34,12 @@ func NewChatModel() ChatModel {
 	}
 }
 
+// TextWidth is the width a message's text wraps at: the chat's content
+// width (updateContent) less renderMessageOpt's own margin.
+func (m ChatModel) TextWidth() int {
+	return m.width - 6
+}
+
 // SetSize sets the chat panel size.
 func (m ChatModel) SetSize(width, height int) ChatModel {
 	m.width = width

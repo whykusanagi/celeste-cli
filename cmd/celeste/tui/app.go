@@ -1315,7 +1315,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat = m.chat.AddSystemMessage(sb.String())
 
 				default: // "status" or no args
-					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.width)
+					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.chat.TextWidth())
 					if viz != "" {
 						m.chat = m.chat.AddSystemMessage(viz)
 					} else {
