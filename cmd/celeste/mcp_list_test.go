@@ -9,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 func writeMCPConfig(t *testing.T, path, body string) {
@@ -66,25 +69,26 @@ func TestMCPList_ShowsServersWithoutSecrets(t *testing.T) {
 	wsFile := filepath.Join(".", ".mcp.json")
 
 	notes := strings.Fields(mcpListLine(t, out, "notes", home1))
-	assert.Equal(t, []string{"notes", home1, "stdio", "yes", "yes", "all", "modes"}, notes)
+	assert.Equal(t, []string{"notes", home1, "stdio", "yes", "yes", "-", "all", "modes"}, notes)
 
 	remote := strings.Fields(mcpListLine(t, out, "remote", home1))
 	// Not enabled: it never starts on its own.
-	assert.Equal(t, []string{"remote", home1, "sse", "no", "no", "off", "(start", "it", "from", "the", "chat's", "/mcp)"}, remote)
+	assert.Equal(t, []string{"remote", home1, "sse", "no", "no", "-", "off", "(start", "it", "from", "the", "chat's", "/mcp)"}, remote)
 
 	// Later home configs win on a name clash (DiscoverConfigPaths order).
 	assert.Contains(t, mcpListLine(t, out, "dup", home1), "overridden by "+home2)
 	assert.Contains(t, mcpListLine(t, out, "dup", home2), "all modes")
 
-	// A workspace server: chat only, and its "trusted" is not honoured.
+	// A workspace server: chat only, once approved, and its "trusted" is
+	// not honoured.
 	repo := strings.Fields(mcpListLine(t, out, "repo", wsFile))
-	assert.Equal(t, []string{"repo", wsFile, "stdio", "yes", "ignored", "chat", "only"}, repo)
+	assert.Equal(t, []string{"repo", wsFile, "stdio", "yes", "ignored", "pending", "chat", "once", "approved"}, repo)
 
 	// A home server the workspace redefines: the chat uses the workspace's.
 	shared := mcpListLine(t, out, "shared", home1)
 	assert.Contains(t, shared, "all but chat (chat uses")
 	assert.Contains(t, shared, wsFile)
-	assert.Contains(t, mcpListLine(t, out, "shared", wsFile), "chat only")
+	assert.Contains(t, mcpListLine(t, out, "shared", wsFile), "chat once approved")
 }
 
 func TestMCPList_NoServers(t *testing.T) {
@@ -131,4 +135,75 @@ func TestMCPList_HelpAndArgs(t *testing.T) {
 func TestMCPUsage_NamesList(t *testing.T) {
 	assert.Contains(t, subcommandUsage["mcp"], "celeste mcp list")
 	assert.Contains(t, subcommandUsage["mcp"], "celeste mcp install")
+}
+
+// #354: a workspace server shows whether it is approved to start; editing
+// it puts it back to pending. Home servers need no approval.
+func TestMCPList_ShowsWorkspaceApproval(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{"mine":{"command":"m","enabled":true}}}`)
+	wsPath := filepath.Join(ws, ".mcp.json")
+	writeMCPConfig(t, wsPath, `{"mcpServers":{"ok":{"command":"a","enabled":true},"new":{"command":"b","enabled":true}}}`)
+	store := hooks.LoadTrust(home)
+	ok := mcp.ServerConfig{Transport: "stdio", Command: "a"}
+	require.NoError(t, store.Approve(hooks.MCPSource(wsPath, "ok", ok.TrustSummary(), ok.TrustHash())))
+
+	code, out, errOut := runMCPList(t, nil, ws, home)
+	require.Equal(t, 0, code, errOut)
+	assert.Contains(t, out, "APPROVAL")
+	wsFile := filepath.Join(".", ".mcp.json")
+	assert.Contains(t, mcpListLine(t, out, "ok", wsFile), "approved")
+	assert.Contains(t, mcpListLine(t, out, "ok", wsFile), "chat only")
+	newLine := mcpListLine(t, out, "new", wsFile)
+	assert.Contains(t, newLine, "pending")
+	assert.Contains(t, newLine, "chat once approved")
+	assert.NotContains(t, mcpListLine(t, out, "mine", filepath.Join("~", ".celeste", "mcp.json")), "pending")
+
+	writeMCPConfig(t, wsPath, `{"mcpServers":{"ok":{"command":"a","args":["--evil"],"enabled":true}}}`)
+	_, out, _ = runMCPList(t, nil, ws, home)
+	assert.Contains(t, mcpListLine(t, out, "ok", wsFile), "pending (changed)")
+}
+
+// Run from the home directory, ~/.celeste/mcp.json is both a home and a
+// workspace candidate: it is listed once, and never overrides itself.
+func TestMCPList_CwdIsHomeListsEachFileOnce(t *testing.T) {
+	home := t.TempDir()
+	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{"dis":{"command":"x","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(home, ".claude", "mcp.json"), `{"mcpServers":{"gh":{"command":"y","enabled":true}}}`)
+	code, out, errOut := runMCPList(t, nil, home, home)
+	require.Equal(t, 0, code, errOut)
+	assert.Equal(t, 1, strings.Count(out, "\ndis "), out)
+	assert.Equal(t, 1, strings.Count(out, "\ngh "), out)
+	assert.NotContains(t, out, "overridden by")
+	assert.Contains(t, mcpListLine(t, out, "dis", filepath.Join("~", ".celeste", "mcp.json")), "all modes")
+	assert.Contains(t, mcpListLine(t, out, "gh", filepath.Join("~", ".claude", "mcp.json")), "all modes")
+}
+
+// A home config that does not parse stops every server in every mode.
+func TestMCPList_BadHomeConfigStopsEveryMode(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	writeMCPConfig(t, filepath.Join(home, ".claude", "mcp.json"), `{not json`)
+	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{"mine":{"command":"m","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(ws, ".mcp.json"), `{"mcpServers":{"repo":{"command":"r","enabled":true}}}`)
+	code, out, errOut := runMCPList(t, nil, ws, home)
+	assert.Equal(t, 1, code)
+	bad := filepath.Join("~", ".claude", "mcp.json")
+	assert.Contains(t, mcpListLine(t, out, "mine", filepath.Join("~", ".celeste", "mcp.json")), "none ("+bad+" does not parse)")
+	assert.Contains(t, mcpListLine(t, out, "repo", filepath.Join(".", ".mcp.json")), "none ("+bad+" does not parse)")
+	assert.Contains(t, errOut, "starts no MCP servers in any mode until "+bad)
+}
+
+// A workspace config that does not parse stops every server in the chat;
+// the other modes still start the home servers.
+func TestMCPList_BadWorkspaceConfigStopsTheChat(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{"mine":{"command":"m","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(ws, ".mcp.json"), `{"mcpServers":{"repo":{"command":"r","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(ws, ".celeste", "mcp.json"), `{not json`)
+	code, out, errOut := runMCPList(t, nil, ws, home)
+	assert.Equal(t, 1, code)
+	bad := filepath.Join(".", ".celeste", "mcp.json")
+	assert.Contains(t, mcpListLine(t, out, "mine", filepath.Join("~", ".celeste", "mcp.json")), "all but chat ("+bad+" does not parse)")
+	assert.Contains(t, mcpListLine(t, out, "repo", filepath.Join(".", ".mcp.json")), "none ("+bad+" does not parse)")
+	assert.Contains(t, errOut, "the chat starts no MCP servers until "+bad)
 }
