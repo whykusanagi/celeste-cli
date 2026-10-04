@@ -280,6 +280,10 @@ func runChatTUI() {
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
+	// The log package goes to the log file while the TUI owns the terminal:
+	// a plain log.Printf (MCP connects, /agent runs) would draw over it.
+	restoreStdLog := tui.RedirectStdLog()
+	defer restoreStdLog()
 	notify := func(s string) { p.Send(tui.HookWarningMsg{Text: s}) }
 	hookNotify.Store(&notify)
 	defer hookNotify.Store(nil)
