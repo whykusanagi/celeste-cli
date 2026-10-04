@@ -13,3 +13,7 @@ cmd/celeste/selfupdate/testdata/** -text
 # (a Windows checkout with CRLF broke the header and module-line matches).
 *.md text eol=lf
 go.mod text eol=lf
+
+# Golden files are compared byte for byte; a Windows checkout with CRLF made
+# every snapshot test fail (#338). Keep LF on every OS.
+*.golden text eol=lf
