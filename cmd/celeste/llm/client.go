@@ -299,13 +299,25 @@ func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage
 // attemptOpts are the deadlines for each send attempt: the configured
 // timeout is the stall timeout (nothing received for that long ends the
 // attempt), and MaxRequestDuration caps an attempt that keeps streaming.
-// The stall timeout falls back to 60s when the config carries none.
 func (c *Client) attemptOpts() retryOpts {
-	stall := 60 * time.Second
-	if _, cfg := c.snapshot(); cfg != nil && cfg.Timeout > 0 {
-		stall = cfg.Timeout
+	_, cfg := c.snapshot()
+	return retryOpts{stall: cfg.StallTimeout(), timeout: cfg.RequestCap()}
+}
+
+// StallTimeout is the stall timeout of requests made with c: c.Timeout, or
+// 60 s when c (which may be nil) carries none.
+func (c *Config) StallTimeout() time.Duration {
+	if c != nil && c.Timeout > 0 {
+		return c.Timeout
 	}
-	return retryOpts{stall: stall, timeout: MaxRequestDuration(stall)}
+	return 60 * time.Second
+}
+
+// RequestCap bounds one request made with c however steadily it streams:
+// MaxRequestDuration of the stall timeout. Work that is one request to the
+// model, such as a compaction summary, is bounded by it too (#345).
+func (c *Config) RequestCap() time.Duration {
+	return MaxRequestDuration(c.StallTimeout())
 }
 
 // StreamCallback is called for each chunk during streaming.

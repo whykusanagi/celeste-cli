@@ -51,6 +51,9 @@ type Runner struct {
 	// summarize writes a compaction summary with the small-model role, the
 	// rung after pruning (#174). Nil disables summaries.
 	summarize compact.SummarizeFunc
+	// summaryTimeout bounds one summary: the summary client's request cap
+	// (#345). Zero (runners built directly in tests) means the default cap.
+	summaryTimeout time.Duration
 	// jev is set when jev_prune is "shadow" (pruning logs Jev's verdict next
 	// to the rules', #175) or "on" (Jev orders the elisions, 2.0 W3).
 	jev     *jev.Client
@@ -133,7 +136,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	}
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
-		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
+		sctx, cancel := context.WithTimeout(ctx, r.summaryDeadline())
 		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, Overhead: overhead, State: r.renderState()}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
@@ -182,8 +185,16 @@ func SmallModelSummarizer(base *llm.Config, model string) compact.SummarizeFunc 
 	}
 }
 
-// summaryTimeout bounds a compaction summary request.
-const summaryTimeout = 3 * time.Minute
+// summaryDeadline bounds one compaction summary. The summary client fails
+// a request that stalls for its stall timeout; this is the cap on one that
+// keeps streaming, the same a chat turn gets (#345: a fixed 3 minutes cut
+// off a cold local model's summary).
+func (r *Runner) summaryDeadline() time.Duration {
+	if r.summaryTimeout > 0 {
+		return r.summaryTimeout
+	}
+	return (*llm.Config)(nil).RequestCap()
+}
 
 func (r *Runner) reportCompaction(state *RunState, msg string) {
 	if state.Options.Verbose {
@@ -501,27 +512,30 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, compact.DefinitionTokens(client.GetSkills()))
 
 	return &Runner{
-		client:     client,
-		registry:   registry,
-		store:      store,
-		options:    options,
-		out:        out,
-		errOut:     errOut,
-		budget:     budget,
-		indexer:    env.Indexer,
-		pruned:     prunedStore,
-		summarize:  SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
-		jev:        jevShadowClient(cfg.JevPruneMode(), options.Workspace, errOut),
-		jevMode:    cfg.JevPruneMode(),
-		env:        env,
-		hooks:      env.Hooks,
-		warn:       warn,
-		gate:       gate,
-		firstRunID: firstRunID,
-		rulesMode:  cfg.StreamRulesMode(),
-		watchdog:   cfg.WatchdogMode(),
-		gateMode:   cfg.CompletionGateMode(),
-		jevGate:    cfg.JevGateMode(),
+		client:    client,
+		registry:  registry,
+		store:     store,
+		options:   options,
+		out:       out,
+		errOut:    errOut,
+		budget:    budget,
+		indexer:   env.Indexer,
+		pruned:    prunedStore,
+		summarize: SmallModelSummarizer(llmConfig, cfg.ResolveSmallModel()),
+		// The summarizer's client is built from llmConfig, so it stalls and
+		// caps as llmConfig says.
+		summaryTimeout: llmConfig.RequestCap(),
+		jev:            jevShadowClient(cfg.JevPruneMode(), options.Workspace, errOut),
+		jevMode:        cfg.JevPruneMode(),
+		env:            env,
+		hooks:          env.Hooks,
+		warn:           warn,
+		gate:           gate,
+		firstRunID:     firstRunID,
+		rulesMode:      cfg.StreamRulesMode(),
+		watchdog:       cfg.WatchdogMode(),
+		gateMode:       cfg.CompletionGateMode(),
+		jevGate:        cfg.JevGateMode(),
 		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
 			fmt.Fprintf(errOut, "[agent] %s\n", line)
 		}),

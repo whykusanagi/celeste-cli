@@ -230,3 +230,25 @@ func TestMaxRequestDuration(t *testing.T) {
 		t.Errorf("cap for 20m = %v, want 60m (3x)", got)
 	}
 }
+
+// A config's stall timeout is its Timeout, 60 s when it carries none; its
+// request cap is MaxRequestDuration of that (#345: summaries use both).
+func TestConfigStallTimeoutAndRequestCap(t *testing.T) {
+	var none *Config
+	for _, tc := range []struct {
+		cfg        *Config
+		stall, cap time.Duration
+	}{
+		{none, 60 * time.Second, 30 * time.Minute},
+		{&Config{}, 60 * time.Second, 30 * time.Minute},
+		{&Config{Timeout: 600 * time.Second}, 600 * time.Second, 30 * time.Minute},
+		{&Config{Timeout: 20 * time.Minute}, 20 * time.Minute, 60 * time.Minute},
+	} {
+		if got := tc.cfg.StallTimeout(); got != tc.stall {
+			t.Errorf("StallTimeout(%+v) = %v, want %v", tc.cfg, got, tc.stall)
+		}
+		if got := tc.cfg.RequestCap(); got != tc.cap {
+			t.Errorf("RequestCap(%+v) = %v, want %v", tc.cfg, got, tc.cap)
+		}
+	}
+}
