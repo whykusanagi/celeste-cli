@@ -87,3 +87,26 @@ func TestCompactorSummarizesWhenPruningIsNotEnough(t *testing.T) {
 		t.Fatalf("under the threshold: changed=%v notes=%v called=%d", changed, notes, called)
 	}
 }
+
+// L2: at 32k with a ~16k system prompt a short session is not summarized.
+func TestCompactorNoSummaryLoopAt32k(t *testing.T) {
+	called := 0
+	summarize := func(context.Context, string, string) (string, error) {
+		called++
+		return "the summary", nil
+	}
+	cfg := &config.Config{Model: "fake-model", ContextLimit: 32_768}
+	c := newCompactor(cfg, strings.Repeat("persona ", 8_250), &compact.Store{Dir: t.TempDir()}, summarize, nil, t.Logf)
+	history := []tui.ChatMessage{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello"}, {Role: "user", Content: "again"}}
+	if _, _, changed := c.Compact(context.Background(), history, nil, false); changed || called != 0 {
+		t.Fatalf("changed=%v summaries=%d for a three-message session", changed, called)
+	}
+	// ~10k of conversation: the summary keeps what the window affords, not
+	// a fixed 20k tail that would leave it nothing to summarize.
+	for i := 0; i < 12; i++ {
+		history = append(history, tui.ChatMessage{Role: "assistant", Content: strings.Repeat("r", 1_600)}, tui.ChatMessage{Role: "user", Content: strings.Repeat("q", 1_600)})
+	}
+	if _, _, changed := c.Compact(context.Background(), history, nil, false); !changed || called != 1 {
+		t.Fatalf("changed=%v summaries=%d for ~10k of history under a 16.5k prefix at 32k", changed, called)
+	}
+}

@@ -191,7 +191,8 @@ func (c *chatCompactor) Compact(ctx context.Context, history []loop.Message, usa
 	}
 	c.meter.Observe(history, prompt)
 	// Shadow reports inline: a call's log lines must not outlive it.
-	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: c.meter.Used(history), Unseen: c.meter.Unseen(history), Force: force}, func(line string) {
+	used := c.meter.Used(history)
+	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: used, Overhead: used - compact.Estimate(history), Unseen: c.meter.Unseen(history), Force: force}, func(line string) {
 		log.Printf("celeste chat: %s", line)
 	}, false)
 	out, res := compact.Prune(history, opts, c.store)
