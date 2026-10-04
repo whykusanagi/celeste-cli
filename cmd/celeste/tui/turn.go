@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
@@ -51,6 +52,11 @@ type TurnEventMsg struct {
 
 // TurnStartMsg: a request is about to go out.
 type TurnStartMsg struct{ Turn int }
+
+// ThinkingMsg is a delta of the model's reasoning, streamed before its
+// reply by an OpenAI-compatible server (L4). It only feeds the status
+// bar's thinking count; it is never reply text or history.
+type ThinkingMsg struct{ Delta string }
 
 // ToolTurnMsg: the model's reply asked for tools. Its text, if any, has
 // already arrived as StreamChunkMsg.
@@ -143,9 +149,24 @@ func (m AppModel) startTurn() (AppModel, tea.Cmd) {
 	m.streaming = true
 	m.streamStart = time.Now()
 	m.lastMsgInTok, m.lastMsgOutTok = 0, 0
+	m.thinkingChars = 0
 	m.status = m.status.SetStreaming(true)
 	m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
 	return m, cmd
+}
+
+// waitingStatus is the status while a request waits for its reply: the
+// spinner, or /plan's "Planning...", and the reasoning streamed so far
+// (L4) as an estimated token count.
+func (m AppModel) waitingStatus() string {
+	s := StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame)
+	if m.planning {
+		s = "Planning..."
+	}
+	if m.thinkingChars > 0 {
+		s += " · thinking… ~" + formatOrchestratorTokens((m.thinkingChars+3)/4) + " tokens"
+	}
+	return s
 }
 
 // toolsOffered: no tools in NSFW mode or with a provider without function
@@ -192,11 +213,19 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.streaming = true
 			m.streamStart = time.Now()
 			m.lastMsgInTok, m.lastMsgOutTok = 0, 0
+			m.thinkingChars = 0 // each request counts its own reasoning
 			m.status = m.status.SetStreaming(true)
 			if !m.planning {
 				m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
 			}
 			cmds = append(cmds, m.tick(typingTickInterval*2))
+		}
+	case ThinkingMsg:
+		if !m.interrupted {
+			m.thinkingChars += utf8.RuneCountInString(msg.Delta)
+			if m.typingContent == "" {
+				m.status = m.status.SetText(m.waitingStatus())
+			}
 		}
 	case StreamChunkMsg:
 		var more []tea.Cmd

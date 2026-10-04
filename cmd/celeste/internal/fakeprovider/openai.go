@@ -21,7 +21,18 @@ func writeOpenAI(w http.ResponseWriter, turn Turn) {
 		})
 	}
 	chunk(map[string]any{"role": "assistant", "content": ""}, nil)
-	if turn.Text != "" {
+	field := turn.ReasoningField
+	if field == "" {
+		field = "reasoning"
+	}
+	for _, d := range turn.ReasoningDeltas {
+		chunk(map[string]any{field: d}, nil)
+	}
+	if len(turn.Deltas) > 0 {
+		for _, d := range turn.Deltas {
+			chunk(map[string]any{"content": d}, nil)
+		}
+	} else if turn.Text != "" {
 		chunk(map[string]any{"content": turn.Text}, nil)
 	}
 	for i, tc := range turn.ToolCalls {

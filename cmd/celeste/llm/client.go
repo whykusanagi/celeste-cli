@@ -355,8 +355,16 @@ func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessa
 // This delegates to the appropriate backend.
 func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
 	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
+		// Reasoning alone does not start the reply: a drop while a slow
+		// local model is still thinking is retried (L4). The repeated
+		// thinking only feeds a status-bar count.
 		started := false
-		wrapped := func(ev StreamEvent) { started = true; callback(ev) }
+		wrapped := func(ev StreamEvent) {
+			if ev.Type != EventThinkingDelta {
+				started = true
+			}
+			callback(ev)
+		}
 		backend, _ := c.snapshot()
 		err := backend.SendMessageStreamEvents(reqCtx, messages, tools, wrapped)
 		if err != nil && started {
