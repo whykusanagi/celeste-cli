@@ -99,20 +99,25 @@ type sandboxInherit struct {
 }
 
 // loadUserSandbox reads the "sandbox" object of the user's config.json at
-// path. It is nil when the file or the key is absent.
+// path. It is nil when the file or the key is absent. Its errors leave the
+// path out: the caller names the file.
 func loadUserSandbox(path string) (*Sandbox, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			return nil, pathErr.Err
+		}
 		return nil, err
 	}
 	var file struct {
 		Sandbox *Sandbox `json:"sandbox"`
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	return file.Sandbox, nil
 }

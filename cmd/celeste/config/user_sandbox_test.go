@@ -101,13 +101,28 @@ func TestProfileNoSandboxAnywhere(t *testing.T) {
 }
 
 // A config.json whose sandbox settings cannot be read fails the load, as
-// Load does with no profile, instead of silently running without them.
+// Load does with no profile, instead of silently running without them. The
+// error names the file once.
 func TestProfileFailsClosedOnBadConfigJSON(t *testing.T) {
 	for _, global := range []string{`{"sandbox":`, `{"sandbox":{"enabled":"yes"}}`} {
 		sandboxHome(t, global, `{"default":true,"model":"m","sandbox":{"enabled":false}}`)
-		if _, err := LoadNamed(""); err == nil || !strings.Contains(err.Error(), "config.json") {
-			t.Fatalf("config.json %s: err = %v, want an error naming config.json", global, err)
+		_, err := LoadNamed("")
+		if err == nil || strings.Count(err.Error(), "config.json") != 1 {
+			t.Fatalf("config.json %s: err = %v, want an error naming config.json once", global, err)
 		}
+	}
+}
+
+// A config.json that exists but cannot be read (here, a directory) fails
+// the load too: an unreadable file is not an absent one.
+func TestProfileFailsClosedOnUnreadableConfigJSON(t *testing.T) {
+	dir := sandboxHome(t, "", `{"default":true,"model":"m"}`)
+	if err := os.Mkdir(filepath.Join(dir, "config.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadNamed("")
+	if err == nil || strings.Count(err.Error(), "config.json") != 1 {
+		t.Fatalf("err = %v, want an error naming config.json once", err)
 	}
 }
 
