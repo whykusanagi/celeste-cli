@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
 func TestTodoCreate(t *testing.T) {
@@ -134,4 +135,19 @@ func TestTodoStoreThreadSafety(t *testing.T) {
 		<-done
 	}
 	assert.Len(t, store.List(), 10)
+}
+
+// #357: create, update and list are internal state (no prompt); delete and
+// clear_done still ask. The tool stays non-read-only, so plan mode does not
+// offer it.
+func TestTodoInternalStateActions(t *testing.T) {
+	tool := NewTodoTool("")
+	for action, want := range map[string]bool{"create": true, "update": true, "list": true, "delete": false, "clear_done": false, "": false} {
+		if got := tools.PermissionReadOnly(tool, map[string]any{"action": action}); got != want {
+			t.Errorf("%q: permission read-only = %v, want %v", action, got, want)
+		}
+	}
+	if tool.IsReadOnly() {
+		t.Error("todo must stay non-read-only")
+	}
 }
