@@ -35,7 +35,7 @@ var knownSubcommands = map[string][]string{
 	"session": {"new", "resume", "list", "clear", "merge", "info", "rename", "delete"},
 	"agent":   {"list-runs", "resume"}, // kill lives on /agents (W-A1)
 	"agents":  {"resume", "kill"},
-	"plan":    {"off", "show"},
+	"plan":    {"off", "show", "help"},
 	"init":    {"agents"},
 }
 
