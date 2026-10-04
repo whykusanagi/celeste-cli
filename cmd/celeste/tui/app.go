@@ -554,6 +554,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case menuItemSelectedMsg:
 			// User selected a menu item, execute it
 			m.viewMode = "chat"
+			if msg.command == "exit" {
+				// exit is not a slash command (#314): quit the way typing it does.
+				m.persistSession()
+				return m, tea.Quit
+			}
 			return m, SendMessage("/" + msg.command)
 		}
 
@@ -1361,8 +1366,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// View() renders m.config's cached ConfirmActions instead
 					// of reloading from disk (#144 W6b review, I1); keep it
-					// current so the toggle takes effect immediately.
-					m.config = cfg
+					// current so the toggle takes effect immediately. Only the
+					// flag is copied: cfg is config.json's, and replacing the
+					// session config with it would drop the active profile.
+					if m.config == nil {
+						m.config = cfg
+					} else {
+						m.config.ConfirmActions = cfg.ConfirmActions
+					}
 					if refresher, ok := m.llmClient.(PromptRefresher); ok {
 						refresher.RefreshSystemPrompt()
 					}
@@ -3418,7 +3429,7 @@ func (m HeaderModel) View() string {
 		contextInfo = m.contextIndicator.ViewCompact()
 	}
 
-	info := HeaderInfoStyle.Render("Press Ctrl+C to exit")
+	info := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
 	if endpointInfo != "" {
 		info = endpointInfo + " • " + info
 	}

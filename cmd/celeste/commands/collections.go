@@ -438,7 +438,7 @@ func handleCollectionsDelete(args []string, cfg *config.Config) *CommandResult {
 	if err := manager.DisableCollection(collectionID); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not disable collection: %v\n", err)
 	}
-	if err := config.Save(cfg); err != nil {
+	if err := config.SaveCollections(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save config: %v\n", err)
 	}
 
@@ -473,7 +473,7 @@ func handleCollectionsEnable(args []string, cfg *config.Config) *CommandResult {
 	}
 
 	// Save config
-	if err := config.Save(cfg); err != nil {
+	if err := config.SaveCollections(cfg); err != nil {
 		return &CommandResult{
 			Success:      false,
 			Message:      fmt.Sprintf("❌ Failed to save config: %v", err),
@@ -519,7 +519,7 @@ func handleCollectionsDisable(args []string, cfg *config.Config) *CommandResult 
 	}
 
 	// Save config
-	if err := config.Save(cfg); err != nil {
+	if err := config.SaveCollections(cfg); err != nil {
 		return &CommandResult{
 			Success:      false,
 			Message:      fmt.Sprintf("❌ Failed to save config: %v", err),
