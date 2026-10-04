@@ -125,7 +125,7 @@ func (m StatusLineModel) View() string {
 		if m.model != "" {
 			narrow = append(narrow, ModelStyle.Render(m.model))
 		}
-		return StatusBarStyle.Width(m.width).Render(strings.Join(narrow, sep))
+		return StatusBarStyle.Width(m.width).MaxHeight(1).Render(m.fit(narrow, sep, false))
 	}
 
 	var segs []string
@@ -153,7 +153,50 @@ func (m StatusLineModel) View() string {
 	if m.session != "" {
 		segs = append(segs, EndpointStyle.Render(m.session))
 	}
-	return StatusBarStyle.Width(m.width).Render(strings.Join(segs, sep))
+	return StatusBarStyle.Width(m.width).MaxHeight(1).Render(m.fit(segs, sep, m.session != ""))
+}
+
+// fit joins segs so the line never exceeds the width and wraps (V6). When
+// sessionLast is set, the session name (the last segment) is cut with an
+// ellipsis first; then trailing segments are dropped until the rest fits.
+func (m StatusLineModel) fit(segs []string, sep string, sessionLast bool) string {
+	line := strings.Join(segs, sep)
+	if lipgloss.Width(line) <= m.width {
+		return line
+	}
+	if sessionLast && len(segs) > 1 {
+		rest := segs[:len(segs)-1]
+		room := m.width - lipgloss.Width(strings.Join(rest, sep)) - lipgloss.Width(sep)
+		if room >= 8 {
+			segs = append(rest[:len(rest):len(rest)], EndpointStyle.Render(truncateCells(m.session, room)))
+		} else {
+			segs = rest
+		}
+		line = strings.Join(segs, sep)
+	}
+	for lipgloss.Width(line) > m.width && len(segs) > 1 {
+		segs = segs[:len(segs)-1]
+		line = strings.Join(segs, sep)
+	}
+	return line
+}
+
+// truncateCells cuts s to at most max terminal cells, ending in "…" when cut.
+func truncateCells(s string, max int) string {
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > max-1 {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + "…"
 }
 
 // parseDirtyCount counts changed files in `git status --short` output.
