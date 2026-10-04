@@ -543,10 +543,11 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	if r.options.MaxTurnsExplicit && r.options.MaxTurns > 0 {
 		state.Options.MaxTurns = r.options.MaxTurns
 	}
-	// The previous attempt's error (a cancel, a failed request) and finish
-	// time are stale once the run resumes (#317): this attempt records its
-	// own, if any.
+	// The previous attempt's error (a cancel, a failed request), stop
+	// reason and finish time are stale once the run resumes (#317): this
+	// attempt records its own, if any.
 	state.Error = ""
+	state.StopReason = ""
 	state.CompletedAt = nil
 	normalizeStateOptions(state, r.options)
 	return r.runState(ctx, state)

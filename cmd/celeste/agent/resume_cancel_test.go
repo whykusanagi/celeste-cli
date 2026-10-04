@@ -107,3 +107,39 @@ func TestResumeOfCancelledRunThatFailsDropsOldCompletedAt(t *testing.T) {
 		t.Fatalf("saved: completed_at=%v error=%q, want no completed_at and the new error", saved.CompletedAt, saved.Error)
 	}
 }
+
+// A no-progress stop's StopReason is stale once the run resumes: a resume
+// that completes stores no "identical" next to status completed.
+func TestResumeOfNoProgressRunClearsOldStopReason(t *testing.T) {
+	isolateHome(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+	r := resumeRunner(t, srv, t.TempDir(), nil)
+
+	state := NewRunState("finish the thing", r.options)
+	normalizeStateOptions(state, r.options)
+	state.Phase = PhaseExecution
+	state.Turn = 1
+	state.Status = StatusNoProgressStopped
+	state.StopReason = "identical"
+	now := time.Now()
+	state.CompletedAt = &now
+	state.Messages = append(state.Messages, tui.ChatMessage{Role: "user", Content: "finish the thing", Timestamp: now})
+	if err := r.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Resume(context.Background(), state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCompleted || got.StopReason != "" {
+		t.Fatalf("resume: status=%q stop_reason=%q, want completed with no stop reason", got.Status, got.StopReason)
+	}
+	saved, err := r.store.Load(state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != StatusCompleted || saved.StopReason != "" {
+		t.Fatalf("saved: status=%q stop_reason=%q, want completed with no stop reason", saved.Status, saved.StopReason)
+	}
+}
