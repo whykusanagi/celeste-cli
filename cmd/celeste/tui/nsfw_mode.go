@@ -23,6 +23,11 @@ type safeState struct {
 // the chat kept Venice's URL and model, and /set-model then failed.
 func (m AppModel) setNSFWMode(on bool) (AppModel, tea.Cmd) {
 	was := m.nsfwMode
+	if !on && !was {
+		// /safe outside NSFW mode has nothing to undo; switching back by
+		// name here would leave an endpoint chosen since (/endpoint).
+		return m, nil
+	}
 	m.nsfwMode = on
 	m.header = m.header.SetNSFWMode(on)
 	var cmd tea.Cmd

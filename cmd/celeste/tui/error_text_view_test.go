@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
@@ -74,4 +75,31 @@ func TestHeaderMarksUnverifiedForceModelAt80And120(t *testing.T) {
 			assert.Contains(t, header, "fugu ✓", "header: %s", header)
 		})
 	}
+}
+
+// The unverified mark is saved with the session, like the pin, so a resumed
+// session does not show a forced model as verified.
+func TestUnverifiedForceModelSurvivesResume(t *testing.T) {
+	yes := true
+	defer providers.SetCatalogForTest("sakana", []providers.CatalogModel{{ID: "fugu", Default: true, Tools: &yes}})()
+	s := &config.Session{}
+	s.SetEndpoint("sakana")
+	s.SetModel("fugu")
+	client := &endpointClient{ep: ActiveEndpoint{Provider: "sakana", BaseURL: "https://api.sakana.ai/v1", Model: "fugu"}}
+	m := newAuditApp(t, client, 120, 40)
+	m.provider = "sakana"
+	m = m.SetSessionManager(&fakeSessions{session: s}, s)
+	m = auditSend(t, m, "/set-model my-private-model --force")
+	assert.True(t, s.GetModelUnverified())
+
+	client2 := &endpointClient{ep: ActiveEndpoint{Provider: "sakana", BaseURL: "https://api.sakana.ai/v1", Model: "my-private-model"}}
+	r := newAuditApp(t, client2, 120, 40)
+	r = r.SetSessionManager(&fakeSessions{session: s}, s)
+	header := strings.SplitN(auditView(r), "\n", 2)[0]
+	assert.Contains(t, header, "my-private-model ?", "header: %s", header)
+
+	// A verified model clears it.
+	r.provider = "sakana"
+	auditSend(t, r, "/set-model fugu")
+	assert.False(t, s.GetModelUnverified())
 }

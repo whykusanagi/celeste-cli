@@ -2859,6 +2859,8 @@ type Session interface {
 	GetNSFWMode() bool
 	SetModelPinned(pinned bool)
 	GetModelPinned() bool
+	SetModelUnverified(unverified bool)
+	GetModelUnverified() bool
 	SetName(name string)
 	ClearMessages()
 	GetMessagesRaw() interface{}     // Returns []config.SessionMessage
@@ -2888,7 +2890,7 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			m.model = model
 			// A /set-model --force pin outlives the resume.
 			m.modelPinned = session.GetModelPinned()
-			m.header = m.header.SetModel(model)
+			m.header = m.header.SetModel(model).SetModelUnverified(m.modelPinned && session.GetModelUnverified())
 
 			// A ToolsPerModel provider (Venice) only knows whether tools are
 			// available once the model is known (#151 W6b); recompute now
@@ -3105,6 +3107,7 @@ func (m *AppModel) persistSession() {
 	m.currentSession.SetEndpoint(m.endpoint)
 	m.currentSession.SetModel(m.model)
 	m.currentSession.SetModelPinned(m.modelPinned)
+	m.currentSession.SetModelUnverified(m.modelPinned && m.header.modelUnverified)
 	m.currentSession.SetNSFWMode(m.nsfwMode)
 	if hist := m.input.GetHistory(); len(hist) > 0 {
 		m.currentSession.SetCommandHistory(hist)

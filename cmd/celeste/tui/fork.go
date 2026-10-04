@@ -28,6 +28,7 @@ func (m AppModel) fork() AppModel {
 	s.SetEndpoint(m.endpoint)
 	s.SetModel(m.model)
 	s.SetModelPinned(m.modelPinned)
+	s.SetModelUnverified(m.modelPinned && m.header.modelUnverified)
 	s.SetNSFWMode(m.nsfwMode)
 	if ws := old.GetWorkspace(); ws != "" {
 		s.SetWorkspace(ws)

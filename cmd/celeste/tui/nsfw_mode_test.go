@@ -68,6 +68,9 @@ func TestSafeAfterAnotherEndpointDoesNotRestoreAStaleSnapshot(t *testing.T) {
 	m = auditSend(t, m, "/nsfw")
 	m, _ = m.switchEndpoint("grok")
 	assert.Nil(t, m.safe)
-	auditSend(t, m, "/safe")
+	m = auditSend(t, m, "/safe")
 	assert.Equal(t, 0, c.restored)
+	// Not in NSFW mode, /safe has nothing to undo: the chat stays on grok
+	// rather than going back to the endpoint /nsfw once left.
+	assert.Equal(t, "grok", m.endpoint)
 }
