@@ -177,11 +177,14 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 		Refuse:       planRefusal(a.plan, a.registry),
 	}
 	goal := lastUserText(req.History)
+	var st loop.Steering
 	if s := a.steering(); s != nil {
 		// The watchdog judges progress against this turn's prompt.
 		s.SetGoal(goal)
-		l.Steering = s
+		st = s
 	}
+	// An approved plan's progress reminder rides on the same hook (#325).
+	l.Steering = withPlanProgress(st, a.plan)
 	if a.baseConfig != nil {
 		// Built here, on the Update goroutine; Jev is asked on the run's.
 		ws, _ := os.Getwd()

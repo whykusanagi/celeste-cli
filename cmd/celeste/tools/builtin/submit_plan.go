@@ -77,7 +77,7 @@ type SubmitPlanTool struct {
 	BaseTool
 	workspace string
 	ask       func(context.Context, tools.AskRequest) (tools.AskResponse, error)
-	approved  func()
+	approved  func(PlanFile)
 	// DefaultGoal, when set, supplies the goal a submission leaves out
 	// (the chat's /plan <goal>).
 	DefaultGoal func() string
@@ -89,8 +89,8 @@ type SubmitPlanTool struct {
 
 // NewSubmitPlanTool builds submit_plan for workspace. ask presents the
 // approval (nil or failing: headless, an error); approved runs after an
-// approved plan is saved (the chat leaves plan mode).
-func NewSubmitPlanTool(workspace string, ask func(context.Context, tools.AskRequest) (tools.AskResponse, error), approved func()) *SubmitPlanTool {
+// approved plan is saved, with that plan (the chat leaves plan mode).
+func NewSubmitPlanTool(workspace string, ask func(context.Context, tools.AskRequest) (tools.AskResponse, error), approved func(PlanFile)) *SubmitPlanTool {
 	return &SubmitPlanTool{
 		BaseTool: BaseTool{
 			ToolName: SubmitPlanName,
@@ -238,7 +238,7 @@ func (t *SubmitPlanTool) Execute(ctx context.Context, input map[string]any, _ ch
 		return tools.ToolResult{Content: "could not save the plan: " + err.Error(), Error: true}, nil
 	}
 	if t.approved != nil {
-		t.approved()
+		t.approved(plan)
 	}
 	// "Plan approved:" also tells the chat a resumed session's plan was
 	// approved (tui.planApprovedPrefix).

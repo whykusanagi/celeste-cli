@@ -19,7 +19,7 @@ func TestSubmitPlanApproveWritesPlanAndTodos(t *testing.T) {
 		asked = req
 		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() { approved = true })
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) { approved = true })
 	res, _ := tool.Execute(context.Background(), map[string]any{"goal": "ship", "steps": []any{
 		map[string]any{"title": "write tests"}, map[string]any{"title": "implement", "detail": "minimal"},
 	}}, nil)
@@ -62,7 +62,7 @@ func TestSubmitPlanKeepPlanning(t *testing.T) {
 	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
 		return tools.AskResponse{Selected: []string{"Keep planning"}}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() { t.Fatal("must not approve") })
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) { t.Fatal("must not approve") })
 	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil)
 	if res.Error || !strings.Contains(res.Content, "keep planning") {
 		t.Fatalf("result = %+v", res)
@@ -81,7 +81,7 @@ func TestSubmitPlanCancelledKeepsPlanning(t *testing.T) {
 	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
 		return tools.AskResponse{Cancelled: true}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() { t.Fatal("must not approve") })
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) { t.Fatal("must not approve") })
 	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil)
 	if res.Error || !strings.Contains(res.Content, "keep planning") {
 		t.Fatalf("result = %+v", res)
@@ -94,12 +94,12 @@ func TestSubmitPlanHeadless(t *testing.T) {
 	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
 		return tools.AskResponse{}, errors.New("interactive input unavailable in this context")
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() { t.Fatal("must not approve") })
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) { t.Fatal("must not approve") })
 	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil)
 	if !res.Error || !strings.Contains(res.Content, "plan mode needs the interactive chat") {
 		t.Fatalf("result = %+v", res)
 	}
-	tool = NewSubmitPlanTool(ws, nil, func() { t.Fatal("must not approve") })
+	tool = NewSubmitPlanTool(ws, nil, func(PlanFile) { t.Fatal("must not approve") })
 	res, _ = tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil)
 	if !res.Error || !strings.Contains(res.Content, "plan mode needs the interactive chat") {
 		t.Fatalf("nil ask: result = %+v", res)
@@ -112,7 +112,7 @@ func TestSubmitPlanValidatesSteps(t *testing.T) {
 		t.Fatal("an invalid plan must not reach the user")
 		return tools.AskResponse{}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() {})
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) {})
 	many := make([]any, 31)
 	for i := range many {
 		many[i] = map[string]any{"title": "s"}
@@ -138,7 +138,7 @@ func TestSubmitPlanUsesDefaultGoal(t *testing.T) {
 	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
 		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() {})
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) {})
 	tool.DefaultGoal = func() string { return "add caching" }
 	if res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil); res.Error {
 		t.Fatalf("result = %+v", res)
@@ -161,7 +161,7 @@ func TestSubmitPlanRollsBackTodosWhenThePlanCannotBeSaved(t *testing.T) {
 	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
 		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() { t.Fatal("must not approve") })
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) { t.Fatal("must not approve") })
 	tool.Todos = store
 	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{map[string]any{"title": "x"}}}, nil)
 	if !res.Error || !strings.Contains(res.Content, "could not save the plan") {
@@ -182,7 +182,7 @@ func TestSubmitPlanApprovalTellsTheModelHowToTickSteps(t *testing.T) {
 	ask := func(context.Context, tools.AskRequest) (tools.AskResponse, error) {
 		return tools.AskResponse{Selected: []string{"Approve and start"}}, nil
 	}
-	tool := NewSubmitPlanTool(ws, ask, func() {})
+	tool := NewSubmitPlanTool(ws, ask, func(PlanFile) {})
 	tool.Todos = store
 	res, _ := tool.Execute(context.Background(), map[string]any{"steps": []any{
 		map[string]any{"title": "write tests"}, map[string]any{"title": "implement"},
