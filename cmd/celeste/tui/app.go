@@ -619,8 +619,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "esc" || msg.String() == "q" {
 				// Save on close if modified
 				if m.personaPanel != nil && m.personaPanel.Modified() {
-					_ = m.personaPanel.Save()
-					m.chat = m.chat.AddSystemMessage("✨ Persona sliders saved.")
+					if err := m.personaPanel.Save(); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save persona sliders: %v", err))
+					} else {
+						// The prompt reads the sliders only when it is
+						// rebuilt; refresh like /user and /confirm (W-P1).
+						if refresher, ok := m.llmClient.(PromptRefresher); ok {
+							refresher.RefreshSystemPrompt()
+						}
+						m.chat = m.chat.AddSystemMessage("✨ Persona sliders saved.")
+					}
 				}
 				m.viewMode = "chat"
 				return m, nil
