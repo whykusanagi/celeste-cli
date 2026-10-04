@@ -497,11 +497,13 @@ func (m AppModel) statusSessionName() string {
 // client at render time: an approval clears it from the run's goroutine.
 // The skills segment is also read here, from the tools a turn would offer
 // (V1: it used to copy the skills panel, which only View() configured), and
-// so is the session name (V16: it used to wait for the next git poll).
+// so is the session name (V16: it used to wait for the next git poll), and
+// the model (N4: /set-model, a --force pin and /safe never resynced it).
 // View passes in the skills count it already computed: building the tool list
 // converts every tool schema, too costly to do twice per frame.
 func (m AppModel) statusLineView(skillsCount int) string {
 	return m.statusLine.
+		SetModel(m.model).
 		SetPlan(m.planModeOn()).
 		SetSkills(m.toolsOffered(), skillsCount).
 		SetSession(m.statusSessionName()).
