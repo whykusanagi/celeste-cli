@@ -869,6 +869,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewMode = "sessions"
 				panel := NewSessionPanelModel(m.workDir)
 				panel = panel.SetWidth(m.width).SetHeight(m.height)
+				if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+					panel = panel.WithCurrent(s.ID)
+				}
 				m.sessionPanel = &panel
 				return m, nil
 			}
@@ -1995,8 +1998,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.interruptPending = false
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
-		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
+		m.status = m.status.SetText("Error: " + errorText(msg.Err))
+		m.chat = m.chat.AddSystemMessage("Error: " + errorText(msg.Err))
 
 	case HookWarningMsg:
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
@@ -2593,9 +2596,11 @@ func (m AppModel) View() string {
 	sections = append(sections, m.header.View())
 
 	// Chat panel (flexible height) — or session picker when in sessions mode
-	chatIdx := -1
+	chatIdx, pickerIdx := -1, -1
 	if m.viewMode == "sessions" && m.sessionPanel != nil {
-		sections = append(sections, m.sessionPanel.View())
+		// The picker takes the chat's rows, so the layout keeps its height.
+		pickerIdx = len(sections)
+		sections = append(sections, m.sessionPanel.SetWidth(m.width).SetHeight(m.chat.height).View())
 	} else {
 		chatIdx = len(sections)
 		sections = append(sections, m.chat.View())
@@ -2684,6 +2689,16 @@ func (m AppModel) View() string {
 		if over := total - m.height; over > 0 {
 			h := max(m.chat.height-over, minChatRowsUnderOverlay)
 			sections[chatIdx] = m.chat.shrunk(h).View()
+		}
+	}
+	if pickerIdx >= 0 && m.height > 0 {
+		total := 0
+		for _, s := range sections {
+			total += lipgloss.Height(s)
+		}
+		if over := total - m.height; over > 0 {
+			h := max(m.chat.height-over, minChatRowsUnderOverlay)
+			sections[pickerIdx] = m.sessionPanel.SetWidth(m.width).SetHeight(h).View()
 		}
 	}
 
@@ -3444,13 +3459,7 @@ func (m HeaderModel) View() string {
 		contextInfo = m.contextIndicator.ViewCompact()
 	}
 
-	info := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
-	if endpointInfo != "" {
-		info = endpointInfo + " • " + info
-	}
-	if contextInfo != "" {
-		info = info + " • " + contextInfo
-	}
+	info := headerInfo(endpointInfo, contextInfo, m.width-lipgloss.Width(title)-3)
 
 	// Calculate gap
 	gap := m.width - lipgloss.Width(title) - lipgloss.Width(info) - 2
@@ -3462,6 +3471,39 @@ func (m HeaderModel) View() string {
 	return HeaderStyle.Width(m.width).Render(
 		title + spacer + info,
 	)
+}
+
+// headerInfo joins the header's right side (endpoint and model, the exit
+// hint, context usage) in at most avail cells, so the header never wraps:
+// the exit hint goes first, then the endpoint and model are cut with "…".
+// avail <= 0 means the width is not known yet.
+func headerInfo(endpointInfo, contextInfo string, avail int) string {
+	join := func(parts ...string) string {
+		var kept []string
+		for _, p := range parts {
+			if p != "" {
+				kept = append(kept, p)
+			}
+		}
+		return strings.Join(kept, " • ")
+	}
+	hint := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
+	info := join(endpointInfo, hint, contextInfo)
+	if avail <= 0 || lipgloss.Width(info) <= avail {
+		return info
+	}
+	info = join(endpointInfo, contextInfo)
+	if lipgloss.Width(info) <= avail || endpointInfo == "" {
+		return fitWidth(info, avail)
+	}
+	if contextInfo == "" {
+		return fitWidth(endpointInfo, avail)
+	}
+	room := avail - lipgloss.Width(" • "+contextInfo)
+	if room < 4 {
+		return fitWidth(info, avail)
+	}
+	return join(fitWidth(endpointInfo, room), contextInfo)
 }
 
 // --- Status Model ---
@@ -3516,22 +3558,45 @@ func (m StatusModel) View() string {
 	if m.showWarning {
 		// Show context warning with appropriate color
 		warningStyle := m.getWarningStyle()
-		status = warningStyle.Render(m.warningMessage)
+		status = warningStyle.Render(oneLine(m.warningMessage))
 	} else if m.streaming {
 		// Show the text set by the typing animation (thinking phrases + spinner)
 		// Falls back to "Streaming..." if no text was set
 		if m.text != "" && m.text != "Ready" {
-			status = StatusStreamingStyle.Render(m.text)
+			status = StatusStreamingStyle.Render(oneLine(m.text))
 		} else {
 			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 			spinner := StatusStreamingStyle.Render(frames[m.frame%len(frames)])
 			status = spinner + " " + StatusStreamingStyle.Render("Streaming...")
 		}
 	} else {
-		status = StatusActiveStyle.Render("●") + " " + m.text
+		status = StatusActiveStyle.Render("●") + " " + oneLine(m.text)
 	}
 
+	// One row: a long error cut with "…" instead of wrapping onto a second
+	// row the layout did not leave room for.
+	if m.width > 0 {
+		status = fitWidth(status, m.width)
+	}
 	return StatusBarStyle.Width(m.width).Render(status)
+}
+
+// oneLine puts a status text on one line.
+func oneLine(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", " ")
+}
+
+// errorText is err's message for the status bar and chat, which already
+// say "Error: ". go-openai's API errors begin "error, status code: …".
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if len(msg) > 7 && strings.EqualFold(msg[:7], "error, ") {
+		msg = msg[7:]
+	}
+	return msg
 }
 
 // getWarningStyle returns the appropriate style for the warning level.

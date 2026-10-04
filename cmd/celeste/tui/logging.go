@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -122,6 +123,28 @@ func LogLLMResponse(contentLen int, hasToolCalls bool) {
 	} else {
 		logf("[%s] LLM_RESPONSE: %d chars, no tool calls\n", timestamp, contentLen)
 	}
+}
+
+// RedirectStdLog points the standard library's log package at the TUI log
+// file (dropping the output when none is open) and returns a func that puts
+// the previous writer back. While Bubble Tea owns the terminal, a plain
+// log.Printf (tools/mcp logs every connect) would draw over the frame.
+func RedirectStdLog() (restore func()) {
+	prev := log.Writer()
+	log.SetOutput(stdLogWriter{})
+	return func() { log.SetOutput(prev) }
+}
+
+// stdLogWriter appends the log package's output to the TUI log file.
+type stdLogWriter struct{}
+
+func (stdLogWriter) Write(p []byte) (int, error) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	if logFile != nil {
+		_, _ = logFile.Write(p)
+	}
+	return len(p), nil
 }
 
 // GetLogPath returns the current log file path.
