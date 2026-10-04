@@ -38,12 +38,21 @@ subagents never have it, and the `submit_plan` tool exists only in the chat.
 out) and 1 to 30 steps, each a `title` and an optional `detail`. You get the
 plan in a question with two answers:
 
-- **Approve and start**: the plan is saved to `.celeste/plan.json`, each
-  step becomes an item in the workspace todo list (`.celeste/tasks.json`),
-  plan mode ends, and Celeste starts with step 1 in the same turn, with all
-  tools again.
 - **Keep planning** (or Esc): nothing is saved, plan mode stays on, and
-  Celeste revises the plan.
+  Celeste revises the plan. This is the pre-selected answer, so Enter on
+  its own never approves.
+- **Approve and start** (move to it with ↓, `j` or `2`, then Enter): the
+  plan is saved to `.celeste/plan.json`, each step becomes an item in the
+  workspace todo list (`.celeste/tasks.json`), plan mode ends, and Celeste
+  starts with step 1 in the same turn, with all tools again.
+
+While the question is open, typing goes nowhere: the first key that is not
+one of the question's keys (a letter, `/`, a paste) puts the cursor back on
+**Keep planning** and the footer says "Typing is ignored here. Choose an
+option: ↑/↓ then Enter". Letters stay text until you press an arrow or
+Enter, and that first Enter only clears the hint, so typing `/plan off` and
+Enter into it does not answer. Retype the command once the question is
+closed.
 
 `.celeste/plan.json` holds `goal`, `steps` (`title`, `detail`, `todo_id`)
 and `approved_at`. A new approved plan replaces it. `/plan show` and

@@ -203,8 +203,10 @@ func (t *SubmitPlanTool) Execute(ctx context.Context, input map[string]any, _ ch
 	resp, err := t.ask(ctx, tools.AskRequest{
 		Question: planQuestion(goal, steps),
 		Options: []tools.AskOption{
-			{Label: planApprove, Description: "Save the plan, add its steps to the todo list and leave plan mode."},
+			// Keep planning first: the modal pre-selects the first option,
+			// so Enter (or typed text and Enter) never approves by default.
 			{Label: planKeep, Description: "Stay in plan mode; tell Celeste what to change."},
+			{Label: planApprove, Description: "Save the plan, add its steps to the todo list and leave plan mode."},
 		},
 	})
 	if err != nil && ctx.Err() == nil {

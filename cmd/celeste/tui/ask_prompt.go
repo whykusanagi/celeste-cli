@@ -26,7 +26,16 @@ type AskPromptModel struct {
 	// offset, so the options never push its start off the screen.
 	height int
 	offset int
+	// typed is set by a keystroke that is not one of the modal's keys
+	// (typing meant for the input, a paste). While it is set the letter
+	// keys are text too, the cursor is back on the first option and the
+	// footer says how to answer; the next Enter only clears it, so typed
+	// text plus Enter never answers. An arrow clears it too.
+	typed bool
 }
+
+// askTypedHint replaces the footer while typed keys are being ignored.
+const askTypedHint = "Typing is ignored here. Choose an option: ↑/↓ then Enter (Esc cancels)"
 
 // NewAskPromptModel creates an inactive ask prompt.
 func NewAskPromptModel() AskPromptModel {
@@ -54,20 +63,36 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 		m.response = msg.Response
 		m.selected = 0
 		m.offset = 0
+		m.typed = false
 		m.checked = map[int]bool{}
 
 	case tea.KeyMsg:
 		if !m.active {
 			break
 		}
+		if m.isTyping(msg) {
+			// The first option is the safe default (callers put it there:
+			// submit_plan's "Keep planning"), so typing never leaves the
+			// cursor on anything else.
+			m.typed = true
+			m.selected = 0
+			break
+		}
 		switch msg.String() {
 		case "up", "k":
+			m.typed = false
 			if m.selected > 0 {
 				m.selected--
 			}
 		case "down", "j":
+			m.typed = false
 			if m.selected < len(m.options)-1 {
 				m.selected++
+			}
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			// A number moves the cursor to that option; Enter still answers.
+			if n := int(msg.Runes[0] - '1'); n < len(m.options) {
+				m.selected = n
 			}
 		case "pgdown":
 			m.offset = min(m.offset+m.scrollStep(), m.maxOffset())
@@ -78,12 +103,41 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 				m.checked[m.selected] = !m.checked[m.selected]
 			}
 		case "enter":
+			if m.typed {
+				m.typed = false
+				break
+			}
 			m.send(m.collect())
 		case "esc", "q", "ctrl+c":
 			m.send(AskResponseMsg{Cancelled: true})
 		}
 	}
 	return m, nil
+}
+
+// isTyping reports whether k is text rather than one of the modal's keys:
+// a paste, any printable key that is not bound, and every printable key
+// once typing has started (so "just do it" does not move with its j).
+func (m AskPromptModel) isTyping(k tea.KeyMsg) bool {
+	if k.Paste {
+		return true
+	}
+	if k.Type == tea.KeySpace {
+		return m.typed || !m.multiSelect
+	}
+	if k.Type != tea.KeyRunes {
+		return false
+	}
+	if m.typed || len(k.Runes) != 1 {
+		return true
+	}
+	switch r := k.Runes[0]; {
+	case r == 'j' || r == 'k' || r == 'q':
+		return false
+	case r >= '1' && r <= '9':
+		return false
+	}
+	return true
 }
 
 // collect gathers the chosen labels (checked set for multi, cursor for single).
@@ -174,6 +228,9 @@ func (m AskPromptModel) footer(scroll string) string {
 	}
 	if scroll != "" {
 		f += " • PgUp/PgDn scroll " + scroll
+	}
+	if m.typed {
+		return m.block(lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(askTypedHint))
 	}
 	return m.block(lipgloss.NewStyle().Foreground(ColorTextMuted).Render(f))
 }

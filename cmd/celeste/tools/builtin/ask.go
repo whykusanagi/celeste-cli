@@ -23,7 +23,7 @@ func NewAskTool(registry *tools.Registry) *AskTool {
 	return &AskTool{
 		BaseTool: BaseTool{
 			ToolName:        "ask",
-			ToolDescription: "Ask the user a structured multiple-choice question and wait for their answer. Use when you need a decision only the user can make. Provide 2-4 clear options.",
+			ToolDescription: "Ask the user a structured multiple-choice question and wait for their answer. Use when you need a decision only the user can make. Provide 2-4 clear options. The first option is the default (the cursor starts on it and typing returns it there), so put the safest choice first.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
