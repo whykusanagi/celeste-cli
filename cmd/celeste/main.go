@@ -1560,8 +1560,10 @@ func sessionCLI(args []string, manager *config.SessionManager, stdout, stderr io
 	fs.Bool("list", false, "List saved sessions") // listing is the default
 	load := fs.String("load", "", "Load a session by ID")
 	clear := fs.Bool("clear", false, "Clear all sessions")
+	actions := 0
 	if len(args) > 0 && args[0] == "list" {
 		args = args[1:]
+		actions++
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1573,6 +1575,13 @@ func sessionCLI(args []string, manager *config.SessionManager, stdout, stderr io
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "Unknown session command %q\n%s\n", fs.Arg(0), sessionUsage)
+		return 2
+	}
+	// Each is its own action; a combination such as list --clear is refused
+	// rather than resolved, since one of the actions deletes every session.
+	fs.Visit(func(*flag.Flag) { actions++ })
+	if actions > 1 {
+		fmt.Fprintf(stderr, "Give one of list, --load or --clear\n%s\n", sessionUsage)
 		return 2
 	}
 

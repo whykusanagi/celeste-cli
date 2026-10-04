@@ -42,3 +42,29 @@ func TestSessionCLI_ListSubcommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 }
+
+// list, --load and --clear are separate actions: combining them is an
+// error, so `celeste session list --clear` never deletes the sessions.
+func TestSessionCLI_CombinedActionsRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	mgr := config.NewSessionManager()
+	s := mgr.NewSession()
+	s.Messages = append(s.Messages, config.SessionMessage{Role: "user", Content: "keep me"})
+	require.NoError(t, mgr.Save(s))
+
+	for _, args := range [][]string{
+		{"list", "--clear"}, {"--list", "--clear"}, {"list", "--load", s.ID},
+		{"--load", s.ID, "--clear"}, {"list", "--list"},
+	} {
+		var out, errBuf bytes.Buffer
+		assert.Equal(t, 2, sessionCLI(args, mgr, &out, &errBuf), args)
+		assert.Contains(t, errBuf.String(), "one of list, --load or --clear", args)
+		assert.Empty(t, out.String(), args)
+	}
+	list, err := mgr.List()
+	require.NoError(t, err)
+	assert.Len(t, list, 1, "a refused command deleted sessions")
+}
