@@ -13,7 +13,7 @@ import (
 )
 
 // The two terminal sizes of the 2.0 TUI audit (80x24, 120x40).
-var auditSizes = []struct{ w, h int }{{80, 24}, {120, 40}}
+var panelAuditSizes = []struct{ w, h int }{{80, 24}, {120, 40}}
 
 // assertFitsWidth fails when any row of view is wider than w: the terminal
 // would wrap it (or cut it) and the layout would lose a row.
@@ -40,7 +40,7 @@ func mcpPanelAt(w int) MCPPanelModel {
 // V8: every box row has its right border, the box is one width, and the
 // footer fits at 80 columns.
 func TestMCPPanelViewBoxedAndFits(t *testing.T) {
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		view := mcpPanelAt(sz.w).View()
 		assertFitsWidth(t, view, sz.w)
 		lines := strings.Split(stripANSI(view), "\n")
@@ -124,7 +124,7 @@ func TestSessionPickerListsEverySessionWithWholeIDs(t *testing.T) {
 	isolatedHome(t)
 	workDir := t.TempDir()
 	ids := savePickerSessions(t, workDir)
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		p := NewSessionPanelModel(workDir).SetWidth(sz.w).SetHeight(sz.h - 9)
 		view := p.View()
 		plain := stripANSI(view)
@@ -154,7 +154,7 @@ func TestSessionPickerFillsTheChatArea(t *testing.T) {
 		if withSessions {
 			savePickerSessions(t, workDir)
 		}
-		for _, sz := range auditSizes {
+		for _, sz := range panelAuditSizes {
 			var m tea.Model = NewApp(nil)
 			m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
 			chatRows := lipgloss.Height(m.View())
@@ -181,7 +181,7 @@ func TestSkillsBrowserMultilineDescriptionKeepsItsRow(t *testing.T) {
 		{Name: "mcp__celeste-ops__document_decision_cancel", Description: "Cancel a pending decision on a document and record why it was dropped"},
 		{Name: "weather", Description: "Récupère la météo — prévisions détaillées pour une ville donnée, avec vent, humidité et alertes régionales"},
 	}
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		var m tea.Model = NewSkillsBrowserModel(skills)
 		m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
 		view := m.View()
@@ -208,7 +208,7 @@ func TestSkillsBrowserMultilineDescriptionKeepsItsRow(t *testing.T) {
 // right or runs past 80 columns.
 func TestMemoriesEmptyStateLinesUpAndFits(t *testing.T) {
 	isolatedHome(t)
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		var m tea.Model = NewMemoryManagerModel(t.TempDir())
 		m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
 		view := m.View()
@@ -238,7 +238,7 @@ func TestHeaderFitsWithLongModelAndNSFW(t *testing.T) {
 	long := NewHeaderModel().SetEndpoint("sakana").SetModel("nonexistent-model-xyz").SetSkillsEnabled(true).SetContextUsage(19_400, 1_000_000)
 	huge := NewHeaderModel().SetEndpoint("openrouter").SetModel("some-vendor/an-extraordinarily-long-model-identifier-preview-2026-10-01").SetSkillsEnabled(true).SetContextUsage(0, 1_000_000)
 	nsfw := NewHeaderModel().SetNSFWMode(true).SetImageModel("lustify-sdxl").SetContextUsage(31_700, 1_000_000)
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		for name, h := range map[string]HeaderModel{"long": long, "huge": huge, "nsfw": nsfw} {
 			view := h.SetWidth(sz.w).View()
 			assertFitsWidth(t, view, sz.w)
@@ -265,7 +265,7 @@ var openAI404 = errors.New(`error, status code: 404, status: 404 Not Found, mess
 // V5: a long error stays on the status bar's one row at 80 columns, cut
 // with "…", and reads "Error: status code: 404…", not "Error: error, …".
 func TestStatusBarLongErrorIsOneRow(t *testing.T) {
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		var m tea.Model = NewApp(nil)
 		m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
 		m, _ = m.Update(StreamErrorMsg{Err: openAI404})
@@ -297,7 +297,7 @@ func TestStatusBarLongErrorIsOneRow(t *testing.T) {
 // /export's "Path:") wraps onto the next rows instead of being cut.
 func TestChatWrapsUnbrokenPaths(t *testing.T) {
 	path := "/var/folders/xy/abcdefghijklmnop/T/celeste-test-workspace-1234567890/project_with_a_long_name/.celeste/grimoire.md"
-	for _, sz := range auditSizes {
+	for _, sz := range panelAuditSizes {
 		chat := NewChatModel().SetSize(sz.w, sz.h-9)
 		chat = chat.AddSystemMessage("Created " + path + "\nEdit the new file to describe the project; it applies from the next session.")
 		chat = chat.AddSystemMessage("✓ Export complete\n  ▓ Format:  json\n  ▓ Path:    " + lipgloss.NewStyle().Foreground(ColorPurple).Render(path+".json"))
