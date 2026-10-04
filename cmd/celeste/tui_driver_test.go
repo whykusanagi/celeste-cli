@@ -1,10 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
 // drive feeds msgs into m, then keeps executing the commands Update returns
@@ -73,7 +77,7 @@ func (d *tuiTestDriver) RunUntil(until func(tea.Model) bool, timeout time.Durati
 			if until(d.m) {
 				return d.m
 			}
-			d.t.Fatalf("drive: no pending work and condition not met")
+			d.t.Fatalf("drive: no pending work and condition not met%s", d.chatTail())
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -90,8 +94,32 @@ func (d *tuiTestDriver) RunUntil(until func(tea.Model) bool, timeout time.Durati
 		case <-time.After(remaining):
 		}
 	}
-	d.t.Fatalf("drive: condition not met within %v", timeout)
+	d.t.Fatalf("drive: condition not met within %v%s", timeout, d.chatTail())
 	return d.m
+}
+
+// chatTail is the end of the driven chat, for a failure message: the
+// system line a slash command answered with is usually the reason its
+// condition never held (#327 only said "no pending work").
+func (d *tuiTestDriver) chatTail() string {
+	am, ok := d.m.(tui.AppModel)
+	if !ok {
+		return ""
+	}
+	msgs := am.DebugMessages()
+	if len(msgs) > 6 {
+		msgs = msgs[len(msgs)-6:]
+	}
+	var b strings.Builder
+	b.WriteString("; last chat messages:")
+	for _, m := range msgs {
+		c := m.Content
+		if len(c) > 300 {
+			c = c[:300] + "…"
+		}
+		fmt.Fprintf(&b, "\n  %s: %q", m.Role, c)
+	}
+	return b.String()
 }
 
 // tui.TickMsg (cmd/celeste/tui/app.go) drives the typewriter reveal of the

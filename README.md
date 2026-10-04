@@ -71,6 +71,11 @@ If you have Go 1.26+ installed:
 go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
 ```
 
+`go install` needs the Go module proxy (the default, `proxy.golang.org`). With `GOPROXY=direct` it
+can fail on a dependency whose upstream tag was moved after the proxy cached it (for example
+`github.com/charmbracelet/glamour` v1.0.0 reports a checksum mismatch); the signed release
+binaries below avoid this.
+
 The `celeste` binary is installed to `$GOPATH/bin` (or `~/go/bin` by default). The first time
 you run a command with it (`celeste chat`, say; `help`, `version`, `update` and `persona` don't
 count), it downloads the official signed release binary of the same version from
