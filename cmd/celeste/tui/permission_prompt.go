@@ -23,10 +23,15 @@ type PermissionPromptModel struct {
 	// printable key is text, so the a in "/plan off" allows nothing, and
 	// a hint says how to answer; Enter clears it.
 	typed bool
+	// pick is the allow answer a or A chose, sent only on Enter: prose
+	// that starts with a (or "Always") turns into typing at its second
+	// letter instead of allowing. Deny keys answer at once. Decision ""
+	// means nothing is picked.
+	pick PermissionResponse
 }
 
 // permissionTypedHint is shown while typed keys are being ignored.
-const permissionTypedHint = "Typing is ignored here. Press a, A, d or D (Enter to dismiss this hint, Esc denies)"
+const permissionTypedHint = "Typing is ignored here. Press a or A then Enter to allow, d or D to deny (Enter dismisses this hint, Esc denies)"
 
 // NewPermissionPromptModel creates a new permission prompt model.
 func NewPermissionPromptModel() PermissionPromptModel {
@@ -58,24 +63,31 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 		m.riskLevel = msg.RiskLevel
 		m.response = msg.Response
 		m.typed = false
+		m.pick = PermissionResponse{}
 
 	case tea.KeyMsg:
 		if !m.active {
 			break
 		}
-		if msg.Paste || msg.Type == tea.KeySpace || (msg.Type == tea.KeyRunes && m.typed) {
+		printable := msg.Paste || msg.Type == tea.KeySpace || msg.Type == tea.KeyRunes
+		if printable && (msg.Paste || msg.Type == tea.KeySpace || m.typed || m.pick.Decision != "") {
+			// Typing: a paste, a space, any key once typing started, or a
+			// second key after a or A.
 			m.typed = true
+			m.pick = PermissionResponse{}
 			return m, nil
 		}
 		var resp PermissionResponse
 		switch msg.String() {
 		case "a":
-			resp = PermissionResponse{Decision: "allow_once"}
+			m.pick = PermissionResponse{Decision: "allow_once"}
+			return m, nil
 		case "A":
-			resp = PermissionResponse{
+			m.pick = PermissionResponse{
 				Decision: "always_allow",
 				Pattern:  m.buildPattern(),
 			}
+			return m, nil
 		case "d", "esc", "ctrl+c":
 			// Esc and Ctrl+C dismiss the modal as a denial, so a waiting
 			// run (an /orch lane, /agent) is never stuck on it.
@@ -86,12 +98,16 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 				Pattern:  m.buildPattern(),
 			}
 		case "enter":
-			// There is no default answer: Enter only clears the hint.
-			m.typed = false
-			return m, nil
+			// Enter confirms a picked allow; there is no default answer,
+			// so otherwise it only clears the hint.
+			if m.pick.Decision == "" {
+				m.typed = false
+				return m, nil
+			}
+			resp = m.pick
 		default:
 			// Any other printable key is typing; other keys do nothing.
-			if msg.Type == tea.KeyRunes {
+			if printable {
 				m.typed = true
 			}
 			return m, nil
@@ -102,6 +118,7 @@ func (m PermissionPromptModel) Update(msg tea.Msg) (PermissionPromptModel, tea.C
 		}
 		m.active = false
 		m.response = nil
+		m.pick = PermissionResponse{}
 	}
 	return m, nil
 }
@@ -177,12 +194,18 @@ func (m PermissionPromptModel) View() string {
 	lines = append(lines, side+strings.Repeat(" ", inner)+side)
 
 	pattern := m.buildPattern()
-	row(keyStyle.Render("[a]") + mutedStyle.Render(" Allow once"))
-	row(keyStyle.Render("[A]") + mutedStyle.Render(fmt.Sprintf(" Always allow %q", pattern)))
+	row(keyStyle.Render("[a]") + mutedStyle.Render(" Allow once (then Enter)"))
+	row(keyStyle.Render("[A]") + mutedStyle.Render(fmt.Sprintf(" Always allow %q (then Enter)", pattern)))
 	row(keyStyle.Render("[d]") + mutedStyle.Render(" Deny (also Esc)"))
 	row(keyStyle.Render("[D]") + mutedStyle.Render(fmt.Sprintf(" Always deny %q", pattern)))
-	if m.typed {
-		row(lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(permissionTypedHint))
+	hint := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
+	switch {
+	case m.pick.Decision == "allow_once":
+		row(hint.Render("Press Enter to allow once (any other key cancels, Esc denies)"))
+	case m.pick.Decision == "always_allow":
+		row(hint.Render(fmt.Sprintf("Press Enter to always allow %q (any other key cancels, Esc denies)", pattern)))
+	case m.typed:
+		row(hint.Render(permissionTypedHint))
 	}
 
 	lines = append(lines, borderStyle.Render("╰"+strings.Repeat("─", inner)+"╯"))

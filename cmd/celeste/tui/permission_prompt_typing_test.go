@@ -59,11 +59,25 @@ func TestPermissionPromptTypedTextDoesNotAllow(t *testing.T) {
 	}
 }
 
+// d and D answer at once (they refuse); a and A allow, so they only pick
+// the answer and Enter confirms it.
 func TestPermissionPromptKeysStillAnswer(t *testing.T) {
-	for key, want := range map[rune]string{'a': "allow_once", 'A': "always_allow", 'd': "deny", 'D': "always_deny"} {
+	for key, want := range map[rune]string{'d': "deny", 'D': "always_deny"} {
 		ch := make(chan PermissionResponse, 1)
 		m := openPermission(ch, 100)
 		_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		r, ok := pendingPermission(ch)
+		require.True(t, ok)
+		assert.Equal(t, want, r.Decision)
+	}
+	for key, want := range map[rune]string{'a': "allow_once", 'A': "always_allow"} {
+		ch := make(chan PermissionResponse, 1)
+		m := openPermission(ch, 100)
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		_, ok := pendingPermission(ch)
+		require.False(t, ok, "%c answered before Enter", key)
+		assert.Contains(t, m.View(), "Press Enter to")
+		_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		r, ok := pendingPermission(ch)
 		require.True(t, ok)
 		assert.Equal(t, want, r.Decision)
@@ -76,6 +90,31 @@ func TestPermissionPromptKeysStillAnswer(t *testing.T) {
 	assert.False(t, ok, "Enter must not pick a default")
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	r, _ := pendingPermission(ch)
+	assert.Equal(t, "deny", r.Decision)
+}
+
+// Prose that starts with a or A is typing too: the next letter cancels
+// the picked answer, and Enter then confirms nothing.
+func TestPermissionPromptTypedProseStartingWithAllowKeyDoesNotAllow(t *testing.T) {
+	for _, text := range []string{"approve later", "allow?", "Always", "A b"} {
+		ch := make(chan PermissionResponse, 1)
+		m := openPermission(ch, 100)
+		m = typePermission(m, text)
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		_, ok := pendingPermission(ch)
+		assert.False(t, ok, "%q + Enter answered the prompt", text)
+		assert.True(t, m.Active(), text)
+	}
+}
+
+// Esc after picking a still denies.
+func TestPermissionPromptEscAfterPickDenies(t *testing.T) {
+	ch := make(chan PermissionResponse, 1)
+	m := openPermission(ch, 100)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	r, ok := pendingPermission(ch)
+	require.True(t, ok)
 	assert.Equal(t, "deny", r.Decision)
 }
 

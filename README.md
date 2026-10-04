@@ -553,10 +553,14 @@ When the modal appears, press one of:
 
 | Key | Action |
 |-----|--------|
-| `a` | Allow this invocation once |
-| `A` | Always allow this tool (persists a rule to `~/.celeste/permissions.json`) |
-| `d` | Deny this invocation |
+| `a`, then Enter | Allow this invocation once |
+| `A`, then Enter | Always allow this tool (persists a rule to `~/.celeste/permissions.json`) |
+| `d` or Esc | Deny this invocation |
 | `D` | Always deny this tool (persists a deny rule) |
+
+Nothing is pre-selected: Enter on its own does nothing. Typing into the
+modal never answers it. A key after `a` or `A` cancels the pick, and any
+other printable key (or a paste) is ignored with a hint until you press Enter.
 
 In headless or non-TUI contexts, any tool that would trigger the modal is **denied by default** — the gate cannot be silently bypassed.
 
