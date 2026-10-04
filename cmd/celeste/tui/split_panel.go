@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -40,42 +39,89 @@ func (s *SplitPanel) Resize(width, height int) {
 
 // AddAction appends an entry to the left action feed.
 // When the user has scrolled up (scrollOffset > 0), the view is pinned by
-// incrementing the offset so the same lines stay visible.
+// raising the offset by the entry's rows so the same lines stay visible.
 func (s *SplitPanel) AddAction(text string) {
 	s.actions = append(s.actions, text)
 	if len(s.actions) > maxActionEntries {
 		trimmed := len(s.actions) - maxActionEntries
 		s.actions = s.actions[trimmed:]
-		if s.scrollOffset > 0 {
-			s.scrollOffset -= trimmed
-			if s.scrollOffset < 0 {
-				s.scrollOffset = 0
-			}
-		}
 	}
-	// If scrolled up, bump offset by 1 so the viewport doesn't jump on new entries.
 	if s.scrollOffset > 0 {
-		s.scrollOffset++
+		s.scrollOffset += entryRows(text)
+		s.scrollOffset = min(s.scrollOffset, s.maxScroll())
 	}
 }
 
 // Actions returns the current action feed entries.
 func (s *SplitPanel) Actions() []string { return s.actions }
 
-// ScrollUp scrolls the left action feed toward older entries (up = back in time).
+// entryRows is how many feed rows an entry takes: one per line.
+func entryRows(e string) int { return strings.Count(e, "\n") + 1 }
+
+// feedLines is the action feed as display rows: an entry's first line
+// marked "● ", its further lines indented under it.
+func (s *SplitPanel) feedLines() []string {
+	var out []string
+	for _, e := range s.actions {
+		for i, l := range strings.Split(e, "\n") {
+			if i == 0 {
+				out = append(out, "● "+l)
+			} else {
+				out = append(out, "  "+l)
+			}
+		}
+	}
+	return out
+}
+
+// feedRowsAvailable is the rows the feed has under its header at the
+// panel's current size (see View and viewNarrow).
+func (s *SplitPanel) feedRowsAvailable() int {
+	if s.width < 40 {
+		return max(s.height, 1)
+	}
+	return max(s.height, 3) - 2 - 1 // borders, header
+}
+
+// feedWindow is the slice of total feed rows shown in avail rows at the
+// current scroll offset: rows [start, end), and whether a scroll marker
+// takes the last row. A feed that fits is shown whole, unscrolled (#353).
+func (s *SplitPanel) feedWindow(total, avail int, marker bool) (start, end int, scrolls bool) {
+	if total <= avail {
+		return 0, total, false
+	}
+	rows := avail
+	if marker {
+		rows = max(avail-1, 1)
+	}
+	offset := min(max(s.scrollOffset, 0), total-rows)
+	end = total - offset
+	return end - rows, end, true
+}
+
+// maxScroll is the largest useful scroll offset at the panel's current
+// size: the one showing the feed's first page.
+func (s *SplitPanel) maxScroll() int {
+	avail := s.feedRowsAvailable()
+	total := len(s.feedLines())
+	if total <= avail {
+		return 0
+	}
+	if s.width >= 40 {
+		avail = max(avail-1, 1) // the marker row
+	}
+	return total - avail
+}
+
+// ScrollUp scrolls the left action feed toward older entries (up = back in
+// time), no further than its first page.
 func (s *SplitPanel) ScrollUp(lines int) {
-	s.scrollOffset += lines
-	maxOffset := len(s.actions) - 1
-	if s.scrollOffset > maxOffset {
-		s.scrollOffset = maxOffset
-	}
-	if s.scrollOffset < 0 {
-		s.scrollOffset = 0
-	}
+	s.scrollOffset = min(max(s.scrollOffset+lines, 0), s.maxScroll())
 }
 
 // ScrollDown scrolls toward the latest entries. Reaching 0 resumes auto-follow.
 func (s *SplitPanel) ScrollDown(lines int) {
+	s.scrollOffset = min(s.scrollOffset, s.maxScroll())
 	s.scrollOffset -= lines
 	if s.scrollOffset < 0 {
 		s.scrollOffset = 0
@@ -181,40 +227,25 @@ func (s *SplitPanel) renderActionFeed(width, contentH int) string {
 		return header + "\n(waiting...)"
 	}
 
-	// Reserve: 1 for header, 1 for optional scroll indicator.
-	maxLines := contentH - 2
-	scrollHintNeeded := s.scrollOffset > 0
-	if scrollHintNeeded {
-		maxLines-- // room for scroll hint at bottom
+	// The header takes a row; when the feed does not fit, a marker counting
+	// the rows hidden above and below takes the last one (#353).
+	all := s.feedLines()
+	start, end, scrolls := s.feedWindow(len(all), max(contentH-1, 1), true)
+	lines := make([]string, 0, end-start)
+	for _, l := range all[start:end] {
+		lines = append(lines, fitLine(l, width))
 	}
-	if maxLines < 1 {
-		maxLines = 1
-	}
-
-	end := len(s.actions) - s.scrollOffset
-	if end < 0 {
-		end = 0
-	}
-	start := end - maxLines
-	if start < 0 {
-		start = 0
-	}
-	entries := s.actions[start:end]
-
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555"))
-	lines := make([]string, len(entries))
-	for i, e := range entries {
-		lines[i] = fitLine("● "+e, width)
-	}
-
 	result := header + "\n" + strings.Join(lines, "\n")
-	if scrollHintNeeded {
-		remaining := len(s.actions) - end
-		hint := fmt.Sprintf("↑ %d older  ↓ pgdn/↓ to resume", s.scrollOffset)
-		if remaining > 0 {
-			hint = fmt.Sprintf("↑ %d older  ↓ %d newer", s.scrollOffset, remaining)
+	if scrolls {
+		var parts []string
+		if start > 0 {
+			parts = append(parts, fmt.Sprintf("↑ %d older", start))
 		}
-		result += "\n" + dimStyle.Render(hint)
+		if newer := len(all) - end; newer > 0 {
+			parts = append(parts, fmt.Sprintf("↓ %d newer", newer))
+		}
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555"))
+		result += "\n" + dimStyle.Render(fitLine(strings.Join(parts, "  "), width))
 	}
 	return result
 }
@@ -308,18 +339,20 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 	return result
 }
 
-// viewNarrow is the feed alone, its latest entries, for a terminal under
-// 40 columns: still no wider or taller than the panel.
+// viewNarrow is the feed alone for a terminal under 40 columns: the rows
+// at the current scroll offset (its latest rows when following), still no
+// wider or taller than the panel.
 func (s *SplitPanel) viewNarrow() string {
 	rows := max(s.height, 1)
 	// Cap rows, not entries: an entry may hold several lines (a verdict).
-	var lines []string
-	for i := len(s.actions) - 1; i >= 0 && len(lines) < rows; i-- {
-		parts := strings.Split(s.actions[i], "\n")
-		for j := len(parts) - 1; j >= 0 && len(lines) < rows; j-- {
-			lines = append(lines, fitLine(parts[j], s.width))
-		}
+	var all []string
+	for _, e := range s.actions {
+		all = append(all, strings.Split(e, "\n")...)
 	}
-	slices.Reverse(lines)
+	start, end, _ := s.feedWindow(len(all), rows, false)
+	lines := make([]string, 0, end-start)
+	for _, l := range all[start:end] {
+		lines = append(lines, fitLine(l, s.width))
+	}
 	return strings.Join(lines, "\n")
 }

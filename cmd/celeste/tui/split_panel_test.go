@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 )
@@ -96,4 +98,108 @@ func TestSplitPanelNarrowCapsRowsNotEntries(t *testing.T) {
 			t.Errorf("row %d is %d wide", i, w)
 		}
 	}
+}
+
+// leftPane returns the left pane's inner rows of a rendered split panel,
+// borders and padding stripped.
+func leftPane(p *SplitPanel) []string {
+	var out []string
+	lines := strings.Split(ansi.Strip(p.View()), "\n")
+	for _, l := range lines[1 : len(lines)-1] {
+		r := []rune(l)
+		out = append(out, strings.TrimSpace(string(r[1:p.width/2-1])))
+	}
+	return out
+}
+
+func paneHas(rows []string, s string) bool {
+	for _, r := range rows {
+		if strings.Contains(r, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// #353: when the whole feed fits, PgUp has nothing to show: no scroll
+// markers, and every entry stays on screen.
+func TestSplitPanelPgUpWithShortFeedKeepsEntries(t *testing.T) {
+	p := NewSplitPanel(100, 30)
+	for i := 0; i < 6; i++ {
+		p.AddAction(fmt.Sprintf("entry %d", i))
+	}
+	p.ScrollUp(5)
+	rows := leftPane(p)
+	for i := 0; i < 6; i++ {
+		assert.True(t, paneHas(rows, fmt.Sprintf("entry %d", i)), "entry %d hidden after PgUp: %q", i, rows)
+	}
+	assert.False(t, paneHas(rows, "older"), "scroll marker over a feed that fits: %q", rows)
+	assert.False(t, paneHas(rows, "newer"), "scroll marker over a feed that fits: %q", rows)
+	assert.True(t, p.AtBottom())
+}
+
+// #353: paging a long feed shows a full pane of older entries, and the
+// markers count what is really hidden above and below.
+func TestSplitPanelPgUpShowsOlderEntriesAndTrueCounts(t *testing.T) {
+	p := NewSplitPanel(100, 12) // inner rows 10: header, 8 entries, marker
+	for i := 0; i < 40; i++ {
+		p.AddAction(fmt.Sprintf("entry %02d", i))
+	}
+	p.ScrollUp(5)
+	rows := leftPane(p)
+	for i := 27; i <= 34; i++ {
+		assert.True(t, paneHas(rows, fmt.Sprintf("entry %02d", i)), "entry %02d missing: %q", i, rows)
+	}
+	assert.False(t, paneHas(rows, "entry 35"), "%q", rows)
+	assert.True(t, paneHas(rows, "↑ 27 older"), "marker: %q", rows)
+	assert.True(t, paneHas(rows, "↓ 5 newer"), "marker: %q", rows)
+
+	// Paging past the top stops at the first page, still full.
+	p.ScrollUp(500)
+	rows = leftPane(p)
+	for i := 0; i <= 7; i++ {
+		assert.True(t, paneHas(rows, fmt.Sprintf("entry %02d", i)), "entry %02d missing at the top: %q", i, rows)
+	}
+	assert.False(t, paneHas(rows, "older"), "nothing is older than the first page: %q", rows)
+	assert.True(t, paneHas(rows, "↓ 32 newer"), "marker: %q", rows)
+
+	// One PgDn from the top moves back down at once.
+	p.ScrollDown(5)
+	rows = leftPane(p)
+	assert.True(t, paneHas(rows, "entry 12"), "%q", rows)
+	assert.True(t, paneHas(rows, "↓ 27 newer"), "%q", rows)
+}
+
+// #353: an entry spanning several lines counts its lines, so the page and
+// the markers stay right.
+func TestSplitPanelScrollCountsMultiLineEntries(t *testing.T) {
+	p := NewSplitPanel(100, 12)
+	for i := 0; i < 20; i++ {
+		p.AddAction(fmt.Sprintf("entry %02d", i))
+	}
+	p.AddAction("verdict a\nverdict b\nverdict c")
+	rows := leftPane(p)
+	assert.True(t, paneHas(rows, "verdict c"), "latest lines missing: %q", rows)
+	assert.True(t, paneHas(rows, "↑ 15 older"), "marker: %q", rows)
+	assert.Len(t, rows, 10)
+}
+
+// #353 end to end: PgUp in the /orch split view with a short feed keeps
+// the feed on screen and shows no scroll markers.
+func TestOrchSplitViewPgUpShortFeed(t *testing.T) {
+	m := NewApp(&fakeToolLLMClient{})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = updated.(AppModel)
+	m.splitPanelMode = true
+	m.splitPanel = NewSplitPanel(120, 30)
+	for i := 0; i < 6; i++ {
+		m.splitPanel.AddAction(fmt.Sprintf("lane step %d", i))
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	view := ansi.Strip(updated.(AppModel).View())
+	for i := 0; i < 6; i++ {
+		assert.Contains(t, view, fmt.Sprintf("lane step %d", i))
+	}
+	assert.NotContains(t, view, "older")
+	assert.NotContains(t, view, "newer")
 }
