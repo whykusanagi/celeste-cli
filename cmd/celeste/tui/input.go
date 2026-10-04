@@ -160,6 +160,16 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if isTextBurst(msg) {
+			// Text, whatever it spells: the word "left" is not the Left
+			// key (#320), so it skips the textarea's key bindings too.
+			m.textArea.InsertString(string(msg.Runes))
+			m.suggestions = computeSuggestions(m.textArea.Value())
+			if m.suggestionIdx >= len(m.suggestions) {
+				m.suggestionIdx = 0
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "tab":
 			// Complete with the highlighted suggestion

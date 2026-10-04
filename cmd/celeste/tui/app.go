@@ -521,6 +521,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onCatalogReady(ready), nil
 	}
 
+	// A sub-view acts on single keys: a text burst is typed into it one
+	// character at a time, so a word never reads as a named key (#320).
+	if k, ok := msg.(tea.KeyMsg); ok && isTextBurst(k) && m.viewMode != "chat" {
+		return m.typeEach(k)
+	}
+
 	// Route to collections view if in that mode
 	if m.viewMode == "collections" {
 		switch msg := msg.(type) {
@@ -703,6 +709,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// The MCP panel and the selector act on single keys too (#320).
+		if isTextBurst(msg) && (m.mcpPanel.Active() || m.selectorActive) {
+			return m.typeEach(msg)
+		}
+
 		// If MCP panel is active, route keys to it
 		if m.mcpPanel.Active() {
 			var cmd tea.Cmd
@@ -719,11 +730,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Esc on an empty input interrupts a running turn (#172). With text in
 		// the input, Esc keeps its old meaning (clear the draft).
-		if msg.String() == "esc" && m.turnActive() && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions() {
+		if keyName(msg) == "esc" && m.turnActive() && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions() {
 			return m.interrupt(), nil
 		}
 
-		switch msg.String() {
+		// keyName: a text burst names no key and goes to the input (#320).
+		switch keyName(msg) {
 		case "ctrl+c":
 			if m.turn != nil || m.cancelFunc != nil {
 				// Active operation running: cancel it. Double Ctrl+C within 3s quits.
