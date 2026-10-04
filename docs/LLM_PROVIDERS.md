@@ -20,6 +20,8 @@ Celeste CLI supports **9 chat providers**: eight call tools, and Venice's tool c
 
 **Sakana/Fugu:** `celeste config --init sakana` then `celeste -config sakana config --set-url https://api.sakana.ai/v1 --set-key <key> --set-model fugu` (or `fugu-ultra`), then `celeste -config sakana chat`. OpenAI-compatible chat completions; reasoning effort is fixed server-side (default high).
 
+**Anthropic:** `celeste -config anthropic config --set-url https://api.anthropic.com --set-key sk-ant-...`. Use the host without `/v1`: celeste adds `/v1/messages` for chat and `/v1/models` for the model list. A base URL that already ends in `/v1` (what earlier versions printed) still works.
+
 **Collections (Grok only):** Management key + `celeste collections create/upload/enable`.
 
 Test 'em: `celeste providers --tools`

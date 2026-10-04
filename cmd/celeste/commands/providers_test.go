@@ -139,3 +139,11 @@ func TestProviderInfoDigitalOceanModel(t *testing.T) {
 	assert.Contains(t, out, "Default:          "+do.DefaultModel)
 	assert.NotContains(t, out, "gpt-4o-mini")
 }
+
+// The advertised Anthropic URL is the bare host: the SDK appends
+// /v1/messages itself, so /v1 here would send chat to /v1/v1/messages.
+func TestProviderInfoAnthropicURLIsBareHost(t *testing.T) {
+	out := providersOutput(t, "info", "anthropic")
+	assert.Contains(t, out, "--set-url https://api.anthropic.com\n")
+	assert.NotContains(t, out, "api.anthropic.com/v1")
+}

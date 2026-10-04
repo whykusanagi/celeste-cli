@@ -49,8 +49,8 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 	opts := []option.RequestOption{
 		option.WithAPIKey(config.APIKey),
 	}
-	if config.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(config.BaseURL))
+	if base := anthropicSDKBaseURL(config.BaseURL); base != "" {
+		opts = append(opts, option.WithBaseURL(base))
 	}
 
 	client := anthropic.NewClient(opts...)
@@ -91,7 +91,7 @@ func (b *AnthropicBackend) Close() error {
 // providerKey names this backend's blocks: the effective base URL and the
 // model it sends (the served model, #232). 2.0 W2 ruling 4.
 func (b *AnthropicBackend) providerKey() string {
-	base := b.config.BaseURL
+	base := anthropicSDKBaseURL(b.config.BaseURL)
 	if base == "" {
 		base = anthropicDefaultBaseURL
 	}
@@ -350,7 +350,7 @@ func (b *AnthropicBackend) inherit(old *AnthropicBackend) {
 
 // endpointKey is providerKey without the model.
 func (b *AnthropicBackend) endpointKey() string {
-	base := b.config.BaseURL
+	base := anthropicSDKBaseURL(b.config.BaseURL)
 	if base == "" {
 		base = anthropicDefaultBaseURL
 	}
