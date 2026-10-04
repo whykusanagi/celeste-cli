@@ -1,5 +1,5 @@
 ---
-condition: TASK_COMPLETE
+condition: (?im)^[ \t*_#>`]*TASK_COMPLETE\b
 scope: text
 action: interrupt
 repeat: once

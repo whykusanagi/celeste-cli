@@ -93,7 +93,7 @@ a single MCP `celeste` call in chat mode, where each call starts fresh.
 |---|---|---|
 | `persona-voice-in-files` | pet names, emotes or stylised spelling in `write_file` / `patch_file` content, outside fenced code and `>` quotes, in a file not under a `docs` directory or a `persona` path (a `~` is ignored in dotfiles, shell scripts and TeX) | append |
 | `unbacked-audio-claim` | "Audio saved:" in a reply when no text-to-speech call has succeeded | interrupt |
-| `task-complete-before-verify` | `TASK_COMPLETE` when a file changed after the last command ran (not in agent runs with verification commands, which check the work themselves) | interrupt |
+| `task-complete-before-verify` | a line that starts with `TASK_COMPLETE` (not a mention mid-sentence, nor `TASK_COMPLETED`) when a file changed after the last command ran (not in agent runs with verification commands, which check the work themselves) | interrupt |
 | `destructive-bash` | `git push --force` / `-f` (not `--force-with-lease`), or a recursive forced `rm` (`-rf`, `-r -f`, `--recursive --force`) in a `bash` command, unless every path it removes is under `build`, `dist`, `node_modules`, `target`, `.cache`, `out` or `coverage` inside the project; it reads quoting, paths (`/bin/rm`), subshells, `sh -c`, `eval` and `ssh host '…'`, and fires again on later requests. Not covered: `find … -delete`, `xargs rm`, or scripts the command runs | interrupt |
 | `three-strikes` | a strike or warning ladder in a reply | append |
 
@@ -143,7 +143,9 @@ skips it.
 `completion_gate`: `shadow` (default) or `on`. With `on`, an agent run
 completes only when its reply starts or ends with a line beginning with
 the word `TASK_COMPLETE` (a mention mid-sentence, or `TASK_COMPLETED`,
-does not count). When the watchdog is on, the gate also asks the ballot
+does not count). Progress-marker lines such as `STEP_DONE: 1` before it
+do not count as the first line, and reasoning a local server left in the
+reply, up to a `</think>` line, is skipped. When the watchdog is on, the gate also asks the ballot
 before it accepts the completion and sends the run back if the ballot
 finds an unchecked claim of success. It sends a run back at most once,
 and never a run with verification commands (the runtime checks those

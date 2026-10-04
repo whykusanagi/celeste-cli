@@ -284,6 +284,49 @@ func TestBuiltinTaskCompleteNeedsAnUncheckedEdit(t *testing.T) {
 	}
 }
 
+// #330: the rule judges a declared completion, a marker at the start of
+// a line, as the completion gate does, on the reply text of local
+// reasoning models (qwen3 style): progress markers before the marker, a
+// mention of the marker inside a sentence, leaked reasoning.
+func TestBuiltinTaskCompleteJudgesTheDeclaredMarker(t *testing.T) {
+	for text, fire := range map[string]bool{
+		"TASK_COMPLETE: wrote hello.txt":                                       true,
+		"STEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\n- files: hello.txt":     true,
+		"STEP_DONE: 1\n\n**TASK_COMPLETE:** done":                              true,
+		"## task_complete: done":                                               true,
+		"> `TASK_COMPLETE` done":                                               true,
+		"I will reply with TASK_COMPLETE once the tests pass.":                 false,
+		"STEP_DONE: 1\nNext I run the tests; TASK_COMPLETE: comes after that.": false,
+		"TASK_COMPLETED: not the marker":                                       false,
+		"TASK_COMPLETE_LATER: after tests":                                     false,
+		"The user wants hello.txt. I wrote it, so I answer TASK_COMPLETE: next.\n</think>\n\nSTEP_DONE: 1\nStill checking.": false,
+	} {
+		m := builtinMatcher(t)
+		m.ToolResult("write_file", false)
+		m.StartRequest()
+		got := names(scanNow(m, text)) == "task-complete-before-verify"
+		if got != fire {
+			t.Errorf("%q: fired=%v, want %v", text, got, fire)
+		}
+	}
+}
+
+// The marker streamed across deltas, a few bytes at a time as local
+// servers send it, is found once.
+func TestBuiltinTaskCompleteAcrossDeltas(t *testing.T) {
+	m := builtinMatcher(t)
+	m.ToolResult("write_file", false)
+	m.StartRequest()
+	var hits []Hit
+	for _, d := range []string{"STEP_", "DONE: 1\n", "TASK_", "COMP", "LETE: wrote", " hello.txt\n", "- files: hello.txt"} {
+		hits = append(hits, m.Text(d)...)
+	}
+	hits = append(hits, m.Flush()...)
+	if names(hits) != "task-complete-before-verify" {
+		t.Errorf("hits = %q", names(hits))
+	}
+}
+
 func TestBuiltinDestructiveBash(t *testing.T) {
 	for cmd, fire := range map[string]bool{
 		"git push --force origin main":            true,

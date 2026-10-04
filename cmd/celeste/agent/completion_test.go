@@ -234,3 +234,48 @@ func TestCompletionGateVetoSettlesThePendingConcern(t *testing.T) {
 		}
 	}
 }
+
+// #330: the task-complete-before-verify rule, in shadow (the default), on
+// a qwen3-style run whose reasoning names TASK_COMPLETE: it stays quiet
+// when the edit was checked, and says it would interrupt when it was not.
+// Reasoning (a separate field, or inlined in <think>) never reaches it.
+func TestTaskCompleteRuleOnReasoningModelRun(t *testing.T) {
+	write := fakeprovider.ToolCall{ID: "w", Name: "write_file", Args: `{"path":"hello.txt","content":"hello world\n"}`}
+	check := fakeprovider.ToolCall{ID: "c", Name: "bash", Args: `{"command":"cat hello.txt"}`}
+	think := []string{"I must write hello.txt, check it, then reply\n", "TASK_COMPLETE: with the summary.\n"}
+	for name, tc := range map[string]struct {
+		turns []fakeprovider.Turn
+		fires bool
+	}{
+		"checked": {turns: []fakeprovider.Turn{
+			{ReasoningDeltas: think, ToolCalls: []fakeprovider.ToolCall{write}},
+			{ReasoningDeltas: think, ToolCalls: []fakeprovider.ToolCall{check}},
+			{ReasoningDeltas: think, Deltas: []string{qwen3Final}},
+		}},
+		"checked, inline think": {turns: []fakeprovider.Turn{
+			{ToolCalls: []fakeprovider.ToolCall{write}},
+			{ToolCalls: []fakeprovider.ToolCall{check}},
+			{Deltas: []string{"<think>\n" + strings.Join(think, ""), "</think>\n\n", qwen3Final}},
+		}},
+		"unchecked": {turns: []fakeprovider.Turn{
+			{ReasoningDeltas: think, ToolCalls: []fakeprovider.ToolCall{write}},
+			{ReasoningDeltas: think, Deltas: []string{qwen3Final}},
+		}, fires: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := fakeprovider.NewOpenAI(t, tc.turns...)
+			r, errOut := steerRunner(t, srv, nil)
+			st, err := r.RunGoal(context.Background(), "write hello.txt")
+			if err != nil || st.Status != StatusCompleted || len(srv.Requests()) != len(tc.turns) {
+				t.Fatalf("status=%s requests=%d err=%v\n%s", st.Status, len(srv.Requests()), err, errOut)
+			}
+			fired := strings.Contains(errOut.String(), "stream rule task-complete-before-verify would interrupt")
+			if fired != tc.fires {
+				t.Errorf("fired=%v, want %v: %q", fired, tc.fires, errOut.String())
+			}
+			if strings.Contains(errOut.String(), "completion gate (shadow)") {
+				t.Errorf("the gate disagreed: %q", errOut.String())
+			}
+		})
+	}
+}
