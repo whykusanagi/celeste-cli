@@ -172,15 +172,25 @@ func compare(o oldSide, c *FileChange) error {
 	}
 	var oldLines, newLines []string
 	if hasOld {
-		oldLines = strings.Split(string(old), "\n")
+		oldLines = splitLines(string(old))
 	}
 	if c.Deleted {
 		c.Deletions = len(oldLines)
 		return nil
 	}
-	newLines = strings.Split(string(cur), "\n")
+	newLines = splitLines(string(cur))
 	c.Insertions, c.Deletions, c.Approx = diffStats(oldLines, newLines)
 	return nil
+}
+
+// splitLines splits s into its lines. The empty string after a final
+// newline is not a line (V20): "hello\n" and "hello" are one line each,
+// and an empty file has none.
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 }
 
 // diffStats computes insertion and deletion counts between two sets of lines
