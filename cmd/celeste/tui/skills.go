@@ -101,7 +101,7 @@ func descLines(desc string, width, maxLines int) []string {
 	if width < 8 {
 		width = 8
 	}
-	lines := strings.Split(wrapText(desc, width), "\n")
+	lines := strings.Split(wrapText(collapseSpace(desc), width), "\n")
 	if len(lines) > maxLines {
 		last := lines[maxLines-1]
 		lines = lines[:maxLines]
@@ -109,6 +109,10 @@ func descLines(desc string, width, maxLines int) []string {
 	}
 	return lines
 }
+
+// collapseSpace joins every run of whitespace (newlines and tabs included)
+// into one space.
+func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // clampScroll keeps the cursor in range and inside the visible page.
 func (m *SkillsBrowserModel) clampScroll() {
@@ -225,7 +229,8 @@ func (m SkillsBrowserModel) View() string {
 		if i == m.cursor {
 			cursor = "› "
 		}
-		desc := truncateLine(skill.Description, descWidth)
+		// One row per skill: blank lines and tabs in a description collapse.
+		desc := fitWidth(collapseSpace(skill.Description), descWidth)
 		if i == m.cursor {
 			b.WriteString(lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true).
 				Render(fmt.Sprintf("%s%-25s  %s", cursor, skill.Name, desc)))

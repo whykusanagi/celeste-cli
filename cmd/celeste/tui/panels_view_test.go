@@ -168,3 +168,34 @@ func TestSessionPickerFillsTheChatArea(t *testing.T) {
 		}
 	}
 }
+
+// V10: a tool description with blank lines (code_review's) stays on its
+// row in the skills browser; the browser keeps its height and width.
+func TestSkillsBrowserMultilineDescriptionKeepsItsRow(t *testing.T) {
+	skills := []SkillDefinition{
+		{Name: "code_review", Description: "Automated code review using structural graph analysis.\n\nAnalyzes every function in the codebase\tfor stubs."},
+		{Name: "base64_decode", Description: "Decode a base64 string"},
+		{Name: "weather", Description: "Récupère la météo — prévisions détaillées pour une ville donnée, avec vent, humidité et alertes régionales"},
+	}
+	for _, sz := range auditSizes {
+		var m tea.Model = NewSkillsBrowserModel(skills)
+		m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+		view := m.View()
+		assertFitsWidth(t, view, sz.w)
+		if got := lipgloss.Height(view); got > sz.h {
+			t.Fatalf("%dx%d: the browser is %d rows:\n%s", sz.w, sz.h, got, stripANSI(view))
+		}
+		lines := strings.Split(stripANSI(view), "\n")
+		for i, ln := range lines {
+			if !strings.Contains(ln, "code_review") {
+				continue
+			}
+			if !strings.Contains(ln, "structural graph") || !strings.Contains(lines[i+1], "weather") {
+				t.Fatalf("%dx%d: code_review's description broke its row:\n%s", sz.w, sz.h, stripANSI(view))
+			}
+			if sz.w >= 120 && !strings.Contains(ln, "analysis. Analyzes every") {
+				t.Fatalf("%dx%d: the blank line was not collapsed: %q", sz.w, sz.h, ln)
+			}
+		}
+	}
+}
