@@ -874,6 +874,23 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat, cmd = m.chat.Update(msg)
 				cmds = append(cmds, cmd)
 			}
+		case "ctrl+up", "alt+up", "ctrl+down", "alt+down":
+			// The split view's right pane (diff or output) pages on its
+			// own keys; PgUp/PgDn page the action feed (#353).
+			if m.splitPanelMode && m.splitPanel != nil {
+				step := max(m.splitPanel.height-6, 1)
+				if strings.HasSuffix(keyName(msg), "up") {
+					step = -step
+				}
+				m.splitPanel.ScrollRight(step)
+			} else {
+				// Outside the split view these keys go to the input, as
+				// before.
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				cmds = append(cmds, cmd)
+				m.skills = m.skills.SetCurrentInput(m.input.Value())
+			}
 		case "pgdown", "shift+down", "end":
 			if m.splitPanelMode && m.splitPanel != nil {
 				m.splitPanel.ScrollDown(5)
@@ -950,7 +967,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A handoff is replacing the session: hold the input until the new
 		// session is in place (#352).
-		if content != "" && m.handingOff && !runsDuringTurn(content) {
+		if content != "" && m.handingOff {
 			return m.holdForHandoff(content), nil
 		}
 		// Idle again, so an earlier interrupt no longer applies.

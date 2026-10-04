@@ -203,3 +203,59 @@ func TestOrchSplitViewPgUpShortFeed(t *testing.T) {
 	assert.NotContains(t, view, "older")
 	assert.NotContains(t, view, "newer")
 }
+
+// rightPane returns the right pane's inner rows of a rendered split panel.
+func rightPane(p *SplitPanel) []string {
+	var out []string
+	lines := strings.Split(ansi.Strip(p.View()), "\n")
+	for _, l := range lines[1 : len(lines)-1] {
+		r := []rune(l)
+		out = append(out, strings.TrimSpace(string(r[p.width/2+1:len(r)-1])))
+	}
+	return out
+}
+
+// #353 (right pane): the "line x-y / n" marker promises more of a long
+// diff; paging the right pane must show it, and stop at the last page.
+func TestSplitPanelRightPanePagesLongDiff(t *testing.T) {
+	p := NewSplitPanel(100, 12) // inner rows 10: header, 8 lines, marker
+	var diff []string
+	for i := 0; i < 30; i++ {
+		diff = append(diff, fmt.Sprintf("+ line %02d", i))
+	}
+	p.SetDiff("main.go", strings.Join(diff, "\n"))
+	rows := rightPane(p)
+	assert.True(t, paneHas(rows, "line 1-8 / 30"), "%q", rows)
+
+	p.ScrollRight(8)
+	rows = rightPane(p)
+	assert.True(t, paneHas(rows, "+ line 08"), "%q", rows)
+	assert.True(t, paneHas(rows, "line 9-16 / 30"), "%q", rows)
+
+	p.ScrollRight(500)
+	rows = rightPane(p)
+	assert.True(t, paneHas(rows, "+ line 22"), "the last page is full: %q", rows)
+	assert.True(t, paneHas(rows, "line 23-30 / 30"), "%q", rows)
+
+	p.ScrollRight(-500)
+	assert.True(t, paneHas(rightPane(p), "line 1-8 / 30"))
+}
+
+// ctrl+↓ / ctrl+↑ page the right pane in the /orch split view.
+func TestOrchSplitViewCtrlArrowsPageRightPane(t *testing.T) {
+	m := NewApp(&fakeToolLLMClient{})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = updated.(AppModel)
+	m.splitPanelMode = true
+	m.splitPanel = NewSplitPanel(120, 30)
+	var diff []string
+	for i := 0; i < 200; i++ {
+		diff = append(diff, fmt.Sprintf("+ row %03d", i))
+	}
+	m.splitPanel.SetDiff("main.go", strings.Join(diff, "\n"))
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlDown})
+	m = updated.(AppModel)
+	assert.Positive(t, m.splitPanel.rightScroll)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlUp})
+	assert.Zero(t, updated.(AppModel).splitPanel.rightScroll)
+}

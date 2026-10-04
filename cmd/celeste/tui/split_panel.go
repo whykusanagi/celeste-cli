@@ -128,6 +128,38 @@ func (s *SplitPanel) ScrollDown(lines int) {
 	}
 }
 
+// rightLines is the scrollable content of the right pane, the live output
+// or the diff; nil when it shows a verdict or is waiting.
+func (s *SplitPanel) rightLines() []string {
+	switch {
+	case s.verdict != "":
+		return nil
+	case s.diffFile != "":
+		return strings.Split(s.diffContent, "\n")
+	case s.output != "":
+		return strings.Split(s.output, "\n")
+	}
+	return nil
+}
+
+// rightPageRows is how many content lines the right pane shows: its inner
+// rows less the header and the "line x-y / n" marker.
+func rightPageRows(contentH int) int { return max(contentH-2, 1) }
+
+// rightWindow is the [start, end) of total right-pane lines shown in a page
+// of rows: the last page is a full one (#353).
+func (s *SplitPanel) rightWindow(total, rows int) (start, end int) {
+	start = min(max(s.rightScroll, 0), max(total-rows, 0))
+	return start, min(start+rows, total)
+}
+
+// ScrollRight pages the right pane by delta lines (negative = up), within
+// its content.
+func (s *SplitPanel) ScrollRight(delta int) {
+	rows := rightPageRows(max(s.height, 3) - 2)
+	s.rightScroll = min(max(s.rightScroll+delta, 0), max(len(s.rightLines())-rows, 0))
+}
+
 // AtBottom reports whether the left panel is auto-following the latest entry.
 func (s *SplitPanel) AtBottom() bool { return s.scrollOffset == 0 }
 
@@ -262,29 +294,15 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 		// Show live response output with scroll support
 		header := headerStyle.Render("code output")
 		allLines := strings.Split(s.output, "\n")
-		maxLines := contentH - 2
-		if maxLines < 1 {
-			maxLines = 1
-		}
-		start := s.rightScroll
-		if start > len(allLines)-1 {
-			start = len(allLines) - 1
-		}
-		if start < 0 {
-			start = 0
-		}
-		end := start + maxLines
-		if end > len(allLines) {
-			end = len(allLines)
-		}
+		start, end := s.rightWindow(len(allLines), rightPageRows(contentH))
 		visible := allLines[start:end]
 		trimmed := make([]string, len(visible))
 		for i, l := range visible {
 			trimmed[i] = fitLine(l, width)
 		}
 		result := header + "\n" + strings.Join(trimmed, "\n")
-		if s.rightScroll > 0 || end < len(allLines) {
-			result += "\n" + dimStyle.Render(fmt.Sprintf("line %d-%d / %d", start+1, end, len(allLines)))
+		if start > 0 || end < len(allLines) {
+			result += "\n" + dimStyle.Render(fitLine(rightMarker(start, end, len(allLines)), width))
 		}
 		return result
 	}
@@ -295,22 +313,7 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 	header := headerStyle.Render(s.diffFile)
 	// Split diff into lines and apply scroll.
 	allLines := strings.Split(s.diffContent, "\n")
-	maxLines := contentH - 2 // header + 1 pad
-	if maxLines < 1 {
-		maxLines = 1
-	}
-
-	start := s.rightScroll
-	if start > len(allLines)-1 {
-		start = len(allLines) - 1
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxLines
-	if end > len(allLines) {
-		end = len(allLines)
-	}
+	start, end := s.rightWindow(len(allLines), rightPageRows(contentH))
 	visible := allLines[start:end]
 
 	// Color diff lines: additions green, removals red, header cyan.
@@ -332,11 +335,15 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 	}
 
 	result := header + "\n" + strings.Join(colored, "\n")
-	if s.rightScroll > 0 || end < len(allLines) {
-		hint := fmt.Sprintf("line %d-%d / %d", start+1, end, len(allLines))
-		result += "\n" + dimStyle.Render(hint)
+	if start > 0 || end < len(allLines) {
+		result += "\n" + dimStyle.Render(fitLine(rightMarker(start, end, len(allLines)), width))
 	}
 	return result
+}
+
+// rightMarker is the right pane's position marker and its paging keys.
+func rightMarker(start, end, total int) string {
+	return fmt.Sprintf("line %d-%d / %d · ctrl+↑/↓ scroll", start+1, end, total)
 }
 
 // viewNarrow is the feed alone for a terminal under 40 columns: the rows

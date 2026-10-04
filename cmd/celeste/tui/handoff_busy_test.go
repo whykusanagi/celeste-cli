@@ -98,3 +98,14 @@ func TestHandoffFailureReleasesHeldInput(t *testing.T) {
 	_ = m
 	assert.Equal(t, []string{"keep going"}, sentMessages(cmd))
 }
+
+// /agents, which runs even during a turn, also waits for the handoff:
+// "/agents resume" would start a run whose output lands in the new session.
+func TestHandoffHoldsAgentsCommand(t *testing.T) {
+	m, ready := startTestHandoff(t, nil)
+	m, _ = step(t, m, SendMessageMsg{Content: "/agents resume cp-1"})
+	assert.Equal(t, []string{"/agents resume cp-1"}, m.handoffHeld)
+	m, cmd := step(t, m, ready)
+	assert.Equal(t, []string{"/agents resume cp-1"}, sentMessages(cmd))
+	assert.Empty(t, m.handoffHeld)
+}
