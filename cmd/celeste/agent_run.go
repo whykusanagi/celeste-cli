@@ -47,7 +47,7 @@ func runAgentCommand(args []string) {
 	maxNoToolTurns := fs.Int("max-no-tool-turns", 0, "Maximum consecutive no-tool turns before stopping")
 	requireMarker := fs.Bool("require-complete-marker", true, "Require completion marker in final response")
 	completionMarker := fs.String("completion-marker", "TASK_COMPLETE:", "Completion marker token")
-	requestTimeout := fs.Int("request-timeout", 0, "LLM request timeout in seconds")
+	requestTimeout := fs.Int("request-timeout", 0, "Most seconds one model turn may take (default: the 30-minute cap; the profile timeout still fails a request that sends nothing for that long)")
 	toolTimeout := fs.Int("tool-timeout", 0, "Tool execution timeout in seconds")
 	verifyTimeout := fs.Int("verify-timeout", 0, "Verification command timeout in seconds")
 	enablePlanning := fs.Bool("planner", true, "Enable explicit planning phase")

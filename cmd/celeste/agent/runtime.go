@@ -334,11 +334,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		// context and the LLM client's per-attempt deadline (cfg.Timeout) are
 		// independent, and the tighter one wins — raising only the agent's was
 		// moot in practice: a real workload still died at the client's 90s and
-		// reported the chat-path message. clientTimeoutFloor carries the same
-		// floor into llm.Config below.
-		if !options.RequestTimeoutExplicit && options.RequestTimeout < conductorRequestTimeout {
-			options.RequestTimeout = conductorRequestTimeout
-		}
+		// reported the chat-path message. clientTimeoutFloor carries the floor
+		// into the client's stall timeout below; the turn deadline derives
+		// from that unless the caller named one.
 		clientTimeoutFloor = conductorRequestTimeout
 		if !options.PlanningExplicit {
 			options.EnablePlanning = false
@@ -346,6 +344,20 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		if !options.VerificationExplicit {
 			options.RequireVerification = false
 		}
+	}
+
+	// The profile's timeout is the client's stall timeout here as in chat
+	// (L3: agent runs used to ignore it for a fixed 90 s turn deadline, so a
+	// local agent run died on its first request). An explicit
+	// -request-timeout bounds each turn, and the client may wait that long
+	// too; otherwise only the hard cap bounds a turn, and a request fails
+	// when it stalls.
+	if options.RequestTimeoutExplicit && options.RequestTimeout > 0 {
+		clientTimeoutFloor = maxDuration(clientTimeoutFloor, options.RequestTimeout)
+	}
+	clientStall := maxDuration(cfg.GetTimeout(), clientTimeoutFloor)
+	if !options.RequestTimeoutExplicit {
+		options.RequestTimeout = llm.MaxRequestDuration(clientStall)
 	}
 
 	normalizeOptions(&options)
@@ -439,7 +451,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	llmConfig := llm.ConfigFrom(cfg)
 	llmConfig.Model = model
-	llmConfig.Timeout = maxDuration(cfg.GetTimeout(), clientTimeoutFloor)
+	llmConfig.Timeout = clientStall
 	var client *llm.Client
 	if options.Client != nil {
 		client = options.Client
