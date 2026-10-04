@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -216,4 +217,40 @@ func TestReplacingTheChatUntracksThePlan(t *testing.T) {
 	m, _ = step(t, m, SendMessageMsg{Content: "/plan show"})
 	_ = m
 	assert.Zero(t, client.untracked)
+}
+
+// Plan mode turned on between a failed turn and its retry: the retry is a
+// plan-mode prompt, so it carries the instruction rather than reusing the
+// prompt that went out without it.
+func TestRetryAfterPlanModeOnCarriesTheInstruction(t *testing.T) {
+	m, client := newPlanTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "look around"})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "error", Err: errors.New("boom")})
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan"})
+	m, _ = step(t, m, SendMessageMsg{Content: "look around"})
+	require.Len(t, client.turns, 2)
+	h := client.turns[1].req.History
+	require.GreaterOrEqual(t, len(h), 2)
+	assert.Equal(t, "look around", h[len(h)-1].Content)
+	assert.Equal(t, PlanModeInstruction, h[len(h)-2].Content)
+	_ = m
+}
+
+// With plan mode unchanged, a plan-mode retry reuses its prompt and its
+// instruction: neither is sent twice.
+func TestPlanModeRetryReusesThePrompt(t *testing.T) {
+	m, client := newPlanTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "/plan"})
+	m, _ = step(t, m, SendMessageMsg{Content: "look around"})
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "error", Err: errors.New("boom")})
+	m, _ = step(t, m, SendMessageMsg{Content: "look around"})
+	require.Len(t, client.turns, 2)
+	n := 0
+	for _, msg := range client.turns[1].req.History {
+		if msg.Content == PlanModeInstruction || msg.Content == "look around" {
+			n++
+		}
+	}
+	assert.Equal(t, 2, n, "the retry duplicated the prompt or its instruction")
+	_ = m
 }

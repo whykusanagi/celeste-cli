@@ -1799,9 +1799,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Add user message to chat, after the hidden plan-mode instruction
 		// while plan mode is on (2.0 W4e). The same text as a prompt whose
-		// turn failed unanswered retries that prompt instead (L5).
+		// turn failed unanswered retries that prompt instead (L5), unless
+		// plan mode changed since: the retry needs (or must drop) the
+		// instruction, so it is sent as a new prompt.
 		reused := false
-		if m.chat, reused = m.chat.ReuseUnanswered(content); !reused {
+		if m.chat.LastPromptPlanned() == m.planModeOn() {
+			m.chat, reused = m.chat.ReuseUnanswered(content)
+		}
+		if !reused {
 			m = m.withPlanInstruction()
 			m.chat = m.chat.AddUserMessage(content)
 		}

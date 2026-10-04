@@ -238,6 +238,18 @@ func (m ChatModel) MarkUnanswered() (ChatModel, bool) {
 	return m.withMeta(i, MetaUnanswered, true), true
 }
 
+// LastPromptPlanned reports whether the last prompt went out with the
+// hidden plan-mode instruction before it.
+func (m ChatModel) LastPromptPlanned() bool {
+	i := m.lastPrompt()
+	if i < 1 {
+		return false
+	}
+	prev := m.messages[i-1]
+	hidden, _ := prev.Metadata["hidden"].(bool)
+	return hidden && prev.Role == "user" && prev.Content == PlanModeInstruction
+}
+
 // ReuseUnanswered reports whether the last prompt is an unanswered one with
 // this content; if so it clears the mark, so the retry sends that prompt
 // rather than a copy of it.
