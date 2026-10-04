@@ -77,3 +77,37 @@ func TestConfirmCommandUpdatesTheModelsCachedConfig(t *testing.T) {
 		t.Error("/confirm must take effect immediately, without an app restart")
 	}
 }
+
+// /confirm reloads config.json to flip and save confirm_actions. It used to
+// replace the whole session config with that reload, which dropped the
+// active profile (and every field config.json does not share with it), so a
+// later collections save went to config.json instead of the profile. Only
+// ConfirmActions may change in the session config.
+func TestConfirmCommandKeepsTheSessionConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	celesteDir := filepath.Join(home, ".celeste")
+	if err := os.MkdirAll(celesteDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(celesteDir, "config.json"), []byte(`{"model": "disk-model", "confirm_actions": false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp(nil).WithEndpoint("openai")
+	sized, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	app = sized.(AppModel)
+	session := &config.Config{Model: "session-model"}
+	app = app.SetConfig(session)
+
+	updated, _ := app.Update(SendMessageMsg{Content: "/confirm"})
+	app = updated.(AppModel)
+
+	if app.config != session {
+		t.Fatal("/confirm replaced the session config with config.json's")
+	}
+	if app.config.Model != "session-model" || !app.config.ConfirmActions {
+		t.Fatalf("session config = model %q confirm %v; want session-model, true", app.config.Model, app.config.ConfirmActions)
+	}
+}

@@ -67,7 +67,11 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// persona down. The guard's notice is only logged: MCP responses are
 	// frozen (W5 ruling 7).
 	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
-	system := env.SystemPrompt(loop.PromptOptions{Session: session, Window: window}).String()
+	sp := env.SystemPrompt(loop.PromptOptions{Session: session, Window: window})
+	if sp.Notice != "" {
+		log.Printf("[persona] %s", sp.Notice)
+	}
+	system := sp.String()
 	sessionID := "mcp-chat-" + config.UniqueNanoID()
 	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
 	sess := chatSteering(ctx, cfg, env, prompt, workspace)
@@ -187,7 +191,8 @@ func (c *chatCompactor) Compact(ctx context.Context, history []loop.Message, usa
 	}
 	c.meter.Observe(history, prompt)
 	// Shadow reports inline: a call's log lines must not outlive it.
-	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: c.meter.Used(history), Unseen: c.meter.Unseen(history), Force: force}, func(line string) {
+	used := c.meter.Used(history)
+	opts, report := compact.WithJev(ctx, c.jev, c.jevMode, history, compact.Options{Window: c.window, Used: used, Overhead: used - compact.Estimate(history), Unseen: c.meter.Unseen(history), Force: force}, func(line string) {
 		log.Printf("celeste chat: %s", line)
 	}, false)
 	out, res := compact.Prune(history, opts, c.store)

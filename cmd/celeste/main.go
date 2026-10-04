@@ -85,13 +85,14 @@ Global Flags:
 
 Commands:
   chat                    Launch interactive TUI mode
-  message <text>          Send a single message and exit
+  message <text>          Send a single message and exit (alias: msg)
   config                  View/modify configuration
   skills                  List and manage skills
+  skill <name> [--args]   Execute a skill
   providers               List and query AI providers
   agent                   Run autonomous agent loops for complex tasks
   persona verify          Check that this binary carries the official persona
-  session                 Manage conversation sessions
+  session                 Manage conversation sessions (alias: sessions)
   context                 Show context/token usage
   stats                   Show usage statistics
   export                  Export session data
@@ -100,6 +101,8 @@ Commands:
   index [status|rebuild|reset]  Manage code graph index
   serve                   Start MCP server (stdio or SSE transport)
   acp                     Run as an Agent Client Protocol agent over stdio (Zed, JetBrains)
+  mcp install [--client <name>]  Register celeste as an MCP server in Claude Desktop, Claude Code, Cursor, Codex
+  collections <subcommand>  Manage xAI collections (create/list/upload/delete/enable/disable/show)
   wallet-monitor          Manage wallet security monitoring daemon
   costs                   Show session cost breakdown
   memories                List memories for current project
@@ -116,22 +119,43 @@ Commands:
 Interactive Commands (in chat mode):
   /help                   Show available commands
   /clear                  Clear chat history
+  /menu                   Open the command menu
   /config                 Show current configuration
   /tools, /skills         Browse available tools
   /agent <goal>           Run autonomous task loop
-  /orch <goal>            Multi-model orchestrated run
+  /agents                 List spawned subagents (resume <id> | kill <id>)
+  /orch, /orchestrate <goal>  Multi-model orchestrated run
+  /session                Open the session picker (new/resume/list/merge/...)
   /memories               List project memories
   /costs                  Show session costs
+  /stats                  Show usage statistics
+  /export [format]        Export the session (json, md, csv)
   /context                Show context/token usage
+  /compact [focus]        Summarize older history to free context
+  /handoff [focus]        Summarize this session into a new one
   /diff                   List the files this session changed
   /undo                   Undo the last file change (repeat to go back)
+  /rewind [n]             Take back the last n prompts and their file changes
+  /fork                   Continue in a copy of this session
+  /init [agents]          Create .grimoire (and AGENTS.md) for this project
   /grimoire               Show project grimoire
   /index                  Show code graph status
+  /graph                  Browse the code graph
+  /mcp                    Show connected MCP servers
+  /collections            Manage xAI collections
   /plan [goal]            Plan mode: read-only tools until you approve a plan
   /plan off | show        Leave plan mode | show the plan and its todo status
+  /confirm                Toggle confirm mode (propose actions before executing)
   /effort <level>         Set reasoning effort (off/low/medium/high/max)
   /endpoint <name>        Switch AI provider endpoint
+  /providers              List AI providers
   /model <name>           Change the model
+  /persona                Personality sliders
+  /user [name|reset]      Show or set how Celeste addresses you
+  /voice                  ElevenLabs TTS settings
+  /nsfw, /safe            Switch to NSFW mode (Venice.ai) | back to safe mode
+  /set-model [model]      List or set the chat model (the image model in NSFW mode)
+  /list-models            List models (also /image-model, the old name for /set-model)
   exit, quit, q           Exit the application
 
 Keyboard Shortcuts:
@@ -256,6 +280,10 @@ func runChatTUI() {
 	// Run the TUI
 	// Mouse capture disabled — allows terminal-native text selection and copy.
 	p := tea.NewProgram(app, tea.WithAltScreen())
+	// The log package goes to the log file while the TUI owns the terminal:
+	// a plain log.Printf (MCP connects, /agent runs) would draw over it.
+	restoreStdLog := tui.RedirectStdLog()
+	defer restoreStdLog()
 	notify := func(s string) { p.Send(tui.HookWarningMsg{Text: s}) }
 	hookNotify.Store(&notify)
 	defer hookNotify.Store(nil)
@@ -356,6 +384,11 @@ type TUIClientAdapter struct {
 	// compactMu serializes compactWith: the loop's compactor calls it on
 	// a run goroutine, /context compact on the Update goroutine.
 	compactMu sync.Mutex
+	// overhead is the fixed prefix (system prompt, tool schemas, or the
+	// provider's surplus) compactWith last measured. SummarizeContext,
+	// on a tea.Cmd goroutine, sizes its kept tail with it, so the summary
+	// the compactor asked for keeps what NeedsSummary assumed (L2).
+	overhead atomic.Int64
 	// Running turns, so shutdown can wait for them before the Env closes.
 	runsMu  sync.Mutex
 	running int
@@ -689,11 +722,14 @@ func (a *TUIClientAdapter) compactWith(ctx context.Context, msgs []tui.ChatMessa
 			a.pruned = store
 		}
 	}
-	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Unseen: unseen, Force: force}, tui.LogInfo, true)
+	a.overhead.Store(int64(overhead))
+	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Overhead: overhead, Unseen: unseen, Force: force}, tui.LogInfo, true)
 	after, res := compact.Prune(msgs, opts, a.pruned)
 	report(res)
+	// Over the overhead-aware threshold with history a summary can
+	// replace: never "over" on the fixed prefix alone (L2).
 	out := tui.CompactOutcome{
-		StillOver: compact.Estimate(after)+overhead > compact.Threshold(window),
+		StillOver: compact.NeedsSummary(after, window, compact.Estimate(after)+overhead),
 	}
 	if !res.Pruned() {
 		return out
@@ -772,7 +808,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
 
 // SummarizeContext implements tui.ContextCompactor: it summarizes all but
-// the newest compact.KeepFor(window) tokens with the small-model role (#174). PreCompact runs
+// the newest compact.KeepWithin(window, overhead) tokens with the small-model role (#174). PreCompact runs
 // inside the summarize call, which compact.Summarize only makes when there
 // is something to summarize; it may block the summary or add instructions.
 // PostCompact sees the summary.
@@ -810,7 +846,7 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	if a.state != nil {
 		state = a.state()
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, State: state}, hooked)
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, Overhead: int(a.overhead.Load()), State: state}, hooked)
 	if blocked != "" {
 		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
 	}

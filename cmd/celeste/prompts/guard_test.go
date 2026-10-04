@@ -76,8 +76,10 @@ func TestGuardLeavesOffAndUnknownWindowsAlone(t *testing.T) {
 	}
 }
 
-// The notice names the profile in use and context_limit, is logged, and is
-// returned once per window (window 8191 is used by no other test).
+// The notice names the profile in use and context_limit, and is returned
+// once per window (window 8191 is used by no other test). The guard does
+// not log it: the caller shows it or logs it, so it is reported once
+// (#321).
 func TestGuardNoticeOnce(t *testing.T) {
 	personaHome(t)
 	logs := captureLog(t)
@@ -87,8 +89,8 @@ func TestGuardNoticeOnce(t *testing.T) {
 			t.Errorf("notice %q lacks %q", first, want)
 		}
 	}
-	if !strings.Contains(logs.String(), "[persona] "+first) {
-		t.Errorf("notice not logged: %q", logs.String())
+	if strings.Contains(logs.String(), first) {
+		t.Errorf("the guard logged the notice its caller reports: %q", logs.String())
 	}
 	if _, again := selectProfile(ProfileFull, 8191); again != "" {
 		t.Errorf("notice repeated: %q", again)
@@ -164,5 +166,17 @@ func TestGuardNoticeAtTheFloor(t *testing.T) {
 		if strings.Contains(n, banned) {
 			t.Errorf("notice %q says %q", n, banned)
 		}
+	}
+}
+
+// GetContentPrompt drops the guard's notice from its prompt, so it logs it,
+// once (window 8189 is used by no other test).
+func TestContentPromptLogsTheGuardNotice(t *testing.T) {
+	personaHome(t)
+	logs := captureLog(t)
+	_ = GetContentPrompt(8189, "", "short", "", "")
+	_ = GetContentPrompt(8189, "", "short", "", "")
+	if got := strings.Count(logs.String(), "[persona] Persona: using the lite profile"); got != 1 {
+		t.Errorf("want the notice logged once, got %d: %q", got, logs.String())
 	}
 }

@@ -78,7 +78,7 @@ type Runner struct {
 // tool results when the history is over the compaction threshold, or
 // unconditionally when force is set (after a context-overflow error); if
 // that isn't enough it summarizes everything but the newest
-// compact.KeepFor(window) tokens. It returns the history, progress notes for
+// compact.KeepWithin(window, overhead) tokens. It returns the history, progress notes for
 // the event stream, and whether it changed. It runs on the loop goroutine and must not write r.out.
 func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, meter *compact.Meter, force bool) ([]tui.ChatMessage, []string, bool) {
 	// A nil prune store only disables pruning (Prune is a no-op without
@@ -95,7 +95,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	overhead := used - compact.Estimate(msgs)
 	// Shadow reports inline: errOut may be a caller's bytes.Buffer, and the
 	// run must not outlive its output.
-	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
+	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Overhead: overhead, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
 		fmt.Fprintf(r.errOut, "[agent] %s\n", line)
 	}, false)
 	pruned, res := compact.Prune(msgs, opts, r.pruned)
@@ -109,12 +109,20 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 
 	// Next rung: summarize when pruning wasn't enough, or when a forced
 	// compaction (after an overflow) found nothing to prune.
-	threshold := compact.Threshold(r.budget.ModelLimit)
+	// Decided on the history beyond the fixed prefix, and only when there
+	// is history a summary can replace (L2).
+	threshold := compact.ThresholdFor(r.budget.ModelLimit, overhead)
 	next := compact.Estimate(msgs) + overhead
-	stillOver := next > threshold
+	stillOver := compact.NeedsSummary(msgs, r.budget.ModelLimit, next)
 	// ceiling leaves the reply room: halfway from the threshold to the
 	// window, so it never takes more than half the threshold's reserve.
 	ceiling := threshold + (r.budget.ModelLimit-threshold)/2
+	if next > ceiling && compact.HasHistoryToSummarize(msgs, r.budget.ModelLimit, overhead) {
+		// The reply has no room: try whatever a summary can free, even
+		// a small head (Summarize refuses one that would not shrink),
+		// but never one with nothing before the kept tail.
+		stillOver = true
+	}
 	if unseen := meter.Unseen(msgs); stillOver && !force && unseen > 0 && unseen <= len(msgs) &&
 		compact.Estimate(msgs[:len(msgs)-unseen])+overhead <= threshold && next <= ceiling {
 		// What keeps the history over is what the model has not seen yet:
@@ -126,7 +134,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, State: r.renderState()}, summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, Overhead: overhead, State: r.renderState()}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
 			// Always reported, not only in verbose output (TUI parity).
@@ -537,6 +545,18 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An explicit --max-turns overrides the saved limit (#316), so a run
+	// that stopped at max_turns_reached continues under the new cap. A
+	// resumer's default MaxTurns never does: the saved limit is the run's.
+	if r.options.MaxTurnsExplicit && r.options.MaxTurns > 0 {
+		state.Options.MaxTurns = r.options.MaxTurns
+	}
+	// The previous attempt's error (a cancel, a failed request), stop
+	// reason and finish time are stale once the run resumes (#317): this
+	// attempt records its own, if any.
+	state.Error = ""
+	state.StopReason = ""
+	state.CompletedAt = nil
 	normalizeStateOptions(state, r.options)
 	return r.runState(ctx, state)
 }
@@ -1184,6 +1204,7 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 
 func completeState(state *RunState) {
 	state.Status = StatusCompleted
+	state.Error = "" // a completed run carries no error (#317)
 	now := time.Now()
 	state.CompletedAt = &now
 	state.UpdatedAt = now

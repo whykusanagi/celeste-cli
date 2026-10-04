@@ -554,6 +554,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case menuItemSelectedMsg:
 			// User selected a menu item, execute it
 			m.viewMode = "chat"
+			if msg.command == "exit" {
+				// exit is not a slash command (#314): quit the way typing it does.
+				m.persistSession()
+				return m, tea.Quit
+			}
 			return m, SendMessage("/" + msg.command)
 		}
 
@@ -864,6 +869,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewMode = "sessions"
 				panel := NewSessionPanelModel(m.workDir)
 				panel = panel.SetWidth(m.width).SetHeight(m.height)
+				if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+					panel = panel.WithCurrent(s.ID)
+				}
 				m.sessionPanel = &panel
 				return m, nil
 			}
@@ -1361,8 +1369,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// View() renders m.config's cached ConfirmActions instead
 					// of reloading from disk (#144 W6b review, I1); keep it
-					// current so the toggle takes effect immediately.
-					m.config = cfg
+					// current so the toggle takes effect immediately. Only the
+					// flag is copied: cfg is config.json's, and replacing the
+					// session config with it would drop the active profile.
+					if m.config == nil {
+						m.config = cfg
+					} else {
+						m.config.ConfirmActions = cfg.ConfirmActions
+					}
 					if refresher, ok := m.llmClient.(PromptRefresher); ok {
 						refresher.RefreshSystemPrompt()
 					}
@@ -1618,6 +1632,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if result.StateChange.ClearHistory {
 					m.chat = m.chat.Clear()
+					m.untrackPlan()
 				}
 				if result.StateChange.NewSession {
 					m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
@@ -1672,6 +1687,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "clear":
 			m.chat = m.chat.Clear()
+			m.untrackPlan()
 			m.status = m.status.SetText("Chat cleared")
 			return m, nil
 		case "help":
@@ -1982,8 +1998,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.interruptPending = false
 		m.streaming = false
 		m.status = m.status.SetStreaming(false)
-		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
-		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Error: %v", msg.Err))
+		m.status = m.status.SetText("Error: " + errorText(msg.Err))
+		m.chat = m.chat.AddSystemMessage("Error: " + errorText(msg.Err))
 
 	case HookWarningMsg:
 		m.chat = m.chat.AddSystemMessage("⚠ " + msg.Text)
@@ -2580,9 +2596,11 @@ func (m AppModel) View() string {
 	sections = append(sections, m.header.View())
 
 	// Chat panel (flexible height) — or session picker when in sessions mode
-	chatIdx := -1
+	chatIdx, pickerIdx := -1, -1
 	if m.viewMode == "sessions" && m.sessionPanel != nil {
-		sections = append(sections, m.sessionPanel.View())
+		// The picker takes the chat's rows, so the layout keeps its height.
+		pickerIdx = len(sections)
+		sections = append(sections, m.sessionPanel.SetWidth(m.width).SetHeight(m.chat.height).View())
 	} else {
 		chatIdx = len(sections)
 		sections = append(sections, m.chat.View())
@@ -2648,7 +2666,14 @@ func (m AppModel) View() string {
 	if m.viewMode == "chat" && !m.mcpPanel.Active() && m.turnActive() {
 		hints = turnHints
 	}
-	sections = append(sections, HeaderInfoStyle.Render(" "+hints))
+	// The hints are fixed text, up to 77 cells: clip them to the terminal.
+	// JoinVertical pads every row to the widest section, so one row past
+	// the edge makes every row wrap on a narrow terminal (#319).
+	hintStyle := HeaderInfoStyle
+	if m.width > 0 {
+		hintStyle = hintStyle.MaxWidth(m.width)
+	}
+	sections = append(sections, hintStyle.Render(" "+hints))
 
 	// Status bar (fixed, 1 line)
 	sections = append(sections, m.status.View())
@@ -2664,6 +2689,16 @@ func (m AppModel) View() string {
 		if over := total - m.height; over > 0 {
 			h := max(m.chat.height-over, minChatRowsUnderOverlay)
 			sections[chatIdx] = m.chat.shrunk(h).View()
+		}
+	}
+	if pickerIdx >= 0 && m.height > 0 {
+		total := 0
+		for _, s := range sections {
+			total += lipgloss.Height(s)
+		}
+		if over := total - m.height; over > 0 {
+			h := max(m.chat.height-over, minChatRowsUnderOverlay)
+			sections[pickerIdx] = m.sessionPanel.SetWidth(m.width).SetHeight(h).View()
 		}
 	}
 
@@ -2766,7 +2801,10 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 					m.contextTracker = config.NewContextTracker(configSession, model, resolved)
 					if !known {
 						if notice := config.UnknownContextNotice(model, resolved); notice != "" {
-							m.chat = m.chat.AddSystemMessage("⚠️ " + notice)
+							// "⚠" without the emoji selector: width
+							// functions disagree on "⚠️" (#319).
+							LogInfo(notice)
+							m.chat = m.chat.AddSystemMessage("⚠ " + notice)
 						}
 					}
 				} else {
@@ -3020,6 +3058,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 			// Clear chat
 			m.chat = m.chat.Clear()
+			m.untrackPlan()
 
 			// Show success with short ID
 			if summary := s.SummarizeRaw(); summary != nil {
@@ -3061,6 +3100,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 				// Clear current chat
 				m.chat = m.chat.Clear()
+				m.untrackPlan()
 
 				// Restore messages
 				if messagesRaw := s.GetMessagesRaw(); messagesRaw != nil {
@@ -3201,6 +3241,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		if refresher, ok := m.llmClient.(PromptRefresher); ok {
 			refresher.RefreshSystemPrompt()
 		}
+		m.untrackPlan()
 		m.chat = m.chat.AddSystemMessage("🗑️  Session cleared, new session started")
 
 	case "merge":
@@ -3418,13 +3459,7 @@ func (m HeaderModel) View() string {
 		contextInfo = m.contextIndicator.ViewCompact()
 	}
 
-	info := HeaderInfoStyle.Render("Press Ctrl+C to exit")
-	if endpointInfo != "" {
-		info = endpointInfo + " • " + info
-	}
-	if contextInfo != "" {
-		info = info + " • " + contextInfo
-	}
+	info := headerInfo(endpointInfo, contextInfo, m.width-lipgloss.Width(title)-3)
 
 	// Calculate gap
 	gap := m.width - lipgloss.Width(title) - lipgloss.Width(info) - 2
@@ -3436,6 +3471,39 @@ func (m HeaderModel) View() string {
 	return HeaderStyle.Width(m.width).Render(
 		title + spacer + info,
 	)
+}
+
+// headerInfo joins the header's right side (endpoint and model, the exit
+// hint, context usage) in at most avail cells, so the header never wraps:
+// the exit hint goes first, then the endpoint and model are cut with "…".
+// avail <= 0 means the width is not known yet.
+func headerInfo(endpointInfo, contextInfo string, avail int) string {
+	join := func(parts ...string) string {
+		var kept []string
+		for _, p := range parts {
+			if p != "" {
+				kept = append(kept, p)
+			}
+		}
+		return strings.Join(kept, " • ")
+	}
+	hint := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
+	info := join(endpointInfo, hint, contextInfo)
+	if avail <= 0 || lipgloss.Width(info) <= avail {
+		return info
+	}
+	info = join(endpointInfo, contextInfo)
+	if lipgloss.Width(info) <= avail || endpointInfo == "" {
+		return fitWidth(info, avail)
+	}
+	if contextInfo == "" {
+		return fitWidth(endpointInfo, avail)
+	}
+	room := avail - lipgloss.Width(" • "+contextInfo)
+	if room < 4 {
+		return fitWidth(info, avail)
+	}
+	return join(fitWidth(endpointInfo, room), contextInfo)
 }
 
 // --- Status Model ---
@@ -3490,22 +3558,45 @@ func (m StatusModel) View() string {
 	if m.showWarning {
 		// Show context warning with appropriate color
 		warningStyle := m.getWarningStyle()
-		status = warningStyle.Render(m.warningMessage)
+		status = warningStyle.Render(oneLine(m.warningMessage))
 	} else if m.streaming {
 		// Show the text set by the typing animation (thinking phrases + spinner)
 		// Falls back to "Streaming..." if no text was set
 		if m.text != "" && m.text != "Ready" {
-			status = StatusStreamingStyle.Render(m.text)
+			status = StatusStreamingStyle.Render(oneLine(m.text))
 		} else {
 			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 			spinner := StatusStreamingStyle.Render(frames[m.frame%len(frames)])
 			status = spinner + " " + StatusStreamingStyle.Render("Streaming...")
 		}
 	} else {
-		status = StatusActiveStyle.Render("●") + " " + m.text
+		status = StatusActiveStyle.Render("●") + " " + oneLine(m.text)
 	}
 
+	// One row: a long error cut with "…" instead of wrapping onto a second
+	// row the layout did not leave room for.
+	if m.width > 0 {
+		status = fitWidth(status, m.width)
+	}
 	return StatusBarStyle.Width(m.width).Render(status)
+}
+
+// oneLine puts a status text on one line.
+func oneLine(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", " ")
+}
+
+// errorText is err's message for the status bar and chat, which already
+// say "Error: ". go-openai's API errors begin "error, status code: …".
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if len(msg) > 7 && strings.EqualFold(msg[:7], "error, ") {
+		msg = msg[7:]
+	}
+	return msg
 }
 
 // getWarningStyle returns the appropriate style for the warning level.

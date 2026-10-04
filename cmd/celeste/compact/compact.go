@@ -81,6 +81,11 @@ type Options struct {
 	// Used is the best known current usage (system prompt, tools and
 	// history). When zero, the history estimate is used.
 	Used int
+	// Overhead is the fixed prefix (system prompt, tool schemas) inside
+	// Used. The prune decides on ThresholdFor(Window, Overhead), so on a
+	// window the prefix crowds it aims at the history's room (L2). 0 keeps
+	// Threshold(Window).
+	Overhead int
 	// Force prunes even below the threshold and below the minimum saving:
 	// the reactive path after a context-overflow error, and /context compact.
 	Force bool
@@ -152,7 +157,7 @@ func Plan(msgs []tui.ChatMessage, opts Options) Result {
 	if used <= 0 {
 		used = Estimate(msgs)
 	}
-	threshold := Threshold(opts.Window)
+	threshold := ThresholdFor(opts.Window, opts.Overhead)
 	if !opts.Force && used <= threshold {
 		return Result{}
 	}

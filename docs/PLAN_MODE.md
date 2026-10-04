@@ -46,6 +46,16 @@ plan in a question with two answers:
   workspace todo list (`.celeste/tasks.json`), plan mode ends, and Celeste
   starts with step 1 in the same turn, with all tools again.
 
+The approval's result lists each step with the todo id it became and the
+two `todo` calls that keep it current: `{"action":"update","id":<id>,"status":"in_progress"}`
+when a step starts and `"status":"done"` when it is finished. If three tool
+turns pass with no change to the plan's todo items, Celeste gets a hidden
+reminder naming the open steps and their ids. It never fires while plan
+mode is on, comes at most twice per approved plan, and stops once every
+step is done or its todo item removed, when you `/clear`, or when you start,
+resume or clear a session. It lasts only for the current process: a resumed
+session's plan gets no reminders.
+
 While the question is open, typing goes nowhere: the first key that is not
 one of the question's keys (a letter, `/`, a paste) puts the cursor back on
 **Keep planning** and the footer says "Typing is ignored here. Choose an

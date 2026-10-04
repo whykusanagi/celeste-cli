@@ -24,6 +24,18 @@ type planState struct {
 	on   atomic.Bool
 	mu   sync.Mutex
 	goal string // /plan <goal>, the default goal for submit_plan
+
+	// todos is the todo tool's store (nil without one); the progress
+	// reminder reads the approved plan's items from it.
+	todos *builtin.TodoStore
+	// pmu guards the progress reminder's state: the steps of the plan
+	// approved in this process, their last todo statuses, and the tool
+	// turns since those changed, and the reminders this plan has had.
+	pmu      sync.Mutex
+	steps    []builtin.PlanStep
+	last     string
+	idle     int
+	reminded int
 }
 
 func (p *planState) set(on bool, goal string) {
@@ -50,14 +62,18 @@ func (p *planState) currentGoal() string {
 // registerSubmitPlan puts submit_plan on the chat's registry (chat only:
 // agent, MCP and subagent registries never have it). The registry's ask
 // function is read at call time, so the modal runTUI installs later
-// answers; approving leaves plan mode.
+// answers; approving leaves plan mode and starts the progress reminder.
 func registerSubmitPlan(reg *tools.Registry, workspace string, plan *planState) {
-	t := builtin.NewSubmitPlanTool(workspace, reg.Ask, func() { plan.set(false, "") })
+	t := builtin.NewSubmitPlanTool(workspace, reg.Ask, func(p builtin.PlanFile) {
+		plan.set(false, "")
+		plan.track(p.Steps)
+	})
 	t.DefaultGoal = plan.currentGoal
 	// One todo list: the todo tool keeps it in memory.
 	if tt, ok := reg.Get("todo"); ok {
 		if todo, ok := tt.(*builtin.TodoTool); ok {
 			t.Todos = todo.Store()
+			plan.todos = t.Todos
 		}
 	}
 	reg.RegisterWithModes(t, tools.ModeChat)
