@@ -16,6 +16,8 @@ The sandbox is **off by default in 2.0**. Turn it on in `~/.celeste/config.json`
 }
 ```
 
+This holds whichever profile is active: a named profile (`-config <name>`, or a `config.<name>.json` with `"default": true`) inherits the `sandbox` settings of `~/.celeste/config.json`. A profile can set its own `sandbox` object; each key it sets (`enabled`, `network`, `writable`) replaces config.json's, and the keys it leaves out still come from config.json.
+
 It applies to the `bash` tool in every mode: the chat, `celeste agent`, subagents and MCP chat. It does not apply to commands you wrote yourself: hooks, custom JSON tools in `~/.celeste/skills` and `--verify-cmd` run as before. The command denylist (`sudo`, `rm -rf /` and the rest) still checks every `bash` command first, sandbox or not.
 
 Every `bash` command runs in its own process group, and a timeout or cancel kills the whole group, with or without the sandbox. A sandboxed command also runs in its own session, without celeste's terminal, so it cannot type into celeste's prompts.
@@ -33,7 +35,7 @@ Everything else is read-only to the command. Paths are compared after resolving 
 
 ## Settings
 
-The `sandbox` object takes three keys, in `~/.celeste/config.json` (yours) and in a workspace's `.celeste/config.json` (the repository's):
+The `sandbox` object takes three keys, in `~/.celeste/config.json` (yours, also for named profiles, which can override it key by key in their own `config.<name>.json`) and in a workspace's `.celeste/config.json` (the repository's):
 
 | Key | Meaning |
 |---|---|
