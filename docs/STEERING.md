@@ -57,8 +57,8 @@ starts.
   streamed reply a match is looked for in the last 4 KB, so a match longer
   than that can be missed. A rule file over 64 KiB is skipped.
 - `scope`: `text` (the reply as it streams; the default), `thinking`
-  (accepted, but no provider streams thinking yet, so such a rule is
-  skipped with a warning), or `tool_args:<tool>.<field>` (one argument of
+  (accepted, but thinking-scope rules are not wired to the model's
+  reasoning yet, so such a rule is skipped with a warning), or `tool_args:<tool>.<field>` (one argument of
   that tool's calls, checked when the call is complete and before it
   runs). Several scopes are separated by commas. The reply is matched as
   it streams, a batch at a time (every 256 bytes or so, at each newline,
