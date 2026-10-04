@@ -26,6 +26,19 @@ func TestTimeoutLine(t *testing.T) {
 	}
 }
 
+// A local server's line also shows the first-byte budget (#359); a hosted
+// provider's does not, since its timeout covers the first byte.
+func TestTimeoutLineShowsLocalFirstByteBudget(t *testing.T) {
+	local := config.Config{BaseURL: "http://127.0.0.1:11434/v1", Timeout: 60}
+	if got := timeoutLine(&local); !strings.Contains(got, "1800s for the first byte") {
+		t.Errorf("timeoutLine(local) = %q, want the 1800s first-byte budget", got)
+	}
+	hosted := config.Config{BaseURL: "https://api.sakana.ai/v1", Timeout: 60}
+	if got := timeoutLine(&hosted); strings.Contains(got, "first byte") {
+		t.Errorf("timeoutLine(hosted) = %q, want no separate first-byte budget", got)
+	}
+}
+
 // The timeout error tells the user to run `config --set-timeout`; the flag
 // has to exist.
 func TestConfigHelpNamesSetTimeout(t *testing.T) {
@@ -42,7 +55,7 @@ func TestLocalGuideDocumentsTimeouts(t *testing.T) {
 	}
 	doc := string(data)
 	local := doc[strings.Index(doc, "## Local models"):]
-	for _, must := range []string{"### Timeouts", "--set-timeout", "600", "30 minutes", "-request-timeout"} {
+	for _, must := range []string{"### Timeouts", "--set-timeout", "600", "30 minutes", "-request-timeout", "first byte"} {
 		if !strings.Contains(local, must) {
 			t.Errorf("the local-model section does not mention %q", must)
 		}

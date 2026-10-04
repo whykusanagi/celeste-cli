@@ -52,10 +52,16 @@ type Config struct {
 	// Backend forces a backend instead of detecting it from BaseURL. Tests
 	// use it to reach a fake provider on 127.0.0.1 with a native backend.
 	// Empty keeps detection.
-	Backend        BackendType
-	Timeout        time.Duration
-	SimulateTyping bool
-	TypingSpeed    int // chars per second
+	Backend BackendType
+	Timeout time.Duration
+	// FirstByteTimeout is how long a request may wait for the first byte
+	// of the reply, when that is longer than Timeout (the stall timeout
+	// between chunks). A local server prefilling a long prompt sends
+	// nothing for minutes (#359). Zero, or anything up to Timeout, means
+	// Timeout covers the first byte too. FirstByteBudget applies the cap.
+	FirstByteTimeout time.Duration
+	SimulateTyping   bool
+	TypingSpeed      int // chars per second
 
 	// Google Cloud authentication (for Gemini/Vertex AI)
 	GoogleCredentialsFile string // Path to service account JSON file
@@ -76,6 +82,7 @@ func ConfigFrom(cfg *config.Config) *Config {
 		BaseURL:               cfg.BaseURL,
 		Model:                 cfg.Model,
 		Timeout:               cfg.GetTimeout(),
+		FirstByteTimeout:      cfg.GetFirstByteTimeout(),
 		SimulateTyping:        cfg.SimulateTyping,
 		TypingSpeed:           cfg.TypingSpeed,
 		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
@@ -343,7 +350,7 @@ func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage
 // attempt), and MaxRequestDuration caps an attempt that keeps streaming.
 func (c *Client) attemptOpts() retryOpts {
 	_, cfg := c.snapshot()
-	return retryOpts{stall: cfg.StallTimeout(), timeout: cfg.RequestCap()}
+	return retryOpts{stall: cfg.StallTimeout(), firstByte: cfg.FirstByteBudget(), timeout: cfg.RequestCap()}
 }
 
 // StallTimeout is the stall timeout of requests made with c: c.Timeout, or
@@ -353,6 +360,17 @@ func (c *Config) StallTimeout() time.Duration {
 		return c.Timeout
 	}
 	return 60 * time.Second
+}
+
+// FirstByteBudget is how long a request made with c may wait for the first
+// byte of the reply: FirstByteTimeout when it is longer than the stall
+// timeout, capped by RequestCap; otherwise the stall timeout.
+func (c *Config) FirstByteBudget() time.Duration {
+	stall := c.StallTimeout()
+	if c == nil || c.FirstByteTimeout <= stall {
+		return stall
+	}
+	return min(c.FirstByteTimeout, c.RequestCap())
 }
 
 // RequestCap bounds one request made with c however steadily it streams:

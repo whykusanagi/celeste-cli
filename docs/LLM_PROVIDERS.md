@@ -126,13 +126,23 @@ thinking took more than 300 s before the first byte. So a local endpoint
 **600 s**. `config` shows the value in use:
 
 ```bash
-celeste config -config local                       # Request Timeout: 600s without data (local default)
+celeste config -config local                       # Request Timeout: 600s without data (local default), 1800s for the first byte
 celeste config -config local --set-timeout 1200    # a slower machine or a bigger model
 celeste config -config local --set-timeout 0       # back to the default
 ```
 
-Hosted providers keep 60 s by default, so a dead connection still fails after
-a minute of silence.
+The first byte of a reply gets a separate, longer budget on a local server:
+**30 minutes**, or the `timeout` when that is longer, and never more than the
+request cap. Reading a long prompt can take that long on a loaded machine: a
+32K-window qwen3:14b on Ollama took ~563 s to its first byte, and the first
+request after leaving plan mode, which re-reads the whole prompt, 11.5
+minutes. Response headers alone do not end that wait. Once the reply starts,
+the `timeout` applies again between chunks, so a server that goes silent
+mid-reply still fails after it. A request that gets nothing at all fails with
+"while waiting for the first byte".
+
+Hosted providers keep 60 s by default, for the first byte as for the rest of
+the reply, so a dead connection still fails after a minute of silence.
 
 `celeste agent` uses the same timeout. `-request-timeout <seconds>` bounds each
 whole model turn (without it, the 30-minute cap does); a request that sends
