@@ -254,6 +254,19 @@ type AgentCommandRunner interface {
 	RunAgentCommand(args []string, run uint64) tea.Cmd
 }
 
+// isAgentInfoCommand reports whether the first word of /agent's arguments
+// names a command that only reports (help, list-runs): RunAgentCommand
+// answers those without running the agent. Resume runs it again. The words
+// must match RunAgentCommand's non-resume cases in the main package
+// (TestAgentInfoCommandsMatchRunAgentCommand).
+func isAgentInfoCommand(first string) bool {
+	switch strings.ToLower(strings.TrimSpace(first)) {
+	case "help", "--help", "-h", "list", "list-runs", "--list-runs":
+		return true
+	}
+	return false
+}
+
 // OrchestratorCommandRunner is an optional extension for handling /orchestrate from TUI.
 type OrchestratorCommandRunner interface {
 	// RunOrchestratorCommand starts the run and tags its StreamStartMsg and
@@ -894,7 +907,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.agentRun = m.agentSeq
 				m.status = m.status.SetStreaming(true)
 				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
-				m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
+				// list-runs and help only report; a goal or resume runs the agent.
+				if !isAgentInfoCommand(cmd.Args[0]) {
+					m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
+				}
 
 				agentArgs := append([]string{}, cmd.Args...)
 				tick := m.restartTick(typingTickInterval * 2)
@@ -1638,10 +1654,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
 				}
 
-				if result.StateChange.MenuState != nil {
-					m.skills = m.skills.SetMenuState(*result.StateChange.MenuState)
-				}
-
 				// Handle session actions
 				if result.StateChange.SessionAction != nil {
 					m = m.handleSessionAction(result.StateChange.SessionAction)
@@ -1721,8 +1733,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, s := range skills {
 				debugMsg += fmt.Sprintf("  • %s: %s\n", s.Name, s.Description)
 			}
-			debugMsg += "\n⚠️  Note: DigitalOcean GenAI Agents may not support function calling.\n"
-			debugMsg += "Tool calls only work with OpenAI-compatible APIs that support the 'tools' parameter.\n"
+			debugMsg += "\n⚠️  Tool calls need a model and endpoint that support tool calling.\n"
 			debugMsg += fmt.Sprintf("\nLog file: %s", GetLogPath())
 			m.chat = m.chat.AddSystemMessage(debugMsg)
 			return m, nil
