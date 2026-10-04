@@ -11,9 +11,10 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
-// defaultSummaryTimeout bounds a summary when the client reports no cap of
-// its own: llm.MaxRequestDuration of the default 60 s stall timeout.
-const defaultSummaryTimeout = 30 * time.Minute
+// DefaultSummaryTimeout bounds a summary when the client reports no cap of
+// its own: llm.MaxRequestDuration of the default 60 s stall timeout. tui
+// cannot import llm; a test in package main keeps the two equal.
+const DefaultSummaryTimeout = 30 * time.Minute
 
 // SummaryTimeouter is a client that knows how long one summary request may
 // run: its request cap, the bound a chat turn gets (#345). The summary
@@ -23,7 +24,7 @@ type SummaryTimeouter interface {
 }
 
 // summaryTimeout bounds a compaction summary or a handoff: the client's
-// request cap, else defaultSummaryTimeout. A fixed 3 minutes cut off a cold
+// request cap, else DefaultSummaryTimeout. A fixed 3 minutes cut off a cold
 // local model's summary while its chat turns succeeded (#345).
 func (m AppModel) summaryTimeout() time.Duration {
 	if c, ok := m.llmClient.(SummaryTimeouter); ok {
@@ -31,7 +32,7 @@ func (m AppModel) summaryTimeout() time.Duration {
 			return d
 		}
 	}
-	return defaultSummaryTimeout
+	return DefaultSummaryTimeout
 }
 
 // ContextSummarizedMsg delivers a compaction summary written in the
