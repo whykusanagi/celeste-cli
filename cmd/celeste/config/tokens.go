@@ -79,17 +79,40 @@ func FormatTokenCount(tokens int) string {
 // local server produced a confident 1,000,000-token budget for a server that
 // might have 8k. Unknown hosted models get the table's 128k default (#201).
 func ResolveContextLimit(baseURL, model string, override int) (limit int, known bool) {
+	limit, src := ResolveContextLimitSource(baseURL, model, override)
+	return limit, src != SourceFallback
+}
+
+// Where ResolveContextLimitSource's window came from.
+const (
+	SourceConfigured = "configured"
+	SourceReported   = "reported by the server"
+	SourceModel      = "model default"
+	SourceFallback   = "fallback"
+)
+
+// ResolveContextLimitSource is ResolveContextLimit with where the number
+// came from (`celeste config` shows it).
+func ResolveContextLimitSource(baseURL, model string, override int) (int, string) {
 	if override > 0 {
-		return override, true
+		return override, SourceConfigured
+	}
+	// A server on this machine or the local network is asked for its own
+	// window (#310), decided on the parsed host so a hosted URL is never
+	// probed.
+	if providers.IsLocalHost(baseURL) {
+		if n := localWindow(baseURL, model); n > 0 {
+			return n, SourceReported
+		}
 	}
 	if providers.DetectProvider(baseURL) == "local" {
-		// The server's own answer, when it gives one (#310).
-		if n := localWindow(baseURL, model); n > 0 {
-			return n, true
-		}
-		return ctxmgr.LocalDefaultLimit, false
+		return ctxmgr.LocalDefaultLimit, SourceFallback
 	}
-	return LookupModelLimit(model)
+	n, known := LookupModelLimit(model)
+	if known {
+		return n, SourceModel
+	}
+	return n, SourceFallback
 }
 
 var unknownContextWarned sync.Map

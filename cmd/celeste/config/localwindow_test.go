@@ -114,6 +114,15 @@ func TestResolveContextLimitUsesTheProbe(t *testing.T) {
 	if n, known := ResolveContextLimit("http://127.0.0.1:11434/v1", "reports", 0); n != 32768 || !known {
 		t.Fatalf("got %d %v", n, known)
 	}
+	if _, src := ResolveContextLimitSource("http://127.0.0.1:11434/v1", "reports", 0); src != SourceReported {
+		t.Fatalf("source %q", src)
+	}
+	if _, src := ResolveContextLimitSource("http://127.0.0.1:11434/v1", "silent", 0); src != SourceFallback {
+		t.Fatalf("source %q", src)
+	}
+	if _, src := ResolveContextLimitSource("https://api.anthropic.com/v1", "claude-opus-4-8", 0); src != SourceModel {
+		t.Fatalf("source %q", src)
+	}
 	if n, known := ResolveContextLimit("http://127.0.0.1:11434/v1", "silent", 0); n != 8192 || known {
 		t.Fatalf("got %d %v", n, known)
 	}
@@ -143,5 +152,26 @@ func TestCachedProbeAsksOnce(t *testing.T) {
 	p(srv.URL+"/v1", "m")
 	if hits.Load() != first {
 		t.Fatal("a fresh answer was asked again")
+	}
+}
+
+// The probe is asked about hosts on this machine or the local network
+// only, by the parsed host: a LAN server is asked, a hosted URL that
+// contains "localhost" never is.
+func TestResolveContextLimitProbesLocalHostsOnly(t *testing.T) {
+	var asked []string
+	SetLocalWindowProbe(func(baseURL, model string) int {
+		asked = append(asked, baseURL)
+		return 16384
+	})
+	t.Cleanup(func() { SetLocalWindowProbe(nil) })
+	if n, known := ResolveContextLimit("http://192.168.1.20:11434/v1", "qwen3:14b", 0); n != 16384 || !known {
+		t.Fatalf("LAN server: got %d %v", n, known)
+	}
+	for _, u := range []string{"https://localhost.evil.example/v1", "https://example.com/localhost/v1"} {
+		ResolveContextLimit(u, "m", 0)
+	}
+	if len(asked) != 1 {
+		t.Fatalf("probed %v, want only the LAN server", asked)
 	}
 }
