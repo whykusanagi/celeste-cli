@@ -99,6 +99,19 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	command := args[0]
 	cmdArgs := args[1:]
 
+	if usage, ok := subcommandUsage[command]; ok && len(cmdArgs) > 0 {
+		if isHelpFlag(cmdArgs[0]) {
+			fmt.Fprintln(stdout, usage)
+			return 0
+		}
+		// -- ends the help check, so text starting with -h or --help is
+		// passed on; the -- itself is not. chat takes no arguments and index
+		// parses its own.
+		if cmdArgs[0] == "--" && command != "chat" && command != "index" {
+			cmdArgs = cmdArgs[1:]
+		}
+	}
+
 	switch command {
 	case "chat":
 		runner.RunChat()
@@ -106,7 +119,7 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 		runner.RunConfig(cmdArgs)
 	case "message", "msg":
 		if len(cmdArgs) < 1 {
-			fmt.Fprintln(stderr, "Usage: celeste message <text>")
+			fmt.Fprintln(stderr, messageUsage)
 			return 1
 		}
 		runner.RunSingleMessage(strings.Join(cmdArgs, " "))
@@ -182,6 +195,52 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	}
 
 	return 0
+}
+
+const messageUsage = `Usage: celeste message <text>
+
+Sends one message to Celeste and prints the reply (msg is short for it).
+To send text that starts with -h or --help, put -- first:
+  celeste message -- --help`
+
+// subcommandUsage holds the usage of the subcommands that take free text or
+// act on their first argument and parse no flags of their own. On these,
+// -h or --help as the first argument prints the usage and runs nothing
+// (#322): it never reaches the model, a memory or a name lookup.
+// Subcommands with a flag set (agent, config, serve, ...) answer -h
+// themselves.
+var subcommandUsage = map[string]string{
+	"message": messageUsage,
+	"msg":     messageUsage,
+	"chat": `Usage: celeste chat
+
+Opens the chat UI (the same as celeste with no arguments).`,
+	"remember": `Usage: celeste remember "<text>"
+
+Saves the text as a memory for this project; celeste memories lists them.`,
+	"forget": `Usage: celeste forget <memory-name>
+
+Deletes a project memory by name; celeste memories lists them.`,
+	"resume": `Usage: celeste resume [<id or name>]
+
+Lists saved chat sessions, or opens the chat UI on the one given.`,
+	"skill": `Usage: celeste skill <skill-name> [--arg value ...]
+
+Runs one skill. Examples:
+  celeste skill generate_uuid
+  celeste skill get_weather --zip 90210
+Use celeste skills --list to see the available skills.`,
+	"index": `Usage: celeste index [rebuild|status|reset]
+
+Builds or updates the code graph index for the current directory.
+  rebuild  delete the index and build it from scratch
+  status   show the index's summary without changing it
+  reset    delete the index`,
+}
+
+// isHelpFlag reports whether arg asks for help.
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "--help" || arg == "-help"
 }
 
 // commandHints answer the lone words people guess for a command. Only these

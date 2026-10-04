@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,14 @@ func TestAgentPersonaLevelOff(t *testing.T) {
 
 // The agent's window is its own model's (context_limit 9100 is used by no
 // other test, so the one-time notice is this test's).
+// It says so once (#321): the notice line on stderr, and no [persona] log
+// line repeating it.
 func TestAgentSmallWindowStepsDownAndSaysSo(t *testing.T) {
+	var logs bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
 	r, errOut := personaRunner(t, srv, 9100, nil)
 	_, _ = r.RunGoal(context.Background(), "say hi")
@@ -92,5 +100,8 @@ func TestAgentSmallWindowStepsDownAndSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "lite profile instead of spine") {
 		t.Fatalf("stderr lacks the notice: %q", errOut.String())
+	}
+	if got := strings.Count(errOut.String()+logs.String(), "lite profile instead of spine"); got != 1 {
+		t.Fatalf("the notice is reported %d times, want 1: stderr %q, log %q", got, errOut.String(), logs.String())
 	}
 }
