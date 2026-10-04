@@ -229,6 +229,10 @@ type Config struct {
 	// envFile holds the values the file had for the fields ApplyEnvOverrides
 	// replaced, so a later Save writes the file's values, not the run's.
 	envFile *envFileValues
+
+	// sandboxFrom is set when Sandbox was filled in from config.json for a
+	// named profile; see inheritUserSandbox.
+	sandboxFrom *sandboxInherit
 }
 
 // CollectionsConfig holds collections settings
@@ -401,12 +405,18 @@ type envFileValues struct {
 
 // forSave is cfg with any still-unchanged env override swapped back for the
 // file's value; a field changed after the override is saved as changed.
+// A profile's sandbox inherited from config.json is saved as the
+// profile's own (see savedSandbox).
 func (c *Config) forSave() *Config {
-	if c == nil || c.envFile == nil {
+	if c == nil || (c.envFile == nil && c.sandboxFrom == nil) {
 		return c
 	}
-	f := c.envFile
 	out := *c
+	out.Sandbox = c.savedSandbox()
+	f := c.envFile
+	if f == nil {
+		return &out
+	}
 	if f.envKey != "" && out.APIKey == f.envKey {
 		out.APIKey = f.apiKey
 	}
@@ -487,6 +497,12 @@ func LoadNamed(name string) (*Config, error) {
 		if err := persistReconciled(configPath, config); err != nil {
 			log.Printf("[config] could not save reconciled profile %q: %v", name, err)
 		}
+	}
+
+	// The user's sandbox settings live in config.json (docs/SANDBOX.md);
+	// a profile inherits every key it does not set itself.
+	if err := config.inheritUserSandbox(); err != nil {
+		return nil, err
 	}
 
 	// Load shared json (for all skill configurations)
