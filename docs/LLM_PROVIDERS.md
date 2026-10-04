@@ -22,6 +22,8 @@ Celeste CLI supports **9 chat providers**: eight call tools, and Venice's tool c
 
 **Anthropic:** `celeste -config anthropic config --set-url https://api.anthropic.com --set-key sk-ant-...`. Use the host without `/v1`: celeste adds `/v1/messages` for chat and `/v1/models` for the model list. A base URL that already ends in `/v1` (what earlier versions printed) still works.
 
+**Anthropic prompt caching and `/effort`:** celeste caches the tools, the system prompt and the conversation, and a toggle of `/effort` changes nothing in them: only the request's thinking settings change. Anthropic counts those settings as part of the cache, though, so the first request after you change `/effort` (or turn it off or on) reads the conversation from scratch and writes it to the cache again; on some models (Sonnet 4.6 among them) the tools and system prompt are re-written too. That is one re-write per change, then caching resumes. Within one tool turn the thinking setting never changes: on budget-thinking models (Sonnet 4.5, Opus 4.5, Haiku 4.5) a turn that started with thinking keeps it until the turn ends, and one that started without it stays without it. To avoid the re-write, pick an effort for the session rather than switching back and forth.
+
 **Collections (Grok only):** Management key + `celeste collections create/upload/enable`.
 
 Test 'em: `celeste providers --tools`
