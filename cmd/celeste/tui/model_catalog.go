@@ -157,6 +157,7 @@ func (m AppModel) switchEndpoint(endpoint string) (AppModel, tea.Cmd) {
 	m.provider = endpoint // provider names match endpoint names
 	m.modelPinned = false // a /set-model --force pin belongs to the old endpoint
 	m.modelTrial, m.modelBeforeTrial = "", ""
+	m.safe = nil // /safe after another endpoint switches by name
 	m.status = m.status.SetText(fmt.Sprintf("Switched to %s", m.endpoint))
 
 	// Leaving Venice turns NSFW mode off.

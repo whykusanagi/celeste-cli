@@ -55,9 +55,12 @@ type AppModel struct {
 	streaming bool
 	// mediaInFlight is set while a Venice media generation runs; it does not
 	// stream, so its progress status text is guarded by this instead.
-	mediaInFlight     bool
-	endpoint          string // Current endpoint (openai, venice, grok, etc.)
-	safeEndpoint      string // Endpoint to return to when leaving NSFW mode
+	mediaInFlight bool
+	endpoint      string // Current endpoint (openai, venice, grok, etc.)
+	safeEndpoint  string // Endpoint to return to when leaving NSFW mode
+	// safe is the chat as /nsfw found it, for /safe to restore exactly
+	// (N1); nil when not in NSFW mode or the client cannot snapshot.
+	safe              *safeState
 	model             string // Current model name
 	imageModel        string // Current image generation model (for NSFW mode)
 	provider          string // Current provider (grok, openai, venice, etc.) - detected from endpoint
@@ -356,6 +359,15 @@ var ErrCheckpointsOff = errors.New("file checkpoints are off in this session")
 type EndpointSwitcher interface {
 	SwitchEndpoint(endpoint string) error
 	ChangeModel(model string) error
+}
+
+// EndpointSnapshotter is implemented by clients that can save their whole
+// endpoint (base URL, key, model, profile) and put it back exactly: /nsfw
+// saves the safe endpoint and /safe restores it (N1). The snapshot is
+// opaque to the chat.
+type EndpointSnapshotter interface {
+	SnapshotEndpoint() any
+	RestoreEndpoint(snapshot any) error
 }
 
 // ThinkingConfigSetter interface for clients that support extended thinking / reasoning effort.
@@ -1636,43 +1648,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m, catalogCmd = m.switchEndpoint(*result.StateChange.EndpointChange)
 				}
 				if result.StateChange.NSFWMode != nil {
-					m.nsfwMode = *result.StateChange.NSFWMode
-					m.header = m.header.SetNSFWMode(m.nsfwMode)
-
-					// When NSFW mode is enabled, save current endpoint and switch to Venice
-					if m.nsfwMode {
-						// Save the current "safe" endpoint
-						m.safeEndpoint = m.endpoint
-						m.endpoint = "venice"
-						m.header = m.header.SetEndpoint(m.endpoint)
-
-						// Actually switch the LLM client to Venice
-						if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-							if err := switcher.SwitchEndpoint(m.endpoint); err != nil {
-								m.status = m.status.SetText(fmt.Sprintf("Error switching to Venice: %v", err))
-							}
-						}
-						m.modelPinned = false // a --force pin belongs to the old endpoint
-						m, catalogCmd = m.adoptActiveModel()
-					} else {
-						// When NSFW mode is disabled, restore the safe endpoint
-						if m.safeEndpoint != "" {
-							m.endpoint = m.safeEndpoint
-						} else {
-							// Fallback to default if no safe endpoint saved
-							m.endpoint = "openai"
-						}
-						m.header = m.header.SetEndpoint(m.endpoint)
-
-						// Actually switch the LLM client back
-						if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-							if err := switcher.SwitchEndpoint(m.endpoint); err != nil {
-								m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
-							}
-						}
-						m.modelPinned = false // a --force pin belongs to the old endpoint
-						m, catalogCmd = m.adoptActiveModel()
-					}
+					var nsfwCmd tea.Cmd
+					m, nsfwCmd = m.setNSFWMode(*result.StateChange.NSFWMode)
+					catalogCmd = tea.Batch(catalogCmd, nsfwCmd)
 
 					// Persist session state
 					m.persistSession()

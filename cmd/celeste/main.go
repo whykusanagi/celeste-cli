@@ -575,6 +575,46 @@ func (a *TUIClientAdapter) SwitchEndpoint(endpoint string) error {
 	return nil
 }
 
+// /nsfw and /safe need the snapshot; without it /safe cannot restore.
+var _ tui.EndpointSnapshotter = (*TUIClientAdapter)(nil)
+
+// endpointSnapshot is a TUIClientAdapter's endpoint as /nsfw found it.
+type endpointSnapshot struct {
+	live llm.Config
+	base *config.Config
+}
+
+// SnapshotEndpoint implements tui.EndpointSnapshotter: the live client
+// config (base URL, key, model) and the profile it came from.
+func (a *TUIClientAdapter) SnapshotEndpoint() any {
+	s := &endpointSnapshot{live: *a.client.GetConfig()}
+	if a.baseConfig != nil {
+		b := *a.baseConfig
+		s.base = &b
+	}
+	return s
+}
+
+// RestoreEndpoint implements tui.EndpointSnapshotter: it puts back exactly
+// what SnapshotEndpoint saved (N1: /safe used to rebuild the endpoint from
+// the Venice profile it was leaving, keeping Venice's URL and model).
+func (a *TUIClientAdapter) RestoreEndpoint(snapshot any) error {
+	s, ok := snapshot.(*endpointSnapshot)
+	if !ok || s == nil {
+		return fmt.Errorf("not an endpoint snapshot: %T", snapshot)
+	}
+	live := s.live
+	a.client.UpdateConfig(&live)
+	if s.base != nil {
+		b := *s.base
+		a.baseConfig = &b
+	}
+	a.summarize = nil // built for the endpoint being left
+	a.applySystemPrompt()
+	tui.LogInfo(fmt.Sprintf("✓ Restored endpoint: %s, model %s", providers.CleanBaseURL(live.BaseURL), live.Model))
+	return nil
+}
+
 // ActiveEndpoint implements tui.ActiveEndpointer: the endpoint the client is
 // on now, so the chat can resolve its model against what it serves.
 func (a *TUIClientAdapter) ActiveEndpoint() tui.ActiveEndpoint {
