@@ -35,8 +35,8 @@ func TimeoutFor(t Tool, def time.Duration) time.Duration {
 }
 
 // RiskRater is implemented by tools that rate a call's risk from its input
-// (bash rates its command). It returns "write" or "destructive", or "" to
-// fall back to the name heuristic. The permission prompt shows the rating.
+// (bash rates its command). It returns "read", "write" or "destructive";
+// anything else ("" included) falls back to the name heuristic. The permission prompt shows the rating.
 type RiskRater interface {
 	RiskLevel(input map[string]any) string
 }

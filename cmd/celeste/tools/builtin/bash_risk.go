@@ -66,52 +66,67 @@ func destructiveCommand(words []string) bool {
 			}
 		}
 	case "xargs":
-		for i, a := range args {
-			if strings.HasPrefix(a, "-") {
-				continue
+		// Any destructive verb among xargs' words: its options may take
+		// values (-n 1, -I {}), so the command word is not reliably the
+		// first non-option.
+		for _, a := range args {
+			if n := shellparse.CommandName(a); destructiveVerbs[n] || strings.HasPrefix(n, "mkfs") {
+				return true
 			}
-			n, _ := shellparse.Command(args[i:])
-			return destructiveVerbs[n] || strings.HasPrefix(n, "mkfs")
 		}
 	}
 	return false
 }
 
-// destructiveGit reports git subcommands that discard work: a forced push,
-// reset --hard, clean, checkout/restore of paths, and branch -D.
+// destructiveGit reports git subcommands that discard work: clean, a
+// forced push, reset --hard, checkout of paths (--, .) or forced, restore
+// of the working tree, branch -D, and stash drop/clear.
 func destructiveGit(args []string) bool {
-	sub := ""
-	for i, a := range args {
-		if sub == "" {
-			if strings.HasPrefix(a, "-") {
-				continue
-			}
+	sub, i := "", 0
+	for ; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-C" || a == "-c" || a == "--git-dir" || a == "--work-tree" || a == "--namespace":
+			i++ // a global option whose value is the next word
+		case !strings.HasPrefix(a, "-"):
 			sub = a
-			switch sub {
-			case "clean":
-				return true
-			case "push":
-				for _, f := range args[i+1:] {
-					if f == "--force" || f == "--force-with-lease" || strings.HasPrefix(f, "--force=") ||
-						(strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") && strings.Contains(f, "f")) ||
-						strings.HasPrefix(f, "+") {
-						return true
-					}
-				}
-				return false
-			}
-			continue
 		}
-		switch sub {
-		case "reset":
-			if a == "--hard" {
-				return true
-			}
-		case "branch":
-			if a == "-D" || (a == "--delete" && contains(args, "--force")) {
+		if sub != "" {
+			break
+		}
+	}
+	if sub == "" {
+		return false
+	}
+	rest := args[i+1:]
+	switch sub {
+	case "clean":
+		return true
+	case "push":
+		for _, f := range rest {
+			if f == "--force" || f == "--force-with-lease" || strings.HasPrefix(f, "--force=") ||
+				(strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") && strings.Contains(f, "f")) ||
+				strings.HasPrefix(f, "+") {
 				return true
 			}
 		}
+	case "reset":
+		return contains(rest, "--hard")
+	case "checkout":
+		for _, f := range rest {
+			if f == "--" || f == "." || f == "-f" || f == "--force" {
+				return true
+			}
+		}
+	case "restore":
+		// --staged alone only unstages; any other restore rewrites the
+		// working tree.
+		staged := contains(rest, "--staged") || contains(rest, "-S")
+		worktree := contains(rest, "--worktree") || contains(rest, "-W")
+		return !staged || worktree
+	case "branch":
+		return contains(rest, "-D") || (contains(rest, "--delete") && contains(rest, "--force"))
+	case "stash":
+		return len(rest) > 0 && (rest[0] == "drop" || rest[0] == "clear")
 	}
 	return false
 }

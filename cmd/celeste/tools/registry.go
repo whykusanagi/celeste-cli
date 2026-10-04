@@ -87,11 +87,13 @@ func classifyRiskLevel(toolName string) string {
 	}
 }
 
-// riskLevel is tool's own rating of this call (RiskRater) when it gives
-// one, else classifyRiskLevel's.
+// riskLevel is tool's own rating of this call (RiskRater) when it is a
+// level the prompt knows (read, write, destructive), else
+// classifyRiskLevel's.
 func riskLevel(tool Tool, name string, input map[string]any) string {
 	if rr, ok := tool.(RiskRater); ok {
-		if lvl := rr.RiskLevel(input); lvl != "" {
+		switch lvl := rr.RiskLevel(input); lvl {
+		case "read", "write", "destructive":
 			return lvl
 		}
 	}

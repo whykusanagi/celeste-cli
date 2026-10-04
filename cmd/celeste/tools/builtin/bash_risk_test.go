@@ -22,6 +22,11 @@ func TestBashRiskLevelRatesTheCommand(t *testing.T) {
 		`printf 'a\nb\n' | sort`,
 		`ls -la && git status`,
 		`go test ./...`,
+		`git checkout main`,
+		`git checkout -b feature`,
+		`git restore --staged main.go`,
+		`git stash list`,
+		`ls | xargs -n 1 echo`,
 	} {
 		if got := b.RiskLevel(map[string]any{"command": cmd}); got != "write" {
 			t.Errorf("RiskLevel(%q) = %q, want write", cmd, got)
@@ -41,6 +46,16 @@ func TestBashRiskLevelRatesTheCommand(t *testing.T) {
 		`find . -name '*.o' -delete`,
 		`find . -exec rm {} \;`,
 		`ls | xargs rm`,
+		`find . -print0 | xargs -0 -n 1 rm -rf`,
+		`ls | xargs -I {} rm -rf {}`,
+		`git checkout -- main.go`,
+		`git checkout .`,
+		`git checkout -f main`,
+		`git restore main.go`,
+		`git restore --worktree --staged main.go`,
+		`git stash drop`,
+		`git -C repo clean -fd`,
+		`git -c core.x=y reset --hard`,
 		`dd if=/dev/zero of=disk.img`,
 		`shred secret.txt`,
 		`truncate -s 0 log.txt`,
