@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -1537,60 +1538,85 @@ func runSkillsCommand(args []string) {
 
 // runSessionCommand handles session-related commands.
 func runSessionCommand(args []string) {
-	fs := flag.NewFlagSet("session", flag.ExitOnError)
-	list := fs.Bool("list", false, "List saved sessions")
+	if code := sessionCLI(args, config.NewSessionManager(), os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+const sessionUsage = `Usage: celeste session [list|--list|--load <id>|--clear]
+
+Lists the saved chat sessions (the default), shows one, or deletes them all.
+  list, --list  list the saved sessions
+  --load <id>   show a session's ID and message count
+  --clear       delete every saved session
+celeste resume <id> opens the chat UI on a session.`
+
+// sessionCLI is celeste session: 0 on success, 1 when the store fails, 2
+// for bad arguments. The list subcommand is the same as --list (W-C1: it
+// used to do nothing and exit 0), and any other word is an error.
+func sessionCLI(args []string, manager *config.SessionManager, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("session", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Bool("list", false, "List saved sessions") // listing is the default
 	load := fs.String("load", "", "Load a session by ID")
 	clear := fs.Bool("clear", false, "Clear all sessions")
-	// Parse flags - exits on error due to ExitOnError flag
-	_ = fs.Parse(args)
-
-	manager := config.NewSessionManager()
+	if len(args) > 0 && args[0] == "list" {
+		args = args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(stdout, sessionUsage)
+			return 0
+		}
+		fmt.Fprintf(stderr, "Error: %v\n%s\n", err, sessionUsage)
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "Unknown session command %q\n%s\n", fs.Arg(0), sessionUsage)
+		return 2
+	}
 
 	if *clear {
 		if err := manager.Clear(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error clearing sessions: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error clearing sessions: %v\n", err)
+			return 1
 		}
-		fmt.Println("All sessions cleared")
-		return
+		fmt.Fprintln(stdout, "All sessions cleared")
+		return 0
 	}
 
 	if *load != "" {
 		session, err := manager.Load(*load)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error loading session: %v\n", err)
+			return 1
 		}
-		fmt.Printf("Loaded session: %s (%d messages)\n", session.ID, len(session.Messages))
-		// In full implementation, this would resume the session in TUI
-		return
+		fmt.Fprintf(stdout, "Loaded session: %s (%d messages)\n", session.ID, len(session.Messages))
+		return 0
 	}
 
-	if *list || len(args) == 0 {
-		sessions, err := manager.List()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
-			os.Exit(1)
-		}
-
-		if len(sessions) == 0 {
-			fmt.Println("No saved sessions")
-			return
-		}
-
-		fmt.Printf("\nSaved Sessions (%d):\n", len(sessions))
-		for _, s := range sessions {
-			summary := s.Summarize()
-			fmt.Printf("\n  ID: %s\n", summary.ID)
-			fmt.Printf("    Messages: %d\n", summary.MessageCount)
-			fmt.Printf("    Created:  %s\n", summary.CreatedAt.Format("2006-01-02 15:04"))
-			fmt.Printf("    Updated:  %s\n", summary.UpdatedAt.Format("2006-01-02 15:04"))
-			if summary.FirstMessage != "" {
-				fmt.Printf("    Preview:  %s\n", summary.FirstMessage)
-			}
-		}
-		fmt.Println()
+	sessions, err := manager.List()
+	if err != nil {
+		fmt.Fprintf(stderr, "Error listing sessions: %v\n", err)
+		return 1
 	}
+	if len(sessions) == 0 {
+		fmt.Fprintln(stdout, "No saved sessions")
+		return 0
+	}
+	fmt.Fprintf(stdout, "\nSaved Sessions (%d):\n", len(sessions))
+	for _, s := range sessions {
+		summary := s.Summarize()
+		fmt.Fprintf(stdout, "\n  ID: %s\n", summary.ID)
+		fmt.Fprintf(stdout, "    Messages: %d\n", summary.MessageCount)
+		fmt.Fprintf(stdout, "    Created:  %s\n", summary.CreatedAt.Format("2006-01-02 15:04"))
+		fmt.Fprintf(stdout, "    Updated:  %s\n", summary.UpdatedAt.Format("2006-01-02 15:04"))
+		if summary.FirstMessage != "" {
+			fmt.Fprintf(stdout, "    Preview:  %s\n", summary.FirstMessage)
+		}
+	}
+	fmt.Fprintln(stdout)
+	return 0
 }
 
 // runCollectionsCommand handles collections-related commands.
