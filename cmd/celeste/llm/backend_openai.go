@@ -30,6 +30,7 @@ func NewOpenAIBackend(config *Config) *OpenAIBackend {
 	if config.BaseURL != "" {
 		clientConfig.BaseURL = config.BaseURL
 	}
+	clientConfig.HTTPClient = newHTTPClient()
 
 	return &OpenAIBackend{
 		client: openai.NewClientWithConfig(clientConfig),

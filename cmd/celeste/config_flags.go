@@ -51,3 +51,12 @@ var removedTemplates = map[string]string{
 	"celeste-classic": "openai",
 	"celeste-claw":    "openai",
 }
+
+// setTimeoutError refuses a negative --set-timeout: 0 selects the default,
+// and a timeout below that means nothing.
+func setTimeoutError(v int, given bool) error {
+	if given && v < 0 {
+		return fmt.Errorf("--set-timeout must be 0 (the default) or a number of seconds, got %d", v)
+	}
+	return nil
+}

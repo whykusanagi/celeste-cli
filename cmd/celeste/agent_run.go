@@ -47,7 +47,7 @@ func runAgentCommand(args []string) {
 	maxNoToolTurns := fs.Int("max-no-tool-turns", 0, "Maximum consecutive no-tool turns before stopping")
 	requireMarker := fs.Bool("require-complete-marker", true, "Require completion marker in final response")
 	completionMarker := fs.String("completion-marker", "TASK_COMPLETE:", "Completion marker token")
-	requestTimeout := fs.Int("request-timeout", 0, "LLM request timeout in seconds")
+	requestTimeout := fs.Int("request-timeout", 0, "Most seconds one model turn may take (default: the 30-minute cap; the profile timeout still fails a request that sends nothing for that long)")
 	toolTimeout := fs.Int("tool-timeout", 0, "Tool execution timeout in seconds")
 	verifyTimeout := fs.Int("verify-timeout", 0, "Verification command timeout in seconds")
 	enablePlanning := fs.Bool("planner", true, "Enable explicit planning phase")
@@ -135,7 +135,7 @@ func runAgentCommand(args []string) {
 		case "require-verify":
 			opts.VerificationExplicit = true
 		case "request-timeout":
-			opts.RequestTimeoutExplicit = true
+			_, opts.RequestTimeoutExplicit = requestTimeoutFlag(*requestTimeout)
 		case "max-turns":
 			opts.MaxTurnsExplicit = *maxTurns > 0
 		}
@@ -154,8 +154,8 @@ func runAgentCommand(args []string) {
 	if *maxNoToolTurns > 0 {
 		opts.MaxConsecutiveNoToolTurns = *maxNoToolTurns
 	}
-	if *requestTimeout > 0 {
-		opts.RequestTimeout = time.Duration(*requestTimeout) * time.Second
+	if d, ok := requestTimeoutFlag(*requestTimeout); ok {
+		opts.RequestTimeout = d
 	}
 	if *toolTimeout > 0 {
 		opts.ToolTimeout = time.Duration(*toolTimeout) * time.Second
@@ -329,4 +329,14 @@ func resolveServedModels(cfg *config.Config, w io.Writer) {
 	for _, n := range cfg.ResolveServedModels(context.Background()) {
 		fmt.Fprintln(w, "celeste: "+n)
 	}
+}
+
+// requestTimeoutFlag reads -request-timeout: a positive number of seconds is
+// a deliberate turn deadline; 0 (or less) leaves the turn to the 30-minute
+// cap, as if the flag were absent.
+func requestTimeoutFlag(secs int) (time.Duration, bool) {
+	if secs <= 0 {
+		return 0, false
+	}
+	return time.Duration(secs) * time.Second, true
 }

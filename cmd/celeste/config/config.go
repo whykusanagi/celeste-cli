@@ -286,7 +286,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		BaseURL:           seed.BaseURL,
 		Model:             seed.DefaultModel,
-		Timeout:           60,
+		Timeout:           DefaultTimeoutSeconds,
 		SimulateTyping:    true,
 		TypingSpeed:       DefaultTypingSpeed,
 		MaxToolIterations: DefaultMaxToolIterations,
@@ -1255,10 +1255,27 @@ func (l *ConfigLoader) GetWalletSecurityConfig() (WalletSecuritySettingsConfig, 
 	}, nil
 }
 
-// GetTimeout returns the configured timeout as a duration.
+// DefaultTimeoutSeconds is the request timeout a new profile gets: how
+// long a request may receive nothing from the provider before it fails.
+const DefaultTimeoutSeconds = 60
+
+// LocalTimeoutSeconds replaces DefaultTimeoutSeconds for a server on this
+// machine or the local network (providers.IsLocalEndpoint). A local model
+// sends nothing while it reads the prompt: a cold 16K-token first turn on a
+// 14B model took longer than 300 s.
+const LocalTimeoutSeconds = 600
+
+// GetTimeout returns the request timeout. It is a stall timeout: a request
+// fails when nothing arrives for this long, however long the reply takes in
+// all (llm.MaxRequestDuration bounds that). A local endpoint whose timeout
+// is unset or still the generic default gets LocalTimeoutSeconds; any other
+// value is the user's and is kept.
 func (c *Config) GetTimeout() time.Duration {
-	if c.Timeout <= 0 {
-		return 60 * time.Second
+	if c.Timeout > 0 && (c.Timeout != DefaultTimeoutSeconds || !providers.IsLocalEndpoint(c.BaseURL)) {
+		return time.Duration(c.Timeout) * time.Second
 	}
-	return time.Duration(c.Timeout) * time.Second
+	if providers.IsLocalEndpoint(c.BaseURL) {
+		return LocalTimeoutSeconds * time.Second
+	}
+	return DefaultTimeoutSeconds * time.Second
 }

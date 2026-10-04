@@ -287,7 +287,7 @@ type ToolCallResult struct {
 // attempt sends messages unchanged (2.0 F3: the history is append-only).
 func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	var res *ChatCompletionResult
-	err := withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
+	err := withRetry(ctx, c.attemptOpts(), func(reqCtx context.Context) error {
 		backend, _ := c.snapshot()
 		var e error
 		res, e = backend.SendMessageSync(reqCtx, messages, tools)
@@ -296,13 +296,16 @@ func (c *Client) SendMessageSync(ctx context.Context, messages []tui.ChatMessage
 	return res, err
 }
 
-// perAttemptTimeout is the deadline applied to each individual send attempt.
-// Falls back to 60s when the config carries no timeout.
-func (c *Client) perAttemptTimeout() time.Duration {
+// attemptOpts are the deadlines for each send attempt: the configured
+// timeout is the stall timeout (nothing received for that long ends the
+// attempt), and MaxRequestDuration caps an attempt that keeps streaming.
+// The stall timeout falls back to 60s when the config carries none.
+func (c *Client) attemptOpts() retryOpts {
+	stall := 60 * time.Second
 	if _, cfg := c.snapshot(); cfg != nil && cfg.Timeout > 0 {
-		return cfg.Timeout
+		stall = cfg.Timeout
 	}
-	return 60 * time.Second
+	return retryOpts{stall: stall, timeout: MaxRequestDuration(stall)}
 }
 
 // StreamCallback is called for each chunk during streaming.
@@ -339,9 +342,9 @@ type StreamChunk struct {
 // SendMessageStream sends a message with streaming callback.
 // This delegates to the appropriate backend (OpenAI or Google).
 func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
+	return withRetry(ctx, c.attemptOpts(), func(reqCtx context.Context) error {
 		started := false
-		wrapped := func(chunk StreamChunk) { started = true; callback(chunk) }
+		wrapped := func(chunk StreamChunk) { started = true; touchStall(reqCtx); callback(chunk) }
 		backend, _ := c.snapshot()
 		err := backend.SendMessageStream(reqCtx, messages, tools, wrapped)
 		if err != nil && started {
@@ -354,12 +357,15 @@ func (c *Client) SendMessageStream(ctx context.Context, messages []tui.ChatMessa
 // SendMessageStreamEvents sends a message with granular streaming events.
 // This delegates to the appropriate backend.
 func (c *Client) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
-	return withRetry(ctx, retryOpts{timeout: c.perAttemptTimeout()}, func(reqCtx context.Context) error {
-		// Reasoning alone does not start the reply: a drop while a slow
-		// local model is still thinking is retried (L4). The repeated
+	return withRetry(ctx, c.attemptOpts(), func(reqCtx context.Context) error {
+		// Every event, reasoning included, is activity on the stall watch:
+		// a local model that thinks for minutes before replying is alive.
+		// Reasoning alone does not start the reply, though: a drop while a
+		// slow local model is still thinking is retried (L4). The repeated
 		// thinking only feeds a status-bar count.
 		started := false
 		wrapped := func(ev StreamEvent) {
+			touchStall(reqCtx)
 			if ev.Type != EventThinkingDelta {
 				started = true
 			}

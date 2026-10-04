@@ -1880,15 +1880,24 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Add user message to chat, after the hidden plan-mode instruction
-		// while plan mode is on (2.0 W4e).
-		m = m.withPlanInstruction()
-		m.chat = m.chat.AddUserMessage(content)
+		// while plan mode is on (2.0 W4e). The same text as a prompt whose
+		// turn failed unanswered retries that prompt instead (L5), unless
+		// plan mode changed since: the retry needs (or must drop) the
+		// instruction, so it is sent as a new prompt.
+		reused := false
+		if m.chat.LastPromptPlanned() == m.planModeOn() {
+			m.chat, reused = m.chat.ReuseUnanswered(content)
+		}
+		if !reused {
+			m = m.withPlanInstruction()
+			m.chat = m.chat.AddUserMessage(content)
+		}
 		m.streaming = true
 		m.status = m.status.SetStreaming(true)
 		m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
 
 		// Add user message to session for persistence
-		if m.currentSession != nil {
+		if m.currentSession != nil && !reused {
 			if configSession, ok := m.currentSession.(*config.Session); ok {
 				configSession.Messages = append(configSession.Messages, config.SessionMessage{
 					Role:      "user",

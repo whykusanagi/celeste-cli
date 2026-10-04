@@ -177,6 +177,8 @@ Configuration:
                                           Set the chat's tool-loop turn cap
   celeste config --set-context-limit <tokens>
                                           Set the context window (0 = model default)
+  celeste config --set-timeout <seconds> Fail a request after this long without data
+                                          (0 = default: 60, or 600 for a local server)
 
 Skills:
   celeste skills --list                  List available skills
@@ -902,6 +904,7 @@ func runConfigCommand(args []string) {
 	setMode := fs.String("set-mode", "", "Removed in 2.0 (see MIGRATING-2.0.md)")
 	setMaxIter := fs.Int("set-max-tool-iterations", -1, "Set the chat's tool-loop turn cap")
 	setClawMaxIterations := fs.Int("set-claw-max-iterations", -1, "Deprecated: use --set-max-tool-iterations")
+	setTimeout := fs.Int("set-timeout", -1, "Set the request timeout in seconds: a request fails after this long without data from the provider (0 = default: 60, or 600 for a local server)")
 	setContextLimit := fs.Int("set-context-limit", -1, "Set the context window in tokens (0 clears it and uses the model default). Required for local models, whose window celeste cannot know")
 	setManagementKey := fs.String("set-management-key", "", "Set xAI Management API key for Collections")
 	skipPersona := fs.String("skip-persona", "", "Removed in 2.0 (see MIGRATING-2.0.md)")
@@ -930,6 +933,12 @@ func runConfigCommand(args []string) {
 		os.Exit(1)
 	}
 	if err := skipPersonaError(*skipPersona); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+	timeoutGiven := false
+	fs.Visit(func(f *flag.Flag) { timeoutGiven = timeoutGiven || f.Name == "set-timeout" })
+	if err := setTimeoutError(*setTimeout, timeoutGiven); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
@@ -1056,6 +1065,11 @@ func runConfigCommand(args []string) {
 		cfg.MaxToolIterations = n
 		changed = true
 		fmt.Printf("Max tool iterations set to: %d\n", n)
+	}
+	if *setTimeout >= 0 {
+		cfg.Timeout = *setTimeout
+		changed = true
+		fmt.Println("Request timeout:   " + timeoutLine(cfg))
 	}
 	if *setContextLimit == 0 {
 		cfg.ContextLimit = 0
@@ -1207,6 +1221,7 @@ func runConfigCommand(args []string) {
 			fmt.Printf("  Planning:          local\n")
 		}
 		fmt.Printf("  Max Tool Iter:     %d\n", cfg.MaxToolIterations)
+		fmt.Printf("  Request Timeout:   %s\n", timeoutLine(cfg))
 		if cfg.ContextLimit > 0 {
 			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
 		} else {
@@ -2044,4 +2059,18 @@ func runServeCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// timeoutLine describes the request timeout config shows: the effective
+// stall timeout and where it came from.
+func timeoutLine(cfg *config.Config) string {
+	d := int(cfg.GetTimeout().Seconds())
+	source := "default"
+	switch {
+	case d == cfg.Timeout && cfg.Timeout != config.DefaultTimeoutSeconds:
+		source = "configured"
+	case d == config.LocalTimeoutSeconds:
+		source = "local default"
+	}
+	return fmt.Sprintf("%ds without data (%s)", d, source)
 }
