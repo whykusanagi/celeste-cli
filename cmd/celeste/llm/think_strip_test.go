@@ -30,8 +30,11 @@ func TestThinkSplitter(t *testing.T) {
 		{"leading whitespace then block", "\n <think>plan</think>Hi", "Hi", "plan"},
 		{"empty block", "<think>\n\n</think>\n\nHi", "Hi", "\n\n"},
 		{"unterminated leading block", "<think>still reasoning when the stream ended", "", "still reasoning when the stream ended"},
-		{"block in the middle", "Answer: <think>check</think>42", "Answer: 42", "check"},
-		{"two blocks", "<think>a</think>One <think>b</think>two", "One two", "ab"},
+		{"block after reply text is literal", "Answer: <think>check</think>42", "Answer: <think>check</think>42", ""},
+		{"block after a leading one is literal", "<think>a</think>One <think>b</think>two", "One <think>b</think>two", "a"},
+		{"two leading blocks", "<think>a</think>\n<think>b</think>Hi", "Hi", "ab"},
+		{"quoted tags in a code block", "```\n<think>example</think>\n```", "```\n<think>example</think>\n```", ""},
+		{"text before tag on one line", "x <think>y</think> z", "x <think>y</think> z", ""},
 		{"literal tag mid reply is kept when never closed", "Qwen writes <think> before it reasons.", "Qwen writes <think> before it reasons.", ""},
 		{"lone close tag is kept", "a </think> b", "a </think> b", ""},
 		{"partial tag at end is kept", "x <thi", "x <thi", ""},
@@ -77,9 +80,27 @@ func TestThinkSplitterStreamsLeadingThinking(t *testing.T) {
 	}
 }
 
+// A "<think>" after reply text is literal: it streams as reply text at
+// once and holds nothing back until a close tag or the end of the stream.
+func TestThinkSplitterPassesLateTagThrough(t *testing.T) {
+	var s thinkSplitter
+	if c, th := s.Write("Hi "); c != "Hi " || th != "" {
+		t.Fatalf("first chunk: content %q thinking %q", c, th)
+	}
+	if c, th := s.Write("<think>x"); c != "<think>x" || th != "" {
+		t.Fatalf("second chunk: content %q thinking %q", c, th)
+	}
+	if c, th := s.Write(" and more"); c != " and more" || th != "" {
+		t.Fatalf("third chunk: content %q thinking %q", c, th)
+	}
+}
+
 func TestStripThink(t *testing.T) {
 	if got := stripThink("<think>x</think>\n\nHello"); got != "Hello" {
 		t.Fatalf("stripThink = %q", got)
+	}
+	if got := stripThink("Use `<think>x</think>` tags."); got != "Use `<think>x</think>` tags." {
+		t.Fatalf("stripThink(literal) = %q", got)
 	}
 	if got := stripThink("plain"); got != "plain" {
 		t.Fatalf("stripThink(plain) = %q", got)

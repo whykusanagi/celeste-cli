@@ -15,23 +15,21 @@ const (
 //
 // Write takes the next content delta and returns the reply text and the
 // thinking text it completes; Flush returns what is still held at the end
-// of the stream. Tags split across deltas are recognised. A complete block
-// is reasoning wherever it sits. A block that opens before any reply text
-// streams as thinking at once, and is still reasoning when the stream ends
-// before it closes. A block that opens after reply text is held until it
-// closes: if it never does, the "<think>" was literal text and the whole
-// held tail goes back to the reply. Whitespace before the first reply text
-// that follows a leading block is dropped.
+// of the stream. Tags split across deltas are recognised. Servers only put
+// reasoning at the start of a message, so only a block that opens before
+// any reply text (whitespace aside) is reasoning: it streams as thinking at
+// once, and is still reasoning when the stream ends before it closes. A
+// "<think>" after reply text is literal text and streams as reply text.
+// Whitespace before the first reply text that follows a leading block is
+// dropped.
 //
 // It is used by one stream at a time; the zero value is ready.
 type thinkSplitter struct {
-	pending  string          // a possible partial tag at the end of the last delta
-	inThink  bool            // inside a block
-	leading  bool            // the open block started before any reply text
-	held     strings.Builder // the open non-leading block's text, until it closes
-	visible  bool            // reply text other than whitespace has been returned
-	ws       string          // whitespace before the first reply text, not yet returned
-	sawThink bool            // a leading block was seen
+	pending  string // a possible partial tag at the end of the last delta
+	inThink  bool   // inside a leading block
+	visible  bool   // reply text other than whitespace has been returned
+	ws       string // whitespace before the first reply text, not yet returned
+	sawThink bool   // a leading block was seen
 }
 
 // Write consumes one content delta.
@@ -40,36 +38,36 @@ func (s *thinkSplitter) Write(delta string) (content, thinking string) {
 	buf := s.pending + delta
 	s.pending = ""
 	for buf != "" {
-		if !s.inThink {
-			if i := strings.Index(buf, thinkOpen); i >= 0 {
-				s.reply(&c, buf[:i])
-				s.inThink = true
-				s.leading = !s.visible
-				if s.leading {
-					s.ws = ""
-					s.sawThink = true
-				}
-				buf = buf[i+len(thinkOpen):]
+		if s.inThink {
+			if i := strings.Index(buf, thinkClose); i >= 0 {
+				t.WriteString(buf[:i])
+				s.inThink = false
+				buf = buf[i+len(thinkClose):]
 				continue
 			}
-			keep := partialSuffix(buf, thinkOpen)
-			s.reply(&c, buf[:len(buf)-keep])
+			keep := partialSuffix(buf, thinkClose)
+			t.WriteString(buf[:len(buf)-keep])
 			s.pending = buf[len(buf)-keep:]
 			break
 		}
-		if i := strings.Index(buf, thinkClose); i >= 0 {
-			s.think(&t, buf[:i])
-			if !s.leading {
-				t.WriteString(s.held.String())
-				s.held.Reset()
-			}
-			s.inThink = false
-			buf = buf[i+len(thinkClose):]
+		if s.visible {
+			c.WriteString(buf)
+			break
+		}
+		if i := strings.Index(buf, thinkOpen); i >= 0 && strings.TrimSpace(s.ws+buf[:i]) == "" {
+			s.ws = ""
+			s.sawThink = true
+			s.inThink = true
+			buf = buf[i+len(thinkOpen):]
 			continue
 		}
-		keep := partialSuffix(buf, thinkClose)
-		s.think(&t, buf[:len(buf)-keep])
-		s.pending = buf[len(buf)-keep:]
+		keep := partialSuffix(buf, thinkOpen)
+		s.reply(&c, buf[:len(buf)-keep])
+		if s.visible {
+			c.WriteString(buf[len(buf)-keep:])
+		} else {
+			s.pending = buf[len(buf)-keep:]
+		}
 		break
 	}
 	return c.String(), t.String()
@@ -78,13 +76,9 @@ func (s *thinkSplitter) Write(delta string) (content, thinking string) {
 // Flush ends the stream and returns what was still held.
 func (s *thinkSplitter) Flush() (content, thinking string) {
 	var c, t strings.Builder
-	switch {
-	case s.inThink && s.leading:
+	if s.inThink {
 		t.WriteString(s.pending) // reasoning cut off by the end of the stream
-	case s.inThink:
-		s.reply(&c, thinkOpen+s.held.String()+s.pending) // the tag was literal text
-		s.held.Reset()
-	default:
+	} else {
 		s.reply(&c, s.pending)
 	}
 	s.pending, s.inThink = "", false
@@ -118,16 +112,6 @@ func (s *thinkSplitter) reply(c *strings.Builder, text string) {
 	s.ws = ""
 }
 
-// think adds text from inside a block: thinking now for a leading block,
-// held for a later one.
-func (s *thinkSplitter) think(t *strings.Builder, text string) {
-	if s.leading {
-		t.WriteString(text)
-	} else {
-		s.held.WriteString(text)
-	}
-}
-
 // partialSuffix is the length of the longest proper prefix of tag that buf
 // ends with.
 func partialSuffix(buf, tag string) int {
@@ -139,7 +123,7 @@ func partialSuffix(buf, tag string) int {
 	return 0
 }
 
-// stripThink is s without its <think> reasoning: for a whole reply, and
+// stripThink is s without its leading <think> reasoning: for a whole reply, and
 // for history sent back to an OpenAI-compatible server.
 func stripThink(s string) string {
 	if !strings.Contains(s, thinkOpen) {

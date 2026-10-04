@@ -114,6 +114,7 @@ func TestOpenAIConvertMessagesStripsThinkFromAssistantHistory(t *testing.T) {
 		{Role: "assistant", Content: "<think>need a tool</think>", ToolCalls: []tui.ToolCallInfo{{ID: "c1", Name: "read_file", Arguments: "{}"}}},
 		{Role: "tool", Content: "file", ToolCallID: "c1"},
 		{Role: "user", Content: "what does <think> mean?"},
+		{Role: "assistant", Content: "Like this: <think>an example</think> done."},
 	}
 	streamEvents(t, b, msgs)
 	reqs := srv.Requests()
@@ -126,6 +127,21 @@ func TestOpenAIConvertMessagesStripsThinkFromAssistantHistory(t *testing.T) {
 	}
 	if !strings.Contains(raw, "what does \\u003cthink\\u003e mean?") {
 		t.Fatalf("user text altered: %s", raw)
+	}
+	if !strings.Contains(raw, "Like this: \\u003cthink\\u003ean example\\u003c/think\\u003e done.") {
+		t.Fatalf("a block after reply text was stripped from history: %s", raw)
+	}
+}
+
+// A reply that quotes think tags after its first text keeps them.
+func TestOpenAIStreamEventsKeepsLateThinkTags(t *testing.T) {
+	b, _ := newThinkBackend(t, fakeprovider.Turn{Deltas: []string{"```\n<thi", "nk>example</think>\n```"}})
+	evs := streamEvents(t, b, hello)
+	if got := contentOf(evs); got != "```\n<think>example</think>\n```" {
+		t.Fatalf("reply = %q", got)
+	}
+	if got := thinkingOf(evs); got != "" {
+		t.Fatalf("thinking = %q, want none", got)
 	}
 }
 

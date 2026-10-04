@@ -541,7 +541,7 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 	// Convert messages
 	for _, msg := range messages {
 		if msg.Role == "assistant" {
-			// Reasoning a server inlined as <think>…</think> is never sent
+			// Reasoning a server inlined as a leading <think>…</think> is never sent
 			// back as content (L4): history saved before it was stripped.
 			msg.Content = stripThink(msg.Content)
 		}
