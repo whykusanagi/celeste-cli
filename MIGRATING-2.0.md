@@ -203,7 +203,7 @@ The sandbox is new and off by default in 2.0, so nothing changes until you turn 
 
 | 1.x | 2.0 |
 |---|---|
-| `bash` commands could write anywhere you can | Unchanged by default. With `"sandbox": {"enabled": true}` in `~/.celeste/config.json`, `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
+| `bash` commands could write anywhere you can | Unchanged by default. With `"sandbox": {"enabled": true}` in `~/.celeste/config.json` (it applies with a named profile active too; a profile's own `sandbox` keys win), `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
 | Linux without bubblewrap, Windows | With the sandbox on: one warning (Linux) or log line (Windows), and commands run with the denylist only. |
 
 ## Sessions: `/rewind` and `/fork`
