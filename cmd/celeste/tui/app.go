@@ -2661,7 +2661,14 @@ func (m AppModel) View() string {
 	if m.viewMode == "chat" && !m.mcpPanel.Active() && m.turnActive() {
 		hints = turnHints
 	}
-	sections = append(sections, HeaderInfoStyle.Render(" "+hints))
+	// The hints are fixed text, up to 77 cells: clip them to the terminal.
+	// JoinVertical pads every row to the widest section, so one row past
+	// the edge makes every row wrap on a narrow terminal (#319).
+	hintStyle := HeaderInfoStyle
+	if m.width > 0 {
+		hintStyle = hintStyle.MaxWidth(m.width)
+	}
+	sections = append(sections, hintStyle.Render(" "+hints))
 
 	// Status bar (fixed, 1 line)
 	sections = append(sections, m.status.View())
