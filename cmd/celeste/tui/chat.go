@@ -537,13 +537,28 @@ func wrapText(text string, width int) string {
 			continue
 		}
 
-		currentLine := words[0]
-		for _, word := range words[1:] {
-			if len(currentLine)+1+len(word) <= width {
+		currentLine := ""
+		for _, word := range words {
+			// A word wider than the chat (a path from /init or /export)
+			// breaks across rows instead of being cut at the edge.
+			if lipgloss.Width(word) > width {
+				if currentLine != "" {
+					result.WriteString(currentLine + "\n")
+				}
+				parts := breakWord(word, width)
+				for _, p := range parts[:len(parts)-1] {
+					result.WriteString(p + "\n")
+				}
+				currentLine = parts[len(parts)-1]
+				continue
+			}
+			switch {
+			case currentLine == "":
+				currentLine = word
+			case lipgloss.Width(currentLine)+1+lipgloss.Width(word) <= width:
 				currentLine += " " + word
-			} else {
-				result.WriteString(currentLine)
-				result.WriteString("\n")
+			default:
+				result.WriteString(currentLine + "\n")
 				currentLine = word
 			}
 		}
@@ -551,6 +566,16 @@ func wrapText(text string, width int) string {
 	}
 
 	return result.String()
+}
+
+// breakWord splits a word wider than width (it may carry ANSI styling)
+// into rows of at most width cells.
+func breakWord(word string, width int) []string {
+	rows := strings.Split(lipgloss.NewStyle().Width(width).Render(word), "\n")
+	for i, r := range rows {
+		rows[i] = strings.TrimRight(r, " ")
+	}
+	return rows
 }
 
 // formatArgs formats function call arguments.

@@ -289,3 +289,25 @@ func TestStatusBarLongErrorIsOneRow(t *testing.T) {
 		t.Fatalf("a two-line status text took %d rows: %q", got, stripANSI(bar))
 	}
 }
+
+// V7: a path longer than the chat is wide (/init's "Created <path>",
+// /export's "Path:") wraps onto the next rows instead of being cut.
+func TestChatWrapsUnbrokenPaths(t *testing.T) {
+	path := "/var/folders/xy/abcdefghijklmnop/T/celeste-test-workspace-1234567890/project_with_a_long_name/.celeste/grimoire.md"
+	for _, sz := range auditSizes {
+		chat := NewChatModel().SetSize(sz.w, sz.h-9)
+		chat = chat.AddSystemMessage("Created " + path + "\nEdit the new file to describe the project; it applies from the next session.")
+		chat = chat.AddSystemMessage("✓ Export complete\n  ▓ Format:  json\n  ▓ Path:    " + lipgloss.NewStyle().Foreground(ColorPurple).Render(path+".json"))
+		view := chat.View()
+		assertFitsWidth(t, view, sz.w)
+		var joined strings.Builder
+		for _, ln := range strings.Split(stripANSI(view), "\n") {
+			joined.WriteString(strings.TrimSpace(ln))
+		}
+		for _, want := range []string{path, path + ".json"} {
+			if !strings.Contains(joined.String(), want) {
+				t.Fatalf("%dx%d: the path was cut:\n%s", sz.w, sz.h, stripANSI(view))
+			}
+		}
+	}
+}
