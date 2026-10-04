@@ -21,7 +21,9 @@ type MenuItem struct {
 
 // menuItems are the commands /menu offers. Selecting one sends "/<name>"
 // with no arguments, so each must do something useful bare; exit quits
-// (TestMenuListsKnownAnd20Commands). The menu has no
+// (TestMenuListsKnownAnd20Commands). One keypress sends it with no
+// confirmation, so nothing here changes files or takes back chat: /undo
+// and /rewind stay out. The menu has no
 // scrolling, so the list stays within a 24-row terminal; /help lists the
 // rest.
 var menuItems = []MenuItem{
@@ -30,8 +32,6 @@ var menuItems = []MenuItem{
 	{"session", "Pick a saved session"},
 	{"plan", "Plan mode: read-only tools until you approve a plan"},
 	{"diff", "List the files this session changed"},
-	{"undo", "Undo the last file change"},
-	{"rewind", "Take back the last prompt and its file changes"},
 	{"fork", "Continue in a copy of this session"},
 	{"compact", "Summarize older history to free context"},
 	{"handoff", "Summarize this session into a new one"},

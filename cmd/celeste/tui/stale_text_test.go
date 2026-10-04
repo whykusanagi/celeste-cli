@@ -46,8 +46,14 @@ func TestMenuListsKnownAnd20Commands(t *testing.T) {
 	// The menu does not scroll: the header (2 rows), the items and the
 	// footer (2 rows) fit a 24-row terminal.
 	assert.LessOrEqual(t, len(menuItems)+4, 24)
-	for _, want := range []string{"plan", "diff", "undo", "rewind", "fork", "grimoire", "compact", "handoff", "mcp", "persona", "memories", "costs"} {
+	for _, want := range []string{"plan", "diff", "fork", "grimoire", "compact", "handoff", "mcp", "persona", "memories", "costs"} {
 		assert.Contains(t, names, want, "/menu lacks /%s", want)
+	}
+	// One keypress sends the bare command, so the menu, where people
+	// browse, offers nothing that changes files or takes back chat with no
+	// confirmation; /help lists /undo and /rewind.
+	for _, unwanted := range []string{"undo", "rewind"} {
+		assert.NotContains(t, names, unwanted, "/menu offers /%s, which acts on one keypress", unwanted)
 	}
 }
 

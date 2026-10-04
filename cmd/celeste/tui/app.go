@@ -253,7 +253,9 @@ type AgentCommandRunner interface {
 
 // isAgentInfoCommand reports whether the first word of /agent's arguments
 // names a command that only reports (help, list-runs): RunAgentCommand
-// answers those without running the agent. Resume runs it again.
+// answers those without running the agent. Resume runs it again. The words
+// must match RunAgentCommand's non-resume cases in the main package
+// (TestAgentInfoCommandsMatchRunAgentCommand).
 func isAgentInfoCommand(first string) bool {
 	switch strings.ToLower(strings.TrimSpace(first)) {
 	case "help", "--help", "-h", "list", "list-runs", "--list-runs":
