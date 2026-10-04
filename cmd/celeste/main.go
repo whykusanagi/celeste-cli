@@ -935,6 +935,12 @@ func runConfigCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
+	timeoutGiven := false
+	fs.Visit(func(f *flag.Flag) { timeoutGiven = timeoutGiven || f.Name == "set-timeout" })
+	if err := setTimeoutError(*setTimeout, timeoutGiven); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 
 	// Handle --list
 	if *listConfigs {

@@ -48,3 +48,22 @@ func TestLocalGuideDocumentsTimeouts(t *testing.T) {
 		}
 	}
 }
+
+// A negative --set-timeout is refused, not silently ignored.
+func TestSetTimeoutError(t *testing.T) {
+	for _, tc := range []struct {
+		v       int
+		given   bool
+		wantErr bool
+	}{
+		{-1, false, false}, // flag absent
+		{0, true, false},
+		{600, true, false},
+		{-1, true, true},
+		{-5, true, true},
+	} {
+		if err := setTimeoutError(tc.v, tc.given); (err != nil) != tc.wantErr {
+			t.Errorf("setTimeoutError(%d, %v) = %v, want error %v", tc.v, tc.given, err, tc.wantErr)
+		}
+	}
+}
