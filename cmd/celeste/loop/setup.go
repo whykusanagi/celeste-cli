@@ -3,8 +3,10 @@ package loop
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -310,18 +312,90 @@ func (e *Env) RefreshDiscovery() {
 // setupMCP starts the configured MCP servers. Only the TUI loads workspace
 // configs (<ws>/.mcp.json, <ws>/.celeste/mcp.json), and not with
 // GlobalMCPOnly: every other mode runs without an interactive user, and a
-// repo's config would otherwise run an arbitrary command unasked.
+// repo's config would otherwise run an arbitrary command unasked. Even in
+// the chat, an enabled workspace server starts only once approved
+// (admitMCP): the repo sets "enabled" itself.
 func (e *Env) setupMCP(ws, home string) {
 	paths := mcp.DiscoverConfigPaths(ws, home)
 	if e.Mode != ModeChat || e.opts.GlobalMCPOnly {
 		paths = e.globalMCPConfigs(paths, home)
 	}
 	e.MCP = mcp.NewManagerMulti(paths, e.Registry)
+	e.MCP.SetAdmit(e.admitMCP(paths, home))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := e.MCP.Start(ctx); err != nil {
 		e.warn("MCP initialization failed: %v", err)
 	}
+}
+
+// admitMCP decides, before any server starts (and before Start's
+// connection timeout runs), which enabled workspace servers may start: one
+// approved with its current command, args, env and url, or approved now by
+// the person. Home-level servers are the user's own and always start. The
+// returned func admits a workspace server only if its definition still
+// hashes to the one approved.
+func (e *Env) admitMCP(paths []string, home string) func(string, mcp.ServerConfig) bool {
+	approved := map[string]string{} // server name -> approved TrustHash
+	admit := func(name string, sc mcp.ServerConfig) bool {
+		if mcp.IsGlobalConfig(home, sc.Origin) {
+			return true
+		}
+		h, ok := approved[name]
+		return ok && h == sc.TrustHash()
+	}
+	cfg, err := mcp.LoadMerged(paths)
+	if err != nil {
+		return admit // Start reports the error and starts nothing
+	}
+	var store *hooks.TrustStore
+	for _, name := range slices.Sorted(maps.Keys(cfg.Servers)) {
+		sc := cfg.Servers[name]
+		if !sc.Enabled || mcp.IsGlobalConfig(home, sc.Origin) {
+			continue
+		}
+		src := hooks.MCPSource(sc.Origin, name, sc.TrustSummary(), sc.TrustHash())
+		if home == "" {
+			e.warnMCPSkipped(src, "no home directory for the trust store")
+			continue
+		}
+		if store == nil {
+			store = hooks.LoadTrust(home)
+			if err := store.Err(); err != nil {
+				e.warn("MCP: %v; repository MCP servers stay unapproved until it is fixed or removed", err)
+			}
+		}
+		if e.trustMCP(store, src) {
+			approved[name] = src.Hash
+		}
+	}
+	return admit
+}
+
+// trustMCP reports whether a workspace MCP server may start: approved in
+// the store with this definition, or approved now through the chat's
+// approver (and stored).
+func (e *Env) trustMCP(store *hooks.TrustStore, src hooks.Source) bool {
+	status := store.Status(src)
+	if status == hooks.Trusted {
+		return true
+	}
+	if approve := e.approver(); approve != nil && store.Err() == nil && approve(src, status) {
+		if err := store.Approve(src); err != nil {
+			e.warn("MCP: server %s approved for this session only: %v", strconv.Quote(hooks.MCPServerName(src)), err)
+		}
+		return true
+	}
+	if status == hooks.Changed {
+		e.warnMCPSkipped(src, "changed since you approved it")
+	} else {
+		e.warnMCPSkipped(src, "not approved")
+	}
+	return false
+}
+
+func (e *Env) warnMCPSkipped(src hooks.Source, why string) {
+	e.warn("MCP: not starting server %s from %s (%s): a repository's MCP servers start only once approved; run `celeste hooks trust` to approve it, or connect it from /mcp", strconv.Quote(hooks.MCPServerName(src)), strconv.Quote(hooks.SourceFile(src)), why)
 }
 
 // globalMCPConfigs keeps the home-level configs in paths and warns once about

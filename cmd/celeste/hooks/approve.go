@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"golang.org/x/term"
 )
@@ -15,6 +16,17 @@ import (
 // approving. Every string from the file is shown Go-quoted, so control and
 // bidi characters appear as escapes instead of acting on the terminal.
 func DescribeSource(w io.Writer, src Source) {
+	if src.Kind == KindRepoMCP {
+		// The summary quotes every string from the file already; quote a
+		// line again only if it still holds a non-printable character.
+		for _, line := range strings.Split(src.Rules, "\n") {
+			if strings.IndexFunc(line, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+				line = strconv.Quote(line)
+			}
+			fmt.Fprintf(w, "    %s\n", line)
+		}
+		return
+	}
 	if src.Kind == KindRepoStreamRules || src.Kind == KindRepoSandbox {
 		for _, line := range strings.Split(src.Rules, "\n") {
 			fmt.Fprintf(w, "    %s\n", strconv.Quote(line))
@@ -45,6 +57,10 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 			fmt.Fprintf(out, "\nSandbox settings in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, sandboxSuffix)), what)
 			DescribeSource(out, src)
 			fmt.Fprint(out, "These settings loosen the sandbox bash commands run in (more writable directories, the network, or no sandbox).\nTrust them? [y/N]: ")
+		case KindRepoMCP:
+			fmt.Fprintf(out, "\nMCP server %s in %s %s:\n", strconv.Quote(MCPServerName(src)), strconv.Quote(SourceFile(src)), what)
+			DescribeSource(out, src)
+			fmt.Fprint(out, "Starting it runs this command on this machine with your permissions (or connects to this URL).\nTrust it? [y/N]: ")
 		default:
 			fmt.Fprintf(out, "\nHooks in %s (%s) %s:\n", strconv.Quote(src.Path), src.Kind, what)
 			DescribeSource(out, src)

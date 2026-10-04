@@ -50,7 +50,7 @@ func CheckRepoSandbox(configPath string) error {
 }
 
 // SourceFile is the file a trust source was read from: its path without
-// the "#stream-rules" or "#sandbox" suffix that keeps it apart from other
+// the "#stream-rules", "#sandbox" or "#mcp:<name>" suffix that keeps it apart from other
 // trust entries for the same file.
 func SourceFile(src Source) string {
 	switch src.Kind {
@@ -58,6 +58,8 @@ func SourceFile(src Source) string {
 		return strings.TrimSuffix(src.Path, streamRulesSuffix)
 	case KindRepoSandbox:
 		return strings.TrimSuffix(src.Path, sandboxSuffix)
+	case KindRepoMCP:
+		return mcpSourceFile(src.Path)
 	}
 	return src.Path
 }

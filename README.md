@@ -629,11 +629,18 @@ inherits your PATH: `claude mcp add celeste celeste serve`.
 Inside the TUI, `/mcp` lists configured servers and lets you connect, disconnect,
 reconnect, or toggle a server at runtime (`c` / `d` / `r` / `space`). Celeste also
 merges MCP servers you've already defined for Claude Code or Cursor
-(`~/.claude/mcp.json`, `~/.cursor/mcp.json`, project `.mcp.json`), gated behind an
-opt-in `"enabled": true` so nothing connects until you ask.
+(`~/.claude/mcp.json`, `~/.cursor/mcp.json`, project `.mcp.json`). A server starts
+on its own only with `"enabled": true`. A project's `.mcp.json` or
+`.celeste/mcp.json` can set that flag itself, so a project server also needs
+your approval: at launch the chat shows its command and asks before starting
+it, and records the answer in `~/.celeste/trusted.json` the same way it does
+for repo hooks. If the command, args, env or URL change later, the chat asks
+again. Without a terminal to ask on, the server is skipped with a warning;
+approve it with `celeste hooks trust`, or connect it by hand from `/mcp`.
 
 From the shell, `celeste mcp list` shows the same servers without starting
 them: each one's source file, transport, whether it is enabled and trusted,
+whether a project server is approved, pending, or pending because it changed,
 and where it runs. A project's `.mcp.json` and `.celeste/mcp.json` start only
 in the interactive chat; agent runs, `celeste acp` and MCP chat use your
 home-level configs. Commands, arguments, URLs and env values are not shown.

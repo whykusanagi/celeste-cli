@@ -9,6 +9,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/rules"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 func hooksCLIFixture(t *testing.T, in string, interactive bool) (hooksCLI, *bytes.Buffer, *bytes.Buffer) {
@@ -229,5 +230,33 @@ func TestHooksTrustApprovesSandboxFile(t *testing.T) {
 	writeFile(t, filepath.Dir(p), "config.json", `{"sandbox":{"network":false}}`)
 	if srcs, _ := sandboxSources(c.cwd); len(srcs) != 0 {
 		t.Fatalf("tightening listed: %+v", srcs)
+	}
+}
+
+// A workspace's MCP servers are listed and approved like repo hooks, with
+// the key and hash the chat checks before starting one; a home config's
+// servers need no approval and are not listed.
+func TestHooksTrustApprovesWorkspaceMCPServers(t *testing.T) {
+	c, out, _ := hooksCLIFixture(t, "", false)
+	writeFile(t, filepath.Join(c.home, ".celeste"), "mcp.json", `{"mcpServers":{"mine":{"command":"m","enabled":true}}}`)
+	writeFile(t, c.cwd, ".mcp.json", `{"mcpServers":{"repo":{"command":"r","args":["-x"],"enabled":true}}}`)
+	if code := hooksCommand([]string{"list"}, c); code != 0 {
+		t.Fatalf("list exit %d", code)
+	}
+	if s := out.String(); !strings.Contains(s, ".mcp.json#mcp:repo") || !strings.Contains(s, "repo-mcp, untrusted") || strings.Contains(s, "#mcp:mine") {
+		t.Fatalf("list = %s", s)
+	}
+
+	out.Reset()
+	p := filepath.Join(c.cwd, ".mcp.json")
+	if code := hooksCommand([]string{"trust", "--yes", p}, c); code != 0 {
+		t.Fatalf("trust exit %d: %s", code, out.String())
+	}
+	sc := mcp.ServerConfig{Transport: "stdio", Command: "r", Args: []string{"-x"}}
+	if st := hooks.LoadTrust(c.home).Status(hooks.MCPSource(p, "repo", sc.TrustSummary(), sc.TrustHash())); st != hooks.Trusted {
+		t.Fatalf("status after trust = %s\n%s", st, out.String())
+	}
+	if !strings.Contains(out.String(), `"r"`) {
+		t.Errorf("trust did not show the command it approves:\n%s", out.String())
 	}
 }

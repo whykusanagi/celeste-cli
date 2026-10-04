@@ -3,13 +3,16 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
 // hooksCLI is the environment `celeste hooks` runs in, injectable for tests.
@@ -22,8 +25,9 @@ type hooksCLI struct {
 
 const hooksUsage = `Usage:
   celeste hooks list                  Show hook sources here and whether each is trusted
-  celeste hooks trust [--yes] [path]  Approve repo hooks, stream rules and sandbox settings (path: a
-                                      directory, a .celeste/hooks.json, .celeste/config.json or
+  celeste hooks trust [--yes] [path]  Approve repo hooks, stream rules, sandbox settings and MCP
+                                      servers (path: a directory, a .celeste/hooks.json,
+                                      .celeste/config.json, .mcp.json, .celeste/mcp.json or
                                       grimoire file; default: the current directory)
 `
 
@@ -75,8 +79,9 @@ func hooksList(c hooksCLI) int {
 		return 1
 	}
 	sbx, sbxWarns := sandboxSources(c.cwd)
-	srcs = append(srcs, sbx...)
-	for _, w := range append(warnings, sbxWarns...) {
+	srv, srvWarns := mcpSources(c.cwd, c.home, "")
+	srcs = append(append(srcs, sbx...), srv...)
+	for _, w := range append(append(warnings, sbxWarns...), srvWarns...) {
 		fmt.Fprintln(c.errOut, w)
 	}
 	if len(srcs) == 0 {
@@ -179,8 +184,8 @@ func hooksTrust(args []string, c hooksCLI) int {
 }
 
 // trustSources is what `celeste hooks trust` acts on: hooks.SourcesAt,
-// plus the workspace's sandbox settings for a directory, or only those for
-// a .celeste/config.json file.
+// plus the workspace's sandbox settings and MCP servers for a directory, or
+// only those of a .celeste/config.json, .mcp.json or .celeste/mcp.json file.
 func trustSources(target, home string) ([]hooks.Source, []string, error) {
 	abs, err := filepath.Abs(target)
 	if err != nil {
@@ -193,13 +198,25 @@ func trustSources(target, home string) ([]hooks.Source, []string, error) {
 		srcs, warns := sandboxSources(filepath.Dir(filepath.Dir(abs)))
 		return srcs, warns, nil
 	}
+	if isWorkspaceMCPFile(abs) {
+		if _, err := os.Stat(abs); err != nil {
+			return nil, nil, err
+		}
+		dir := filepath.Dir(abs)
+		if filepath.Base(dir) == ".celeste" {
+			dir = filepath.Dir(dir)
+		}
+		srcs, warns := mcpSources(dir, home, abs)
+		return srcs, warns, nil
+	}
 	srcs, warns, err := hooks.SourcesAt(abs, home)
 	if err != nil {
 		return srcs, warns, err
 	}
 	if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
 		sbx, sbxWarns := sandboxSources(abs)
-		srcs, warns = append(srcs, sbx...), append(warns, sbxWarns...)
+		srv, srvWarns := mcpSources(abs, home, "")
+		srcs, warns = append(append(srcs, sbx...), srv...), append(append(warns, sbxWarns...), srvWarns...)
 	}
 	return srcs, warns, nil
 }
@@ -219,4 +236,35 @@ func sandboxSources(workspace string) ([]hooks.Source, []string) {
 		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %v", strconv.Quote(path), err)}
 	}
 	return []hooks.Source{hooks.SandboxSource(path, body)}, nil
+}
+
+// isWorkspaceMCPFile reports whether path is named like a workspace MCP
+// config: .mcp.json, or mcp.json in a .celeste directory.
+func isWorkspaceMCPFile(path string) bool {
+	base := filepath.Base(path)
+	return base == ".mcp.json" || (base == "mcp.json" && filepath.Base(filepath.Dir(path)) == ".celeste")
+}
+
+// mcpSources is a trust source for each server in workspace's .mcp.json
+// and .celeste/mcp.json (only file's, when file is set), keyed and hashed as
+// loop.Setup checks them before the chat starts one. Home-level configs need
+// no approval and are left out.
+func mcpSources(workspace, home, file string) ([]hooks.Source, []string) {
+	var srcs []hooks.Source
+	var warns []string
+	for _, p := range mcp.DiscoverConfigPaths(workspace, home) {
+		if mcp.IsGlobalConfig(home, p) || (file != "" && filepath.Clean(p) != filepath.Clean(file)) {
+			continue
+		}
+		cfg, err := mcp.LoadConfig(p)
+		if err != nil {
+			warns = append(warns, fmt.Sprintf("mcp: skipping %s: %v", strconv.Quote(p), err))
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(cfg.Servers)) {
+			sc := cfg.Servers[name]
+			srcs = append(srcs, hooks.MCPSource(p, name, sc.TrustSummary(), sc.TrustHash()))
+		}
+	}
+	return srcs, warns
 }
