@@ -227,3 +227,30 @@ func TestMemoriesEmptyStateLinesUpAndFits(t *testing.T) {
 		}
 	}
 }
+
+// V4: the header stays one row (plus its rule) at 80 columns with a long
+// model name or in NSFW mode; what does not fit is cut with "…".
+func TestHeaderFitsWithLongModelAndNSFW(t *testing.T) {
+	long := NewHeaderModel().SetEndpoint("sakana").SetModel("nonexistent-model-xyz").SetSkillsEnabled(true).SetContextUsage(19_400, 1_000_000)
+	huge := NewHeaderModel().SetEndpoint("openrouter").SetModel("some-vendor/an-extraordinarily-long-model-identifier-preview-2026-10-01").SetSkillsEnabled(true).SetContextUsage(0, 1_000_000)
+	nsfw := NewHeaderModel().SetNSFWMode(true).SetImageModel("lustify-sdxl").SetContextUsage(31_700, 1_000_000)
+	for _, sz := range auditSizes {
+		for name, h := range map[string]HeaderModel{"long": long, "huge": huge, "nsfw": nsfw} {
+			view := h.SetWidth(sz.w).View()
+			assertFitsWidth(t, view, sz.w)
+			if got := lipgloss.Height(view); got != 2 {
+				t.Fatalf("%s %dx%d: the header is %d rows:\n%s", name, sz.w, sz.h, got, stripANSI(view))
+			}
+			plain := stripANSI(view)
+			if !strings.Contains(plain, "Celeste CLI") {
+				t.Fatalf("%s %dx%d: the header lost its title:\n%s", name, sz.w, sz.h, plain)
+			}
+		}
+	}
+	if plain := stripANSI(long.SetWidth(80).View()); !strings.Contains(plain, "nonexistent-model-xyz") {
+		t.Fatalf("at 80 columns the model name should still fit once the exit hint goes:\n%s", plain)
+	}
+	if plain := stripANSI(huge.SetWidth(80).View()); !strings.Contains(plain, "…") {
+		t.Fatalf("a model name too long for the row should end in …:\n%s", plain)
+	}
+}

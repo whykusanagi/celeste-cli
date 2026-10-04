@@ -3446,13 +3446,7 @@ func (m HeaderModel) View() string {
 		contextInfo = m.contextIndicator.ViewCompact()
 	}
 
-	info := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
-	if endpointInfo != "" {
-		info = endpointInfo + " • " + info
-	}
-	if contextInfo != "" {
-		info = info + " • " + contextInfo
-	}
+	info := headerInfo(endpointInfo, contextInfo, m.width-lipgloss.Width(title)-3)
 
 	// Calculate gap
 	gap := m.width - lipgloss.Width(title) - lipgloss.Width(info) - 2
@@ -3464,6 +3458,39 @@ func (m HeaderModel) View() string {
 	return HeaderStyle.Width(m.width).Render(
 		title + spacer + info,
 	)
+}
+
+// headerInfo joins the header's right side (endpoint and model, the exit
+// hint, context usage) in at most avail cells, so the header never wraps:
+// the exit hint goes first, then the endpoint and model are cut with "…".
+// avail <= 0 means the width is not known yet.
+func headerInfo(endpointInfo, contextInfo string, avail int) string {
+	join := func(parts ...string) string {
+		var kept []string
+		for _, p := range parts {
+			if p != "" {
+				kept = append(kept, p)
+			}
+		}
+		return strings.Join(kept, " • ")
+	}
+	hint := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
+	info := join(endpointInfo, hint, contextInfo)
+	if avail <= 0 || lipgloss.Width(info) <= avail {
+		return info
+	}
+	info = join(endpointInfo, contextInfo)
+	if lipgloss.Width(info) <= avail || endpointInfo == "" {
+		return fitWidth(info, avail)
+	}
+	if contextInfo == "" {
+		return fitWidth(endpointInfo, avail)
+	}
+	room := avail - lipgloss.Width(" • "+contextInfo)
+	if room < 4 {
+		return fitWidth(info, avail)
+	}
+	return join(fitWidth(endpointInfo, room), contextInfo)
 }
 
 // --- Status Model ---
