@@ -133,7 +133,8 @@ celeste config -config local --set-timeout 0       # back to the default
 
 The first byte of a reply gets a separate, longer budget on a local server:
 **30 minutes**, or the `timeout` when that is longer, and never more than the
-request cap. Reading a long prompt can take that long on a loaded machine: a
+request cap; time spent waiting for the first byte counts toward the request
+cap. Reading a long prompt can take that long on a loaded machine: a
 32K-window qwen3:14b on Ollama took ~563 s to its first byte, and the first
 request after leaving plan mode, which re-reads the whole prompt, 11.5
 minutes. Response headers alone do not end that wait. Once the reply starts,

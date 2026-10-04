@@ -205,7 +205,7 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 			if opts.timeout > 0 {
 				waited = min(waited, opts.timeout)
 			}
-			const hint = "%w: nothing arrived for %s (the first-byte budget for a local server); the model may still be reading the prompt: shorten it, free up the machine, use a smaller model, or raise the budget with `celeste config --set-timeout <seconds>` above it"
+			const hint = "%w: nothing arrived for %s (the first-byte budget for a local server); the model may still be reading the prompt: shorten it, free up the machine, use a smaller model, or raise the budget with `celeste config --set-timeout <seconds>` above it (this also lengthens the stall timeout between chunks)"
 			if errors.Is(err, ErrStalled) {
 				return fmt.Errorf(hint, errNoFirstByte, waited)
 			}

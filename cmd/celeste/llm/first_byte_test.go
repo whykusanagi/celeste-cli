@@ -108,6 +108,9 @@ func TestNoFirstByteFailsAfterFirstByteBudget(t *testing.T) {
 	if !strings.Contains(err.Error(), "first byte") || !strings.Contains(err.Error(), "300ms") {
 		t.Fatalf("error should say it waited 300ms for the first byte: %v", err)
 	}
+	if !strings.Contains(err.Error(), "also lengthens the stall timeout") {
+		t.Fatalf("the hint to raise the timeout should say it also lengthens the stall timeout: %v", err)
+	}
 	if n := calls.Load(); n != 1 {
 		t.Fatalf("requests = %d, want 1: a first-byte stall is not retried", n)
 	}
