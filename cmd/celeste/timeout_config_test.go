@@ -1,0 +1,34 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+)
+
+// `config` shows the request timeout and where it came from, so a local
+// setup can see the 600 s default took effect (L1).
+func TestTimeoutLine(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  config.Config
+		want string
+	}{
+		{config.Config{BaseURL: "https://api.sakana.ai/v1", Timeout: 60}, "60s without data (default)"},
+		{config.Config{BaseURL: "http://127.0.0.1:11434/v1", Timeout: 60}, "600s without data (local default)"},
+		{config.Config{BaseURL: "http://127.0.0.1:11434/v1", Timeout: 0}, "600s without data (local default)"},
+		{config.Config{BaseURL: "http://127.0.0.1:11434/v1", Timeout: 900}, "900s without data (configured)"},
+	} {
+		if got := timeoutLine(&tc.cfg); !strings.Contains(got, tc.want) {
+			t.Errorf("timeoutLine(%s, %d) = %q, want %q", tc.cfg.BaseURL, tc.cfg.Timeout, got, tc.want)
+		}
+	}
+}
+
+// The timeout error tells the user to run `config --set-timeout`; the flag
+// has to exist.
+func TestConfigHelpNamesSetTimeout(t *testing.T) {
+	if !strings.Contains(usageText, "--set-timeout") {
+		t.Error("help does not mention --set-timeout")
+	}
+}

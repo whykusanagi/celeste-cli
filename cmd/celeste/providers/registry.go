@@ -2,6 +2,8 @@
 package providers
 
 import (
+	"net"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -402,4 +404,38 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 	default:
 		return false
 	}
+}
+
+// IsLocalEndpoint reports whether baseURL is a server on this machine or the
+// local network: the "local" provider, or an address no hosted provider
+// uses (a private or link-local IP, a single-label host, or a .local, .lan,
+// .internal or .home.arpa name). Such a server runs the model on the
+// user's own hardware, which can take minutes before the first byte.
+func IsLocalEndpoint(baseURL string) bool {
+	if baseURL == "" {
+		return false
+	}
+	if DetectProvider(baseURL) == "local" {
+		return true
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+	if !strings.Contains(host, ".") {
+		return true
+	}
+	for _, suffix := range []string{".local", ".lan", ".internal", ".home.arpa"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
