@@ -219,6 +219,20 @@ func (m ChatModel) AddSystemMessage(content string) ChatModel {
 	return m
 }
 
+// AddPlainSystemMessage adds a system message shown as written, without
+// markdown: for listings whose placeholders and line breaks must survive.
+func (m ChatModel) AddPlainSystemMessage(content string) ChatModel {
+	m.messages = append(m.messages, ChatMessage{
+		Role:      "system",
+		Content:   content,
+		Timestamp: time.Now(),
+		plain:     true,
+	})
+	m.updateContent()
+	m.viewport.GotoBottom()
+	return m
+}
+
 // SetTypingActive marks whether the typing animation is running.
 // When true, the last assistant message skips Glamour markdown rendering
 // so that ANSI-styled corruption glyphs at the cursor don't break the layout.
@@ -455,7 +469,11 @@ func (m ChatModel) renderMessageOpt(msg ChatMessage, width int, skipMarkdown boo
 
 	// Try markdown rendering for assistant messages
 	var styledContent string
-	if !skipMarkdown && (msg.Role == "assistant" || msg.Role == "system") {
+	if msg.plain {
+		// As written: lipgloss wraps long lines but keeps the indentation
+		// and column alignment that wrapText would collapse.
+		styledContent = MessageRoleStyle(msg.Role).Width(width - 2).Render(msg.Content)
+	} else if !skipMarkdown && (msg.Role == "assistant" || msg.Role == "system") {
 		rendered := renderMarkdown(msg.Content, width-2)
 		if rendered != msg.Content {
 			// Glamour handled it — already styled

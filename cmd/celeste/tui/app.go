@@ -3224,7 +3224,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				sb.WriteString("  /session resume \"<name>\"   - Load session by name\n")
 				sb.WriteString("  /session rename <id> <name> - Rename a session\n")
 				sb.WriteString("  /session delete <id>       - Delete a session\n")
-				m.chat = m.chat.AddSystemMessage(sb.String())
+				m.chat = m.chat.AddPlainSystemMessage(sb.String())
 			}
 		} else {
 			m.chat = m.chat.AddSystemMessage(
