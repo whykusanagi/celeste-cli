@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -236,6 +237,8 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 		return m, nil
 	}
 	m.summarizing = true
+	m.handingOff = true
+	m.status = m.status.SetText(handoffStatus)
 	m.chat = m.chat.AddSystemMessage("🤝 Writing handoff notes…")
 	snapshot := append([]ChatMessage(nil), msgs...)
 	timeout := m.summaryTimeout()
@@ -252,17 +255,58 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 	}
 }
 
+// handoffStatus is the status bar text while /handoff writes its notes.
+const handoffStatus = "🤝 Handoff in progress: input waits for the new session"
+
+// holdForHandoff keeps input submitted during a handoff away from the
+// session it is replacing (#352).
+func (m AppModel) holdForHandoff(content string) AppModel {
+	m.handoffHeld = append(m.handoffHeld, content)
+	m.chat = m.chat.AddSystemMessage("⏳ Held until the handoff's new session is ready: " + truncateQueued(content))
+	return m
+}
+
+// releaseHandoffHeld hands the input held during a handoff on. In a new
+// session (started) chat text joins the notes in the input, where the user
+// sends it with them, and commands run there; when the handoff did not
+// apply, everything runs in the session that is still current, in order.
+func (m AppModel) releaseHandoffHeld(started bool) AppModel {
+	held := m.handoffHeld
+	m.handoffHeld = nil
+	m.handingOff = false
+	if !started {
+		m.followUpQueue = append(m.followUpQueue, held...)
+		return m
+	}
+	var text []string
+	for _, h := range held {
+		if strings.HasPrefix(h, "/") {
+			m.followUpQueue = append(m.followUpQueue, h)
+		} else {
+			text = append(text, h)
+		}
+	}
+	if len(text) > 0 {
+		parts := append([]string{m.input.Value()}, text...)
+		m.input = m.input.SetValue(strings.Join(parts, "\n\n"))
+	}
+	return m
+}
+
 // applyHandoff starts the new session with the handoff notes in the input.
 func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 	m.summarizing = false
+	if m.status.text == handoffStatus {
+		m.status = m.status.SetText("Ready")
+	}
 	if msg.Err != nil {
 		m.chat = m.chat.AddSystemMessage("Handoff failed: " + errorText(msg.Err))
-		return m
+		return m.releaseHandoffHeld(false)
 	}
 	current := m.chat.GetLLMMessages()
 	if len(current) != msg.snapshotLen || current[0].Content != msg.firstContent {
 		m.chat = m.chat.AddSystemMessage("Handoff discarded: the conversation changed while the notes were being written. Run /handoff again.")
-		return m
+		return m.releaseHandoffHeld(false)
 	}
 	m.persistSession()
 	if m.sessionManager != nil {
@@ -274,7 +318,7 @@ func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 	m = m.resetContextForNewSession()
 	m.input = m.input.SetValue(msg.Text)
 	m.chat = m.chat.AddSystemMessage("🤝 New session started. The handoff notes are in the input: edit them and press Enter to send.")
-	return m
+	return m.releaseHandoffHeld(true)
 }
 
 // resetContextForNewSession starts the token tracking over for the session

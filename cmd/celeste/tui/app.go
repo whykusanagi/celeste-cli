@@ -118,6 +118,11 @@ type AppModel struct {
 	// summarizing is set while a compaction summary is being written, so
 	// only one runs at a time.
 	summarizing bool
+	// handingOff is set while /handoff writes its notes (#352). Input
+	// submitted meanwhile is held in handoffHeld rather than run against
+	// the session about to be replaced; applyHandoff releases it.
+	handingOff  bool
+	handoffHeld []string
 
 	// The running chat turn (2.0 F2d): a loop.Loop run whose events arrive
 	// as TurnEventMsg tagged turnRun; nil when idle. loopSteers counts steers
@@ -943,12 +948,17 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if content != "" && m.turnActive() && !runsDuringTurn(content) {
 			return m.enqueue(content, msg.FollowUp || strings.HasPrefix(content, "/")), nil
 		}
+		// A handoff is replacing the session: hold the input until the new
+		// session is in place (#352).
+		if content != "" && m.handingOff && !runsDuringTurn(content) {
+			return m.holdForHandoff(content), nil
+		}
 		// Idle again, so an earlier interrupt no longer applies.
 		m.interrupted = false
 		// A status text ("Selection cancelled", "Model changed to …")
 		// belongs to the command that set it; the next one starts from
 		// Ready and sets its own (V17).
-		if content != "" && !m.streaming && !m.turnActive() && !m.mediaInFlight {
+		if content != "" && !m.streaming && !m.turnActive() && !m.mediaInFlight && !m.handingOff {
 			m.status = m.status.SetText("Ready")
 		}
 
