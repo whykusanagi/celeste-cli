@@ -37,14 +37,26 @@ func jsonInstallClients(home string) []jsonClient {
 // runMCPCommand handles `celeste mcp <subcommand>`.
 func runMCPCommand(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: celeste mcp install [--client all|claude-desktop|claude-code|cursor|celeste-cli|codex] [--dry-run] [--port N]")
+		fmt.Fprintln(os.Stderr, subcommandUsage["mcp"])
 		os.Exit(1)
 	}
 	switch args[0] {
 	case "install":
 		runMCPInstall(args[1:])
+	case "list":
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
+			os.Exit(1)
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(mcpListCommand(args[1:], cwd, home, os.Stdout, os.Stderr))
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown mcp subcommand %q. Try: celeste mcp install\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown mcp subcommand %q. Try: celeste mcp list, celeste mcp install\n", args[0])
 		os.Exit(1)
 	}
 }

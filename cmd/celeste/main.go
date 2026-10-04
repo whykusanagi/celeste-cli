@@ -102,6 +102,7 @@ Commands:
   index [status|rebuild|reset]  Manage code graph index
   serve                   Start MCP server (stdio or SSE transport)
   acp                     Run as an Agent Client Protocol agent over stdio (Zed, JetBrains)
+  mcp list                Show configured MCP servers, where each comes from and where it runs
   mcp install [--client <name>]  Register celeste as an MCP server in Claude Desktop, Claude Code, Cursor, Codex
   collections <subcommand>  Manage xAI collections (create/list/upload/delete/enable/disable/show)
   wallet-monitor          Manage wallet security monitoring daemon

@@ -632,6 +632,12 @@ merges MCP servers you've already defined for Claude Code or Cursor
 (`~/.claude/mcp.json`, `~/.cursor/mcp.json`, project `.mcp.json`), gated behind an
 opt-in `"enabled": true` so nothing connects until you ask.
 
+From the shell, `celeste mcp list` shows the same servers without starting
+them: each one's source file, transport, whether it is enabled and trusted,
+and where it runs. A project's `.mcp.json` and `.celeste/mcp.json` start only
+in the interactive chat; agent runs, `celeste acp` and MCP chat use your
+home-level configs. Commands, arguments, URLs and env values are not shown.
+
 A server's tools need your approval like any other non-read-only tool, even
 when the server marks them `readOnlyHint: true`: that hint is the server's own
 claim. For a server you control, add `"trusted": true` and celeste believes
