@@ -90,6 +90,7 @@ func TestAskPromptDefaultIsFirstOption(t *testing.T) {
 }
 
 func TestAskPromptExplicitApproveStillWorks(t *testing.T) {
+	humanPace(t) // keys typed, not pasted (#326)
 	for _, move := range []tea.KeyMsg{
 		{Type: tea.KeyDown},
 		{Type: tea.KeyRunes, Runes: []rune{'j'}},

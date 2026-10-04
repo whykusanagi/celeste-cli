@@ -25,6 +25,13 @@ type ChatMessage struct {
 	// modified in place; an edit sets it to nil. The only tagged field:
 	// agent checkpoints marshal ChatMessage directly.
 	ProviderBlocks *ProviderBlocks `json:"provider_blocks,omitempty"`
+
+	// plain renders the content as written, never through markdown: text
+	// such as "/session resume <id>" that the renderer would mangle (#315).
+	// Display-only: it is unexported, so it is not serialized, and a
+	// persisted or restored message renders as markdown again. Only the
+	// transient /session list output sets it.
+	plain bool
 }
 
 // ToolCallInfo represents a tool call in an assistant message.

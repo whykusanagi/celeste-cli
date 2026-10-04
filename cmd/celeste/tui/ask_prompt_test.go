@@ -38,6 +38,7 @@ func TestAskPrompt_EscCancels(t *testing.T) {
 }
 
 func TestAskPrompt_MultiSelectSpaceThenEnter(t *testing.T) {
+	humanPace(t) // keys typed, not pasted (#326)
 	ch := make(chan AskResponseMsg, 1)
 	m := NewAskPromptModel()
 	m, _ = m.Update(AskRequestMsg{
