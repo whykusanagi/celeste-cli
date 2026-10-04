@@ -30,6 +30,13 @@ const (
 	maxInputLines = 10000
 	// inputTabWidth is what the textarea turns a tab into.
 	inputTabWidth = 4
+	// pasteRestoreGap is the pause that ends an unbracketed paste for
+	// the overflow rollback. It is far wider than burstWindow: while a
+	// long paste lands, rendering the input can take longer than
+	// burstWindow, so the gap between two keys of one paste, measured
+	// when each is processed, can exceed it. A person pausing between
+	// keys takes longer than this.
+	pasteRestoreGap = 500 * time.Millisecond
 )
 
 var inputNoticeStyle = lipgloss.NewStyle().Foreground(ColorWarning)
@@ -78,7 +85,11 @@ func (m InputModel) Notice() string {
 }
 
 // insertedRunes returns the text k inserts, or nil when it inserts none.
+// An Alt key (alt+b, alt+f: move by a word) inserts nothing.
 func insertedRunes(k tea.KeyMsg) []rune {
+	if k.Alt && !isTextBurst(k) {
+		return nil
+	}
 	switch k.Type {
 	case tea.KeyRunes:
 		return k.Runes
@@ -142,6 +153,44 @@ func (m *InputModel) refreshSuggestions() {
 	}
 }
 
+// startsBurst reports whether an inserting key read at now, after the
+// key read at prev (zero: none), starts a new burst: the input it lands
+// in is the one a rollback restores. Typed keys a burst window apart are
+// separate bursts, so a paste that overflows never takes typed text with
+// it. Once a burst has carried a paste, only a pause of pasteRestoreGap
+// ends it: render time can stretch the gaps inside a paste past the
+// burst window (#358).
+func (m *InputModel) startsBurst(prev, now time.Time) bool {
+	if !m.burstBaseOK || prev.IsZero() {
+		return true
+	}
+	gap := now.Sub(prev)
+	if m.burstPaste {
+		return gap >= pasteRestoreGap
+	}
+	return gap >= burstWindow
+}
+
+// markBurstBase remembers the input and its cursor as the start of a
+// burst of keys.
+func (m *InputModel) markBurstBase() {
+	li := m.textArea.LineInfo()
+	m.burstBase, m.burstBaseOK = m.textArea.Value(), true
+	m.burstRow, m.burstCol = m.textArea.Line(), li.StartColumn+li.ColumnOffset
+	m.burstPaste = false
+}
+
+// restoreBurstBase puts the input and its cursor back to the start of
+// the burst.
+func (m *InputModel) restoreBurstBase() {
+	m.textArea.SetValue(m.burstBase) // the cursor ends up at the end
+	for m.textArea.Line() > m.burstRow {
+		m.textArea.CursorUp()
+	}
+	m.textArea.SetCursor(m.burstCol)
+	m.used = -1
+}
+
 // valueReplaced records that the input was set or cleared other than by
 // an insertion: its size is unknown until counted, and no burst runs on.
 func (m *InputModel) valueReplaced() {
@@ -155,13 +204,14 @@ func (m *InputModel) valueReplaced() {
 // counting on every key would make a long unbracketed paste, which
 // arrives as one message per word, quadratic.
 //
-// Text that does not fit is not inserted and the notice says why. A
-// key inside a burst (inPaste) is part of an unbracketed paste: the part
-// of it already inserted is taken back out (the input returns to what it
-// was before the burst) and the rest of the burst is dropped, so a paste
-// either lands whole or not at all, as a bracketed one does, and there
-// is room for what the user types next.
-func (m *InputModel) admit(runes []rune, bracketed, inPaste bool) bool {
+// Text that does not fit is not inserted and the notice says why. Keys
+// of a burst that carried several runes in one message are an
+// unbracketed paste: the part of it already inserted is taken back out
+// (the input and cursor return to where they were before the burst) and
+// the rest of the burst is dropped, so a paste either lands whole or not
+// at all, as a bracketed one does, and there is room for what the user
+// types next. A single typed key that does not fit is refused alone.
+func (m *InputModel) admit(runes []rune, bracketed bool) bool {
 	limit := m.CharLimit()
 	adding, newlines := 0, 0
 	for _, r := range runes {
@@ -186,7 +236,7 @@ func (m *InputModel) admit(runes []rune, bracketed, inPaste bool) bool {
 	}
 	m.used = used
 
-	paste := bracketed || inPaste || len(runes) > 1
+	paste := bracketed || len(runes) > 1 || (m.burstBaseOK && m.burstPaste)
 	switch {
 	case !paste:
 		m.notice = fmt.Sprintf("Input full: it holds %s characters.", commaInt(limit))
@@ -197,14 +247,10 @@ func (m *InputModel) admit(runes []rune, bracketed, inPaste bool) bool {
 		m.notice = fmt.Sprintf("Paste not inserted: it is over the %s-character input limit. Save long text to a file and point to it instead.",
 			commaInt(limit))
 	}
-	if !bracketed {
-		if paste && m.burstBaseOK {
-			m.textArea.SetValue(m.burstBase)
-			m.used = -1
-		} else if paste {
-			m.notice = fmt.Sprintf("Paste too long: the input holds %s characters; the rest of the paste was dropped.",
-				commaInt(limit))
-		}
+	if paste && !bracketed {
+		// Every inserting key marks a burst base first when none is
+		// set, so there is always one to restore here.
+		m.restoreBurstBase()
 		m.burstBaseOK = false
 		m.overflowAt = keyClock()
 	}

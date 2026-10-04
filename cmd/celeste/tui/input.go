@@ -98,6 +98,9 @@ type InputModel struct {
 	used          int       // Characters in the input, an upper bound (-1: unknown)
 	burstBase     string    // The input before the current burst of keys
 	burstBaseOK   bool      // burstBase is the input this burst started from
+	burstRow      int       // The cursor's row at burstBase
+	burstCol      int       // The cursor's column at burstBase
+	burstPaste    bool      // A key of this burst carried several runes: a paste
 	deferView     bool      // A burst is landing: View may show the last render
 	redrawPending bool      // An inputRedrawMsg is on its way
 	rendered      *inputRender
@@ -186,7 +189,7 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			return m, nil
 		}
 		m.deferView = false
-		if !m.admit([]rune(msg.text), true, false) {
+		if !m.admit([]rune(msg.text), true) {
 			return m, nil
 		}
 		m.textArea.InsertString(msg.text)
@@ -205,21 +208,28 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 	case tea.KeyMsg:
 		m.deferView = false
 		now := keyClock()
-		inPaste := inBurst(m.lastKeyAt) // this key came in the same burst
+		prevKeyAt := m.lastKeyAt
+		inPaste := inBurst(prevKeyAt) // this key came in the same burst
 		m.lastKeyAt = now
-		if inBurst(m.overflowAt) {
+		if !m.overflowAt.IsZero() && now.Sub(m.overflowAt) < pasteRestoreGap {
 			// The rest of a paste that did not fit: dropped whole,
 			// Enter included, so no fragment of it lands or is sent.
 			m.overflowAt = now
 			return m, nil
 		}
 		runes := insertedRunes(msg)
-		if runes != nil && !msg.Paste && !inPaste {
-			// A key that may start an unbracketed paste: remember the
-			// input it started from, to restore if the paste overflows.
-			m.burstBase, m.burstBaseOK = m.textArea.Value(), true
+		if runes != nil && !msg.Paste {
+			if m.startsBurst(prevKeyAt, now) {
+				// A key that may start an unbracketed paste: remember
+				// the input it started from, to restore if the paste
+				// overflows.
+				m.markBurstBase()
+			}
+			if len(runes) > 1 {
+				m.burstPaste = true
+			}
 		}
-		if runes != nil && !m.admit(runes, msg.Paste, inPaste) {
+		if runes != nil && !m.admit(runes, msg.Paste) {
 			return m, nil
 		}
 		if isTextBurst(msg) || (runes != nil && !msg.Paste && !msg.Alt && inPaste) {

@@ -275,3 +275,103 @@ func TestInputSuggestionsAfterDeletingLongText(t *testing.T) {
 	assert.Equal(t, "/ind", m.Value())
 	assert.True(t, m.HasSuggestions())
 }
+
+// renderStretchedPaste feeds keys to m the way a real terminal paces
+// them while the input renders: a key whose message leaves the render
+// deferred costs a millisecond, but a full render (after a redraw, or
+// a key the textarea handles) takes 60 ms, longer than the burst
+// window. The redraw tick fires every 20 keys while one is pending.
+func renderStretchedPaste(m InputModel, move func(time.Duration), keys []tea.KeyMsg) InputModel {
+	pending := false
+	for i, k := range keys {
+		var cmd tea.Cmd
+		m, cmd = m.Update(k)
+		if cmd != nil {
+			pending = true
+		}
+		if pending && i%20 == 19 {
+			m, _ = m.Update(inputRedrawMsg{})
+			pending = false
+		}
+		if m.Bursting() {
+			move(time.Millisecond)
+		} else {
+			move(60 * time.Millisecond)
+		}
+	}
+	return m
+}
+
+// An oversize unbracketed paste on a clock that render time stretches
+// past the burst window is still taken out whole, and its Enter does
+// not send what was left of it.
+func TestInputOversizeUnbracketedPasteRenderStretched(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m := NewInputModel().Focus().SetContextWindow(1).SetValue("before ")
+	paste := flatText(m.CharLimit() + 5_000)
+	m = renderStretchedPaste(m, move, unbracketed(paste, 500))
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Nil(t, cmd, "nothing of the paste is sent")
+	assert.Equal(t, "before ", m.Value(), "the input is what it was before the paste")
+	assert.Contains(t, m.Notice(), "not inserted")
+
+	move(time.Second)
+	m = typeInput(m, "typed")
+	assert.Equal(t, "before typed", m.Value())
+}
+
+// A fitting unbracketed paste on the same stretched clock lands whole.
+func TestInputUnbracketedPasteRenderStretchedKept(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m := NewInputModel().Focus()
+	paste := flatText(8 * 1024)
+	m = renderStretchedPaste(m, move, unbracketed(paste, 500))
+	assert.Equal(t, paste, m.Value())
+	assert.Empty(t, m.Notice())
+}
+
+// Keys typed fast at a nearly full input are not a paste: the ones that
+// fit are kept, the one that does not is refused as a key, and Enter
+// right after it still sends.
+func TestInputFastTypingAtLimitKeepsFittingKeys(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m := NewInputModel().Focus().SetContextWindow(1)
+	full := strings.Repeat("a", m.CharLimit()-3)
+	m = m.SetValue(full)
+	move(time.Second)
+	for _, r := range "xyzw" {
+		m, _ = m.Update(runeKey(r))
+		move(30 * time.Millisecond)
+	}
+	assert.Equal(t, full+"xyz", m.Value())
+	assert.Contains(t, m.Notice(), "Input full")
+	move(30 * time.Millisecond)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.NotNil(t, cmd, "Enter sends what was typed")
+}
+
+// Alt+letter moves the cursor by a word; it inserts nothing, so a full
+// input does not refuse it.
+func TestInputAltKeyNotCountedAsText(t *testing.T) {
+	humanPace(t)
+	m := NewInputModel().Focus().SetContextWindow(1)
+	m = m.SetValue(strings.Repeat("a", m.CharLimit()-5) + " word")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	assert.Empty(t, m.Notice(), "alt+b is not an insertion")
+	assert.Equal(t, strings.Repeat("a", m.CharLimit()-5)+" word", m.Value())
+}
+
+// A refused unbracketed paste puts the cursor back where it was.
+func TestInputOversizeUnbracketedPasteRestoresCursor(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m := NewInputModel().Focus().SetContextWindow(1).SetValue("first line\nsecond line")
+	m.textArea.CursorUp()
+	m.textArea.SetCursor(5)
+	move(time.Second)
+	for _, k := range unbracketed(flatText(m.CharLimit()+100), 500) {
+		m, _ = m.Update(k)
+	}
+	require.Equal(t, "first line\nsecond line", m.Value())
+	assert.Equal(t, 0, m.textArea.Line())
+	assert.Equal(t, 5, m.textArea.LineInfo().ColumnOffset)
+}
