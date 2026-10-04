@@ -62,6 +62,7 @@ func TestPermissionPromptTypedTextDoesNotAllow(t *testing.T) {
 // d and D answer at once (they refuse); a and A allow, so they only pick
 // the answer and Enter confirms it.
 func TestPermissionPromptKeysStillAnswer(t *testing.T) {
+	humanPace(t) // keys typed, not pasted (#326)
 	for key, want := range map[rune]string{'d': "deny", 'D': "always_deny"} {
 		ch := make(chan PermissionResponse, 1)
 		m := openPermission(ch, 100)

@@ -1,6 +1,10 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // isTextBurst reports whether k is several printable characters in one
 // message: text typed or pasted faster than one key per read, as a
@@ -37,4 +41,19 @@ func (m AppModel) typeEach(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	}
 	return model, tea.Batch(cmds...)
+}
+
+// burstWindow: keys closer together than this came in one input burst,
+// a paste on a terminal without bracketed paste. Nobody presses a key
+// and then Enter that fast, so a modal never takes such an Enter as a
+// confirmation (#326).
+const burstWindow = 50 * time.Millisecond
+
+// keyClock reads the time a key arrived (tests replace it).
+var keyClock = time.Now
+
+// inBurst reports whether a key arriving now came in the same burst as
+// the key read at prev (zero: none).
+func inBurst(prev time.Time) bool {
+	return !prev.IsZero() && keyClock().Sub(prev) < burstWindow
 }
