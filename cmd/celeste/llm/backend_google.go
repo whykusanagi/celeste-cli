@@ -91,6 +91,15 @@ func NewGoogleBackend(config *Config) (*GoogleBackend, error) {
 			"See: https://cloud.google.com/docs/authentication", err)
 	}
 
+	// Report response bytes to the stall watch, as every other backend's
+	// HTTP client does (newHTTPClient). The SDK built its own client (with
+	// the ADC/Vertex auth transport when that applies), so wrap that one's
+	// transport rather than passing ours in: a custom ClientConfig.HTTPClient
+	// makes the SDK skip credential detection.
+	if hc := client.ClientConfig().HTTPClient; hc != nil {
+		hc.Transport = stallTransport{base: hc.Transport}
+	}
+
 	return &GoogleBackend{
 		client: client,
 		config: config,
@@ -144,10 +153,10 @@ func (b *GoogleBackend) request(messages []tui.ChatMessage, tools []tui.SkillDef
 }
 
 // SendMessageSync sends a message and returns the complete result. It
-// streams internally (#349): the Google SDK's HTTP client does not report
-// response bytes to the stall watch, so a whole-reply request looks idle
-// until the reply is complete, and a long one (a compaction summary) failed
-// with ErrStalled after the stall timeout. Each chunk counts as activity.
+// streams internally (#349): a whole-reply request sends nothing until the
+// reply is complete, so a long one (a compaction summary) looked idle and
+// failed with ErrStalled after the stall timeout. Streamed, every chunk's
+// bytes reach the stall watch, and each chunk also counts as activity.
 func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
 	contents, genConfig := b.request(messages, tools)
 	result := &ChatCompletionResult{}
@@ -257,6 +266,14 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 
 		for _, candidate := range chunk.Candidates {
 			if candidate.Content != nil {
+				// Thoughts feed the thinking indicator, never the reply.
+				if thought := extractThoughts(candidate.Content); thought != "" {
+					callback(StreamEvent{
+						Type:          EventThinkingDelta,
+						ThinkingDelta: thought,
+					})
+				}
+
 				// Extract text content
 				text := extractText(candidate.Content)
 				if text != "" {
@@ -572,12 +589,28 @@ func (b *GoogleBackend) convertFunctionCallToResult(fc *genai.FunctionCall, thou
 	}
 }
 
-// extractText extracts text content from a Google GenAI Content object.
+// extractText extracts the reply text from a Google GenAI Content object.
+// Thought parts (IncludeThoughts) are the model's reasoning, not reply
+// text: they are left out here and read with extractThoughts.
 func extractText(content *genai.Content) string {
 	var text strings.Builder
 
 	for _, part := range content.Parts {
-		if part.Text != "" {
+		if part.Text != "" && !part.Thought {
+			text.WriteString(part.Text)
+		}
+	}
+
+	return text.String()
+}
+
+// extractThoughts extracts the thought-summary text from a Google GenAI
+// Content object.
+func extractThoughts(content *genai.Content) string {
+	var text strings.Builder
+
+	for _, part := range content.Parts {
+		if part.Text != "" && part.Thought {
 			text.WriteString(part.Text)
 		}
 	}
