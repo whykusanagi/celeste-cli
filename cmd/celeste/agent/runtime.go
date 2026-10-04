@@ -487,7 +487,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		fmt.Fprintln(errOut, prompts.NoticePrefix+sp.Notice)
 	}
 	systemPrompt := sp.String()
-	client.SetSystemPrompt(systemPrompt)
+	client.SetSystemPromptParts(sp.Static, sp.Dynamic)
 
 	store, err := NewCheckpointStore("")
 	if err != nil {

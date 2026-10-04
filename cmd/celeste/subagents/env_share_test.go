@@ -103,7 +103,7 @@ func TestSubagentsShareOneEnvironment(t *testing.T) {
 			t.Fatalf("spawn %q: status=%v err=%v", goal, run, err)
 		}
 	}
-	if n := strings.Count(w.all(), "skipping"); n != 1 {
+	if n := strings.Count(w.all(), "hooks: skipping"); n != 1 {
 		t.Fatalf("hooks loaded %d times, want once, by the chat's environment:\n%s", n, w.all())
 	}
 }
