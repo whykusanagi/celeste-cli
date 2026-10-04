@@ -3264,6 +3264,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		newSession := m.sessionManager.NewSession()
 		if s, ok := newSession.(Session); ok {
 			m.currentSession = s
+			m = m.resetContextForNewSession()
 		}
 		// Refresh system prompt so /user and /confirm changes take effect
 		if refresher, ok := m.llmClient.(PromptRefresher); ok {

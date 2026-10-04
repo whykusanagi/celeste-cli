@@ -57,24 +57,33 @@ func TestHandoffResetsContextBar(t *testing.T) {
 	}
 }
 
-// /clear also starts a new, empty session, so it resets the bar the same way.
+// /clear and /session clear also start a new, empty session, so they reset
+// the bar and rebind the tracker the same way.
 func TestClearResetsContextBar(t *testing.T) {
 	for _, sz := range auditSizes {
-		t.Run(sz.name, func(t *testing.T) {
-			m := newAuditApp(t, &fakeToolLLMClient{}, sz.w, sz.h)
-			mgr := &diskSessions{mgr: config.NewSessionManager()}
-			old := mgr.mgr.NewSession()
-			m = m.SetSessionManager(mgr, old)
-			m.contextTracker = config.NewContextTracker(old, "test-model", 100_000)
-			m, _ = step(t, m, ContextBudgetMsg{UsedTokens: 50_000, MaxTokens: 100_000, UsagePercent: 50, TurnCount: 7})
-			require.Contains(t, auditView(m), "50%")
-
-			m = auditSend(t, m, "/clear")
-			frame := auditView(m)
-			assert.NotContains(t, frame, "50%")
-			assert.NotContains(t, frame, "turn: 7")
-			assert.NotSame(t, old, m.contextTracker.Session)
-			assertFrameFits(t, frame, sz.w, sz.h)
-		})
+		for _, command := range []string{"/clear", "/session clear"} {
+			t.Run(sz.name+command, func(t *testing.T) {
+				clearResetsContextBar(t, sz.w, sz.h, command)
+			})
+		}
 	}
+}
+
+func clearResetsContextBar(t *testing.T, w, h int, command string) {
+	t.Helper()
+	m := newAuditApp(t, &fakeToolLLMClient{}, w, h)
+	mgr := &diskSessions{mgr: config.NewSessionManager()}
+	old := mgr.mgr.NewSession()
+	m = m.SetSessionManager(mgr, old)
+	m.contextTracker = config.NewContextTracker(old, "test-model", 100_000)
+	m, _ = step(t, m, ContextBudgetMsg{UsedTokens: 50_000, MaxTokens: 100_000, UsagePercent: 50, TurnCount: 7})
+	require.Contains(t, auditView(m), "50%")
+
+	m = auditSend(t, m, command)
+	frame := auditView(m)
+	assert.NotContains(t, frame, "50%")
+	assert.NotContains(t, frame, "turn: 7")
+	assert.NotSame(t, old, m.contextTracker.Session)
+	assert.Same(t, m.currentSession, Session(m.contextTracker.Session))
+	assertFrameFits(t, frame, w, h)
 }
