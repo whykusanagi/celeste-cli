@@ -199,3 +199,31 @@ func TestSkillsBrowserMultilineDescriptionKeepsItsRow(t *testing.T) {
 		}
 	}
 }
+
+// V11: the /memories empty state is three left-aligned lines; none drifts
+// right or runs past 80 columns.
+func TestMemoriesEmptyStateLinesUpAndFits(t *testing.T) {
+	isolatedHome(t)
+	for _, sz := range auditSizes {
+		var m tea.Model = NewMemoryManagerModel(t.TempDir())
+		m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+		view := m.View()
+		assertFitsWidth(t, view, sz.w)
+		plain := stripANSI(view)
+		for _, want := range []string{
+			"No memories saved for this project.",
+			"Celeste will save memories automatically during conversation.",
+			`Or use: celeste remember "<text>"`,
+		} {
+			found := false
+			for _, ln := range strings.Split(plain, "\n") {
+				if strings.HasPrefix(ln, "  "+want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("%dx%d: no row starts with %q at column 2:\n%s", sz.w, sz.h, want, plain)
+			}
+		}
+	}
+}
