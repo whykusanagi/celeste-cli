@@ -445,18 +445,20 @@ func registerCelesteContentTool(s *Server) {
 		// on a small window; MCP responses never carry the guard's notice
 		// (W5 ruling 7: frozen shape), it is only logged.
 		window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
-		contentPrompt := prompts.GetContentPrompt(window, "", format, "", "")
-		contentPrompt += fmt.Sprintf("\n\nOutput format: %s\n", format)
+		// The persona (Static) and the rest go to the client apart, so an
+		// Anthropic request caches the persona on its own (#309).
+		contentPrompt := prompts.ContentPrompt(window, "", format, "", "")
+		contentPrompt.Dynamic += fmt.Sprintf("\n\nOutput format: %s\n", format)
 
 		// Inject workspace grimoire if available (project-specific rules/context)
 		cwd, _ := os.Getwd()
 		if cwd != "" {
 			if projectGrimoire, err := grimoire.LoadAll(cwd); err == nil && projectGrimoire != nil && !projectGrimoire.IsEmpty() {
-				contentPrompt += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
+				contentPrompt.Dynamic += "\n\n# Project Context (.grimoire)\n\n" + projectGrimoire.Render()
 			}
 		}
 
-		client.SetSystemPrompt(contentPrompt)
+		client.SetSystemPromptParts(contentPrompt.Static, contentPrompt.Dynamic)
 
 		messages := []tui.ChatMessage{
 			{Role: "user", Content: prompt, Timestamp: time.Now()},

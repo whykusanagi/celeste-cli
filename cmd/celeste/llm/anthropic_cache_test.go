@@ -14,7 +14,8 @@ import (
 // and the tool list, plus the system prompt's: four in all, the API's
 // maximum (#174).
 func TestAnthropicRollingCacheBreakpoints(t *testing.T) {
-	b := &AnthropicBackend{config: &Config{Model: "claude-opus-5"}, systemPrompt: "persona\n\n---\n\ntoday"}
+	b := &AnthropicBackend{config: &Config{Model: "claude-opus-5"}}
+	b.SetSystemPromptParts("persona", "today")
 	msgs := []tui.ChatMessage{
 		{Role: "user", Content: "read a and b"},
 		{Role: "assistant", Content: "reading", ToolCalls: []tui.ToolCallInfo{
@@ -29,7 +30,7 @@ func TestAnthropicRollingCacheBreakpoints(t *testing.T) {
 
 	raw, err := json.Marshal(params)
 	require.NoError(t, err)
-	assert.Equal(t, 4, strings.Count(string(raw), `"cache_control"`), "system + tools + two messages")
+	assert.Equal(t, 4, strings.Count(string(raw), `"cache_control"`), "static system + tools + two messages")
 
 	cached := func(v any) bool {
 		j, err := json.Marshal(v)

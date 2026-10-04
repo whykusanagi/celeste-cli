@@ -133,26 +133,22 @@ func TestAnthropicConvertTools(t *testing.T) {
 }
 
 func TestAnthropicBuildSystemBlocks(t *testing.T) {
-	backend := &AnthropicBackend{config: &Config{}}
-
-	t.Run("single block without separator", func(t *testing.T) {
-		blocks := backend.buildSystemBlocks("You are a helpful assistant.")
+	t.Run("one part is one block", func(t *testing.T) {
+		blocks := buildSystemBlocks("", "You are a helpful assistant.")
 		require.Len(t, blocks, 1)
 		assert.Equal(t, "You are a helpful assistant.", blocks[0].Text)
 	})
 
-	t.Run("splits on CacheablePrompt separator", func(t *testing.T) {
-		prompt := "Static persona content\n\n---\n\nDynamic context content"
-		blocks := backend.buildSystemBlocks(prompt)
+	t.Run("static and dynamic are two blocks, the static one cached", func(t *testing.T) {
+		blocks := buildSystemBlocks("Static persona content", "Dynamic context content")
 		require.Len(t, blocks, 2)
 		assert.Equal(t, "Static persona content", blocks[0].Text)
 		assert.Equal(t, "Dynamic context content", blocks[1].Text)
 	})
 
-	t.Run("separator at start produces single block", func(t *testing.T) {
-		prompt := "\n\n---\n\nOnly dynamic"
-		blocks := backend.buildSystemBlocks(prompt)
-		// idx == 0, so no split.
+	t.Run("a separator in the text is not a split point", func(t *testing.T) {
+		prompt := "Static persona content\n\n---\n\nDynamic context content"
+		blocks := buildSystemBlocks("", prompt)
 		require.Len(t, blocks, 1)
 		assert.Equal(t, prompt, blocks[0].Text)
 	})
