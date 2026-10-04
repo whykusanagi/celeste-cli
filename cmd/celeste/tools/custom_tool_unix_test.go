@@ -72,11 +72,25 @@ func TestCustomToolDoesNotWaitOnAGrandchildHoldingThePipe(t *testing.T) {
 }
 
 // Cancelling the call kills the whole process group, not just sh.
+//
+// The call is cancelled once the child's pid is on disk, not on a fixed
+// timer: on a loaded machine a 300ms timer could fire before sh had started
+// the child, leaving no pid to check.
 func TestCustomToolCancelKillsTheGroup(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
 	tool := loadCustomTool(t, "sleep 15 & echo $! > '"+pidfile+"'; wait")
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() {
+		defer cancel()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) && ctx.Err() == nil {
+			if b, _ := os.ReadFile(pidfile); strings.HasSuffix(string(b), "\n") {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 	start := time.Now()
 	res, _ := tool.Execute(ctx, map[string]any{}, nil)
 	if took := time.Since(start); took > 8*time.Second {
