@@ -70,6 +70,16 @@ same caps, guards, permissions and hooks. These are intentional changes:
 | Esc during a chat turn could leave half a turn in history | Esc stops the turn; a partial reply stays on screen, and nothing half-finished is saved. Messages typed during a turn join it at the next tool boundary. |
 | `celeste agent` used the chat model | It uses `agent_model` when set, as subagents and MCP agent mode already did. |
 
+## Request timeout
+
+| 1.x | 2.0 |
+|---|---|
+| `timeout` capped the whole request: a reply still streaming after 60 s failed | `timeout` is a stall timeout: a request fails when nothing arrives for that long. A reply that keeps streaming runs to a cap of 30 minutes (or 3× `timeout`). Hosted providers still fail after 60 s of silence by default. |
+| A local server got the same 60 s, so a cold first turn on a local model failed | A local server (`127.0.0.1`, `localhost`, a private address, a `.local` host) whose `timeout` is unset or 60 gets 600 s. Any other value you set is kept. |
+| No way to set it from the CLI | `celeste config --set-timeout <seconds>` (0 = default); `config` shows the value in use. |
+| `celeste agent` ignored `timeout` and gave each turn 90 s | It uses `timeout` like the chat. `-request-timeout` still bounds a whole turn; without it the 30-minute cap does. |
+| A turn that failed left its message, and retrying sent the prompt twice | Sending the same text again retries the unanswered message; the request carries it once. |
+
 ## Permission prompt
 
 | 1.x | 2.0 |

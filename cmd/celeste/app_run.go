@@ -238,6 +238,7 @@ Connection:
   --set-model <model>        set the model
   --set-max-tool-iterations N  set the chat's tool-loop turn cap
   --set-context-limit N      set the context window in tokens (0 uses the model default)
+  --set-timeout <seconds>    fail a request after this long without data (0 = default: 60, or 600 for a local server)
   --set-management-key <key> set the xAI Management API key for collections
   --set-google-credentials <file>  set a Google Cloud service account JSON file
   --use-google-adc           use Google Application Default Credentials

@@ -104,3 +104,53 @@ func TestResumeKeepsSavedMaxTurnsWithoutExplicitFlag(t *testing.T) {
 		t.Fatalf("requests = %d, want 2 (resume must not call the model)", n)
 	}
 }
+
+// A run saved with a short turn deadline (the old fixed 90 s) gets the
+// resumer's longer one, and an explicit -request-timeout replaces it.
+func TestResumeRaisesSavedTurnDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		explicit time.Duration
+		want     func(*Runner) time.Duration
+	}{
+		{"default raises", 0, func(r *Runner) time.Duration { return r.options.RequestTimeout }},
+		{"explicit replaces", 45 * time.Second, func(*Runner) time.Duration { return 45 * time.Second }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateHome(t)
+			ws := t.TempDir()
+			if err := os.WriteFile(filepath.Join(ws, "a.txt"), []byte("alpha"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			srv := fakeprovider.NewOpenAI(t, readTurn(1))
+			first := resumeRunner(t, srv, ws, func(o *Options) {
+				o.MaxTurns = 1
+				o.RequestTimeout = 90 * time.Second
+				o.RequestTimeoutExplicit = true
+			})
+			st, err := first.RunGoal(context.Background(), "read a.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Options.RequestTimeout != 90*time.Second {
+				t.Fatalf("first run deadline = %v, want 90s", st.Options.RequestTimeout)
+			}
+			srv.Push(fakeprovider.Turn{Text: "TASK_COMPLETE: read it"})
+			second := resumeRunner(t, srv, ws, func(o *Options) {
+				o.MaxTurns = 5
+				o.MaxTurnsExplicit = true
+				if tc.explicit > 0 {
+					o.RequestTimeout = tc.explicit
+					o.RequestTimeoutExplicit = true
+				}
+			})
+			got, err := second.Resume(context.Background(), st.RunID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := tc.want(second); got.Options.RequestTimeout != want || want == 90*time.Second {
+				t.Fatalf("resumed deadline = %v, want %v", got.Options.RequestTimeout, want)
+			}
+		})
+	}
+}

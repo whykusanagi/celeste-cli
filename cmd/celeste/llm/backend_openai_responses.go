@@ -36,6 +36,7 @@ func NewResponsesBackend(config *Config) *ResponsesBackend {
 	}
 	cc := openai.DefaultConfig(config.APIKey)
 	cc.BaseURL = base
+	cc.HTTPClient = newHTTPClient()
 	return &ResponsesBackend{client: openai.NewClientWithConfig(cc), config: config, baseURL: base}
 }
 

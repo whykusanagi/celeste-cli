@@ -127,8 +127,14 @@ type retryOpts struct {
 	// into the base ctx meant a timeout on attempt 1 left an already-expired ctx,
 	// so the retry failed instantly. A fresh per-attempt deadline lets the retry
 	// actually run. It does NOT raise the configured timeout — each attempt still
-	// gets exactly `timeout`.
+	// gets exactly `timeout`. With stall set it is the hard cap
+	// (MaxRequestDuration), not the user's timeout.
 	timeout time.Duration
+	// stall, when > 0, ends an attempt that receives nothing for this long
+	// (ErrStalled): the config's `timeout`. A reply that keeps streaming is
+	// never cut by it, so a slow local model can take as long as it needs,
+	// while a dead connection still fails after one idle period.
+	stall time.Duration
 }
 
 // withRetry runs fn, retrying transient errors per policy. Each attempt gets a
@@ -142,10 +148,16 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 		if opts.timeout > 0 {
 			ctx, cancel = context.WithTimeout(base, opts.timeout)
 		}
+		stopStall := func() {}
+		if opts.stall > 0 {
+			ctx, stopStall = withStall(ctx, opts.stall)
+		}
 		err := fn(ctx)
 		// Capture before cancel(): once cancelled, ctx.Err() no longer tells us
 		// whether the attempt ran out of time or was torn down.
-		attemptTimedOut := opts.timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
+		attemptStalled := opts.stall > 0 && errors.Is(context.Cause(ctx), ErrStalled) && base.Err() == nil
+		attemptTimedOut := !attemptStalled && opts.timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
+		stopStall()
 		cancel()
 
 		if err == nil {
@@ -174,8 +186,23 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 		// Issue #113: this burned 3x90s + backoff = 273s on sakana/fugu before
 		// failing with a bare, uninformative error. Fail on the first attempt and
 		// say which knob to turn.
+		//
+		// A stall is the same: the next attempt would wait just as long for a
+		// model that is still busy (a local model prefilling) or a connection
+		// that is gone.
+		if attemptStalled {
+			const hint = "%w for %s (the stall timeout); a slow local model may need longer: raise it with `celeste config --set-timeout <seconds>`"
+			// A provider error that already says it stalled adds nothing.
+			if errors.Is(err, ErrStalled) {
+				return fmt.Errorf(hint, ErrStalled, opts.stall)
+			}
+			return fmt.Errorf(hint+": %w", ErrStalled, opts.stall, err)
+		}
+		if attemptTimedOut && opts.stall > 0 {
+			return fmt.Errorf("request still running after %s, the most one request may take; shorten the request: %w", opts.timeout, err)
+		}
 		if attemptTimedOut {
-			return fmt.Errorf("request exceeded the %s per-request timeout; raise it with `config --set-timeout <seconds>` or shorten the request: %w", opts.timeout, err)
+			return fmt.Errorf("request exceeded the %s per-request timeout; raise it with `celeste config --set-timeout <seconds>` or shorten the request: %w", opts.timeout, err)
 		}
 		cls := classifyError(err)
 		// The history no longer fits the model's window. Callers that can

@@ -110,6 +110,37 @@ celeste -config local agent -auto-approve --goal "read README.md and summarise i
 Expect local inference to be slow enough that a turn feels stalled. A 27B model
 at ~6 tok/s takes roughly half a minute per turn.
 
+### Timeouts
+
+The profile's `timeout` is a **stall timeout**: a request fails only when
+nothing arrives from the server for that many seconds. A reply that keeps
+streaming, including reasoning the model sends but celeste does not show
+(qwen3's thinking on Ollama), can take as long as it needs. No single request
+runs longer than 30 minutes, or three times the timeout if that is longer.
+
+A local server sends nothing while it reads the prompt, and the first turn of
+a chat is long: on a 14B model at a 32K window, ~16K prompt tokens plus
+thinking took more than 300 s before the first byte. So a local endpoint
+(`127.0.0.1`, `localhost`, a private or link-local address, a single-label or
+`.local`/`.lan` host) whose timeout is unset or still the 60 s default gets
+**600 s**. `config` shows the value in use:
+
+```bash
+celeste config -config local                       # Request Timeout: 600s without data (local default)
+celeste config -config local --set-timeout 1200    # a slower machine or a bigger model
+celeste config -config local --set-timeout 0       # back to the default
+```
+
+Hosted providers keep 60 s by default, so a dead connection still fails after
+a minute of silence.
+
+`celeste agent` uses the same timeout. `-request-timeout <seconds>` bounds each
+whole model turn (without it, the 30-minute cap does); a request that sends
+nothing for the profile's `timeout` still fails first.
+
+If a turn fails before any reply, its message stays in the chat. Send the same
+text again to retry it: the request carries it once, not twice.
+
 ## Google (Gemini AI Studio + Vertex)
 
 Google behaves differently from the other providers here in three ways. Each one

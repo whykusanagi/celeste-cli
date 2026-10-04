@@ -118,7 +118,7 @@ func TestUpdateConfigAppliesNonEndpointChanges(t *testing.T) {
 	assert.Same(t, next, b.config)
 	assert.Equal(t, "sys", b.systemPrompt)
 	assert.Equal(t, ThinkingConfig{Enabled: true, Level: "high"}, b.thinkingConfig)
-	assert.Equal(t, 42*time.Second, c.perAttemptTimeout())
+	assert.Equal(t, 42*time.Second, c.attemptOpts().stall)
 }
 
 // Rebuilding an Anthropic backend for the same endpoint and model keeps a

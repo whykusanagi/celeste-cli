@@ -334,11 +334,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		// context and the LLM client's per-attempt deadline (cfg.Timeout) are
 		// independent, and the tighter one wins — raising only the agent's was
 		// moot in practice: a real workload still died at the client's 90s and
-		// reported the chat-path message. clientTimeoutFloor carries the same
-		// floor into llm.Config below.
-		if !options.RequestTimeoutExplicit && options.RequestTimeout < conductorRequestTimeout {
-			options.RequestTimeout = conductorRequestTimeout
-		}
+		// reported the chat-path message. clientTimeoutFloor carries the floor
+		// into the client's stall timeout below; the turn deadline derives
+		// from that unless the caller named one.
 		clientTimeoutFloor = conductorRequestTimeout
 		if !options.PlanningExplicit {
 			options.EnablePlanning = false
@@ -346,6 +344,17 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		if !options.VerificationExplicit {
 			options.RequireVerification = false
 		}
+	}
+
+	// The profile's timeout is the client's stall timeout here as in chat
+	// (L3: agent runs used to ignore it for a fixed 90 s turn deadline, so a
+	// local agent run died on its first request). An explicit
+	// -request-timeout bounds each turn; otherwise only the hard cap does.
+	// Either way a request fails when it stalls for the profile's timeout,
+	// so a hosted provider still fails fast on a dead connection.
+	clientStall := maxDuration(cfg.GetTimeout(), clientTimeoutFloor)
+	if !options.RequestTimeoutExplicit {
+		options.RequestTimeout = llm.MaxRequestDuration(clientStall)
 	}
 
 	normalizeOptions(&options)
@@ -439,7 +448,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 
 	llmConfig := llm.ConfigFrom(cfg)
 	llmConfig.Model = model
-	llmConfig.Timeout = maxDuration(cfg.GetTimeout(), clientTimeoutFloor)
+	llmConfig.Timeout = clientStall
 	var client *llm.Client
 	if options.Client != nil {
 		client = options.Client
@@ -550,6 +559,15 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	// resumer's default MaxTurns never does: the saved limit is the run's.
 	if r.options.MaxTurnsExplicit && r.options.MaxTurns > 0 {
 		state.Options.MaxTurns = r.options.MaxTurns
+	}
+	// The saved turn deadline may predate stall timeouts (a fixed 90 s that
+	// killed a local run): an explicit -request-timeout replaces it, and
+	// otherwise the resumer's deadline raises it, never lowers it. The
+	// client's stall timeout still fails a request that goes quiet.
+	if r.options.RequestTimeoutExplicit {
+		state.Options.RequestTimeout = r.options.RequestTimeout
+	} else if state.Options.RequestTimeout < r.options.RequestTimeout {
+		state.Options.RequestTimeout = r.options.RequestTimeout
 	}
 	// The previous attempt's error (a cancel, a failed request), stop
 	// reason and finish time are stale once the run resumes (#317): this

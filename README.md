@@ -1078,7 +1078,7 @@ Useful flags beyond `--goal`:
 |---|---|---|
 | `-planner` | `true` | Run an explicit planning phase before executing. |
 | `-require-verify` | `false` | Refuse to finish until the verification commands pass. |
-| `-request-timeout` | `0` (provider default) | Per-LLM-request timeout, in seconds. |
+| `-request-timeout` | `0` (30-minute cap) | Most seconds one model turn may take. A request that sends nothing for the profile's `timeout` fails sooner either way. |
 | `-max-turns` | unset | Cap the number of agent turns. |
 | `-no-checkpoint` | `false` | Disable checkpointing for this run. |
 | `-auto-approve` | `false` | Approve every tool without prompting. **Required for unattended runs.** |

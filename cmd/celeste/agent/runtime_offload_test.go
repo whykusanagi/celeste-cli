@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 )
 
 func newTestConfig(baseURL, model string) *config.Config {
@@ -232,7 +233,9 @@ func TestNewRunnerGivesConductorsLongerTimeout(t *testing.T) {
 		t.Errorf("conductor RequestTimeout = %v, want more than the %v default", r.options.RequestTimeout, base)
 	}
 
-	// A plain model keeps the default.
+	// A plain model's turn deadline is the hard cap over its profile's
+	// stall timeout (L3), not a fixed default; its client keeps the
+	// profile's timeout (TestNewRunnerLeavesPlainModelClientTimeout).
 	plainCfg := newTestConfig("https://api.openai.com/v1", "gpt-4.1-nano")
 	popts := DefaultOptions()
 	popts.Workspace = t.TempDir()
@@ -242,8 +245,8 @@ func TestNewRunnerGivesConductorsLongerTimeout(t *testing.T) {
 		t.Fatalf("NewRunner: %v", err)
 	}
 	defer pr.Close()
-	if pr.options.RequestTimeout != base {
-		t.Errorf("plain-model RequestTimeout = %v, want the %v default", pr.options.RequestTimeout, base)
+	if want := llm.MaxRequestDuration(plainCfg.GetTimeout()); pr.options.RequestTimeout != want {
+		t.Errorf("plain-model RequestTimeout = %v, want the hard cap %v", pr.options.RequestTimeout, want)
 	}
 
 	// An explicit -request-timeout wins over the conductor bump.

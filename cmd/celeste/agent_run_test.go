@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/hooktest"
@@ -73,6 +74,25 @@ func TestCLIAgentUsesAgentModel(t *testing.T) {
 		runCLIAgent(t, srv, tc.cfg, "say done")
 		if got := srv.Requests()[0].Body["model"]; got != tc.want {
 			t.Errorf("config %v: request model = %v, want %s", tc.cfg, got, tc.want)
+		}
+	}
+}
+
+// -request-timeout 0 means "no turn deadline but the cap", like leaving it
+// out: it must not mark the default 90 s as explicit.
+func TestRequestTimeoutFlag(t *testing.T) {
+	for _, tc := range []struct {
+		secs     int
+		want     time.Duration
+		explicit bool
+	}{
+		{0, 0, false},
+		{-3, 0, false},
+		{120, 120 * time.Second, true},
+	} {
+		got, explicit := requestTimeoutFlag(tc.secs)
+		if got != tc.want || explicit != tc.explicit {
+			t.Errorf("requestTimeoutFlag(%d) = %v, %v; want %v, %v", tc.secs, got, explicit, tc.want, tc.explicit)
 		}
 	}
 }

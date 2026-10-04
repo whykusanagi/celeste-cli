@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
@@ -49,7 +48,7 @@ func NewXAIBackend(config *Config, registry *tools.Registry) (*XAIBackend, error
 		model:      config.Model,
 		config:     config,
 		registry:   registry,
-		httpClient: &http.Client{Timeout: time.Duration(config.Timeout) * time.Second},
+		httpClient: newHTTPClient(), // the request context carries the timeouts
 	}, nil
 }
 
