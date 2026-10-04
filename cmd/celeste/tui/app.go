@@ -435,13 +435,13 @@ func (m AppModel) SetMCPManager(manager *mcp.Manager, configs map[string]mcp.Ser
 
 // syncStatusLine copies non-git AppModel state (project, model, effort,
 // permission mode, session) into the status line. Git fields are set separately
-// by the GitStatusMsg handler.
+// by the GitStatusMsg handler; plan mode and skills are read at render time
+// by statusLineView.
 func (m AppModel) syncStatusLine() AppModel {
 	sl := m.statusLine.
 		SetProject(filepath.Base(m.workDir)).
 		SetModel(m.model).
-		SetEffort(m.effort).
-		SetSkills(m.skills.Enabled(), m.skills.Count())
+		SetEffort(m.effort)
 	if m.permChecker != nil {
 		sl = sl.SetPermMode(m.permChecker.Mode().String())
 	}
@@ -454,8 +454,13 @@ func (m AppModel) syncStatusLine() AppModel {
 
 // statusLineView renders the status line with plan mode read from the
 // client at render time: an approval clears it from the run's goroutine.
+// The skills segment is also read here, from the tools a turn would offer
+// (V1: it used to copy the skills panel, which only View() configured).
 func (m AppModel) statusLineView() string {
-	return m.statusLine.SetPlan(m.planModeOn()).View()
+	return m.statusLine.
+		SetPlan(m.planModeOn()).
+		SetSkills(m.toolsOffered(), len(m.getAvailableSkills())).
+		View()
 }
 
 // Update implements tea.Model.
