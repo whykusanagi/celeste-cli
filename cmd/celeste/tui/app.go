@@ -2205,8 +2205,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 0=Classified 1=Action 2=ToolCall 3=FileDiff 4=ReviewDraft 5=Defense 6=Verdict 7=Complete 8=Error 9=DebateStart
 		switch msg.Kind {
 		case 0: // EventClassified
-			m.splitPanel.AddAction(fmt.Sprintf("── %s · %s ──", msg.Lane, msg.Text))
-			m.status = m.status.SetText(fmt.Sprintf("Orchestrator: [%s] %s", msg.Lane, msg.Text))
+			if msg.Lane == "unknown" {
+				// No lane keyword matched: say so, not "unknown" with
+				// the heuristic's placeholder confidence.
+				m.splitPanel.AddAction("── no lane matched · default model ──")
+				m.status = m.status.SetText("Orchestrator: no lane matched · default model")
+			} else {
+				m.splitPanel.AddAction(fmt.Sprintf("── %s · %s ──", msg.Lane, msg.Text))
+				m.status = m.status.SetText(fmt.Sprintf("Orchestrator: [%s] %s", msg.Lane, msg.Text))
+			}
 			m.streaming = true
 			m.status = m.status.SetStreaming(true)
 		case 1: // EventAction
