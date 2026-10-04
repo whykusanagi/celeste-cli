@@ -74,3 +74,36 @@ func TestResumeOfCancelledRunAtCapDropsOldError(t *testing.T) {
 		t.Fatalf("requests = %d, want 0", n)
 	}
 }
+
+// A resumed run is running again: the previous attempt's CompletedAt goes
+// with its error, so a resume that then fails stores no stale finish time.
+func TestResumeOfCancelledRunThatFailsDropsOldCompletedAt(t *testing.T) {
+	isolateHome(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"bad request"}}`})
+	r := resumeRunner(t, srv, t.TempDir(), nil)
+
+	state := NewRunState("finish the thing", r.options)
+	normalizeStateOptions(state, r.options)
+	state.Phase = PhaseExecution
+	state.Turn = 1
+	state.Status = StatusCancelled
+	state.Error = "run cancelled: context canceled"
+	old := time.Now().Add(-time.Hour)
+	state.CompletedAt = &old
+	state.Messages = append(state.Messages, tui.ChatMessage{Role: "user", Content: "finish the thing", Timestamp: old})
+	if err := r.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Resume(context.Background(), state.RunID)
+	if err == nil || got.Status != StatusFailed {
+		t.Fatalf("resume: status=%q err=%v, want failed", got.Status, err)
+	}
+	saved, err := r.store.Load(state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CompletedAt != nil || saved.Error == "" || saved.Error == "run cancelled: context canceled" {
+		t.Fatalf("saved: completed_at=%v error=%q, want no completed_at and the new error", saved.CompletedAt, saved.Error)
+	}
+}
