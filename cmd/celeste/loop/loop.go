@@ -368,6 +368,8 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits, turn int
 			if l.emit(Event{Kind: EventTextDelta, Text: ev.ContentDelta}) && allow {
 				intr.fire()
 			}
+		case llm.EventThinkingDelta:
+			l.emit(Event{Kind: EventThinking, Text: ev.ThinkingDelta})
 		case llm.EventToolUseStart, llm.EventToolUseInputDelta, llm.EventToolUseDone:
 			acc.HandleEvent(ev)
 		case llm.EventMessageDone:

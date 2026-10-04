@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **loop:** a tool result is capped once, at 128 KiB, when it is recorded, including when the spill file cannot be written. Requests and their retries send the conversation unchanged; nothing trims tool results per request any more. Results between 64 and 128 KiB are now sent whole, so with a small context window the first request after one can overflow it, and the compactor then prunes that result.
 * **chat:** `/set-model` and a switch between two OpenAI-compatible endpoints now change the model and URL the next request goes to, keeping the system prompt and thinking level. Before, the client kept its previous backend until the switch was to a different kind of provider.
 * **providers:** when OpenAI refuses the reasoning items celeste replays (for example after the API key changed) and the request sent without them fails too, the items are still dropped from the history, so the next turn does not fail the same way.
+* **providers:** local reasoning models (llama.cpp, LM Studio, vLLM, Ollama, DeepSeek): a `<think>` block a server puts at the start of a reply is kept out of the reply and of the history sent back; `<think>` tags later in a reply are left as written. Reasoning in `reasoning` or `reasoning_content` deltas, or in a leading `<think>` block, shows as a thinking count in the status bar while the model thinks. A connection drop while the model is still only thinking is retried.
 
 ### Hooks
 
