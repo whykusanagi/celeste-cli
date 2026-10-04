@@ -98,7 +98,7 @@ func renderMarkdown(content string, width int) string {
 		return content
 	}
 
-	rendered, err := r.Render(content)
+	rendered, err := r.Render(escapeHTMLLikeTags(content))
 	if err != nil {
 		return content
 	}
@@ -107,17 +107,90 @@ func renderMarkdown(content string, width int) string {
 }
 
 // looksLikeMarkdown checks if content contains markdown formatting.
+//
+// Blockquotes and table rows only count at the start of a line: command help
+// is full of "<goal> " and "<key> | " placeholders, and treating those as
+// markdown sent plain text through glamour, which reflowed it and dropped the
+// placeholders as HTML (#315).
 func looksLikeMarkdown(s string) bool {
-	indicators := []string{
-		"```", "**", "##", "| ", "> ",
-	}
-	for _, ind := range indicators {
+	for _, ind := range []string{"```", "**", "##"} {
 		if strings.Contains(s, ind) {
+			return true
+		}
+	}
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimLeft(line, " ")
+		if len(line)-len(t) > 3 {
+			continue // indented four or more: not a quote or table row
+		}
+		if strings.HasPrefix(t, ">") || strings.HasPrefix(t, "| ") || strings.HasPrefix(t, "|-") {
 			return true
 		}
 	}
 	return false
 }
+
+// escapeHTMLLikeTags backslash-escapes every "<" that starts something an HTML
+// parser would take for a tag ("<id>", "</div>"), outside code spans and fenced
+// blocks, so glamour prints it instead of dropping it. Code is left untouched
+// because backslash escapes are literal there.
+func escapeHTMLLikeTags(s string) string {
+	lines := strings.Split(s, "\n")
+	inFence := false
+	fence := ""
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " ")
+		if inFence {
+			if strings.HasPrefix(trimmed, fence) {
+				inFence = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence, fence = true, trimmed[:3]
+			continue
+		}
+		lines[i] = escapeLineTags(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// escapeLineTags escapes tag-like "<" in one line, skipping backtick code spans.
+func escapeLineTags(line string) string {
+	if !strings.Contains(line, "<") {
+		return line
+	}
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		c := line[i]
+		if c == '`' {
+			n := 0
+			for i+n < len(line) && line[i+n] == '`' {
+				n++
+			}
+			ticks := line[i : i+n]
+			if end := strings.Index(line[i+n:], ticks); end >= 0 {
+				span := i + n + end + n
+				b.WriteString(line[i:span])
+				i = span
+				continue
+			}
+			b.WriteString(ticks)
+			i += n
+			continue
+		}
+		if c == '<' && i+1 < len(line) && (isASCIILetter(line[i+1]) || line[i+1] == '/') && (i == 0 || line[i-1] != '\\') {
+			b.WriteString(`\<`)
+			i++
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 
 func stringPtr(s string) *string { return &s }
 func boolPtr(b bool) *bool       { return &b }
