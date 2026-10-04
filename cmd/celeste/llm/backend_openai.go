@@ -344,9 +344,14 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 			callback(StreamEvent{Type: EventContentDelta, ContentDelta: text})
 		}
 	}
+	emitThinking := func(text string) {
+		if text != "" {
+			callback(StreamEvent{Type: EventThinkingDelta, ThinkingDelta: text})
+		}
+	}
 
 	for {
-		response, err := stream.Recv()
+		response, reasoning, err := recvChunk(stream)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -363,10 +368,12 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 			}
 		}
 
-		for _, choice := range response.Choices {
+		for i, choice := range response.Choices {
+			emitThinking(reasoning[i])
 			// Handle content delta
 			if choice.Delta.Content != "" {
-				text, _ := think.Write(choice.Delta.Content)
+				text, thought := think.Write(choice.Delta.Content)
+				emitThinking(thought)
 				emitContent(text)
 			}
 
@@ -430,7 +437,8 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 		}
 	}
 
-	rest, _ := think.Flush()
+	rest, thought := think.Flush()
+	emitThinking(thought)
 	emitContent(rest)
 
 	// Emit ToolUseDone for each accumulated indexed tool call
@@ -456,6 +464,42 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	})
 
 	return nil
+}
+
+// chunkReasoning is the reasoning field go-openai does not decode: Ollama
+// (and newer vLLM) stream a chat-completions reply's reasoning as
+// delta.reasoning; DeepSeek and older vLLM as delta.reasoning_content,
+// which go-openai decodes as ReasoningContent.
+type chunkReasoning struct {
+	Choices []struct {
+		Delta struct {
+			Reasoning string `json:"reasoning"`
+		} `json:"delta"`
+	} `json:"choices"`
+}
+
+// recvChunk reads the next chunk as stream.Recv does, with each choice's
+// reasoning text (by position in Choices; "" for none). A server that sends
+// both fields sends the same text in each, so reasoning_content wins.
+func recvChunk(stream *openai.ChatCompletionStream) (openai.ChatCompletionStreamResponse, []string, error) {
+	var resp openai.ChatCompletionStreamResponse
+	raw, err := stream.RecvRaw()
+	if err != nil {
+		return resp, nil, err
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return resp, nil, err
+	}
+	reasoning := make([]string, len(resp.Choices))
+	var extra chunkReasoning
+	_ = json.Unmarshal(raw, &extra) // resp decoded, so raw is valid JSON; a mistyped field only loses the indicator
+	for i, c := range resp.Choices {
+		reasoning[i] = c.Delta.ReasoningContent
+		if reasoning[i] == "" && i < len(extra.Choices) {
+			reasoning[i] = extra.Choices[i].Delta.Reasoning
+		}
+	}
+	return resp, reasoning, nil
 }
 
 // applyThinkingConfig adds reasoning_effort to the request when thinking

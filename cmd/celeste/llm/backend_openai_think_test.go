@@ -128,3 +128,69 @@ func TestOpenAIConvertMessagesStripsThinkFromAssistantHistory(t *testing.T) {
 		t.Fatalf("user text altered: %s", raw)
 	}
 }
+
+func thinkingOf(evs []StreamEvent) string {
+	var sb strings.Builder
+	for _, ev := range evs {
+		if ev.Type == EventThinkingDelta {
+			sb.WriteString(ev.ThinkingDelta)
+		}
+	}
+	return sb.String()
+}
+
+// The reasoning a server inlines as <think> is reported as thinking while
+// it streams, never as reply text.
+func TestOpenAIStreamEventsReportsInlineThinkAsThinking(t *testing.T) {
+	b, _ := newThinkBackend(t, fakeprovider.Turn{Deltas: thinkDeltas})
+	evs := streamEvents(t, b, hello)
+	if got := thinkingOf(evs); got != "Okay, the user wants a greeting." {
+		t.Fatalf("thinking = %q", got)
+	}
+	// Thinking arrives before the reply's first text.
+	for _, ev := range evs {
+		if ev.Type == EventContentDelta {
+			t.Fatalf("content before thinking: %+v", evs)
+		}
+		if ev.Type == EventThinkingDelta {
+			break
+		}
+	}
+}
+
+// Ollama sends reasoning in a separate "reasoning" delta field; DeepSeek
+// and vLLM in "reasoning_content". Both become thinking events, never reply
+// text.
+func TestOpenAIStreamEventsReportsReasoningDeltas(t *testing.T) {
+	for _, field := range []string{"reasoning", "reasoning_content"} {
+		t.Run(field, func(t *testing.T) {
+			b, srv := newThinkBackend(t, fakeprovider.Turn{
+				ReasoningDeltas: []string{"Okay, ", "the user ", "wants a greeting."},
+				ReasoningField:  field,
+				Deltas:          []string{"Hi, ", "darling."},
+			})
+			evs := streamEvents(t, b, hello)
+			if got := thinkingOf(evs); got != "Okay, the user wants a greeting." {
+				t.Fatalf("thinking = %q", got)
+			}
+			if got := contentOf(evs); got != "Hi, darling." {
+				t.Fatalf("reply = %q", got)
+			}
+			var n int
+			for _, ev := range evs {
+				if ev.Type == EventThinkingDelta {
+					n++
+				}
+			}
+			if n != 3 {
+				t.Fatalf("thinking events = %d, want one per delta", n)
+			}
+			// The next request carries no reasoning.
+			srv.Push(fakeprovider.Turn{Text: "ok"})
+			streamEvents(t, b, append(hello, tui.ChatMessage{Role: "assistant", Content: contentOf(evs)}, tui.ChatMessage{Role: "user", Content: "again"}))
+			if raw := string(srv.Requests()[1].Raw); strings.Contains(raw, "Okay, the user") {
+				t.Fatalf("reasoning sent back: %s", raw)
+			}
+		})
+	}
+}
