@@ -521,15 +521,11 @@ func (b *OpenAIBackend) Close() error {
 func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.ChatCompletionMessage {
 	var result []openai.ChatCompletionMessage
 
-	// Add the system prompt if set.
-	//
-	// TODO(prompt-caching): When using Anthropic via OpenAI compat, structure
-	// the system message with cache_control hints for prompt caching. The
-	// static prefix of the system prompt (the persona; the Anthropic backend
-	// gets it from Client.SetSystemPromptParts, #309) should include:
-	//   {"type": "text", "text": "<static>", "cache_control": {"type": "ephemeral"}}
-	// This requires switching from a simple string content to multi-part content
-	// blocks when b.isAnthropicProvider() is true.
+	// Add the system prompt if set, as one string. There is no cache split
+	// here: Anthropic's OpenAI-compatible endpoint does not support prompt
+	// caching (it hoists and joins system messages), and an api.anthropic.com
+	// URL always gets the native backend (DetectBackendType), which caches
+	// the static persona on its own breakpoint (#309).
 	if prompt := b.prompt(); prompt != "" {
 		result = append(result, openai.ChatCompletionMessage{
 			Role:    "system",
