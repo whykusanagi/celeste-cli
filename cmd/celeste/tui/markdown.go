@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -98,7 +99,7 @@ func renderMarkdown(content string, width int) string {
 		return content
 	}
 
-	rendered, err := r.Render(content)
+	rendered, err := r.Render(escapeHTMLLikeTags(content))
 	if err != nil {
 		return content
 	}
@@ -107,17 +108,156 @@ func renderMarkdown(content string, width int) string {
 }
 
 // looksLikeMarkdown checks if content contains markdown formatting.
+//
+// Blockquotes and table rows only count at the start of a line: command help
+// is full of "<goal> " and "<key> | " placeholders, and treating those as
+// markdown sent plain text through glamour, which reflowed it and dropped the
+// placeholders as HTML (#315).
 func looksLikeMarkdown(s string) bool {
-	indicators := []string{
-		"```", "**", "##", "| ", "> ",
-	}
-	for _, ind := range indicators {
+	for _, ind := range []string{"```", "**", "##"} {
 		if strings.Contains(s, ind) {
+			return true
+		}
+	}
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimLeft(line, " ")
+		if len(line)-len(t) > 3 {
+			continue // indented four or more: not a quote or table row
+		}
+		if strings.HasPrefix(t, ">") || strings.HasPrefix(t, "| ") || strings.HasPrefix(t, "|-") {
 			return true
 		}
 	}
 	return false
 }
+
+// escapeHTMLLikeTags backslash-escapes every "<" that starts something an HTML
+// parser would take for a tag ("<id>", "</div>"), outside code spans, fenced
+// and indented code blocks, so glamour prints it instead of dropping it. Code
+// is left untouched because backslash escapes are literal there.
+func escapeHTMLLikeTags(s string) string {
+	lines := strings.Split(s, "\n")
+	fenceChar, fenceLen := byte(0), 0 // open fence, if any
+	prevBlank, prevCode, inList := true, false, false
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " ")
+		indent := len(line) - len(trimmed)
+		if fenceLen > 0 {
+			if indent < 4 {
+				if c, n := fenceRun(trimmed); c == fenceChar && n >= fenceLen && strings.TrimSpace(trimmed[n:]) == "" {
+					fenceLen = 0
+				}
+			}
+			continue
+		}
+		blank := strings.TrimSpace(line) == ""
+		// An indented code block starts after a blank line (it cannot
+		// interrupt a paragraph) and continues while lines stay indented;
+		// inside a list the same indent is list content instead.
+		indented := strings.HasPrefix(line, "\t") || indent >= 4
+		if !blank && indented && !inList && (prevBlank || prevCode) {
+			prevBlank, prevCode = false, true
+			continue
+		}
+		if blank {
+			prevBlank = true
+			continue // keep prevCode: a blank line does not end a code block
+		}
+		prevBlank, prevCode = false, false
+		if indent < 4 {
+			if c, n := fenceRun(trimmed); n >= 3 && (c == '~' || !strings.Contains(trimmed[n:], "`")) {
+				fenceChar, fenceLen = c, n
+				continue
+			}
+			inList = isListItem(trimmed) || (inList && indented)
+		}
+		lines[i] = escapeLineTags(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// fenceRun returns the fence character that starts s and how many times it
+// repeats; n is 0 when s does not start with a backtick or tilde.
+func fenceRun(s string) (c byte, n int) {
+	if s == "" || (s[0] != '`' && s[0] != '~') {
+		return 0, 0
+	}
+	c = s[0]
+	for n < len(s) && s[n] == c {
+		n++
+	}
+	return c, n
+}
+
+// isListItem reports whether s (indent removed) opens a list item: "- ",
+// "* ", "+ ", "1. " or "1) ".
+func isListItem(s string) bool {
+	if len(s) >= 2 && (s[0] == '-' || s[0] == '*' || s[0] == '+') && (s[1] == ' ' || s[1] == '\t') {
+		return true
+	}
+	d := 0
+	for d < len(s) && d < 9 && s[d] >= '0' && s[d] <= '9' {
+		d++
+	}
+	return d > 0 && d+1 < len(s) && (s[d] == '.' || s[d] == ')') && (s[d+1] == ' ' || s[d+1] == '\t')
+}
+
+// escapeLineTags escapes tag-like "<" in one line, skipping backtick code spans.
+func escapeLineTags(line string) string {
+	if !strings.Contains(line, "<") {
+		return line
+	}
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		c := line[i]
+		if c == '`' {
+			n := 0
+			for i+n < len(line) && line[i+n] == '`' {
+				n++
+			}
+			ticks := line[i : i+n]
+			if end := strings.Index(line[i+n:], ticks); end >= 0 {
+				span := i + n + end + n
+				b.WriteString(line[i:span])
+				i = span
+				continue
+			}
+			b.WriteString(ticks)
+			i += n
+			continue
+		}
+		if c == '<' {
+			if n := autolinkLen(line[i:]); n > 0 {
+				b.WriteString(line[i : i+n])
+				i += n
+				continue
+			}
+		}
+		if c == '<' && i+1 < len(line) && (isASCIILetter(line[i+1]) || line[i+1] == '/') && (i == 0 || line[i-1] != '\\') {
+			b.WriteString(`\<`)
+			i++
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// autolinkRe matches a markdown autolink: a URI with a scheme
+// ("<https://example.com>") or an email address ("<someone@example.com>").
+var autolinkRe = regexp.MustCompile(`^<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>`)
+
+// autolinkLen returns the length of the autolink s starts with, or 0. An
+// autolink stays as it is so glamour still renders it as a link.
+func autolinkLen(s string) int {
+	if loc := autolinkRe.FindStringIndex(s); loc != nil {
+		return loc[1]
+	}
+	return 0
+}
+
+func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 
 func stringPtr(s string) *string { return &s }
 func boolPtr(b bool) *bool       { return &b }

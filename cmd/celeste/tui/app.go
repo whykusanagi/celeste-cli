@@ -48,11 +48,14 @@ type AppModel struct {
 	mcpPanel         MCPPanelModel
 
 	// Application state
-	width             int
-	height            int
-	ready             bool
-	nsfwMode          bool
-	streaming         bool
+	width     int
+	height    int
+	ready     bool
+	nsfwMode  bool
+	streaming bool
+	// mediaInFlight is set while a Venice media generation runs; it does not
+	// stream, so its progress status text is guarded by this instead.
+	mediaInFlight     bool
 	endpoint          string // Current endpoint (openai, venice, grok, etc.)
 	safeEndpoint      string // Endpoint to return to when leaving NSFW mode
 	model             string // Current model name
@@ -450,28 +453,59 @@ func (m AppModel) SetMCPManager(manager *mcp.Manager, configs map[string]mcp.Ser
 }
 
 // syncStatusLine copies non-git AppModel state (project, model, effort,
-// permission mode, session) into the status line. Git fields are set separately
-// by the GitStatusMsg handler.
+// permission mode) into the status line. Git fields are set separately by the
+// GitStatusMsg handler; plan mode, skills and the session name are read at
+// render time by statusLineView, so /clear, /fork and /handoff show at once.
 func (m AppModel) syncStatusLine() AppModel {
 	sl := m.statusLine.
 		SetProject(filepath.Base(m.workDir)).
 		SetModel(m.model).
-		SetEffort(m.effort).
-		SetSkills(m.skills.Enabled(), m.skills.Count())
+		SetEffort(m.effort)
 	if m.permChecker != nil {
 		sl = sl.SetPermMode(m.permChecker.Mode().String())
-	}
-	if s, ok := m.currentSession.(*config.Session); ok && s != nil {
-		sl = sl.SetSession(s.Name)
 	}
 	m.statusLine = sl
 	return m
 }
 
+// costsSummary is the /costs text. Before the first reply the context bar
+// has no numbers yet, so it falls back to the tracker, and says the limit is
+// unknown rather than "0 limit" when neither knows it (V13).
+func (m AppModel) costsSummary() string {
+	used, limit := m.contextBar.usedTokens, m.contextBar.maxTokens
+	if limit == 0 && m.contextTracker != nil {
+		used, limit = m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens
+	}
+	tokens := fmt.Sprintf("%d used / %d limit", used, limit)
+	if limit == 0 {
+		tokens = fmt.Sprintf("%d used (limit known after the first reply)", used)
+	}
+	return fmt.Sprintf("Session Costs:\n  Tokens: %s\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
+		tokens, m.contextBar.turnCount)
+}
+
+// statusSessionName is the session segment: the current session's name, or
+// "" when it has none.
+func (m AppModel) statusSessionName() string {
+	if s, ok := m.currentSession.(*config.Session); ok && s != nil {
+		return s.Name
+	}
+	return ""
+}
+
 // statusLineView renders the status line with plan mode read from the
 // client at render time: an approval clears it from the run's goroutine.
-func (m AppModel) statusLineView() string {
-	return m.statusLine.SetPlan(m.planModeOn()).View()
+// The skills segment is also read here, from the tools a turn would offer
+// (V1: it used to copy the skills panel, which only View() configured), and
+// so is the session name (V16: it used to wait for the next git poll).
+// View passes in the skills count it already computed: building the tool list
+// converts every tool schema, too costly to do twice per frame.
+func (m AppModel) statusLineView(skillsCount int) string {
+	return m.statusLine.
+		SetPlan(m.planModeOn()).
+		SetSkills(m.toolsOffered(), skillsCount).
+		SetSession(m.statusSessionName()).
+		View()
 }
 
 // Update implements tea.Model.
@@ -630,8 +664,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "esc" || msg.String() == "q" {
 				// Save on close if modified
 				if m.personaPanel != nil && m.personaPanel.Modified() {
-					_ = m.personaPanel.Save()
-					m.chat = m.chat.AddSystemMessage("✨ Persona sliders saved.")
+					if err := m.personaPanel.Save(); err != nil {
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Failed to save persona sliders: %v", err))
+					} else {
+						// The prompt reads the sliders only when it is
+						// rebuilt; refresh like /user and /confirm (W-P1).
+						if refresher, ok := m.llmClient.(PromptRefresher); ok {
+							refresher.RefreshSystemPrompt()
+						}
+						m.chat = m.chat.AddSystemMessage("✨ Persona sliders saved.")
+					}
 				}
 				m.viewMode = "chat"
 				return m, nil
@@ -866,6 +908,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Idle again, so an earlier interrupt no longer applies.
 		m.interrupted = false
+		// A status text ("Selection cancelled", "Model changed to …")
+		// belongs to the command that set it; the next one starts from
+		// Ready and sets its own (V17).
+		if content != "" && !m.streaming && !m.turnActive() && !m.mediaInFlight {
+			m.status = m.status.SetText("Ready")
+		}
 
 		// Clear completed tool progress from previous turn
 		m.toolProgress.ClearCompleted()
@@ -1084,8 +1132,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "costs":
-				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Session Costs:\n  Tokens: %d used / %d limit\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
-					m.contextBar.usedTokens, m.contextBar.maxTokens, m.contextBar.turnCount))
+				m.chat = m.chat.AddSystemMessage(m.costsSummary())
 				return m, nil
 
 			case "init":
@@ -1776,6 +1823,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat = m.chat.AddUserMessage(content)
 				m.chat = m.chat.AddAssistantMessage(fmt.Sprintf("🎨 Generating %s... please wait", mediaType))
 				m.status = m.status.SetText(fmt.Sprintf("⏳ Venice.ai %s generation in progress...", mediaType))
+				m.mediaInFlight = true
 
 				// Add messages to session for persistence
 				if m.currentSession != nil {
@@ -1945,6 +1993,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MediaResultMsg:
 		// Handle media generation result
 		LogInfo(fmt.Sprintf("Received MediaResultMsg: success=%v, mediaType=%s", msg.Success, msg.MediaType))
+		m.mediaInFlight = false
 		if msg.Success {
 			var resultText string
 			if msg.URL != "" {
@@ -2673,7 +2722,7 @@ func (m AppModel) View() string {
 	}
 
 	// Segmented status line (git / project / model / effort / perms / session / skills)
-	sections = append(sections, m.statusLineView())
+	sections = append(sections, m.statusLineView(skillsCount))
 
 	// Contextual key hints
 	hints := hintsFor(m.viewMode, m.mcpPanel.Active())
@@ -3070,9 +3119,10 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 			m.claimWorkspace(s)
 			m.currentSession = s
 
-			// Clear chat
+			// Clear chat, and the old session's token counts with it
 			m.chat = m.chat.Clear()
 			m.untrackPlan()
+			m = m.resetContextForNewSession()
 
 			// Show success with short ID
 			if summary := s.SummarizeRaw(); summary != nil {
@@ -3250,6 +3300,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		newSession := m.sessionManager.NewSession()
 		if s, ok := newSession.(Session); ok {
 			m.currentSession = s
+			m = m.resetContextForNewSession()
 		}
 		// Refresh system prompt so /user and /confirm changes take effect
 		if refresher, ok := m.llmClient.(PromptRefresher); ok {
