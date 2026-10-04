@@ -65,6 +65,11 @@ which profile they use; MCP responses only log it. A local model with no `contex
 assumed to have 8,192 tokens, so chat runs on `lite` there. Set `context_limit` in your config to
 the server's real window to get `full`.
 
+Stepping down sizes the persona, not the whole request. The tool definitions need room too
+(several thousand tokens in the chat), so on a very small window, the 8,192-token default
+included, a request can still exceed the window and compaction starts. A fuller fix is planned
+for 2.1 ([#310](https://github.com/whykusanagi/celeste-cli/issues/310)); until then, set `context_limit` to the server's real window.
+
 Every profile ends with the **voice boundary**: her voice applies only to prose addressed to you.
 Code, comments, commit messages, file contents and tool arguments are plain and professional.
 

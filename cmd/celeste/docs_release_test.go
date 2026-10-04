@@ -58,6 +58,12 @@ func TestReadmeInstallAndPersona(t *testing.T) {
 		"celeste persona verify",
 		"(VERIFY.md)",
 		"docs/HOOKS.md",
+		// Spec-coverage audit G6: the upgrade guide and the 2.0 docs are linked.
+		"(MIGRATING-2.0.md)",
+		"docs/SANDBOX.md", "docs/SUBAGENTS.md", "docs/PLAN_MODE.md",
+		"docs/STEERING.md", "docs/PERSONALITY.md", "docs/ROADMAP.md",
+		"docs/COMPARISON.md", "docs/ACP.md",
+		"celeste revert", "celeste hooks trust",
 	)
 	requireNone(t, "README.md", readme, "celeste_essence.json", "hooks defined in `.grimoire`")
 }

@@ -127,7 +127,7 @@ instead of showing it. Subagents and `/agent` nest under the chat's
 servers. A nested run's copy of an MCP tool finds its server's client by
 name through `mcp.Manager` at call time, so it follows a `/mcp` reconnect.
 
-**What it is not**: Chat has no planning step, no checkpoints, no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
+**What it is not**: Chat has no planning step, file checkpoints only (no run checkpoint), no workspace awareness, and no multi-turn memory beyond the conversation history. It is a reactive loop, not an autonomous agent.
 
 **Configure**:
 ```bash

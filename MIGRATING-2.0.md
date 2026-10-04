@@ -39,7 +39,7 @@ decrypts it; every other build runs a short public persona and says so. See
 | `~/.celeste/celeste_essence.json` | No longer read, and there is no replacement override. celeste logs once that it is ignored; you can delete it. |
 | Every build had the same persona | An official release binary (the Releases page, or a `go install` build after it upgrades itself, below) runs the full persona. A build from a checkout or a fork runs the public persona: one identity line, the rule against claiming an action a tool didn't report, and the voice boundary. It says so once at startup. |
 | No way to check | `celeste persona verify` prints `official persona: ...` and exits 0 on an official binary; it exits 1 and names the reason on any other build. |
-| One persona size for every model | The persona is picked by the model's context window: chat uses the `full` profile, agent runs `spine`. A profile larger than a quarter of the window steps down (`full`, `spine`, `lite`); `lite` stays while it fits in half the window, and below that only the identity, the honesty rule and the voice boundary stay. The chat, `celeste agent` and `celeste message` say once which profile they use. A local model with no `context_limit` counts as 8,192 tokens, so set `context_limit` in your config to the server's real window to get `full`. |
+| One persona size for every model | The persona is picked by the model's context window: chat uses the `full` profile, agent runs `spine`. A profile larger than a quarter of the window steps down (`full`, `spine`, `lite`); `lite` stays while it fits in half the window, and below that only the identity, the honesty rule and the voice boundary stay. The chat, `celeste agent` and `celeste message` say once which profile they use. A local model with no `context_limit` counts as 8,192 tokens, so set `context_limit` in your config to the server's real window to get `full`. The tool definitions also need room, so on a very small window a request can still exceed it and compaction starts (a fuller fix is planned for 2.1, [#310](https://github.com/whykusanagi/celeste-cli/issues/310)). |
 
 ## Self-update (`celeste update`)
 
@@ -69,6 +69,13 @@ same caps, guards, permissions and hooks. These are intentional changes:
 | `UserPromptSubmit` hooks ran in the chat only | They also check the goal of `celeste agent`, MCP agent mode and `/agent`, and every MCP chat prompt. A `deny` stops the run before any model call. |
 | Esc during a chat turn could leave half a turn in history | Esc stops the turn; a partial reply stays on screen, and nothing half-finished is saved. Messages typed during a turn join it at the next tool boundary. |
 | `celeste agent` used the chat model | It uses `agent_model` when set, as subagents and MCP agent mode already did. |
+
+## Permission prompt
+
+| 1.x | 2.0 |
+|---|---|
+| A single key answered the permission prompt, so typed text could answer it (the `a` in a sentence allowed the call once) | `a` (allow once) or `A` (always allow) only picks the answer; Enter confirms it. Any other key after `a` or `A` cancels the pick, so text starting with `a` or `Always` allows nothing. Enter with nothing picked does nothing. |
+| | Typed text never answers it: a printable key that is not one of the prompt's keys (or a paste) starts typing mode, where every key, `d` and `D` included, is ignored with a hint until you press Enter. `d` (deny) and `D` (always deny) still answer at once outside typing mode. Esc always denies. |
 
 ## Hooks
 
@@ -122,6 +129,12 @@ The persona is always on in chat and agent runs, for every provider.
 | A DigitalOcean agent profile (`--init digitalocean` set `skip_persona_prompt: true`) | DigitalOcean agents now also get Celeste's persona, on top of the agent's own instructions. |
 | Gemini with `skip_persona_prompt: true` sent no system prompt at all | Gemini gets the system prompt like every other provider. |
 
+## Environment variables override the config file
+
+| 1.x | 2.0 |
+|---|---|
+| `CELESTE_API_KEY`, `CELESTE_API_ENDPOINT` and `TAROT_AUTH_TOKEN` were listed in the help but never read | They are read and **override** the config file's `api_key`, `base_url` and `tarot_auth_token` for the chat, `celeste message`, `celeste agent`, `celeste skill`, `celeste serve` and `celeste acp`. A blank variable changes nothing. The value applies to that run only and is never written to the config file. If one of them is still exported from an old setup (a shell profile, a CI secret), celeste now uses it instead of the config file: unset it to go back to the file's value. |
+
 ## Sessions and agent checkpoints
 
 | 1.x | 2.0 |
@@ -174,7 +187,18 @@ without a warning.
 | Two MCP servers whose names sanitize to the same tool name (`a.b` and `a_b`) | The server whose name sorts first keeps the tool (the same one on every launch); the other server's tool is not registered, with a warning naming both. Disconnecting the second server no longer removes the first one's tool. |
 | A custom JSON tool (`~/.celeste/skills/*.json`) named like a built-in tool or another custom tool | No longer replaces it: the built-in (or the first file, in directory order) keeps the name, the file is skipped with a warning, and the other files still load. Rename the tool to use it. |
 
-## OpenAI uses the Responses API
+## Custom tools (`~/.celeste/skills/*.json`)
+
+A custom JSON tool's `command` now runs through the same shell runner as `bash`
+(without its denylist):
+
+| 1.x | 2.0 |
+|---|---|
+| The command ran with `/bin/sh -c` | It runs with `sh -c`, the first `sh` on your `PATH`. |
+| The tool returned stdout only; stderr was dropped | It returns stdout and stderr combined, in the order they were written. |
+| Output of any size was returned | Output is capped at 64,000 bytes, with `[output truncated at 64000 bytes]` appended. |
+| No timeout of its own | 2 minutes (sooner if the caller's deadline ends first); the command and everything it started are killed. |
+| A background process that kept the output open could hang the call | It gets 2 seconds after the command exits, then it is killed and the call fails, saying so. A background process that redirected its output keeps running. |
 
 | 1.x | 2.0 |
 |---|---|

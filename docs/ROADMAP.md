@@ -43,8 +43,10 @@ On `main`, to be tagged v2.0.0. One line per workstream.
   gating and routing ([#175](https://github.com/whykusanagi/celeste-cli/issues/175)).
   See [STEERING.md](STEERING.md).
 - **Persona profiles.** The persona ships encrypted in official builds, at four
-  levels (full, spine, lite, off); the level fits the context window, so small
-  local models never overflow; explore and review subagents run with it off;
+  levels (full, spine, lite, off); the persona steps down to fit the context
+  window (on a very small window the tool definitions can still exceed it and
+  compaction starts; a fuller fix is planned for 2.1, [#310](https://github.com/whykusanagi/celeste-cli/issues/310)); explore and review
+  subagents run with it off; the blind persona back-test passed;
   `celeste persona verify` ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
 - **Responses API.** The `openai` provider uses OpenAI's Responses API, with a
   Chat Completions fallback for endpoints that lack it.
@@ -73,7 +75,8 @@ On `main`, to be tagged v2.0.0. One line per workstream.
   [PLAN_MODE.md](PLAN_MODE.md).
 - **ACP.** `celeste acp` is an Agent Client Protocol agent for Zed and JetBrains:
   prompts, streamed replies, tool calls, the editor's permission prompt and
-  cancel.
+  cancel; editor threads reopen with `session/load`, and an untrusted
+  repository hook file is approved through the editor's permission prompt.
 - **Images.** `read_file` fits images to each provider's limits or refuses them
   with the limit named ([#239](https://github.com/whykusanagi/celeste-cli/issues/239)).
 - **Surface cleanup.** The classic/claw runtime mode and `skip_persona_prompt`
@@ -92,22 +95,26 @@ of the workstream plan named.
       `/responses/compact` as a ladder rung ([#199](https://github.com/whykusanagi/celeste-cli/issues/199),
       rung 2 of [#174](https://github.com/whykusanagi/celeste-cli/issues/174)).
 - [ ] Threshold and background compaction (the 2.0 plans: compaction).
+- [ ] Tool definitions that fit small context windows: on a very small window
+      (the 8,192-token default for an unknown local model) the tool schemas alone
+      can exceed it, so compaction starts on the first request ([#310](https://github.com/whykusanagi/celeste-cli/issues/310)).
 
 ### Context, skills and commands
 
 - [ ] Agent Skills: `SKILL.md` directories in `~/.celeste/skills/*/` and
       `.celeste/skills/`, name and description in the prompt, body on demand; the
-      JSON shell "skills" become commands ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+      JSON shell "skills" become commands (Agent Skills [#302](https://github.com/whykusanagi/celeste-cli/issues/302); JSON skills to
+      `~/.celeste/commands/` [#303](https://github.com/whykusanagi/celeste-cli/issues/303)).
       `~/.celeste/skills/*.json` keeps loading until the move is done.
 - [ ] Repository-local commands (the 2.0 plans: context and skills).
 
 ### Edits and diagnostics
 
 - [ ] LSP diagnostics after writes, starting with gopls and the TypeScript
-      server ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)); more
+      server ([#304](https://github.com/whykusanagi/celeste-cli/issues/304)); more
       language servers after that (the 2.0 plans: edits and LSP).
 - [ ] Evaluate hash-anchored (hashline) edits for weaker and local models
-      ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+      ([#305](https://github.com/whykusanagi/celeste-cli/issues/305)).
 
 ### Sandbox
 
@@ -122,32 +129,34 @@ of the workstream plan named.
 
 - [ ] A `recall_memory` tool, so the model can read a memory's body (today it
       sees the memory index), and a memory store keyed on the git root rather
-      than the workspace ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+      than the workspace ([#306](https://github.com/whykusanagi/celeste-cli/issues/306)).
 
 ### ACP
 
-- [ ] `session/load` and hooks for editor sessions (ACP part 3,
-      [#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
 - [ ] The editor's `fs/*` and `terminal/*` methods, session modes, and `http`/`sse`
       MCP servers passed by the editor (the 2.0 plans: ACP).
+- [ ] Share or lazily start MCP servers across editor sessions ([#311](https://github.com/whykusanagi/celeste-cli/issues/311)).
 
 ### Persona
 
-- [ ] Semantic retrieval for `persona_lore`; 2.0 ships BM25 with instrumentation
-      (the 2.0 design; [#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
-- [ ] The blind persona back-test ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
+- [ ] `persona_lore(query)`: a chat-only lore lookup, BM25 first, semantic
+      retrieval later. 2.0 does not ship it
+      ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
+- [ ] An Anthropic cache breakpoint after the static persona, so the persona is
+      cached on its own ([#309](https://github.com/whykusanagi/celeste-cli/issues/309)).
 
 ### Providers
 
 - [ ] OpenAI `previous_response_id` server-side state (the 2.0 design).
 - [ ] Gemini `ThoughtSignature` folded into provider blocks (the 2.0 design).
+- [ ] Anthropic cache tokens shown in `/costs` and the logs ([#312](https://github.com/whykusanagi/celeste-cli/issues/312)).
 
 ### Cleanup
 
 - [ ] One token estimator and one set of context thresholds
-      ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+      ([#307](https://github.com/whykusanagi/celeste-cli/issues/307)).
 - [ ] Split `tui/app.go`'s `update()` into one file per message type, with slash
-      commands in their own files ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)).
+      commands in their own files ([#308](https://github.com/whykusanagi/celeste-cli/issues/308)).
 
 ### Code graph
 
