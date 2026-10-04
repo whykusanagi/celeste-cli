@@ -349,12 +349,9 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// The profile's timeout is the client's stall timeout here as in chat
 	// (L3: agent runs used to ignore it for a fixed 90 s turn deadline, so a
 	// local agent run died on its first request). An explicit
-	// -request-timeout bounds each turn, and the client may wait that long
-	// too; otherwise only the hard cap bounds a turn, and a request fails
-	// when it stalls.
-	if options.RequestTimeoutExplicit && options.RequestTimeout > 0 {
-		clientTimeoutFloor = maxDuration(clientTimeoutFloor, options.RequestTimeout)
-	}
+	// -request-timeout bounds each turn; otherwise only the hard cap does.
+	// Either way a request fails when it stalls for the profile's timeout,
+	// so a hosted provider still fails fast on a dead connection.
 	clientStall := maxDuration(cfg.GetTimeout(), clientTimeoutFloor)
 	if !options.RequestTimeoutExplicit {
 		options.RequestTimeout = llm.MaxRequestDuration(clientStall)

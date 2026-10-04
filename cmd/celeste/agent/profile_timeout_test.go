@@ -56,17 +56,18 @@ func TestAgentLocalDefaultTimeout(t *testing.T) {
 	}
 }
 
-// An explicit -request-timeout bounds the turn, and the client may wait as
-// long: a shorter profile timeout must not cut the turn first.
-func TestAgentExplicitRequestTimeoutLiftsClient(t *testing.T) {
+// An explicit -request-timeout bounds the whole turn but never the stall
+// timeout: a hosted provider still fails after the profile's 60 s of
+// silence, however long the turn may run.
+func TestAgentExplicitRequestTimeoutBoundsOnlyTheTurn(t *testing.T) {
 	cfg := newTestConfig("https://api.openai.com/v1", "gpt-4.1-nano")
 	cfg.Timeout = 60
 	r := timeoutRunner(t, cfg, 900*time.Second)
 	if r.options.RequestTimeout != 900*time.Second {
 		t.Errorf("turn deadline = %v, want the explicit 900s", r.options.RequestTimeout)
 	}
-	if got := r.client.GetConfig().Timeout; got < 900*time.Second {
-		t.Errorf("client stall timeout = %v, want at least the explicit 900s", got)
+	if got := r.client.GetConfig().Timeout; got != 60*time.Second {
+		t.Errorf("client stall timeout = %v, want the profile's 60s", got)
 	}
 }
 
