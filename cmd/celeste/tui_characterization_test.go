@@ -347,9 +347,10 @@ func TestTUIInterruptWithQueuedSteer(t *testing.T) {
 // /compact on a short history declines honestly (#204 baseline).
 func TestTUICompactOnShortHistoryDeclines(t *testing.T) {
 	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "hello back"})
-	m, _, _ := chatApp(t, srv)
+	m, _, _ := chatAppWithContextLimit(t, srv, 1_000_000) // no automatic summary to race /compact (#327)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "hello"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "hello back" && turnIdle(m) }, 30*time.Second)
+	noBackgroundSummary(t, m)
 	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/compact"}}, func(m tea.Model) bool {
 		for _, x := range chatMessages(m) {
 			if x.Role == "system" && strings.Contains(x.Content, "Context summary not applied") {
@@ -395,9 +396,10 @@ func TestTUIHandoffStartsNewSession(t *testing.T) {
 		fakeprovider.Turn{Text: "hello back"},
 		fakeprovider.Turn{Text: "## Goal\nsay hello\n## Next step\nnone"},
 	)
-	m, _, _ := chatApp(t, srv)
+	m, _, _ := chatAppWithContextLimit(t, srv, 1_000_000) // no automatic summary to race /handoff (#327)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "hello"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "hello back" && turnIdle(m) }, 30*time.Second)
+	noBackgroundSummary(t, m)
 	drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/handoff"}}, func(m tea.Model) bool {
 		for _, x := range chatMessages(m) {
 			if strings.Contains(x.Content, "New session started") {
