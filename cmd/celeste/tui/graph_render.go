@@ -10,10 +10,12 @@ import (
 )
 
 // RenderCodeGraphConstellation produces a structured dependency tree visualization
-// of the code graph using the corrupted theme palette.
+// of the code graph using the corrupted theme palette. width is the width of
+// the text it is shown in (the chat's ChatModel.TextWidth): the banner rules
+// fit inside it (N8).
 func RenderCodeGraphConstellation(indexer *codegraph.Indexer, width int) string {
-	if width < 40 {
-		width = 80
+	if width < 4 {
+		width = 4 // the rules are width-2 wide; never wider than the chat
 	}
 
 	stats, err := indexer.Stats()

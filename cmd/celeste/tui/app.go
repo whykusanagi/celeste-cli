@@ -55,9 +55,12 @@ type AppModel struct {
 	streaming bool
 	// mediaInFlight is set while a Venice media generation runs; it does not
 	// stream, so its progress status text is guarded by this instead.
-	mediaInFlight     bool
-	endpoint          string // Current endpoint (openai, venice, grok, etc.)
-	safeEndpoint      string // Endpoint to return to when leaving NSFW mode
+	mediaInFlight bool
+	endpoint      string // Current endpoint (openai, venice, grok, etc.)
+	safeEndpoint  string // Endpoint to return to when leaving NSFW mode
+	// safe is the chat as /nsfw found it, for /safe to restore exactly
+	// (N1); nil when not in NSFW mode or the client cannot snapshot.
+	safe              *safeState
 	model             string // Current model name
 	imageModel        string // Current image generation model (for NSFW mode)
 	provider          string // Current provider (grok, openai, venice, etc.) - detected from endpoint
@@ -185,6 +188,9 @@ type AppModel struct {
 	agentActive bool
 	agentRun    uint64
 	agentSeq    uint64
+	// agentInfoOnly: the current /agent command only reports (help,
+	// list-runs), so its result does not say a run completed (N5).
+	agentInfoOnly bool
 
 	// The run each modal belongs to (none: it stays until answered). When
 	// that run ends, its modal is answered (deny, cancelled) and closed, so
@@ -355,6 +361,15 @@ type EndpointSwitcher interface {
 	ChangeModel(model string) error
 }
 
+// EndpointSnapshotter is implemented by clients that can save their whole
+// endpoint (base URL, key, model, profile) and put it back exactly: /nsfw
+// saves the safe endpoint and /safe restores it (N1). The snapshot is
+// opaque to the chat.
+type EndpointSnapshotter interface {
+	SnapshotEndpoint() any
+	RestoreEndpoint(snapshot any) error
+}
+
 // ThinkingConfigSetter interface for clients that support extended thinking / reasoning effort.
 type ThinkingConfigSetter interface {
 	SetThinkingLevel(level string)
@@ -497,11 +512,13 @@ func (m AppModel) statusSessionName() string {
 // client at render time: an approval clears it from the run's goroutine.
 // The skills segment is also read here, from the tools a turn would offer
 // (V1: it used to copy the skills panel, which only View() configured), and
-// so is the session name (V16: it used to wait for the next git poll).
+// so is the session name (V16: it used to wait for the next git poll), and
+// the model (N4: /set-model, a --force pin and /safe never resynced it).
 // View passes in the skills count it already computed: building the tool list
 // converts every tool schema, too costly to do twice per frame.
 func (m AppModel) statusLineView(skillsCount int) string {
 	return m.statusLine.
+		SetModel(m.model).
 		SetPlan(m.planModeOn()).
 		SetSkills(m.toolsOffered(), skillsCount).
 		SetSession(m.statusSessionName()).
@@ -977,9 +994,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.agentSeq++
 				m.agentRun = m.agentSeq
 				m.status = m.status.SetStreaming(true)
-				m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 				// list-runs and help only report; a goal or resume runs the agent.
-				if !isAgentInfoCommand(cmd.Args[0]) {
+				m.agentInfoOnly = isAgentInfoCommand(cmd.Args[0])
+				if !m.agentInfoOnly {
+					m.status = m.status.SetText(StreamingSpinner(0) + " Running agent...")
 					m.chat = m.chat.AddSystemMessage("🤖 Agent running: " + strings.Join(cmd.Args, " "))
 				}
 
@@ -1309,7 +1327,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat = m.chat.AddSystemMessage(sb.String())
 
 				default: // "status" or no args
-					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.width)
+					viz := RenderCodeGraphConstellation(m.codeGraphIndexer, m.chat.TextWidth())
 					if viz != "" {
 						m.chat = m.chat.AddSystemMessage(viz)
 					} else {
@@ -1434,7 +1452,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, func() tea.Msg {
 						voices, err := fetchElevenLabsVoices(apiKey)
 						if err != nil {
-							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Failed: %v", err)}
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: "Failed: " + errorText(err)}
 						}
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: voices}
 					}
@@ -1487,7 +1505,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, func() tea.Msg {
 						result, err := resumer.ResumeSubagent(context.Background(), checkpointID)
 						if err != nil {
-							return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resume failed: %v", err)}
+							return AgentProgressMsg{Kind: AgentProgressResponse, Text: "Resume failed: " + errorText(err)}
 						}
 						return AgentProgressMsg{Kind: AgentProgressResponse, Text: fmt.Sprintf("Resumed subagent completed.\n\n%s", result)}
 					}
@@ -1630,43 +1648,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m, catalogCmd = m.switchEndpoint(*result.StateChange.EndpointChange)
 				}
 				if result.StateChange.NSFWMode != nil {
-					m.nsfwMode = *result.StateChange.NSFWMode
-					m.header = m.header.SetNSFWMode(m.nsfwMode)
-
-					// When NSFW mode is enabled, save current endpoint and switch to Venice
-					if m.nsfwMode {
-						// Save the current "safe" endpoint
-						m.safeEndpoint = m.endpoint
-						m.endpoint = "venice"
-						m.header = m.header.SetEndpoint(m.endpoint)
-
-						// Actually switch the LLM client to Venice
-						if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-							if err := switcher.SwitchEndpoint(m.endpoint); err != nil {
-								m.status = m.status.SetText(fmt.Sprintf("Error switching to Venice: %v", err))
-							}
-						}
-						m.modelPinned = false // a --force pin belongs to the old endpoint
-						m, catalogCmd = m.adoptActiveModel()
-					} else {
-						// When NSFW mode is disabled, restore the safe endpoint
-						if m.safeEndpoint != "" {
-							m.endpoint = m.safeEndpoint
-						} else {
-							// Fallback to default if no safe endpoint saved
-							m.endpoint = "openai"
-						}
-						m.header = m.header.SetEndpoint(m.endpoint)
-
-						// Actually switch the LLM client back
-						if switcher, ok := m.llmClient.(EndpointSwitcher); ok {
-							if err := switcher.SwitchEndpoint(m.endpoint); err != nil {
-								m.status = m.status.SetText(fmt.Sprintf("Error switching endpoint: %v", err))
-							}
-						}
-						m.modelPinned = false // a --force pin belongs to the old endpoint
-						m, catalogCmd = m.adoptActiveModel()
-					}
+					var nsfwCmd tea.Cmd
+					m, nsfwCmd = m.setNSFWMode(*result.StateChange.NSFWMode)
+					catalogCmd = tea.Batch(catalogCmd, nsfwCmd)
 
 					// Persist session state
 					m.persistSession()
@@ -1678,7 +1662,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.modelTrial, m.modelBeforeTrial = *result.StateChange.Model, m.model
 					m.model = *result.StateChange.Model
 					m.modelPinned = result.StateChange.PinModel
-					m.header = m.header.SetModel(m.model)
+					m.header = m.header.SetModel(m.model).SetModelUnverified(result.StateChange.ModelUnverified)
 					m.status = m.status.SetText(fmt.Sprintf("Model changed to %s", m.model))
 
 					// A ToolsPerModel provider (Venice) only knows tool
@@ -2413,8 +2397,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streaming = false
 			m.splitPanelMode = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText(fmt.Sprintf("Orchestrator error: %s", msg.Text))
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ %s", msg.Text))
+			text := cleanErrorText(msg.Text)
+			m.status = m.status.SetText("Orchestrator error: " + text)
+			m.chat = m.chat.AddSystemMessage("❌ " + text)
 			m.persistSession()
 		}
 
@@ -2436,13 +2421,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.Err != nil {
-			m.status = m.status.SetText(fmt.Sprintf("Agent error: %v", msg.Err))
+			m.status = m.status.SetText("Agent error: " + errorText(msg.Err))
 			if strings.TrimSpace(msg.Output) == "" {
-				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %v", msg.Err))
+				m.chat = m.chat.AddSystemMessage("❌ Agent error: " + errorText(msg.Err))
 			}
+		} else if m.agentInfoOnly {
+			m.status = m.status.SetText("Ready") // nothing ran (N5)
 		} else {
 			m.status = m.status.SetText("Agent run complete")
 		}
+		m.agentInfoOnly = false
 
 		m.persistSession()
 
@@ -2609,7 +2597,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case ErrorMsg:
-		m.status = m.status.SetText(fmt.Sprintf("Error: %v", msg.Err))
+		m.status = m.status.SetText("Error: " + errorText(msg.Err))
 	}
 
 	// Keep ticks alive while tool progress entries are active so spinners
@@ -2872,6 +2860,8 @@ type Session interface {
 	GetNSFWMode() bool
 	SetModelPinned(pinned bool)
 	GetModelPinned() bool
+	SetModelUnverified(unverified bool)
+	GetModelUnverified() bool
 	SetName(name string)
 	ClearMessages()
 	GetMessagesRaw() interface{}     // Returns []config.SessionMessage
@@ -2901,7 +2891,7 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 			m.model = model
 			// A /set-model --force pin outlives the resume.
 			m.modelPinned = session.GetModelPinned()
-			m.header = m.header.SetModel(model)
+			m.header = m.header.SetModel(model).SetModelUnverified(m.modelPinned && session.GetModelUnverified())
 
 			// A ToolsPerModel provider (Venice) only knows whether tools are
 			// available once the model is known (#151 W6b); recompute now
@@ -3118,6 +3108,7 @@ func (m *AppModel) persistSession() {
 	m.currentSession.SetEndpoint(m.endpoint)
 	m.currentSession.SetModel(m.model)
 	m.currentSession.SetModelPinned(m.modelPinned)
+	m.currentSession.SetModelUnverified(m.modelPinned && m.header.modelUnverified)
 	m.currentSession.SetNSFWMode(m.nsfwMode)
 	if hist := m.input.GetHistory(); len(hist) > 0 {
 		m.currentSession.SetCommandHistory(hist)
@@ -3480,6 +3471,7 @@ type HeaderModel struct {
 	imageModel       string           // Image generation model (NSFW mode)
 	autoRouted       bool             // Whether the last message was auto-routed
 	skillsEnabled    bool             // Whether skills/function calling is available
+	modelUnverified  bool             // a /set-model --force name nothing validated (V5)
 	contextIndicator ContextIndicator // Token usage display
 	showContext      bool             // Whether to show context usage
 }
@@ -3507,9 +3499,20 @@ func (m HeaderModel) SetEndpoint(endpoint string) HeaderModel {
 	return m
 }
 
-// SetModel sets the current model.
+// SetModel sets the current model. A new model is verified until
+// SetModelUnverified says otherwise.
 func (m HeaderModel) SetModel(model string) HeaderModel {
+	if model != m.model {
+		m.modelUnverified = false
+	}
 	m.model = model
+	return m
+}
+
+// SetModelUnverified marks the current model as one nothing validated (a
+// /set-model --force name no catalog lists): the header shows "?", not ✓.
+func (m HeaderModel) SetModelUnverified(unverified bool) HeaderModel {
+	m.modelUnverified = unverified
 	return m
 }
 
@@ -3575,10 +3578,13 @@ func (m HeaderModel) View() string {
 		}
 		// Add capability indicator
 		modelDisplay := m.model
-		if m.skillsEnabled {
+		if m.modelUnverified {
+			modelDisplay += " ?" // forced, never validated
+		} else if m.skillsEnabled {
 			modelDisplay += " ✓" // Checkmark for skills enabled
-		} else {
-			modelDisplay += " ⚠" // Warning for no skills
+		}
+		if !m.skillsEnabled {
+			modelDisplay += " ⚠" // Warning for no skills, verified or not
 		}
 		endpointInfo += ModelStyle.Render(modelDisplay)
 	}
@@ -3717,16 +3723,22 @@ func oneLine(s string) string {
 }
 
 // errorText is err's message for the status bar and chat, which already
-// say "Error: ". go-openai's API errors begin "error, status code: …".
+// say "Error: ". go-openai's API errors begin "error, status code: …", at
+// the start or, wrapped, after the wrapper's own "…: ".
 func errorText(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
+	return cleanErrorText(err.Error())
+}
+
+// cleanErrorText is errorText for an error already turned into text (an
+// orchestrator error event carries only its message).
+func cleanErrorText(msg string) string {
 	if len(msg) > 7 && strings.EqualFold(msg[:7], "error, ") {
 		msg = msg[7:]
 	}
-	return msg
+	return strings.ReplaceAll(msg, ": error, status code: ", ": status code: ")
 }
 
 // getWarningStyle returns the appropriate style for the warning level.

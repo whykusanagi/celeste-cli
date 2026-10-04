@@ -146,7 +146,7 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) (AppModel, bool) {
 	if msg.Err != nil {
 		switch {
 		case msg.manual || !isNothingToSummarize(msg.Err):
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Context summary not applied: %v", msg.Err))
+			m.chat = m.chat.AddSystemMessage("Context summary not applied: " + errorText(msg.Err))
 		default:
 			// "Summarizing older context…" is on screen; close it (#234).
 			m.chat = m.chat.AddSystemMessage("🗜 Summary skipped: the older history is too small to shrink.")
@@ -256,7 +256,7 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 	m.summarizing = false
 	if msg.Err != nil {
-		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Handoff failed: %v", msg.Err))
+		m.chat = m.chat.AddSystemMessage("Handoff failed: " + errorText(msg.Err))
 		return m
 	}
 	current := m.chat.GetLLMMessages()

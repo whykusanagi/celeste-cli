@@ -508,6 +508,25 @@ func (s *Session) GetModelPinned() bool {
 	return pinned
 }
 
+// SetModelUnverified records that the session's model is a /set-model
+// --force name no catalog listed, so a resume does not show it as valid.
+func (s *Session) SetModelUnverified(unverified bool) {
+	if s.Metadata == nil {
+		s.Metadata = make(map[string]any)
+	}
+	if unverified {
+		s.Metadata["model_unverified"] = true
+	} else {
+		delete(s.Metadata, "model_unverified")
+	}
+}
+
+// GetModelUnverified reports what SetModelUnverified stored.
+func (s *Session) GetModelUnverified() bool {
+	unverified, _ := s.Metadata["model_unverified"].(bool)
+	return unverified
+}
+
 // SetNSFWMode stores the NSFW mode in session.
 func (s *Session) SetNSFWMode(enabled bool) {
 	s.NSFWMode = enabled

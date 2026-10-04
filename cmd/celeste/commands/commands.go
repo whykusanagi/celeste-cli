@@ -60,11 +60,14 @@ type StateChange struct {
 	NSFWMode       *bool
 	Model          *string
 	PinModel       bool // with Model: --force, so live resolution must not replace it
-	ImageModel     *string
-	ClearHistory   bool
-	NewSession     bool           // signals the TUI to create a new session after clearing chat
-	SessionAction  *SessionAction // Session management operations
-	ShowSelector   *SelectorData  // Show interactive selector
+	// ModelUnverified, with PinModel: no catalog served the forced name, so
+	// nothing will check it and the header must not show it as valid (V5).
+	ModelUnverified bool
+	ImageModel      *string
+	ClearHistory    bool
+	NewSession      bool           // signals the TUI to create a new session after clearing chat
+	SessionAction   *SessionAction // Session management operations
+	ShowSelector    *SelectorData  // Show interactive selector
 }
 
 // SessionAction represents a session management operation.
@@ -359,7 +362,7 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 	// Validate against the catalog already loaded for this provider. This
 	// runs inside the TUI's Update, so it never fetches; with no catalog the
 	// model is accepted unvalidated.
-	modelInfo, err := validateAgainstCatalog(ctx.Provider, ctx.BaseURL, ctx.APIKey, modelName)
+	modelInfo, served, err := validateAgainstCatalog(ctx.Provider, ctx.BaseURL, ctx.APIKey, modelName)
 	if err != nil {
 		// Model not found, but allow if --force
 		if forceModel {
@@ -368,8 +371,9 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 				Message:      fmt.Sprintf("🤖 Model changed to: %s\n⚠️  Model validation unavailable", modelName),
 				ShouldRender: true,
 				StateChange: &StateChange{
-					Model:    &modelName,
-					PinModel: true,
+					Model:           &modelName,
+					PinModel:        true,
+					ModelUnverified: true,
 				},
 			}
 		}
@@ -397,8 +401,9 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 			Message:      fmt.Sprintf("🤖 Model changed to: %s\n⚠️  Skills disabled - model does not support function calling\n\n%s", modelName, modelInfo.Description),
 			ShouldRender: true,
 			StateChange: &StateChange{
-				Model:    &modelName,
-				PinModel: true,
+				Model:           &modelName,
+				PinModel:        true,
+				ModelUnverified: forceModel && !served,
 			},
 		}
 	}
@@ -414,15 +419,17 @@ func handleChatModel(cmd *Command, ctx *CommandContext) *CommandResult {
 		Message:      fmt.Sprintf("🤖 Model changed to: %s%s\n\n%s", modelName, checkmark, modelInfo.Description),
 		ShouldRender: true,
 		StateChange: &StateChange{
-			Model:    &modelName,
-			PinModel: forceModel,
+			Model:           &modelName,
+			PinModel:        forceModel,
+			ModelUnverified: forceModel && !served,
 		},
 	}
 }
 
-// validateAgainstCatalog looks a model up in the provider's loaded catalog.
-// No catalog: accepted, with tool support from the name heuristic.
-func validateAgainstCatalog(provider, baseURL, apiKey, modelID string) (providers.ModelInfo, error) {
+// validateAgainstCatalog looks a model up in the provider's loaded catalog;
+// served reports that the catalog lists it. No catalog: accepted, with tool
+// support from the name heuristic.
+func validateAgainstCatalog(provider, baseURL, apiKey, modelID string) (info providers.ModelInfo, served bool, err error) {
 	cat, ok := providers.CatalogFor(provider)
 	if baseURL != "" {
 		cat, _, ok = providers.MemoryCatalog(provider, baseURL, apiKey)
@@ -434,12 +441,12 @@ func validateAgainstCatalog(provider, baseURL, apiKey, modelID string) (provider
 			Provider:      provider,
 			SupportsTools: providers.NewModelDetection(provider).SupportsTools(modelID),
 			Description:   "Model validation unavailable",
-		}, nil
+		}, false, nil
 	}
 	if served, ok := providers.FindServed(cat, modelID); ok {
 		for _, m := range providers.ModelInfosFromCatalog(provider, []providers.CatalogModel{served}) {
 			m.ID = modelID
-			return m, nil
+			return m, true, nil
 		}
 	}
 	if providers.HasModelEndpoint(provider) {
@@ -451,9 +458,9 @@ func validateAgainstCatalog(provider, baseURL, apiKey, modelID string) (provider
 			Provider:      provider,
 			SupportsTools: providers.NewModelDetection(provider).SupportsTools(modelID),
 			Description:   "Not in the provider's model list; checking it with the provider",
-		}, nil
+		}, false, nil
 	}
-	return providers.ModelInfo{}, fmt.Errorf("model %s not found for provider %s", modelID, provider)
+	return providers.ModelInfo{}, false, fmt.Errorf("model %s not found for provider %s", modelID, provider)
 }
 
 // listAvailableModels fetches and displays available models for current provider.
