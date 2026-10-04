@@ -4,6 +4,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -87,9 +88,19 @@ type InputModel struct {
 	width         int
 	history       []string
 	historyIndex  int
-	tempInput     string   // Stores current input when browsing history
-	suggestions   []string // Current typeahead matches
-	suggestionIdx int      // Which suggestion is highlighted (Tab cycles)
+	tempInput     string    // Stores current input when browsing history
+	suggestions   []string  // Current typeahead matches
+	suggestionIdx int       // Which suggestion is highlighted (Tab cycles)
+	charLimit     int       // Character limit (0: inputCharLimit), see input_limit.go
+	notice        string    // Why the last paste or key was not inserted
+	overflowAt    time.Time // When a burst last overflowed the limit (#358)
+	lastKeyAt     time.Time // When the last key arrived
+	used          int       // Characters in the input, an upper bound (-1: unknown)
+	burstBase     string    // The input before the current burst of keys
+	burstBaseOK   bool      // burstBase is the input this burst started from
+	deferView     bool      // A burst is landing: View may show the last render
+	redrawPending bool      // An inputRedrawMsg is on its way
+	rendered      *inputRender
 }
 
 // NewInputModel creates a new input model using textarea for word-wrap support.
@@ -97,7 +108,12 @@ func NewInputModel() InputModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message or 'help'..."
 	ta.Focus()
-	ta.CharLimit = 4096
+	// No textarea CharLimit: it cuts silently. The input checks every
+	// insertion against its own limit and says when text does not fit
+	// (#358, input_limit.go).
+	ta.CharLimit = 0
+	// Ctrl+V reads the clipboard through that limit too.
+	ta.KeyMap.Paste.SetEnabled(false)
 	ta.SetWidth(80)
 	ta.SetHeight(3) // 3 visible lines — expands visually with wrapping
 	ta.ShowLineNumbers = false
@@ -114,6 +130,8 @@ func NewInputModel() InputModel {
 		textArea:     ta,
 		history:      []string{},
 		historyIndex: -1,
+		charLimit:    inputCharLimit,
+		rendered:     &inputRender{},
 	}
 }
 
@@ -124,6 +142,7 @@ func (m InputModel) SetWidth(width int) InputModel {
 	}
 	m.width = width
 	m.textArea.SetWidth(width - 4) // Account for borders/padding
+	m.deferView = false
 	return m
 }
 
@@ -135,6 +154,8 @@ func (m InputModel) Value() string {
 // SetValue sets the input text.
 func (m InputModel) SetValue(s string) InputModel {
 	m.textArea.SetValue(s)
+	m.valueReplaced()
+	m.deferView = false
 	return m
 }
 
@@ -159,22 +180,67 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if isTextBurst(msg) {
-			// Text, whatever it spells: the word "left" is not the Left
-			// key (#320), so it skips the textarea's key bindings too.
-			m.textArea.InsertString(string(msg.Runes))
-			m.suggestions = computeSuggestions(m.textArea.Value())
-			if m.suggestionIdx >= len(m.suggestions) {
-				m.suggestionIdx = 0
-			}
+	case clipboardPasteMsg:
+		if msg.err != nil {
+			m.notice = "Clipboard unreadable: " + msg.err.Error()
 			return m, nil
 		}
+		m.deferView = false
+		if !m.admit([]rune(msg.text), true, false) {
+			return m, nil
+		}
+		m.textArea.InsertString(msg.text)
+		m.textArea, cmd = m.textArea.Update(msg) // scroll to the cursor
+		m.refreshSuggestions()
+		return m, cmd
+
+	case inputRedrawMsg:
+		// The burst is over (or a frame's worth of it landed): render
+		// afresh, the textarea scrolled to the cursor.
+		m.redrawPending = false
+		m.deferView = false
+		m.textArea, cmd = m.textArea.Update(msg)
+		return m, cmd
+
+	case tea.KeyMsg:
+		m.deferView = false
+		now := keyClock()
+		inPaste := inBurst(m.lastKeyAt) // this key came in the same burst
+		m.lastKeyAt = now
+		if inBurst(m.overflowAt) {
+			// The rest of a paste that did not fit: dropped whole,
+			// Enter included, so no fragment of it lands or is sent.
+			m.overflowAt = now
+			return m, nil
+		}
+		runes := insertedRunes(msg)
+		if runes != nil && !msg.Paste && !inPaste {
+			// A key that may start an unbracketed paste: remember the
+			// input it started from, to restore if the paste overflows.
+			m.burstBase, m.burstBaseOK = m.textArea.Value(), true
+		}
+		if runes != nil && !m.admit(runes, msg.Paste, inPaste) {
+			return m, nil
+		}
+		if isTextBurst(msg) || (runes != nil && !msg.Paste && !msg.Alt && inPaste) {
+			// Text, whatever it spells: the word "left" is not the Left
+			// key (#320), so it skips the textarea's key bindings too.
+			// So does any key inside the burst: the textarea re-wraps
+			// the whole row on every key it handles, which a long
+			// unbracketed paste would pay once per word (#358).
+			m.textArea.InsertString(string(runes))
+			m.refreshSuggestions()
+			return m, m.deferRender()
+		}
 		switch msg.String() {
+		case "ctrl+v":
+			return m, readClipboard
+
 		case "tab":
 			// Complete with the highlighted suggestion
 			if len(m.suggestions) > 0 {
 				m.textArea.SetValue("/" + m.suggestions[m.suggestionIdx] + " ")
+				m.valueReplaced()
 				m.suggestions = nil
 				m.suggestionIdx = 0
 				return m, nil
@@ -189,6 +255,7 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			m.historyIndex = len(m.history)
 			m.tempInput = ""
 			m.textArea.Reset()
+			m.clearNotice()
 			return m, QueueFollowUp(value)
 
 		case "enter":
@@ -203,6 +270,7 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 
 				// Clear input
 				m.textArea.Reset()
+				m.clearNotice()
 
 				// Send message
 				return m, SendMessage(value)
@@ -219,6 +287,7 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 					if m.historyIndex > 0 {
 						m.historyIndex--
 						m.textArea.SetValue(m.history[m.historyIndex])
+						m.valueReplaced()
 					}
 				}
 				return m, nil
@@ -234,6 +303,7 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 					} else {
 						m.textArea.SetValue(m.history[m.historyIndex])
 					}
+					m.valueReplaced()
 				}
 				return m, nil
 			}
@@ -245,12 +315,14 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 				m.suggestions = nil
 				m.suggestionIdx = 0
 			}
+			m.clearNotice()
 			return m, nil
 
 		case "ctrl+u":
 			// Clear input line
 			m.textArea.Reset()
 			m.suggestions = nil
+			m.clearNotice()
 			return m, nil
 
 		case "ctrl+w":
@@ -263,24 +335,29 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			} else {
 				m.textArea.Reset()
 			}
+			m.valueReplaced()
 			return m, nil
 		}
 	}
 
 	// Delegate to textarea for character input, cursor movement, etc.
 	m.textArea, cmd = m.textArea.Update(msg)
+	if k, ok := msg.(tea.KeyMsg); ok && insertedRunes(k) == nil {
+		// A deletion or an edit: the size bound is stale until counted.
+		m.valueReplaced()
+	}
 
 	// Update suggestions based on current value
-	m.suggestions = computeSuggestions(m.textArea.Value())
-	if len(m.suggestions) > 0 && m.suggestionIdx >= len(m.suggestions) {
-		m.suggestionIdx = 0
-	}
+	m.refreshSuggestions()
 
 	return m, cmd
 }
 
 // View renders the input component.
 func (m InputModel) View() string {
+	if m.deferView && m.rendered != nil && m.rendered.ok {
+		return m.rendered.view
+	}
 	inputView := m.textArea.View()
 
 	// Render typeahead suggestions below input
@@ -298,7 +375,13 @@ func (m InputModel) View() string {
 	}
 
 	if hintLine != "" {
-		return inputView + "\n" + hintLine
+		inputView += "\n" + hintLine
+	}
+	if m.notice != "" {
+		inputView += "\n" + inputNoticeStyle.Render("  "+m.notice)
+	}
+	if m.rendered != nil {
+		m.rendered.view, m.rendered.ok = inputView, true
 	}
 	return inputView
 }
