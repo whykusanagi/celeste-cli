@@ -186,20 +186,23 @@ func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 	return m, nil
 }
 
+// mcpPanelKeys is the panel's key-hint footer.
+const mcpPanelKeys = "↑↓ nav · space toggle · c connect · d disconnect · r reconnect · esc close"
+
 // View renders the MCP panel.
 func (m MCPPanelModel) View() string {
 	if !m.active {
 		return ""
 	}
 
+	// The box spans the panel width: a 1-cell border each side around
+	// rows padded (or cut) to the inner width, so every row keeps its
+	// right edge.
 	w := m.width
-	if w < 40 {
+	if w < 44 {
 		w = 44
 	}
-	innerW := w - 6
-	if innerW < 30 {
-		innerW = 30
-	}
+	innerW := w - 2
 
 	borderStyle := lipgloss.NewStyle().Foreground(ColorBorderPurple)
 	titleStyle := lipgloss.NewStyle().Foreground(ColorPurpleNeon).Bold(true)
@@ -210,19 +213,15 @@ func (m MCPPanelModel) View() string {
 	cursorStyle := lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true)
 	footerStyle := lipgloss.NewStyle().Foreground(ColorTextMuted)
 
-	hRule := strings.Repeat("─", innerW)
-	title := " MCP Servers "
+	edge := borderStyle.Render("│")
+	row := func(content string) string { return edge + padRight(content, innerW) + edge }
 
-	// Top border
-	topFill := innerW - len(title)
+	title := " MCP Servers "
+	topFill := w - 3 - lipgloss.Width(title)
 	if topFill < 0 {
 		topFill = 0
 	}
-	top := borderStyle.Render("╭─") + titleStyle.Render(title) + borderStyle.Render(strings.Repeat("─", topFill)+"╮")
-
-	// Server lines
-	var lines []string
-	lines = append(lines, top)
+	lines := []string{borderStyle.Render("╭─") + titleStyle.Render(title) + borderStyle.Render(strings.Repeat("─", topFill)+"╮")}
 
 	totalTools := 0
 	for i, srv := range m.servers {
@@ -247,32 +246,19 @@ func (m MCPPanelModel) View() string {
 			prefix = cursorStyle.Render("> ")
 			srvName = cursorStyle.Render(srv.Name)
 		}
-
-		line := fmt.Sprintf("%s%s %s  %s  %s",
-			borderStyle.Render("│"),
-			prefix,
-			dot,
-			srvName,
-			infoStyle.Render(detail),
-		)
-		lines = append(lines, line)
+		lines = append(lines, row(fmt.Sprintf("%s %s  %s  %s", prefix, dot, srvName, infoStyle.Render(detail))))
 	}
 
 	if len(m.servers) == 0 {
-		lines = append(lines, borderStyle.Render("│")+"  "+infoStyle.Render("No MCP servers configured"))
+		lines = append(lines, row("  "+infoStyle.Render("No MCP servers configured")))
 	}
 
-	// Blank + summary line
-	lines = append(lines, borderStyle.Render("│"))
-	summaryText := fmt.Sprintf("  Total: %d external tools available", totalTools)
-	lines = append(lines, borderStyle.Render("│")+infoStyle.Render(summaryText))
+	lines = append(lines, row(""))
+	lines = append(lines, row(infoStyle.Render(fmt.Sprintf("  Total: %d external tools available", totalTools))))
+	lines = append(lines, borderStyle.Render("╰"+strings.Repeat("─", innerW)+"╯"))
 
-	// Bottom border
-	bot := borderStyle.Render("╰" + hRule + "──╯")
-	lines = append(lines, bot)
-
-	// Footer with keybindings
-	lines = append(lines, footerStyle.Render("[↑/↓] Nav  [c] Connect  [d] Disconnect  [r] Reconnect  [Space] Toggle  [Esc] Close"))
+	// Key hints, short enough for 80 columns (cut with "…" below that).
+	lines = append(lines, footerStyle.Render(fitWidth(mcpPanelKeys, w)))
 
 	return strings.Join(lines, "\n")
 }
