@@ -48,11 +48,14 @@ type AppModel struct {
 	mcpPanel         MCPPanelModel
 
 	// Application state
-	width             int
-	height            int
-	ready             bool
-	nsfwMode          bool
-	streaming         bool
+	width     int
+	height    int
+	ready     bool
+	nsfwMode  bool
+	streaming bool
+	// mediaInFlight is set while a Venice media generation runs; it does not
+	// stream, so its progress status text is guarded by this instead.
+	mediaInFlight     bool
 	endpoint          string // Current endpoint (openai, venice, grok, etc.)
 	safeEndpoint      string // Endpoint to return to when leaving NSFW mode
 	model             string // Current model name
@@ -479,10 +482,12 @@ func (m AppModel) statusSessionName() string {
 // The skills segment is also read here, from the tools a turn would offer
 // (V1: it used to copy the skills panel, which only View() configured), and
 // so is the session name (V16: it used to wait for the next git poll).
-func (m AppModel) statusLineView() string {
+// View passes in the skills count it already computed: building the tool list
+// converts every tool schema, too costly to do twice per frame.
+func (m AppModel) statusLineView(skillsCount int) string {
 	return m.statusLine.
 		SetPlan(m.planModeOn()).
-		SetSkills(m.toolsOffered(), len(m.getAvailableSkills())).
+		SetSkills(m.toolsOffered(), skillsCount).
 		SetSession(m.statusSessionName()).
 		View()
 }
@@ -890,7 +895,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A status text ("Selection cancelled", "Model changed to …")
 		// belongs to the command that set it; the next one starts from
 		// Ready and sets its own (V17).
-		if content != "" && !m.streaming && !m.turnActive() {
+		if content != "" && !m.streaming && !m.turnActive() && !m.mediaInFlight {
 			m.status = m.status.SetText("Ready")
 		}
 
@@ -1801,6 +1806,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat = m.chat.AddUserMessage(content)
 				m.chat = m.chat.AddAssistantMessage(fmt.Sprintf("🎨 Generating %s... please wait", mediaType))
 				m.status = m.status.SetText(fmt.Sprintf("⏳ Venice.ai %s generation in progress...", mediaType))
+				m.mediaInFlight = true
 
 				// Add messages to session for persistence
 				if m.currentSession != nil {
@@ -1970,6 +1976,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MediaResultMsg:
 		// Handle media generation result
 		LogInfo(fmt.Sprintf("Received MediaResultMsg: success=%v, mediaType=%s", msg.Success, msg.MediaType))
+		m.mediaInFlight = false
 		if msg.Success {
 			var resultText string
 			if msg.URL != "" {
@@ -2696,7 +2703,7 @@ func (m AppModel) View() string {
 	}
 
 	// Segmented status line (git / project / model / effort / perms / session / skills)
-	sections = append(sections, m.statusLineView())
+	sections = append(sections, m.statusLineView(skillsCount))
 
 	// Contextual key hints
 	hints := hintsFor(m.viewMode, m.mcpPanel.Active())

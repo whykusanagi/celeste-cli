@@ -32,3 +32,27 @@ func TestStaleStatusTextClearsOnNextCommand(t *testing.T) {
 		})
 	}
 }
+
+// A Venice media generation runs without m.streaming; a command sent while it
+// is in flight must not reset its progress text to Ready (V17 review).
+func TestMediaGenerationStatusSurvivesNextCommand(t *testing.T) {
+	m := newAuditApp(t, &fakeToolLLMClient{}, 120, 40)
+	m.nsfwMode = true
+	m = auditSend(t, m, "image: a lighthouse at dusk")
+	if !m.mediaInFlight {
+		t.Fatal("media command did not mark generation in flight")
+	}
+	m = auditSend(t, m, "/costs")
+	if row := lastRow(auditView(m)); !strings.Contains(row, "generation in progress") {
+		t.Errorf("status row = %q, want the generation progress text", row)
+	}
+	updated, _ := m.Update(MediaResultMsg{Success: true, MediaType: "image", URL: "https://example.invalid/x.png"})
+	m = updated.(AppModel)
+	if m.mediaInFlight {
+		t.Error("media result did not clear the in-flight flag")
+	}
+	m = auditSend(t, m, "/costs")
+	if row := lastRow(auditView(m)); !strings.Contains(row, "Ready") {
+		t.Errorf("after the result status row = %q, want Ready", row)
+	}
+}
