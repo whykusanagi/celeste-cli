@@ -95,7 +95,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	overhead := used - compact.Estimate(msgs)
 	// Shadow reports inline: errOut may be a caller's bytes.Buffer, and the
 	// run must not outlive its output.
-	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
+	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Overhead: overhead, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
 		fmt.Fprintf(r.errOut, "[agent] %s\n", line)
 	}, false)
 	pruned, res := compact.Prune(msgs, opts, r.pruned)
@@ -109,12 +109,19 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 
 	// Next rung: summarize when pruning wasn't enough, or when a forced
 	// compaction (after an overflow) found nothing to prune.
-	threshold := compact.Threshold(r.budget.ModelLimit)
+	// Decided on the history beyond the fixed prefix, and only when there
+	// is history a summary can replace (L2).
+	threshold := compact.ThresholdFor(r.budget.ModelLimit, overhead)
 	next := compact.Estimate(msgs) + overhead
-	stillOver := next > threshold
+	stillOver := compact.NeedsSummary(msgs, r.budget.ModelLimit, next)
 	// ceiling leaves the reply room: halfway from the threshold to the
 	// window, so it never takes more than half the threshold's reserve.
 	ceiling := threshold + (r.budget.ModelLimit-threshold)/2
+	if next > ceiling {
+		// The reply has no room: try whatever a summary can free, even
+		// a small head (Summarize refuses one that would not shrink).
+		stillOver = true
+	}
 	if unseen := meter.Unseen(msgs); stillOver && !force && unseen > 0 && unseen <= len(msgs) &&
 		compact.Estimate(msgs[:len(msgs)-unseen])+overhead <= threshold && next <= ceiling {
 		// What keeps the history over is what the model has not seen yet:
@@ -126,7 +133,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
 		sctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, State: r.renderState()}, summarize)
+		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, Overhead: overhead, State: r.renderState()}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
 			// Always reported, not only in verbose output (TUI parity).

@@ -380,6 +380,11 @@ type TUIClientAdapter struct {
 	// compactMu serializes compactWith: the loop's compactor calls it on
 	// a run goroutine, /context compact on the Update goroutine.
 	compactMu sync.Mutex
+	// overhead is the fixed prefix (system prompt, tool schemas, or the
+	// provider's surplus) compactWith last measured. SummarizeContext,
+	// on a tea.Cmd goroutine, sizes its kept tail with it, so the summary
+	// the compactor asked for keeps what NeedsSummary assumed (L2).
+	overhead atomic.Int64
 	// Running turns, so shutdown can wait for them before the Env closes.
 	runsMu  sync.Mutex
 	running int
@@ -713,11 +718,14 @@ func (a *TUIClientAdapter) compactWith(ctx context.Context, msgs []tui.ChatMessa
 			a.pruned = store
 		}
 	}
-	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Unseen: unseen, Force: force}, tui.LogInfo, true)
+	a.overhead.Store(int64(overhead))
+	opts, report := compact.WithJev(ctx, jc, jevMode, msgs, compact.Options{Window: window, Used: used, Overhead: overhead, Unseen: unseen, Force: force}, tui.LogInfo, true)
 	after, res := compact.Prune(msgs, opts, a.pruned)
 	report(res)
+	// Over the overhead-aware threshold with history a summary can
+	// replace: never "over" on the fixed prefix alone (L2).
 	out := tui.CompactOutcome{
-		StillOver: compact.Estimate(after)+overhead > compact.Threshold(window),
+		StillOver: compact.NeedsSummary(after, window, compact.Estimate(after)+overhead),
 	}
 	if !res.Pruned() {
 		return out
@@ -834,7 +842,7 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	if a.state != nil {
 		state = a.state()
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, State: state}, hooked)
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, Overhead: int(a.overhead.Load()), State: state}, hooked)
 	if blocked != "" {
 		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
 	}

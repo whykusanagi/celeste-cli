@@ -491,3 +491,31 @@ func TestAgentDoesNotRecompactAfterAPruneWithoutNewUsage(t *testing.T) {
 		}
 	}
 }
+
+// L2: a 32k run whose system prompt and tool schemas are ~16k must not
+// summarize (or try to) on every call while the history is short.
+func TestAgentNoSummaryLoopAt32k(t *testing.T) {
+	runner, _ := newCompactionRunner(t, &windowBackend{}, 32_768)
+	runner.budget.SystemPromptTokens, runner.budget.ToolDefinitionTokens = 7_500, 9_000
+	var summaries int
+	runner.summarize = func(context.Context, string, string) (string, error) {
+		summaries++
+		return "## Goal\nread every file", nil
+	}
+	msgs := []tui.ChatMessage{{Role: "user", Content: "fix the bug"}}
+	c := &runCompactor{r: runner, meter: compact.NewMeter(0)}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("t%d", i)
+		msgs = append(msgs,
+			tui.ChatMessage{Role: "assistant", ToolCalls: []tui.ToolCallInfo{{ID: id, Name: "read_file", Arguments: fmt.Sprintf(`{"path":"%s.go"}`, id)}}},
+			tui.ChatMessage{Role: "tool", ToolCallID: id, Name: "read_file", Content: strings.Repeat("x", 5_600)})
+		var usage *llm.TokenUsage
+		if i > 0 {
+			usage = &llm.TokenUsage{PromptTokens: compact.Estimate(msgs[:len(msgs)-2]) + 16_500}
+		}
+		msgs, _, _ = c.Compact(context.Background(), msgs, usage, false)
+	}
+	if summaries != 0 {
+		t.Fatalf("summarized %d times with ~8.5k of history under a 16.5k prefix", summaries)
+	}
+}

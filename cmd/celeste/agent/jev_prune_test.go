@@ -54,8 +54,10 @@ func TestAgentJevPruneOnElidesTheLeastNeeded(t *testing.T) {
 	)
 	r, _ := steerRunner(t, srv, func(c *config.Config) { c.JevPrune, c.ContextLimit = "on", 40_000 })
 	r.jev = &jev.Client{Key: "k", URL: jevSrv.URL}
+	// ~7.5k tokens each: three put the run over the 40k window's
+	// overhead-aware threshold (L2), not only the prefix-blind one.
 	for i := 0; i < 3; i++ {
-		os.WriteFile(filepath.Join(r.options.Workspace, fmt.Sprintf("f%d.txt", i)), []byte(strings.Repeat("word ", 5200)), 0o644)
+		os.WriteFile(filepath.Join(r.options.Workspace, fmt.Sprintf("f%d.txt", i)), []byte(strings.Repeat("word ", 6000)), 0o644)
 	}
 	os.WriteFile(filepath.Join(r.options.Workspace, "f3.txt"), []byte("small"), 0o644)
 	if _, err := r.RunGoal(context.Background(), "read f0, f1 and f2"); err != nil {
