@@ -201,9 +201,15 @@ func (m MemoryManagerModel) View() string {
 	sb.WriteString("\n\n")
 
 	if len(m.memories) == 0 {
-		sb.WriteString(memMutedStyle.Render("  No memories saved for this project.\n"))
-		sb.WriteString(memMutedStyle.Render("  Celeste will save memories automatically during conversation.\n"))
-		sb.WriteString(memMutedStyle.Render("  Or use: celeste remember \"<text>\"\n"))
+		// One Render per line: a newline inside Render pads the next line
+		// to the first one's width, and each line then starts further right.
+		for _, ln := range []string{
+			"  No memories saved for this project.",
+			"  Celeste will save memories automatically during conversation.",
+			"  Or use: celeste remember \"<text>\"",
+		} {
+			sb.WriteString(memMutedStyle.Render(ln) + "\n")
+		}
 	}
 
 	// Memory list
@@ -283,7 +289,15 @@ func (m MemoryManagerModel) View() string {
 	footer := " [↑/↓] Navigate  [Enter] View  [D] Delete  [P] Purge stale (>30d)  [Q/Esc] Back"
 	sb.WriteString(memFooterStyle.Render(footer))
 
-	return sb.String()
+	// No row may run past the terminal: it would wrap and push the list.
+	if m.width <= 0 {
+		return sb.String()
+	}
+	lines := strings.Split(sb.String(), "\n")
+	for i, ln := range lines {
+		lines[i] = fitWidth(ln, m.width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func memTypeBadge(t string) string {

@@ -15,6 +15,7 @@ import (
 // SessionEntry is a display-ready session summary.
 type SessionEntry struct {
 	ID           string
+	Name         string // set by /session rename, /fork and the first prompt
 	Preview      string // first user message, truncated
 	MessageCount int
 	CreatedAt    time.Time
@@ -30,6 +31,8 @@ type SessionPanelModel struct {
 	height   int
 	selected string // ID of selected session (empty = none)
 	deleted  string // ID of deleted session
+	current  string // ID of the chat's own session: marked, never deleted
+	notice   string // shown in place of the key hints until the next key
 	err      error
 }
 
@@ -51,17 +54,15 @@ func (m *SessionPanelModel) loadSessions(workDir string) {
 
 	mine, others := config.SortForWorkspace(sessions, workDir)
 	sessions = append(mine, others...)
+	// Every session /session list shows, the ones with no messages yet
+	// included (a fresh fork, a new chat), so the two never disagree.
 	m.entries = make([]SessionEntry, 0, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
 
-		// Skip empty sessions
-		if len(s.Messages) == 0 {
-			continue
-		}
-
 		entry := SessionEntry{
 			ID:           s.ID,
+			Name:         s.Name,
 			MessageCount: len(s.Messages),
 			CreatedAt:    s.CreatedAt,
 			UpdatedAt:    s.UpdatedAt,
@@ -71,16 +72,16 @@ func (m *SessionPanelModel) loadSessions(workDir string) {
 		// Extract first user message as preview
 		for _, msg := range s.Messages {
 			if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
-				preview := strings.ReplaceAll(msg.Content, "\n", " ")
-				if len(preview) > 80 {
-					preview = preview[:77] + "..."
-				}
-				entry.Preview = preview
+				entry.Preview = strings.Join(strings.Fields(msg.Content), " ")
 				break
 			}
 		}
 		if entry.Preview == "" {
-			entry.Preview = "(no user messages)"
+			if len(s.Messages) == 0 {
+				entry.Preview = "(no messages yet)"
+			} else {
+				entry.Preview = "(no user messages)"
+			}
 		}
 
 		m.entries = append(m.entries, entry)
@@ -100,6 +101,13 @@ func (m SessionPanelModel) SetHeight(h int) SessionPanelModel {
 	return m
 }
 
+// WithCurrent marks id as the chat's own session: its row says (current)
+// and d or Backspace on it deletes nothing.
+func (m SessionPanelModel) WithCurrent(id string) SessionPanelModel {
+	m.current = id
+	return m
+}
+
 // Selected returns the ID of the session the user chose (empty if none).
 func (m SessionPanelModel) Selected() string { return m.selected }
 
@@ -110,6 +118,7 @@ func (m SessionPanelModel) Deleted() string { return m.deleted }
 func (m SessionPanelModel) Update(msg tea.Msg) (SessionPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		m.notice = ""
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
@@ -120,21 +129,23 @@ func (m SessionPanelModel) Update(msg tea.Msg) (SessionPanelModel, tea.Cmd) {
 				m.cursor++
 			}
 		case "pgup":
-			m.cursor -= 10
+			m.cursor -= m.pageSize()
 			if m.cursor < 0 {
 				m.cursor = 0
 			}
 		case "pgdown":
-			m.cursor += 10
+			m.cursor += m.pageSize()
 			if m.cursor >= len(m.entries) {
-				m.cursor = len(m.entries) - 1
+				m.cursor = max(len(m.entries)-1, 0)
 			}
 		case "enter":
 			if len(m.entries) > 0 {
 				m.selected = m.entries[m.cursor].ID
 			}
 		case "d", "delete", "backspace":
-			if len(m.entries) > 0 {
+			if len(m.entries) > 0 && m.current != "" && m.entries[m.cursor].ID == m.current {
+				m.notice = "That is the current session; switch away from it to delete it."
+			} else if len(m.entries) > 0 {
 				m.deleted = m.entries[m.cursor].ID
 				// Remove from display
 				m.entries = append(m.entries[:m.cursor], m.entries[m.cursor+1:]...)
@@ -147,19 +158,52 @@ func (m SessionPanelModel) Update(msg tea.Msg) (SessionPanelModel, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the session picker.
+// View renders the session picker. It fills the height it was given, so
+// the input and the bars below it stay at the bottom of the screen.
 func (m SessionPanelModel) View() string {
+	return m.fill(m.body())
+}
+
+// fill pads (or cuts) the picker to its height and cuts each row to its width.
+func (m SessionPanelModel) fill(lines []string) string {
+	if m.height > 0 {
+		if len(lines) > m.height {
+			lines = lines[:m.height]
+		}
+		for len(lines) < m.height {
+			lines = append(lines, "")
+		}
+	}
+	if m.width > 0 {
+		for i, ln := range lines {
+			lines[i] = fitWidth(ln, m.width)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// sessionRowsPerEntry is one meta row (age, messages, ID) and one preview row.
+const sessionRowsPerEntry = 2
+
+// sessionChromeRows are the 3 title rows and the 2 "more" rows.
+const sessionChromeRows = 5
+
+// pageSize is how many entries the picker shows at once; PgUp/PgDn move
+// the cursor by that much.
+func (m SessionPanelModel) pageSize() int {
+	if m.height <= 0 {
+		return 10
+	}
+	return max((m.height-sessionChromeRows)/sessionRowsPerEntry, 1)
+}
+
+func (m SessionPanelModel) body() []string {
 	if m.err != nil {
-		return fmt.Sprintf("Error loading sessions: %v", m.err)
+		return []string{fmt.Sprintf("Error loading sessions: %v", m.err)}
 	}
 
 	if len(m.entries) == 0 {
-		return "No saved sessions.\n\nPress q or Esc to close."
-	}
-
-	w := m.width - 4
-	if w < 40 {
-		w = 40
+		return []string{"No saved sessions.", "", "Press q or Esc to close."}
 	}
 
 	titleStyle := lipgloss.NewStyle().
@@ -169,17 +213,18 @@ func (m SessionPanelModel) View() string {
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6b7280"))
 
-	var sb strings.Builder
-	sb.WriteString(titleStyle.Render(fmt.Sprintf("Sessions (%d)", len(m.entries))))
-	sb.WriteString("\n")
-	sb.WriteString(hintStyle.Render("↑/↓ navigate  PgUp/PgDn page  Enter resume  d delete  Esc close"))
-	sb.WriteString("\n\n")
-
-	// Visible window — show a page of entries around the cursor
-	pageSize := 10
-	if m.height > 30 {
-		pageSize = (m.height - 8) / 3 // 3 lines per entry (meta + preview + gap)
+	hint := hintStyle.Render("↑/↓ navigate  PgUp/PgDn page  Enter resume  d delete  Esc close")
+	if m.notice != "" {
+		hint = lipgloss.NewStyle().Foreground(ColorError).Render(m.notice)
 	}
+	lines := []string{
+		titleStyle.Render(fmt.Sprintf("Sessions (%d)", len(m.entries))),
+		hint,
+		"",
+	}
+
+	// A page of entries around the cursor.
+	pageSize := m.pageSize()
 
 	start := 0
 	if m.cursor >= pageSize {
@@ -200,6 +245,11 @@ func (m SessionPanelModel) View() string {
 	previewStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#d1d5db"))
 
+	previewW := m.width - 4
+	if previewW < 20 {
+		previewW = 76
+	}
+
 	for i := start; i < end; i++ {
 		e := m.entries[i]
 		cursor := "  "
@@ -212,31 +262,31 @@ func (m SessionPanelModel) View() string {
 			pStyle = selectedStyle
 		}
 
-		age := formatAge(e.UpdatedAt)
 		here := ""
 		if e.ThisProject {
 			here = "  this project"
 		}
-		meta := style.Render(fmt.Sprintf("%s%s  %d msgs  %s%s", cursor, age, e.MessageCount, e.ID[:8], here))
-
-		maxPreview := w - 4
-		preview := e.Preview
-		if len(preview) > maxPreview {
-			preview = preview[:maxPreview-3] + "..."
+		if m.current != "" && e.ID == m.current {
+			here += "  (current)"
 		}
-		previewLine := "    " + pStyle.Render(preview)
+		// The whole ID: rows from one day share their leading digits, and
+		// /session resume takes the ID as shown.
+		lines = append(lines, style.Render(fmt.Sprintf("%s%s  %d msgs  %s%s", cursor, formatAge(e.UpdatedAt), e.MessageCount, e.ID, here)))
 
-		sb.WriteString(meta + "\n" + previewLine + "\n")
+		preview := e.Preview
+		if e.Name != "" && e.Name != e.Preview {
+			preview = e.Name + " · " + e.Preview
+		}
+		lines = append(lines, "    "+pStyle.Render(fitWidth(preview, previewW)))
 	}
 
 	if start > 0 {
-		sb.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d more above\n", start)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  ↑ %d more above", start)))
 	}
 	if end < len(m.entries) {
-		sb.WriteString(dimStyle.Render(fmt.Sprintf("  ↓ %d more below\n", len(m.entries)-end)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  ↓ %d more below", len(m.entries)-end)))
 	}
-
-	return sb.String()
+	return lines
 }
 
 func formatAge(t time.Time) string {
