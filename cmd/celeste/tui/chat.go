@@ -551,9 +551,9 @@ func (m ChatModel) renderMessageOpt(msg ChatMessage, width int, skipMarkdown boo
 	// Try markdown rendering for assistant messages
 	var styledContent string
 	if msg.plain {
-		// As written: lipgloss wraps long lines but keeps the indentation
-		// and column alignment that wrapText would collapse.
-		styledContent = MessageRoleStyle(msg.Role).Width(width - 2).Render(msg.Content)
+		// As written, never through markdown; wrapText keeps the indent
+		// and column alignment of rows wider than the chat.
+		styledContent = MessageRoleStyle(msg.Role).Render(wrapText(msg.Content, width-2))
 	} else if !skipMarkdown && (msg.Role == "assistant" || msg.Role == "system") {
 		rendered := renderMarkdown(msg.Content, width-2)
 		if rendered != msg.Content {
@@ -617,61 +617,109 @@ func (m ChatModel) renderFunctionCall(call FunctionCall, width int) string {
 	return FunctionCallStyle.Width(width - 4).Render(content)
 }
 
-// wrapText wraps text to the specified width.
+// wrapText wraps text to the specified width. A line that fits is kept as
+// written; a longer one wraps with a hanging indent (wrapLine), so command
+// help and tables keep their indent and columns (#350).
 func wrapText(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
-
-	var result strings.Builder
 	lines := strings.Split(text, "\n")
-
 	for i, line := range lines {
-		if i > 0 {
-			result.WriteString("\n")
-		}
-
-		// A line that already fits is kept as written, so the column
-		// alignment of command help and tables survives.
 		if lipgloss.Width(line) <= width {
-			result.WriteString(strings.TrimRight(line, " \t"))
+			lines[i] = strings.TrimRight(line, " \t")
 			continue
 		}
-
-		words := strings.Fields(line)
-		if len(words) == 0 {
-			continue
-		}
-
-		currentLine := ""
-		for _, word := range words {
-			// A word wider than the chat (a path from /init or /export)
-			// breaks across rows instead of being cut at the edge.
-			if lipgloss.Width(word) > width {
-				if currentLine != "" {
-					result.WriteString(currentLine + "\n")
-				}
-				parts := breakWord(word, width)
-				for _, p := range parts[:len(parts)-1] {
-					result.WriteString(p + "\n")
-				}
-				currentLine = parts[len(parts)-1]
-				continue
-			}
-			switch {
-			case currentLine == "":
-				currentLine = word
-			case lipgloss.Width(currentLine)+1+lipgloss.Width(word) <= width:
-				currentLine += " " + word
-			default:
-				result.WriteString(currentLine + "\n")
-				currentLine = word
-			}
-		}
-		result.WriteString(currentLine)
+		lines[i] = wrapLine(line, width)
 	}
+	return strings.Join(lines, "\n")
+}
 
-	return result.String()
+// wrapLine wraps one line wider than width. The text up to its hanging
+// column stays as written on the first row and the rest wraps beside it;
+// continuation rows are indented to that column. The hanging column is the
+// start of the rightmost column (text after a run of two or more spaces)
+// in the left half of the row, or else the line's own indent: a two-column
+// help row hangs under its description, a table row under its last column,
+// and prose keeps its indent.
+func wrapLine(line string, width int) string {
+	head, tail := splitHang(line, width)
+	col := lipgloss.Width(head)
+	rows := wrapWords(strings.Fields(tail), width-col)
+	if len(rows) == 0 {
+		return strings.TrimRight(head, " \t")
+	}
+	pad := strings.Repeat(" ", col)
+	for i := range rows {
+		if i == 0 {
+			rows[i] = head + rows[i]
+		} else {
+			rows[i] = pad + rows[i]
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
+// splitHang splits line at its hanging column (see wrapLine): head is kept
+// as written, tail is the text that wraps.
+func splitHang(line string, width int) (head, tail string) {
+	body := strings.TrimLeft(line, " ")
+	indent := len(line) - len(body)
+	limit := width / 2
+	cut := 0
+	if lipgloss.Width(line[:indent]) <= limit {
+		cut = indent
+	}
+	for i := indent; i < len(line); {
+		if line[i] != ' ' {
+			i++
+			continue
+		}
+		j := i
+		for j < len(line) && line[j] == ' ' {
+			j++
+		}
+		if j-i >= 2 && j < len(line) {
+			if lipgloss.Width(line[:j]) > limit {
+				break
+			}
+			cut = j
+		}
+		i = j
+	}
+	return line[:cut], line[cut:]
+}
+
+// wrapWords fills rows of at most width cells with words. A word wider than
+// the row (a path from /init or /export) breaks across rows instead of
+// being cut at the edge.
+func wrapWords(words []string, width int) []string {
+	var rows []string
+	cur := ""
+	for _, word := range words {
+		if lipgloss.Width(word) > width {
+			if cur != "" {
+				rows = append(rows, cur)
+			}
+			parts := breakWord(word, width)
+			rows = append(rows, parts[:len(parts)-1]...)
+			cur = parts[len(parts)-1]
+			continue
+		}
+		switch {
+		case cur == "":
+			cur = word
+		case lipgloss.Width(cur)+1+lipgloss.Width(word) <= width:
+			cur += " " + word
+		default:
+			rows = append(rows, cur)
+			cur = word
+		}
+	}
+	if cur != "" {
+		rows = append(rows, cur)
+	}
+	return rows
 }
 
 // breakWord splits a word wider than width (it may carry ANSI styling)
