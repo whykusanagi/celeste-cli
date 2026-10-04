@@ -494,3 +494,11 @@ func TestOnlyOpenAIDeclaresResponses(t *testing.T) {
 		}
 	}
 }
+
+// Anthropic usage is counted from its native usage blocks, cache tokens
+// included (#193), so `/providers info anthropic` says so (#314).
+func TestAnthropicTracksTokens(t *testing.T) {
+	caps, ok := GetProvider("anthropic")
+	assert.True(t, ok)
+	assert.True(t, caps.SupportsTokenTracking)
+}

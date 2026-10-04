@@ -796,6 +796,79 @@ func handleClear(cmd *Command) *CommandResult {
 	}
 }
 
+// chatCommandsHelp lists every slash command, grouped. /help shows it in both
+// modes; help_coverage_test checks it against the dispatch tables (#313).
+const chatCommandsHelp = `Chat:
+  /clear             Clear conversation history
+  /help              Show this help message
+  /menu              Open the command menu
+  /session           Open the session picker
+  /session <sub>     new, resume, list, clear, merge, info, rename, delete
+  /endpoint <name>   Switch AI provider (openai, venice, grok, google)
+  /persona           Personality sliders (flirt, warmth, speech, lewdness)
+  /user              Show current user identity
+  /user <name>       Set who Celeste addresses you as (default: Summoner)
+  /user reset        Reset to default (Summoner)
+  /confirm           Toggle confirm mode (propose actions before executing)
+  /agents            List spawned subagents and their status
+  /agents resume <id> Resume a failed subagent from its last checkpoint
+  /agents kill <id|name> Cancel a specific in-flight subagent (id, task id, or on-screen name)
+  /voice             Show ElevenLabs TTS config
+  /voice list        List available ElevenLabs voices
+  /voice set-key     Set ElevenLabs API key
+  /voice set-voice   Set default voice ID
+  /config             List available config profiles
+  /config <name>      Load a named config profile
+  /config set-key <k> Set API key
+  /config set-model   Set LLM model (e.g. grok-build-0.1)
+  /config set-url     Set API base URL
+  /model <name>      Change the model
+  /providers         List AI providers (--tools, info <name>, current)
+
+Project:
+  /memories          List project memories
+  /grimoire          Show project grimoire and AGENTS.md / CLAUDE.md
+  /init [agents]     Create .grimoire (and AGENTS.md) for this project
+  /index             Show code graph status
+  /graph             Browse the code graph
+  /index rebuild     Full re-index (populates LSH + BM25)
+  /index update      Incremental re-index (changed files only)
+  /index snapshot    Save graph state for later diffing
+  /index diff        Show what changed since last snapshot
+  /index impact      Blast radius analysis (changed symbols + callers)
+  /plan [goal]       Plan mode: read-only tools until you approve a plan
+  /plan off          Leave plan mode
+  /plan show         Show the approved plan and its todo status
+  /context           Show context/token usage
+  /compact [focus]   Summarize older history to free context
+  /handoff [focus]   Summarize this session into a new one
+  /diff              List the files this session changed
+  /undo              Undo the last file change (repeat to go back)
+  /rewind [n]        Take back the last n prompts and the file changes they made
+  /fork              Continue in a copy of this session (the original is kept)
+  /costs             Show session costs
+  /stats             Show usage statistics
+  /export [format]   Export the session (json, md, csv)
+  /collections       Manage xAI collections
+  /mcp               Show MCP server status and tools
+
+Agent & Orchestrator:
+  /agent <goal>      Run autonomous task loop
+  /agent list-runs   List checkpointed agent runs
+  /agent resume <id> Resume an existing agent run
+  /orch <goal>       Multi-model orchestrated run (also /orchestrate)
+
+Settings:
+  /effort <level>    Set reasoning effort (off/low/medium/high/max)
+  /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
+  /safe              Return to safe mode
+  /set-model [model] List or set the chat model (the image model in NSFW mode)
+  /list-models       List models (also /image-model, the old name for /set-model)
+
+Tools:
+  /tools, /skills    Browse available tools interactively
+`
+
 // handleHelp handles the /help command.
 func handleHelp(cmd *Command, ctx *CommandContext) *CommandResult {
 	var helpText string
@@ -827,24 +900,10 @@ Media Generation Commands:
   image[model]: <prompt>       Use specific model for one generation
                                Example: image[nano-banana-pro]: futuristic city
 
-Model Management:
-  /set-model <model>           Set default image generation model
-                               Example: /set-model wai-Illustrious
-                               Run without args to see all models
-
-Chat Commands:
-  /safe                        Return to safe mode (OpenAI)
-  /clear                       Clear conversation history
-  /diff                        List the files this session changed
-  /undo                        Undo the last file change (repeat to go back)
-  /rewind [n]                  Take back the last n prompts and the file changes they made
-  /fork                        Continue in a copy of this session (the original is kept)
-  /help                        Show this help message
-
 Current Configuration:
   • Endpoint: Venice.ai (https://api.venice.ai/api/v1)
   • Chat Model: the one Venice serves as its default
-  • Image Model: Use /set-model to configure
+  • Image Model: /set-model <model> sets it (e.g. wai-Illustrious); no args lists them
   • Downloads: ~/Downloads
   • Quality: 40 steps, CFG 12.0, PNG format
 
@@ -867,71 +926,11 @@ Image Quality Parameters (defaults):
 Configure downloads_dir in ~/.celeste/skills.json to change save location.
 
 Tip: Ask the uncensored LLM to write detailed NSFW prompts, then use
-"image: [paste prompt]" to generate from that description!`
+"image: [paste prompt]" to generate from that description!` +
+			"\n\nEvery chat command works in NSFW mode too:\n\n" + chatCommandsHelp
 	} else {
 		// Safe Mode Help
-		helpText = versionHeader + `Available Commands:
-
-Chat:
-  /clear             Clear conversation history
-  /help              Show this help message
-  /endpoint <name>   Switch AI provider (openai, venice, grok, google)
-  /persona           Personality sliders (flirt, warmth, speech, lewdness)
-  /user              Show current user identity
-  /user <name>       Set who Celeste addresses you as (default: Summoner)
-  /user reset        Reset to default (Summoner)
-  /confirm           Toggle confirm mode (propose actions before executing)
-  /agents            List spawned subagents and their status
-  /agents resume <id> Resume a failed subagent from its last checkpoint
-  /agents kill <id|name> Cancel a specific in-flight subagent (id, task id, or on-screen name)
-  /voice             Show ElevenLabs TTS config
-  /voice list        List available ElevenLabs voices
-  /voice set-key     Set ElevenLabs API key
-  /voice set-voice   Set default voice ID
-  /config             List available config profiles
-  /config <name>      Load a named config profile
-  /config set-key <k> Set API key
-  /config set-model   Set LLM model (e.g. grok-build-0.1)
-  /config set-url     Set API base URL
-  /model <name>      Change the model
-
-Project:
-  /memories          List project memories
-  /grimoire          Show project grimoire and AGENTS.md / CLAUDE.md
-  /init [agents]     Create .grimoire (and AGENTS.md) for this project
-  /index             Show code graph status
-  /index rebuild     Full re-index (populates LSH + BM25)
-  /index update      Incremental re-index (changed files only)
-  /index snapshot    Save graph state for later diffing
-  /index diff        Show what changed since last snapshot
-  /index impact      Blast radius analysis (changed symbols + callers)
-  /plan [goal]       Plan mode: read-only tools until you approve a plan
-  /plan off          Leave plan mode
-  /plan show         Show the approved plan and its todo status
-  /context           Show context/token usage
-  /compact [focus]   Summarize older history to free context
-  /handoff [focus]   Summarize this session into a new one
-  /diff              List the files this session changed
-  /undo              Undo the last file change (repeat to go back)
-  /rewind [n]        Take back the last n prompts and the file changes they made
-  /fork              Continue in a copy of this session (the original is kept)
-  /costs             Show session costs
-
-Agent & Orchestrator:
-  /agent <goal>      Run autonomous task loop
-  /agent list-runs   List checkpointed agent runs
-  /agent resume <id> Resume an existing agent run
-  /orch <goal>       Multi-model orchestrated run
-
-Settings:
-  /effort <level>    Set reasoning effort (off/low/medium/high/max)
-  /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
-  /safe              Return to safe mode
-
-Tools:
-  /tools             Browse available tools interactively
-
-Examples:
+		helpText = versionHeader + "Available Commands:\n\n" + chatCommandsHelp + "\n\n" + `Examples:
   /agent fix tests       → Run autonomous code-fix loop
   /orch write a script   → Multi-model orchestrated run
   /endpoint google       → Switch to Google Vertex AI

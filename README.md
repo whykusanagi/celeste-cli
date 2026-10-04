@@ -664,22 +664,22 @@ are a convenience for natural-language interactions.
 
 ## 📊 How Celeste Compares
 
-| | **Celeste CLI** | **OpenClaw** | **Picobot** | **oh-my-pi** | **gptme** |
-|---|---|---|---|---|---|
-| **Focus** | Agentic coding | Personal AI assistant | Lightweight AI bot | CLI coding agent | CLI coding agent |
-| **Language** | Go | TypeScript | Go | TS + Rust | Python |
-| **Deploy** | 54MB binary, zero deps | Node.js (~393MB) | 9MB binary | Bun + Rust | pip package |
-| **RAM** | Low | High (Node.js) | ~10MB | Medium | Medium |
-| **Providers** | 9 (native + OpenAI-compat) | OpenAI primary | OpenAI only | 6+ | 7+ |
-| **Tools** | 48 | Many | 16 | Many | ~10 |
-| **Code Graph** | Yes (MinHash) | No | No | No | No |
-| **Code Review** | Yes (6 categories) | No | No | No | No |
-| **Collections/RAG** | Yes (xAI) | No | No | No | Yes |
-| **MCP** | Server + client | Partial | Client | Full | Yes |
+[docs/COMPARISON.md](docs/COMPARISON.md) compares celeste with Claude Code,
+Codex CLI, opencode, Crush, Gemini CLI, oh-my-pi and pi, feature by feature.
+What celeste keeps that none of these ship:
 
-**Celeste's unique advantages:** Code graph with semantic search, structural code review, persistent project memory, `.grimoire` context with staleness tracking, corruption-aesthetic TUI with typing animation. No other project combines compiled binary + code intelligence + MCP server.
-
-See [docs/COMPARISON.md](docs/COMPARISON.md) for detailed analysis.
+1. **A code graph with structural review.** `celeste index` builds a persistent
+   index of symbols and call edges; `celeste_code_search` ranks code by concept
+   (MinHash and BM25, fused), `celeste_code_graph` walks callers and callees, and
+   `celeste_code_review` finds stubs, lazy redirects, placeholders, swallowed
+   errors, TODOs and hardcoded values from the graph rather than by grep.
+2. **MCP-server mode built around that graph.** `celeste serve` exposes
+   celeste to Claude Code, Codex or any MCP client, including the code-graph
+   tools as direct calls that return verbatim results without a model in the
+   way.
+3. **A character.** Celeste is a persona with its own voice, at four levels
+   (full, spine, lite, off) that fit the context window; official builds carry
+   it encrypted.
 
 ---
 
@@ -966,13 +966,12 @@ celeste -config grok chat
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+C` | Exit immediately |
-| `Ctrl+D` | Exit gracefully |
+| `Ctrl+C` | Cancel the running operation; press again within 3 seconds to exit |
 | `PgUp/PgDown` | Scroll chat history (full page) |
 | `Shift+↑/↓` | Scroll chat (3 lines at a time) |
 | `↑/↓` | Navigate input history (previous messages) |
 | `Enter` | Send message |
-| `Esc` | Clear current input |
+| `Esc` | Clear current input; on an empty input it interrupts the running turn |
 
 ### In-Chat Commands
 
@@ -981,7 +980,7 @@ celeste -config grok chat
 |---------|--------|
 | `/help` | Show available commands and keyboard shortcuts |
 | `/clear` | Clear chat history (current session only) |
-| `/exit`, `/quit`, `/q` | Exit application |
+| `exit`, `quit`, `q` | Exit application (typed without a slash; or press `Ctrl+C` twice) |
 
 #### Plan Mode
 | Command | Action |
@@ -1036,10 +1035,10 @@ Approving a plan turns its steps into todo items and ends plan mode. See [docs/P
 - Google Gemini AI Studio (gemini-flash-latest — a Google-maintained alias; the 2.x line is retired)
 - Google Vertex AI (gemini models via OpenAI endpoint)
 - OpenRouter (all models)
+- Anthropic Claude (native API; input, output and cache read/write tokens)
 - **DigitalOcean Gradient** (Agent API with RAG - supports stream_options.include_usage)
 
 ❌ **No Support** (Uses estimation only):
-- Anthropic Claude (native API implemented; its usage format differs from `stream_options.include_usage`, so automatic tracking isn't wired up)
 - ElevenLabs (Voice-focused API)
 
 **Examples:**
@@ -1060,7 +1059,7 @@ Approving a plan turns its steps into todo items and ends plan mode. See [docs/P
 /export json
 ```
 
-**Note:** When using providers without token tracking (Anthropic native API, ElevenLabs), Celeste CLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
+**Note:** When using a provider without token tracking (ElevenLabs), Celeste CLI will estimate tokens based on character count (~4 chars = 1 token), but won't show exact API usage or costs. For accurate token tracking and context management features, use providers marked with ✅ above.
 
 ### Autonomous Agent Mode
 
