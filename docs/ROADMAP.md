@@ -48,6 +48,9 @@ On `main`, to be tagged v2.0.0. One line per workstream.
   compaction starts; a fuller fix is planned for 2.1, [#310](https://github.com/whykusanagi/celeste-cli/issues/310)); explore and review
   subagents run with it off; the blind persona back-test passed;
   `celeste persona verify` ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
+  On Anthropic the persona is its own cached system block, so `/user` and
+  the rest of the dynamic prompt re-write only what follows it
+  ([#309](https://github.com/whykusanagi/celeste-cli/issues/309)).
 - **Responses API.** The `openai` provider uses OpenAI's Responses API, with a
   Chat Completions fallback for endpoints that lack it.
 - **AGENTS.md and context files.** `AGENTS.md` and `CLAUDE.md` are read up to the
@@ -142,8 +145,6 @@ of the workstream plan named.
 - [ ] `persona_lore(query)`: a chat-only lore lookup, BM25 first, semantic
       retrieval later. 2.0 does not ship it
       ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
-- [ ] An Anthropic cache breakpoint after the static persona, so the persona is
-      cached on its own ([#309](https://github.com/whykusanagi/celeste-cli/issues/309)).
 
 ### Providers
 

@@ -549,7 +549,7 @@ func TestChatClaimsFollowToolResults(t *testing.T) {
 // asks for nothing else) is denied.
 func TestNewChatLoopIsHeadless(t *testing.T) {
 	env, cfg := mcpChatEnv(t)
-	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, "sys"), env, "sys", "mcp-chat-test")
+	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, "", "sys"), env, "sys", "mcp-chat-test")
 	if l.Gate != nil {
 		t.Error("MCP chat must have no Gate")
 	}
@@ -632,7 +632,7 @@ func TestChatCompactorOnlyForcedBelowTheWindow(t *testing.T) {
 func TestNewChatLoopCompacts(t *testing.T) {
 	env, cfg := mcpChatEnv(t)
 	cfg.ContextLimit = 64_000
-	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, "sys"), env, "sys", "mcp-chat-test")
+	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, "", "sys"), env, "sys", "mcp-chat-test")
 	c, ok := l.Compact.(*chatCompactor)
 	if !ok {
 		t.Fatalf("Compact = %T, want *chatCompactor", l.Compact)

@@ -121,3 +121,20 @@ func TestContentPromptIncludesBase(t *testing.T) {
 	assert.True(t, strings.HasPrefix(contentPrompt, base), "content prompt should start with the chat prompt")
 	assert.Contains(t, contentPrompt, "CONTENT GENERATION MODE")
 }
+
+// #309: the content prompt keeps the persona as its Static part, the
+// content-mode addendum in Dynamic, and the same whole bytes as
+// GetContentPrompt, so an Anthropic request caches the persona apart.
+func TestContentPromptKeepsThePersonaStatic(t *testing.T) {
+	composeEnv(t, false)
+	p := ContentPrompt(0, "twitter", "short", "playful", "a launch")
+	if p.Static != mustProfile(ProfileFull).SystemPrompt {
+		t.Fatal("Static is not the full profile")
+	}
+	if !strings.Contains(p.Dynamic, "CONTENT GENERATION MODE") || strings.Contains(p.Static, "CONTENT GENERATION MODE") {
+		t.Fatal("the content addendum is not in Dynamic")
+	}
+	if p.String() != GetContentPrompt(0, "twitter", "short", "playful", "a launch") {
+		t.Fatal("ContentPrompt and GetContentPrompt disagree")
+	}
+}

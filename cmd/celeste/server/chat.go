@@ -73,7 +73,7 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	}
 	system := sp.String()
 	sessionID := "mcp-chat-" + config.UniqueNanoID()
-	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, system), env, system, sessionID)
+	l := newChatLoop(cfg, newChatClient(cfg, env.Registry, sp.Static, sp.Dynamic), env, system, sessionID)
 	sess := chatSteering(ctx, cfg, env, prompt, workspace)
 	// The call's ballot ends with it: one in flight is cancelled.
 	defer sess.Close()
@@ -114,10 +114,12 @@ func chatSteering(ctx context.Context, cfg *config.Config, env *loop.Env, prompt
 }
 
 // newChatClient is the pre-loop server's client (same config fields) on the
-// Env's registry. The tool mode stays tools.ModeChat.
-func newChatClient(cfg *config.Config, reg *tools.Registry, system string) *llm.Client {
+// Env's registry, on the composed prompt's static and dynamic parts (so an
+// Anthropic request caches the persona on its own, #309). The tool mode
+// stays tools.ModeChat.
+func newChatClient(cfg *config.Config, reg *tools.Registry, static, dynamic string) *llm.Client {
 	client := llm.NewClient(llm.ConfigFrom(cfg), reg)
-	client.SetSystemPrompt(system)
+	client.SetSystemPromptParts(static, dynamic)
 	return client
 }
 

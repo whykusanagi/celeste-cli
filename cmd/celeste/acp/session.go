@@ -147,7 +147,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session) *RPCError {
 	window, _ := config.ResolveContextLimit(s.cfg.BaseURL, s.cfg.Model, s.cfg.ContextLimit)
 	sp := env.SystemPrompt(loop.PromptOptions{Window: window})
 	prompt := sp.String()
-	client.SetSystemPrompt(prompt)
+	client.SetSystemPromptParts(sp.Static, sp.Dynamic)
 
 	pruned, err := compact.DefaultStore()
 	if err != nil {
