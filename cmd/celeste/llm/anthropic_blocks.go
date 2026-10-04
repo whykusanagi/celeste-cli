@@ -15,6 +15,15 @@ import (
 // anthropicDefaultBaseURL is the SDK's endpoint when the config has none.
 const anthropicDefaultBaseURL = "https://api.anthropic.com"
 
+// anthropicSDKBaseURL is a configured base URL in the form the SDK wants:
+// the API root without /v1, since the SDK appends v1/messages itself.
+// celeste advertised https://api.anthropic.com/v1 before 2.0, so a trailing
+// /v1 (and any trailing slash) is dropped; both forms reach /v1/messages.
+func anthropicSDKBaseURL(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return strings.TrimSuffix(base, "/v1")
+}
+
 // replayedContent turns stored blocks into request content blocks that
 // marshal to exactly the stored bytes (2.0 W2 ruling 3). A replayed block
 // has no cache_control and is never edited.

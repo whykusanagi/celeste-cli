@@ -156,6 +156,11 @@ func TestDetectProvider(t *testing.T) {
 			expected: "anthropic",
 		},
 		{
+			name:     "Anthropic bare host",
+			baseURL:  "https://api.anthropic.com",
+			expected: "anthropic",
+		},
+		{
 			name:     "Gemini URL",
 			baseURL:  "https://generativelanguage.googleapis.com/v1beta/openai",
 			expected: "gemini",

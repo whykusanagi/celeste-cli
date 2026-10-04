@@ -334,3 +334,59 @@ func TestSetCatalogForTest(t *testing.T) {
 		t.Error("the test catalog must stop network fetches")
 	}
 }
+
+// The Anthropic listing is GET {host}/v1/models whether the configured base
+// URL is the bare host (the registry form, what the SDK wants for chat) or
+// ends in /v1 (what celeste advertised before 2.0).
+func TestFetchCatalog_AnthropicPathForBothBaseURLForms(t *testing.T) {
+	for _, suffix := range []string{"", "/", "/v1", "/v1/"} {
+		t.Run("suffix="+suffix, func(t *testing.T) {
+			isolateCatalog(t)
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				_, _ = w.Write([]byte(anthropicModelsFixture))
+			}))
+			defer srv.Close()
+
+			if _, err := fetchCatalog(context.Background(), "anthropic", srv.URL+suffix, "k"); err != nil {
+				t.Fatal(err)
+			}
+			if gotPath != "/v1/models" {
+				t.Errorf("listing path = %q, want /v1/models", gotPath)
+			}
+		})
+	}
+}
+
+func TestVerifyModel_AnthropicPathForBothBaseURLForms(t *testing.T) {
+	for _, suffix := range []string{"", "/v1"} {
+		t.Run("suffix="+suffix, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				_, _ = w.Write([]byte(`{"id":"claude-x"}`))
+			}))
+			defer srv.Close()
+
+			served, known := verifyModel(context.Background(), "anthropic", srv.URL+suffix, "k", "claude-x")
+			if !served || !known || gotPath != "/v1/models/claude-x" {
+				t.Errorf("served=%v known=%v path=%q", served, known, gotPath)
+			}
+		})
+	}
+}
+
+// Both forms are one endpoint, so they share one catalog cache entry.
+func TestNormalizeBaseURL_AnthropicFormsShareOneKey(t *testing.T) {
+	bare := normalizeBaseURL("anthropic", "https://api.anthropic.com")
+	for _, in := range []string{"", "https://api.anthropic.com/", "https://api.anthropic.com/v1", "https://api.anthropic.com/v1/"} {
+		if got := normalizeBaseURL("anthropic", in); got != bare {
+			t.Errorf("normalizeBaseURL(anthropic, %q) = %q, want %q", in, got, bare)
+		}
+	}
+	// Other providers keep their /v1: it is part of their API root.
+	if got := normalizeBaseURL("openai", "https://api.openai.com/v1"); got != "https://api.openai.com/v1" {
+		t.Errorf("openai base = %q", got)
+	}
+}

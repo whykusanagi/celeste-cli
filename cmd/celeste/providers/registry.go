@@ -101,7 +101,7 @@ var Registry = map[string]ProviderCapabilities{
 
 	"anthropic": {
 		Name:                    "Anthropic Claude",
-		BaseURL:                 "https://api.anthropic.com/v1",
+		BaseURL:                 "https://api.anthropic.com", // the SDK appends /v1/messages; /v1 is accepted too
 		SupportsFunctionCalling: true,
 		SupportsModelListing:    true,  // GET /v1/models with x-api-key
 		SupportsTokenTracking:   false, // Uses native API with different usage format

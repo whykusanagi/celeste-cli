@@ -104,7 +104,9 @@ func defaultCatalogDir() string {
 // normalizeBaseURL defaults an empty base URL to the provider's registry
 // URL, drops any userinfo, query and fragment (they never reach the cache,
 // a log or a /models request), and drops a trailing slash, so one endpoint
-// has one cache key.
+// has one cache key. Anthropic's base is its API root without /v1 (the form
+// the SDK takes for chat); a configured /v1 is dropped so both forms are one
+// endpoint, and modelsURL adds /v1 back.
 func normalizeBaseURL(provider, baseURL string) string {
 	if baseURL == "" {
 		baseURL = Registry[provider].BaseURL
@@ -115,7 +117,20 @@ func normalizeBaseURL(provider, baseURL string) string {
 	} else if i := strings.IndexAny(baseURL, "?#"); i >= 0 {
 		baseURL = baseURL[:i]
 	}
-	return strings.TrimRight(baseURL, "/")
+	baseURL = strings.TrimRight(baseURL, "/")
+	if provider == "anthropic" {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	return baseURL
+}
+
+// modelsURL is the provider's model listing under a normalised base:
+// {base}/models, or {base}/v1/models for Anthropic, whose base has no /v1.
+func modelsURL(provider, base string) string {
+	if provider == "anthropic" {
+		return base + "/v1/models"
+	}
+	return base + "/models"
 }
 
 // CleanBaseURL is a base URL safe to log: no userinfo, query or fragment.
@@ -432,7 +447,7 @@ func sweepStaleTemps(dir string) {
 	}
 }
 
-// fetchCatalog is catalogFetch's real implementation: GET {base}/models.
+// fetchCatalog is catalogFetch's real implementation: GET modelsURL.
 // Anthropic's listing paginates; every page is read.
 func fetchCatalog(ctx context.Context, provider, baseURL, apiKey string) ([]CatalogModel, error) {
 	if !HasCatalog(provider) {
@@ -445,7 +460,7 @@ func fetchCatalog(ctx context.Context, provider, baseURL, apiKey string) ([]Cata
 	ctx, cancel := context.WithTimeout(ctx, catalogFetchTimeout)
 	defer cancel()
 	if provider != "anthropic" {
-		status, body, err := providerGet(ctx, provider, base+"/models", apiKey)
+		status, body, err := providerGet(ctx, provider, modelsURL(provider, base), apiKey)
 		if err != nil {
 			return nil, err
 		}
@@ -461,7 +476,7 @@ func fetchCatalog(ctx context.Context, provider, baseURL, apiKey string) ([]Cata
 		if after != "" {
 			q.Set("after_id", after)
 		}
-		status, body, err := providerGet(ctx, provider, base+"/models?"+q.Encode(), apiKey)
+		status, body, err := providerGet(ctx, provider, modelsURL(provider, base)+"?"+q.Encode(), apiKey)
 		if err != nil {
 			return nil, err
 		}
@@ -506,7 +521,7 @@ func hasModelEndpoint(provider string) bool {
 	return false
 }
 
-// verifyModel is catalogVerify's real implementation: GET {base}/models/{id}.
+// verifyModel is catalogVerify's real implementation: GET modelsURL/{id}.
 // 200 is served, 404 retired; anything else (other statuses, timeouts) is
 // unknown.
 func verifyModel(ctx context.Context, provider, baseURL, apiKey, id string) (served, known bool) {
@@ -516,7 +531,7 @@ func verifyModel(ctx context.Context, provider, baseURL, apiKey, id string) (ser
 	}
 	ctx, cancel := context.WithTimeout(ctx, catalogFetchTimeout)
 	defer cancel()
-	status, _, err := providerGet(ctx, provider, base+"/models/"+url.PathEscape(id), apiKey)
+	status, _, err := providerGet(ctx, provider, modelsURL(provider, base)+"/"+url.PathEscape(id), apiKey)
 	switch {
 	case err != nil:
 		return false, false
