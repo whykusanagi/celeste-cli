@@ -86,6 +86,30 @@ func TestPlanProgressReminderFollowsTheTodoList(t *testing.T) {
 	}
 }
 
+// Removed todo items are not open: a plan whose items are all done or
+// removed is no longer tracked.
+func TestPlanProgressReminderDropsRemovedSteps(t *testing.T) {
+	p, store, steps := trackedPlan(t)
+	if err := store.Delete(steps[0].TodoID); err != nil {
+		t.Fatal(err)
+	}
+	p.progressReminder() // the change
+	for i := 1; i < planIdleTurns; i++ {
+		p.progressReminder()
+	}
+	r, ok := p.progressReminder()
+	if !ok || strings.Contains(r.Text, "write tests") {
+		t.Fatalf("reminder = %q, %v", r.Text, ok)
+	}
+	if _, err := store.Update(steps[1].TodoID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	p.progressReminder()
+	if p.tracking() {
+		t.Fatal("done and removed: nothing left to track")
+	}
+}
+
 // No reminder while planning (plan mode on) or without a plan approved in
 // this process.
 func TestPlanProgressReminderNeedsAnApprovedPlan(t *testing.T) {

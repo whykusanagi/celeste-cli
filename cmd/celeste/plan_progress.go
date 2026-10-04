@@ -28,7 +28,10 @@ func (p *planState) track(steps []builtin.PlanStep) {
 }
 
 // planStatus is the tracked steps' todo statuses ("-": removed) as one
-// comparable string, and whether a step is still open. Callers hold pmu.
+// comparable string, and whether a step is still open. A removed todo item
+// is not open: there is nothing left to tick, and whoever removed it (the
+// user, or the model on the user's word) dropped that step. Callers hold
+// pmu.
 func (p *planState) planStatus() (string, bool) {
 	status := map[int]string{}
 	if p.todos != nil {
