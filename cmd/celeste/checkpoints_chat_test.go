@@ -268,7 +268,10 @@ func rewindChat(t *testing.T) (tea.Model, *chatDeps, string) {
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r1", Name: "read_file", Args: `{"path":"a.go"}`}}},
 		fakeprovider.Turn{Text: "Read it."},
 	)
-	m, deps, ws := chatApp(t, srv)
+	// A window these turns fit in: fake-model's guessed 8.2K one is below
+	// the system prompt and tool schemas, so every turn would end by
+	// starting a background summary (see noBackgroundSummary).
+	m, deps, ws := chatAppWithContextLimit(t, srv, 1_000_000)
 	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
 		return tools.PermissionResponse{Decision: "allow_once"}
 	})
@@ -283,7 +286,20 @@ func rewindChat(t *testing.T) (tea.Model, *chatDeps, string) {
 	fileIs(t, filepath.Join(ws, "c.go"), "package c // new\n")
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "read a.go"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "Read it." && turnIdle(m) }, 30*time.Second)
+	noBackgroundSummary(t, m)
 	return m, deps, ws
+}
+
+// noBackgroundSummary fails when a turn started an automatic context
+// summary. drive returns once its condition holds and drops the commands
+// still running, so a summary started at a turn's end may never report
+// back: the chat then stays "summarizing" and /rewind refuses (#327, seen
+// on Windows, where the summary's reply lost the race more often).
+func noBackgroundSummary(t *testing.T, m tea.Model) {
+	t.Helper()
+	if hasChatLine(m, "Summarizing older context") {
+		t.Fatalf("a turn started a background context summary; give the chat a context window that fits (chatAppWithContextLimit). chat = %+v", chatMessages(m))
+	}
 }
 
 func hasChatLine(m tea.Model, s string) bool {
@@ -390,7 +406,7 @@ func TestRewindWithReusedCallIDsKeepsTheEarlierTurnsFiles(t *testing.T) {
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "call_write_file", Name: "write_file", Args: `{"path":"b.go","content":"package b\n"}`}}},
 		fakeprovider.Turn{Text: "Wrote b."},
 	)
-	m, deps, ws := chatApp(t, srv)
+	m, deps, ws := chatAppWithContextLimit(t, srv, 1_000_000) // see rewindChat
 	deps.registry.SetPromptFunc(func(tools.PermissionRequest) tools.PermissionResponse {
 		return tools.PermissionResponse{Decision: "allow_once"}
 	})
@@ -398,6 +414,7 @@ func TestRewindWithReusedCallIDsKeepsTheEarlierTurnsFiles(t *testing.T) {
 		func(m tea.Model) bool { return lastAssistant(m) == "Wrote a." && turnIdle(m) }, 30*time.Second)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "write b.go"}},
 		func(m tea.Model) bool { return lastAssistant(m) == "Wrote b." && turnIdle(m) }, 30*time.Second)
+	noBackgroundSummary(t, m)
 	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "/rewind 1"}},
 		func(m tea.Model) bool { return hasChatLine(m, "Rewind:") }, 30*time.Second)
 	if !hasChatLine(m, "reuses tool call IDs") {
