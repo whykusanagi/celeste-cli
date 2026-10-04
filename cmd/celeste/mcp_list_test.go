@@ -46,8 +46,8 @@ func TestMCPList_ShowsServersWithoutSecrets(t *testing.T) {
 		"notes":{"command":"notes-mcp","args":["--token","ARG-SECRET"],"env":{"API_KEY":"ENV-SECRET"},"enabled":true,"trusted":true},
 		"remote":{"transport":"sse","url":"https://user:URL-SECRET@example.com/sse?key=Q-SECRET"},
 		"dup":{"command":"older"},
-		"shared":{"command":"shared-home"}}}`)
-	writeMCPConfig(t, filepath.Join(home, ".claude", "mcp.json"), `{"mcpServers":{"dup":{"command":"newer"}}}`)
+		"shared":{"command":"shared-home","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(home, ".claude", "mcp.json"), `{"mcpServers":{"dup":{"command":"newer","enabled":true}}}`)
 	writeMCPConfig(t, filepath.Join(ws, ".mcp.json"), `{"mcpServers":{
 		"repo":{"command":"repo-mcp","enabled":true,"trusted":true},
 		"shared":{"command":"shared-repo","enabled":true}}}`)
@@ -69,7 +69,8 @@ func TestMCPList_ShowsServersWithoutSecrets(t *testing.T) {
 	assert.Equal(t, []string{"notes", home1, "stdio", "yes", "yes", "all", "modes"}, notes)
 
 	remote := strings.Fields(mcpListLine(t, out, "remote", home1))
-	assert.Equal(t, []string{"remote", home1, "sse", "no", "no", "all", "modes"}, remote)
+	// Not enabled: it never starts on its own.
+	assert.Equal(t, []string{"remote", home1, "sse", "no", "no", "off", "(start", "it", "from", "the", "chat's", "/mcp)"}, remote)
 
 	// Later home configs win on a name clash (DiscoverConfigPaths order).
 	assert.Contains(t, mcpListLine(t, out, "dup", home1), "overridden by "+home2)

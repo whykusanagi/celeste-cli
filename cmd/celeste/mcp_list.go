@@ -104,9 +104,9 @@ and MCP chat use the home configs. "trusted" counts only in a home config.`)
 	return code
 }
 
-// mcpRunsIn says where entries[i] is the definition celeste uses. Workspace
-// configs follow every home config in precedence, and only the chat loads
-// them (loop.setupMCP).
+// mcpRunsIn says where entries[i] is the definition celeste starts; only an
+// enabled server starts on its own. Workspace configs follow every home
+// config in precedence, and only the chat loads them (loop.setupMCP).
 func mcpRunsIn(entries []mcpListEntry, i int, show func(mcpListEntry) string) string {
 	e := entries[i]
 	var wsOverride string
@@ -122,6 +122,11 @@ func mcpRunsIn(entries []mcpListEntry, i int, show func(mcpListEntry) string) st
 		}
 	}
 	switch {
+	case !e.cfg.Enabled && wsOverride != "":
+		return "off (chat uses " + wsOverride + ")"
+	case !e.cfg.Enabled:
+		// Manager.Start skips it; the chat's /mcp panel can still connect it.
+		return "off (start it from the chat's /mcp)"
 	case !e.global:
 		return "chat only"
 	case wsOverride != "":
