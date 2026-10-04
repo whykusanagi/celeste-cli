@@ -14,10 +14,10 @@ import (
 var knownCommands = []string{
 	"agent", "agents", "clear", "collections", "compact", "config", "confirm",
 	"context", "costs", "diff", "effort", "endpoint", "export", "fork", "graph",
-	"grimoire", "handoff", "help", "index", "init", "mcp", "memories", "menu",
-	"model", "nsfw", "orch", "orchestrate", "persona", "plan", "providers",
-	"rewind", "safe", "session", "set-model", "skills", "stats", "tools", "undo", "user",
-	"voice",
+	"grimoire", "handoff", "help", "image-model", "index", "init", "list-models",
+	"mcp", "memories", "menu", "model", "nsfw", "orch", "orchestrate", "persona",
+	"plan", "providers", "rewind", "safe", "session", "set-model", "skills",
+	"stats", "tools", "undo", "user", "voice",
 }
 
 var (

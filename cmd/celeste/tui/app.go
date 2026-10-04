@@ -554,6 +554,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case menuItemSelectedMsg:
 			// User selected a menu item, execute it
 			m.viewMode = "chat"
+			if msg.command == "exit" {
+				// exit is not a slash command (#314): quit the way typing it does.
+				m.persistSession()
+				return m, tea.Quit
+			}
 			return m, SendMessage("/" + msg.command)
 		}
 
@@ -3418,7 +3423,7 @@ func (m HeaderModel) View() string {
 		contextInfo = m.contextIndicator.ViewCompact()
 	}
 
-	info := HeaderInfoStyle.Render("Press Ctrl+C to exit")
+	info := HeaderInfoStyle.Render("Press Ctrl+C twice to exit")
 	if endpointInfo != "" {
 		info = endpointInfo + " • " + info
 	}

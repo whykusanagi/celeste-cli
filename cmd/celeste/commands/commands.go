@@ -900,15 +900,10 @@ Media Generation Commands:
   image[model]: <prompt>       Use specific model for one generation
                                Example: image[nano-banana-pro]: futuristic city
 
-Model Management:
-  /set-model <model>           Set default image generation model
-                               Example: /set-model wai-Illustrious
-                               Run without args to see all models
-
 Current Configuration:
   • Endpoint: Venice.ai (https://api.venice.ai/api/v1)
   • Chat Model: the one Venice serves as its default
-  • Image Model: Use /set-model to configure
+  • Image Model: /set-model <model> sets it (e.g. wai-Illustrious); no args lists them
   • Downloads: ~/Downloads
   • Quality: 40 steps, CFG 12.0, PNG format
 
