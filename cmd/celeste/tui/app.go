@@ -871,6 +871,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Idle again, so an earlier interrupt no longer applies.
 		m.interrupted = false
+		// A status text ("Selection cancelled", "Model changed to …")
+		// belongs to the command that set it; the next one starts from
+		// Ready and sets its own (V17).
+		if content != "" && !m.streaming && !m.turnActive() {
+			m.status = m.status.SetText("Ready")
+		}
 
 		// Clear completed tool progress from previous turn
 		m.toolProgress.ClearCompleted()
