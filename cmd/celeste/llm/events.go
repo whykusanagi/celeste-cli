@@ -32,6 +32,14 @@ const (
 	// EventMessageDone is emitted when the entire LLM response is complete.
 	// Contains usage statistics and finish reason.
 	EventMessageDone
+
+	// EventThinkingDelta is emitted as the model's reasoning streams, for
+	// a "thinking" indicator only: it is never reply text and never joins
+	// the history. Only the OpenAI-compatible chat-completions backend
+	// emits it (reasoning / reasoning_content deltas and inlined <think>
+	// blocks, L4); Anthropic and Responses thinking are kept as provider
+	// blocks instead.
+	EventThinkingDelta
 )
 
 // String returns a human-readable name for the event type.
@@ -47,6 +55,8 @@ func (t StreamEventType) String() string {
 		return "ToolUseDone"
 	case EventMessageDone:
 		return "MessageDone"
+	case EventThinkingDelta:
+		return "ThinkingDelta"
 	default:
 		return fmt.Sprintf("Unknown(%d)", t)
 	}
@@ -61,6 +71,9 @@ type StreamEvent struct {
 
 	// ContentDelta contains the text delta (only for EventContentDelta).
 	ContentDelta string
+
+	// ThinkingDelta contains reasoning text (only for EventThinkingDelta).
+	ThinkingDelta string
 
 	// ToolUseID is the unique identifier for the tool call
 	// (set for EventToolUseStart, EventToolUseInputDelta, EventToolUseDone).

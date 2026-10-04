@@ -65,6 +65,11 @@ that name and returns 404.
 only its embedding model, not the chat model it has loaded, so `local` is
 registered with model listing disabled. Configure the model by hand.
 
+**Reasoning models.** A model that reasons before it answers (qwen3,
+deepseek-r1) shows a thinking count in the status bar while it reasons. A
+`<think>…</think>` block at the start of the reply, as servers without a
+reasoning parser send it, is kept out of the reply and the history.
+
 ### Set the context window
 
 celeste cannot know a local server's context window. The model name is an

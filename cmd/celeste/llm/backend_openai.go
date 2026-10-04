@@ -157,6 +157,8 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 		}
 	}
 
+	result.Content = stripThink(result.Content) // L4: reasoning inlined by the server
+
 	// Convert tool calls
 	for _, tc := range toolCalls {
 		result.ToolCalls = append(result.ToolCalls, ToolCallResult{
@@ -202,13 +204,16 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 
 	var toolCalls []openai.ToolCall
 	var usage *TokenUsage
+	var think thinkSplitter
 	isFirst := true
 
 	for {
 		response, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
+			rest, _ := think.Flush()
 			// Send final chunk with usage data if available
 			callback(StreamChunk{
+				Content:      rest,
 				IsFinal:      true,
 				FinishReason: "stop",
 				ToolCalls:    convertToolCalls(toolCalls),
@@ -234,9 +239,9 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 				IsFirst: isFirst,
 			}
 
-			// Handle content delta
+			// Handle content delta, without inlined <think> reasoning
 			if choice.Delta.Content != "" {
-				chunk.Content = choice.Delta.Content
+				chunk.Content, _ = think.Write(choice.Delta.Content)
 			}
 
 			// Handle tool calls
@@ -332,9 +337,22 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	var toolCallsByIndex []toolCallState
 	var usage *TokenUsage
 	var finishReason string
+	// think keeps reasoning a server inlines as <think>…</think> out of
+	// the reply (L4).
+	var think thinkSplitter
+	emitContent := func(text string) {
+		if text != "" {
+			callback(StreamEvent{Type: EventContentDelta, ContentDelta: text})
+		}
+	}
+	emitThinking := func(text string) {
+		if text != "" {
+			callback(StreamEvent{Type: EventThinkingDelta, ThinkingDelta: text})
+		}
+	}
 
 	for {
-		response, err := stream.Recv()
+		response, reasoning, err := recvChunk(stream)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -351,13 +369,13 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 			}
 		}
 
-		for _, choice := range response.Choices {
+		for i, choice := range response.Choices {
+			emitThinking(reasoning[i])
 			// Handle content delta
 			if choice.Delta.Content != "" {
-				callback(StreamEvent{
-					Type:         EventContentDelta,
-					ContentDelta: choice.Delta.Content,
-				})
+				text, thought := think.Write(choice.Delta.Content)
+				emitThinking(thought)
+				emitContent(text)
 			}
 
 			// Handle tool calls
@@ -420,6 +438,10 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 		}
 	}
 
+	rest, thought := think.Flush()
+	emitThinking(thought)
+	emitContent(rest)
+
 	// Emit ToolUseDone for each accumulated indexed tool call
 	for _, tc := range toolCallsByIndex {
 		if tc.id != "" {
@@ -443,6 +465,42 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 	})
 
 	return nil
+}
+
+// chunkReasoning is the reasoning field go-openai does not decode: Ollama
+// (and newer vLLM) stream a chat-completions reply's reasoning as
+// delta.reasoning; DeepSeek and older vLLM as delta.reasoning_content,
+// which go-openai decodes as ReasoningContent.
+type chunkReasoning struct {
+	Choices []struct {
+		Delta struct {
+			Reasoning string `json:"reasoning"`
+		} `json:"delta"`
+	} `json:"choices"`
+}
+
+// recvChunk reads the next chunk as stream.Recv does, with each choice's
+// reasoning text (by position in Choices; "" for none). A server that sends
+// both fields sends the same text in each, so reasoning_content wins.
+func recvChunk(stream *openai.ChatCompletionStream) (openai.ChatCompletionStreamResponse, []string, error) {
+	var resp openai.ChatCompletionStreamResponse
+	raw, err := stream.RecvRaw()
+	if err != nil {
+		return resp, nil, err
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return resp, nil, err
+	}
+	reasoning := make([]string, len(resp.Choices))
+	var extra chunkReasoning
+	_ = json.Unmarshal(raw, &extra) // resp decoded, so raw is valid JSON; a mistyped field only loses the indicator
+	for i, c := range resp.Choices {
+		reasoning[i] = c.Delta.ReasoningContent
+		if reasoning[i] == "" && i < len(extra.Choices) {
+			reasoning[i] = extra.Choices[i].Delta.Reasoning
+		}
+	}
+	return resp, reasoning, nil
 }
 
 // applyThinkingConfig adds reasoning_effort to the request when thinking
@@ -483,6 +541,11 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 
 	// Convert messages
 	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			// Reasoning a server inlined as a leading <think>…</think> is never sent
+			// back as content (L4): history saved before it was stripped.
+			msg.Content = stripThink(msg.Content)
+		}
 		// Skip messages with empty content (except tool calls which can have empty content)
 		if msg.Content == "" && len(msg.ToolCalls) == 0 && msg.Role != "tool" {
 			// Skip empty messages to prevent API errors (Grok requires content field)
