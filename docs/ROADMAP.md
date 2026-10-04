@@ -44,8 +44,8 @@ On `main`, to be tagged v2.0.0. One line per workstream.
   See [STEERING.md](STEERING.md).
 - **Persona profiles.** The persona ships encrypted in official builds, at four
   levels (full, spine, lite, off); the persona steps down to fit the context
-  window (on a very small window the tool definitions can still exceed it and
-  compaction starts; a fuller fix is planned for 2.1, [#310](https://github.com/whykusanagi/celeste-cli/issues/310)); explore and review
+  window, and on a small window so do the tool definitions: a core set with
+  short descriptions ([#310](https://github.com/whykusanagi/celeste-cli/issues/310)); explore and review
   subagents run with it off; the blind persona back-test passed;
   `celeste persona verify` ([#173](https://github.com/whykusanagi/celeste-cli/issues/173)).
   On Anthropic the persona is its own cached system block, so `/user` and
@@ -98,9 +98,9 @@ of the workstream plan named.
       `/responses/compact` as a ladder rung ([#199](https://github.com/whykusanagi/celeste-cli/issues/199),
       rung 2 of [#174](https://github.com/whykusanagi/celeste-cli/issues/174)).
 - [ ] Threshold and background compaction (the 2.0 plans: compaction).
-- [ ] Tool definitions that fit small context windows: on a very small window
-      (the 8,192-token default for an unknown local model) the tool schemas alone
-      can exceed it, so compaction starts on the first request ([#310](https://github.com/whykusanagi/celeste-cli/issues/310)).
+- [x] Tool definitions that fit small context windows: a core set with short
+      descriptions when the full set would crowd out the history, and a local
+      server's reported window instead of the 8,192 guess ([#310](https://github.com/whykusanagi/celeste-cli/issues/310)).
 
 ### Context, skills and commands
 
