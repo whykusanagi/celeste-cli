@@ -87,6 +87,19 @@ func classifyRiskLevel(toolName string) string {
 	}
 }
 
+// riskLevel is tool's own rating of this call (RiskRater) when it is a
+// level the prompt knows (read, write, destructive), else
+// classifyRiskLevel's.
+func riskLevel(tool Tool, name string, input map[string]any) string {
+	if rr, ok := tool.(RiskRater); ok {
+		switch lvl := rr.RiskLevel(input); lvl {
+		case "read", "write", "destructive":
+			return lvl
+		}
+	}
+	return classifyRiskLevel(name)
+}
+
 // inputSummary produces a short (<80 char) human-readable summary of the tool input.
 func inputSummary(input map[string]any) string {
 	if len(input) == 0 {
@@ -587,7 +600,7 @@ func (r *Registry) checkPermission(tool Tool, name string, input map[string]any,
 	}
 	// Runs in the tool-execution goroutine (off the Bubble Tea Update loop),
 	// so blocking on the answer is safe.
-	resp := prompt(PermissionRequest{ToolName: name, InputSummary: summary, RiskLevel: classifyRiskLevel(name), Forced: forceAsk})
+	resp := prompt(PermissionRequest{ToolName: name, InputSummary: summary, RiskLevel: riskLevel(tool, name, input), Forced: forceAsk})
 	pattern := resp.Pattern
 	if pattern == "" {
 		pattern = name

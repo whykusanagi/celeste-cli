@@ -221,3 +221,24 @@ func TestPermissionGate_RequestFields(t *testing.T) {
 	assert.Equal(t, "destructive", capturedReq.RiskLevel)
 	assert.Contains(t, capturedReq.InputSummary, "echo hello")
 }
+
+type ratedTool struct {
+	mockTool
+	level string
+}
+
+func (r *ratedTool) RiskLevel(map[string]any) string { return r.level }
+
+// A tool's own rating is used only when it is a level the prompt knows;
+// anything else falls back to the name heuristic.
+func TestRiskLevelClampsToolRatings(t *testing.T) {
+	for _, tc := range []struct{ level, want string }{
+		{"write", "write"}, {"destructive", "destructive"}, {"read", "read"},
+		{"", "destructive"}, {"safe", "destructive"}, {"DESTRUCTIVE", "destructive"},
+	} {
+		got := riskLevel(&ratedTool{mockTool: mockTool{name: "bash"}, level: tc.level}, "bash", nil)
+		if got != tc.want {
+			t.Errorf("rating %q: got %q, want %q", tc.level, got, tc.want)
+		}
+	}
+}

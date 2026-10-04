@@ -163,6 +163,9 @@ func (o *orchRun) emit(e OrchestratorEvent) {
 	o.onEvent(e)
 }
 
+// noLaneMatched is the EventClassified text for a goal no lane matched.
+const noLaneMatched = "no lane matched · default model"
+
 // Run classifies the goal, routes to models, executes the primary agent,
 // and optionally runs a reviewer debate. Every real lane of the run nests
 // under one environment (loop.Parent). That environment is local to this
@@ -196,7 +199,13 @@ func (o *orchRun) run(ctx context.Context, goal string, li laneInheritance) (*Re
 	lane, confidence, note := Classify(ctx, goal, o.cfg.JevRouteMode(), func(s string) {
 		o.emit(OrchestratorEvent{Kind: EventAction, Text: "⚠ " + s})
 	})
-	o.emit(OrchestratorEvent{Kind: EventClassified, Lane: lane, Text: fmt.Sprintf("%.0f%% confidence", confidence*100)})
+	classified := fmt.Sprintf("%.0f%% confidence", confidence*100)
+	if lane == LaneUnknown {
+		// No lane keyword matched: the heuristic's 0.1 is a placeholder,
+		// not a confidence, and the run uses the default model.
+		classified = noLaneMatched
+	}
+	o.emit(OrchestratorEvent{Kind: EventClassified, Lane: lane, Text: classified})
 	if note != "" {
 		o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Text: note})
 	}
@@ -214,7 +223,7 @@ func (o *orchRun) run(ctx context.Context, goal string, li laneInheritance) (*Re
 	}
 
 	// 3. Run primary agent
-	o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Model: assignment.Primary, Text: fmt.Sprintf("[%s] primary agent", assignment.Primary)})
+	o.emit(OrchestratorEvent{Kind: EventAction, Lane: lane, Model: assignment.Primary, Text: "primary agent"}) // the TUI prefixes Model
 	primary := o.makeRunner(li, assignment.Primary, assignment.PrimaryBaseURL, assignment.PrimaryAPIKey)
 	primaryResponse, err := primary.RunGoal(ctx, goal)
 	if err != nil {

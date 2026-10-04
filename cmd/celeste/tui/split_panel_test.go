@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,4 +38,62 @@ func TestSplitPanelCapsActionsAt200(t *testing.T) {
 		p.AddAction("entry")
 	}
 	assert.LessOrEqual(t, len(p.Actions()), 200)
+}
+
+// V21: the panel renders exactly width x height, whatever it holds: wide
+// runes, long lines, a multi-line verdict, a long diff.
+func TestSplitPanelViewIsExactlyItsSize(t *testing.T) {
+	fill := func(p *SplitPanel) {
+		p.AddAction("🔍 [reviewer] " + strings.Repeat("wide 漢字 ", 20))
+		for i := 0; i < 60; i++ {
+			p.AddAction("entry")
+		}
+	}
+	contents := map[string]func(p *SplitPanel){
+		"output": func(p *SplitPanel) { p.SetOutput(strings.Repeat("🙂 output line that is long enough to wrap\n", 50)) },
+		"diff": func(p *SplitPanel) {
+			p.SetDiff("main.go", strings.Repeat("+ added 漢字 line that is long enough to wrap twice over\n", 80))
+		},
+		"verdict": func(p *SplitPanel) {
+			p.SetVerdict(strings.Repeat("✓ approved with a verdict line long enough to wrap\n", 50))
+		},
+		"empty": func(p *SplitPanel) {},
+	}
+	for name, set := range contents {
+		for _, sz := range [][2]int{{120, 26}, {80, 9}, {41, 5}, {200, 60}} {
+			p := NewSplitPanel(sz[0], sz[1])
+			fill(p)
+			set(p)
+			lines := strings.Split(p.View(), "\n")
+			if len(lines) != sz[1] {
+				t.Errorf("%s %v: %d rows", name, sz, len(lines))
+			}
+			for i, l := range lines {
+				if w := ansi.StringWidth(l); w != sz[0] {
+					t.Errorf("%s %v: row %d is %d wide", name, sz, i, w)
+				}
+			}
+		}
+	}
+}
+
+// Under 40 columns the feed alone is shown: an entry holding newlines (a
+// multi-line verdict) must not make it taller than the panel.
+func TestSplitPanelNarrowCapsRowsNotEntries(t *testing.T) {
+	p := NewSplitPanel(30, 4)
+	p.AddAction("first")
+	p.AddAction("verdict line 1\nverdict line 2\nverdict line 3")
+	p.AddAction("last")
+	lines := strings.Split(p.View(), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("narrow view is %d rows, want 4: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[3], "last") || !strings.Contains(lines[0], "verdict line 1") {
+		t.Errorf("narrow view = %q, want the latest 4 rows", lines)
+	}
+	for i, l := range lines {
+		if w := ansi.StringWidth(l); w > 30 {
+			t.Errorf("row %d is %d wide", i, w)
+		}
+	}
 }

@@ -2,9 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const maxActionEntries = 200
@@ -122,43 +124,54 @@ func (s *SplitPanel) DiffFile() string { return s.diffFile }
 // DiffContent returns the diff currently shown in the right panel.
 func (s *SplitPanel) DiffContent() string { return s.diffContent }
 
-// View renders the split panel as a string for Bubble Tea.
+// View renders the split panel as a string for Bubble Tea: exactly width
+// columns by height rows (at least 3), whatever the panes hold. Lines too
+// wide for a pane are cut with "…", never wrapped, and a pane shows only
+// the rows it has (V21: an overflowing pane pushed the view off screen).
 func (s *SplitPanel) View() string {
 	if s.width < 40 {
 		return s.viewNarrow()
 	}
-
-	leftWidth := s.width / 2
-	rightWidth := s.width - leftWidth - 1
-
-	// s.height is the available panel height (total terminal minus header/status/input).
-	// lipgloss Height sets content area; the border adds 2 lines (top + bottom).
-	contentH := s.height - 2
-	if contentH < 3 {
-		contentH = 3
-	}
-
-	leftStyle := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(contentH).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#8b5cf6")).
-		Padding(0, 1)
-
-	rightStyle := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(contentH).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00d4ff")).
-		Padding(0, 1)
-
-	leftContent := s.renderActionFeed(leftWidth-4, contentH)
-	rightContent := s.renderArtifact(rightWidth-4, contentH)
-
+	h := max(s.height, 3)
+	leftW := s.width / 2
+	rightW := s.width - leftW
+	// Each pane: a 1-column border and a 1-column pad on either side.
+	left := s.renderActionFeed(leftW-4, h-2)
+	right := s.renderArtifact(rightW-4, h-2)
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		leftStyle.Render(leftContent),
-		rightStyle.Render(rightContent),
+		splitPane(left, leftW, h, "#8b5cf6"),
+		splitPane(right, rightW, h, "#00d4ff"),
 	)
+}
+
+// splitPane boxes content in a rounded border exactly w columns by h rows.
+func splitPane(content string, w, h int, border string) string {
+	inner, rows := w-4, h-2
+	lines := strings.Split(content, "\n")
+	if len(lines) > rows {
+		lines = lines[:rows]
+	}
+	for i, l := range lines {
+		lines[i] = fitLine(l, inner)
+	}
+	return lipgloss.NewStyle().
+		Width(w-2). // lipgloss widths include the padding, not the border
+		Height(rows).
+		MaxHeight(h).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(border)).
+		Padding(0, 1).
+		Render(strings.Join(lines, "\n"))
+}
+
+// fitLine makes l one terminal row at most width columns wide: tabs become
+// spaces, carriage returns go, and the rest is cut with "…".
+func fitLine(l string, width int) string {
+	l = strings.ReplaceAll(strings.ReplaceAll(l, "\t", "    "), "\r", "")
+	if width < 1 {
+		return ""
+	}
+	return ansi.Truncate(l, width, "…")
 }
 
 func (s *SplitPanel) renderActionFeed(width, contentH int) string {
@@ -191,12 +204,7 @@ func (s *SplitPanel) renderActionFeed(width, contentH int) string {
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555"))
 	lines := make([]string, len(entries))
 	for i, e := range entries {
-		line := "● " + e
-		if len([]rune(line)) > width {
-			runes := []rune(line)
-			line = string(runes[:width-1]) + "…"
-		}
-		lines[i] = line
+		lines[i] = fitLine("● "+e, width)
 	}
 
 	result := header + "\n" + strings.Join(lines, "\n")
@@ -241,10 +249,7 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 		visible := allLines[start:end]
 		trimmed := make([]string, len(visible))
 		for i, l := range visible {
-			if width > 0 && len([]rune(l)) > width {
-				l = string([]rune(l)[:width-1]) + "…"
-			}
-			trimmed[i] = l
+			trimmed[i] = fitLine(l, width)
 		}
 		result := header + "\n" + strings.Join(trimmed, "\n")
 		if s.rightScroll > 0 || end < len(allLines) {
@@ -280,9 +285,7 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 	// Color diff lines: additions green, removals red, header cyan.
 	colored := make([]string, len(visible))
 	for i, l := range visible {
-		if width > 0 && len([]rune(l)) > width {
-			l = string([]rune(l)[:width-1]) + "…"
-		}
+		l = fitLine(l, width)
 		switch {
 		case strings.HasPrefix(l, "+++") || strings.HasPrefix(l, "---"):
 			colored[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff")).Render(l)
@@ -305,6 +308,18 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 	return result
 }
 
+// viewNarrow is the feed alone, its latest entries, for a terminal under
+// 40 columns: still no wider or taller than the panel.
 func (s *SplitPanel) viewNarrow() string {
-	return strings.Join(s.actions, "\n")
+	rows := max(s.height, 1)
+	// Cap rows, not entries: an entry may hold several lines (a verdict).
+	var lines []string
+	for i := len(s.actions) - 1; i >= 0 && len(lines) < rows; i-- {
+		parts := strings.Split(s.actions[i], "\n")
+		for j := len(parts) - 1; j >= 0 && len(lines) < rows; j-- {
+			lines = append(lines, fitLine(parts[j], s.width))
+		}
+	}
+	slices.Reverse(lines)
+	return strings.Join(lines, "\n")
 }
