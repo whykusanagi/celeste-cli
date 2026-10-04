@@ -2,7 +2,6 @@ package prompts
 
 import (
 	"fmt"
-	"log"
 	"slices"
 	"sync"
 
@@ -28,8 +27,10 @@ var stepDown = []Profile{ProfileFull, ProfileSpine, ProfileLite}
 // tokens (0 or less = unknown: no guard). It steps full → spine → lite while
 // the profile is over a quarter of the window, then to off if lite is over
 // half of it. When it stepped, the second result is the guard's notice:
-// returned once per (want, chosen, window) per process, and logged then
-// (ruling 7). Sizes are the container's estimate, len(system_prompt)/4.
+// returned once per (want, chosen, window) per process (ruling 7). The
+// guard does not log it: the caller shows it, or logs it when it has
+// nowhere to show it, so each run reports it once (#321). Sizes are the
+// container's estimate, len(system_prompt)/4.
 func selectProfile(want Profile, window int) (*PersonaProfile, string) {
 	pp := mustProfile(want)
 	i := slices.Index(stepDown, want)
@@ -67,6 +68,5 @@ func guardNotice(want, got Profile, window int) string {
 		msg = fmt.Sprintf("Persona: even the lite profile would take over half of the %s-token context window, so only the persona's identity, honesty rule and voice boundary are kept. If the model's window is larger, set context_limit in your config.",
 			size)
 	}
-	log.Printf("[persona] %s", msg)
 	return msg
 }

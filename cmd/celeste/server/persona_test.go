@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"log"
 	"strings"
 	"testing"
 
@@ -66,5 +68,26 @@ func TestMCPContentSmallWindowStepsDown(t *testing.T) {
 	}
 	if out := string(res[1]); strings.Contains(out, "Persona:") {
 		t.Fatalf("the persona notice reached the MCP response: %s", out)
+	}
+}
+
+// MCP chat drops the guard's notice from its response, so the server log
+// (stderr) carries it, once (#321; context_limit 8195 is used by no other
+// test).
+func TestMCPChatSmallWindowLogsTheNoticeOnce(t *testing.T) {
+	promptstest.Install(t)
+	var logs bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "hi"}, fakeprovider.Turn{Text: "hi"})
+	cfg, ws := contractCfg(t, srv)
+	cfg.CelesteConfig.ContextLimit = 8195
+	for i := int64(1); i <= 2; i++ {
+		call(t, cfg, rpc{i, "tools/call", map[string]any{"name": "celeste", "arguments": map[string]any{"prompt": "hello", "mode": "chat", "workspace": ws}}})
+	}
+	if got := strings.Count(logs.String(), "[persona] Persona: using the lite profile"); got != 1 {
+		t.Fatalf("want the notice logged once, got %d: %q", got, logs.String())
 	}
 }
