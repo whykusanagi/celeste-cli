@@ -186,7 +186,7 @@ func TestOrchestratorLanesShareOneEnvironment(t *testing.T) {
 	if res.Verdict == nil {
 		t.Fatal("the reviewer lane did not run")
 	}
-	if n := strings.Count(log.texts(), "skipping"); n != 1 {
+	if n := strings.Count(log.texts(), "hooks: skipping"); n != 1 {
 		t.Fatalf("hooks loaded %d times across lanes, want once:\n%s", n, log.texts())
 	}
 }

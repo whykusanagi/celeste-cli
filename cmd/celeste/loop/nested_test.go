@@ -89,7 +89,7 @@ func TestNestedSharesParentParts(t *testing.T) {
 	if child.Hooks != parent.Hooks || child.ProjectContext != parent.ProjectContext {
 		t.Fatal("same workspace: hooks and project context come from the parent")
 	}
-	if n := strings.Count(w.all(), "skipping"); n != 1 {
+	if n := strings.Count(w.all(), "hooks: skipping"); n != 1 {
 		t.Fatalf("hooks were loaded %d times, want once (by the parent):\n%s", n, w.all())
 	}
 }
@@ -393,10 +393,10 @@ func TestNestedOtherWorkspaceRebuildsHooksAndWarnsTheChild(t *testing.T) {
 	if child.Hooks == parent.Hooks {
 		t.Fatal("an other-workspace child must rebuild its own hooks, not share the parent's")
 	}
-	if n := strings.Count(childWarns.all(), "skipping"); n != 1 {
+	if n := strings.Count(childWarns.all(), "hooks: skipping"); n != 1 {
 		t.Fatalf("child warnings = %q, want the other workspace's untrusted hooks.json warning once", childWarns.all())
 	}
-	if strings.Contains(parentWarns.all(), "skipping") {
+	if strings.Contains(parentWarns.all(), "hooks: skipping") {
 		t.Fatalf("the other workspace's hook warning reached the parent's sink:\n%s", parentWarns.all())
 	}
 }
