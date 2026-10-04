@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -252,5 +253,39 @@ func TestHeaderFitsWithLongModelAndNSFW(t *testing.T) {
 	}
 	if plain := stripANSI(huge.SetWidth(80).View()); !strings.Contains(plain, "…") {
 		t.Fatalf("a model name too long for the row should end in …:\n%s", plain)
+	}
+}
+
+// openAI404 is the error go-openai returns for an unknown model.
+var openAI404 = errors.New(`error, status code: 404, status: 404 Not Found, message: Model "nonexistent-model-xyz" not found`)
+
+// V5: a long error stays on the status bar's one row at 80 columns, cut
+// with "…", and reads "Error: status code: 404…", not "Error: error, …".
+func TestStatusBarLongErrorIsOneRow(t *testing.T) {
+	for _, sz := range auditSizes {
+		var m tea.Model = NewApp(nil)
+		m, _ = m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+		m, _ = m.Update(StreamErrorMsg{Err: openAI404})
+		app := m.(AppModel)
+		bar := app.status.View()
+		assertFitsWidth(t, bar, sz.w)
+		if got := lipgloss.Height(bar); got != 1 {
+			t.Fatalf("%dx%d: the status bar is %d rows:\n%s", sz.w, sz.h, got, stripANSI(bar))
+		}
+		plain := stripANSI(bar)
+		if strings.Contains(plain, "Error: error") || !strings.Contains(plain, "Error: status code: 404") {
+			t.Fatalf("%dx%d: status bar text: %q", sz.w, sz.h, plain)
+		}
+		if sz.w == 80 && !strings.HasSuffix(strings.TrimRight(plain, " "), "…") {
+			t.Fatalf("%dx%d: a cut error should end in …: %q", sz.w, sz.h, plain)
+		}
+		if got := lipgloss.Height(app.View()); got > sz.h {
+			t.Fatalf("%dx%d: the view is %d rows:\n%s", sz.w, sz.h, got, stripANSI(app.View()))
+		}
+	}
+	// A multi-line status (a warning, a streaming phrase) is one row too.
+	bar := NewStatusModel().SetWidth(80).SetText("line one\nline two").View()
+	if got := lipgloss.Height(bar); got != 1 {
+		t.Fatalf("a two-line status text took %d rows: %q", got, stripANSI(bar))
 	}
 }
