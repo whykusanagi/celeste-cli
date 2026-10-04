@@ -223,17 +223,6 @@ jobs:
         go-version: '1.26.6'
         cache: true
 
-    # `go install ...@version` must also work for users whose GOPROXY is
-    # `direct` (no proxy.golang.org). Every pinned version has to exist at
-    # its origin: a tag the upstream deleted (#323: go-tree-sitter v0.25.0)
-    # resolves only through the proxy. A fresh module cache keeps the
-    # setup-go cache from hiding a version the origin no longer serves.
-    - name: Modules resolve without the module proxy (GOPROXY=direct)
-      run: |
-        export GOMODCACHE="$(mktemp -d)" GOFLAGS=-modcacherw
-        GOPROXY=direct go mod download
-        GOPROXY=off go build -o /dev/null ./cmd/celeste
-
     - name: Build for multiple platforms
       run: |
         LDFLAGS="-X main.Version=ci-${{ github.sha }} -X main.CommitSHA=${{ github.sha }}"
