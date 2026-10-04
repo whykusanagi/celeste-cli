@@ -38,8 +38,9 @@ func askPrompt(send func(tea.Msg)) tools.AskFunc {
 		for _, o := range req.Options {
 			opts = append(opts, tui.AskOption{Label: o.Label, Description: o.Description})
 		}
+		deadline, _ := ctx.Deadline()
 		send(tui.AskRequestMsg{Question: req.Question, Options: opts, MultiSelect: req.MultiSelect, Response: ch,
-			Owner: tui.RunOwnerFrom(ctx), Done: ctx.Done()})
+			Owner: tui.RunOwnerFrom(ctx), Done: ctx.Done(), Deadline: deadline})
 		select {
 		case r, ok := <-ch:
 			if !ok {

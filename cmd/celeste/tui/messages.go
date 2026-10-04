@@ -318,6 +318,9 @@ type AskRequestMsg struct {
 	// answered cancelled and never shown (2.0 F2e).
 	Owner RunOwner
 	Done  <-chan struct{}
+	// Deadline is when the question expires unanswered (the asking
+	// tool's timeout); zero: none. The modal shows it.
+	Deadline time.Time
 }
 
 // AskResponseMsg is the user's answer to an AskRequestMsg.

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
@@ -52,4 +53,16 @@ func TestAskPrompt_MultiSelectSpaceThenEnter(t *testing.T) {
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // confirm; side effect: sends on ch
 	resp := <-ch
 	assert.ElementsMatch(t, []string{"cheese", "ham"}, resp.Selected)
+}
+
+// #356: a question with a deadline says in the footer when it expires.
+func TestAskPrompt_ShowsTheDeadline(t *testing.T) {
+	m := NewAskPromptModel()
+	m.SetSize(120, 0)
+	deadline := time.Date(2026, 10, 4, 15, 42, 0, 0, time.Local)
+	m, _ = m.Update(AskRequestMsg{Question: "q", Options: []AskOption{{Label: "x"}}, Response: make(chan AskResponseMsg, 1), Deadline: deadline})
+	assert.Contains(t, m.View(), "expires at 15:42")
+
+	m, _ = m.Update(AskRequestMsg{Question: "q", Options: []AskOption{{Label: "x"}}, Response: make(chan AskResponseMsg, 1)})
+	assert.NotContains(t, m.View(), "expires")
 }

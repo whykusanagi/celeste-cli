@@ -47,6 +47,9 @@ func NewAskTool(registry *tools.Registry) *AskTool {
 			ReadOnly:        true,
 			ConcurrencySafe: false,
 			RequiredFields:  []string{"question", "options"},
+			// The user answers in a modal: the default tool timeout
+			// would drop a question they are still reading (#356).
+			ExecTimeout: answerTimeout,
 		},
 		registry: registry,
 	}

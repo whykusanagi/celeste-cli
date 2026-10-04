@@ -58,3 +58,39 @@ func TestRunTurnTagsItsContext(t *testing.T) {
 		t.Fatalf("turn context owner = %+v", got)
 	}
 }
+
+// #356: the modal is told when the question expires, so it can show it.
+func TestAskPromptCarriesTheDeadline(t *testing.T) {
+	sent := make(chan tea.Msg, 1)
+	fn := askPrompt(func(m tea.Msg) { sent <- m })
+	deadline := time.Now().Add(30 * time.Minute)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	go func() { _, _ = fn(ctx, tools.AskRequest{Question: "q", Options: []tools.AskOption{{Label: "a"}}}) }()
+	msg := (<-sent).(tui.AskRequestMsg)
+	if !msg.Deadline.Equal(deadline) {
+		t.Fatalf("deadline = %v, want %v", msg.Deadline, deadline)
+	}
+	msg.Response <- tui.AskResponseMsg{Cancelled: true}
+}
+
+// #356: in the chat, the ask tool's question waits past the 45 s default
+// tool timeout: its context runs for submit_plan's 30 minutes.
+func TestChatAskOutlivesTheDefaultToolTimeout(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "a", Name: "ask",
+			Args: `{"question":"which?","options":[{"label":"x"},{"label":"y"}]}`}}},
+		fakeprovider.Turn{Text: "ok"})
+	_, deps, _ := chatApp(t, srv)
+	var left time.Duration
+	deps.registry.SetAskFunc(func(ctx context.Context, _ tools.AskRequest) (tools.AskResponse, error) {
+		if d, ok := ctx.Deadline(); ok {
+			left = time.Until(d)
+		}
+		return tools.AskResponse{Selected: []string{"y"}}, nil
+	})
+	runTurnMsgs(t, deps.adapter, tui.TurnRequest{History: userTurn("ask me"), Tools: true, Run: 1})
+	if left < 29*time.Minute {
+		t.Fatalf("ask had %v to be answered, want about 30m", left)
+	}
+}
