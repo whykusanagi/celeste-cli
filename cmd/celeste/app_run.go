@@ -99,9 +99,17 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	command := args[0]
 	cmdArgs := args[1:]
 
-	if usage, ok := subcommandUsage[command]; ok && len(cmdArgs) > 0 && isHelpFlag(cmdArgs[0]) {
-		fmt.Fprintln(stdout, usage)
-		return 0
+	if usage, ok := subcommandUsage[command]; ok && len(cmdArgs) > 0 {
+		if isHelpFlag(cmdArgs[0]) {
+			fmt.Fprintln(stdout, usage)
+			return 0
+		}
+		// -- ends the help check, so text starting with -h or --help is
+		// passed on; the -- itself is not. chat takes no arguments and index
+		// parses its own.
+		if cmdArgs[0] == "--" && command != "chat" && command != "index" {
+			cmdArgs = cmdArgs[1:]
+		}
 	}
 
 	switch command {
@@ -110,10 +118,6 @@ func run(args []string, runner commandRunner, stdout, stderr io.Writer) int {
 	case "config":
 		runner.RunConfig(cmdArgs)
 	case "message", "msg":
-		// -- ends the help check, so text starting with -h or --help sends.
-		if len(cmdArgs) > 0 && cmdArgs[0] == "--" {
-			cmdArgs = cmdArgs[1:]
-		}
 		if len(cmdArgs) < 1 {
 			fmt.Fprintln(stderr, messageUsage)
 			return 1

@@ -29,7 +29,8 @@ var stepDown = []Profile{ProfileFull, ProfileSpine, ProfileLite}
 // half of it. When it stepped, the second result is the guard's notice:
 // returned once per (want, chosen, window) per process (ruling 7). The
 // guard does not log it: the caller shows it, or logs it when it has
-// nowhere to show it, so each run reports it once (#321). Sizes are the container's estimate, len(system_prompt)/4.
+// nowhere to show it, so each run reports it once (#321). Sizes are the
+// container's estimate, len(system_prompt)/4.
 func selectProfile(want Profile, window int) (*PersonaProfile, string) {
 	pp := mustProfile(want)
 	i := slices.Index(stepDown, want)

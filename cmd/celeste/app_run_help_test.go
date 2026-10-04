@@ -51,6 +51,15 @@ func TestRun_MessageHelpEdges(t *testing.T) {
 	assert.Equal(t, 1, run([]string{"message", "--"}, r, &out, &errBuf))
 	assert.Contains(t, errBuf.String(), "Usage: celeste message <text>")
 	assert.Empty(t, r.lastCall)
+
+	// -- ends the help check on the other free-text subcommands too, and is
+	// not passed on as text.
+	for _, cmd := range []string{"remember", "forget", "resume", "skill"} {
+		r = &fakeRunner{}
+		assert.Equal(t, 0, run([]string{cmd, "--", "--help"}, r, &out, &errBuf), cmd)
+		assert.Equal(t, cmd, r.lastCall)
+		assert.Equal(t, []string{"--help"}, r.lastArgs, cmd)
+	}
 }
 
 // Subcommands with their own flag parsing keep their own -h handling.
