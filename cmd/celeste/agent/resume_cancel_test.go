@@ -1,0 +1,145 @@
+package agent
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
+)
+
+// #317: a cancelled run that resumes and completes carries no stale error,
+// in the returned state or the stored checkpoint.
+func TestResumeOfCancelledRunClearsOldError(t *testing.T) {
+	isolateHome(t)
+	ws := t.TempDir()
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+	r := resumeRunner(t, srv, ws, nil)
+
+	state := NewRunState("finish the thing", r.options)
+	normalizeStateOptions(state, r.options)
+	state.Phase = PhaseExecution
+	state.Turn = 1
+	state.Status = StatusCancelled
+	state.Error = "run cancelled: context canceled"
+	now := time.Now()
+	state.CompletedAt = &now
+	state.Messages = append(state.Messages, tui.ChatMessage{Role: "user", Content: "finish the thing", Timestamp: now})
+	if err := r.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Resume(context.Background(), state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCompleted || got.Error != "" {
+		t.Fatalf("resume: status=%q error=%q, want completed with no error", got.Status, got.Error)
+	}
+	saved, err := r.store.Load(state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != StatusCompleted || saved.Error != "" {
+		t.Fatalf("saved: status=%q error=%q, want completed with no error", saved.Status, saved.Error)
+	}
+}
+
+// The stale error goes on resume, not only on completion: a resumed
+// cancelled run that stops for another reason reports that reason alone.
+func TestResumeOfCancelledRunAtCapDropsOldError(t *testing.T) {
+	isolateHome(t)
+	srv := fakeprovider.NewOpenAI(t)
+	r := resumeRunner(t, srv, t.TempDir(), func(o *Options) { o.MaxTurns = 2 })
+
+	state := NewRunState("finish the thing", r.options)
+	normalizeStateOptions(state, r.options)
+	state.Phase = PhaseExecution
+	state.Turn = 2
+	state.Status = StatusCancelled
+	state.Error = "run cancelled: context canceled"
+	if err := r.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Resume(context.Background(), state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusMaxTurnsReached || got.Error != "" {
+		t.Fatalf("resume: status=%q error=%q, want max_turns_reached with no error", got.Status, got.Error)
+	}
+	if n := len(srv.Requests()); n != 0 {
+		t.Fatalf("requests = %d, want 0", n)
+	}
+}
+
+// A resumed run is running again: the previous attempt's CompletedAt goes
+// with its error, so a resume that then fails stores no stale finish time.
+func TestResumeOfCancelledRunThatFailsDropsOldCompletedAt(t *testing.T) {
+	isolateHome(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Status: 400, Body: `{"error":{"message":"bad request"}}`})
+	r := resumeRunner(t, srv, t.TempDir(), nil)
+
+	state := NewRunState("finish the thing", r.options)
+	normalizeStateOptions(state, r.options)
+	state.Phase = PhaseExecution
+	state.Turn = 1
+	state.Status = StatusCancelled
+	state.Error = "run cancelled: context canceled"
+	old := time.Now().Add(-time.Hour)
+	state.CompletedAt = &old
+	state.Messages = append(state.Messages, tui.ChatMessage{Role: "user", Content: "finish the thing", Timestamp: old})
+	if err := r.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Resume(context.Background(), state.RunID)
+	if err == nil || got.Status != StatusFailed {
+		t.Fatalf("resume: status=%q err=%v, want failed", got.Status, err)
+	}
+	saved, err := r.store.Load(state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CompletedAt != nil || saved.Error == "" || saved.Error == "run cancelled: context canceled" {
+		t.Fatalf("saved: completed_at=%v error=%q, want no completed_at and the new error", saved.CompletedAt, saved.Error)
+	}
+}
+
+// A no-progress stop's StopReason is stale once the run resumes: a resume
+// that completes stores no "identical" next to status completed.
+func TestResumeOfNoProgressRunClearsOldStopReason(t *testing.T) {
+	isolateHome(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "TASK_COMPLETE: done"})
+	r := resumeRunner(t, srv, t.TempDir(), nil)
+
+	state := NewRunState("finish the thing", r.options)
+	normalizeStateOptions(state, r.options)
+	state.Phase = PhaseExecution
+	state.Turn = 1
+	state.Status = StatusNoProgressStopped
+	state.StopReason = "identical"
+	now := time.Now()
+	state.CompletedAt = &now
+	state.Messages = append(state.Messages, tui.ChatMessage{Role: "user", Content: "finish the thing", Timestamp: now})
+	if err := r.store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.Resume(context.Background(), state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCompleted || got.StopReason != "" {
+		t.Fatalf("resume: status=%q stop_reason=%q, want completed with no stop reason", got.Status, got.StopReason)
+	}
+	saved, err := r.store.Load(state.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != StatusCompleted || saved.StopReason != "" {
+		t.Fatalf("saved: status=%q stop_reason=%q, want completed with no stop reason", saved.Status, saved.StopReason)
+	}
+}

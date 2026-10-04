@@ -42,7 +42,7 @@ func runAgentCommand(args []string) {
 	benchmarkOut := fs.String("benchmark-out", "", "Write benchmark report JSON to this path")
 	workspace := fs.String("workspace", "", "Workspace root for agent development tools (defaults to current directory)")
 	artifactDir := fs.String("artifact-dir", "", "Directory where run artifact bundles are written")
-	maxTurns := fs.Int("max-turns", 0, "Maximum agent turns")
+	maxTurns := fs.Int("max-turns", 0, "Maximum agent turns (with --resume, replaces the run's saved limit)")
 	maxToolCalls := fs.Int("max-tool-calls", 0, "Maximum tool calls per turn")
 	maxNoToolTurns := fs.Int("max-no-tool-turns", 0, "Maximum consecutive no-tool turns before stopping")
 	requireMarker := fs.Bool("require-complete-marker", true, "Require completion marker in final response")
@@ -136,6 +136,8 @@ func runAgentCommand(args []string) {
 			opts.VerificationExplicit = true
 		case "request-timeout":
 			opts.RequestTimeoutExplicit = true
+		case "max-turns":
+			opts.MaxTurnsExplicit = *maxTurns > 0
 		}
 	})
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)

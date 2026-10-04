@@ -537,6 +537,18 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An explicit --max-turns overrides the saved limit (#316), so a run
+	// that stopped at max_turns_reached continues under the new cap. A
+	// resumer's default MaxTurns never does: the saved limit is the run's.
+	if r.options.MaxTurnsExplicit && r.options.MaxTurns > 0 {
+		state.Options.MaxTurns = r.options.MaxTurns
+	}
+	// The previous attempt's error (a cancel, a failed request), stop
+	// reason and finish time are stale once the run resumes (#317): this
+	// attempt records its own, if any.
+	state.Error = ""
+	state.StopReason = ""
+	state.CompletedAt = nil
 	normalizeStateOptions(state, r.options)
 	return r.runState(ctx, state)
 }
@@ -1184,6 +1196,7 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 
 func completeState(state *RunState) {
 	state.Status = StatusCompleted
+	state.Error = "" // a completed run carries no error (#317)
 	now := time.Now()
 	state.CompletedAt = &now
 	state.UpdatedAt = now
