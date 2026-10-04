@@ -78,7 +78,7 @@ type Runner struct {
 // tool results when the history is over the compaction threshold, or
 // unconditionally when force is set (after a context-overflow error); if
 // that isn't enough it summarizes everything but the newest
-// compact.KeepFor(window) tokens. It returns the history, progress notes for
+// compact.KeepWithin(window, overhead) tokens. It returns the history, progress notes for
 // the event stream, and whether it changed. It runs on the loop goroutine and must not write r.out.
 func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, meter *compact.Meter, force bool) ([]tui.ChatMessage, []string, bool) {
 	// A nil prune store only disables pruning (Prune is a no-op without

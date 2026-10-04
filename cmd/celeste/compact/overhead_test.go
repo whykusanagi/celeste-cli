@@ -216,3 +216,36 @@ func TestHasHistoryToSummarize(t *testing.T) {
 		t.Fatal("two messages before the tail can be summarized when urgent")
 	}
 }
+
+// A prefix that fills a tiny window (16k under the smoke run's 16k prefix)
+// leaves no history budget. No proactive summary runs: the next request
+// overflows and the forced compaction after the overflow recovers. A
+// summary that does run (the urgent rung, a manual /compact) keeps only
+// the newest message. Pinned so a change to either is deliberate.
+func TestNoHistoryBudgetFailsOpenToOverflowRecovery(t *testing.T) {
+	const window = 16_384
+	if b := HistoryBudget(window, smokeOverhead); b != 0 {
+		t.Fatalf("HistoryBudget(16k, 16k prefix) = %d, want 0", b)
+	}
+	var long []tui.ChatMessage
+	for i := 0; i < 12; i++ {
+		long = append(long, msg("user", strings.Repeat("q", 4*400)), msg("assistant", strings.Repeat("r", 4*400)))
+	}
+	if NeedsSummary(long, window, Estimate(long)+smokeOverhead) {
+		t.Fatal("no history budget: no proactive summary, overflow recovery handles it")
+	}
+	if k := KeepWithin(window, smokeOverhead); k != 1 {
+		t.Fatalf("KeepWithin(16k, 16k prefix) = %d, want 1 (the newest message)", k)
+	}
+	sum := func(context.Context, string, string) (string, error) { return "## Goal\nx", nil }
+	out, _, err := Summarize(context.Background(), long, SummaryOptions{Window: window, Overhead: smokeOverhead}, sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := out[len(out)-1]; last.Content != long[len(long)-1].Content {
+		t.Fatal("a forced summary must keep the newest message")
+	}
+	if Estimate(out) >= Estimate(long) {
+		t.Fatal("a forced summary must shrink the history")
+	}
+}

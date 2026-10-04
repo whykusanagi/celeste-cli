@@ -804,7 +804,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")
 
 // SummarizeContext implements tui.ContextCompactor: it summarizes all but
-// the newest compact.KeepFor(window) tokens with the small-model role (#174). PreCompact runs
+// the newest compact.KeepWithin(window, overhead) tokens with the small-model role (#174). PreCompact runs
 // inside the summarize call, which compact.Summarize only makes when there
 // is something to summarize; it may block the summary or add instructions.
 // PostCompact sees the summary.
