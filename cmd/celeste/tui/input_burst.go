@@ -26,8 +26,8 @@ func keyName(k tea.KeyMsg) string {
 }
 
 // typeEach feeds a text burst to the app one character at a time, the
-// way it arrives when typed: for views that act on single keys (lists,
-// panels), where the burst's text is not meant for the input.
+// way it arrives when typed: for a view whose text field reads single
+// keys (graph search).
 func (m AppModel) typeEach(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var model tea.Model = m

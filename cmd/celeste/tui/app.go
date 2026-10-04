@@ -521,10 +521,18 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onCatalogReady(ready), nil
 	}
 
-	// A sub-view acts on single keys: a text burst is typed into it one
-	// character at a time, so a word never reads as a named key (#320).
+	// A text burst in a sub-view (#320): the skills filter takes it as
+	// text, graph search as typed letters; the other views act on single
+	// keys and drop it, so a pasted word neither reads as a named key nor
+	// runs its letters as commands ("dog" would delete a session).
 	if k, ok := msg.(tea.KeyMsg); ok && isTextBurst(k) && m.viewMode != "chat" {
-		return m.typeEach(k)
+		switch {
+		case m.viewMode == "skills":
+		case m.viewMode == "graph" && m.graphModel != nil && m.graphModel.searching:
+			return m.typeEach(k)
+		default:
+			return m, nil
+		}
 	}
 
 	// Route to collections view if in that mode
@@ -711,7 +719,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// The MCP panel and the selector act on single keys too (#320).
 		if isTextBurst(msg) && (m.mcpPanel.Active() || m.selectorActive) {
-			return m.typeEach(msg)
+			return m, nil
 		}
 
 		// If MCP panel is active, route keys to it

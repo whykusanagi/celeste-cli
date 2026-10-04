@@ -54,9 +54,8 @@ func TestAppBurstKeepsKeyNameWords(t *testing.T) {
 	assert.False(t, app.interruptPending, "the word ctrl+c was taken for Ctrl+C")
 }
 
-// In a list the text is typed one key at a time, as if typed: the word
-// "end" is the letters e, n, d, not the End key.
-func TestSelectorBurstIsTypedKeyByKey(t *testing.T) {
+// A list drops a pasted word: "end" is not the End key.
+func TestSelectorBurstIsDropped(t *testing.T) {
 	items := []SelectorItem{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	m := NewApp(nil)
 	m.selector = NewSelectorModel("pick", items)
@@ -70,4 +69,39 @@ func TestKeyName(t *testing.T) {
 	assert.Equal(t, "left", keyName(tea.KeyMsg{Type: tea.KeyLeft}))
 	assert.Equal(t, "j", keyName(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}))
 	assert.Equal(t, "", keyName(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("left")}))
+}
+
+// A pasted word in a command-only view runs none of its letters: "dog"
+// in the session picker must not delete a session with its d.
+func TestSessionPanelBurstDeletesNothing(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	panel := NewSessionPanelModel("")
+	require.NotEmpty(t, panel.entries)
+	m.sessionPanel = &panel
+	m.viewMode = "sessions"
+	for _, word := range []string{"dog", "delete", "down"} {
+		m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(word)})
+	}
+	_, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err, "a pasted word deleted a session")
+	assert.Equal(t, "sessions", m.viewMode)
+}
+
+// The skills filter takes a burst as typed text.
+func TestSkillsFilterTakesBurst(t *testing.T) {
+	m := NewApp(nil)
+	b := NewSkillsBrowserModel(nil)
+	m.skillsBrowser = &b
+	m.viewMode = "skills"
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("left")})
+	assert.Equal(t, "left", m.skillsBrowser.query)
+}
+
+// Graph search takes a burst letter by letter, as typed.
+func TestGraphSearchTakesBurst(t *testing.T) {
+	m := NewApp(nil)
+	m.graphModel = &GraphModel{searching: true}
+	m.viewMode = "graph"
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("left")})
+	assert.Equal(t, "left", m.graphModel.searchQuery)
 }
