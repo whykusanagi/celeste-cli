@@ -136,6 +136,8 @@ func runAgentCommand(args []string) {
 			opts.VerificationExplicit = true
 		case "request-timeout":
 			opts.RequestTimeoutExplicit = true
+		case "max-turns":
+			opts.MaxTurnsExplicit = *maxTurns > 0
 		}
 	})
 	opts.VerificationCommands = append(opts.VerificationCommands, verifyCommands...)

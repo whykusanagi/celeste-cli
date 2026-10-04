@@ -68,6 +68,11 @@ type Options struct {
 	// the caller, so NewRunner must not raise it for conductor models. Same
 	// contract as PlanningExplicit below.
 	RequestTimeoutExplicit bool `json:"-"`
+	// MaxTurnsExplicit records that MaxTurns was set deliberately (agent
+	// --max-turns), so Resume applies it over the run's saved limit: a run
+	// that hit max_turns_reached can continue under a larger cap. Not
+	// serialised, like the other *Explicit fields.
+	MaxTurnsExplicit bool `json:"-"`
 	// PlanningExplicit records that EnablePlanning was set deliberately by the
 	// caller, so NewRunner must not override it for conductor models. Not
 	// serialised: it describes how this run was launched, not its state.

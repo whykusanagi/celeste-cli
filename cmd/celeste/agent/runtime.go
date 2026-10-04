@@ -537,6 +537,12 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An explicit --max-turns overrides the saved limit (#316), so a run
+	// that stopped at max_turns_reached continues under the new cap. A
+	// resumer's default MaxTurns never does: the saved limit is the run's.
+	if r.options.MaxTurnsExplicit && r.options.MaxTurns > 0 {
+		state.Options.MaxTurns = r.options.MaxTurns
+	}
 	normalizeStateOptions(state, r.options)
 	return r.runState(ctx, state)
 }
