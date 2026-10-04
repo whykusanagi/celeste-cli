@@ -560,6 +560,15 @@ func (r *Runner) Resume(ctx context.Context, runID string) (*RunState, error) {
 	if r.options.MaxTurnsExplicit && r.options.MaxTurns > 0 {
 		state.Options.MaxTurns = r.options.MaxTurns
 	}
+	// The saved turn deadline may predate stall timeouts (a fixed 90 s that
+	// killed a local run): an explicit -request-timeout replaces it, and
+	// otherwise the resumer's deadline raises it, never lowers it. The
+	// client's stall timeout still fails a request that goes quiet.
+	if r.options.RequestTimeoutExplicit {
+		state.Options.RequestTimeout = r.options.RequestTimeout
+	} else if state.Options.RequestTimeout < r.options.RequestTimeout {
+		state.Options.RequestTimeout = r.options.RequestTimeout
+	}
 	// The previous attempt's error (a cancel, a failed request), stop
 	// reason and finish time are stale once the run resumes (#317): this
 	// attempt records its own, if any.
