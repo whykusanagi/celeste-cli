@@ -610,7 +610,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else if m.viewMode == "graph" {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
-			if msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc" {
+			// While searching, q is a letter of the query and esc ends the
+			// search; the graph view handles both.
+			searching := m.graphModel != nil && m.graphModel.searching
+			if !searching && (msg.String() == "q" || msg.String() == "Q" || msg.String() == "esc") {
 				m.viewMode = "chat"
 				return m, nil
 			}

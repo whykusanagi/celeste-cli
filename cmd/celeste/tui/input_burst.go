@@ -27,13 +27,14 @@ func keyName(k tea.KeyMsg) string {
 
 // typeEach feeds a text burst to the app one character at a time, the
 // way it arrives when typed: for a view whose text field reads single
-// keys (graph search).
+// keys (graph search). It stops once a letter leaves the view the burst
+// started in, so the rest never lands in another view's input.
 func (m AppModel) typeEach(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var model tea.Model = m
 	for _, r := range k.Runes {
 		app, ok := model.(AppModel)
-		if !ok {
+		if !ok || app.viewMode != m.viewMode {
 			break
 		}
 		var cmd tea.Cmd

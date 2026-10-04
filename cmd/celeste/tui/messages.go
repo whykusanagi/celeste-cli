@@ -28,6 +28,9 @@ type ChatMessage struct {
 
 	// plain renders the content as written, never through markdown: text
 	// such as "/session resume <id>" that the renderer would mangle (#315).
+	// Display-only: it is unexported, so it is not serialized, and a
+	// persisted or restored message renders as markdown again. Only the
+	// transient /session list output sets it.
 	plain bool
 }
 

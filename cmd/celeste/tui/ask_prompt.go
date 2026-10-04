@@ -87,6 +87,10 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 		pickAt := m.pickAt
 		m.pickAt = time.Time{}
 		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+			// Stamped when Update handles the key, not when it arrived: if
+			// the loop stalls and a real pick and its Enter are handled
+			// back to back, the Enter reads as a paste and the user presses
+			// it again. That fails safe.
 			m.pickAt = keyClock() // a key a paste can contain
 		}
 		switch msg.String() {

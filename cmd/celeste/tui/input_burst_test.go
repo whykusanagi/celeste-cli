@@ -105,3 +105,37 @@ func TestGraphSearchTakesBurst(t *testing.T) {
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("left")})
 	assert.Equal(t, "left", m.graphModel.searchQuery)
 }
+
+// A burst with a q in it stays in graph search: q is a letter there,
+// not "leave the view", and no letter spills into the chat input.
+func TestGraphSearchBurstWithQStaysInSearch(t *testing.T) {
+	m := NewApp(nil)
+	m.graphModel = &GraphModel{searching: true}
+	m.viewMode = "graph"
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("quick")})
+	assert.Equal(t, "graph", m.viewMode)
+	assert.Equal(t, "quick", m.graphModel.searchQuery)
+	assert.Equal(t, "", m.input.Value())
+}
+
+// Esc in graph search ends the search and keeps the graph view.
+func TestGraphSearchEscEndsSearchOnly(t *testing.T) {
+	m := NewApp(nil)
+	m.graphModel = &GraphModel{searching: true, searchQuery: "ab"}
+	m.viewMode = "graph"
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, "graph", m.viewMode)
+	assert.False(t, m.graphModel.searching)
+}
+
+// typeEach stops once a letter leaves the view the burst started in, so
+// the rest of the burst never lands in another view's input.
+func TestTypeEachStopsWhenViewChanges(t *testing.T) {
+	m := NewApp(nil)
+	m.graphModel = &GraphModel{} // not searching: q leaves the view
+	m.viewMode = "graph"
+	model, _ := m.typeEach(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("quick")})
+	app := model.(AppModel)
+	assert.Equal(t, "chat", app.viewMode)
+	assert.Equal(t, "", app.input.Value())
+}
