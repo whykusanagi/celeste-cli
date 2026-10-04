@@ -15,6 +15,7 @@ import (
 // SessionEntry is a display-ready session summary.
 type SessionEntry struct {
 	ID           string
+	Name         string // set by /session rename, /fork and the first prompt
 	Preview      string // first user message, truncated
 	MessageCount int
 	CreatedAt    time.Time
@@ -51,17 +52,15 @@ func (m *SessionPanelModel) loadSessions(workDir string) {
 
 	mine, others := config.SortForWorkspace(sessions, workDir)
 	sessions = append(mine, others...)
+	// Every session /session list shows, the ones with no messages yet
+	// included (a fresh fork, a new chat), so the two never disagree.
 	m.entries = make([]SessionEntry, 0, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
 
-		// Skip empty sessions
-		if len(s.Messages) == 0 {
-			continue
-		}
-
 		entry := SessionEntry{
 			ID:           s.ID,
+			Name:         s.Name,
 			MessageCount: len(s.Messages),
 			CreatedAt:    s.CreatedAt,
 			UpdatedAt:    s.UpdatedAt,
@@ -71,16 +70,16 @@ func (m *SessionPanelModel) loadSessions(workDir string) {
 		// Extract first user message as preview
 		for _, msg := range s.Messages {
 			if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
-				preview := strings.ReplaceAll(msg.Content, "\n", " ")
-				if len(preview) > 80 {
-					preview = preview[:77] + "..."
-				}
-				entry.Preview = preview
+				entry.Preview = strings.Join(strings.Fields(msg.Content), " ")
 				break
 			}
 		}
 		if entry.Preview == "" {
-			entry.Preview = "(no user messages)"
+			if len(s.Messages) == 0 {
+				entry.Preview = "(no messages yet)"
+			} else {
+				entry.Preview = "(no user messages)"
+			}
 		}
 
 		m.entries = append(m.entries, entry)
@@ -147,19 +146,40 @@ func (m SessionPanelModel) Update(msg tea.Msg) (SessionPanelModel, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the session picker.
+// View renders the session picker. It fills the height it was given, so
+// the input and the bars below it stay at the bottom of the screen.
 func (m SessionPanelModel) View() string {
+	return m.fill(m.body())
+}
+
+// fill pads (or cuts) the picker to its height and cuts each row to its width.
+func (m SessionPanelModel) fill(lines []string) string {
+	if m.height > 0 {
+		if len(lines) > m.height {
+			lines = lines[:m.height]
+		}
+		for len(lines) < m.height {
+			lines = append(lines, "")
+		}
+	}
+	if m.width > 0 {
+		for i, ln := range lines {
+			lines[i] = fitWidth(ln, m.width)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// sessionRowsPerEntry is one meta row (age, messages, ID) and one preview row.
+const sessionRowsPerEntry = 2
+
+func (m SessionPanelModel) body() []string {
 	if m.err != nil {
-		return fmt.Sprintf("Error loading sessions: %v", m.err)
+		return []string{fmt.Sprintf("Error loading sessions: %v", m.err)}
 	}
 
 	if len(m.entries) == 0 {
-		return "No saved sessions.\n\nPress q or Esc to close."
-	}
-
-	w := m.width - 4
-	if w < 40 {
-		w = 40
+		return []string{"No saved sessions.", "", "Press q or Esc to close."}
 	}
 
 	titleStyle := lipgloss.NewStyle().
@@ -169,16 +189,17 @@ func (m SessionPanelModel) View() string {
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6b7280"))
 
-	var sb strings.Builder
-	sb.WriteString(titleStyle.Render(fmt.Sprintf("Sessions (%d)", len(m.entries))))
-	sb.WriteString("\n")
-	sb.WriteString(hintStyle.Render("↑/↓ navigate  PgUp/PgDn page  Enter resume  d delete  Esc close"))
-	sb.WriteString("\n\n")
+	lines := []string{
+		titleStyle.Render(fmt.Sprintf("Sessions (%d)", len(m.entries))),
+		hintStyle.Render("↑/↓ navigate  PgUp/PgDn page  Enter resume  d delete  Esc close"),
+		"",
+	}
 
-	// Visible window — show a page of entries around the cursor
+	// A page of entries around the cursor: what fits under the 3 title rows
+	// and the 2 "more" rows.
 	pageSize := 10
-	if m.height > 30 {
-		pageSize = (m.height - 8) / 3 // 3 lines per entry (meta + preview + gap)
+	if m.height > 0 {
+		pageSize = max((m.height-len(lines)-2)/sessionRowsPerEntry, 1)
 	}
 
 	start := 0
@@ -200,6 +221,11 @@ func (m SessionPanelModel) View() string {
 	previewStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#d1d5db"))
 
+	previewW := m.width - 4
+	if previewW < 20 {
+		previewW = 76
+	}
+
 	for i := start; i < end; i++ {
 		e := m.entries[i]
 		cursor := "  "
@@ -212,31 +238,28 @@ func (m SessionPanelModel) View() string {
 			pStyle = selectedStyle
 		}
 
-		age := formatAge(e.UpdatedAt)
 		here := ""
 		if e.ThisProject {
 			here = "  this project"
 		}
-		meta := style.Render(fmt.Sprintf("%s%s  %d msgs  %s%s", cursor, age, e.MessageCount, e.ID[:8], here))
+		// The whole ID: rows from one day share their leading digits, and
+		// /session resume takes the ID as shown.
+		lines = append(lines, style.Render(fmt.Sprintf("%s%s  %d msgs  %s%s", cursor, formatAge(e.UpdatedAt), e.MessageCount, e.ID, here)))
 
-		maxPreview := w - 4
 		preview := e.Preview
-		if len(preview) > maxPreview {
-			preview = preview[:maxPreview-3] + "..."
+		if e.Name != "" && e.Name != e.Preview {
+			preview = e.Name + " · " + e.Preview
 		}
-		previewLine := "    " + pStyle.Render(preview)
-
-		sb.WriteString(meta + "\n" + previewLine + "\n")
+		lines = append(lines, "    "+pStyle.Render(fitWidth(preview, previewW)))
 	}
 
 	if start > 0 {
-		sb.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d more above\n", start)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  ↑ %d more above", start)))
 	}
 	if end < len(m.entries) {
-		sb.WriteString(dimStyle.Render(fmt.Sprintf("  ↓ %d more below\n", len(m.entries)-end)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  ↓ %d more below", len(m.entries)-end)))
 	}
-
-	return sb.String()
+	return lines
 }
 
 func formatAge(t time.Time) string {

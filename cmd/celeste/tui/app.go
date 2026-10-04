@@ -2593,9 +2593,11 @@ func (m AppModel) View() string {
 	sections = append(sections, m.header.View())
 
 	// Chat panel (flexible height) — or session picker when in sessions mode
-	chatIdx := -1
+	chatIdx, pickerIdx := -1, -1
 	if m.viewMode == "sessions" && m.sessionPanel != nil {
-		sections = append(sections, m.sessionPanel.View())
+		// The picker takes the chat's rows, so the layout keeps its height.
+		pickerIdx = len(sections)
+		sections = append(sections, m.sessionPanel.SetWidth(m.width).SetHeight(m.chat.height).View())
 	} else {
 		chatIdx = len(sections)
 		sections = append(sections, m.chat.View())
@@ -2677,6 +2679,16 @@ func (m AppModel) View() string {
 		if over := total - m.height; over > 0 {
 			h := max(m.chat.height-over, minChatRowsUnderOverlay)
 			sections[chatIdx] = m.chat.shrunk(h).View()
+		}
+	}
+	if pickerIdx >= 0 && m.height > 0 {
+		total := 0
+		for _, s := range sections {
+			total += lipgloss.Height(s)
+		}
+		if over := total - m.height; over > 0 {
+			h := max(m.chat.height-over, minChatRowsUnderOverlay)
+			sections[pickerIdx] = m.sessionPanel.SetWidth(m.width).SetHeight(h).View()
 		}
 	}
 
