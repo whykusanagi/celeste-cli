@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 )
@@ -145,24 +144,25 @@ func mergeSandbox(profile, global *Sandbox) *Sandbox {
 // inheritUserSandbox gives a named profile the user's sandbox settings
 // from ~/.celeste/config.json (docs/SANDBOX.md), which LoadNamed otherwise
 // never reads once a profile is active; keys the profile sets win. A
-// config.json that cannot be read or parsed is skipped with a log line.
-func (c *Config) inheritUserSandbox() {
+// config.json that cannot be read or parsed is an error, as it is for
+// Load: running on without the user's sandbox would fail open.
+func (c *Config) inheritUserSandbox() error {
 	path := NamedConfigPath("")
 	global, err := loadUserSandbox(path)
 	if err != nil {
-		log.Printf("[config] ignoring the sandbox settings in config.json: %v", err)
-		return
+		return fmt.Errorf("reading the sandbox settings in %s: %w", path, err)
 	}
 	if global == nil {
-		return
+		return nil
 	}
 	own := c.Sandbox
 	merged := mergeSandbox(own, global)
 	if own != nil && sandboxEqual(*own, *merged) {
-		return
+		return nil
 	}
 	c.Sandbox = merged
 	c.sandboxFrom = &sandboxInherit{own: own, ptr: merged, merged: cloneSandbox(*merged)}
+	return nil
 }
 
 // savedSandbox is what saving c writes as "sandbox": the profile's own

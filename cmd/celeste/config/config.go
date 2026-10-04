@@ -501,7 +501,9 @@ func LoadNamed(name string) (*Config, error) {
 
 	// The user's sandbox settings live in config.json (docs/SANDBOX.md);
 	// a profile inherits every key it does not set itself.
-	config.inheritUserSandbox()
+	if err := config.inheritUserSandbox(); err != nil {
+		return nil, err
+	}
 
 	// Load shared json (for all skill configurations)
 	if skillsConfig, err := LoadSkillsConfig(); err == nil {

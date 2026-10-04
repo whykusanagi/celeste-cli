@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,10 +98,16 @@ func TestProfileNoSandboxAnywhere(t *testing.T) {
 	if cfg.Sandbox != nil {
 		t.Fatalf("sandbox = %+v, want nil", cfg.Sandbox)
 	}
-	// A malformed config.json does not break the profile.
-	dir := sandboxHome(t, `{"sandbox":`, `{"default":true,"model":"m"}`)
-	if _, err := LoadNamed(""); err != nil {
-		t.Fatalf("malformed %s broke the profile: %v", filepath.Join(dir, "config.json"), err)
+}
+
+// A config.json whose sandbox settings cannot be read fails the load, as
+// Load does with no profile, instead of silently running without them.
+func TestProfileFailsClosedOnBadConfigJSON(t *testing.T) {
+	for _, global := range []string{`{"sandbox":`, `{"sandbox":{"enabled":"yes"}}`} {
+		sandboxHome(t, global, `{"default":true,"model":"m","sandbox":{"enabled":false}}`)
+		if _, err := LoadNamed(""); err == nil || !strings.Contains(err.Error(), "config.json") {
+			t.Fatalf("config.json %s: err = %v, want an error naming config.json", global, err)
+		}
 	}
 }
 
