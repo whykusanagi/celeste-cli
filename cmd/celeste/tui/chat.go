@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -362,6 +363,9 @@ func (m ChatModel) UpdateFunctionResult(id, name, result string) ChatModel {
 		}
 	}
 	m.updateContent()
+	if m.showSkillCalls && !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
@@ -461,9 +465,15 @@ func (m ChatModel) Clear() ChatModel {
 }
 
 // ToggleSkillCalls toggles the visibility of skill call logs.
+// A chat following the conversation stays at the bottom, so the latest
+// reply and tool log stay on screen (#351); a scrolled-up one keeps its
+// place.
 func (m ChatModel) ToggleSkillCalls() ChatModel {
 	m.showSkillCalls = !m.showSkillCalls
 	m.updateContent()
+	if !m.userScrolled {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
@@ -494,7 +504,29 @@ func (m *ChatModel) updateContent() {
 		}
 	}
 
+	// With the logs shown, each tool call sits in the turn it ran in:
+	// before the first message newer than it, so the latest reply and its
+	// tool log end the chat together (#351). Calls newer than every
+	// message come last.
+	var calls []FunctionCall
+	if m.showSkillCalls {
+		calls = append(calls, m.functionCalls...)
+		sort.SliceStable(calls, func(a, b int) bool { return calls[a].Timestamp.Before(calls[b].Timestamp) })
+	}
+	next := 0
+	emitCalls := func(before time.Time, all bool) {
+		start := next
+		for next < len(calls) && (all || calls[next].Timestamp.Before(before)) {
+			lines = append(lines, m.renderFunctionCall(calls[next], contentWidth))
+			next++
+		}
+		if next > start {
+			lines = append(lines, "")
+		}
+	}
+
 	for i, msg := range m.messages {
+		emitCalls(msg.Timestamp, false)
 		// Don't render tool results in UI - they're for LLM only
 		if msg.Role == "tool" {
 			continue
@@ -514,12 +546,7 @@ func (m *ChatModel) updateContent() {
 		lines = append(lines, "") // Spacing between messages
 	}
 
-	// Render function calls (only if showSkillCalls is true)
-	if m.showSkillCalls {
-		for _, call := range m.functionCalls {
-			lines = append(lines, m.renderFunctionCall(call, contentWidth))
-		}
-	}
+	emitCalls(time.Time{}, true)
 
 	content := strings.Join(lines, "\n")
 	m.viewport.SetContent(content)
