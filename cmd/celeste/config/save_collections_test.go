@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -25,7 +26,8 @@ func TestSaveCollectionsEdgeCases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		// Windows has no Unix permission bits; os.Stat reports 0666 there.
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
 		}
 	})
