@@ -153,7 +153,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	tuiClient.applySystemPrompt()
 	// The tool schemas follow the same window: a small one gets a core set
 	// (#310).
-	client.SetWindowFunc(tuiClient.liveWindow)
+	client.SetWindowFunc(tuiClient.windowForTools)
 
 	// Subagents and /agent nest under the chat's Env (2.0 F2e): they share
 	// its MCP clients (global servers only), hooks (this session's ID) and

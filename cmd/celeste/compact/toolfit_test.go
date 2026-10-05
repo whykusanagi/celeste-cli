@@ -104,15 +104,47 @@ func TestFitToolsDropsMCPFirst(t *testing.T) {
 	}
 }
 
-// A tool the model activated this session (find_tools) is never dropped,
-// whatever the window.
+// A tool the model activated this session (find_tools) is kept on a
+// small window while the activated tools fit.
 func TestFitToolsKeepsPinnedTools(t *testing.T) {
 	defs := chatTools()
-	pinned := func(n string) bool { return n == "mcp__srv__beta" || n == "extra_39" }
-	fit := FitTools(defs, 8_192, chatSystem, pinned)
+	fit := FitTools(defs, 8_192, chatSystem, []string{"mcp__srv__beta", "extra_39"})
 	got := names(fit.Defs)
 	if !slices.Contains(got, "mcp__srv__beta") || !slices.Contains(got, "extra_39") {
 		t.Fatalf("pinned tools dropped: %v", got)
+	}
+	if fit.PinnedDropped != 0 {
+		t.Fatalf("PinnedDropped %d", fit.PinnedDropped)
+	}
+}
+
+// #310 review: every find_tools call activates more tools, and kept at any
+// cost they pushed the prefix back past the window. The most recent
+// activation is always sent; older ones only while they fit, newest
+// first, and the fit says how many it dropped.
+func TestFitToolsBoundsPinnedTools(t *testing.T) {
+	defs := chatTools()
+	var pinned []string
+	for i := range 40 {
+		pinned = append(pinned, fmt.Sprintf("extra_%02d", i))
+	}
+	fit := FitTools(defs, 8_192, chatSystem, pinned)
+	got := names(fit.Defs)
+	if !slices.Contains(got, "extra_39") {
+		t.Fatalf("the newest activation was dropped: %v", got)
+	}
+	if slices.Contains(got, "extra_00") {
+		t.Fatalf("the oldest activation was kept over newer ones: %v", got)
+	}
+	if fit.PinnedDropped == 0 {
+		t.Fatal("PinnedDropped is 0 with activations dropped")
+	}
+	if prefix := chatSystem + DefinitionTokens(fit.Defs); HistoryBudget(8_192, prefix) < 8_192/4 {
+		t.Fatalf("prefix %d leaves no room for history", prefix)
+	}
+	n := new(ToolNotices).Notice(fit, 8_192)
+	if !strings.Contains(n, "find_tools activated earlier") {
+		t.Fatalf("the notice does not say activated tools were dropped: %q", n)
 	}
 }
 
@@ -152,24 +184,29 @@ func TestShortDescription(t *testing.T) {
 }
 
 // The notice names the window, the counts and context_limit, once per
-// (kept, total, window).
+// (kept, total, window) for one session.
 func TestToolFitNoticeOnce(t *testing.T) {
 	fit := ToolFit{Reduced: true, Total: 49, Dropped: 38, Defs: make([]tui.SkillDefinition, 11)}
-	n := ToolFitNotice(fit, 8_111)
+	var seen ToolNotices
+	n := seen.Notice(fit, 8_111)
 	for _, want := range []string{"8.1K", "11 of 49", "context_limit", "find_tools"} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("notice %q lacks %q", n, want)
 		}
 	}
-	if again := ToolFitNotice(fit, 8_111); again != "" {
+	if again := seen.Notice(fit, 8_111); again != "" {
 		t.Fatalf("second notice %q", again)
 	}
+	// Another session (an ACP editor session, a subagent) is told too.
+	if other := new(ToolNotices).Notice(fit, 8_111); other == "" {
+		t.Fatal("a second session was not told")
+	}
 	// Nothing dropped, only shortened: it does not claim a subset.
-	all := ToolFitNotice(ToolFit{Reduced: true, Total: 23, Defs: make([]tui.SkillDefinition, 23)}, 8_111)
+	all := seen.Notice(ToolFit{Reduced: true, Total: 23, Defs: make([]tui.SkillDefinition, 23)}, 8_111)
 	if strings.Contains(all, "23 of 23") || !strings.Contains(all, "all 23 tools are sent with short descriptions") {
 		t.Fatalf("notice %q", all)
 	}
-	if ToolFitNotice(ToolFit{Total: 3, Defs: make([]tui.SkillDefinition, 3)}, 8_111) != "" {
+	if seen.Notice(ToolFit{Total: 3, Defs: make([]tui.SkillDefinition, 3)}, 8_111) != "" {
 		t.Fatal("an unreduced fit has a notice")
 	}
 }

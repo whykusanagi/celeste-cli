@@ -596,6 +596,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.skills = m.skills.SetCurrentInput(m.input.Value())
 		return m, cmd
 	}
+	// And a local server's window: an idle chat follows it now; a running
+	// turn's next one does (RunTurn), so a prompt never changes mid-turn.
+	if _, ok := msg.(LocalWindowMsg); ok {
+		if f, ok := m.llmClient.(WindowFollower); ok && !m.turnActive() {
+			f.FollowWindow()
+		}
+		return m, nil
+	}
 
 	// A text burst in a sub-view (#320): the skills filter takes it as
 	// text, graph search as typed letters; the other views act on single
@@ -2932,7 +2940,7 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 				// Pass config's ContextLimit as override if available
 				if m.config != nil {
 					override := m.config.ContextLimit
-					resolved, known := config.ResolveContextLimit(m.config.BaseURL, model, override)
+					resolved, known := config.ResolveContextLimit(m.config.BaseURL, model, override, m.config.APIKey)
 					m.contextTracker = config.NewContextTracker(configSession, model, resolved)
 					if !known {
 						if notice := config.UnknownContextNotice(model, resolved); notice != "" {

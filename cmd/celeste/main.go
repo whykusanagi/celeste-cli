@@ -287,6 +287,11 @@ func runChatTUI() {
 	// a plain log.Printf (MCP connects, /agent runs) would draw over it.
 	restoreStdLog := tui.RedirectStdLog()
 	defer restoreStdLog()
+	// From here the TUI's Update and View must not wait on a local server:
+	// a window the probe has no answer for is asked in the background, and
+	// the chat follows it when it arrives (#310 review).
+	config.LocalWindowNoWait(true, func() { p.Send(tui.LocalWindowMsg{}) })
+	defer config.LocalWindowNoWait(false, nil)
 	notify := func(s string) { p.Send(tui.HookWarningMsg{Text: s}) }
 	hookNotify.Store(&notify)
 	defer hookNotify.Store(nil)
@@ -367,8 +372,10 @@ type TUIClientAdapter struct {
 	// (applySystemPrompt), for promptWindow tokens. A turn on a model with
 	// another window recomposes it (W5 guard). personaNotice is the guard's
 	// notice, waiting for the chat to show it once.
-	promptSet     bool
-	promptWindow  int
+	promptSet    bool
+	promptWindow int
+	// toolWindow is promptWindow for other goroutines (windowForTools).
+	toolWindow    atomic.Int64
 	personaNotice string
 	// hooks runs the session's lifecycle hooks (2.0 F0); nil allows all.
 	hooks *hooks.Runner
@@ -411,14 +418,24 @@ func (a *TUIClientAdapter) liveWindow() int {
 	if cfg == nil {
 		return 0
 	}
-	baseURL, model := cfg.BaseURL, cfg.Model
+	baseURL, model, key := cfg.BaseURL, cfg.Model, cfg.APIKey
 	if a.client != nil {
 		lc := a.client.GetConfig()
-		baseURL, model = lc.BaseURL, lc.Model
+		baseURL, model, key = lc.BaseURL, lc.Model, lc.APIKey
 	}
-	window, _ := config.ResolveContextLimit(baseURL, model, cfg.ContextLimit)
+	window, _ := config.ResolveContextLimit(baseURL, model, cfg.ContextLimit, key)
 	return window
 }
+
+// windowForTools is the window GetSkills fits the tool schemas to, on any
+// goroutine: the one the prompt was last composed for. liveWindow reads
+// baseConfig, which only the Update goroutine may touch, and may ask a
+// local server; a turn's loop and View call GetSkills (#310 review).
+func (a *TUIClientAdapter) windowForTools() int { return int(a.toolWindow.Load()) }
+
+// FollowWindow implements tui.WindowFollower: a local server reported a
+// window in the background, so the prompt and tools follow it now.
+func (a *TUIClientAdapter) FollowWindow() { a.followWindow() }
 
 // applySystemPrompt composes the chat system prompt for the live model's
 // window, including the session's project context, and sets it. When the
@@ -435,6 +452,7 @@ func (a *TUIClientAdapter) applySystemPrompt() {
 	})
 	a.client.SetSystemPromptParts(p.Static, p.Dynamic)
 	a.promptSet, a.promptWindow = true, window
+	a.toolWindow.Store(int64(window))
 	// A compose on chat's own profile drops a pending notice from an earlier
 	// step-down that no longer applies.
 	if p.Profile == prompts.ProfileFor(prompts.ModeChat) {
@@ -1274,7 +1292,7 @@ func runConfigCommand(args []string) {
 		if cfg.ContextLimit > 0 {
 			fmt.Printf("  Context Limit:     %d tokens (configured)\n", cfg.ContextLimit)
 		} else {
-			limit, src := config.ResolveContextLimitSource(cfg.BaseURL, cfg.Model, 0)
+			limit, src := config.ResolveContextLimitSource(cfg.BaseURL, cfg.Model, 0, cfg.APIKey)
 			if src != config.SourceFallback {
 				fmt.Printf("  Context Limit:     %d tokens (%s)\n", limit, src)
 			} else {
@@ -1737,7 +1755,7 @@ func runSingleMessage(message string) {
 
 	// The persona steps down for a small window, and says so on stderr
 	// (W5 ruling 7).
-	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	sp := prompts.Compose(prompts.ComposeOptions{Mode: prompts.ModeChat, Window: window})
 	if sp.Notice != "" {
 		fmt.Fprintln(os.Stderr, prompts.NoticePrefix+sp.Notice)
@@ -1888,7 +1906,7 @@ func runContextCommand(args []string) {
 	session := &sessions[0]
 
 	// Create context tracker from session
-	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	contextTracker := config.NewContextTracker(session, cfg.Model, resolved)
 
 	// Handle subcommand
@@ -1922,7 +1940,7 @@ func runStatsCommand(args []string) {
 	session := &sessions[0]
 
 	// Create context tracker from session
-	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	resolved, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	contextTracker := config.NewContextTracker(session, cfg.Model, resolved)
 
 	// Generate stats output

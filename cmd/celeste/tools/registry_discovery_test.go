@@ -72,3 +72,19 @@ func TestActivatedWithoutDiscoveryMode(t *testing.T) {
 	r.Activate("x")
 	assert.True(t, r.Activated("x"))
 }
+
+// ActivatedNames lists activations oldest first; activating a tool again
+// makes it the newest, and an unregistered tool leaves the list (#310
+// review: the small-window fit keeps the newest activations).
+func TestActivatedNamesOrder(t *testing.T) {
+	r := NewRegistry()
+	for _, n := range []string{"a", "b", "c"} {
+		r.Register(stubTool{name: n, desc: n})
+	}
+	r.Activate("a", "b")
+	r.Activate("c")
+	r.Activate("a")
+	assert.Equal(t, []string{"b", "c", "a"}, r.ActivatedNames())
+	r.UnregisterByPrefix("c")
+	assert.Equal(t, []string{"b", "a"}, r.ActivatedNames())
+}

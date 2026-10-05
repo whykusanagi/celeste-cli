@@ -144,7 +144,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session) *RPCError {
 	env.StartSession(ctx, "acp")
 	// The persona steps down for a small window (W5 guard); its notice
 	// goes to the editor with the first prompt, never to stderr.
-	window, _ := config.ResolveContextLimit(s.cfg.BaseURL, s.cfg.Model, s.cfg.ContextLimit)
+	window, _ := config.ResolveContextLimit(s.cfg.BaseURL, s.cfg.Model, s.cfg.ContextLimit, s.cfg.APIKey)
 	sp := env.SystemPrompt(loop.PromptOptions{Window: window})
 	prompt := sp.String()
 	client.SetSystemPromptParts(sp.Static, sp.Dynamic)

@@ -471,7 +471,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Honour the configured context_limit, as the TUI does: for local models it
 	// is the only way to know the window (#169). The persona steps down for
 	// it (W5 guard).
-	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit)
+	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit, cfg.APIKey)
 
 	// Build the system prompt: the persona profile (spine unless the caller
 	// picked a level, stepped down on a small window), then the agent

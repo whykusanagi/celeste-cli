@@ -50,6 +50,9 @@ type ToolFit struct {
 	Total   int                   // the definitions offered before fitting
 	Dropped int                   // Total - len(Defs)
 	Reduced bool                  // the set was trimmed and shortened
+	// PinnedDropped counts tools find_tools activated that were dropped
+	// to fit (the oldest activations first).
+	PinnedDropped int
 }
 
 // ToolBudget is the room for tool schemas on window when the system prompt
@@ -61,22 +64,26 @@ func ToolBudget(window, systemTokens int) int {
 }
 
 // FitTools returns defs as they are when they fit ToolBudget (or the window
-// is unknown). Otherwise it sends shortened copies of the core tools and of
-// every tool pinned reports true for (one the model activated this
-// session), whatever they cost, then the other tools in order while they
-// fit, builtins before MCP tools. The order of defs is kept, so the
-// definitions a provider caches do not move. defs is never modified.
-func FitTools(defs []tui.SkillDefinition, window, systemTokens int, pinned func(string) bool) ToolFit {
+// is unknown). Otherwise it sends shortened copies of the core tools,
+// whatever they cost, then the tools the model activated this session
+// (pinned, oldest activation first): the newest always, older ones newest
+// first while they fit, so repeated find_tools calls cannot push the
+// prefix past the window. Then the other tools in order while they fit,
+// builtins before MCP tools. The order of defs is kept, so the definitions
+// a provider caches do not move. defs is never modified.
+func FitTools(defs []tui.SkillDefinition, window, systemTokens int, pinned []string) ToolFit {
 	fit := ToolFit{Defs: defs, Total: len(defs)}
 	budget := ToolBudget(window, systemTokens)
 	if window <= 0 || len(defs) == 0 || DefinitionTokens(defs)+len(defs)*wireBytes/4 <= budget {
 		return fit
 	}
-	must := func(name string) bool {
-		return slices.Contains(CoreTools, name) || (pinned != nil && pinned(name))
+	index := make(map[string]int, len(defs))
+	for i, d := range defs {
+		index[d.Name] = i
 	}
+	core := func(name string) bool { return slices.Contains(CoreTools, name) }
 	short := compactAll(defs, maxCompactParamDescription)
-	if mustBytes(defs, short, must)/4 > budget {
+	if mustBytes(defs, short, core)/4 > budget {
 		// The core set does not fit even shortened: its parameters go
 		// without descriptions (their names and types stay).
 		short = compactAll(defs, 0)
@@ -90,17 +97,32 @@ func FitTools(defs []tui.SkillDefinition, window, systemTokens int, pinned func(
 		size += defBytes(short[i])
 		keep[i] = true
 	}
+	fits := func(i int) bool { return (size+1+defBytes(short[i]))/4 <= budget }
 	for i, d := range defs {
-		if must(d.Name) {
+		if core(d.Name) {
 			add(i)
 		}
+	}
+	dropped := 0
+	newest := true
+	for j := len(pinned) - 1; j >= 0; j-- {
+		i, ok := index[pinned[j]]
+		if !ok || keep[i] {
+			continue
+		}
+		if newest || fits(i) {
+			add(i)
+		} else {
+			dropped++
+		}
+		newest = false
 	}
 	for _, mcp := range []bool{false, true} {
 		for i, d := range defs {
 			if keep[i] || strings.HasPrefix(d.Name, mcpPrefix) != mcp {
 				continue
 			}
-			if (size+1+defBytes(short[i]))/4 <= budget {
+			if fits(i) {
 				add(i)
 			}
 		}
@@ -111,7 +133,7 @@ func FitTools(defs []tui.SkillDefinition, window, systemTokens int, pinned func(
 			out = append(out, short[i])
 		}
 	}
-	return ToolFit{Defs: out, Total: len(defs), Dropped: len(defs) - len(out), Reduced: true}
+	return ToolFit{Defs: out, Total: len(defs), Dropped: len(defs) - len(out), Reduced: true, PinnedDropped: dropped}
 }
 
 // defBytes is d's size as sent: its JSON and the provider's wrapping.
@@ -204,23 +226,44 @@ func shortDescription(s string, limit int) string {
 // continuation byte), so a cut never splits a character.
 func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
 
-var toolFitSeen sync.Map
+// ToolNotices dedupes the tool fit's notice for one session (one chat, one
+// ACP editor session, one agent run): each is told once per (kept, total,
+// window), whatever other sessions in the process were told. The zero
+// value is ready.
+type ToolNotices struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
 
-// ToolFitNotice is the one-time notice for a reduced fit on window: "" when
-// fit was not reduced, or once the same (kept, total, window) was noticed
-// in this process. Like the persona guard's, the caller shows it.
-func ToolFitNotice(fit ToolFit, window int) string {
+// Notice is the one-time notice for a reduced fit on window: "" when fit
+// was not reduced, or once this session was told about the same fit. Like
+// the persona guard's, the caller shows it.
+func (n *ToolNotices) Notice(fit ToolFit, window int) string {
 	if !fit.Reduced {
 		return ""
 	}
-	if _, seen := toolFitSeen.LoadOrStore(fmt.Sprintf("%d/%d@%d", len(fit.Defs), fit.Total, window), true); seen {
+	key := fmt.Sprintf("%d/%d@%d-%d", len(fit.Defs), fit.Total, window, fit.PinnedDropped)
+	n.mu.Lock()
+	seen := n.seen[key]
+	if n.seen == nil {
+		n.seen = map[string]bool{}
+	}
+	n.seen[key] = true
+	n.mu.Unlock()
+	if seen {
 		return ""
 	}
 	size := config.FormatTokenCount(window)
+	var msg string
 	if fit.Dropped == 0 {
-		return fmt.Sprintf("Tools: the context window (%s tokens) is too small for all the tool definitions next to the system prompt as they are, so all %d tools are sent with short descriptions. If the model's window is larger, set context_limit in your config.",
+		msg = fmt.Sprintf("Tools: the context window (%s tokens) is too small for all the tool definitions next to the system prompt as they are, so all %d tools are sent with short descriptions. If the model's window is larger, set context_limit in your config.",
 			size, fit.Total)
+	} else {
+		msg = fmt.Sprintf("Tools: the context window (%s tokens) is too small for all the tool definitions next to the system prompt, so %d of %d tools are sent, with short descriptions; find_tools activates any of the others. If the model's window is larger, set context_limit in your config.",
+			size, len(fit.Defs), fit.Total)
 	}
-	return fmt.Sprintf("Tools: the context window (%s tokens) is too small for all the tool definitions next to the system prompt, so %d of %d tools are sent, with short descriptions; find_tools activates any of the others. If the model's window is larger, set context_limit in your config.",
-		size, len(fit.Defs), fit.Total)
+	if fit.PinnedDropped > 0 {
+		msg += fmt.Sprintf(" %d tools find_tools activated earlier no longer fit and were dropped; find_tools activates them again.", fit.PinnedDropped)
+	}
+	return msg
 }

@@ -78,8 +78,8 @@ func FormatTokenCount(tokens int) string {
 // fresh profile inherits the seed default's model (fugu), so pointing it at a
 // local server produced a confident 1,000,000-token budget for a server that
 // might have 8k. Unknown hosted models get the table's 128k default (#201).
-func ResolveContextLimit(baseURL, model string, override int) (limit int, known bool) {
-	limit, src := ResolveContextLimitSource(baseURL, model, override)
+func ResolveContextLimit(baseURL, model string, override int, apiKey string) (limit int, known bool) {
+	limit, src := ResolveContextLimitSource(baseURL, model, override, apiKey)
 	return limit, src != SourceFallback
 }
 
@@ -92,8 +92,9 @@ const (
 )
 
 // ResolveContextLimitSource is ResolveContextLimit with where the number
-// came from (`celeste config` shows it).
-func ResolveContextLimitSource(baseURL, model string, override int) (int, string) {
+// came from (`celeste config` shows it). apiKey is the endpoint's key: a
+// local server started with one answers the probe only with it.
+func ResolveContextLimitSource(baseURL, model string, override int, apiKey string) (int, string) {
 	if override > 0 {
 		return override, SourceConfigured
 	}
@@ -101,7 +102,7 @@ func ResolveContextLimitSource(baseURL, model string, override int) (int, string
 	// window (#310), decided on the parsed host so a hosted URL is never
 	// probed.
 	if providers.IsLocalHost(baseURL) {
-		if n := localWindow(baseURL, model); n > 0 {
+		if n := localWindow(baseURL, apiKey, model); n > 0 {
 			return n, SourceReported
 		}
 	}

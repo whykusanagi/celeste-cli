@@ -47,8 +47,13 @@ type Client struct {
 	// windowFn, when set, is the context window GetSkills fits the tools
 	// to; nil resolves it from config (SetWindowFunc).
 	windowFn func() int
-	// toolNotice is the tool fit's pending one-time notice (TakeToolNotice).
-	toolNotice string
+	// lastFit and lastWindow are GetSkills' last tool fit, for
+	// TakeToolNotice; toolNotices dedupes its notice for this client's
+	// session (#310 review: per session, not per process); nil until
+	// first used or shared (ShareToolNotices).
+	lastFit     compact.ToolFit
+	lastWindow  int
+	toolNotices *compact.ToolNotices
 }
 
 // Config holds LLM client configuration.
@@ -467,8 +472,8 @@ func (c *Client) SetWindowFunc(fn func() int) {
 // GetSkills returns the tools the model may call in this client's mode,
 // fitted to the context window next to the system prompt
 // (compact.FitTools): on a small window a core set with short
-// descriptions, plus any tool find_tools activated. When that reduces the
-// set, the one-time notice waits for TakeToolNotice.
+// descriptions, plus the tools find_tools activated (the newest first
+// while they fit). When that reduces the set, TakeToolNotice says so once.
 func (c *Client) GetSkills() []tui.SkillDefinition {
 	c.mu.RLock()
 	mode, cfg, system, windowFn := c.toolMode, c.config, c.systemPrompt, c.windowFn
@@ -479,29 +484,40 @@ func (c *Client) GetSkills() []tui.SkillDefinition {
 	case windowFn != nil:
 		window = windowFn()
 	case cfg != nil:
-		window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+		window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	}
-	var pinned func(string) bool
+	var pinned []string
 	if c.registry != nil {
-		pinned = c.registry.Activated
+		pinned = c.registry.ActivatedNames()
 	}
 	fit := compact.FitTools(defs, window, ctxmgr.EstimateTokens(system), pinned)
-	if n := compact.ToolFitNotice(fit, window); n != "" {
-		c.mu.Lock()
-		c.toolNotice = n
-		c.mu.Unlock()
-	}
+	c.mu.Lock()
+	c.lastFit, c.lastWindow = fit, window
+	c.mu.Unlock()
 	return fit.Defs
 }
 
-// TakeToolNotice returns the tool fit's pending notice once ("" when there
-// is none). The caller shows it, as it shows the persona guard's.
+// TakeToolNotice returns the notice for GetSkills' last fit, once per fit
+// for this client ("" when it was not reduced or was already told). The
+// caller shows it, as it shows the persona guard's.
 func (c *Client) TakeToolNotice() string {
 	c.mu.Lock()
+	fit, window := c.lastFit, c.lastWindow
+	if c.toolNotices == nil {
+		c.toolNotices = new(compact.ToolNotices)
+	}
+	seen := c.toolNotices
+	c.mu.Unlock()
+	return seen.Notice(fit, window)
+}
+
+// ShareToolNotices makes TakeToolNotice dedupe through n, shared with other
+// clients: a server whose every request has its own client tells its log
+// once per fit, not once per request.
+func (c *Client) ShareToolNotices(n *compact.ToolNotices) {
+	c.mu.Lock()
 	defer c.mu.Unlock()
-	n := c.toolNotice
-	c.toolNotice = ""
-	return n
+	c.toolNotices = n
 }
 
 // skillDefinitions converts the registry's tools for mode into skill

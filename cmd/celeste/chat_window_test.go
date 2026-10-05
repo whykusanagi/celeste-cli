@@ -206,3 +206,51 @@ func TestChatToolNoticeOnce(t *testing.T) {
 		t.Fatalf("the tool notice shows %d times, want 1", n)
 	}
 }
+
+// #310 review: GetSkills runs on a turn's goroutine and in View, while the
+// Update goroutine replaces baseConfig (a loaded catalog, an endpoint
+// switch). The tool fit must not read baseConfig there: under -race this
+// reported a data race on it.
+func TestGetSkillsDoesNotRaceEndpointUpdates(t *testing.T) {
+	promptstest.Install(t)
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _ := chatAppWithContextLimit(t, srv, 8192)
+	a := deps.adapter
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				a.client.GetSkills()
+			}
+		}
+	}()
+	for range 20 {
+		a.RefreshServedModels()
+		if err := a.SwitchEndpoint("openai"); err != nil {
+			t.Error(err)
+		}
+	}
+	close(stop)
+	<-done
+}
+
+// The tool fit follows the window the prompt was composed for: a smaller
+// context_limit reaches GetSkills once the window is followed, with no
+// I/O and no baseConfig read on the caller's goroutine.
+func TestToolWindowFollowsThePrompt(t *testing.T) {
+	promptstest.Install(t)
+	srv := fakeprovider.NewOpenAI(t)
+	_, deps, _ := chatAppWithContextLimit(t, srv, 200000)
+	a := deps.adapter
+	all := len(a.client.GetSkills())
+	a.baseConfig.ContextLimit = 8192
+	a.FollowWindow()
+	if n := len(a.client.GetSkills()); n >= all {
+		t.Fatalf("after following 8,192: %d tools, want fewer than %d", n, all)
+	}
+}

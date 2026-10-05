@@ -94,3 +94,30 @@ func TestSetWindowFunc(t *testing.T) {
 func shortened(defs []tui.SkillDefinition) bool {
 	return len(defs) > 0 && !strings.Contains(defs[0].Description, "at length")
 }
+
+// #310 review: the notice is per session, not per process: in ACP one
+// process serves many editor sessions, and each is told its tools were
+// reduced (window 8,400 is used by no other test).
+func TestToolNoticePerClient(t *testing.T) {
+	for i := range 2 {
+		c := fitClient(8_400)
+		c.GetSkills()
+		if c.TakeToolNotice() == "" {
+			t.Fatalf("client %d was not told", i)
+		}
+	}
+}
+
+// The notice is the last fit's: a reduced fit seen in View before the
+// window grew leaves nothing behind for the turn on the larger window.
+func TestToolNoticeFollowsTheLastFit(t *testing.T) {
+	c := fitClient(200_000)
+	window := 8_450
+	c.SetWindowFunc(func() int { return window })
+	c.GetSkills()
+	window = 200_000
+	c.GetSkills()
+	if n := c.TakeToolNotice(); n != "" {
+		t.Fatalf("a stale notice: %q", n)
+	}
+}
