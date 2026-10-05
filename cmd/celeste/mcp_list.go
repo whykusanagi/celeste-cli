@@ -115,10 +115,19 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	where := func(e mcpListEntry) string { return show(e.path, e.global) }
 	// Which definition each mode starts comes from the runtime's own code
 	// (loop.setupMCP): LoadMerged over every config for the chat, over the
-	// home configs alone for every other mode. The files were just parsed.
-	chat, _ := mcp.LoadMerged(good)
+	// home configs alone for every other mode. The files were just parsed,
+	// but one edited since can fail now: report it rather than guess.
+	chat, err := mcp.LoadMerged(good)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error: %v\n", err)
+		return 1
+	}
 	homeOnly, _ := mcp.SplitGlobal(good, home)
-	other, _ := mcp.LoadMerged(homeOnly)
+	other, err := mcp.LoadMerged(homeOnly)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error: %v\n", err)
+		return 1
+	}
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tSOURCE\tTRANSPORT\tENABLED\tTRUSTED\tAPPROVAL\tRUNS IN")
