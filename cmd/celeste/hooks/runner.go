@@ -213,7 +213,7 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 		if res.failed != "" {
 			// res.failed can carry the hook's own stderr: quote it if it
 			// holds control or bidi characters.
-			failed := safeText(res.failed)
+			failed := SafeText(res.failed)
 			r.warnFor(ctx)(fmt.Sprintf("hooks: %s hook from %s failed: %s", ev, strconv.Quote(h.source), failed))
 			if ev.gating() {
 				out.Decision, out.Reason = Deny, "hook failed: "+failed

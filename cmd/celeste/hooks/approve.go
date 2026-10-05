@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"golang.org/x/term"
 )
@@ -18,12 +17,9 @@ import (
 func DescribeSource(w io.Writer, src Source) {
 	if src.Kind == KindRepoMCP {
 		// The summary quotes every string from the file already; quote a
-		// line again only if it still holds a non-printable character.
+		// line again only if SafeText would.
 		for _, line := range strings.Split(src.Rules, "\n") {
-			if strings.IndexFunc(line, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
-				line = strconv.Quote(line)
-			}
-			fmt.Fprintf(w, "    %s\n", line)
+			fmt.Fprintf(w, "    %s\n", SafeText(line))
 		}
 		return
 	}

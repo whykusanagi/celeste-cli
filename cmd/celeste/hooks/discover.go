@@ -75,7 +75,7 @@ func Discover(workspace, home string) ([]Source, []string, error) {
 		src, warns, err := readSource(path, root, kind)
 		warnings = append(warnings, warns...)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("hooks: skipping %s: %s", strconv.Quote(path), safeText(err.Error())))
+			warnings = append(warnings, fmt.Sprintf("hooks: skipping %s: %s", strconv.Quote(path), SafeText(err.Error())))
 			return
 		}
 		if len(src.Hooks) > 0 {

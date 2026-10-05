@@ -5,10 +5,8 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
-	"unicode"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
@@ -52,9 +50,9 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			base, prefix = home, "~"
 		}
 		if rel, err := filepath.Rel(base, path); err == nil {
-			return safeText(filepath.Join(prefix, rel))
+			return hooks.SafeText(filepath.Join(prefix, rel))
 		}
-		return safeText(path)
+		return hooks.SafeText(path)
 	}
 
 	code := 0
@@ -140,7 +138,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			runs = "all but chat (" + wsBad + " does not parse)"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			safeText(e.name), where(e), safeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs)
+			hooks.SafeText(e.name), where(e), hooks.SafeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs)
 	}
 	_ = tw.Flush()
 	fmt.Fprintln(out, `
@@ -211,13 +209,4 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-// safeText returns s, or s Go-quoted when it holds characters that would act
-// on the terminal: config content is shown, never interpreted.
-func safeText(s string) string {
-	if strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
-		return strconv.Quote(s)
-	}
-	return s
 }
