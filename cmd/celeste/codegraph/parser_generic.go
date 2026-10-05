@@ -46,6 +46,14 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 	// Track whether each line is inside a class for method detection
 	var currentClass string
 	classIndent := -1
+	classLine := 0
+	// enterContainer records a class-like declaration whose indented
+	// functions are methods. PHP also counts interfaces, traits and enums.
+	enterContainer := func(name, line string, lineNo int) {
+		currentClass = name
+		classIndent = countLeadingSpaces(line)
+		classLine = lineNo
+	}
 
 	for lineNum, line := range lines {
 		lineNo := lineNum + 1 // 1-based
@@ -57,8 +65,7 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				result.Symbols = append(result.Symbols, Symbol{
 					Name: name, Kind: SymbolClass, File: path, Line: lineNo,
 				})
-				currentClass = name
-				classIndent = countLeadingSpaces(line)
+				enterContainer(name, line, lineNo)
 			}
 		}
 
@@ -71,13 +78,23 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				classIndent = -1
 			}
 		}
+		// PHP: the container ends at the first line back at its own indent
+		// (normally its closing brace). An Allman-style opening brace on
+		// its own line does not end it.
+		if currentClass != "" && p.language == "php" && lineNo != classLine {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && trimmed != "{" && countLeadingSpaces(line) <= classIndent {
+				currentClass = ""
+				classIndent = -1
+			}
+		}
 
 		// Check function/method declarations
 		for _, re := range p.patterns.function {
 			if m := re.FindStringSubmatch(line); m != nil {
 				name := m[1]
 				// In Python, methods are indented functions inside a class
-				if p.language == "python" && currentClass != "" {
+				if (p.language == "python" || p.language == "php") && currentClass != "" {
 					indent := countLeadingSpaces(line)
 					if indent > classIndent {
 						result.Symbols = append(result.Symbols, Symbol{
@@ -98,6 +115,9 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				result.Symbols = append(result.Symbols, Symbol{
 					Name: m[1], Kind: SymbolInterface, File: path, Line: lineNo,
 				})
+				if p.language == "php" {
+					enterContainer(m[1], line, lineNo)
+				}
 			}
 		}
 
@@ -107,6 +127,9 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				result.Symbols = append(result.Symbols, Symbol{
 					Name: m[1], Kind: SymbolType, File: path, Line: lineNo,
 				})
+				if p.language == "php" {
+					enterContainer(m[1], line, lineNo)
+				}
 			}
 		}
 
@@ -184,6 +207,17 @@ func (p *GenericParser) patternsForLanguage(lang string) languagePatterns {
 			importDcl: compileAll(`^\s*use\s+([^;{]+)`),
 			constDecl: compileAll(`^\s*(?:pub\s+)?const\s+(\w+)\s*:`),
 		}
+	case "php":
+		// Kinds follow the tree-sitter path: a trait is an interface, an
+		// enum is a type. Only unindented `use` lines are imports; an
+		// indented `use Foo;` inside a class body is a trait use.
+		return languagePatterns{
+			function:  compileAll(`^\s*(?:(?:public|protected|private|static|final|abstract)\s+)*function\s+&?(\w+)\s*\(`),
+			class:     compileAll(`^\s*(?:(?:final|abstract|readonly)\s+)*class\s+(\w+)`),
+			iface:     compileAll(`^\s*interface\s+(\w+)`, `^\s*trait\s+(\w+)`),
+			typeDecl:  compileAll(`^\s*enum\s+(\w+)`),
+			importDcl: compileAll(`^use\s+(?:function\s+|const\s+)?\\?([\w\\]+)`),
+		}
 	default:
 		// Fallback: try common patterns
 		return languagePatterns{
@@ -218,40 +252,39 @@ func countLeadingSpaces(line string) int {
 // callPattern matches identifiers followed by '(' — a simple call heuristic.
 var callPattern = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
 
+// declPrefix matches the text just before a `name(` that declares or
+// constructs rather than calls: `def name(`, `function &name(`, `new Name(`.
+var declPrefix = regexp.MustCompile(`\b(?:def|function|fn|func|class|new)\s+&?$`)
+
 // extractCallEdges scans each function/method body for call-like patterns and
-// creates edges to known symbols. Works for JS/TS/Python/Rust and any language
-// where calls look like `name(`.
+// creates an edge for every called name. Works for JS/TS/Python/Rust/PHP and
+// any language where calls look like `name(`. Targets need not be declared in
+// this file: the indexer resolves names once every file's symbols are stored
+// and drops the ones nothing declares, so a cross-file call keeps its edge.
 func (p *GenericParser) extractCallEdges(source string, symbols []Symbol) []RawEdge {
 	var edges []RawEdge
-
-	// Build a set of known callable symbol names
-	knownSymbols := make(map[string]bool)
-	for _, s := range symbols {
-		if s.Kind == SymbolFunction || s.Kind == SymbolMethod {
-			knownSymbols[s.Name] = true
-		}
-	}
 
 	for _, sym := range symbols {
 		if sym.Kind != SymbolFunction && sym.Kind != SymbolMethod {
 			continue
 		}
-		body := extractBody(source, sym.Line)
-		matches := callPattern.FindAllStringSubmatch(body, -1)
+		body := p.functionBody(source, sym.Line)
+		matches := callPattern.FindAllStringSubmatchIndex(body, -1)
 		seen := make(map[string]bool)
-		for _, match := range matches {
-			callee := match[1]
-			if isGenericKeyword(callee) || callee == sym.Name || seen[callee] {
+		for _, m := range matches {
+			callee := body[m[2]:m[3]]
+			if p.isKeyword(callee) || callee == sym.Name || seen[callee] {
 				continue
 			}
-			if knownSymbols[callee] {
-				seen[callee] = true
-				edges = append(edges, RawEdge{
-					SourceName: sym.Name,
-					TargetName: callee,
-					Kind:       EdgeCalls,
-				})
+			if declPrefix.MatchString(body[max(0, m[2]-16):m[2]]) {
+				continue
 			}
+			seen[callee] = true
+			edges = append(edges, RawEdge{
+				SourceName: sym.Name,
+				TargetName: callee,
+				Kind:       EdgeCalls,
+			})
 		}
 	}
 	return edges
@@ -270,7 +303,143 @@ func extractBody(source string, startLine int) string {
 	return strings.Join(lines[startLine-1:end], "\n")
 }
 
-// isGenericKeyword returns true for common keywords across JS/TS/Python/Rust
+// functionBody returns the source of the function declared at startLine,
+// trimmed to the function itself so its call scan cannot pick up the calls
+// of the functions declared after it. Languages without a known body rule
+// keep the 50-line window.
+func (p *GenericParser) functionBody(source string, startLine int) string {
+	body := extractBody(source, startLine)
+	switch p.language {
+	case "python":
+		return extractIndentedBody(body)
+	case "javascript", "typescript", "rust", "php":
+		return extractBracedBody(body, p.language)
+	}
+	return body
+}
+
+// extractIndentedBody trims a Python body window to the def itself: the
+// signature (which may span lines until its brackets close) plus every
+// following line up to the first non-blank, non-comment line indented no
+// deeper than the def.
+func extractIndentedBody(body string) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 {
+		return body
+	}
+	defIndent := countLeadingSpaces(lines[0])
+	depth := 0
+	i := 0
+	// The signature: the def line and any continuation lines.
+	for ; i < len(lines); i++ {
+		depth += bracketDelta(lines[i])
+		if depth <= 0 {
+			i++
+			break
+		}
+	}
+	for ; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if countLeadingSpaces(lines[i]) <= defIndent {
+			break
+		}
+	}
+	return strings.Join(lines[:i], "\n")
+}
+
+// bracketDelta returns opening minus closing brackets on a line, ignoring
+// anything after a '#' comment. Quoted brackets are rare enough in a
+// signature to ignore.
+func bracketDelta(line string) int {
+	if c := strings.IndexByte(line, '#'); c >= 0 {
+		line = line[:c]
+	}
+	d := 0
+	for _, ch := range line {
+		switch ch {
+		case '(', '[', '{':
+			d++
+		case ')', ']', '}':
+			d--
+		}
+	}
+	return d
+}
+
+// extractBracedBody trims a brace-language body window to the declaration
+// itself: everything up to the brace that closes the body, or up to the
+// first top-level ';' when the declaration has no body (an abstract or
+// interface method, a one-line arrow function). Braces inside the
+// parameter list (TS object types, JS default objects), strings and
+// comments do not count. Rust skips only "..." strings, because ' also
+// starts a lifetime; PHP also treats # as a line comment.
+func extractBracedBody(body, lang string) string {
+	depth, parens := 0, 0
+	for i := 0; i < len(body); i++ {
+		ch := body[i]
+		switch {
+		case ch == '/' && i+1 < len(body) && body[i+1] == '/',
+			ch == '#' && lang == "php":
+			for i < len(body) && body[i] != '\n' {
+				i++
+			}
+			continue
+		case ch == '/' && i+1 < len(body) && body[i+1] == '*':
+			end := strings.Index(body[i+2:], "*/")
+			if end < 0 {
+				return body
+			}
+			i += 2 + end + 1
+			continue
+		case ch == '"' || (ch == '\'' && lang != "rust") || (ch == '`' && lang != "rust" && lang != "php"):
+			i = skipQuoted(body, i)
+			continue
+		}
+		switch ch {
+		case '(':
+			parens++
+		case ')':
+			parens--
+		case '{':
+			if parens <= 0 {
+				depth++
+			}
+		case '}':
+			if parens <= 0 {
+				depth--
+				if depth <= 0 {
+					return body[:i+1]
+				}
+			}
+		case ';':
+			if depth == 0 && parens <= 0 {
+				return body[:i+1]
+			}
+		}
+	}
+	return body
+}
+
+// skipQuoted returns the index of the quote that closes the string opened
+// at body[start], honouring backslash escapes, or the last index when the
+// string never closes.
+func skipQuoted(body string, start int) int {
+	quote := body[start]
+	for i := start + 1; i < len(body); i++ {
+		switch body[i] {
+		case '\\':
+			i++
+		case quote:
+			return i
+		}
+	}
+	return len(body) - 1
+}
+
+// genericKeywords lists common keywords across JS/TS/Python/Rust
 // that should not be treated as function calls.
 var genericKeywords = map[string]bool{
 	// JS/TS
@@ -294,8 +463,19 @@ var genericKeywords = map[string]bool{
 	"in": true, "dyn": true,
 }
 
-func isGenericKeyword(s string) bool {
-	return genericKeywords[s]
+// phpKeywords are PHP language constructs that look like calls. They are
+// checked only for PHP, so a JS or Rust function named list() or empty()
+// keeps its edges.
+var phpKeywords = map[string]bool{
+	"array": true, "isset": true, "empty": true, "unset": true, "list": true,
+	"echo": true, "foreach": true, "elseif": true, "exit": true, "die": true,
+	"include": true, "include_once": true, "require_once": true, "declare": true,
+}
+
+// isKeyword reports whether a `name(` in this parser's language is a
+// keyword or language construct rather than a call.
+func (p *GenericParser) isKeyword(s string) bool {
+	return genericKeywords[s] || (p.language == "php" && phpKeywords[s])
 }
 
 // deduplicateSymbols removes duplicate symbols (same name+kind+file+line).

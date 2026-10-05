@@ -67,6 +67,15 @@ jobs:
       shell: bash
       run: go test -v -race -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
 
+    # Release binaries are built with CGO_ENABLED=0, which swaps the
+    # tree-sitter parsers for the regex parser. Run the code graph tests in
+    # that mode too, or its call-edge regressions go unseen.
+    - name: Run codegraph tests without cgo
+      if: runner.os == 'Linux'
+      env:
+        CGO_ENABLED: "0"
+      run: go test -count=1 -timeout 10m ./cmd/celeste/codegraph/...
+
     - name: Check coverage threshold
       if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.6'
       run: |
