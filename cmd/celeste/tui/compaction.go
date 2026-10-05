@@ -295,12 +295,8 @@ func isLegacyTextCommand(content string) bool {
 	if strings.HasPrefix(content, "/") {
 		return true
 	}
-	switch lower := strings.ToLower(content); lower {
-	case "clear", "help", "tools", "skills", "debug":
-		return true
-	default:
-		return isQuitWord(lower)
-	}
+	lower := strings.ToLower(content)
+	return legacyCommands[lower] != nil || isQuitWord(lower)
 }
 
 // holdForHandoff keeps input submitted during a handoff away from the
