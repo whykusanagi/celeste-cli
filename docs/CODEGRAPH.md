@@ -25,15 +25,16 @@ database, and commits are lost newest first. A full build sets
 its last pass commits, and the Go pass does the same with
 `meta.go_pass_pending`. An `Update` that finds the first mark finishes the
 build without resetting the graph: it keeps the files already indexed,
-indexes the missing or changed ones, rewrites every non-Go edge (it deletes
-them and resolves them again, so a reader can briefly see fewer non-Go
-edges), reruns the Go pass and only then clears the mark. Repeated short
-runs (a chat opened and closed before a long build ends) each index more
-files and keep what earlier runs stored. Rewriting the non-Go edges stops as
-soon as the run is cancelled, so closing a chat never waits for it; the run
-that clears the mark is the first one that lasts through it (`celeste index`
-does). An `Update`
-that finds the second mark reruns the Go pass. A build or update that was
+indexes the missing or changed ones, rewrites every non-Go edge (it
+resolves them again, then deletes the old ones and stores the new ones in
+one transaction, so readers never see an emptied graph or missing edges
+during recovery: they see the old edges until the new ones commit), reruns
+the Go pass and only then clears the mark. Repeated short runs (a chat
+opened and closed before a long build ends) each index more files and keep
+what earlier runs stored. Rewriting the non-Go edges stops as soon as the
+run is cancelled and then changes no edge, so closing a chat never waits
+for it; the run that clears the mark is the first one that lasts through it
+(`celeste index` does). An `Update` that finds the second mark reruns the Go pass. A build or update that was
 cancelled, killed or cut off by a power loss is finished by the next update
 rather than trusted because its file hashes match. Each mark holds a
 random token of the run that set it, and a run clears only its own.

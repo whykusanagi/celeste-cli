@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,4 +260,113 @@ func TestUpdate_NonGoCallsNeverResolveToGo(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(ws, "py", "a.py"), []byte("def caller():\n    helper()\n    pass\n"), 0o644))
 	require.NoError(t, idx.Update())
 	assert.Equal(t, want, edgeKeys(t, idx), "incremental update")
+}
+
+// wideCallFiles is n Python files whose caller calls every helper of the
+// next 12 files, so a few files make more than one 1024-edge stride.
+func wideCallFiles(n int) map[string]string {
+	files := map[string]string{}
+	for i := 0; i < n; i++ {
+		var b strings.Builder
+		fmt.Fprintf(&b, "def caller_%d():\n", i)
+		for j := 1; j <= 12; j++ {
+			for k := 0; k < 2; k++ {
+				fmt.Fprintf(&b, "    helper_%d_%d()\n", (i+j)%n, k)
+			}
+		}
+		for k := 0; k < 2; k++ {
+			fmt.Fprintf(&b, "\ndef helper_%d_%d():\n    pass\n", i, k)
+		}
+		files[fmt.Sprintf("py/w%03d.py", i)] = b.String()
+	}
+	return files
+}
+
+// nonGoEdgeCount counts the edges that start at a non-Go symbol, read
+// through its own Store, as another process's reader would.
+func nonGoEdgeCount(t *testing.T, st *Store) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.db.QueryRow(`SELECT COUNT(*) FROM edges
+		WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`).Scan(&n))
+	return n
+}
+
+// #393 review: recovery replaces the non-Go edges in one transaction, so a
+// reader on another connection sees the old edges or the new ones, never
+// a graph without them.
+func TestUpdate_RecoveryReadersNeverSeeMissingNonGoEdges(t *testing.T) {
+	files := wideCallFiles(60)
+	idx, _ := buildFixture(t, files)
+	want := edgeKeys(t, idx)
+	reader, err := NewStore(idx.store.path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close() })
+	before := nonGoEdgeCount(t, reader)
+	require.Greater(t, before, 1024, "the fixture needs more than one resolve stride")
+	require.NoError(t, idx.store.SetMeta(metaBuildInProgress, []byte("killed-run")))
+
+	var seen []int
+	testHookReresolveResolve = func() { seen = append(seen, nonGoEdgeCount(t, reader)) }
+	t.Cleanup(func() { testHookReresolveResolve = nil })
+	require.NoError(t, idx.Update())
+	require.Greater(t, len(seen), 1)
+	for i, n := range seen {
+		assert.Equal(t, before, n, "a reader during resolve stride %d sees every non-Go edge", i)
+	}
+	assert.Equal(t, before, nonGoEdgeCount(t, reader))
+	assert.Equal(t, want, edgeKeys(t, idx))
+}
+
+// A recovery cancelled while it resolves the non-Go edges rolls back: every
+// edge stays as it was and the mark stays set for the next run.
+func TestUpdate_RecoveryCancelWhileResolvingKeepsEdges(t *testing.T) {
+	files := wideCallFiles(60)
+	idx, _ := buildFixture(t, files)
+	want := edgeKeys(t, idx)
+	require.NoError(t, idx.store.SetMeta(metaBuildInProgress, []byte("killed-run")))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	strides := 0
+	testHookReresolveResolve = func() {
+		strides++
+		if strides == 2 {
+			cancel()
+		}
+	}
+	t.Cleanup(func() { testHookReresolveResolve = nil })
+	require.ErrorIs(t, idx.UpdateWithContext(ctx), context.Canceled)
+	assert.Equal(t, want, edgeKeys(t, idx), "a cancel while resolving changes no edge")
+	mark, err := idx.store.GetMeta(metaBuildInProgress)
+	require.NoError(t, err)
+	assert.NotNil(t, mark, "a cancelled recovery keeps the mark")
+
+	testHookReresolveResolve = nil
+	require.NoError(t, idx.Update())
+	assert.Equal(t, want, edgeKeys(t, idx))
+}
+
+// A cancel while ReplaceNonGoEdges inserts rolls back the delete as well.
+func TestStore_ReplaceNonGoEdgesCancelRollsBack(t *testing.T) {
+	idx, _ := buildFixture(t, wideCallFiles(60))
+	want := edgeKeys(t, idx)
+	edges := make([]Edge, 0, 2048)
+	rows, err := idx.store.db.Query(`SELECT source_id, target_id, kind FROM edges`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var e Edge
+		require.NoError(t, rows.Scan(&e.SourceID, &e.TargetID, &e.Kind))
+		edges = append(edges, e)
+	}
+	require.NoError(t, rows.Close())
+	require.Greater(t, len(edges), 1024)
+
+	// The first stride inserts, the second finds the context ended.
+	err = idx.store.ReplaceNonGoEdges(&failAfterCtx{Context: context.Background(), n: 1}, edges[1:])
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, want, edgeKeys(t, idx), "a cancelled replacement changes no edge")
+
+	require.NoError(t, idx.store.ReplaceNonGoEdges(context.Background(), edges[1:]))
+	assert.Len(t, edgeKeys(t, idx), len(want)-1)
 }

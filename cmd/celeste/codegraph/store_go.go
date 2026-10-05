@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -201,12 +202,48 @@ func DisplayName(sym Symbol) string {
 	return "(" + star + recv + ")." + sym.Name
 }
 
-// DeleteNonGoEdges deletes every edge whose source is not a Go symbol, so an
-// interrupted build's non-Go edges can be resolved again from scratch
-// without emptying the graph (#391).
-func (s *Store) DeleteNonGoEdges() error {
-	if _, err := s.db.Exec(`DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
-		return fmt.Errorf("clear non-go edges: %w", err)
+// ReplaceNonGoEdges deletes every edge whose source is not a Go symbol and
+// inserts edges in its place, in one transaction, so an interrupted build's
+// non-Go edges are resolved again from scratch (#391) while a reader sees
+// either the old edges or the new ones. ctx is checked every 1024 inserts;
+// a cancel rolls the whole replacement back.
+func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// fail prefers the context's error, so a cancel that interrupts a
+	// statement is reported as the cancel it is.
+	fail := func(err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
+		return fail(fmt.Errorf("clear non-go edges: %w", err))
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fail(err)
+	}
+	defer stmt.Close()
+	for i, e := range edges {
+		if i&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if _, err := stmt.ExecContext(ctx, e.SourceID, e.TargetID, e.Kind); err != nil {
+			return fail(fmt.Errorf("insert non-go edge: %w", err))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
 	}
 	return nil
 }

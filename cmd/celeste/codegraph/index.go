@@ -553,11 +553,15 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 // resolves the raw edges against the symbols now stored, as a build's pass
 // 2 does. The Go pass rewrites Go-sourced edges itself.
 //
-// ctx is checked every 64 parsed files and every 1024 resolved edges, so a
-// cancelled run (Env.Close) returns promptly. A cancel while parsing
-// returns before any edge is deleted; a cancel while resolving leaves part
-// of the non-Go edges stored, and the build_in_progress mark, still set,
-// makes the next run do this again.
+// The raw edges are resolved first, which only reads the symbols, and the
+// delete and the inserts then run in one transaction
+// (Store.ReplaceNonGoEdges), so a reader sees the old non-Go edges or the
+// new ones and never a graph without them.
+//
+// ctx is checked every 64 parsed files, every 1024 resolved edges and every
+// 1024 inserted edges, so a cancelled run (Env.Close) returns promptly. A
+// cancel at any point changes no edge (the transaction rolls back), and the
+// build_in_progress mark, still set, makes the next run do this again.
 func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, parsed map[string][]RawEdge) error {
 	var raw []RawEdge
 	n := 0
@@ -587,19 +591,17 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, par
 		}
 		raw = append(raw, res.Edges...)
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := idx.store.DeleteNonGoEdges(); err != nil {
-		return err
-	}
+	var edges []Edge
 	for start := 0; start < len(raw); start += 1024 {
+		if testHookReresolveResolve != nil {
+			testHookReresolveResolve()
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		idx.resolveAndStoreEdges(raw[start:min(start+1024, len(raw))])
+		edges = append(edges, idx.resolveEdges(raw[start:min(start+1024, len(raw))])...)
 	}
-	return nil
+	return idx.store.ReplaceNonGoEdges(ctx, edges)
 }
 
 // indexFileSymbols parses a file, stores its symbols (with MinHash / LSH / tokens)
@@ -677,6 +679,15 @@ func (idx *Indexer) storeFileRecord(relPath, lang, resolution string) {
 // inserts them into the edges table. Called by Build() after indexFileSymbols
 // has run over all files, ensuring every target symbol is already present.
 func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
+	for _, e := range idx.resolveEdges(edges) {
+		_ = idx.store.AddEdge(e.SourceID, e.TargetID, e.Kind)
+	}
+}
+
+// resolveEdges resolves raw (name-based) edges to symbol IDs against the
+// stored symbols, leaving out any edge whose source or target is not found.
+func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
+	var out []Edge
 	for _, edge := range edges {
 		sourceID, ok1 := idx.store.GetSymbolIDByNameInFile(edge.SourceName, edge.SourceFile)
 		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
@@ -688,9 +699,10 @@ func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
 			}
 		}
 		if ok1 && ok2 {
-			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
+			out = append(out, Edge{SourceID: sourceID, TargetID: targetID, Kind: edge.Kind})
 		}
 	}
+	return out
 }
 
 // resolveTarget looks up an edge's target by name. A call resolves to a
