@@ -82,7 +82,7 @@ func (t *CodeSymbolsTool) Execute(ctx context.Context, input map[string]any, pro
 	grouped := make(map[codegraph.SymbolKind][]codegraph.Symbol)
 	kindOrder := []codegraph.SymbolKind{
 		codegraph.SymbolInterface, codegraph.SymbolStruct, codegraph.SymbolType,
-		codegraph.SymbolFunction, codegraph.SymbolMethod,
+		codegraph.SymbolFunction, codegraph.SymbolMethod, codegraph.SymbolInterfaceMethod,
 		codegraph.SymbolConst, codegraph.SymbolVar,
 	}
 
@@ -96,7 +96,7 @@ func (t *CodeSymbolsTool) Execute(ctx context.Context, input map[string]any, pro
 			continue
 		}
 
-		kindLabel := strings.ToUpper(string(kind)[:1]) + string(kind)[1:]
+		kindLabel := strings.ToUpper(string(kind)[:1]) + strings.ReplaceAll(string(kind)[1:], "_", " ")
 		fmt.Fprintf(&b, "### %ss (%d)\n", kindLabel, len(items))
 		for _, s := range items {
 			if s.Signature != "" {

@@ -43,13 +43,25 @@ func (p *GoParser) ParseFile(path string) (*ParseResult, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	result := &ParseResult{}
+	result := &ParseResult{Symbols: p.fileSymbols(file, path, fset)}
+	for _, decl := range file.Decls {
+		if d, ok := decl.(*ast.FuncDecl); ok && d.Body != nil {
+			result.Edges = append(result.Edges, p.extractCallEdges(d, fset)...)
+		}
+	}
+	return result, nil
+}
+
+// fileSymbols extracts the declared symbols (imports, functions, methods,
+// types, interface methods, consts, vars) of one parsed file. Shared by the
+// heuristic ParseFile and the type-checked pass in gotypes.go.
+func (p *GoParser) fileSymbols(file *ast.File, path string, fset *token.FileSet) []Symbol {
+	var syms []Symbol
 	pkgName := file.Name.Name
 
-	// Extract import edges
 	for _, imp := range file.Imports {
 		importPath := strings.Trim(imp.Path.Value, `"`)
-		result.Symbols = append(result.Symbols, Symbol{
+		syms = append(syms, Symbol{
 			Name:    importPath,
 			Kind:    SymbolImport,
 			Package: pkgName,
@@ -58,26 +70,15 @@ func (p *GoParser) ParseFile(path string) (*ParseResult, error) {
 		})
 	}
 
-	// Walk the AST for declarations
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			sym := p.extractFunction(d, pkgName, path, fset)
-			result.Symbols = append(result.Symbols, sym)
-
-			// Extract call edges from function body
-			if d.Body != nil {
-				edges := p.extractCallEdges(d, fset)
-				result.Edges = append(result.Edges, edges...)
-			}
-
+			syms = append(syms, p.extractFunction(d, pkgName, path, fset))
 		case *ast.GenDecl:
-			syms := p.extractGenDecl(d, pkgName, path, fset)
-			result.Symbols = append(result.Symbols, syms...)
+			syms = append(syms, p.extractGenDecl(d, pkgName, path, fset)...)
 		}
 	}
-
-	return result, nil
+	return syms
 }
 
 // extractFunction extracts a function or method symbol.
@@ -137,6 +138,26 @@ func (p *GoParser) formatFuncSignature(fn *ast.FuncDecl) string {
 	return b.String()
 }
 
+// formatInterfaceMethod renders an interface method like a method
+// signature on the interface: "func (Writer) Write([]byte) (int, error)".
+func formatInterfaceMethod(iface, name string, ft *ast.FuncType) string {
+	var b strings.Builder
+	b.WriteString("func (" + iface + ") " + name + "(")
+	if ft.Params != nil {
+		b.WriteString(formatFieldList(ft.Params))
+	}
+	b.WriteString(")")
+	if ft.Results != nil && len(ft.Results.List) > 0 {
+		b.WriteString(" ")
+		if len(ft.Results.List) > 1 || len(ft.Results.List[0].Names) > 0 {
+			b.WriteString("(" + formatFieldList(ft.Results) + ")")
+		} else {
+			b.WriteString(formatFieldList(ft.Results))
+		}
+	}
+	return b.String()
+}
+
 // extractGenDecl extracts symbols from general declarations (type, const, var).
 func (p *GoParser) extractGenDecl(decl *ast.GenDecl, pkg, file string, fset *token.FileSet) []Symbol {
 	var syms []Symbol
@@ -158,6 +179,24 @@ func (p *GoParser) extractGenDecl(decl *ast.GenDecl, pkg, file string, fset *tok
 				File:    file,
 				Line:    fset.Position(s.Pos()).Line,
 			})
+			if it, ok := s.Type.(*ast.InterfaceType); ok && it.Methods != nil {
+				for _, m := range it.Methods.List {
+					ft, ok := m.Type.(*ast.FuncType)
+					if !ok {
+						continue // embedded interface or type-set term
+					}
+					for _, name := range m.Names {
+						syms = append(syms, Symbol{
+							Name:      name.Name,
+							Kind:      SymbolInterfaceMethod,
+							Package:   pkg,
+							File:      file,
+							Line:      fset.Position(name.Pos()).Line,
+							Signature: formatInterfaceMethod(s.Name.Name, name.Name, ft),
+						})
+					}
+				}
+			}
 
 		case *ast.ValueSpec:
 			kind := SymbolVar

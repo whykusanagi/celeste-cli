@@ -50,6 +50,21 @@ func TestStructuralReranker_ZeroEdgePenaltyOnFunction(t *testing.T) {
 	assert.Equal(t, int64(2), reranked[0].Symbol.ID, "zero-edge function should be penalized below real-impl")
 }
 
+func TestStructuralReranker_NoZeroEdgePenaltyForImplementer(t *testing.T) {
+	// A method that satisfies an interface from outside the module (Error,
+	// String, a framework handler) is reached through that interface, so it
+	// is not dead code even with no edges.
+	r := NewStructuralReranker()
+	impl := mkResult(2, "Error", SymbolMethod, 0, []string{"error"})
+	impl.Symbol.Implements = "error"
+	results := []SearchResult{
+		mkResult(1, "errorDead", SymbolMethod, 0, []string{"error"}),
+		impl,
+	}
+	reranked := r.Rerank(results, 1)
+	assert.Equal(t, int64(2), reranked[0].Symbol.ID, "an implementer must not get the zero-edge penalty")
+}
+
 func TestStructuralReranker_PreservesOrderOnTies(t *testing.T) {
 	// Three candidates that produce IDENTICAL structural scores (same
 	// kind, same edge density, same matched tokens) should fall back to
