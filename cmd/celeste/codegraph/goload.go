@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,7 +86,6 @@ type listedPkg struct {
 	ImportPath string
 	Dir        string
 	GoFiles    []string
-	CgoFiles   []string
 	ImportMap  map[string]string
 }
 
@@ -113,6 +114,10 @@ func loadGo(ctx context.Context, workspace string, relFiles []string) (*goLoader
 	// system hook is set; setting one keeps the fallback in-process (GOROOT
 	// and vendor lookups only). Module dependencies come from listModule.
 	l.bctx.JoinPath = filepath.Join
+	// Analyse the CGO_ENABLED=0 build, which is what release binaries
+	// are, so results do not depend on whether the host has a C compiler:
+	// cgo-tagged files and files importing "C" fall back to the heuristic.
+	l.bctx.CgoEnabled = false
 
 	// Group by slash-separated directory; keep each file's path exactly as
 	// the walker produced it (OS separators), since that is the key the
@@ -209,8 +214,8 @@ func (l *goLoader) loadDir(absDir, importPath string, rels []string) {
 		gf := &goFile{rel: rel, ast: f}
 		l.files = append(l.files, gf)
 		match, err := l.bctx.MatchFile(absDir, filepath.Base(abs))
-		if err != nil || !match {
-			continue // excluded by build constraints: heuristic fallback
+		if err != nil || !match || importsC(f) {
+			continue // excluded by build constraints or cgo: heuristic fallback
 		}
 		test := strings.HasSuffix(rel, "_test.go")
 		all = append(all, parsed{gf, test})
@@ -290,10 +295,9 @@ func (l *goLoader) check(u *goUnit) {
 		Instances:  map[*ast.Ident]types.Instance{},
 	}
 	conf := types.Config{
-		Importer:    &goImporter{l: l, self: u.aug},
-		FakeImportC: true,
-		Sizes:       types.SizesFor("gc", l.bctx.GOARCH),
-		Error:       func(error) { u.errs++ },
+		Importer: &goImporter{l: l, self: u.aug},
+		Sizes:    types.SizesFor("gc", l.bctx.GOARCH),
+		Error:    func(error) { u.errs++ },
 	}
 	asts := make([]*ast.File, len(u.files))
 	for i, f := range u.files {
@@ -364,14 +368,14 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 	var names []string
 	if lp, ok := l.listed[p]; ok && lp.Dir != "" {
 		dir = lp.Dir
-		names = append(append(names, lp.GoFiles...), lp.CgoFiles...)
+		names = lp.GoFiles
 	} else {
 		bp, err := l.bctx.Import(p, fromDir, 0)
 		if err != nil && bp == nil {
 			e.err = err
 			return nil, err
 		}
-		if bp == nil || len(bp.GoFiles)+len(bp.CgoFiles) == 0 {
+		if bp == nil || len(bp.GoFiles) == 0 {
 			e.err = fmt.Errorf("cannot find package %s", p)
 			if err != nil {
 				e.err = err
@@ -379,7 +383,7 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 			return nil, e.err
 		}
 		dir = bp.Dir
-		names = append(append(names, bp.GoFiles...), bp.CgoFiles...)
+		names = bp.GoFiles
 	}
 	var asts []*ast.File
 	for _, n := range names {
@@ -395,7 +399,6 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 	conf := types.Config{
 		Importer:         &goImporter{l: l},
 		IgnoreFuncBodies: true,
-		FakeImportC:      true,
 		Sizes:            types.SizesFor("gc", l.bctx.GOARCH),
 		Error:            func(error) {},
 	}
@@ -415,11 +418,11 @@ func (l *goLoader) listModule(goBin, root string) {
 	ctx, cancel := context.WithTimeout(l.ctx, goListTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, goBin, "list", "-e", "-deps", "-test",
-		"-json=ImportPath,Dir,GoFiles,CgoFiles,ImportMap", "./...")
+		"-json=ImportPath,Dir,GoFiles,ImportMap", "./...")
 	cmd.Dir = root
 	// os/exec keeps the last value of a duplicated variable, so these
 	// overrides win over the inherited environment.
-	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOTOOLCHAIN=local")
+	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOTOOLCHAIN=local", "CGO_ENABLED=0")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard
@@ -457,6 +460,52 @@ func goEnvGOROOT(ctx context.Context, goBin string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// importsC reports whether a file uses cgo.
+func importsC(f *ast.File) bool {
+	for _, imp := range f.Imports {
+		if imp.Path.Value == `"C"` {
+			return true
+		}
+	}
+	return false
+}
+
+// goModFingerprint hashes the go.mod and go.sum of every module the given
+// Go files belong to. Update compares it with the stored value so a module
+// rename or a dependency change re-runs the Go pass even when no .go file
+// changed.
+func goModFingerprint(workspace string, relFiles []string) string {
+	cache := map[string][2]string{}
+	roots := map[string]bool{}
+	seenDir := map[string]bool{}
+	for _, rel := range relFiles {
+		dir := filepath.Dir(filepath.Join(workspace, rel))
+		if seenDir[dir] {
+			continue
+		}
+		seenDir[dir] = true
+		if root, _ := findModule(dir, cache); root != "" {
+			roots[root] = true
+		}
+	}
+	sorted := make([]string, 0, len(roots))
+	for r := range roots {
+		sorted = append(sorted, r)
+	}
+	sort.Strings(sorted)
+	h := sha256.New()
+	for _, r := range sorted {
+		h.Write([]byte(r + "\x00"))
+		for _, name := range []string{"go.mod", "go.sum"} {
+			data, _ := os.ReadFile(filepath.Join(r, name))
+			h.Write([]byte(name + "\x00"))
+			h.Write(data)
+			h.Write([]byte{0})
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // findModule walks up from dir to the nearest go.mod and returns its

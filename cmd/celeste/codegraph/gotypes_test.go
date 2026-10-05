@@ -168,6 +168,14 @@ func Broken() {
 	helperX()
 }
 `,
+	"cgo/c.go": `package cgo
+
+import "C"
+
+func UsesC() { helperC() }
+
+func helperC() {}
+`,
 	"tagged/ignored.go": `//go:build ignore
 
 package tagged
@@ -360,6 +368,9 @@ func TestGoTypes_FallbackIsRecordedAsApproximate(t *testing.T) {
 	assert.Equal(t, GoResolutionTyped, res["calls/calls.go"])
 	assert.Equal(t, GoResolutionApproximate, res["broken/broken.go"])
 	assert.Equal(t, GoResolutionApproximate, res["tagged/ignored.go"])
+	// cgo is analysed as disabled (release binaries are CGO_ENABLED=0),
+	// independent of the host.
+	assert.Equal(t, GoResolutionApproximate, res["cgo/c.go"])
 
 	got := edgeKeys(t, idx)
 	// Typed even though the package has an error elsewhere.
@@ -515,5 +526,18 @@ func TestGoTypes_SearchAndSummaryReportApproximate(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "search should return a symbol from broken/broken.go")
-	assert.Contains(t, idx.ProjectSummary(), "Go call graph: 4 files type-checked, 2 approximate")
+	assert.Contains(t, idx.ProjectSummary(), "Go call graph: 4 files type-checked, 3 approximate")
+}
+
+func TestGoTypes_UpdateNoticesGoModChanges(t *testing.T) {
+	idx, ws := buildFixture(t, goFixture)
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "go.mod"), []byte("module example.com/renamed\n\ngo 1.22\n"), 0o644))
+	// No .go file changed: only go.mod did.
+	require.NoError(t, idx.Update())
+
+	got := edgeKeys(t, idx)
+	requireEdges(t, got, "example.com/renamed/a.A -calls-> example.com/renamed/a.update")
+	for k := range got {
+		assert.NotContains(t, k, "example.com/fx/", "stale qualified name after a module rename")
+	}
 }

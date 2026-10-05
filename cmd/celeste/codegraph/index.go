@@ -386,7 +386,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 			continue
 		}
 	}
-	if len(goChanged) > 0 || goRemoved {
+	if len(goChanged) > 0 || goRemoved || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
 		if err := idx.indexGo(ctx, goFiles, goChanged); err != nil {
 			return err
 		}

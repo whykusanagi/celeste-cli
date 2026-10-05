@@ -21,7 +21,7 @@ symbols (id, name, kind, package, file, line, signature, decorators, base_classe
          qual_name, implements, minhash BLOB)
 edges   (source_id, target_id, kind)  -- directional, unique on (src, dst, kind)
 files   (path, language, size, content_hash, indexed_at, resolution)
-meta    (key, value)                  -- minhash_seeds, graph_version
+meta    (key, value)                  -- minhash_seeds, graph_version, go_modules
 ```
 
 Indexed on `symbols.name`, `symbols.file`, `symbols.package`, `symbols.qual_name`, `edges.source_id`, `edges.target_id`.
@@ -52,8 +52,12 @@ the exact function or method:
 
 - **Packages.** Files are grouped by directory and package clause; a
   package's in-package `_test.go` files are checked with it, the external
-  `_test` package separately. Files excluded by build constraints for the
-  current GOOS/GOARCH are not part of any package. The import path comes from
+  `_test` package separately (in-package tests are checked in a
+  test-augmented copy of the package, so test-only imports never create
+  import cycles). Files excluded by build constraints for the current
+  GOOS/GOARCH are not part of any package. The pass analyses the
+  `CGO_ENABLED=0` build (what release binaries are), so cgo-tagged files and
+  files importing `"C"` take the fallback on every host. The import path comes from
   the nearest `go.mod` (a directory without one gets `_/<dir>`).
 - **Imports.** Workspace packages import each other from source with bodies.
   Everything else (standard library, module dependencies) is type-checked
@@ -127,7 +131,9 @@ Go is the exception: if any Go file was added, changed or removed, the Go
 pass re-runs over all Go files (it needs whole packages), re-stores the
 symbols of changed files (and of any file whose symbols changed meaning),
 and rewrites every Go-sourced edge in one transaction. Edges into a changed
-file from unchanged callers are therefore kept.
+file from unchanged callers are therefore kept. A change to a module's
+`go.mod` or `go.sum` (tracked as a fingerprint in `meta.go_modules`) re-runs
+the Go pass too, since it can change every qualified name.
 
 ### Edge Resolution
 

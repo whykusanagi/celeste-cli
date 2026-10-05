@@ -14,6 +14,8 @@ import (
 const (
 	metaGraphVersion = "graph_version"
 	graphVersion     = "2"
+	// metaGoModules holds goModFingerprint as of the last Go pass.
+	metaGoModules = "go_modules"
 )
 
 // indexGo runs the type-checked Go pass over every Go file in the workspace
@@ -81,7 +83,20 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 			impl[id] = implementsList(names)
 		}
 	}
-	return idx.store.SetGoImplements(impl)
+	if err := idx.store.SetGoImplements(impl); err != nil {
+		return err
+	}
+	return idx.store.SetMeta(metaGoModules, []byte(goModFingerprint(idx.workspace, goFiles)))
+}
+
+// goModulesChanged reports whether go.mod/go.sum changed since the last Go
+// pass.
+func (idx *Indexer) goModulesChanged(goFiles []string) bool {
+	stored, err := idx.store.GetMeta(metaGoModules)
+	if err != nil {
+		return true
+	}
+	return string(stored) != goModFingerprint(idx.workspace, goFiles)
 }
 
 func (idx *Indexer) goEdgeSource(e goEdge, quals map[string]int64) (int64, bool) {
