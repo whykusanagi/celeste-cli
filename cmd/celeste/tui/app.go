@@ -3621,7 +3621,7 @@ func (m HeaderModel) View() string {
 	title := HeaderTitleStyle.Render("✨ Celeste CLI")
 
 	// Build endpoint/mode indicator
-	var endpointInfo string
+	var endpointInfo, marks string
 	if m.nsfwMode {
 		endpointInfo = NSFWStyle.Render("🔥 NSFW")
 		// Show image model if set
@@ -3651,17 +3651,19 @@ func (m HeaderModel) View() string {
 		if endpointInfo != "" {
 			endpointInfo += " • "
 		}
-		// Add capability indicator
-		modelDisplay := m.model
+		endpointInfo += ModelStyle.Render(m.model)
+		// Capability marks, kept whole when the name is cut (C3).
 		if m.modelUnverified {
-			modelDisplay += " ?" // forced, never validated
+			marks += " ?" // forced, never validated
 		} else if m.skillsEnabled {
-			modelDisplay += " ✓" // Checkmark for skills enabled
+			marks += " ✓" // Checkmark for skills enabled
 		}
 		if !m.skillsEnabled {
-			modelDisplay += " ⚠" // Warning for no skills, verified or not
+			marks += " ⚠" // Warning for no skills, verified or not
 		}
-		endpointInfo += ModelStyle.Render(modelDisplay)
+	}
+	if marks != "" {
+		marks = ModelStyle.Render(marks)
 	}
 
 	// Add context usage indicator if available
@@ -3670,7 +3672,7 @@ func (m HeaderModel) View() string {
 		contextInfo = m.contextIndicator.ViewCompact()
 	}
 
-	info := headerInfo(endpointInfo, contextInfo, m.width-lipgloss.Width(title)-3)
+	info := headerInfo(endpointInfo, marks, contextInfo, m.width-lipgloss.Width(title)-3)
 
 	// Calculate gap
 	gap := m.width - lipgloss.Width(title) - lipgloss.Width(info) - 2
@@ -3684,11 +3686,27 @@ func (m HeaderModel) View() string {
 	)
 }
 
-// headerInfo joins the header's right side (endpoint and model, the exit
-// hint, context usage) in at most avail cells, so the header never wraps:
-// the exit hint goes first, then the endpoint and model are cut with "…".
-// avail <= 0 means the width is not known yet.
-func headerInfo(endpointInfo, contextInfo string, avail int) string {
+// headerInfo joins the header's right side (endpoint and model with the
+// model's marks, the exit hint, context usage) in at most avail cells, so
+// the header never wraps: the exit hint goes first, then the endpoint and
+// model are cut with "…", their marks kept after it (C3). avail <= 0
+// means the width is not known yet.
+func headerInfo(endpointInfo, marks, contextInfo string, avail int) string {
+	if marks != "" {
+		fit := func(w int) string {
+			if w-lipgloss.Width(marks) < 2 {
+				return fitWidth(endpointInfo+marks, w)
+			}
+			return fitWidth(endpointInfo, w-lipgloss.Width(marks)) + marks
+		}
+		return headerInfoFit(endpointInfo+marks, contextInfo, avail, fit)
+	}
+	return headerInfoFit(endpointInfo, contextInfo, avail, func(w int) string { return fitWidth(endpointInfo, w) })
+}
+
+// headerInfoFit is headerInfo with fit, which cuts the endpoint and model
+// to at most w cells.
+func headerInfoFit(endpointInfo, contextInfo string, avail int, fit func(w int) string) string {
 	join := func(parts ...string) string {
 		var kept []string
 		for _, p := range parts {
@@ -3708,13 +3726,13 @@ func headerInfo(endpointInfo, contextInfo string, avail int) string {
 		return fitWidth(info, avail)
 	}
 	if contextInfo == "" {
-		return fitWidth(endpointInfo, avail)
+		return fit(avail)
 	}
 	room := avail - lipgloss.Width(" • "+contextInfo)
 	if room < 4 {
 		return fitWidth(info, avail)
 	}
-	return join(fitWidth(endpointInfo, room), contextInfo)
+	return join(fit(room), contextInfo)
 }
 
 // --- Status Model ---
