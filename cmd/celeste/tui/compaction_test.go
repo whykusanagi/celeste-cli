@@ -30,6 +30,8 @@ type fakeCompactClient struct {
 	// away each summary's and handoff's deadline was (#345).
 	summaryCap time.Duration
 	deadlines  []time.Duration
+	// tokensAfter is the estimate a summary reports (K1).
+	tokensAfter int
 }
 
 func (f *fakeCompactClient) SummaryTimeout() time.Duration { return f.summaryCap }
@@ -70,9 +72,10 @@ func (f *fakeCompactClient) SummarizeContext(ctx context.Context, msgs []ChatMes
 	}
 	cut := len(msgs) / 2
 	return SummaryOutcome{
-		Cut:      cut,
-		Messages: []ChatMessage{{Role: "user", Content: "<compacted-context>summary</compacted-context>"}},
-		Line:     "summarized for test",
+		Cut:         cut,
+		Messages:    []ChatMessage{{Role: "user", Content: "<compacted-context>summary</compacted-context>"}},
+		Line:        "summarized for test",
+		TokensAfter: f.tokensAfter,
 	}, nil
 }
 
@@ -308,6 +311,33 @@ func TestSummaryDeadlineIsTheClientCap(t *testing.T) {
 				assert.GreaterOrEqual(t, left, tc.min)
 				assert.LessOrEqual(t, left, tc.max)
 			}
+		})
+	}
+}
+
+// After /compact the in-chat context bar shows the post-compaction count, as
+// the header does, instead of the last turn's (K1).
+func TestCompactUpdatesContextBar(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m, client := newCompactTestApp(t)
+			client.tokensAfter = 13_000
+			sized, _ := m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+			m = sized.(AppModel)
+			m = runToolTurn(t, m)
+			m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+			m, _ = step(t, m, ContextBudgetMsg{UsedTokens: 50_000, MaxTokens: 100_000, UsagePercent: 50, TurnCount: 4})
+			require.Contains(t, auditView(m), "50.0K / 100.0K")
+
+			m, cmd := step(t, m, SendMessageMsg{Content: "/compact"})
+			m = runCmd(t, m, cmd)
+
+			assert.Equal(t, 13_000, m.contextTracker.CurrentTokens)
+			assert.Equal(t, 13_000, m.contextBar.usedTokens, "the bar must follow the compaction")
+			frame := auditView(m)
+			assert.Contains(t, frame, "◆ tokens: 13.0K / 100.0K", frame)
+			assert.NotContains(t, frame, "50.0K / 100.0K")
+			assertFrameFits(t, frame, sz.w, sz.h)
 		})
 	}
 }

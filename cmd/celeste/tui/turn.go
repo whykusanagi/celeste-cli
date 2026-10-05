@@ -591,18 +591,7 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 				u.TotalTokens,
 			)
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-
-			// Update context bar
-			budgetMsg := ContextBudgetMsg{
-				UsedTokens:   m.contextTracker.CurrentTokens,
-				MaxTokens:    m.contextTracker.MaxTokens,
-				UsagePercent: float64(m.contextTracker.CurrentTokens) / float64(m.contextTracker.MaxTokens) * 100,
-			}
-			if m.contextTracker.Budget != nil {
-				budgetMsg.CompactCount = m.contextTracker.Budget.CompactCount
-				budgetMsg.TurnCount = m.contextTracker.Budget.TurnCount
-			}
-			m.contextBar, _ = m.contextBar.Update(budgetMsg)
+			m = m.syncContextBar()
 		}
 	} else if content != "" {
 		// API didn't return token usage — estimate from response length and
@@ -612,6 +601,7 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 			cur := m.contextTracker.CurrentTokens + estOut
 			m.contextTracker.UpdateTokens(0, estOut, cur)
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			m = m.syncContextBar()
 		}
 		// Leave lastMsgInTok/lastMsgOutTok at 0 so the TickMsg inferred path runs.
 	}

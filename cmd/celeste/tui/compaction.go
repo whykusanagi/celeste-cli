@@ -164,6 +164,7 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) (AppModel, bool) {
 		if msg.Outcome.TokensAfter > 0 {
 			m.contextTracker.CurrentTokens = msg.Outcome.TokensAfter
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			m = m.syncContextBar() // K1: the bar follows the header
 		}
 	}
 	m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Outcome.Line)
@@ -372,6 +373,26 @@ func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 	m.input = m.input.SetValue(msg.Text)
 	m.chat = m.chat.AddSystemMessage("🤝 New session started. The handoff notes are in the input: edit them and press Enter to send.")
 	return m.releaseHandoffHeld(true)
+}
+
+// syncContextBar shows the context tracker's count in the in-chat context
+// bar, the way the header shows it.
+func (m AppModel) syncContextBar() AppModel {
+	t := m.contextTracker
+	if t == nil || t.MaxTokens <= 0 {
+		return m
+	}
+	budgetMsg := ContextBudgetMsg{
+		UsedTokens:   t.CurrentTokens,
+		MaxTokens:    t.MaxTokens,
+		UsagePercent: float64(t.CurrentTokens) / float64(t.MaxTokens) * 100,
+	}
+	if t.Budget != nil {
+		budgetMsg.CompactCount = t.Budget.CompactCount
+		budgetMsg.TurnCount = t.Budget.TurnCount
+	}
+	m.contextBar, _ = m.contextBar.Update(budgetMsg)
+	return m
 }
 
 // resetContextForNewSession starts the token tracking over for the session
