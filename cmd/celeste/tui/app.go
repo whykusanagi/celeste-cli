@@ -1710,8 +1710,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			result := commands.Execute(cmd, ctx)
 
-			// Show command result message if needed
-			if result.ShouldRender {
+			// Show command result message if needed. A command whose
+			// handler writes the output (/session list, info) has none
+			// yet: no empty bubble ahead of it.
+			if result.ShouldRender && strings.TrimSpace(result.Message) != "" {
 				m.chat = m.chat.AddSystemMessage(result.Message)
 			}
 
