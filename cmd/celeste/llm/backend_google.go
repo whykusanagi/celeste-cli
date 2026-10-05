@@ -157,113 +157,82 @@ func (b *GoogleBackend) request(messages []tui.ChatMessage, tools []tui.SkillDef
 // streams internally (#349): a whole-reply request sends nothing until the
 // reply is complete, so a long one (a compaction summary) looked idle and
 // failed with ErrStalled after the stall timeout. Streamed, every chunk's
-// bytes reach the stall watch, and each chunk also counts as activity.
+// bytes reach the stall watch, and each chunk also counts as activity. It
+// accumulates SendMessageStreamEvents, the backend's one reading of the
+// stream (audit C3).
 func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	contents, genConfig := b.request(messages, tools)
 	result := &ChatCompletionResult{}
 	var content strings.Builder
-	for chunk, err := range b.client.Models.GenerateContentStream(ctx, b.config.Model, contents, genConfig) {
-		if err != nil {
-			return nil, fmt.Errorf("Google AI request failed: %w", err)
+	acc := NewToolUseAccumulator()
+	err := b.streamEvents(ctx, messages, tools, func(ev StreamEvent) {
+		acc.HandleEvent(ev)
+		switch ev.Type {
+		case EventContentDelta:
+			content.WriteString(ev.ContentDelta)
+		case EventMessageDone:
+			result.FinishReason = ev.FinishReason
 		}
-		touchStall(ctx)
-		if len(chunk.Candidates) == 0 {
-			continue
-		}
-		candidate := chunk.Candidates[0]
-		if candidate.Content != nil {
-			content.WriteString(extractText(candidate.Content))
-			for _, part := range candidate.Content.Parts {
-				if part.FunctionCall != nil {
-					result.ToolCalls = append(result.ToolCalls, b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature))
-				}
-			}
-		}
-		if candidate.FinishReason != "" {
-			result.FinishReason = string(candidate.FinishReason)
-		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("Google AI request failed: %w", err)
 	}
 	result.Content = content.String()
+	result.ToolCalls = acc.CompletedCalls()
 	return result, nil
 }
 
-// SendMessageStream sends a message with streaming callback.
+// SendMessageStream sends a message with streaming callback: the text of
+// SendMessageStreamEvents as chunks, then one final chunk with the complete
+// tool calls and the finish reason.
 func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	contents, genConfig := b.request(messages, tools)
-	modelName := b.config.Model
-	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
-
-	var fullContent strings.Builder
-	var toolCalls []ToolCallResult
+	acc := NewToolUseAccumulator()
 	isFirst := true
-	var lastFinishReason string
-
-	// Iterate over streaming chunks
-	for chunk, err := range streamIter {
-		if err != nil {
-			return fmt.Errorf("Google AI stream error: %w", err)
-		}
-
-		// Process each candidate in the chunk
-		for _, candidate := range chunk.Candidates {
-			streamChunk := StreamChunk{
-				IsFirst: isFirst,
-			}
-
-			// Extract text content
-			if candidate.Content != nil {
-				text := extractText(candidate.Content)
-				if text != "" {
-					fullContent.WriteString(text)
-					streamChunk.Content = text
-				}
-
-				// Extract function calls (tool calls)
-				for _, part := range candidate.Content.Parts {
-					if part.FunctionCall != nil {
-						toolCall := b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature)
-						toolCalls = append(toolCalls, toolCall)
-					}
-				}
-			}
-
-			// Check finish reason
-			if candidate.FinishReason != "" {
-				lastFinishReason = string(candidate.FinishReason)
-			}
-
-			// Call callback with chunk (if there's content or it's the first chunk)
-			if streamChunk.Content != "" || isFirst {
-				callback(streamChunk)
+	err := b.streamEvents(ctx, messages, tools, func(ev StreamEvent) {
+		acc.HandleEvent(ev)
+		switch ev.Type {
+		case EventContentDelta:
+			callback(StreamChunk{IsFirst: isFirst, Content: ev.ContentDelta})
+			isFirst = false
+		case EventMessageDone:
+			if isFirst {
+				callback(StreamChunk{IsFirst: true})
 				isFirst = false
 			}
+			callback(StreamChunk{
+				IsFinal:      true,
+				FinishReason: ev.FinishReason,
+				ToolCalls:    acc.CompletedCalls(),
+				Usage:        nil, // Google GenAI SDK doesn't provide token usage in streaming yet
+			})
 		}
-	}
-
-	// Send final chunk with complete tool calls and finish reason
-	callback(StreamChunk{
-		IsFinal:      true,
-		FinishReason: lastFinishReason,
-		ToolCalls:    toolCalls,
-		Usage:        nil, // Google GenAI SDK doesn't provide token usage in streaming yet
 	})
-
+	if err != nil {
+		return fmt.Errorf("Google AI stream error: %w", err)
+	}
 	return nil
 }
 
 // SendMessageStreamEvents sends a message with granular streaming events.
 func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
+	if err := b.streamEvents(ctx, messages, tools, callback); err != nil {
+		return fmt.Errorf("Google AI stream error: %w", err)
+	}
+	return nil
+}
+
+// streamEvents is the backend's one loop over GenerateContentStream: each
+// chunk counts as activity on the stall watch, thoughts become thinking,
+// text becomes content, function calls (sent complete) become a start and
+// a done event, and EventMessageDone carries the finish reason. It returns
+// the SDK's error unwrapped, for the caller to label.
+func (b *GoogleBackend) streamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
 	contents, genConfig := b.request(messages, tools)
-	modelName := b.config.Model
-	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
-
 	var lastFinishReason string
-
-	// Iterate over streaming chunks
-	for chunk, err := range streamIter {
+	for chunk, err := range b.client.Models.GenerateContentStream(ctx, b.config.Model, contents, genConfig) {
 		if err != nil {
-			return fmt.Errorf("Google AI stream error: %w", err)
+			return err
 		}
+		touchStall(ctx)
 
 		for _, candidate := range chunk.Candidates {
 			if candidate.Content != nil {

@@ -133,3 +133,35 @@ func TestGoogleResponseBytesKeepTheStallWatchAlive(t *testing.T) {
 	require.NoError(t, err, "the response was still sending bytes")
 	assert.Equal(t, "done", res.Content)
 }
+
+// The chunk stream reads the same events as SendMessageStreamEvents (audit
+// C3): text deltas, then one final chunk with the complete tool calls (and
+// their signatures) and the provider's finish reason.
+func TestGoogleSendMessageStreamFinalChunk(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello \"}]}}]}\n\n")
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"world\"},{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.go\"}},\"thoughtSignature\":\"c2ln\"}]},\"finishReason\":\"STOP\"}]}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(&Config{APIKey: "k", BaseURL: srv.URL, Model: "gemini-test", Backend: BackendTypeGoogle}, nil)
+	var chunks []StreamChunk
+	require.NoError(t, client.SendMessageStream(context.Background(), []tui.ChatMessage{{Role: "user", Content: "hi"}}, nil, func(ch StreamChunk) {
+		chunks = append(chunks, ch)
+	}))
+	require.NotEmpty(t, chunks)
+	assert.True(t, chunks[0].IsFirst)
+	var text strings.Builder
+	for _, ch := range chunks {
+		text.WriteString(ch.Content)
+	}
+	assert.Equal(t, "hello world", text.String())
+	final := chunks[len(chunks)-1]
+	require.True(t, final.IsFinal)
+	assert.Equal(t, "STOP", final.FinishReason)
+	require.Len(t, final.ToolCalls, 1)
+	assert.Equal(t, "read_file", final.ToolCalls[0].Name)
+	assert.JSONEq(t, `{"path":"a.go"}`, final.ToolCalls[0].Arguments)
+	assert.Equal(t, []byte("sig"), final.ToolCalls[0].ThoughtSignature)
+}
