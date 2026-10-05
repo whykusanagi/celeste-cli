@@ -204,7 +204,9 @@ func (r *StructuralReranker) featureScore(c SearchResult, queryTokenCount int, m
 
 	// Zero-edge penalty for function/method symbols. Dead code or
 	// parser-missed callers either way — push it below real matches.
-	if c.EdgeCount == 0 {
+	// A method that implements an interface from outside the module is
+	// reached through that interface, so it is exempt.
+	if c.EdgeCount == 0 && c.Symbol.Implements == "" {
 		switch c.Symbol.Kind {
 		case SymbolFunction, SymbolMethod:
 			score += r.ZeroEdgePenalty

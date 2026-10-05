@@ -23,13 +23,40 @@ const (
 	SymbolStruct    SymbolKind = "struct"
 	SymbolImport    SymbolKind = "import"
 	SymbolClass     SymbolKind = "class"
+	// SymbolInterfaceMethod is a method declared inside a Go interface type.
+	// It has no body; its outgoing "implements" edges lead to the concrete
+	// methods a call through the interface can reach.
+	SymbolInterfaceMethod SymbolKind = "interface_method"
 )
 
 // EdgeKind identifies the kind of relationship between symbols.
 type EdgeKind string
 
-// EdgeCalls is the only kind any parser emits (docs/CODEGRAPH.md).
-const EdgeCalls EdgeKind = "calls"
+// Edge kinds (docs/CODEGRAPH.md). Every parser emits EdgeCalls; the
+// type-checked Go pass also emits the other two.
+const (
+	// EdgeCalls: the source calls the target, directly or through a
+	// function value, struct field, map/slice element or interface method.
+	EdgeCalls EdgeKind = "calls"
+	// EdgeReferences: the source takes the target as a value (passes it,
+	// stores it, returns it) without calling it at that point.
+	EdgeReferences EdgeKind = "references"
+	// EdgeImplements: the source is an interface method and the target is
+	// a concrete method that implements it, so a call through the
+	// interface can reach the target.
+	EdgeImplements EdgeKind = "implements"
+)
+
+// Go call-graph resolution recorded per file in files.resolution.
+const (
+	// GoResolutionTyped: the file's package type-checked cleanly and every
+	// call edge from it points at the exact function or method.
+	GoResolutionTyped = "typed"
+	// GoResolutionApproximate: the file did not type-check (broken code,
+	// missing dependencies, build tags excluding it). Edges the type
+	// checker could not resolve fall back to bare-name matching.
+	GoResolutionApproximate = "approximate"
+)
 
 // Symbol represents a code entity (function, type, interface, etc.).
 type Symbol struct {
@@ -42,6 +69,15 @@ type Symbol struct {
 	Signature   string
 	Decorators  string // comma-separated decorator names captured at parse time
 	BaseClasses string // comma-separated base-class names of the enclosing class
+	// QualName is the type-checked qualified name of a Go function,
+	// method, interface method, type, var or const, as go/types prints it:
+	// "pkg/path.Func", "(*pkg/path.T).Method", "(pkg/path.I).Method".
+	// Empty for other languages and for Go files that did not type-check.
+	QualName string
+	// Implements lists the interfaces a Go method satisfies (comma-separated,
+	// e.g. "error,fmt.Stringer"). A method listed here is reached through
+	// the interface even when no edge points at it.
+	Implements string
 }
 
 // Edge represents a relationship between two symbols.
@@ -58,6 +94,9 @@ type FileRecord struct {
 	Size        int64
 	ContentHash string
 	IndexedAt   int64
+	// Resolution is GoResolutionTyped or GoResolutionApproximate for Go
+	// files and empty for every other language.
+	Resolution string
 }
 
 // MinHashSignature is a fixed-length array of hash values for similarity search.
@@ -174,6 +213,18 @@ func (s *Store) createSchema() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
 	}
+	for _, col := range []string{
+		"ALTER TABLE symbols ADD COLUMN qual_name TEXT",
+		"ALTER TABLE symbols ADD COLUMN implements TEXT",
+		"ALTER TABLE files ADD COLUMN resolution TEXT",
+	} {
+		if _, err := s.db.Exec(col); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migrate schema: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_symbols_qual ON symbols(qual_name)`); err != nil {
+		return err
+	}
 	// Idempotent migration: add decorators/base_classes columns to existing DBs
 	// that were created before this schema version. The columns exist in new DBs
 	// from the CREATE TABLE above; for existing DBs ALTER TABLE adds them.
@@ -225,29 +276,33 @@ func (s *Store) SetMeta(key string, value []byte) error {
 }
 
 // UpsertSymbol inserts or updates a symbol. Uniqueness is determined by
-// (name, kind, package, file). Returns the row ID.
+// (name, kind, package, file, qual_name), so two Go methods with the same
+// name on different receivers in one file stay separate rows. Returns the
+// row ID.
 func (s *Store) UpsertSymbol(sym Symbol) (int64, error) {
 	// Check if symbol already exists.
 	var existingID int64
 	err := s.db.QueryRow(
-		`SELECT id FROM symbols WHERE name = ? AND kind = ? AND package = ? AND file = ?`,
-		sym.Name, sym.Kind, sym.Package, sym.File,
+		`SELECT id FROM symbols WHERE name = ? AND kind = ? AND package = ? AND file = ?
+		 AND COALESCE(qual_name, '') = ?`,
+		sym.Name, sym.Kind, sym.Package, sym.File, sym.QualName,
 	).Scan(&existingID)
 
 	if err == nil {
 		// Update existing row.
 		_, err = s.db.Exec(
-			`UPDATE symbols SET line = ?, signature = ?, decorators = ?, base_classes = ? WHERE id = ?`,
-			sym.Line, sym.Signature, sym.Decorators, sym.BaseClasses, existingID,
+			`UPDATE symbols SET line = ?, signature = ?, decorators = ?, base_classes = ?, implements = ? WHERE id = ?`,
+			sym.Line, sym.Signature, sym.Decorators, sym.BaseClasses, sym.Implements, existingID,
 		)
 		return existingID, err
 	}
 
 	// Insert new row.
 	result, err := s.db.Exec(
-		`INSERT INTO symbols (name, kind, package, file, line, signature, decorators, base_classes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO symbols (name, kind, package, file, line, signature, decorators, base_classes, qual_name, implements)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sym.Name, sym.Kind, sym.Package, sym.File, sym.Line, sym.Signature, sym.Decorators, sym.BaseClasses,
+		sym.QualName, sym.Implements,
 	)
 	if err != nil {
 		return 0, err
@@ -260,10 +315,11 @@ func (s *Store) GetSymbol(id int64) (*Symbol, error) {
 	sym := &Symbol{}
 	err := s.db.QueryRow(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
-		        COALESCE(decorators, ''), COALESCE(base_classes, '')
+		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
+		        COALESCE(qual_name, ''), COALESCE(implements, '')
 		 FROM symbols WHERE id = ?`, id,
 	).Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature,
-		&sym.Decorators, &sym.BaseClasses)
+		&sym.Decorators, &sym.BaseClasses, &sym.QualName, &sym.Implements)
 	if err != nil {
 		return nil, err
 	}
@@ -318,14 +374,15 @@ func scanEdges(rows *sql.Rows) ([]Edge, error) {
 // UpsertFile inserts or updates a file record.
 func (s *Store) UpsertFile(f FileRecord) error {
 	_, err := s.db.Exec(
-		`INSERT INTO files (path, language, size, content_hash, indexed_at)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO files (path, language, size, content_hash, indexed_at, resolution)
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(path) DO UPDATE SET
 		   language = excluded.language,
 		   size = excluded.size,
 		   content_hash = excluded.content_hash,
-		   indexed_at = excluded.indexed_at`,
-		f.Path, f.Language, f.Size, f.ContentHash, time.Now().Unix(),
+		   indexed_at = excluded.indexed_at,
+		   resolution = excluded.resolution`,
+		f.Path, f.Language, f.Size, f.ContentHash, time.Now().Unix(), f.Resolution,
 	)
 	return err
 }
@@ -354,7 +411,8 @@ func (s *Store) DeleteFileSymbols(file string) error {
 func (s *Store) GetSymbolsByFile(file string) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
-		        COALESCE(decorators, ''), COALESCE(base_classes, '')
+		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
+		        COALESCE(qual_name, ''), COALESCE(implements, '')
 		 FROM symbols WHERE file = ? ORDER BY line`, file,
 	)
 	if err != nil {
@@ -368,7 +426,8 @@ func (s *Store) GetSymbolsByFile(file string) ([]Symbol, error) {
 func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
-		        COALESCE(decorators, ''), COALESCE(base_classes, '')
+		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
+		        COALESCE(qual_name, ''), COALESCE(implements, '')
 		 FROM symbols WHERE package = ? ORDER BY file, line`, pkg,
 	)
 	if err != nil {
@@ -382,7 +441,8 @@ func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 func (s *Store) SearchSymbolsByName(query string) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
-		        COALESCE(decorators, ''), COALESCE(base_classes, '')
+		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
+		        COALESCE(qual_name, ''), COALESCE(implements, '')
 		 FROM symbols WHERE name LIKE ? ORDER BY name`,
 		"%"+query+"%",
 	)
@@ -398,7 +458,7 @@ func scanSymbols(rows *sql.Rows) ([]Symbol, error) {
 	for rows.Next() {
 		var sym Symbol
 		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature,
-			&sym.Decorators, &sym.BaseClasses); err != nil {
+			&sym.Decorators, &sym.BaseClasses, &sym.QualName, &sym.Implements); err != nil {
 			return nil, err
 		}
 		syms = append(syms, sym)
@@ -632,7 +692,7 @@ func (s *Store) Stats() (*StoreStats, error) {
 
 // GetAllFiles returns all indexed file records.
 func (s *Store) GetAllFiles() ([]FileRecord, error) {
-	rows, err := s.db.Query(`SELECT path, language, size, content_hash, indexed_at FROM files`)
+	rows, err := s.db.Query(`SELECT path, language, size, content_hash, indexed_at, COALESCE(resolution, '') FROM files`)
 	if err != nil {
 		return nil, err
 	}
@@ -641,7 +701,7 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 	var files []FileRecord
 	for rows.Next() {
 		var f FileRecord
-		if err := rows.Scan(&f.Path, &f.Language, &f.Size, &f.ContentHash, &f.IndexedAt); err != nil {
+		if err := rows.Scan(&f.Path, &f.Language, &f.Size, &f.ContentHash, &f.IndexedAt, &f.Resolution); err != nil {
 			return nil, err
 		}
 		files = append(files, f)
@@ -655,6 +715,8 @@ func (s *Store) FindAllFunctionsWithEdges() ([]FunctionEdgeInfo, error) {
 	query := `
 		SELECT s.name, s.file, s.line, s.kind, COALESCE(s.signature, ''),
 		       COALESCE(s.decorators, ''), COALESCE(s.base_classes, ''),
+		       COALESCE(s.implements, ''),
+		       COALESCE((SELECT f.resolution FROM files f WHERE f.path = s.file), ''),
 		       (SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) as calls_out,
 		       (SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) as called_by
 		FROM symbols s
@@ -672,7 +734,7 @@ func (s *Store) FindAllFunctionsWithEdges() ([]FunctionEdgeInfo, error) {
 	for rows.Next() {
 		var r FunctionEdgeInfo
 		if err := rows.Scan(&r.Name, &r.File, &r.Line, &r.Kind, &r.Signature,
-			&r.Decorators, &r.BaseClasses, &r.OutEdges, &r.InEdges); err != nil {
+			&r.Decorators, &r.BaseClasses, &r.Implements, &r.Resolution, &r.OutEdges, &r.InEdges); err != nil {
 			return nil, err
 		}
 		results = append(results, r)

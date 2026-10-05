@@ -17,12 +17,30 @@ The code graph provides structural understanding of codebases through three sear
 SQLite (WAL mode) via `modernc.org/sqlite` (pure Go, no CGo). Three tables:
 
 ```sql
-symbols (id, name, kind, package, file, line, signature, minhash BLOB)
+symbols (id, name, kind, package, file, line, signature, decorators, base_classes,
+         qual_name, implements, minhash BLOB)
 edges   (source_id, target_id, kind)  -- directional, unique on (src, dst, kind)
-files   (path, language, size, content_hash, indexed_at)
+files   (path, language, size, content_hash, indexed_at, resolution)
+meta    (key, value)                  -- minhash_seeds, graph_version, go_modules
 ```
 
-Indexed on `symbols.name`, `symbols.file`, `symbols.package`, `edges.source_id`, `edges.target_id`.
+Indexed on `symbols.name`, `symbols.file`, `symbols.package`, `symbols.qual_name`, `edges.source_id`, `edges.target_id`.
+
+`qual_name` is the type-checked qualified name of a Go symbol, as go/types
+prints it: `pkg/path.Func`, `(*pkg/path.T).Method`, `(pkg/path.Iface).Method`.
+`implements` lists the interfaces a Go method satisfies (`error,fmt.Stringer`).
+`files.resolution` is `typed` or `approximate` for Go files (see below).
+
+`meta.graph_version` records the edge format. Version 2 is the type-checked
+Go graph (#375). When an existing index has another version (or none),
+`Update` deletes only the Go rows (symbols, files, BM25/LSH rows and every
+edge touching a Go symbol) in one transaction and re-runs the Go pass; other
+languages keep their rows, because version 2 does not change them. The
+version is stamped only when that update completes, so an update cancelled
+part-way (a session closed during indexing) is redone by the next one. An
+empty index gets a full build. Go `init` functions are stored under
+`pkg/path.init#<file>`, one per file, since every `init` in a package shares
+the name `pkg/path.init`.
 
 Database stored at `~/.celeste/projects/<sha256-prefix>/codegraph.db` to avoid polluting project directories.
 
@@ -30,9 +48,71 @@ Database stored at `~/.celeste/projects/<sha256-prefix>/codegraph.db` to avoid p
 
 Two strategies depending on language:
 
-### Go (AST-based, deep fidelity)
+### Go (type-checked)
 
-Uses `go/ast` and `go/token`. Walks `FuncDecl` and `GenDecl` nodes to extract symbols (functions, methods, types, interfaces, structs, consts, vars, imports). Call edges extracted by `ast.Inspect` over function bodies, matching `*ast.CallExpr` nodes for both direct calls (`foo()`) and qualified calls (`pkg.Func()`).
+Go files are indexed together, package by package, with `go/parser` and
+`go/types` (standard library only, no CGo). Symbols (functions, methods,
+interface methods, types, interfaces, structs, consts, vars, imports) come
+from the AST; call edges come from the type checker, so each edge points at
+the exact function or method:
+
+- **Packages.** Files are grouped by directory and package clause; a
+  package's in-package `_test.go` files are checked with it, the external
+  `_test` package separately (in-package tests are checked in a
+  test-augmented copy of the package, so test-only imports never create
+  import cycles). Files excluded by build constraints for the current
+  GOOS/GOARCH are not part of any package. The pass analyses the
+  `CGO_ENABLED=0` build (what release binaries are), so cgo-tagged files and
+  files importing `"C"` take the fallback on every host. The import path comes from
+  the nearest `go.mod` (a directory without one gets `_/<dir>`).
+- **Imports.** Workspace packages import each other from source with bodies.
+  Everything else (standard library, module dependencies) is type-checked
+  from source without function bodies. Their directories come from one
+  `go list -e -deps -test ./...` per module, run with `GOPROXY=off` and
+  `GOTOOLCHAIN=local` so indexing never downloads anything, and with an
+  explicit `-mod=readonly` (`-mod=vendor` for a vendored module) so a
+  `GOFLAGS=-mod=mod` in the environment cannot rewrite the indexed `go.mod`.
+  Without the `go` command, the standard library resolves only when the
+  `GOROOT` environment variable points at a Go installation: release binaries
+  are built with `-trimpath` and have no built-in GOROOT. Otherwise no import
+  resolves and almost every file is approximate.
+- **Direct calls.** `f()`, `pkg.F()`, `x.M()` and `a.b.c.M()` resolve
+  through `types.Info`, so a call to `update` in package `b` reaches
+  `b.update`, never a same-named function elsewhere, and `t.Update()` reaches
+  the `Update` of `t`'s type. Generic calls resolve to the generic
+  declaration.
+- **Function values.** Every place a function value can be stored
+  (variable, struct field, parameter, result, map/slice/array element) is a
+  slot. Assignments, composite literals, call arguments, returns, `range` and
+  channel sends record which functions (and which other slots) flow into which
+  slots; the flows are propagated module-wide, flow- and
+  instance-insensitively. A call through a slot (`f()`, `s.handler()`,
+  `handlers[k]()`, `factory()()`) gets a `calls` edge to every function that
+  can reach it. Taking a function as a value (`f := x.M`, `register(h)`,
+  `T{Run: run}`) also records a `references` edge from the enclosing symbol.
+- **Interfaces.** Each interface method is a symbol (kind
+  `interface_method`). A call through an interface calls the interface
+  method, which has an `implements` edge to every module method that
+  implements it (value or pointer receiver, promoted methods included).
+  Methods that satisfy an interface from outside the module (`error`,
+  `fmt.Stringer`, `sort.Interface`, a framework's handler interface) have no
+  module caller; their `implements` column records the interface, and
+  code review and search do not call them dead.
+
+**Fallback.** A file that is not part of a type-checked package (build
+constraints, package clause mismatch) is indexed with the old AST heuristic
+(bare-name calls). A package with type errors (broken code, a dependency
+missing from the module cache) still gets typed edges wherever the checker
+resolved the callee, and heuristic edges for the rest. Both cases are
+recorded as `files.resolution = approximate`; `code_graph` notes it on the
+symbol, search adds the warning `approximate call graph: Go file did not
+type-check`, code review appends it to stub reasons, and `celeste index`
+prints how many Go files were type-checked.
+
+Known limits: function values are tracked per slot, not per instance (every
+`S` value shares the targets stored in `S.h`); calls through closures and
+through values that leave the module and come back are not followed; generic
+types do not get interface `implements` edges.
 
 ### Other Languages (regex-based, broad coverage)
 
@@ -42,13 +122,14 @@ Python class/method detection uses indentation tracking to distinguish top-level
 
 ### Tradeoff
 
-Go gets real AST fidelity (accurate call graphs). Other languages get fast-but-approximate regex extraction with heuristic call detection. Adding tree-sitter would require CGo, which the project avoids.
+Go gets type-checked call graphs. Other languages get fast-but-approximate
+extraction with heuristic call detection.
 
 ## Indexing
 
 ### Full Build
 
-Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata.
+Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index.
 
 ### Incremental Updates
 
@@ -57,9 +138,20 @@ SHA-256 content hash per file. On update:
 2. Changed files: delete old symbols, re-index
 3. Unchanged files: skip
 
+Go is the exception: if any Go file was added, changed or removed, the Go
+pass re-runs over all Go files (it needs whole packages), re-stores the
+symbols of changed files (and of any file whose symbols changed meaning),
+and rewrites every Go-sourced edge in one transaction. Edges into a changed
+file from unchanged callers are therefore kept. A change to a module's
+`go.mod` or `go.sum` (tracked as a fingerprint in `meta.go_modules`) re-runs
+the Go pass too, since it can change every qualified name.
+
 ### Edge Resolution
 
-Raw edges store symbol names (not IDs). Resolved at insert time:
+Go edges from type-checked files carry qualified names and resolve exactly
+(or not at all, when the target is outside the workspace). Heuristic edges
+(other languages, Go files that did not type-check) store symbol names and
+resolve at insert time:
 1. Check local file symbols first
 2. Fall back to global DB lookup by name
 3. Strip qualifier prefix (`pkg.Func` -> `Func`) as a last resort
@@ -104,6 +196,11 @@ The `code_graph` tool accepts a symbol name, direction (`callers`/`callees`/`bot
 2. For each match, look up incoming edges (`GetEdgesTo`) for callers, outgoing edges (`GetEdgesFrom`) for callees
 3. Returns formatted listing with symbol kind, file, line, signature, and relationships
 
+Go methods and interface methods are shown with their receiver,
+`(*codegraph.Indexer).Build`, so same-named methods stay apart; a method
+that satisfies interfaces gets an `Implements:` line, and a symbol from an
+approximate file gets a note saying so.
+
 ## Code Smell Detection
 
 `FindCodeSmells` (the `code_review` tool) runs one pass over every function and
@@ -134,15 +231,23 @@ New `lsh_bands(band_id, band_hash, symbol_id)` SQLite table. Band hashes precomp
 
 ## Supported Symbol Kinds
 
-`function`, `method`, `type`, `interface`, `struct`, `const`, `var`, `import`, `class`
+`function`, `method`, `interface_method` (Go), `type`, `interface`, `struct`, `const`, `var`, `import`, `class`
 
 ## Supported Edge Kinds
 
-Only `calls` exists. Imports, interface implementations, embeds and type
-references are not tracked as edges. Edges also resolve by bare symbol name
-(not package-qualified), so same-named functions in different packages
-can collapse onto one graph node.
+- `calls`: every language. For Go: direct calls, calls through function
+  values, fields, map/slice elements and factory results, and calls through
+  interface methods.
+- `references` (Go): the source takes the target as a value without calling
+  it there, or converts to the target type (`Celsius(x)`).
+- `implements` (Go): from an interface method to each module method that
+  implements it.
+
+Imports, embeds and type references other than conversions are not tracked
+as edges. Outside Go
+(and in approximate Go files) edges still resolve by bare symbol name, so
+same-named functions in different packages can collapse onto one node.
 
 ## Supported Languages (indexable)
 
-Go (AST), Python (regex), JavaScript (regex), TypeScript (regex), Rust (regex)
+Go (go/types), Python (regex), JavaScript (regex), TypeScript (regex), Rust (regex)
