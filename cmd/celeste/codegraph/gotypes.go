@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -187,7 +188,7 @@ func qualOf(obj types.Object) string {
 func funcDeclQual(fn *types.Func, d *ast.FuncDecl, rel string) string {
 	q := qualOf(fn)
 	if d.Recv == nil && d.Name.Name == "init" && q != "" {
-		q += "#" + rel
+		q += "#" + filepath.ToSlash(rel) // the same key on Windows and elsewhere
 	}
 	return q
 }
