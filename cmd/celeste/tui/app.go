@@ -597,6 +597,15 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ready, ok := msg.(catalogReadyMsg); ok {
 		return m.onCatalogReady(ready), nil
 	}
+	// And the clipboard text Ctrl+V read, and the input's redraw after
+	// a burst: they belong to the input whichever view shows (#358).
+	switch msg.(type) {
+	case clipboardPasteMsg, inputRedrawMsg:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		m.skills = m.skills.SetCurrentInput(m.input.Value())
+		return m, cmd
+	}
 
 	// A text burst in a sub-view (#320): the skills filter takes it as
 	// text, graph search as typed letters; the other views act on single
@@ -913,13 +922,21 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		default:
-			// Other keys go to input
+			// Other keys go to input, its limit bounded by the current
+			// model's context window (#358).
+			if m.contextTracker != nil {
+				m.input = m.input.SetContextWindow(m.contextTracker.MaxTokens)
+			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			cmds = append(cmds, cmd)
 
-			// Update skills panel with current input for contextual help
-			m.skills = m.skills.SetCurrentInput(m.input.Value())
+			// Update skills panel with current input for contextual help;
+			// mid-burst it waits for the input's redraw (reading the
+			// input per key of a long paste would be quadratic, #358).
+			if !m.input.Bursting() {
+				m.skills = m.skills.SetCurrentInput(m.input.Value())
+			}
 		}
 
 	case tea.WindowSizeMsg:
