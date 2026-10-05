@@ -154,8 +154,10 @@ var Registry = map[string]ProviderCapabilities{
 
 	// Local OpenAI-compatible servers: mlx-vlm, Ollama, LM Studio, llama.cpp.
 	// BaseURL is deliberately EMPTY. DetectProvider's exact-match loop skips
-	// entries with no BaseURL, so detection happens purely by the host substring
-	// below and works on any port. Hardcoding one would bind this to a port.
+	// entries with no BaseURL; the URL's parsed host is checked by IsLocalHost
+	// (loopback, LAN/private and link-local IPs, single-label names, and
+	// .local/.lan/.internal/.home.arpa names), on any port. Hardcoding a
+	// BaseURL would bind this to a port.
 	"local": {
 		Name:                    "Local (OpenAI-compatible)",
 		BaseURL:                 "",
@@ -170,7 +172,7 @@ var Registry = map[string]ProviderCapabilities{
 		RequiresAPIKey:        false,
 		IsOpenAICompatible:    true,
 		ExampleBaseURL:        "http://127.0.0.1:8080/v1",
-		Notes:                 "Any OpenAI-compatible server on localhost (mlx-vlm, Ollama, LM Studio, llama.cpp). Set the model to whatever the server expects — mlx-vlm wants the full filesystem path. No API key required.",
+		Notes:                 "Any OpenAI-compatible server on this machine or the LAN: loopback, private IPs, single-label names, .local/.lan/.internal/.home.arpa (mlx-vlm, Ollama, LM Studio, llama.cpp). Set the model to whatever the server expects — mlx-vlm wants the full filesystem path. No API key required.",
 	},
 
 	"openrouter": {

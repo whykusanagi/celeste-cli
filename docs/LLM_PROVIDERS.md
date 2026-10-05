@@ -43,6 +43,16 @@ decides, not the rest of the URL: `https://proxy.example.com/localhost/v1` is
 not local. The same rule picks the local timeouts, asks the server for its
 window and applies the 8192 fallback below.
 
+A proxy on the LAN or on an `.internal` or bare host name (LiteLLM, vLLM, a
+corporate gateway) detects as local too. Setup then does not ask for an API key,
+and a server that does not report its window gets the 8192 fallback, even when
+it serves a hosted model such as `gpt-4o`. For such a proxy, set both:
+
+```bash
+celeste config -config proxy --set-key <the proxy's key>
+celeste config -config proxy --set-context-limit 128000
+```
+
 ```bash
 celeste config -config local --set-url http://127.0.0.1:8080/v1
 celeste config -config local --set-key not-needed
