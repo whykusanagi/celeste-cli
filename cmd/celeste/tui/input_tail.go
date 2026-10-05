@@ -33,8 +33,9 @@ import (
 //   - spaces from its read and then more of the same read: a new
 //     unbracketed paste; everything held is inserted;
 //   - spaces from its read and then nothing more: the paste's last word
-//     and a typed space; the space is inserted. A single held rune is kept
-//     with it: someone typing one letter and a space;
+//     and a typed space; the space is inserted. A single held rune is
+//     dropped too ("… and I"): a letter typed by hand and the space after
+//     it are separate reads, further apart than sameReadGap;
 //   - any other key from its read (Enter, an arrow, Esc): the paste's last
 //     word alone; dropped, and the key acts as usual.
 //
@@ -121,8 +122,6 @@ func (m *InputModel) settleTailQuiet() {
 	switch {
 	case spaces == 0:
 		m.insertSettled(runes[len(runes)-1:], 0)
-	case len(runes) == 1:
-		m.insertSettled(runes, spaces)
 	default:
 		m.insertSettled(nil, spaces)
 	}

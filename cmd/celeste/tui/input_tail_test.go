@@ -353,3 +353,19 @@ func TestInputOverflowOnLastKeyHeldTailDropped(t *testing.T) {
 	m = settleTicks(t, m, cmd)
 	assert.Equal(t, "BASE x", m.Value())
 }
+
+// K3: a one-letter last word ("… and I"), held and then followed in the
+// same read by a typed space, is dropped like any other held word; only
+// the space lands.
+func TestInputOverflowHeldOneLetterTailThenSpace(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m, r := tailInput(t, move, rowPaste(40_958)+" I")
+	require.Equal(t, "I", r.held)
+
+	var cmd tea.Cmd
+	for _, k := range r.read(" ") {
+		m, cmd = m.Update(k)
+	}
+	m = settleTicks(t, m, cmd)
+	assert.Equal(t, "BASE  ", m.Value())
+}
