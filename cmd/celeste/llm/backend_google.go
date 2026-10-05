@@ -91,6 +91,15 @@ func NewGoogleBackend(config *Config) (*GoogleBackend, error) {
 			"See: https://cloud.google.com/docs/authentication", err)
 	}
 
+	// Report response bytes to the stall watch, as every other backend's
+	// HTTP client does (newHTTPClient). The SDK built its own client (with
+	// the ADC/Vertex auth transport when that applies), so wrap that one's
+	// transport rather than passing ours in: a custom ClientConfig.HTTPClient
+	// makes the SDK skip credential detection.
+	if hc := client.ClientConfig().HTTPClient; hc != nil {
+		hc.Transport = stallTransport{base: hc.Transport}
+	}
+
 	return &GoogleBackend{
 		client: client,
 		config: config,
@@ -126,100 +135,60 @@ func (b *GoogleBackend) thinking() ThinkingConfig {
 	return b.thinkingConfig
 }
 
-// SendMessageSync sends a message synchronously and returns the complete result.
-func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
-	// Convert messages to Google GenAI format
+// request builds the contents and generation config every send uses.
+func (b *GoogleBackend) request(messages []tui.ChatMessage, tools []tui.SkillDefinition) ([]*genai.Content, *genai.GenerateContentConfig) {
 	contents := b.convertMessagesToGenAI(messages)
-
-	// Convert tools to Google function declarations
-	var functionDeclarations []*genai.FunctionDeclaration
-	if len(tools) > 0 {
-		functionDeclarations = b.convertToolsToGenAI(tools)
-	}
-
-	// Create generation config
 	genConfig := &genai.GenerateContentConfig{}
-
-	// Add system instruction if present
 	if prompt := b.prompt(); prompt != "" {
 		// System instruction doesn't need a role - it's handled differently
 		genConfig.SystemInstruction = genai.NewContentFromText(prompt, "user")
 	}
-
-	if len(functionDeclarations) > 0 {
-		genConfig.Tools = []*genai.Tool{
-			{FunctionDeclarations: functionDeclarations},
+	if len(tools) > 0 {
+		if decls := b.convertToolsToGenAI(tools); len(decls) > 0 {
+			genConfig.Tools = []*genai.Tool{{FunctionDeclarations: decls}}
 		}
 	}
-
 	b.applyThinkingConfig(genConfig)
+	return contents, genConfig
+}
 
-	// Generate content
-	modelName := b.config.Model
-	resp, err := b.client.Models.GenerateContent(ctx, modelName, contents, genConfig)
-	if err != nil {
-		return nil, fmt.Errorf("Google AI request failed: %w", err)
-	}
-
-	// Parse response
+// SendMessageSync sends a message and returns the complete result. It
+// streams internally (#349): a whole-reply request sends nothing until the
+// reply is complete, so a long one (a compaction summary) looked idle and
+// failed with ErrStalled after the stall timeout. Streamed, every chunk's
+// bytes reach the stall watch, and each chunk also counts as activity.
+func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition) (*ChatCompletionResult, error) {
+	contents, genConfig := b.request(messages, tools)
 	result := &ChatCompletionResult{}
-
-	if len(resp.Candidates) > 0 {
-		candidate := resp.Candidates[0]
-
-		// Extract text content
-		if candidate.Content != nil {
-			result.Content = extractText(candidate.Content)
+	var content strings.Builder
+	for chunk, err := range b.client.Models.GenerateContentStream(ctx, b.config.Model, contents, genConfig) {
+		if err != nil {
+			return nil, fmt.Errorf("Google AI request failed: %w", err)
 		}
-
-		// Extract tool calls (function calls)
+		touchStall(ctx)
+		if len(chunk.Candidates) == 0 {
+			continue
+		}
+		candidate := chunk.Candidates[0]
 		if candidate.Content != nil {
+			content.WriteString(extractText(candidate.Content))
 			for _, part := range candidate.Content.Parts {
 				if part.FunctionCall != nil {
-					toolCall := b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature)
-					result.ToolCalls = append(result.ToolCalls, toolCall)
+					result.ToolCalls = append(result.ToolCalls, b.convertFunctionCallToResult(part.FunctionCall, part.ThoughtSignature))
 				}
 			}
 		}
-
-		// Extract finish reason
 		if candidate.FinishReason != "" {
 			result.FinishReason = string(candidate.FinishReason)
 		}
 	}
-
+	result.Content = content.String()
 	return result, nil
 }
 
 // SendMessageStream sends a message with streaming callback.
 func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamCallback) error {
-	// Convert messages to Google GenAI format
-	contents := b.convertMessagesToGenAI(messages)
-
-	// Convert tools to Google function declarations
-	var functionDeclarations []*genai.FunctionDeclaration
-	if len(tools) > 0 {
-		functionDeclarations = b.convertToolsToGenAI(tools)
-	}
-
-	// Create generation config
-	genConfig := &genai.GenerateContentConfig{}
-
-	// Add system instruction if present
-	if prompt := b.prompt(); prompt != "" {
-		// System instruction doesn't need a role - it's handled differently
-		genConfig.SystemInstruction = genai.NewContentFromText(prompt, "user")
-	}
-
-	if len(functionDeclarations) > 0 {
-		genConfig.Tools = []*genai.Tool{
-			{FunctionDeclarations: functionDeclarations},
-		}
-	}
-
-	b.applyThinkingConfig(genConfig)
-
-	// Stream the response
+	contents, genConfig := b.request(messages, tools)
 	modelName := b.config.Model
 	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
 
@@ -283,32 +252,7 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 
 // SendMessageStreamEvents sends a message with granular streaming events.
 func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
-	// Convert messages to Google GenAI format
-	contents := b.convertMessagesToGenAI(messages)
-
-	// Convert tools to Google function declarations
-	var functionDeclarations []*genai.FunctionDeclaration
-	if len(tools) > 0 {
-		functionDeclarations = b.convertToolsToGenAI(tools)
-	}
-
-	// Create generation config
-	genConfig := &genai.GenerateContentConfig{}
-
-	// Add system instruction if present
-	if prompt := b.prompt(); prompt != "" {
-		genConfig.SystemInstruction = genai.NewContentFromText(prompt, "user")
-	}
-
-	if len(functionDeclarations) > 0 {
-		genConfig.Tools = []*genai.Tool{
-			{FunctionDeclarations: functionDeclarations},
-		}
-	}
-
-	b.applyThinkingConfig(genConfig)
-
-	// Stream the response
+	contents, genConfig := b.request(messages, tools)
 	modelName := b.config.Model
 	streamIter := b.client.Models.GenerateContentStream(ctx, modelName, contents, genConfig)
 
@@ -322,6 +266,14 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 
 		for _, candidate := range chunk.Candidates {
 			if candidate.Content != nil {
+				// Thoughts feed the thinking indicator, never the reply.
+				if thought := extractThoughts(candidate.Content); thought != "" {
+					callback(StreamEvent{
+						Type:          EventThinkingDelta,
+						ThinkingDelta: thought,
+					})
+				}
+
 				// Extract text content
 				text := extractText(candidate.Content)
 				if text != "" {
@@ -637,12 +589,28 @@ func (b *GoogleBackend) convertFunctionCallToResult(fc *genai.FunctionCall, thou
 	}
 }
 
-// extractText extracts text content from a Google GenAI Content object.
+// extractText extracts the reply text from a Google GenAI Content object.
+// Thought parts (IncludeThoughts) are the model's reasoning, not reply
+// text: they are left out here and read with extractThoughts.
 func extractText(content *genai.Content) string {
 	var text strings.Builder
 
 	for _, part := range content.Parts {
-		if part.Text != "" {
+		if part.Text != "" && !part.Thought {
+			text.WriteString(part.Text)
+		}
+	}
+
+	return text.String()
+}
+
+// extractThoughts extracts the thought-summary text from a Google GenAI
+// Content object.
+func extractThoughts(content *genai.Content) string {
+	var text strings.Builder
+
+	for _, part := range content.Parts {
+		if part.Text != "" && part.Thought {
 			text.WriteString(part.Text)
 		}
 	}
