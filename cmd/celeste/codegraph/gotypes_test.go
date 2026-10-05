@@ -3,6 +3,7 @@ package codegraph
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -258,6 +259,16 @@ func dumpEdges(m map[string]bool) string {
 
 const fx = "example.com/fx/"
 
+// requireGoToolchain skips a test that needs the standard library's source:
+// the Docker suite runs the compiled tests where no Go toolchain is installed,
+// and there the indexer correctly falls back to the approximate pass.
+func requireGoToolchain(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("needs the go toolchain to type-check the standard library")
+	}
+}
+
 func TestGoTypes_BareNameCollapse(t *testing.T) {
 	idx, _ := buildFixture(t, goFixture)
 	got := edgeKeys(t, idx)
@@ -319,6 +330,7 @@ func TestGoTypes_IndirectCalls(t *testing.T) {
 }
 
 func TestGoTypes_InterfaceImplementations(t *testing.T) {
+	requireGoToolchain(t)
 	idx, _ := buildFixture(t, goFixture)
 	got := edgeKeys(t, idx)
 	p := fx + "iface."
@@ -344,6 +356,7 @@ func TestGoTypes_InterfaceImplementations(t *testing.T) {
 }
 
 func TestGoTypes_InterfaceMethodsAreNotReportedDead(t *testing.T) {
+	requireGoToolchain(t)
 	idx, _ := buildFixture(t, goFixture)
 	smells, err := idx.FindCodeSmells([]CodeSmellKind{SmellStub}, 100, true)
 	require.NoError(t, err)
@@ -504,8 +517,12 @@ func TestGoTypes_ThisRepository(t *testing.T) {
 	if testing.Short() {
 		t.Skip("type-checks the whole cmd/celeste tree")
 	}
+	requireGoToolchain(t)
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	require.NoError(t, err)
+	if _, err := os.Stat(filepath.Join(root, "cmd", "celeste")); err != nil {
+		t.Skip("needs the source tree (the Docker suite runs the compiled tests without it)")
+	}
 	var files []string
 	require.NoError(t, filepath.WalkDir(filepath.Join(root, "cmd", "celeste"), func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -590,6 +607,7 @@ func TestDisplayName(t *testing.T) {
 }
 
 func TestGoTypes_SearchAndSummaryReportApproximate(t *testing.T) {
+	requireGoToolchain(t)
 	idx, _ := buildFixture(t, goFixture)
 	results, err := idx.SemanticSearchWithOptions("Broken helperX undefinedThing", SemanticSearchOptions{TopK: 20})
 	require.NoError(t, err)
