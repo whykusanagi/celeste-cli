@@ -136,6 +136,11 @@ func (a *TUIClientAdapter) RunTurn(req tui.TurnRequest) (tui.TurnHandle, tea.Cmd
 	if n := a.takePersonaNotice(); n != "" {
 		t.box.put(tui.PersonaNoticeMsg{Text: prompts.NoticePrefix + n})
 	}
+	// The tool set fitted to a small window says so once (#310).
+	a.client.GetSkills() // the fit this turn starts on
+	if n := a.client.TakeToolNotice(); n != "" && req.Tools {
+		t.box.put(tui.PersonaNoticeMsg{Text: prompts.NoticePrefix + n})
+	}
 	read := t.box.reader(req.Run)
 	return t, func() tea.Msg {
 		t.start.Do(func() {

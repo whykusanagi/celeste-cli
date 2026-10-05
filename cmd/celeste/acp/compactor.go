@@ -40,7 +40,7 @@ type compactor struct {
 // (context_limit, else the model's known window), the system prompt as the
 // fixed overhead, pruned results in store, summaries from summarize.
 func newCompactor(cfg *config.Config, systemPrompt string, store *compact.Store, summarize compact.SummarizeFunc, h *hooks.Runner, logf func(string, ...any)) *compactor {
-	limit, known := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	limit, known := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	if !known {
 		logf("acp: unknown context window for model %q: assuming %d tokens (set context_limit if that is wrong)", cfg.Model, limit)
 	}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 type commandRunner interface {
@@ -79,6 +81,9 @@ func main() {
 	// A `go install` build becomes the official release binary first (W5
 	// rulings 25–27); on success this does not return on unix.
 	newUpgradeHook().beforeRun(os.Args)
+	// A local server's reported context window replaces the 8,192 guess
+	// (#310). Only the binary asks: tests talk to fake servers.
+	config.EnableLocalWindowProbe()
 	os.Exit(run(os.Args[1:], defaultCommandRunner{}, os.Stdout, os.Stderr))
 }
 

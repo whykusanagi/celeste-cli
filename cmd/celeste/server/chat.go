@@ -66,7 +66,7 @@ func (s *Server) runChatMode(ctx context.Context, cfg *config.Config, prompt, wo
 	// The window is this call's served model's; a small one steps the
 	// persona down. The guard's notice is only logged: MCP responses are
 	// frozen (W5 ruling 7).
-	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	sp := env.SystemPrompt(loop.PromptOptions{Session: session, Window: window})
 	if sp.Notice != "" {
 		log.Printf("[persona] %s", sp.Notice)
@@ -120,8 +120,13 @@ func chatSteering(ctx context.Context, cfg *config.Config, env *loop.Env, prompt
 func newChatClient(cfg *config.Config, reg *tools.Registry, static, dynamic string) *llm.Client {
 	client := llm.NewClient(llm.ConfigFrom(cfg), reg)
 	client.SetSystemPromptParts(static, dynamic)
+	// Each call has its own client: the log tells a tool fit once a process.
+	client.ShareToolNotices(&chatToolNotices)
 	return client
 }
+
+// chatToolNotices dedupes the tool-fit notice across MCP chat calls (#310).
+var chatToolNotices compact.ToolNotices
 
 // newChatLoop builds one call's loop. There is no Gate: an Ask (only a
 // hook-forced one, since Trust mode asks for nothing else) is denied
@@ -142,6 +147,11 @@ func newChatLoop(cfg *config.Config, client *llm.Client, env *loop.Env, system, 
 	// would be a non-nil Compactor.
 	if c := newChatCompactor(cfg, system, client.GetSkills(), env.Workspace); c != nil {
 		l.Compact = c
+	}
+	// A window too small for every tool schema gets a core set; the
+	// server log says so once (#310).
+	if n := client.TakeToolNotice(); n != "" {
+		log.Printf("celeste chat: %s", n)
 	}
 	return l
 }
@@ -166,7 +176,7 @@ func newChatCompactor(cfg *config.Config, system string, skills []tui.SkillDefin
 	if err != nil {
 		return nil
 	}
-	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	c := &chatCompactor{
 		window:  window,
 		meter:   compact.NewMeter(ctxmgr.EstimateTokens(system) + compact.DefinitionTokens(skills)),

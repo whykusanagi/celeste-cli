@@ -70,20 +70,50 @@ func FormatTokenCount(tokens int) string {
 // ResolveContextLimit returns the effective context window and whether that
 // number is actually knowledge.
 //
-// An explicit override always wins. Local endpoints get ctxmgr.LocalDefaultLimit
+// An explicit override always wins. A local endpoint whose server reports
+// its window (the probe EnableLocalWindowProbe installs) gets that.
+// Otherwise local endpoints get ctxmgr.LocalDefaultLimit
 // even when the model name is in the table: a local server names its model
 // whatever it likes, so a hit is coincidence. That mattered in practice — a
 // fresh profile inherits the seed default's model (fugu), so pointing it at a
 // local server produced a confident 1,000,000-token budget for a server that
 // might have 8k. Unknown hosted models get the table's 128k default (#201).
-func ResolveContextLimit(baseURL, model string, override int) (limit int, known bool) {
+func ResolveContextLimit(baseURL, model string, override int, apiKey string) (limit int, known bool) {
+	limit, src := ResolveContextLimitSource(baseURL, model, override, apiKey)
+	return limit, src != SourceFallback
+}
+
+// Where ResolveContextLimitSource's window came from.
+const (
+	SourceConfigured = "configured"
+	SourceReported   = "reported by the server"
+	SourceModel      = "model default"
+	SourceFallback   = "fallback"
+)
+
+// ResolveContextLimitSource is ResolveContextLimit with where the number
+// came from (`celeste config` shows it). apiKey is the endpoint's key: a
+// local server started with one answers the probe only with it.
+func ResolveContextLimitSource(baseURL, model string, override int, apiKey string) (int, string) {
 	if override > 0 {
-		return override, true
+		return override, SourceConfigured
+	}
+	// A server on this machine or the local network is asked for its own
+	// window (#310), decided on the parsed host so a hosted URL is never
+	// probed.
+	if providers.IsLocalHost(baseURL) {
+		if n := localWindow(baseURL, apiKey, model); n > 0 {
+			return n, SourceReported
+		}
 	}
 	if providers.DetectProvider(baseURL) == "local" {
-		return ctxmgr.LocalDefaultLimit, false
+		return ctxmgr.LocalDefaultLimit, SourceFallback
 	}
-	return LookupModelLimit(model)
+	n, known := LookupModelLimit(model)
+	if known {
+		return n, SourceModel
+	}
+	return n, SourceFallback
 }
 
 var unknownContextWarned sync.Map

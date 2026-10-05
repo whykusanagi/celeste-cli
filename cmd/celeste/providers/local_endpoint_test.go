@@ -32,3 +32,25 @@ func TestIsLocalEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// IsLocalHost decides on the parsed host only, so a hosted URL that merely
+// contains "localhost" is not local (the window probe must never reach it).
+func TestIsLocalHost(t *testing.T) {
+	for url, want := range map[string]bool{
+		"http://127.0.0.1:11434/v1":         true,
+		"http://localhost:1234/v1":          true,
+		"http://[::1]:8080/v1":              true,
+		"http://192.168.1.20:11434/v1":      true,
+		"http://gpu-box.local:8080/v1":      true,
+		"http://studio:1234/v1":             true,
+		"https://localhost.evil.example/v1": false,
+		"https://example.com/localhost/v1":  false,
+		"https://api.openai.com/v1":         false,
+		"https://8.8.8.8/v1":                false,
+		"":                                  false,
+	} {
+		if got := IsLocalHost(url); got != want {
+			t.Errorf("IsLocalHost(%q) = %v, want %v", url, got, want)
+		}
+	}
+}

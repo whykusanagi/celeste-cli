@@ -444,7 +444,7 @@ func registerCelesteContentTool(s *Server) {
 		// Use the content-specific prompt variant. It steps down like chat
 		// on a small window; MCP responses never carry the guard's notice
 		// (W5 ruling 7: frozen shape), it is only logged.
-		window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+		window, _ := config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 		// The persona (Static) and the rest go to the client apart, so an
 		// Anthropic request caches the persona on its own (#309).
 		contentPrompt := prompts.ContentPrompt(window, "", format, "", "")

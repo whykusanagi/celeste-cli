@@ -167,6 +167,7 @@ type Registry struct {
 	// Dynamic tool discovery (opt-in via SetDiscoveryMode).
 	hidden        map[string]bool // tools hidden from the prompt until activated
 	activated     map[string]bool // tools re-activated this session by find_tools
+	activeOrder   []string        // activated's names, oldest activation first
 	discoveryMode bool            // when false, hidden/activated are ignored
 
 	// overwritten lists names Register/RegisterWithModes replaced with a
@@ -329,7 +330,33 @@ func (r *Registry) Activate(names ...string) {
 	defer r.mu.Unlock()
 	for _, n := range names {
 		r.activated[n] = true
+		r.activeOrder = slices.DeleteFunc(r.activeOrder, func(x string) bool { return x == n })
+		r.activeOrder = append(r.activeOrder, n)
 	}
+}
+
+// ActivatedNames lists the registered tools find_tools activated this
+// session, oldest activation first (activating one again makes it the
+// newest). The small-window tool fit keeps the newest when not all fit.
+func (r *Registry) ActivatedNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.activeOrder))
+	for _, n := range r.activeOrder {
+		if _, ok := r.tools[n]; ok && r.activated[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// Activated reports whether find_tools activated name this session. It
+// holds whether or not discovery mode is on: the small-window tool fit
+// (compact.FitTools) keeps an activated tool even when it drops others.
+func (r *Registry) Activated(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.activated[name]
 }
 
 // Get returns a tool by name.

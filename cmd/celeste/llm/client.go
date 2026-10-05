@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
@@ -42,6 +44,16 @@ type Client struct {
 	// toolMode selects which registered tools GetSkills offers the model.
 	// The zero value is tools.ModeChat.
 	toolMode tools.RuntimeMode
+	// windowFn, when set, is the context window GetSkills fits the tools
+	// to; nil resolves it from config (SetWindowFunc).
+	windowFn func() int
+	// lastFit and lastWindow are GetSkills' last tool fit, for
+	// TakeToolNotice; toolNotices dedupes its notice for this client's
+	// session (#310 review: per session, not per process); nil until
+	// first used or shared (ShareToolNotices).
+	lastFit     compact.ToolFit
+	lastWindow  int
+	toolNotices *compact.ToolNotices
 }
 
 // Config holds LLM client configuration.
@@ -67,6 +79,10 @@ type Config struct {
 	GoogleCredentialsFile string // Path to service account JSON file
 	GoogleUseADC          bool   // Use Application Default Credentials
 
+	// ContextLimit is the user's context_limit (0: resolved from the model
+	// and endpoint). GetSkills fits the tool schemas to the window (#310).
+	ContextLimit int
+
 	// Collections (xAI only)
 	Collections *config.CollectionsConfig
 	XAIFeatures *config.XAIFeaturesConfig
@@ -87,6 +103,7 @@ func ConfigFrom(cfg *config.Config) *Config {
 		TypingSpeed:           cfg.TypingSpeed,
 		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
 		GoogleUseADC:          cfg.GoogleUseADC,
+		ContextLimit:          cfg.ContextLimit,
 		Collections:           cfg.Collections,
 		XAIFeatures:           cfg.XAIFeatures,
 	}
@@ -461,12 +478,64 @@ func (c *Client) SetToolMode(mode tools.RuntimeMode) {
 	c.toolMode = mode
 }
 
-// GetSkills returns the tools the model may call in this client's mode.
+// SetWindowFunc makes GetSkills fit the tools to the window fn returns
+// (the chat follows its live model and context_limit). fn is called
+// without the client's lock held, so it may call the client.
+func (c *Client) SetWindowFunc(fn func() int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.windowFn = fn
+}
+
+// GetSkills returns the tools the model may call in this client's mode,
+// fitted to the context window next to the system prompt
+// (compact.FitTools): on a small window a core set with short
+// descriptions, plus the tools find_tools activated (the newest first
+// while they fit). When that reduces the set, TakeToolNotice says so once.
 func (c *Client) GetSkills() []tui.SkillDefinition {
 	c.mu.RLock()
-	mode := c.toolMode
+	mode, cfg, system, windowFn := c.toolMode, c.config, c.systemPrompt, c.windowFn
 	c.mu.RUnlock()
-	return skillDefinitions(c.registry, mode)
+	defs := skillDefinitions(c.registry, mode)
+	window := 0
+	switch {
+	case windowFn != nil:
+		window = windowFn()
+	case cfg != nil:
+		window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
+	}
+	var pinned []string
+	if c.registry != nil {
+		pinned = c.registry.ActivatedNames()
+	}
+	fit := compact.FitTools(defs, window, ctxmgr.EstimateTokens(system), pinned)
+	c.mu.Lock()
+	c.lastFit, c.lastWindow = fit, window
+	c.mu.Unlock()
+	return fit.Defs
+}
+
+// TakeToolNotice returns the notice for GetSkills' last fit, once per fit
+// for this client ("" when it was not reduced or was already told). The
+// caller shows it, as it shows the persona guard's.
+func (c *Client) TakeToolNotice() string {
+	c.mu.Lock()
+	fit, window := c.lastFit, c.lastWindow
+	if c.toolNotices == nil {
+		c.toolNotices = new(compact.ToolNotices)
+	}
+	seen := c.toolNotices
+	c.mu.Unlock()
+	return seen.Notice(fit, window)
+}
+
+// ShareToolNotices makes TakeToolNotice dedupe through n, shared with other
+// clients: a server whose every request has its own client tells its log
+// once per fit, not once per request.
+func (c *Client) ShareToolNotices(n *compact.ToolNotices) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.toolNotices = n
 }
 
 // skillDefinitions converts the registry's tools for mode into skill

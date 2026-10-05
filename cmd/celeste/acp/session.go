@@ -144,7 +144,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session) *RPCError {
 	env.StartSession(ctx, "acp")
 	// The persona steps down for a small window (W5 guard); its notice
 	// goes to the editor with the first prompt, never to stderr.
-	window, _ := config.ResolveContextLimit(s.cfg.BaseURL, s.cfg.Model, s.cfg.ContextLimit)
+	window, _ := config.ResolveContextLimit(s.cfg.BaseURL, s.cfg.Model, s.cfg.ContextLimit, s.cfg.APIKey)
 	sp := env.SystemPrompt(loop.PromptOptions{Window: window})
 	prompt := sp.String()
 	client.SetSystemPromptParts(sp.Static, sp.Dynamic)
@@ -157,8 +157,18 @@ func (a *Agent) setupEnv(ctx context.Context, s *session) *RPCError {
 	summarize := agent.SmallModelSummarizer(llm.ConfigFrom(s.cfg), s.cfg.ResolveSmallModel())
 
 	comp := newCompactor(s.cfg, prompt, pruned, summarize, env.Hooks, a.logf)
+	// The tool schemas count as fixed overhead too; on a small window they
+	// are a fitted core set, and the editor is told once (#310).
+	comp.budget.ToolDefinitionTokens = compact.DefinitionTokens(client.GetSkills())
+	notice := sp.Notice
+	if tn := client.TakeToolNotice(); tn != "" {
+		if notice != "" {
+			notice += "\n" + prompts.NoticePrefix
+		}
+		notice += tn
+	}
 	s.mu.Lock()
-	s.env, s.client, s.systemPrompt, s.notice, s.compactor = env, client, prompt, sp.Notice, comp
+	s.env, s.client, s.systemPrompt, s.notice, s.compactor = env, client, prompt, notice, comp
 	s.mu.Unlock()
 	return nil
 }

@@ -46,8 +46,11 @@ func testConfig(srv *fakeprovider.Server, maxIter int) func() (*config.Config, e
 	if srv != nil {
 		base = srv.BaseURL()
 	}
+	// A large window: these tests are about the protocol, and a session on
+	// the 8,192 fallback is told its tools were fitted (#310), which
+	// notice_test covers.
 	return func() (*config.Config, error) {
-		return &config.Config{APIKey: "k", BaseURL: base, Model: "fake-model", Timeout: 10, MaxToolIterations: maxIter}, nil
+		return &config.Config{APIKey: "k", BaseURL: base, Model: "fake-model", Timeout: 10, MaxToolIterations: maxIter, ContextLimit: 200_000}, nil
 	}
 }
 

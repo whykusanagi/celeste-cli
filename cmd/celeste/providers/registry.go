@@ -415,9 +415,15 @@ func IsLocalEndpoint(baseURL string) bool {
 	if baseURL == "" {
 		return false
 	}
-	if DetectProvider(baseURL) == "local" {
-		return true
-	}
+	return DetectProvider(baseURL) == "local" || IsLocalHost(baseURL)
+}
+
+// IsLocalHost reports whether baseURL's parsed host is this machine or the
+// local network: localhost, a loopback, private, link-local or unspecified
+// IP, a single-label host, or a .local, .lan, .internal or .home.arpa name.
+// Unlike DetectProvider's substring match, a hosted URL that merely
+// contains "localhost" is not local.
+func IsLocalHost(baseURL string) bool {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return false
@@ -425,6 +431,9 @@ func IsLocalEndpoint(baseURL string) bool {
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	if host == "" {
 		return false
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
