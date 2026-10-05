@@ -310,7 +310,7 @@ func TestGoTypes_IndirectCalls(t *testing.T) {
 		{"factory result", p + "UseFactory -calls-> " + p + "target4"},
 		{"value taken in literal", p + "NewS -references-> " + p + "target1"},
 		{"value in package var", p + "handlers -references-> " + p + "handleA"},
-		{"value passed as arg", p + "init -references-> " + p + "handleC"},
+		{"value passed as arg", p + "init#calls/calls.go -references-> " + p + "handleC"},
 		{"type conversion", p + "Conv -references-> " + p + "Celsius"},
 	}
 	for _, c := range cases {
@@ -382,6 +382,30 @@ func TestGoTypes_FallbackIsRecordedAsApproximate(t *testing.T) {
 	requireEdges(t, got, fx+"broken.Broken -calls-> "+fx+"broken.helperX")
 	// Heuristic (bare names) for the build-tag-excluded file.
 	requireEdges(t, got, "Lone -calls-> other")
+}
+
+// Every init in a package has the same types.Func FullName; each one keeps
+// its own calls instead of all landing on one file's init.
+func TestGoTypes_InitFunctionsPerFile(t *testing.T) {
+	idx, _ := buildFixture(t, map[string]string{
+		"go.mod": "module example.com/fx\n\ngo 1.22\n",
+		"p/x.go": "package p\n\nfunc init() { helperA() }\n\nfunc helperA() {}\n",
+		"p/y.go": "package p\n\nfunc init() { helperB() }\n\nfunc helperB() {}\n",
+	})
+	rows, err := idx.store.db.Query(`
+		SELECT s.file, d.name FROM edges e
+		JOIN symbols s ON s.id = e.source_id JOIN symbols d ON d.id = e.target_id
+		WHERE s.name = 'init' AND e.kind = 'calls'`)
+	require.NoError(t, err)
+	defer rows.Close()
+	got := map[string]bool{}
+	for rows.Next() {
+		var file, tgt string
+		require.NoError(t, rows.Scan(&file, &tgt))
+		got[file+" -> "+tgt] = true
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, map[string]bool{"p/x.go -> helperA": true, "p/y.go -> helperB": true}, got)
 }
 
 func TestGoTypes_NoGoModDirectoriesStaySeparate(t *testing.T) {

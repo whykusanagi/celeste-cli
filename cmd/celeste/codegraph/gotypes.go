@@ -180,6 +180,18 @@ func qualOf(obj types.Object) string {
 	return ""
 }
 
+// funcDeclQual is the qualified name of a declared function or method. Every
+// init in a package shares the FullName "pkg.init", so each one is keyed by
+// its file as well; nothing can call or reference an init, so only its own
+// outgoing edges use the key.
+func funcDeclQual(fn *types.Func, d *ast.FuncDecl, rel string) string {
+	q := qualOf(fn)
+	if d.Recv == nil && d.Name.Name == "init" && q != "" {
+		q += "#" + rel
+	}
+	return q
+}
+
 // qualify fills Symbol.QualName for a type-checked file's declarations.
 func (a *goAnalyzer) qualify(f *goFile, syms []Symbol) {
 	info := f.unit.info
@@ -202,7 +214,11 @@ func (a *goAnalyzer) qualify(f *goFile, syms []Symbol) {
 			if d.Recv != nil {
 				kind = SymbolMethod
 			}
-			set(d.Name, fset.Position(d.Pos()).Line, kind)
+			if fn, ok := info.Defs[d.Name].(*types.Func); ok {
+				if q := funcDeclQual(fn, d, f.rel); q != "" {
+					quals[key(d.Name.Name, fset.Position(d.Pos()).Line, kind)] = q
+				}
+			}
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				switch s := spec.(type) {
@@ -254,7 +270,7 @@ func (a *goAnalyzer) walkFile(f *goFile) {
 			var sig *types.Signature
 			src := ""
 			if fn, ok := info.Defs[d.Name].(*types.Func); ok {
-				src = qualOf(fn)
+				src = funcDeclQual(fn, d, f.rel)
 				sig, _ = fn.Type().(*types.Signature)
 			}
 			a.walk(info, f.rel, src, d.Name.Name, sig, d.Body, approx)

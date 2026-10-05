@@ -56,7 +56,7 @@ func (s *Store) ResetGo() error {
 }
 
 // GoQualIDs maps each qualified Go name to its symbol ID. When two rows
-// share a qualified name (several init functions in one package) the
+// share a qualified name (two init functions in one file) the
 // lowest ID wins, so the mapping is deterministic.
 func (s *Store) GoQualIDs() (map[string]int64, error) {
 	rows, err := s.db.Query(`SELECT id, qual_name FROM symbols WHERE qual_name IS NOT NULL AND qual_name != '' ORDER BY id`)
