@@ -26,7 +26,10 @@ its last pass commits, and the Go pass does the same with
 `meta.go_pass_pending`; an `Update` that finds the first mark runs a full
 build, and one that finds the second reruns the Go pass, so a build or update
 that was cancelled, killed or cut off by a power loss is finished by the next
-update rather than trusted because its file hashes match. Three tables:
+update rather than trusted because its file hashes match. An index left
+incomplete by a version without these marks has nothing to repair it: rebuild
+it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
+in the TUI (`celeste index` only updates). Three tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,

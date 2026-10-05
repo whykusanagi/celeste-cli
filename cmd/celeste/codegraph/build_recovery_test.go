@@ -37,7 +37,10 @@ func TestBuild_InterruptedBetweenPassesIsRepairedByUpdate(t *testing.T) {
 	t.Cleanup(func() { _ = idx.Close() })
 
 	// Two checks pass (BuildWithContext's entry and pass 1's first file);
-	// the next one, between the passes, reports cancellation.
+	// the next one, between the passes, reports cancellation. Pass 1 checks
+	// ctx every 64 files, so this holds only while the fixture fits in one
+	// stride; a larger fixture would cancel inside pass 1 instead.
+	require.LessOrEqual(t, len(files), 64, "the fixture must fit in one pass-1 ctx stride")
 	err = idx.BuildWithContext(&failAfterCtx{Context: context.Background(), n: 2})
 	require.ErrorIs(t, err, context.Canceled)
 	got := edgeKeys(t, idx)
@@ -82,4 +85,23 @@ func TestUpdate_InterruptedGoPassIsRedone(t *testing.T) {
 	v, err := idx.store.GetMeta(metaGoPassPending)
 	require.NoError(t, err)
 	assert.Nil(t, v)
+}
+
+// A full build clears a Go-pass mark left by an earlier killed pass even when
+// the workspace no longer has Go files, so the next Update does not run an
+// extra empty Go pass.
+func TestBuild_ClearsGoPassMarkWithoutGoFiles(t *testing.T) {
+	ws := writeFixture(t, map[string]string{
+		"py/a.py": "def caller():\n    helper()\n",
+		"py/b.py": "def helper():\n    pass\n",
+	})
+	idx, err := NewIndexer(ws, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	require.NoError(t, idx.store.SetMeta(metaGoPassPending, []byte("1")))
+
+	require.NoError(t, idx.Build())
+	v, err := idx.store.GetMeta(metaGoPassPending)
+	require.NoError(t, err)
+	assert.Nil(t, v, "a complete build leaves no Go-pass mark")
 }
