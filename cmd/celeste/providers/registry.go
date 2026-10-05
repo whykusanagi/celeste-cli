@@ -307,6 +307,12 @@ func DetectProvider(baseURL string) string {
 		}
 	}
 
+	// Anthropic is decided by host, the same rule the backend choice uses
+	// (#372), so a proxy path that merely mentions anthropic.com is not it.
+	if IsAnthropicURL(baseURL) {
+		return "anthropic"
+	}
+
 	// Check partial matches
 	switch {
 	case strings.Contains(baseURL, "openai.com"):
@@ -315,8 +321,6 @@ func DetectProvider(baseURL string) string {
 		return "grok"
 	case strings.Contains(baseURL, "venice.ai"):
 		return "venice"
-	case strings.Contains(baseURL, "anthropic.com"):
-		return "anthropic"
 	case strings.Contains(baseURL, "generativelanguage.googleapis.com"):
 		return "gemini"
 	case strings.Contains(baseURL, "aiplatform.googleapis.com") || strings.Contains(baseURL, "vertexai"):
@@ -337,6 +341,27 @@ func DetectProvider(baseURL string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// IsAnthropicURL reports whether baseURL points at Anthropic: its host is
+// anthropic.com or a subdomain of it, in any case, with or without a
+// trailing dot or port. It is the one rule both DetectProvider (the header,
+// capabilities, context windows) and the llm backend choice use (#372). A
+// URL without a scheme is read as https.
+func IsAnthropicURL(baseURL string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return false
+	}
+	if !strings.Contains(baseURL, "://") {
+		baseURL = "https://" + baseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == "anthropic.com" || strings.HasSuffix(host, ".anthropic.com")
 }
 
 // ModelDetection provides heuristics for detecting model capabilities.

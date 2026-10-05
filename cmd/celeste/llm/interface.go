@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
@@ -79,12 +80,11 @@ func DetectBackendType(baseURL string) BackendType {
 	return BackendTypeOpenAI
 }
 
-// isAnthropicProvider checks if a base URL belongs to Anthropic.
+// isAnthropicProvider checks if a base URL belongs to Anthropic. It is
+// providers.IsAnthropicURL, the rule DetectProvider uses too, so the
+// header and the backend choice never disagree (#372).
 func isAnthropicProvider(baseURL string) bool {
-	if baseURL == "" {
-		return false
-	}
-	return strings.Contains(baseURL, "api.anthropic.com")
+	return providers.IsAnthropicURL(baseURL)
 }
 
 // isXAIProvider checks if a base URL belongs to xAI (Grok).
