@@ -563,8 +563,8 @@ func TestGoTypes_ThisRepository(t *testing.T) {
 
 	// errorText is a tui helper; its callers are tui functions and methods.
 	has(mod+"tui.errorText", "("+mod+"tui.AppModel).update", EdgeCalls)
-	// stampNow is called from loop methods and the steering code.
-	has(mod+"loop.stampNow", mod+"loop.TestStampNowStrictlyIncreases", EdgeCalls)
+	// clock.Now (the never-repeating clock) is called from the loop's message builders.
+	has(mod+"internal/clock.Now", mod+"loop.toolMessage", EdgeCalls)
 	// Bare-name collapse: acp's session.update and tui's AppModel.update
 	// share a name but must not share callers.
 	for src := range callers["("+mod+"tui.AppModel).update"] {
