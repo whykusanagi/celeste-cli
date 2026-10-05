@@ -52,6 +52,11 @@ func TestIsIndexableFile(t *testing.T) {
 	assert.True(t, IsIndexableFile("main.go"))
 	assert.True(t, IsIndexableFile("app.py"))
 	assert.True(t, IsIndexableFile("server.ts"))
+	// tree-sitter grammars ship for these; the indexer must reach them.
+	for _, f := range []string{"Main.java", "lib.c", "lib.h", "a.cpp", "a.cc", "a.cxx", "a.hpp", "app.rb"} {
+		assert.Truef(t, IsIndexableFile(f), "%s should be indexable", f)
+	}
+	assert.Equal(t, "cpp", DetectLanguage("a.cxx"))
 	assert.False(t, IsIndexableFile("image.png"))
 	assert.False(t, IsIndexableFile("data.bin"))
 	assert.False(t, IsIndexableFile(".gitignore"))

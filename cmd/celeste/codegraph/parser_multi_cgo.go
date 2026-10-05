@@ -237,8 +237,10 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 		return
 	}
 
-	// Import statements
-	if w.importSet[kind] {
+	// Import statements. Ruby has no import syntax: require is a plain
+	// call, so only require/require_relative/load calls are imports and
+	// every other call node falls through to the call-edge branch below.
+	if w.importSet[kind] && (w.lang != "ruby" || rubyRequireName(w, node) != "") {
 		name := w.extractImportName(node)
 		if name != "" {
 			w.result.Symbols = append(w.result.Symbols, Symbol{
@@ -340,6 +342,9 @@ func (w *multiWalker) extractName(node *tree_sitter.Node) string {
 
 // extractImportName gets the module/package name from an import node.
 func (w *multiWalker) extractImportName(node *tree_sitter.Node) string {
+	if w.lang == "ruby" {
+		return rubyRequireName(w, node)
+	}
 	// Python: import_from_statement has "module_name" field
 	if child := node.ChildByFieldName("module_name"); child != nil {
 		return w.nodeText(child)
@@ -436,6 +441,31 @@ func (w *multiWalker) phpCallTarget(node *tree_sitter.Node) string {
 		return strings.TrimSpace(text)
 	}
 	return ""
+}
+
+// rubyRequireName returns the required path of a Ruby
+// `require "x"` / `require_relative "x"` / `load "x"` call, or "" when the
+// call is anything else.
+//
+//	call  method: identifier ("require")  arguments: argument_list → string → string_content
+func rubyRequireName(w *multiWalker, node *tree_sitter.Node) string {
+	if node.Kind() != "call" || node.ChildByFieldName("receiver") != nil {
+		return ""
+	}
+	switch w.nodeText(node.ChildByFieldName("method")) {
+	case "require", "require_relative", "load":
+	default:
+		return ""
+	}
+	args := node.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return ""
+	}
+	arg := args.NamedChild(0)
+	if arg == nil || arg.Kind() != "string" {
+		return ""
+	}
+	return strings.Trim(w.nodeText(arg), "'\"")
 }
 
 // decoratorTarget returns the callable name from a Python decorator node.

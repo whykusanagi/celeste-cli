@@ -34,6 +34,7 @@ go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
 except Go with regex. 2.0 release binaries are built with CGo on each platform's own runner and
 include the tree-sitter parsers for TypeScript, PHP, Python, Rust, Java, C/C++ and Ruby, with
 more accurate call edges ([#376](https://github.com/whykusanagi/celeste-cli/issues/376)).
+Java, C, C++ and Ruby files are now indexed too; 1.x skipped them.
 Rebuild an index made by 1.x to get them: `celeste index rebuild`.
 
 | Platform | 2.0 release binary |

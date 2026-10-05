@@ -26,6 +26,7 @@ var extensionToLanguage = map[string]string{
 	".cpp":   "cpp",
 	".hpp":   "cpp",
 	".cc":    "cpp",
+	".cxx":   "cpp",
 	".cs":    "csharp",
 	".swift": "swift",
 	".scala": "scala",
@@ -51,7 +52,10 @@ var extensionToLanguage = map[string]string{
 	".zig":   "zig",
 }
 
-// indexableLanguages lists languages that have parser support (Go AST or regex).
+// indexableLanguages lists languages that have parser support: Go AST,
+// tree-sitter, or the regex fallback. Java, C, C++ and Ruby are parsed by
+// tree-sitter in cgo builds; a CGO_ENABLED=0 build hands them to the
+// generic regex parser, which extracts what it can and never errors.
 var indexableLanguages = map[string]bool{
 	"go":         true,
 	"python":     true,
@@ -59,6 +63,10 @@ var indexableLanguages = map[string]bool{
 	"typescript": true,
 	"rust":       true,
 	"php":        true,
+	"java":       true,
+	"c":          true,
+	"cpp":        true,
+	"ruby":       true,
 }
 
 // manifestToLanguage maps manifest files to their primary language.
