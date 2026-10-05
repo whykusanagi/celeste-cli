@@ -125,7 +125,7 @@ type Store struct {
 // NewStore opens (or creates) a SQLite database at the given path and
 // initializes the schema.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
