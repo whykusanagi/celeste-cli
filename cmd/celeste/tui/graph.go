@@ -379,10 +379,33 @@ func (m GraphModel) renderOverview() string {
 	}
 
 	sb.WriteString("\n")
-	footer := " [↑/↓] Navigate  [Enter] Expand  [D] Detail  [/] Search  [Tab] Filter  [Q/Esc] Back"
+	footer := keyFooter([]string{"[↑/↓] Navigate", "[Enter] Expand", "[D] Detail", "[/] Search", "[Tab] Filter", "[Q/Esc] Back"}, width)
 	sb.WriteString(graphFooterStyle.Render(footer))
 
 	return sb.String()
+}
+
+// keyFooter lays key hints out in rows of at most width cells, two spaces
+// apart, each row indented one space: a narrow terminal gets a second row
+// instead of a cut hint.
+func keyFooter(items []string, width int) string {
+	var rows []string
+	row := ""
+	for _, it := range items {
+		switch {
+		case row == "":
+			row = " " + it
+		case lipgloss.Width(row+"  "+it) <= width:
+			row += "  " + it
+		default:
+			rows = append(rows, row)
+			row = " " + it
+		}
+	}
+	if row != "" {
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
 }
 
 // renderDetail shows the selected node with its connections.
