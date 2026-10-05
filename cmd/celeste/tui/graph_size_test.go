@@ -23,6 +23,7 @@ func TestGraphOpensAtTerminalSize(t *testing.T) {
 	}
 	idx, err := codegraph.NewIndexer(dir, filepath.Join(t.TempDir(), "graph.db"))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() }) // Windows cannot remove an open database file
 	require.NoError(t, idx.Build())
 
 	for _, sz := range auditSizes {
