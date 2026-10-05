@@ -83,10 +83,17 @@ uses the window it reports:
 | LM Studio | the loaded model's `loaded_context_length` in `/api/v0/models/<model>` |
 
 A model's trained maximum is never used: the server runs it with what it was
-started with, often far less. The answer is reused for a minute, so a model
-that loads with its first request is picked up on a later one. When the server
-reports nothing (Ollama with the model not loaded and no `num_ctx`, mlx-vlm,
-other servers), the fallback is a conservative 8192 tokens. Left alone that
+started with, often far less. The endpoint's API key, if it has one, is sent
+as a Bearer token, so a llama.cpp or LM Studio server started with a key
+answers too (the probe only ever goes to a host on this machine or the local
+network). The answer is asked again in the background after a minute, so a
+model that loads with its first request is picked up on a later one, and the
+chat never waits on the server while you type. Once a server has reported a
+window, it is kept until the server reports a different one: an Ollama model
+unloaded after its idle `keep_alive` reports nothing, and the window does not
+drop back to the fallback. When the server has never reported a window
+(Ollama with the model not loaded and no `num_ctx`, mlx-vlm, other servers),
+the fallback is a conservative 8192 tokens. Left alone that
 truncates a model with a 128k window long before it needs to be, so set it to
 whatever you started the server with:
 
@@ -107,8 +114,11 @@ leave less than a quarter of the window for history, celeste sends a
 core set of tools (`read_file`, `write_file`, `patch_file`, `list_files`, `search`, `bash`,
 `todo`, plan mode's `submit_plan` and `find_tools`) with short descriptions, then
 the other tools while they fit, MCP tools last, and says so once, naming
-`context_limit`. `find_tools` activates any tool that was left out, and a tool it
-activated stays for the rest of the session. At 8,192 tokens the chat's first
+`context_limit`. `find_tools` activates any tool that was left out. The tools it
+activated are sent next, newest first: the most recent always, older ones while
+they fit, so repeated searches cannot push the request past the window (the
+notice says when older activations were dropped; `find_tools` activates them
+again). At 8,192 tokens the chat's first
 request goes from ~13.9k tokens to under 5.2k; at 32K and above every tool is
 sent as before.
 
