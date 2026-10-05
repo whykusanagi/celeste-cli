@@ -520,7 +520,7 @@ func TestMCPStubServer(t *testing.T) {
 // next call gets its own answer, not the late one sent just before it.
 func TestClient_StdioCallToolHonoursContext(t *testing.T) {
 	t.Setenv(stubServerEnv, "1")
-	tr, err := NewStdioTransport(os.Args[0], []string{"-test.run=^TestMCPStubServer$"}, nil)
+	tr, err := newStdioTransport("", os.Args[0], []string{"-test.run=^TestMCPStubServer$"}, nil)
 	require.NoError(t, err)
 	c := NewClient(tr, "celeste", "test")
 	t.Cleanup(func() { _ = c.Close() })
