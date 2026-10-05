@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -85,7 +86,7 @@ func (m ContextBarModel) View() string {
 		filled = 10
 	}
 	empty := 10 - filled
-	bar := barStyle.Render(repeatStr("▓", filled)) + emptyStyle.Render(repeatStr("░", empty))
+	bar := barStyle.Render(strings.Repeat("▓", filled)) + emptyStyle.Render(strings.Repeat("░", empty))
 
 	// Narrow terminal: minimal display
 	if m.width > 0 && m.width < 80 {
@@ -109,13 +110,4 @@ func (m ContextBarModel) View() string {
 		labelStyle.Render("│"),
 		labelStyle.Render(fmt.Sprintf("turn: %d", m.turnCount)),
 	)
-}
-
-// repeatStr repeats a string n times.
-func repeatStr(s string, n int) string {
-	result := ""
-	for range n {
-		result += s
-	}
-	return result
 }

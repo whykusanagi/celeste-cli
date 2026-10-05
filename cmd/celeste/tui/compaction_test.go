@@ -34,7 +34,13 @@ type fakeCompactClient struct {
 	tokensAfter int
 }
 
-func (f *fakeCompactClient) SummaryTimeout() time.Duration { return f.summaryCap }
+// SummaryTimeout is summaryCap, or the default 30-minute request cap.
+func (f *fakeCompactClient) SummaryTimeout() time.Duration {
+	if f.summaryCap > 0 {
+		return f.summaryCap
+	}
+	return 30 * time.Minute
+}
 
 func (f *fakeCompactClient) recordDeadline(ctx context.Context) {
 	if dl, ok := ctx.Deadline(); ok {
@@ -286,8 +292,7 @@ func TestAutomaticSummarySkipSaysSo(t *testing.T) {
 }
 
 // #345: a summary and a handoff are bounded by the client's request cap,
-// the one a chat turn gets, not a fixed 3 minutes; a client that reports
-// none gets the default 30-minute cap.
+// the one a chat turn gets, not a fixed 3 minutes.
 func TestSummaryDeadlineIsTheClientCap(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -295,7 +300,7 @@ func TestSummaryDeadlineIsTheClientCap(t *testing.T) {
 		min, max time.Duration
 	}{
 		{"client cap", 60 * time.Minute, 59 * time.Minute, 60 * time.Minute},
-		{"default cap", 0, 29 * time.Minute, 30 * time.Minute},
+		{"short cap", 5 * time.Minute, 4 * time.Minute, 5 * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, client := newCompactTestApp(t)

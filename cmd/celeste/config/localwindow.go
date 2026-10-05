@@ -174,19 +174,6 @@ func (c *windowCache) refresh(e *windowEntry, baseURL, apiKey, model string) {
 	}
 }
 
-// wait blocks until no probe for baseURL and model is running (tests).
-func (c *windowCache) wait(baseURL, model string) {
-	c.mu.Lock()
-	var ch chan struct{}
-	if e := c.entries[windowKey(baseURL, model)]; e != nil {
-		ch = e.inflight
-	}
-	c.mu.Unlock()
-	if ch != nil {
-		<-ch
-	}
-}
-
 // ProbeLocalWindow asks the server at baseURL (an OpenAI-compatible base,
 // usually ending in /v1) for the context window it runs model with, and
 // returns 0 when it does not say. apiKey, when set, is sent as a Bearer

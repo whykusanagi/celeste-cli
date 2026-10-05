@@ -12,28 +12,13 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
-// DefaultSummaryTimeout bounds a summary when the client reports no cap of
-// its own: llm.MaxRequestDuration of the default 60 s stall timeout. tui
-// cannot import llm; a test in package main keeps the two equal.
-const DefaultSummaryTimeout = 30 * time.Minute
-
 // SummaryTimeouter is a client that knows how long one summary request may
 // run: its request cap, the bound a chat turn gets (#345). The summary
 // client fails a request that stalls for its stall timeout before that.
+// ContextCompactor and ContextHandoff require it, so the chat has no
+// summary deadline of its own (audit C6).
 type SummaryTimeouter interface {
 	SummaryTimeout() time.Duration
-}
-
-// summaryTimeout bounds a compaction summary or a handoff: the client's
-// request cap, else DefaultSummaryTimeout. A fixed 3 minutes cut off a cold
-// local model's summary while its chat turns succeeded (#345).
-func (m AppModel) summaryTimeout() time.Duration {
-	if c, ok := m.llmClient.(SummaryTimeouter); ok {
-		if d := c.SummaryTimeout(); d > 0 {
-			return d
-		}
-	}
-	return DefaultSummaryTimeout
 }
 
 // ContextSummarizedMsg delivers a compaction summary written in the
@@ -102,7 +87,7 @@ func (m AppModel) startSummaryAs(focus string, manual bool, trigger string) (App
 	m.summarizing = true
 	m.chat = m.chat.AddSystemMessage("🗜 Summarizing older context…")
 	snapshot := append([]ChatMessage(nil), msgs...)
-	timeout := m.summaryTimeout()
+	timeout := c.SummaryTimeout()
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), compactTriggerKey{}, trigger), timeout)
 		defer cancel()
@@ -207,6 +192,7 @@ func isNothingToSummarize(err error) bool { return errors.Is(err, ErrNothingToSu
 // ContextHandoff is implemented by clients that can write a handoff
 // summary of the whole conversation (/handoff, #174).
 type ContextHandoff interface {
+	SummaryTimeouter
 	HandoffContext(ctx context.Context, msgs []ChatMessage, focus string) (string, error)
 }
 
@@ -248,7 +234,7 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 	m.status = m.status.SetText(handoffStatus)
 	m.chat = m.chat.AddSystemMessage("🤝 Writing handoff notes… (Esc cancels)")
 	snapshot := append([]ChatMessage(nil), msgs...)
-	ctx, cancel := context.WithTimeout(context.Background(), m.summaryTimeout())
+	ctx, cancel := context.WithTimeout(context.Background(), c.SummaryTimeout())
 	m.handoffCancel = cancel
 	return m, func() tea.Msg {
 		defer cancel()
@@ -295,12 +281,8 @@ func isLegacyTextCommand(content string) bool {
 	if strings.HasPrefix(content, "/") {
 		return true
 	}
-	switch lower := strings.ToLower(content); lower {
-	case "clear", "help", "tools", "skills", "debug":
-		return true
-	default:
-		return isQuitWord(lower)
-	}
+	lower := strings.ToLower(content)
+	return legacyCommands[lower] != nil || isQuitWord(lower)
 }
 
 // holdForHandoff keeps input submitted during a handoff away from the

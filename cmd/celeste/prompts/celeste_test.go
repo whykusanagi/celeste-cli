@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestGetContentPrompt tests content generation prompts
-func TestGetContentPrompt(t *testing.T) {
+// TestContentPrompt tests content generation prompts
+func TestContentPrompt(t *testing.T) {
 	tests := []struct {
 		name     string
 		platform string
@@ -61,7 +61,7 @@ func TestGetContentPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prompt := GetContentPrompt(0, tt.platform, tt.format, tt.tone, tt.topic)
+			prompt := ContentPrompt(0, tt.platform, tt.format, tt.tone, tt.topic).String()
 
 			assert.NotEmpty(t, prompt, "Prompt should not be empty")
 			assert.Contains(t, prompt, "CONTENT GENERATION MODE", "Should indicate content mode")
@@ -73,8 +73,8 @@ func TestGetContentPrompt(t *testing.T) {
 	}
 }
 
-// TestGetContentPromptPlatforms tests all platform options
-func TestGetContentPromptPlatforms(t *testing.T) {
+// TestContentPromptPlatforms tests all platform options
+func TestContentPromptPlatforms(t *testing.T) {
 	platforms := []struct {
 		name    string
 		keyword string
@@ -87,14 +87,14 @@ func TestGetContentPromptPlatforms(t *testing.T) {
 
 	for _, p := range platforms {
 		t.Run(p.name, func(t *testing.T) {
-			prompt := GetContentPrompt(0, p.name, "", "", "")
+			prompt := ContentPrompt(0, p.name, "", "", "").String()
 			assert.Contains(t, prompt, p.keyword, "Should mention platform")
 		})
 	}
 }
 
-// TestGetContentPromptFormats tests all format options
-func TestGetContentPromptFormats(t *testing.T) {
+// TestContentPromptFormats tests all format options
+func TestContentPromptFormats(t *testing.T) {
 	formats := []struct {
 		name    string
 		keyword string
@@ -106,7 +106,7 @@ func TestGetContentPromptFormats(t *testing.T) {
 
 	for _, f := range formats {
 		t.Run(f.name, func(t *testing.T) {
-			prompt := GetContentPrompt(0, "", f.name, "", "")
+			prompt := ContentPrompt(0, "", f.name, "", "").String()
 			assert.Contains(t, prompt, f.keyword, "Should mention format")
 		})
 	}
@@ -117,14 +117,14 @@ func TestGetContentPromptFormats(t *testing.T) {
 func TestContentPromptIncludesBase(t *testing.T) {
 	composeEnv(t, false)
 	base := Compose(ComposeOptions{Mode: ModeChat}).String()
-	contentPrompt := GetContentPrompt(0, "twitter", "short", "casual", "tech")
+	contentPrompt := ContentPrompt(0, "twitter", "short", "casual", "tech").String()
 	assert.True(t, strings.HasPrefix(contentPrompt, base), "content prompt should start with the chat prompt")
 	assert.Contains(t, contentPrompt, "CONTENT GENERATION MODE")
 }
 
 // #309: the content prompt keeps the persona as its Static part, the
-// content-mode addendum in Dynamic, and the same whole bytes as
-// GetContentPrompt, so an Anthropic request caches the persona apart.
+// content-mode addendum in Dynamic, so an Anthropic request caches the
+// persona apart.
 func TestContentPromptKeepsThePersonaStatic(t *testing.T) {
 	composeEnv(t, false)
 	p := ContentPrompt(0, "twitter", "short", "playful", "a launch")
@@ -134,7 +134,7 @@ func TestContentPromptKeepsThePersonaStatic(t *testing.T) {
 	if !strings.Contains(p.Dynamic, "CONTENT GENERATION MODE") || strings.Contains(p.Static, "CONTENT GENERATION MODE") {
 		t.Fatal("the content addendum is not in Dynamic")
 	}
-	if p.String() != GetContentPrompt(0, "twitter", "short", "playful", "a launch") {
-		t.Fatal("ContentPrompt and GetContentPrompt disagree")
+	if p.String() != p.Static+"\n\n"+p.Dynamic {
+		t.Fatal("String is not Static and Dynamic joined")
 	}
 }

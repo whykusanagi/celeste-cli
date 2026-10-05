@@ -43,12 +43,6 @@ Before executing any action that creates, modifies, or generates content (writin
 Read-only operations (listing files, reading, searching, status checks) do not require confirmation.
 This applies to ALL write paths: direct file writes, subagent spawns for generation, bash commands that modify state.`
 
-// GetContentPrompt returns a prompt tailored for content generation:
-// ContentPrompt as one string.
-func GetContentPrompt(window int, platform, format, tone, topic string) string {
-	return ContentPrompt(window, platform, format, tone, topic).String()
-}
-
 // ContentPrompt is the chat prompt with the content-generation addendum
 // at the end of its Dynamic part; Static stays the persona, so a provider
 // caches it apart (#309). window is the model's resolved context window;

@@ -342,8 +342,6 @@ func (a *TUIClientAdapter) currentAgentConfig() *config.Config {
 		cfg.APIKey = current.APIKey
 		cfg.BaseURL = current.BaseURL
 		cfg.Model = current.Model
-		cfg.SimulateTyping = current.SimulateTyping
-		cfg.TypingSpeed = current.TypingSpeed
 		cfg.GoogleCredentialsFile = current.GoogleCredentialsFile
 		cfg.GoogleUseADC = current.GoogleUseADC
 		cfg.Collections = current.Collections

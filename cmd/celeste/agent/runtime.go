@@ -52,7 +52,7 @@ type Runner struct {
 	// rung after pruning (#174). Nil disables summaries.
 	summarize compact.SummarizeFunc
 	// summaryTimeout bounds one summary: the summary client's request cap
-	// (#345). Zero (runners built directly in tests) means the default cap.
+	// (#345), llm.Config.RequestCap as in the chat and ACP (audit C6).
 	summaryTimeout time.Duration
 	// jev is set when jev_prune is "shadow" (pruning logs Jev's verdict next
 	// to the rules', #175) or "on" (Jev orders the elisions, 2.0 W3).
@@ -136,7 +136,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	}
 	if r.summarize != nil && (stillOver || (force && !changed)) {
 		summarize, blocked := r.hookedSummarize(r.summarize)
-		sctx, cancel := context.WithTimeout(ctx, r.summaryDeadline())
+		sctx, cancel := context.WithTimeout(ctx, r.summaryTimeout)
 		out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: r.budget.ModelLimit, Overhead: overhead, State: r.renderState()}, summarize)
 		cancel()
 		if reason := blocked(); reason != "" {
@@ -183,17 +183,6 @@ func SmallModelSummarizer(base *llm.Config, model string) compact.SummarizeFunc 
 		}
 		return res.Content, nil
 	}
-}
-
-// summaryDeadline bounds one compaction summary. The summary client fails
-// a request that stalls for its stall timeout; this is the cap on one that
-// keeps streaming, the same a chat turn gets (#345: a fixed 3 minutes cut
-// off a cold local model's summary).
-func (r *Runner) summaryDeadline() time.Duration {
-	if r.summaryTimeout > 0 {
-		return r.summaryTimeout
-	}
-	return (*llm.Config)(nil).RequestCap()
 }
 
 func (r *Runner) reportCompaction(state *RunState, msg string) {
@@ -1198,7 +1187,7 @@ func normalizeOptions(options *Options) {
 		options.MaxConsecutiveInvalidToolArgs = defaults.MaxConsecutiveInvalidToolArgs
 	}
 	if options.RequestTimeout <= 0 {
-		options.RequestTimeout = defaults.RequestTimeout
+		options.RequestTimeout = llm.MaxRequestDuration((*llm.Config)(nil).StallTimeout())
 	}
 	if options.ToolTimeout <= 0 {
 		options.ToolTimeout = defaults.ToolTimeout
@@ -1244,17 +1233,6 @@ func completeState(state *RunState) {
 	now := time.Now()
 	state.CompletedAt = &now
 	state.UpdatedAt = now
-}
-
-func isCompletionResponse(content string, options Options) bool {
-	text := strings.TrimSpace(content)
-	if text == "" {
-		return false
-	}
-	if options.CompletionMarker != "" && strings.Contains(strings.ToUpper(text), strings.ToUpper(options.CompletionMarker)) {
-		return true
-	}
-	return !options.RequireCompletionMarker
 }
 
 func buildPlanningPrompt(state *RunState) string {

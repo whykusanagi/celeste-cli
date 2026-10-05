@@ -123,10 +123,5 @@ func (m *AppModel) recordSessionMessage(role, content string) {
 }
 
 func truncateQueued(s string) string {
-	const max = 80
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len([]rune(s)) <= max {
-		return s
-	}
-	return string([]rune(s)[:max]) + "…"
+	return fitRow(s, 80)
 }

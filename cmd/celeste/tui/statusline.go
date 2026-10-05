@@ -168,7 +168,7 @@ func (m StatusLineModel) fit(segs []string, sep string, sessionLast bool) string
 		rest := segs[:len(segs)-1]
 		room := m.width - lipgloss.Width(strings.Join(rest, sep)) - lipgloss.Width(sep)
 		if room >= 8 {
-			segs = append(rest[:len(rest):len(rest)], EndpointStyle.Render(truncateCells(m.session, room)))
+			segs = append(rest[:len(rest):len(rest)], EndpointStyle.Render(fitWidth(m.session, room)))
 		} else {
 			segs = rest
 		}
@@ -179,24 +179,6 @@ func (m StatusLineModel) fit(segs []string, sep string, sessionLast bool) string
 		line = strings.Join(segs, sep)
 	}
 	return line
-}
-
-// truncateCells cuts s to at most max terminal cells, ending in "…" when cut.
-func truncateCells(s string, max int) string {
-	if lipgloss.Width(s) <= max {
-		return s
-	}
-	var b strings.Builder
-	w := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if w+rw > max-1 {
-			break
-		}
-		b.WriteRune(r)
-		w += rw
-	}
-	return b.String() + "…"
 }
 
 // parseDirtyCount counts changed files in `git status --short` output.

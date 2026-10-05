@@ -3,7 +3,6 @@ package llm
 
 import (
 	"context"
-	"strings"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
@@ -67,53 +66,18 @@ const (
 )
 
 // DetectBackendType determines which backend to use based on the base URL.
-// The Anthropic host check runs first, as in DetectProvider: the xAI and
-// Google checks are substring matches that a path or query on an
-// Anthropic host could otherwise trip (#372).
+// Anthropic, xAI and Google are decided by host, by the same rules
+// providers.DetectProvider uses (#372, #377), so the header and the backend
+// choice never disagree and a proxy path that names one of those domains
+// stays OpenAI-compatible.
 func DetectBackendType(baseURL string) BackendType {
-	if isAnthropicProvider(baseURL) {
+	switch {
+	case providers.IsAnthropicURL(baseURL):
 		return BackendTypeAnthropic
-	}
-	if isXAIProvider(baseURL) {
+	case providers.IsXAIURL(baseURL):
 		return BackendTypeXAI
-	}
-	if isGoogleProvider(baseURL) {
+	case providers.IsGoogleURL(baseURL):
 		return BackendTypeGoogle
 	}
 	return BackendTypeOpenAI
-}
-
-// isAnthropicProvider checks if a base URL belongs to Anthropic. It is
-// providers.IsAnthropicURL, the rule DetectProvider uses too, so the
-// header and the backend choice never disagree (#372).
-func isAnthropicProvider(baseURL string) bool {
-	return providers.IsAnthropicURL(baseURL)
-}
-
-// isXAIProvider checks if a base URL belongs to xAI (Grok).
-func isXAIProvider(baseURL string) bool {
-	if baseURL == "" {
-		return false
-	}
-	return strings.Contains(baseURL, "api.x.ai") || strings.Contains(baseURL, "x.ai/v1")
-}
-
-// isGoogleProvider checks if a base URL belongs to Google Cloud.
-func isGoogleProvider(baseURL string) bool {
-	if baseURL == "" {
-		return false
-	}
-
-	// Check for Google AI Studio (Gemini API)
-	if strings.Contains(baseURL, "generativelanguage.googleapis.com") {
-		return true
-	}
-
-	// Check for Vertex AI
-	if strings.Contains(baseURL, "aiplatform.googleapis.com") ||
-		strings.Contains(baseURL, "vertexai") {
-		return true
-	}
-
-	return false
 }

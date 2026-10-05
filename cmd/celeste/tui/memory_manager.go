@@ -240,7 +240,7 @@ func (m MemoryManagerModel) View() string {
 		}
 
 		line := fmt.Sprintf(" %s %-30s  %s%s%s",
-			badge, truncateStr(mem.Name, 30), truncateStr(mem.Description, 40), age, staleMarker)
+			badge, fitRow(mem.Name, 30), fitRow(mem.Description, 40), age, staleMarker)
 
 		if isCursor {
 			if m.confirmed == i {
@@ -313,13 +313,6 @@ func memTypeBadge(t string) string {
 	default:
 		return memMutedStyle.Render("???")
 	}
-}
-
-func truncateStr(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
 }
 
 // Corrupted-theme memory manager styles

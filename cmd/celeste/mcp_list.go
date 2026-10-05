@@ -5,10 +5,8 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
-	"unicode"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
@@ -41,24 +39,20 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		return 2
 	}
 
-	global := map[string]bool{}
-	for _, p := range mcp.GlobalConfigPaths(home) {
-		global[filepath.Clean(p)] = true
-	}
-
 	show := func(path string, isGlobal bool) string {
 		base, prefix := cwd, "."
 		if isGlobal {
 			base, prefix = home, "~"
 		}
 		if rel, err := filepath.Rel(base, path); err == nil {
-			return safeText(filepath.Join(prefix, rel))
+			return hooks.SafeText(filepath.Join(prefix, rel))
 		}
-		return safeText(path)
+		return hooks.SafeText(path)
 	}
 
 	code := 0
 	var entries []mcpListEntry
+	var good []string // the files that parse, in precedence order
 	// The first file that does not parse: the runtime then starts no server
 	// at all where it is loaded (LoadMerged fails as a whole), so a home
 	// file stops every mode and a workspace file stops the chat.
@@ -66,7 +60,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	// DiscoverConfigPaths is lowest precedence first: a later file defining
 	// the same name replaces the earlier definition.
 	for _, p := range lastOccurrences(mcp.DiscoverConfigPaths(cwd, home)) {
-		isGlobal := global[filepath.Clean(p)]
+		isGlobal := mcp.IsGlobalConfig(home, p)
 		cfg, err := mcp.LoadConfig(p)
 		if err != nil {
 			fmt.Fprintf(errOut, "Error: %v\n", err)
@@ -79,6 +73,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			}
 			continue
 		}
+		good = append(good, p)
 		names := make([]string, 0, len(cfg.Servers))
 		for name := range cfg.Servers {
 			names = append(names, name)
@@ -118,10 +113,25 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		return "pending"
 	}
 	where := func(e mcpListEntry) string { return show(e.path, e.global) }
+	// Which definition each mode starts comes from the runtime's own code
+	// (loop.setupMCP): LoadMerged over every config for the chat, over the
+	// home configs alone for every other mode. The files were just parsed,
+	// but one edited since can fail now: report it rather than guess.
+	chat, err := mcp.LoadMerged(good)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error: %v\n", err)
+		return 1
+	}
+	homeOnly, _ := mcp.SplitGlobal(good, home)
+	other, err := mcp.LoadMerged(homeOnly)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error: %v\n", err)
+		return 1
+	}
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tSOURCE\tTRANSPORT\tENABLED\tTRUSTED\tAPPROVAL\tRUNS IN")
-	for i, e := range entries {
+	for _, e := range entries {
 		trusted := "no"
 		if e.cfg.Trusted {
 			trusted = "yes"
@@ -130,7 +140,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			}
 		}
 		ap := approval(e)
-		runs := mcpRunsIn(entries, i, where, ap == "approved")
+		runs := mcpRunsIn(e, chat.Servers[e.name].Origin, other.Servers[e.name].Origin, func(p string) string { return show(p, mcp.IsGlobalConfig(home, p)) }, ap == "approved")
 		switch {
 		case homeBad != "":
 			runs = "none (" + homeBad + " does not parse)"
@@ -140,7 +150,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			runs = "all but chat (" + wsBad + " does not parse)"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			safeText(e.name), where(e), safeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs)
+			hooks.SafeText(e.name), where(e), hooks.SafeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs)
 	}
 	_ = tw.Flush()
 	fmt.Fprintln(out, `
@@ -172,27 +182,36 @@ func lastOccurrences(paths []string) []string {
 	return out
 }
 
-// mcpRunsIn says where entries[i] is the definition celeste starts; only an
-// enabled server starts on its own, and a workspace one only once approved.
-// Workspace configs follow every home config in precedence, and only the
-// chat loads them (loop.setupMCP).
-func mcpRunsIn(entries []mcpListEntry, i int, show func(mcpListEntry) string, approved bool) string {
-	e := entries[i]
-	var wsOverride string
-	for _, later := range entries[i+1:] {
-		if later.name != e.name {
-			continue
+// mcpRunsIn says where e is the definition celeste starts, from the
+// runtime's merges: chatOrigin is the file whose definition of e.name the
+// chat starts, otherOrigin the one every other mode starts ("" for none).
+// Only an enabled server starts on its own, and a workspace one only once
+// approved.
+func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string) string, approved bool) string {
+	same := func(p string) bool { return p != "" && filepath.Clean(p) == filepath.Clean(e.path) }
+	inChat, inOther := same(chatOrigin), e.global && same(otherOrigin)
+	// An empty origin means the server left its file between the two
+	// reads (review m4): say so rather than name no file.
+	const removed = "removed since listing"
+	src := func(p string) string {
+		if p == "" {
+			return "nothing, " + removed
 		}
-		if later.global == e.global {
-			return "overridden by " + show(later)
+		return show(p)
+	}
+	overridden := func(p string) string {
+		if p == "" {
+			return "none (" + removed + ")"
 		}
-		if wsOverride == "" {
-			wsOverride = show(later)
-		}
+		return "overridden by " + show(p)
 	}
 	switch {
-	case !e.cfg.Enabled && wsOverride != "":
-		return "off (chat uses " + wsOverride + ")"
+	case e.global && !inOther:
+		return overridden(otherOrigin)
+	case !e.global && !inChat:
+		return overridden(chatOrigin)
+	case !e.cfg.Enabled && !inChat:
+		return "off (chat uses " + src(chatOrigin) + ")"
 	case !e.cfg.Enabled:
 		// Manager.Start skips it; the chat's /mcp panel can still connect it.
 		return "off (start it from the chat's /mcp)"
@@ -200,8 +219,8 @@ func mcpRunsIn(entries []mcpListEntry, i int, show func(mcpListEntry) string, ap
 		return "chat only"
 	case !e.global:
 		return "chat once approved"
-	case wsOverride != "":
-		return "all but chat (chat uses " + wsOverride + ")"
+	case !inChat:
+		return "all but chat (chat uses " + src(chatOrigin) + ")"
 	}
 	return "all modes"
 }
@@ -211,13 +230,4 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-// safeText returns s, or s Go-quoted when it holds characters that would act
-// on the terminal: config content is shown, never interpreted.
-func safeText(s string) string {
-	if strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
-		return strconv.Quote(s)
-	}
-	return s
 }

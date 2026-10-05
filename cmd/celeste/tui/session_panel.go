@@ -277,7 +277,7 @@ func (m SessionPanelModel) body() []string {
 		if e.Name != "" && e.Name != e.Preview {
 			preview = e.Name + " · " + e.Preview
 		}
-		lines = append(lines, "    "+pStyle.Render(fitWidth(preview, previewW)))
+		lines = append(lines, "    "+pStyle.Render(fitRow(preview, previewW)))
 	}
 
 	if start > 0 {

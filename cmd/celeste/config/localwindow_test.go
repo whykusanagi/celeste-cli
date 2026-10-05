@@ -175,3 +175,50 @@ func TestResolveContextLimitProbesLocalHostsOnly(t *testing.T) {
 		t.Fatalf("probed %v, want only the LAN server", asked)
 	}
 }
+
+// A LAN, bare-hostname or .local server whose probe gets no answer falls
+// back to the local 8,192 window, not the model's hosted default (fugu's
+// 1,000,000), and gets the local timeouts; a hosted URL whose path says
+// "localhost" gets neither (#377).
+func TestLocalFallbackFollowsTheHostRule(t *testing.T) {
+	SetLocalWindowProbe(func(baseURL, apiKey, model string) int { return 0 })
+	t.Cleanup(func() { SetLocalWindowProbe(nil) })
+	for _, u := range []string{
+		"http://127.0.0.1:8080/v1",
+		"http://192.168.1.20:8080/v1",
+		"http://10.1.2.3:8080/v1",
+		"http://172.20.0.4:8080/v1",
+		"http://gpu-box:8080/v1",
+		"http://mac.local:1234/v1",
+	} {
+		n, src := ResolveContextLimitSource(u, "fugu", 0, "")
+		if n != 8192 || src != SourceFallback {
+			t.Errorf("%s: window %d (%s), want 8192 fallback", u, n, src)
+		}
+		c := &Config{BaseURL: u, Timeout: DefaultTimeoutSeconds}
+		if got := c.GetTimeout(); got != LocalTimeoutSeconds*time.Second {
+			t.Errorf("%s: timeout %v, want local", u, got)
+		}
+	}
+	proxy := "https://proxy.example.com/localhost/v1"
+	if n, src := ResolveContextLimitSource(proxy, "fugu", 0, ""); n == 8192 || src == SourceFallback {
+		t.Errorf("%s: window %d (%s), want the model default", proxy, n, src)
+	}
+	c := &Config{BaseURL: proxy, Timeout: DefaultTimeoutSeconds}
+	if got := c.GetTimeout(); got != DefaultTimeoutSeconds*time.Second {
+		t.Errorf("%s: timeout %v, want the hosted default", proxy, got)
+	}
+}
+
+// wait blocks until no probe for baseURL and model is running (tests).
+func (c *windowCache) wait(baseURL, model string) {
+	c.mu.Lock()
+	var ch chan struct{}
+	if e := c.entries[windowKey(baseURL, model)]; e != nil {
+		ch = e.inflight
+	}
+	c.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+}

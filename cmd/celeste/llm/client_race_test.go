@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
 // The TUI switches model (model catalog → applyModel → UpdateConfig) and
@@ -152,7 +153,7 @@ func TestUpdateConfigAnthropicRebuildKeepsEndpointState(t *testing.T) {
 	elsewhere.BaseURL = "https://other.example.com"
 	c.UpdateConfig(elsewhere)
 	fresh := c.backend.(*AnthropicBackend)
-	assert.Equal(t, isAnthropicProvider(elsewhere.BaseURL), fresh.bindingControls)
+	assert.Equal(t, providers.IsAnthropicURL(elsewhere.BaseURL), fresh.bindingControls)
 }
 
 // A prompt change made while a request is in flight stays pending: that

@@ -26,16 +26,10 @@ type StdioTransport struct {
 	closed bool
 }
 
-// NewStdioTransport spawns a child process and connects to its stdin/stdout.
-// command is the executable to run (e.g., "npx", "python3").
-// args are the command-line arguments.
-// env is an optional map of environment variables (supports ${VAR} expansion).
-func NewStdioTransport(command string, args []string, env map[string]string) (*StdioTransport, error) {
-	return newStdioTransport("", command, args, env)
-}
-
-// newStdioTransport is NewStdioTransport with the child's working
-// directory (empty: celeste's own).
+// newStdioTransport spawns a child process and connects to its stdin/stdout.
+// dir is the child's working directory (empty: celeste's own), command the
+// executable to run (e.g., "npx", "python3"), args its arguments and env an
+// optional map of environment variables (supports ${VAR} expansion).
 func newStdioTransport(dir, command string, args []string, env map[string]string) (*StdioTransport, error) {
 	cmd := exec.Command(command, args...)
 	cmd.Dir = dir

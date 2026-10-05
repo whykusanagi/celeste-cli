@@ -35,6 +35,21 @@ func GlobalConfigPaths(home string) []string {
 	}
 }
 
+// SplitGlobal splits paths (as DiscoverConfigPaths returns them) into the
+// home-level configs every mode loads and the workspace configs only the
+// interactive chat loads, each in its original order. With no home every
+// path is a workspace one.
+func SplitGlobal(paths []string, home string) (global, workspace []string) {
+	for _, p := range paths {
+		if IsGlobalConfig(home, p) {
+			global = append(global, p)
+		} else {
+			workspace = append(workspace, p)
+		}
+	}
+	return global, workspace
+}
+
 // LoadMerged folds every config in paths into a single MCPConfig. paths must be
 // ordered lowest-to-highest precedence (as DiscoverConfigPaths returns them):
 // a server name present in a later path replaces the earlier definition

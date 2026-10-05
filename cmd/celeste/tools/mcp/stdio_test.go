@@ -17,7 +17,7 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 	// We send a JSON-RPC request; cat echoes it back.
 	// The echoed request is valid JSON that can be unmarshaled as a Response
 	// (it will have no result/error, but the JSON parses).
-	transport, err := NewStdioTransport("cat", nil, nil)
+	transport, err := newStdioTransport("", "cat", nil, nil)
 	require.NoError(t, err)
 	defer transport.Close()
 
@@ -38,7 +38,7 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 }
 
 func TestStdioTransport_Close(t *testing.T) {
-	transport, err := NewStdioTransport("cat", nil, nil)
+	transport, err := newStdioTransport("", "cat", nil, nil)
 	require.NoError(t, err)
 
 	err = transport.Close()
@@ -51,7 +51,7 @@ func TestStdioTransport_Close(t *testing.T) {
 }
 
 func TestStdioTransport_SendNotification(t *testing.T) {
-	transport, err := NewStdioTransport("cat", nil, nil)
+	transport, err := newStdioTransport("", "cat", nil, nil)
 	require.NoError(t, err)
 	defer transport.Close()
 
@@ -104,7 +104,7 @@ func TestMCPHungServer(t *testing.T) {
 // it forever, so a retired chat Env can't freeze the call closing it.
 func TestStdioTransport_CloseKillsHungServer(t *testing.T) {
 	t.Setenv(hungServerEnv, "1")
-	tr, err := NewStdioTransport(os.Args[0], []string{"-test.run=^TestMCPHungServer$"}, nil)
+	tr, err := newStdioTransport("", os.Args[0], []string{"-test.run=^TestMCPHungServer$"}, nil)
 	require.NoError(t, err)
 
 	done := make(chan struct{})

@@ -6,7 +6,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
-func TestPlainConfigFromClearsXAIExtras(t *testing.T) {
+func TestConfigFromPlainClearsXAIExtras(t *testing.T) {
 	cfg := &config.Config{
 		APIKey:                "k",
 		BaseURL:               "https://api.example.com/v1",
@@ -15,12 +15,12 @@ func TestPlainConfigFromClearsXAIExtras(t *testing.T) {
 		Collections:           &config.CollectionsConfig{Enabled: true},
 		XAIFeatures:           &config.XAIFeaturesConfig{},
 	}
-	got := PlainConfigFrom(cfg)
+	got := ConfigFrom(cfg).Plain()
 	if got.Collections != nil || got.XAIFeatures != nil {
-		t.Fatalf("PlainConfigFrom kept an xAI field: %+v", got)
+		t.Fatalf("Plain kept an xAI field: %+v", got)
 	}
 	if got.APIKey != "k" || got.BaseURL != cfg.BaseURL || got.Model != "m" || got.GoogleCredentialsFile != "sa.json" {
-		t.Fatalf("PlainConfigFrom dropped a connection field: %+v", got)
+		t.Fatalf("Plain dropped a connection field: %+v", got)
 	}
 }
 
