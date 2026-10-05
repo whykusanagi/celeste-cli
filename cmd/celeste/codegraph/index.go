@@ -451,6 +451,12 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 	var goFiles []string
 	goChanged := map[string]bool{}
 	reindexed := 0
+	// While recovering, the raw edges of the files this run re-indexes are
+	// kept, so the re-resolve below does not parse them a second time.
+	var recoveredEdges map[string][]RawEdge
+	if recovering {
+		recoveredEdges = map[string][]RawEdge{}
+	}
 	for i, path := range currentFiles {
 		if i&1023 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -482,7 +488,9 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		// with every other file's below, as a build's pass 2 does.
 		_ = idx.store.DeleteFileSymbols(path)
 		if recovering {
-			_, _ = idx.indexFileSymbols(path)
+			if raw, err := idx.indexFileSymbols(path); err == nil {
+				recoveredEdges[path] = raw
+			}
 			continue
 		}
 		if err := idx.indexFile(path); err != nil {
@@ -493,7 +501,7 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := idx.reresolveNonGoEdges(currentFiles); err != nil {
+		if err := idx.reresolveNonGoEdges(ctx, currentFiles, recoveredEdges); err != nil {
 			return err
 		}
 	}
@@ -539,15 +547,36 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 }
 
 // reresolveNonGoEdges finishes an interrupted build's pass 2 without
-// emptying the graph (#391): it parses every non-Go file again for its raw
-// edges, deletes every edge that starts at a non-Go symbol and resolves the
-// raw edges against the symbols now stored, as a build's pass 2 does. The
-// Go pass rewrites Go-sourced edges itself.
-func (idx *Indexer) reresolveNonGoEdges(files []string) error {
+// emptying the graph (#391): it collects every non-Go file's raw edges
+// (from parsed, for the files this run already re-indexed, else by parsing
+// the file again), deletes every edge that starts at a non-Go symbol and
+// resolves the raw edges against the symbols now stored, as a build's pass
+// 2 does. The Go pass rewrites Go-sourced edges itself.
+//
+// ctx is checked every 64 parsed files and every 1024 resolved edges, so a
+// cancelled run (Env.Close) returns promptly. A cancel while parsing
+// returns before any edge is deleted; a cancel while resolving leaves part
+// of the non-Go edges stored, and the build_in_progress mark, still set,
+// makes the next run do this again.
+func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, parsed map[string][]RawEdge) error {
 	var raw []RawEdge
+	n := 0
 	for _, path := range files {
 		if DetectLanguage(path) == "go" {
 			continue
+		}
+		if edges, ok := parsed[path]; ok {
+			raw = append(raw, edges...)
+			continue
+		}
+		if n&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		n++
+		if testHookReresolveParse != nil {
+			testHookReresolveParse(path)
 		}
 		res, err := idx.parseFile(path)
 		if err != nil || res == nil {
@@ -558,10 +587,18 @@ func (idx *Indexer) reresolveNonGoEdges(files []string) error {
 		}
 		raw = append(raw, res.Edges...)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := idx.store.DeleteNonGoEdges(); err != nil {
 		return err
 	}
-	idx.resolveAndStoreEdges(raw)
+	for start := 0; start < len(raw); start += 1024 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		idx.resolveAndStoreEdges(raw[start:min(start+1024, len(raw))])
+	}
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,8 +129,10 @@ func graphCounts(t *testing.T, idx *Indexer) (files, symbols int) {
 // #391: an Update that finds an unfinished build must not empty the graph
 // and start over. Repeated short runs, each cancelled part-way (a user who
 // keeps opening and closing celeste chat), keep the files the earlier runs
-// indexed, index more, and the last one leaves the graph a clean build
-// would.
+// indexed and index more. Re-resolving the non-Go edges is not incremental
+// (it stops when ctx ends, so Env.Close does not wait for it), so the run
+// that finishes is one that outlasts it; that run leaves the graph a clean
+// build would.
 func TestUpdate_RepeatedCancellationMakesProgressAndKeepsGraph(t *testing.T) {
 	files := manyPyFiles(150)
 	ref, _ := buildFixture(t, files)
@@ -147,27 +150,89 @@ func TestUpdate_RepeatedCancellationMakesProgressAndKeepsGraph(t *testing.T) {
 	prevFiles, prevSyms := graphCounts(t, idx)
 	require.Positive(t, prevFiles)
 
-	finished := false
-	for run := 0; run < 10 && !finished; run++ {
+	for run := 0; run < 10 && prevFiles < len(files); run++ {
 		// Three checks pass: the entry, the scan's first file and the
 		// first re-indexed file; the next one cancels the run.
 		err := idx.UpdateWithContext(&failAfterCtx{Context: context.Background(), n: 3})
+		require.ErrorIs(t, err, context.Canceled)
 		nFiles, nSyms := graphCounts(t, idx)
 		require.GreaterOrEqual(t, nFiles, prevFiles, "run %d dropped indexed files", run)
 		require.GreaterOrEqual(t, nSyms, prevSyms, "run %d dropped symbols", run)
-		if err == nil {
-			finished = true
-			break
-		}
-		require.ErrorIs(t, err, context.Canceled)
 		mark, gerr := idx.store.GetMeta(metaBuildInProgress)
 		require.NoError(t, gerr)
 		require.NotNil(t, mark, "a cancelled recovery keeps the mark")
 		prevFiles, prevSyms = nFiles, nSyms
 	}
-	require.True(t, finished, "repeated short runs must finish the index")
+	require.Equal(t, len(files), prevFiles, "repeated short runs must index every file")
+
+	require.NoError(t, idx.Update())
 	assert.Equal(t, want, edgeKeys(t, idx))
 	mark, err := idx.store.GetMeta(metaBuildInProgress)
 	require.NoError(t, err)
 	assert.Nil(t, mark)
+}
+
+// #391 review: Env.Close cancels the index context and waits for the run,
+// so a recovering update must stop re-resolving non-Go edges when ctx ends
+// instead of parsing the whole repo first. A cancel while parsing must not
+// delete any edge, and the mark stays so the next run finishes the work.
+func TestUpdate_RecoveryReresolveStopsOnCancel(t *testing.T) {
+	files := manyPyFiles(400)
+	idx, _ := buildFixture(t, files)
+	want := edgeKeys(t, idx)
+	require.NoError(t, idx.store.SetMeta(metaBuildInProgress, []byte("killed-run")))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parsed := 0
+	testHookReresolveParse = func(string) {
+		parsed++
+		if parsed == 100 {
+			cancel()
+		}
+	}
+	t.Cleanup(func() { testHookReresolveParse = nil })
+
+	start := time.Now()
+	err := idx.UpdateWithContext(ctx)
+	elapsed := time.Since(start)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, parsed, 200, "the re-resolve must stop within a stride of the cancel")
+	assert.Less(t, elapsed, 5*time.Second)
+	assert.Equal(t, want, edgeKeys(t, idx), "a cancel while parsing deletes no edge")
+	mark, err := idx.store.GetMeta(metaBuildInProgress)
+	require.NoError(t, err)
+	assert.NotNil(t, mark, "a cancelled recovery keeps the mark")
+
+	testHookReresolveParse = nil
+	require.NoError(t, idx.Update())
+	assert.Equal(t, want, edgeKeys(t, idx))
+	mark, err = idx.store.GetMeta(metaBuildInProgress)
+	require.NoError(t, err)
+	assert.Nil(t, mark)
+}
+
+// A recovering update re-parses for the re-resolve only the files it did
+// not re-index itself in the same run.
+func TestUpdate_RecoveryReusesEdgesOfFilesItIndexed(t *testing.T) {
+	files := manyPyFiles(100)
+	ref, _ := buildFixture(t, files)
+	want := edgeKeys(t, ref)
+
+	ws := writeFixture(t, files)
+	idx, err := NewIndexer(ws, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	// The build stops inside pass 1, after its first stride of 64 files.
+	err = idx.BuildWithContext(&failAfterCtx{Context: context.Background(), n: 2})
+	require.ErrorIs(t, err, context.Canceled)
+	indexed, _ := graphCounts(t, idx)
+	require.Less(t, indexed, len(files))
+
+	parsed := 0
+	testHookReresolveParse = func(string) { parsed++ }
+	t.Cleanup(func() { testHookReresolveParse = nil })
+	require.NoError(t, idx.Update())
+	assert.Equal(t, indexed, parsed, "only the files indexed by earlier runs are parsed again")
+	assert.Equal(t, want, edgeKeys(t, idx))
 }

@@ -37,6 +37,10 @@ var (
 // the index lock held.
 var testHookAfterPass1 func()
 
+// testHookReresolveParse, when set, runs before a recovering update parses
+// a file again for its raw edges.
+var testHookReresolveParse func(path string)
+
 // indexLock is an exclusive OS file lock on the lock file next to an index
 // database. Build and Update hold it so two Indexers on one database (the
 // MCP server's, an MCP chat Env's, the TUI's or the CLI's, in one process

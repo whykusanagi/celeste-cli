@@ -24,10 +24,15 @@ database, and commits are lost newest first. A full build sets
 `meta.build_in_progress` before it empties the graph and clears it only after
 its last pass commits, and the Go pass does the same with
 `meta.go_pass_pending`. An `Update` that finds the first mark finishes the
-build without emptying the graph again: it keeps the files already indexed,
-indexes the missing or changed ones, resolves every non-Go edge again, reruns
-the Go pass and only then clears the mark, so repeated short runs (a chat
-opened and closed before a long build ends) each make progress. An `Update`
+build without resetting the graph: it keeps the files already indexed,
+indexes the missing or changed ones, rewrites every non-Go edge (it deletes
+them and resolves them again, so a reader can briefly see fewer non-Go
+edges), reruns the Go pass and only then clears the mark. Repeated short
+runs (a chat opened and closed before a long build ends) each index more
+files and keep what earlier runs stored. Rewriting the non-Go edges stops as
+soon as the run is cancelled, so closing a chat never waits for it; the run
+that clears the mark is the first one that lasts through it (`celeste index`
+does). An `Update`
 that finds the second mark reruns the Go pass. A build or update that was
 cancelled, killed or cut off by a power loss is finished by the next update
 rather than trusted because its file hashes match. Each mark holds a
