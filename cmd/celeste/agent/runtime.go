@@ -1235,17 +1235,6 @@ func completeState(state *RunState) {
 	state.UpdatedAt = now
 }
 
-func isCompletionResponse(content string, options Options) bool {
-	text := strings.TrimSpace(content)
-	if text == "" {
-		return false
-	}
-	if options.CompletionMarker != "" && strings.Contains(strings.ToUpper(text), strings.ToUpper(options.CompletionMarker)) {
-		return true
-	}
-	return !options.RequireCompletionMarker
-}
-
 func buildPlanningPrompt(state *RunState) string {
 	return fmt.Sprintf("Create a concise execution plan for this goal with 3-7 numbered steps. Include technical validation steps. Goal: %s", state.Goal)
 }
