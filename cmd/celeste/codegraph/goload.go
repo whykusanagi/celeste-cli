@@ -417,7 +417,7 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 func (l *goLoader) listModule(goBin, root string) {
 	ctx, cancel := context.WithTimeout(l.ctx, goListTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, goBin, "list", "-e", "-deps", "-test",
+	cmd := exec.CommandContext(ctx, goBin, "list", goListModFlag(root), "-e", "-deps", "-test",
 		"-json=ImportPath,Dir,GoFiles,ImportMap", "./...")
 	cmd.Dir = root
 	// os/exec keeps the last value of a duplicated variable, so these
@@ -447,6 +447,17 @@ func (l *goLoader) listModule(goBin, root string) {
 			l.importMaps[lp.Dir] = lp.ImportMap
 		}
 	}
+}
+
+// goListModFlag is the -mod flag for `go list` in the module at root. It is
+// always explicit so a GOFLAGS=-mod=mod in the user's environment cannot
+// rewrite the indexed module's go.mod/go.sum: vendor when the module is
+// vendored, readonly otherwise.
+func goListModFlag(root string) string {
+	if _, err := os.Stat(filepath.Join(root, "vendor", "modules.txt")); err == nil {
+		return "-mod=vendor"
+	}
+	return "-mod=readonly"
 }
 
 // goEnvGOROOT returns `go env GOROOT`, or "" on any failure.

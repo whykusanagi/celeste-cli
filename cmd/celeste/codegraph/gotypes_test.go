@@ -619,3 +619,13 @@ func TestGoTypes_UpdateNoticesGoModChanges(t *testing.T) {
 		assert.NotContains(t, k, "example.com/fx/", "stale qualified name after a module rename")
 	}
 }
+
+// go list never runs with the user's GOFLAGS=-mod=mod, which could rewrite
+// the indexed workspace's go.mod/go.sum.
+func TestGoListModFlag(t *testing.T) {
+	root := t.TempDir()
+	assert.Equal(t, "-mod=readonly", goListModFlag(root))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "vendor"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "vendor", "modules.txt"), nil, 0o644))
+	assert.Equal(t, "-mod=vendor", goListModFlag(root))
+}
