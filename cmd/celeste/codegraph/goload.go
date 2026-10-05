@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -385,6 +386,11 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 		dir = bp.Dir
 		names = bp.GoFiles
 	}
+	key := l.stdKey(dir)
+	if pkg := stdPkgs.get(key); pkg != nil {
+		e.pkg = pkg
+		return pkg, nil
+	}
 	var asts []*ast.File
 	for _, n := range names {
 		f, err := parser.ParseFile(l.fset, filepath.Join(dir, n), nil, parser.SkipObjectResolution)
@@ -406,8 +412,55 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 	e.pkg = pkg
 	if pkg == nil {
 		e.err = fmt.Errorf("type-check %s failed", p)
+	} else {
+		stdPkgs.put(key, pkg)
 	}
 	return e.pkg, e.err
+}
+
+// stdPkgs keeps type-checked standard-library packages for the life of the
+// process. They never change for one GOROOT, GOOS and GOARCH, and checking
+// them from source is most of an index run's time (and pushed the codegraph
+// tests past 20 minutes under -race on Windows). Only exported types are
+// looked up in them, never their positions, so sharing one across loaders
+// with different FileSets is safe.
+// ponytail: unbounded, a few hundred packages at most; evict if memory matters.
+var stdPkgs = &pkgCache{m: map[string]*types.Package{}}
+
+type pkgCache struct {
+	mu sync.Mutex
+	m  map[string]*types.Package
+}
+
+func (c *pkgCache) get(key string) *types.Package {
+	if key == "" {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.m[key]
+}
+
+func (c *pkgCache) put(key string, pkg *types.Package) {
+	if key == "" {
+		return
+	}
+	c.mu.Lock()
+	c.m[key] = pkg
+	c.mu.Unlock()
+}
+
+// stdKey is the cache key for a package directory inside GOROOT/src, or ""
+// for any other package (module code is not shared: it can change).
+func (l *goLoader) stdKey(dir string) string {
+	if l.bctx.GOROOT == "" {
+		return ""
+	}
+	src := filepath.Join(l.bctx.GOROOT, "src") + string(filepath.Separator)
+	if !strings.HasPrefix(dir+string(filepath.Separator), src) {
+		return ""
+	}
+	return l.bctx.GOOS + "/" + l.bctx.GOARCH + "|" + dir
 }
 
 // listModule records the directories and files of every package the module
