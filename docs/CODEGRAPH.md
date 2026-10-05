@@ -38,7 +38,8 @@ TUI's and `celeste index`. A build or update holds an exclusive OS file lock
 on `codegraph.db.lock` next to the database (`flock` on Linux and macOS,
 `LockFileEx` on Windows), so only one of them writes at a time. An update
 that finds the lock taken skips, since the other run brings the index up to
-date; an explicit build waits for it, up to two minutes. The OS releases the
+date; an explicit build waits for it, up to two minutes, and so does a
+rebuild or reset before it deletes the database files. The OS releases the
 lock when its process exits or is killed, so a lock file left behind never
 blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
 a reader waits for a writer's SQLite lock instead of failing. An index left

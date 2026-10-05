@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -282,13 +283,13 @@ func runIndexCommand(args []string) {
 		switch args[0] {
 		case "rebuild", "--rebuild":
 			// Delete and rebuild from scratch
+			// Removing waits for another celeste process that is writing
+			// the index rather than delete it under that process (#392).
 			dbPath := codegraph.DefaultIndexPath(cwd)
-			if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "Warning: could not remove old index: %v\n", err)
+			if err := codegraph.RemoveIndex(context.Background(), dbPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: could not remove old index: %v\n", err)
+				os.Exit(1)
 			}
-			// Remove WAL/SHM files too
-			os.Remove(dbPath + "-wal")
-			os.Remove(dbPath + "-shm")
 			fmt.Println("Old index removed. Rebuilding...")
 
 		case "status":
@@ -310,9 +311,10 @@ func runIndexCommand(args []string) {
 		case "reset":
 			// Delete index entirely
 			dbPath := codegraph.DefaultIndexPath(cwd)
-			os.Remove(dbPath)
-			os.Remove(dbPath + "-wal")
-			os.Remove(dbPath + "-shm")
+			if err := codegraph.RemoveIndex(context.Background(), dbPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: could not delete index: %v\n", err)
+				os.Exit(1)
+			}
 			fmt.Println("Index deleted for current project.")
 			return
 		}

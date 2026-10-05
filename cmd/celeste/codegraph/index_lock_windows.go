@@ -22,6 +22,9 @@ func lockFile(f *os.File) error {
 	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_IO_PENDING) {
 		return errLocked
 	}
+	if errors.Is(err, windows.ERROR_NOT_SUPPORTED) || errors.Is(err, windows.ERROR_INVALID_FUNCTION) {
+		return errLockUnsupported
+	}
 	return err
 }
 

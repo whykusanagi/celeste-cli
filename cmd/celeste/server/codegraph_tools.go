@@ -271,10 +271,11 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	// and the next chat call opens the rebuilt index.
 	s.chatEnvs.invalidate(workspace)
 
-	// Remove the existing db + WAL files so Build starts fresh.
-	dbPath := codegraph.DefaultIndexPath(workspace)
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		_ = removeIfExists(dbPath + suffix)
+	// Remove the existing db + WAL files so Build starts fresh. RemoveIndex
+	// takes the index lock first, so a TUI or CLI process that is writing
+	// this index finishes before its database is deleted (#392).
+	if err := codegraph.RemoveIndex(ctx, codegraph.DefaultIndexPath(workspace)); err != nil {
+		return nil, fmt.Errorf("remove index: %w", err)
 	}
 
 	idx, _, err := s.indexerFor(workspace)

@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -15,8 +17,13 @@ import (
 // holds the index's write lock (#392).
 var ErrIndexBusy = errors.New("the code graph index is being written by another indexer")
 
-// errLocked is what lockFile returns when another holder has the lock.
-var errLocked = errors.New("file is locked")
+// errLocked is what lockFile returns when another holder has the lock;
+// errLockUnsupported is what it returns when the file system cannot lock
+// files at all (some network file systems).
+var (
+	errLocked          = errors.New("file is locked")
+	errLockUnsupported = errors.New("file locking is not supported here")
+)
 
 // buildLockWait bounds how long an explicit Build waits for another
 // indexer's lock; lockPoll is how often it retries. Vars so tests can
@@ -45,21 +52,27 @@ func lockPath(dbPath string) string { return dbPath + ".lock" }
 
 // tryLockIndex takes the lock at path without waiting. It returns
 // ErrIndexBusy when another holder has it. A file system that cannot lock
-// files gets a lock that excludes nothing rather than no index at all.
+// files at all gets a lock that excludes nothing rather than no index; any
+// other locking error is returned, so writers never run unexcluded by
+// accident.
 func tryLockIndex(path string) (*indexLock, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open index lock: %w", err)
 	}
-	if err := lockFile(f); err != nil {
-		if errors.Is(err, errLocked) {
-			_ = f.Close()
-			return nil, ErrIndexBusy
-		}
+	switch err := lockFile(f); {
+	case err == nil:
+		return &indexLock{f: f}, nil
+	case errors.Is(err, errLocked):
+		_ = f.Close()
+		return nil, ErrIndexBusy
+	case errors.Is(err, errLockUnsupported):
 		_ = f.Close()
 		return &indexLock{}, nil
+	default:
+		_ = f.Close()
+		return nil, fmt.Errorf("lock index: %w", err)
 	}
-	return &indexLock{f: f}, nil
 }
 
 // unlock releases the lock. Safe on a nil or no-op lock.
@@ -82,7 +95,13 @@ func (idx *Indexer) acquireIndexLock(ctx context.Context, wait bool) (*indexLock
 	if idx.store.path == "" {
 		return &indexLock{}, nil
 	}
-	path := lockPath(idx.store.path)
+	return lockIndex(ctx, idx.store.path, wait)
+}
+
+// lockIndex takes the lock of the index database at dbPath, waiting as
+// acquireIndexLock describes.
+func lockIndex(ctx context.Context, dbPath string, wait bool) (*indexLock, error) {
+	path := lockPath(dbPath)
 	deadline := time.Now().Add(buildLockWait)
 	for {
 		l, err := tryLockIndex(path)
@@ -108,4 +127,27 @@ func newOwnerToken() string {
 		return fmt.Sprintf("pid%d-%d", os.Getpid(), time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// RemoveIndex deletes the index database at dbPath with its WAL and shared
+// memory files, for a rebuild or reset. It takes the index lock first,
+// waiting as an explicit Build does, so it never deletes a database another
+// indexer is writing; it returns ErrIndexBusy when the wait runs out.
+// Missing files are not an error. The caller closes its own Indexer on the
+// database first.
+func RemoveIndex(ctx context.Context, dbPath string) error {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return fmt.Errorf("index directory: %w", err)
+	}
+	lock, err := lockIndex(ctx, dbPath, true)
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(dbPath + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove index: %w", err)
+		}
+	}
+	return nil
 }

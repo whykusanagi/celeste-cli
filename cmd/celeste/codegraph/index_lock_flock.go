@@ -24,6 +24,8 @@ func lockFile(f *os.File) error {
 			continue
 		case errors.Is(err, unix.EWOULDBLOCK):
 			return errLocked
+		case errors.Is(err, unix.ENOLCK), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EOPNOTSUPP):
+			return errLockUnsupported
 		default:
 			return err
 		}

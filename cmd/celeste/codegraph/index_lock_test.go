@@ -229,3 +229,25 @@ func TestIndexLock_OtherProcessAndStaleLock(t *testing.T) {
 	require.NoError(t, err, "a stale lock from a dead process must not block")
 	assert.Equal(t, want, edgeKeys(t, idx))
 }
+
+// Removing an index (rebuild, reset) takes the same lock, so it never
+// deletes a database another indexer is writing.
+func TestRemoveIndex_WaitsForTheLock(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "cg.db")
+	store, err := NewStore(db)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	held, err := tryLockIndex(lockPath(db))
+	require.NoError(t, err)
+	shortLockWait(t, 200*time.Millisecond)
+	require.ErrorIs(t, RemoveIndex(context.Background(), db), ErrIndexBusy)
+	_, err = os.Stat(db)
+	require.NoError(t, err, "a locked index is not removed")
+
+	held.unlock()
+	require.NoError(t, RemoveIndex(context.Background(), db))
+	_, err = os.Stat(db)
+	assert.True(t, os.IsNotExist(err))
+	require.NoError(t, RemoveIndex(context.Background(), db), "removing a missing index is fine")
+}
