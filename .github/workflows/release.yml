@@ -5,13 +5,19 @@ on:
     tags:
       - 'v*'
   # Dry run (#376): Actions > Release > Run workflow, on any branch, no tag.
-  # Builds every target on its own runner and smoke-tests it there, keeps
-  # the binaries as workflow artifacts for a week, and publishes nothing:
-  # the release job below only runs for a pushed v* tag.
+  # Builds every target on its own runner and smoke-tests it there, and
+  # nothing leaves the runners: no artifacts, no release. The release job
+  # below only runs for a pushed v* tag.
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# One run per tag (or dry-run branch) at a time. A second run waits; a run
+# that is signing or publishing is never cancelled halfway.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # One job per target, each on a runner of that OS and architecture, so CGo
@@ -218,7 +224,10 @@ jobs:
             ;;
         esac
 
+    # Tag builds only: a dry-run binary carries the persona key but no
+    # signature, so it stays on its runner.
     - name: Upload binary
+      if: github.event_name == 'push'
       uses: actions/upload-artifact@v7
       with:
         name: celeste-${{ matrix.target }}

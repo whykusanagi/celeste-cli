@@ -77,7 +77,7 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
 - [ ] Version constants left for release-please (don't hand-edit the `x-release-please-version` markers)
 - [ ] Version-dependent tests assert against the version constant, not a literal (so the auto-bump doesn't break CI)
 - [ ] Merge to `main` → review the release-please PR's generated CHANGELOG + version → merge it (no tag or release is created)
-- [ ] **Release dry run** on the release-please branch or `main`: Actions → Release → Run workflow (or `gh workflow run release.yml --ref <branch>`). It builds all five binaries with CGo on their own runners and smoke-tests each one (`--version`, `index selfcheck`, `persona verify`, link check) without a tag, and publishes nothing. Every `Build` job must be green before tagging.
+- [ ] **Release dry run** on the release-please branch or `main`: Actions → Release → Run workflow (or `gh workflow run release.yml --ref <branch>`). It builds all five binaries with CGo on their own runners and smoke-tests each one (`--version`, `index selfcheck`, `persona verify`, link check) without a tag. Nothing leaves the runners: no artifacts, no release. Every `Build` job must be green before tagging.
 - [ ] **[owner]** Sign and push the tag on the merge commit with the signing subkey, then check it:
   ```bash
   git fetch origin

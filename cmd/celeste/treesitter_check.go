@@ -29,7 +29,7 @@ export function formatGreeting(who: string): string {
 namespace App\Auth;
 
 interface Validator {
-    public function validate(string $token): bool;
+    public function verify(string $token): bool;
 }
 
 final class SessionValidator implements Validator {
@@ -138,8 +138,14 @@ func treeSitterSelfCheck(dir string) error {
 	}
 	wantCall("run_jobs", "load_jobs")
 
-	// PHP, through the parser directly: the indexer's file walk decides
-	// separately which extensions it indexes.
+	// PHP. Once the indexer's file walk takes .php files, the graph must
+	// show what tree-sitter extracts; until then the parser is checked
+	// directly, so the parsers are proven either way.
+	if codegraph.IsIndexableFile("auth.php") {
+		wantKind("Validator", codegraph.SymbolInterface)
+		wantKind("checkToken", codegraph.SymbolMethod)
+		wantCall("validate", "checkToken")
+	}
 	php, err := parseFixture(repo, "src/auth.php")
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("parse auth.php: %v", err))

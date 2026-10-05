@@ -10,7 +10,11 @@ import (
 )
 
 type workflowFile struct {
-	On   map[string]any `yaml:"on"`
+	On          map[string]any `yaml:"on"`
+	Concurrency struct {
+		Group            string `yaml:"group"`
+		CancelInProgress bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
 	Jobs map[string]struct {
 		If       string `yaml:"if"`
 		Needs    any    `yaml:"needs"`
@@ -22,6 +26,7 @@ type workflowFile struct {
 		} `yaml:"strategy"`
 		Steps []struct {
 			Name string            `yaml:"name"`
+			If   string            `yaml:"if"`
 			Uses string            `yaml:"uses"`
 			Run  string            `yaml:"run"`
 			Env  map[string]string `yaml:"env"`
@@ -115,6 +120,17 @@ func TestReleaseWorkflowDryRunNeverPublishes(t *testing.T) {
 	}
 	if len(publishers) == 0 {
 		t.Error("release.yml has no publish job")
+	}
+	// A dry-run binary carries the persona key but no signature: it never
+	// leaves the runner that built it.
+	for _, s := range wf.Jobs["build"].Steps {
+		if strings.HasPrefix(s.Uses, "actions/upload-artifact") && !strings.Contains(s.If, "github.event_name == 'push'") {
+			t.Errorf("step %q uploads binaries on a dry run (if %q)", s.Name, s.If)
+		}
+	}
+	// One run per tag at a time, and a publish is never cancelled midway.
+	if !strings.Contains(wf.Concurrency.Group, "github.ref") || wf.Concurrency.CancelInProgress {
+		t.Errorf("release.yml concurrency = %+v, want a group per ref that never cancels a run in progress", wf.Concurrency)
 	}
 }
 
