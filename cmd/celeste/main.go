@@ -433,7 +433,7 @@ func (a *TUIClientAdapter) applySystemPrompt() {
 		GitSnapshot:    a.gitSnapshot,
 		Memories:       a.memories,
 	})
-	a.client.SetSystemPrompt(p.String())
+	a.client.SetSystemPromptParts(p.Static, p.Dynamic)
 	a.promptSet, a.promptWindow = true, window
 	// A compose on chat's own profile drops a pending notice from an earlier
 	// step-down that no longer applies.
@@ -1742,7 +1742,7 @@ func runSingleMessage(message string) {
 	if sp.Notice != "" {
 		fmt.Fprintln(os.Stderr, prompts.NoticePrefix+sp.Notice)
 	}
-	client.SetSystemPrompt(sp.String())
+	client.SetSystemPromptParts(sp.Static, sp.Dynamic)
 
 	// Send message. Cancel-only ctx; the client owns the per-attempt deadline
 	// (cfg.GetTimeout()) so timeout retries get a fresh, non-expired context.

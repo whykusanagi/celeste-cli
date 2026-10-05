@@ -31,6 +31,11 @@ type Client struct {
 	registry     *tools.Registry
 	backendType  BackendType
 	systemPrompt string
+	// systemStatic and systemDynamic are systemPrompt's parts when it was
+	// set with SetSystemPromptParts; a prompt set whole is all
+	// systemDynamic.
+	systemStatic  string
+	systemDynamic string
 	// thinking is the last SetThinkingConfig, re-applied when UpdateConfig
 	// rebuilds the backend. nil: never set.
 	thinking *ThinkingConfig
@@ -157,14 +162,51 @@ func newBackend(config *Config, registry *tools.Registry, bt BackendType) (LLMBa
 	}
 }
 
-// SetSystemPrompt sets the system prompt (Celeste persona).
+// SetSystemPrompt sets the system prompt (Celeste persona) as one piece.
 func (c *Client) SetSystemPrompt(prompt string) {
+	c.SetSystemPromptParts("", prompt)
+}
+
+// systemPromptPartsSetter is a backend that caches the static part of the
+// system prompt apart from the dynamic rest (Anthropic, #309).
+type systemPromptPartsSetter interface {
+	SetSystemPromptParts(static, dynamic string)
+}
+
+// JoinSystemPrompt is the whole prompt for its static and dynamic parts:
+// the bytes prompts.Prompt.String makes.
+func JoinSystemPrompt(static, dynamic string) string {
+	switch {
+	case static == "":
+		return dynamic
+	case dynamic == "":
+		return static
+	}
+	return static + "\n\n" + dynamic
+}
+
+// SetSystemPromptParts sets the system prompt from prompts.Compose's
+// parts: the byte-stable persona (Prompt.Static) and the rest
+// (Prompt.Dynamic). A backend that caches the persona on its own gets the
+// parts; the others get JoinSystemPrompt's whole prompt.
+func (c *Client) SetSystemPromptParts(static, dynamic string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.systemPrompt = prompt
-	if c.backend != nil {
-		c.backend.SetSystemPrompt(prompt)
+	c.systemPrompt = JoinSystemPrompt(static, dynamic)
+	c.systemStatic, c.systemDynamic = static, dynamic
+	c.applySystemPromptLocked()
+}
+
+// applySystemPromptLocked hands the prompt to the backend. c.mu is held.
+func (c *Client) applySystemPromptLocked() {
+	if c.backend == nil {
+		return
 	}
+	if ps, ok := c.backend.(systemPromptPartsSetter); ok {
+		ps.SetSystemPromptParts(c.systemStatic, c.systemDynamic)
+		return
+	}
+	c.backend.SetSystemPrompt(c.systemPrompt)
 }
 
 // SystemPrompt returns the prompt last set with SetSystemPrompt.
@@ -222,7 +264,7 @@ func (c *Client) UpdateConfig(config *Config) {
 	c.config = config
 	c.backend, c.backendType = backend, built
 	if c.systemPrompt != "" {
-		c.backend.SetSystemPrompt(c.systemPrompt)
+		c.applySystemPromptLocked()
 	}
 	if c.thinking != nil {
 		c.backend.SetThinkingConfig(*c.thinking)

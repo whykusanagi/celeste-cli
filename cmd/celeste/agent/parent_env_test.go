@@ -74,7 +74,7 @@ func TestAgentParentEnvIsSharedNotRebuilt(t *testing.T) {
 		}
 		r.Close()
 	}
-	if n := strings.Count(warns.all(), "skipping"); n != 1 {
+	if n := strings.Count(warns.all(), "hooks: skipping"); n != 1 {
 		t.Fatalf("hooks loaded %d times, want once:\n%s", n, warns.all())
 	}
 	if _, err := os.Stat(record); !os.IsNotExist(err) {

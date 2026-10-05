@@ -21,11 +21,18 @@ import (
 type AnthropicBackend struct {
 	client *anthropic.Client
 	config *Config
-	// mu guards systemPrompt, thinkingConfig, bindingControls and
-	// promptChanged: the client sets the prompt and thinking config while
-	// a request may be building.
-	mu             sync.Mutex
+	// mu guards systemPrompt, systemStatic, systemDynamic, thinkingConfig,
+	// bindingControls and promptChanged: the client sets the prompt and
+	// thinking config while a request may be building.
+	mu sync.Mutex
+	// systemPrompt is the whole prompt, systemStatic + "\n\n" +
+	// systemDynamic when both are set (prompts.Prompt.String). The request
+	// sends the two parts as separate blocks, the static one a cache
+	// breakpoint, so a change to the dynamic part keeps the persona cached
+	// (#309). A prompt set whole is all systemDynamic.
 	systemPrompt   string
+	systemStatic   string
+	systemDynamic  string
 	thinkingConfig ThinkingConfig
 	// bindingControls: send the thinking-binding beta with drop_block on
 	// requests that replay thinking (2.0 W2 ruling 6). Set for Anthropic's
@@ -67,13 +74,22 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 // a previous prompt makes the next request drop replayed blocks: their
 // signatures cover the old prompt (2.0 W2 ruling 10).
 func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
+	b.SetSystemPromptParts("", prompt)
+}
+
+// SetSystemPromptParts sets the system prompt as its byte-stable static
+// part (the persona, prompts.Prompt.Static) and the dynamic rest (user
+// identity, sliders, project context, git, date). Requests carry a cache
+// breakpoint right after the static part (#309).
+func (b *AnthropicBackend) SetSystemPromptParts(static, dynamic string) {
+	prompt := JoinSystemPrompt(static, dynamic)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.systemPrompt != "" && prompt != b.systemPrompt {
 		b.promptChanged = true
 		b.promptGen++
 	}
-	b.systemPrompt = prompt
+	b.systemPrompt, b.systemStatic, b.systemDynamic = prompt, static, dynamic
 }
 
 // SetThinkingConfig configures extended thinking for Claude models.
@@ -251,7 +267,7 @@ func (b *AnthropicBackend) build(messages []tui.ChatMessage, tools []tui.SkillDe
 
 	// Set system prompt with cache control on the static prefix.
 	if b.systemPrompt != "" {
-		params.System = b.buildSystemBlocks(b.systemPrompt)
+		params.System = buildSystemBlocks(b.systemStatic, b.systemDynamic)
 	}
 
 	// Convert tools.
@@ -412,37 +428,23 @@ func applyCacheBreakpoints(params *anthropic.MessageNewParams) {
 	}
 }
 
-// buildSystemBlocks creates system prompt text blocks with prompt caching.
-// The system prompt is split: the first block gets cache_control for
-// Anthropic's prompt caching, so the static persona/grimoire stays cached
-// across turns.
-func (b *AnthropicBackend) buildSystemBlocks(prompt string) []anthropic.TextBlockParam {
-	// Try to split on the static/dynamic system-prompt separator convention.
-	separator := "\n\n---\n\n"
-	if idx := strings.Index(prompt, separator); idx > 0 {
-		staticPrefix := prompt[:idx]
-		dynamicSuffix := prompt[idx+len(separator):]
-
-		blocks := []anthropic.TextBlockParam{
-			{
-				Text:         staticPrefix,
-				CacheControl: anthropic.NewCacheControlEphemeralParam(),
-			},
-		}
-		if dynamicSuffix != "" {
-			blocks = append(blocks, anthropic.TextBlockParam{
-				Text: dynamicSuffix,
-			})
-		}
-		return blocks
-	}
-
-	// No separator found — single block with cache control.
-	return []anthropic.TextBlockParam{
-		{
-			Text:         prompt,
+// buildSystemBlocks is the system prompt as text blocks: the static part
+// with a cache_control breakpoint, then the dynamic part without one. The
+// cached prefix (tools, then system) then ends at the persona, so a change
+// to the user identity, sliders, project context or date re-writes only
+// what follows it (#309). The newest messages' breakpoints cover the
+// dynamic block, so the request carries at most four. With one part
+// empty, the other is the only block and carries the breakpoint.
+func buildSystemBlocks(static, dynamic string) []anthropic.TextBlockParam {
+	if static == "" || dynamic == "" {
+		return []anthropic.TextBlockParam{{
+			Text:         static + dynamic,
 			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		},
+		}}
+	}
+	return []anthropic.TextBlockParam{
+		{Text: static, CacheControl: anthropic.NewCacheControlEphemeralParam()},
+		{Text: dynamic},
 	}
 }
 

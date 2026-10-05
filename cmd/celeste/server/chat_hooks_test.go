@@ -201,7 +201,7 @@ func TestMCPChatLoopChecksThePrompt(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(env.Close)
-		return newChatLoop(cfg.CelesteConfig, newChatClient(cfg.CelesteConfig, env.Registry, ""), env, "", "s")
+		return newChatLoop(cfg.CelesteConfig, newChatClient(cfg.CelesteConfig, env.Registry, "", ""), env, "", "s")
 	}
 	if build().CheckPrompt != nil {
 		t.Fatal("a loop without UserPromptSubmit hooks checks prompts")
