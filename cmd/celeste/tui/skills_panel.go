@@ -84,11 +84,11 @@ func (s SkillsModel) collapsedView() string {
 	case s.executingSkill != "":
 		return SkillExecutingStyle.Render(" ⚙ " + s.executingSkill + "…")
 	case s.lastError != "":
-		return SkillErrorStyle.Render(" ⚙ " + safeLabel(s.lastErrorSkill) + ": " + fitWidth(s.lastError, 80))
+		return SkillErrorStyle.Render(" ⚙ " + safeLabel(s.lastErrorSkill) + ": " + fitRow(s.lastError, 80))
 	case s.lastCompleted != "":
 		return SkillCompletedStyle.Render(" ⚙ " + s.lastCompleted + " ✓")
 	case !s.skillsEnabled && s.disabledReason != "":
-		return SkillErrorStyle.Render(" ⚙ skills off: " + fitWidth(s.disabledReason, 90))
+		return SkillErrorStyle.Render(" ⚙ skills off: " + fitRow(s.disabledReason, 90))
 	default:
 		return ""
 	}
@@ -110,13 +110,13 @@ func (s SkillsModel) View() string {
 	if s.executingSkill != "" {
 		lines = append(lines, SkillExecutingStyle.Render("Executing: "+s.executingSkill))
 	} else if s.lastError != "" {
-		lines = append(lines, SkillErrorStyle.Render("Last error ("+safeLabel(s.lastErrorSkill)+"): "+fitWidth(s.lastError, 80)))
+		lines = append(lines, SkillErrorStyle.Render("Last error ("+safeLabel(s.lastErrorSkill)+"): "+fitRow(s.lastError, 80)))
 	} else if s.lastCompleted != "" {
 		lines = append(lines, SkillCompletedStyle.Render("Last completed: "+s.lastCompleted))
 	}
 
 	if !s.skillsEnabled && s.disabledReason != "" {
-		lines = append(lines, "Reason: "+fitWidth(s.disabledReason, 90))
+		lines = append(lines, "Reason: "+fitRow(s.disabledReason, 90))
 	}
 
 	if hint := skillsInputHint(s.currentInput, s.nsfw, s.skillsEnabled); hint != "" {

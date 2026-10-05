@@ -2372,7 +2372,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Model != "" {
 				reviewer = msg.Model
 			}
-			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, fitWidth(msg.Text, 60))
+			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, fitRow(msg.Text, 60))
 			if msg.Duration > 0 || msg.InputTokens > 0 {
 				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
 			}
@@ -2387,7 +2387,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Model != "" {
 				model = msg.Model
 			}
-			entry := fmt.Sprintf("🛡 [%s] %s", model, fitWidth(msg.Text, 60))
+			entry := fmt.Sprintf("🛡 [%s] %s", model, fitRow(msg.Text, 60))
 			if msg.Duration > 0 || msg.InputTokens > 0 {
 				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
 			}

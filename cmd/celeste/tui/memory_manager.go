@@ -240,7 +240,7 @@ func (m MemoryManagerModel) View() string {
 		}
 
 		line := fmt.Sprintf(" %s %-30s  %s%s%s",
-			badge, fitWidth(mem.Name, 30), fitWidth(mem.Description, 40), age, staleMarker)
+			badge, fitRow(mem.Name, 30), fitRow(mem.Description, 40), age, staleMarker)
 
 		if isCursor {
 			if m.confirmed == i {

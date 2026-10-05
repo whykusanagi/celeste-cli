@@ -54,3 +54,11 @@ func padRight(s string, w int) string {
 	}
 	return s
 }
+
+// fitRow is fitWidth for a field that must stay on one row (an error, a
+// description, a review line): it joins the lines of s, and any run of
+// whitespace, into single spaces before the cut, so a multi-line value
+// such as bash stderr cannot grow the row.
+func fitRow(s string, w int) string {
+	return fitWidth(collapseSpace(s), w)
+}

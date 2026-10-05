@@ -123,5 +123,5 @@ func (m *AppModel) recordSessionMessage(role, content string) {
 }
 
 func truncateQueued(s string) string {
-	return fitWidth(strings.ReplaceAll(s, "\n", " "), 80)
+	return fitRow(s, 80)
 }
