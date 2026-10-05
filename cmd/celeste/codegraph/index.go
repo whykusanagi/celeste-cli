@@ -288,6 +288,9 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 		if err := idx.indexGo(ctx, goFiles, nil); err != nil {
 			return err
 		}
+	} else if err := idx.store.DeleteMeta(metaGoPassPending); err != nil {
+		// No Go pass ran, so a mark left by an earlier killed one is stale.
+		return fmt.Errorf("clear go pass mark: %w", err)
 	}
 
 	// Persist the MinHasher seeds so a subsequent process can restore
