@@ -76,8 +76,6 @@ type Config struct {
 	// nothing for minutes (#359). Zero, or anything up to Timeout, means
 	// Timeout covers the first byte too. FirstByteBudget applies the cap.
 	FirstByteTimeout time.Duration
-	SimulateTyping   bool
-	TypingSpeed      int // chars per second
 
 	// Google Cloud authentication (for Gemini/Vertex AI)
 	GoogleCredentialsFile string // Path to service account JSON file
@@ -103,8 +101,6 @@ func ConfigFrom(cfg *config.Config) *Config {
 		Model:                 cfg.Model,
 		Timeout:               cfg.GetTimeout(),
 		FirstByteTimeout:      cfg.GetFirstByteTimeout(),
-		SimulateTyping:        cfg.SimulateTyping,
-		TypingSpeed:           cfg.TypingSpeed,
 		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
 		GoogleUseADC:          cfg.GoogleUseADC,
 		ContextLimit:          cfg.ContextLimit,
