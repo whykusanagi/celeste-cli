@@ -434,3 +434,32 @@ func writeFile(t *testing.T, dir, name, content string) {
 	err := os.WriteFile(path, []byte(content), 0644)
 	require.NoError(t, err)
 }
+
+// Two files each declare run(); each run's calls stay attached to its own
+// run, not to whichever run was stored first.
+func TestIndexer_EdgeSourceResolvesInOwnFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.py", "def run():\n    alpha()\n\ndef alpha():\n    pass\n")
+	writeFile(t, dir, "b.py", "def run():\n    beta()\n\ndef beta():\n    pass\n")
+
+	idx, err := NewIndexer(dir, filepath.Join(dir, "codegraph-src.db"))
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+
+	syms, err := idx.Store().GetSymbolsByFile("b.py")
+	require.NoError(t, err)
+	var betaID int64
+	for _, s := range syms {
+		if s.Name == "beta" {
+			betaID = s.ID
+		}
+	}
+	require.NotZero(t, betaID)
+	in, err := idx.Store().GetEdgesTo(betaID)
+	require.NoError(t, err)
+	require.Len(t, in, 1)
+	src, err := idx.Store().GetSymbol(in[0].SourceID)
+	require.NoError(t, err)
+	assert.Equal(t, "b.py", src.File, "beta's caller is b.py's run")
+}

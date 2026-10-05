@@ -428,6 +428,9 @@ func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
 		ContentHash: hash,
 	})
 
+	for i := range result.Edges {
+		result.Edges[i].SourceFile = relPath
+	}
 	return result.Edges, nil
 }
 
@@ -436,19 +439,30 @@ func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
 // has run over all files, ensuring every target symbol is already present.
 func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
 	for _, edge := range edges {
-		sourceID, ok1 := idx.store.GetSymbolIDByName(edge.SourceName)
-		targetID, ok2 := idx.store.GetSymbolIDByName(edge.TargetName)
+		sourceID, ok1 := idx.store.GetSymbolIDByNameInFile(edge.SourceName, edge.SourceFile)
+		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
 		// Try unqualified name: "pkg.Func" -> "Func"
 		if !ok2 {
 			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
 				unqualified := edge.TargetName[dotIdx+1:]
-				targetID, ok2 = idx.store.GetSymbolIDByName(unqualified)
+				targetID, ok2 = idx.resolveTarget(unqualified, edge.Kind, edge.SourceFile)
 			}
 		}
 		if ok1 && ok2 {
 			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
 		}
 	}
+}
+
+// resolveTarget looks up an edge's target by name. A call resolves to a
+// callable first and to one in the caller's file next, so a call to a
+// common name such as get() does not land on an import or a type that
+// happened to be stored first.
+func (idx *Indexer) resolveTarget(name string, kind EdgeKind, fromFile string) (int64, bool) {
+	if kind == EdgeCalls {
+		return idx.store.GetCallableIDByName(name, fromFile)
+	}
+	return idx.store.GetSymbolIDByNameInFile(name, fromFile)
 }
 
 // indexFile parses a single file and stores its symbols, edges, and MinHash.
@@ -528,18 +542,15 @@ func (idx *Indexer) indexFile(relPath string) error {
 		if !ok1 {
 			sourceID, ok1 = idx.store.GetSymbolIDByName(edge.SourceName)
 		}
-		targetID, ok2 := symbolIDs[edge.TargetName]
-		if !ok2 {
-			targetID, ok2 = idx.store.GetSymbolIDByName(edge.TargetName)
-		}
+		// The target goes through the store rather than symbolIDs: this
+		// file's symbols are already stored, and resolveTarget prefers
+		// them, but it also prefers a callable over a same-named import.
+		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, relPath)
 		// Try unqualified name: "pkg.Func" -> "Func"
 		if !ok2 {
 			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
 				unqualified := edge.TargetName[dotIdx+1:]
-				targetID, ok2 = symbolIDs[unqualified]
-				if !ok2 {
-					targetID, ok2 = idx.store.GetSymbolIDByName(unqualified)
-				}
+				targetID, ok2 = idx.resolveTarget(unqualified, edge.Kind, relPath)
 			}
 		}
 		if ok1 && ok2 {

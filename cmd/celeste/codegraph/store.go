@@ -417,6 +417,38 @@ func (s *Store) GetSymbolIDByName(name string) (int64, bool) {
 	return id, true
 }
 
+// GetCallableIDByName resolves a call target by name. Among symbols with
+// that name it prefers a callable (function, method or class) over any other
+// kind, so a call to get() does not land on an import or a var named get;
+// among those it prefers one in preferFile, the caller's own file. A name
+// with no callable still resolves to whatever has it, which keeps Go type
+// conversions such as Celsius(x) as edges.
+func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?
+		ORDER BY CASE WHEN kind IN ('function', 'method', 'class') THEN 0 ELSE 1 END,
+			CASE WHEN file = ? THEN 0 ELSE 1 END,
+			id
+		LIMIT 1`, name, preferFile).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// GetSymbolIDByNameInFile returns the ID of the symbol with this name,
+// preferring one declared in file over one stored first elsewhere.
+func (s *Store) GetSymbolIDByNameInFile(name, file string) (int64, bool) {
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?
+		ORDER BY CASE WHEN file = ? THEN 0 ELSE 1 END, id
+		LIMIT 1`, name, file).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // UpdateMinHash stores the MinHash signature for a symbol.
 func (s *Store) UpdateMinHash(symbolID int64, sig MinHashSignature) error {
 	blob := encodeMinHash(sig)

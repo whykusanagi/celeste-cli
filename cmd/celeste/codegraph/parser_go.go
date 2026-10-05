@@ -21,6 +21,10 @@ type RawEdge struct {
 	SourceName string
 	TargetName string
 	Kind       EdgeKind
+	// SourceFile is the workspace-relative file the edge was parsed from.
+	// Parsers leave it empty; the indexer sets it so both ends resolve
+	// against that file's symbols before any same-named symbol elsewhere.
+	SourceFile string
 }
 
 // GoParser extracts symbols and edges from Go source files using go/ast.
