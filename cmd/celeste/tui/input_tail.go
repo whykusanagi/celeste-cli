@@ -22,25 +22,32 @@ import (
 // Such a run can only follow a burst whose last delivered key was not a
 // rune run: the held run is a whole run, cut off by the space or newline
 // before it. So after such a burst overflowed, the first rune run is held
-// for a burst window and settled by what comes with it, from the same
-// read or the same burst:
+// and settled by what comes with it. Keys parsed from one read reach the
+// input back to back (within sameReadGap); keys typed by hand are separate
+// reads, further apart:
 //
-//   - nothing: the paste's last word and the key typed after it, glued
-//     into one message; only the typed key, its last rune, is inserted
-//     (a single rune is all typed);
-//   - another rune run (after any spaces): a new paste, or fast typing;
-//     everything held is inserted;
-//   - spaces, then nothing: the paste's last word and a typed space; the
-//     space is inserted. A single held rune is kept with it: someone
-//     typing one letter and a space fast;
-//   - any other key (Enter, an arrow, Esc): the paste's last word alone;
-//     dropped, and the key acts as usual.
+//   - nothing more from its read: the paste's last word and the key typed
+//     after it, glued into one message; only the typed key, its last rune,
+//     is inserted (a single rune is all typed), and the next typed key
+//     acts as usual;
+//   - spaces from its read and then more of the same read: a new
+//     unbracketed paste; everything held is inserted;
+//   - spaces from its read and then nothing more: the paste's last word
+//     and a typed space; the space is inserted. A single held rune is kept
+//     with it: someone typing one letter and a space;
+//   - any other key from its read (Enter, an arrow, Esc): the paste's last
+//     word alone; dropped, and the key acts as usual.
 //
 // The reader's messages carry no read boundaries, so two cases stay
 // ambiguous and are settled for the likelier one: a held word glued to the
 // first word of a second unbracketed paste is kept (it reads as that
 // paste), and several characters committed at once as the very first
 // input after such an overflow (an input method) keep only their last.
+
+// sameReadGap: keys closer together than this were parsed from one read.
+// The reader hands them over back to back; hands on a keyboard take far
+// longer between two reads.
+const sameReadGap = 8 * time.Millisecond
 
 // tailSettleMsg settles held keys once a burst window has passed with no
 // other key (the tick for tailSeq seq).
@@ -73,7 +80,7 @@ func (m *InputModel) tailTick(now time.Time) tea.Cmd {
 // routing it, so a key another view takes (Esc, Ctrl+C, PgUp) settles them
 // too. A space the input would hold is left for the input's Update.
 func (m InputModel) SettleTail(k tea.KeyMsg) InputModel {
-	if m.tailPending == nil || (k.Type == tea.KeySpace && keyClock().Sub(m.tailAt) < burstWindow) {
+	if m.tailPending == nil || (k.Type == tea.KeySpace && keyClock().Sub(m.tailAt) < sameReadGap) {
 		return m
 	}
 	m, _, _ = m.settleTail(k)
@@ -81,14 +88,15 @@ func (m InputModel) SettleTail(k tea.KeyMsg) InputModel {
 }
 
 // settleTail settles held keys by k. held reports that k was held with
-// them (a space inside the window), with the tick that settles them.
+// them (a space from their read), with the tick that settles them.
 func (m InputModel) settleTail(k tea.KeyMsg) (_ InputModel, held bool, cmd tea.Cmd) {
 	if m.tailPending == nil {
 		return m, false, nil
 	}
 	now := keyClock()
 	switch {
-	case now.Sub(m.tailAt) >= burstWindow:
+	case now.Sub(m.tailAt) >= sameReadGap:
+		// k is another read: typing. The held keys came alone.
 		m.settleTailQuiet()
 	case k.Type == tea.KeySpace:
 		m.tailSpaces++
@@ -102,8 +110,8 @@ func (m InputModel) settleTail(k tea.KeyMsg) (_ InputModel, held bool, cmd tea.C
 	return m, false, nil
 }
 
-// settleTailQuiet settles held keys after a burst window with no other
-// key.
+// settleTailQuiet settles held keys that came with nothing more from
+// their read.
 func (m *InputModel) settleTailQuiet() {
 	runes, spaces := m.tailPending, m.tailSpaces
 	if runes == nil {

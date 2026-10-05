@@ -299,3 +299,21 @@ func TestAppOverflowHeldTailThenPgUp(t *testing.T) {
 	assert.Nil(t, m.input.tailPending)
 	assert.Equal(t, "BASE ", m.input.Value())
 }
+
+// Review: a key typed right after the glued one (a separate read, inside
+// the burst window) is typing too; the held word still never lands.
+func TestInputOverflowHeldTailFastTyping(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m, r := tailInput(t, move, rowPaste(40_960))
+	require.NotEmpty(t, r.held)
+	for _, k := range r.read("x") {
+		m, _ = m.Update(k)
+	}
+	for _, s := range []string{"y", " ", "z"} {
+		move(20 * time.Millisecond)
+		for _, k := range r.read(s) {
+			m, _ = m.Update(k)
+		}
+	}
+	assert.Equal(t, "BASE xy z", m.Value())
+}

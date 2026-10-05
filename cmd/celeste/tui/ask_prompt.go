@@ -248,6 +248,9 @@ func (m AskPromptModel) optionsView() string {
 func optionRows(prefix string, opt AskOption, width int, label, desc lipgloss.Style) string {
 	indent := lipgloss.Width(prefix)
 	head := prefix + opt.Label
+	if strings.TrimSpace(opt.Description) == "" {
+		opt.Description = ""
+	}
 	if width <= 0 || lipgloss.Width(head)+2+lipgloss.Width(opt.Description) <= width {
 		out := label.Render(head)
 		if opt.Description != "" {

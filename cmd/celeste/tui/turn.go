@@ -280,6 +280,7 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 				m.contextTracker.CurrentTokens -= msg.Saved
 			}
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			m = m.syncContextBar() // K1: the bar follows the header
 		}
 		m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Line)
 		LogInfo("context compacted: " + msg.Line)

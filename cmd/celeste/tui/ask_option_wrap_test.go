@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -46,4 +48,12 @@ func TestAskOptionDescriptionHangs(t *testing.T) {
 			assert.Contains(t, flat, "then start on the first step right away.", frame)
 		})
 	}
+}
+
+// Review: a description of only spaces, too long for the row, renders as
+// none instead of panicking.
+func TestAskOptionBlankDescription(t *testing.T) {
+	plain := lipgloss.NewStyle()
+	out := optionRows("› ", AskOption{Label: "Approve", Description: strings.Repeat(" ", 200)}, 80, plain, plain)
+	assert.Equal(t, "› Approve", out)
 }

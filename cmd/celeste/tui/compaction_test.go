@@ -341,3 +341,14 @@ func TestCompactUpdatesContextBar(t *testing.T) {
 		})
 	}
 }
+
+// Review: a prune during a turn (CompactedMsg) moves the bar with the
+// header too.
+func TestTurnCompactionUpdatesContextBar(t *testing.T) {
+	m, _ := newCompactTestApp(t)
+	m, _ = step(t, m, SendMessageMsg{Content: "go"})
+	m, _ = step(t, m, ContextBudgetMsg{UsedTokens: 50_000, MaxTokens: 100_000, UsagePercent: 50})
+	m, _ = feed(t, m, CompactedMsg{Line: "pruned", Saved: 20_000})
+	assert.Equal(t, 30_000, m.contextTracker.CurrentTokens)
+	assert.Equal(t, 30_000, m.contextBar.usedTokens)
+}
