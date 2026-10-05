@@ -253,6 +253,7 @@ func (m *InputModel) admit(runes []rune, bracketed bool) bool {
 		m.restoreBurstBase()
 		m.burstBaseOK = false
 		m.overflowAt = keyClock()
+		m.tailArmed, m.tailOpen = true, false
 	}
 	return false
 }
@@ -262,6 +263,7 @@ func (m *InputModel) admit(runes []rune, bracketed bool) bool {
 func (m *InputModel) clearNotice() {
 	m.notice = ""
 	m.overflowAt = time.Time{}
+	m.tailArmed = false
 	m.valueReplaced()
 }
 

@@ -600,7 +600,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// And the clipboard text Ctrl+V read, and the input's redraw after
 	// a burst: they belong to the input whichever view shows (#358).
 	switch msg.(type) {
-	case clipboardPasteMsg, inputRedrawMsg:
+	case clipboardPasteMsg, inputRedrawMsg, tailSettleMsg:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m.skills = m.skills.SetCurrentInput(m.input.Value())
@@ -808,6 +808,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// A key settles the held tail of an overflowed paste whichever
+		// view takes it (K3).
+		m.input = m.input.SettleTail(msg)
 		// If permission prompt is active, route keys to it first
 		if m.permissionPrompt.Active() {
 			var cmd tea.Cmd

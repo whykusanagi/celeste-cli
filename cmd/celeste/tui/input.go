@@ -104,6 +104,13 @@ type InputModel struct {
 	deferView     bool      // A burst is landing: View may show the last render
 	redrawPending bool      // An inputRedrawMsg is on its way
 	rendered      *inputRender
+	// The held tail of an overflowed paste (K3), see input_tail.go.
+	tailArmed   bool      // No key has arrived since the overflow's burst ended
+	tailOpen    bool      // The burst's last key was not a rune run
+	tailPending []rune    // The first rune run after the burst, held to settle
+	tailSpaces  int       // Spaces that came right after tailPending, held too
+	tailAt      time.Time // When the last held key arrived
+	tailSeq     int       // Which settle tick is the held keys'
 }
 
 // NewInputModel creates a new input model using textarea for word-wrap support.
@@ -205,7 +212,17 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		m.textArea, cmd = m.textArea.Update(msg)
 		return m, cmd
 
+	case tailSettleMsg:
+		if msg.seq == m.tailSeq {
+			m.settleTailQuiet()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		var held bool
+		if m, held, cmd = m.settleTail(msg); held {
+			return m, cmd
+		}
 		m.deferView = false
 		now := keyClock()
 		prevKeyAt := m.lastKeyAt
@@ -215,7 +232,16 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			// The rest of a paste that did not fit: dropped whole,
 			// Enter included, so no fragment of it lands or is sent.
 			m.overflowAt = now
+			m.tailOpen = !plainRuneRun(msg)
 			return m, nil
+		}
+		if m.tailArmed {
+			// The first key after an overflowed burst may carry the
+			// burst's last word, held back by the terminal reader (K3).
+			m.tailArmed = false
+			if m.tailOpen && plainRuneRun(msg) {
+				return m, m.holdTail(msg.Runes, now)
+			}
 		}
 		runes := insertedRunes(msg)
 		if runes != nil && !msg.Paste {
