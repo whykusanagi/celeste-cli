@@ -252,19 +252,17 @@ func countLeadingSpaces(line string) int {
 // callPattern matches identifiers followed by '(' — a simple call heuristic.
 var callPattern = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
 
+// declPrefix matches the text just before a `name(` that declares or
+// constructs rather than calls: `def name(`, `function &name(`, `new Name(`.
+var declPrefix = regexp.MustCompile(`\b(?:def|function|fn|func|class|new)\s+&?$`)
+
 // extractCallEdges scans each function/method body for call-like patterns and
-// creates edges to known symbols. Works for JS/TS/Python/Rust and any language
-// where calls look like `name(`.
+// creates an edge for every called name. Works for JS/TS/Python/Rust/PHP and
+// any language where calls look like `name(`. Targets need not be declared in
+// this file: the indexer resolves names once every file's symbols are stored
+// and drops the ones nothing declares, so a cross-file call keeps its edge.
 func (p *GenericParser) extractCallEdges(source string, symbols []Symbol) []RawEdge {
 	var edges []RawEdge
-
-	// Build a set of known callable symbol names
-	knownSymbols := make(map[string]bool)
-	for _, s := range symbols {
-		if s.Kind == SymbolFunction || s.Kind == SymbolMethod {
-			knownSymbols[s.Name] = true
-		}
-	}
 
 	for _, sym := range symbols {
 		if sym.Kind != SymbolFunction && sym.Kind != SymbolMethod {
@@ -274,21 +272,22 @@ func (p *GenericParser) extractCallEdges(source string, symbols []Symbol) []RawE
 		if p.language == "php" {
 			body = extractBracedBody(body)
 		}
-		matches := callPattern.FindAllStringSubmatch(body, -1)
+		matches := callPattern.FindAllStringSubmatchIndex(body, -1)
 		seen := make(map[string]bool)
-		for _, match := range matches {
-			callee := match[1]
+		for _, m := range matches {
+			callee := body[m[2]:m[3]]
 			if isGenericKeyword(callee) || callee == sym.Name || seen[callee] {
 				continue
 			}
-			if knownSymbols[callee] {
-				seen[callee] = true
-				edges = append(edges, RawEdge{
-					SourceName: sym.Name,
-					TargetName: callee,
-					Kind:       EdgeCalls,
-				})
+			if declPrefix.MatchString(body[max(0, m[2]-16):m[2]]) {
+				continue
 			}
+			seen[callee] = true
+			edges = append(edges, RawEdge{
+				SourceName: sym.Name,
+				TargetName: callee,
+				Kind:       EdgeCalls,
+			})
 		}
 	}
 	return edges
@@ -354,6 +353,10 @@ var genericKeywords = map[string]bool{
 	"where": true, "loop": true, "break": true, "continue": true, "move": true,
 	"mut": true, "ref": true, "unsafe": true, "type": true, "as": true,
 	"in": true, "dyn": true,
+	// PHP language constructs that look like calls
+	"array": true, "isset": true, "empty": true, "unset": true, "list": true,
+	"echo": true, "foreach": true, "elseif": true, "exit": true, "die": true,
+	"include": true, "include_once": true, "require_once": true, "declare": true,
 }
 
 func isGenericKeyword(s string) bool {

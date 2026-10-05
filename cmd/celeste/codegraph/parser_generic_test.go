@@ -232,3 +232,32 @@ pub fn create_server(config: Config) -> Server {
 	require.NotNil(t, fn)
 	assert.Equal(t, SymbolFunction, fn.Kind)
 }
+
+// Call targets defined in another file are still edges: the indexer
+// resolves them by name once every file's symbols are stored, and drops
+// the ones nothing declares. Keeping only same-file targets lost every
+// cross-file edge in CGO_ENABLED=0 builds (#47, #347).
+func TestGenericParser_CrossFileCallEdges(t *testing.T) {
+	src := `def process(items):
+    store = Store()
+    return in_databricks(items)
+
+def other():
+    pass
+`
+	path := writeTestFile(t, "calls.py", src)
+	result, err := NewGenericParser("python").ParseFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "process", TargetName: "in_databricks", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "process", TargetName: "Store", Kind: EdgeCalls})
+	// The next declaration inside the body window is not a call.
+	assert.NotContains(t, result.Edges, RawEdge{SourceName: "process", TargetName: "other", Kind: EdgeCalls})
+
+	php := "<?php\nfunction make(): Thing {\n    return new Thing(load_thing());\n}\n"
+	path = writeTestFile(t, "make.php", php)
+	result, err = NewGenericParser("php").ParseFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "make", TargetName: "load_thing", Kind: EdgeCalls})
+	// `new Thing(` constructs; it is not a call to a function named Thing.
+	assert.NotContains(t, result.Edges, RawEdge{SourceName: "make", TargetName: "Thing", Kind: EdgeCalls})
+}
