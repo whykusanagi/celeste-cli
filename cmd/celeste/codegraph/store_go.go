@@ -14,9 +14,9 @@ const goSourceFilter = `SELECT id FROM symbols WHERE file LIKE '%.go'`
 
 // ResetGraph deletes every symbol, edge, file record and BM25/LSH row so a
 // full Build starts from an empty graph. Meta (MinHash seeds) and snapshots
-// are kept. Dependent rows are deleted explicitly rather than relying on
-// ON DELETE CASCADE, which only applies on connections that enabled
-// foreign_keys.
+// are kept. Dependent rows are deleted explicitly, children first, so the
+// reset does not depend on ON DELETE CASCADE (which every connection now
+// enforces, #389) and token_stats, which has no foreign key, is cleared too.
 func (s *Store) ResetGraph() error {
 	return s.inTx(func(tx *sql.Tx) error {
 		for _, q := range []string{

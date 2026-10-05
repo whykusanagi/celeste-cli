@@ -133,7 +133,12 @@ func NewStore(dbPath string) (*Store, error) {
 	// index build take seconds to minutes there (#385). The index is
 	// derived data: a power loss can drop the last commits, never corrupt
 	// the database, and the next update re-indexes what is missing.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=synchronous(NORMAL)")
+	//
+	// foreign_keys is a per-connection setting too, so it goes in the DSN
+	// for the same reason: run once through db.Exec it reached only one
+	// pooled connection, and ON DELETE CASCADE (symbol_tokens, lsh_bands,
+	// edges) applied only to deletes that happened to run there (#389).
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -142,12 +147,6 @@ func NewStore(dbPath string) (*Store, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-
-	// Enable foreign keys.
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	s := &Store{db: db}
