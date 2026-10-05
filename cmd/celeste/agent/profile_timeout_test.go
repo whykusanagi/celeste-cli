@@ -54,6 +54,14 @@ func TestAgentLocalDefaultTimeout(t *testing.T) {
 	if r.options.RequestTimeout < config.LocalTimeoutSeconds*time.Second {
 		t.Errorf("turn deadline %v is shorter than the stall timeout", r.options.RequestTimeout)
 	}
+	// #359: the first byte gets the local first-byte budget, and the turn
+	// deadline leaves room for it.
+	if got := r.client.GetConfig().FirstByteBudget(); got != config.LocalFirstByteSeconds*time.Second {
+		t.Errorf("first-byte budget = %v, want %ds", got, config.LocalFirstByteSeconds)
+	}
+	if r.options.RequestTimeout < config.LocalFirstByteSeconds*time.Second {
+		t.Errorf("turn deadline %v is shorter than the first-byte budget", r.options.RequestTimeout)
+	}
 }
 
 // An explicit -request-timeout bounds the whole turn but never the stall

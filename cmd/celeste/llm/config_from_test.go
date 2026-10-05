@@ -24,8 +24,9 @@ func TestConfigFromCarriesEveryField(t *testing.T) {
 	got := ConfigFrom(cfg)
 	want := &Config{
 		APIKey: "k", BaseURL: "https://api.example.com/v1", Model: "m",
-		Timeout:        90 * time.Second,
-		SimulateTyping: true, TypingSpeed: 75,
+		Timeout:          90 * time.Second,
+		FirstByteTimeout: 90 * time.Second,
+		SimulateTyping:   true, TypingSpeed: 75,
 		GoogleCredentialsFile: "sa.json", GoogleUseADC: true,
 		Collections: cfg.Collections, XAIFeatures: cfg.XAIFeatures,
 	}

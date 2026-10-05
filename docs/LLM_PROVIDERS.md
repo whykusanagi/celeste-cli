@@ -22,7 +22,7 @@ Celeste CLI supports **9 chat providers**: eight call tools, and Venice's tool c
 
 **Anthropic:** `celeste -config anthropic config --set-url https://api.anthropic.com --set-key sk-ant-...`. Use the host without `/v1`: celeste adds `/v1/messages` for chat and `/v1/models` for the model list. A base URL that already ends in `/v1` (what earlier versions printed) still works.
 
-**Anthropic prompt caching and `/effort`:** celeste caches the tools, the persona (the first system block, with its own breakpoint, so `/user` or a new day re-writes only the system prompt's dynamic part) and the conversation, and a toggle of `/effort` changes nothing in them: only the request's thinking settings change. Anthropic counts those settings as part of the cache, though, so the first request after you change `/effort` (or turn it off or on) reads the conversation from scratch and writes it to the cache again. That is one re-write per change, then caching resumes. celeste itself never changes the thinking setting within a tool turn: on budget-thinking models (Sonnet 4.5, Opus 4.5, Haiku 4.5) a turn that started with thinking keeps it until the turn ends, and a turn that started without it stays without it. If you run `/effort` while a tool loop is running, turning thinking off (or, on adaptive models, changing the effort) applies to the next request in that turn; turning it on for a budget-thinking model waits for the next turn. To avoid the re-write, pick an effort for the session rather than switching back and forth.
+**Anthropic prompt caching and `/effort`:** celeste caches the tools, the persona (the first system block, with its own breakpoint, so `/user` or a new day re-writes only the system prompt's dynamic part) and the conversation, and a toggle of `/effort` changes nothing in them: celeste sends the same bytes, and only the request's thinking settings change. Anthropic keeps a separate prompt cache for each effort setting, though (thinking on or off counts too), so the first request after you change `/effort` finds nothing cached for the new setting and writes the whole prefix again: the tools, the system prompt and the conversation (about 23K tokens in one measured chat). That is one full re-write per change, then caching resumes. If you switch back to an earlier setting while its entry is still cached (Anthropic keeps an entry for 5 minutes after its last use), that request reads the earlier entry and writes only what the conversation gained since. celeste itself never changes the thinking setting within a tool turn: on budget-thinking models (Sonnet 4.5, Opus 4.5, Haiku 4.5) a turn that started with thinking keeps it until the turn ends, and a turn that started without it stays without it. If you run `/effort` while a tool loop is running, turning thinking off (or, on adaptive models, changing the effort) applies to the next request in that turn; turning it on for a budget-thinking model waits for the next turn. To avoid the re-writes, pick an effort for the session rather than switching back and forth.
 
 **Collections (Grok only):** Management key + `celeste collections create/upload/enable`.
 
@@ -161,17 +161,29 @@ thinking took more than 300 s before the first byte. So a local endpoint
 **600 s**. `config` shows the value in use:
 
 ```bash
-celeste config -config local                       # Request Timeout: 600s without data (local default)
+celeste config -config local                       # Request Timeout: 600s without data (local default), 1800s for the first byte
 celeste config -config local --set-timeout 1200    # a slower machine or a bigger model
 celeste config -config local --set-timeout 0       # back to the default
 ```
 
-Hosted providers keep 60 s by default, so a dead connection still fails after
-a minute of silence.
+The first byte of a reply gets a separate, longer budget on a local server:
+**30 minutes**, or the `timeout` when that is longer, and never more than the
+request cap; time spent waiting for the first byte counts toward the request
+cap. Reading a long prompt can take that long on a loaded machine: a
+32K-window qwen3:14b on Ollama took ~563 s to its first byte, and the first
+request after leaving plan mode, which re-reads the whole prompt, 11.5
+minutes. Response headers alone do not end that wait. Once the reply starts,
+the `timeout` applies again between chunks, so a server that goes silent
+mid-reply still fails after it. A request that gets nothing at all fails with
+"while waiting for the first byte".
+
+Hosted providers keep 60 s by default, for the first byte as for the rest of
+the reply, so a dead connection still fails after a minute of silence.
 
 `celeste agent` uses the same timeout. `-request-timeout <seconds>` bounds each
-whole model turn (without it, the 30-minute cap does); a request that sends
-nothing for the profile's `timeout` still fails first.
+whole model turn (without it, the 30-minute cap does); a request that goes
+silent for the profile's `timeout` mid-reply, or (on a local server) gets no
+first byte within its first-byte budget, still fails first.
 
 If a turn fails before any reply, its message stays in the chat. Send the same
 text again to retry it: the request carries it once, not twice.

@@ -2129,7 +2129,8 @@ func runServeCommand(args []string) {
 }
 
 // timeoutLine describes the request timeout config shows: the effective
-// stall timeout and where it came from.
+// stall timeout and where it came from, and a local server's longer
+// first-byte budget (#359).
 func timeoutLine(cfg *config.Config) string {
 	d := int(cfg.GetTimeout().Seconds())
 	source := "default"
@@ -2139,5 +2140,9 @@ func timeoutLine(cfg *config.Config) string {
 	case d == config.LocalTimeoutSeconds:
 		source = "local default"
 	}
-	return fmt.Sprintf("%ds without data (%s)", d, source)
+	line := fmt.Sprintf("%ds without data (%s)", d, source)
+	if fb := int(cfg.GetFirstByteTimeout().Seconds()); fb > d {
+		line += fmt.Sprintf(", %ds for the first byte", fb)
+	}
+	return line
 }

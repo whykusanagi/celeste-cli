@@ -72,11 +72,25 @@ func TestCustomToolDoesNotWaitOnAGrandchildHoldingThePipe(t *testing.T) {
 }
 
 // Cancelling the call kills the whole process group, not just sh.
+//
+// The call is cancelled once the child's pid is on disk, not on a fixed
+// timer: on a loaded machine a 300ms timer could fire before sh had started
+// the child, leaving no pid to check.
 func TestCustomToolCancelKillsTheGroup(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
 	tool := loadCustomTool(t, "sleep 15 & echo $! > '"+pidfile+"'; wait")
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() {
+		defer cancel()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) && ctx.Err() == nil {
+			if b, _ := os.ReadFile(pidfile); strings.HasSuffix(string(b), "\n") {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 	start := time.Now()
 	res, _ := tool.Execute(ctx, map[string]any{}, nil)
 	if took := time.Since(start); took > 8*time.Second {
@@ -105,6 +119,28 @@ func TestCustomToolNamesTheCallersDeadline(t *testing.T) {
 	defer cancel()
 	res, _ := loadCustomTool(t, "sleep 5").Execute(ctx, map[string]any{}, nil)
 	if !res.Error || !strings.Contains(res.Content, "the caller's deadline ended it") || strings.Contains(res.Content, "2m0s") {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+// A deadline that has already passed when the command would start is still
+// the caller's deadline, not a bare start error: on a loaded machine a short
+// deadline can end before sh is even started.
+func TestCustomToolNamesTheCallersDeadlineBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	res, _ := loadCustomTool(t, "sleep 5").Execute(ctx, map[string]any{}, nil)
+	if !res.Error || !strings.Contains(res.Content, "the caller's deadline ended it") {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+// A call cancelled before the command starts says it was cancelled.
+func TestCustomToolCancelledBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, _ := loadCustomTool(t, "sleep 5").Execute(ctx, map[string]any{}, nil)
+	if !res.Error || !strings.Contains(res.Content, "cancelled; the command") {
 		t.Fatalf("res = %+v", res)
 	}
 }

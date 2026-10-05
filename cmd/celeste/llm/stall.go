@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -21,14 +22,22 @@ func MaxRequestDuration(stall time.Duration) time.Duration {
 	return max(30*time.Minute, 3*stall)
 }
 
+// errNoFirstByte is the cause of an attempt that received no reply data
+// for the whole first-byte budget. It wraps ErrStalled.
+var errNoFirstByte = fmt.Errorf("%w while waiting for the first byte", ErrStalled)
+
 // stallWatch cancels its context when no activity is recorded for idle.
 // Activity is any byte of the response body (stallTransport) or any stream
 // callback, so a model sending reasoning that celeste never shows still
-// counts as alive.
+// counts as alive. Until the first reply data arrives the allowance is
+// first instead (#359): a local model prefilling a long prompt sends
+// nothing for minutes, and response headers alone do not end that wait.
 type stallWatch struct {
-	idle   time.Duration
-	last   atomic.Int64 // UnixNano of the last activity
-	cancel context.CancelCauseFunc
+	idle    time.Duration
+	first   time.Duration
+	last    atomic.Int64 // UnixNano of the last activity
+	started atomic.Bool  // reply data has arrived
+	cancel  context.CancelCauseFunc
 
 	mu    sync.Mutex
 	timer *time.Timer
@@ -38,15 +47,17 @@ type stallWatch struct {
 type stallKey struct{}
 
 // withStall derives a context that is cancelled with ErrStalled after idle
-// without activity. stop releases the timer.
-func withStall(parent context.Context, idle time.Duration) (ctx context.Context, stop func()) {
+// without activity, or after first while no reply data has arrived yet
+// (first no longer than idle means idle throughout). The returned watch
+// reports whether data arrived; stop releases the timer.
+func withStall(parent context.Context, idle, first time.Duration) (ctx context.Context, w *stallWatch, stop func()) {
 	ctx, cancel := context.WithCancelCause(parent)
-	w := &stallWatch{idle: idle, cancel: cancel}
+	w = &stallWatch{idle: idle, first: max(first, idle), cancel: cancel}
 	w.touch()
 	w.mu.Lock()
-	w.timer = time.AfterFunc(idle, w.check)
+	w.timer = time.AfterFunc(w.first, w.check)
 	w.mu.Unlock()
-	return context.WithValue(ctx, stallKey{}, w), func() {
+	return context.WithValue(ctx, stallKey{}, w), w, func() {
 		w.mu.Lock()
 		w.done = true
 		w.timer.Stop()
@@ -57,6 +68,29 @@ func withStall(parent context.Context, idle time.Duration) (ctx context.Context,
 
 func (w *stallWatch) touch() { w.last.Store(time.Now().UnixNano()) }
 
+// headers records that the response headers arrived. They are activity
+// for the stall timeout, but not reply data: while a longer first-byte
+// budget runs, it keeps counting from the request.
+func (w *stallWatch) headers() {
+	if w.started.Load() || w.first == w.idle {
+		w.touch()
+	}
+}
+
+// data records reply data. The first call ends the first-byte wait: the
+// timer re-arms for the stall timeout, which applies from then on.
+func (w *stallWatch) data() {
+	w.touch()
+	if w.started.Load() || !w.started.CompareAndSwap(false, true) || w.first == w.idle {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.done {
+		w.timer.Reset(w.idle)
+	}
+}
+
 // check runs when the timer fires: a full idle period without activity
 // cancels; otherwise the timer re-arms for what is left of the period.
 func (w *stallWatch) check() {
@@ -65,19 +99,23 @@ func (w *stallWatch) check() {
 	if w.done {
 		return
 	}
+	idle, cause := w.idle, ErrStalled
+	if !w.started.Load() {
+		idle, cause = w.first, errNoFirstByte
+	}
 	since := time.Since(time.Unix(0, w.last.Load()))
-	if since >= w.idle {
+	if since >= idle {
 		w.done = true
-		w.cancel(ErrStalled)
+		w.cancel(cause)
 		return
 	}
-	w.timer.Reset(w.idle - since)
+	w.timer.Reset(idle - since)
 }
 
-// touchStall records activity on ctx's stall watch, if it has one.
+// touchStall records reply data on ctx's stall watch, if it has one.
 func touchStall(ctx context.Context) {
 	if w, ok := ctx.Value(stallKey{}).(*stallWatch); ok {
-		w.touch()
+		w.data()
 	}
 }
 
@@ -95,7 +133,7 @@ func (t stallTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, err
 	}
 	if w, ok := req.Context().Value(stallKey{}).(*stallWatch); ok {
-		w.touch() // the headers arrived
+		w.headers()
 		resp.Body = &stallBody{ReadCloser: resp.Body, w: w}
 	}
 	return resp, nil
@@ -109,7 +147,7 @@ type stallBody struct {
 func (b *stallBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 {
-		b.w.touch()
+		b.w.data()
 	}
 	return n, err
 }
