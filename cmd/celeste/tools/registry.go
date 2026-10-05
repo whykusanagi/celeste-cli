@@ -735,8 +735,10 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 	// a timeout, a bounded pipe wait and an output cap.
 	res := shellrun.Run(ctx, shellrun.Options{Command: c.command, Stdin: data, Timeout: customToolTimeout})
 	var failure string
+	// A caller's context that has ended explains the failure, even when it
+	// ended before the shell started and the start error is just ctx.Err().
 	switch {
-	case res.Err != nil:
+	case res.Err != nil && ctx.Err() == nil:
 		failure = res.Err.Error()
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		failure = "the caller's deadline ended it; the command and everything it started were killed"

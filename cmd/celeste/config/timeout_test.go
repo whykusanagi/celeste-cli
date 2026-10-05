@@ -39,3 +39,33 @@ func TestGetTimeoutDefaults(t *testing.T) {
 		t.Errorf("LocalTimeoutSeconds = %d: a cold 16K prefill on a 14B ran past 300 s", LocalTimeoutSeconds)
 	}
 }
+
+// #359: a local server gets a first-byte budget far beyond its stall
+// timeout (a cold prefill on a loaded machine took ~563 s); hosted
+// providers keep their timeout for the first byte too.
+func TestGetFirstByteTimeout(t *testing.T) {
+	local, hosted := "http://127.0.0.1:11434/v1", "https://api.sakana.ai/v1"
+	for _, tc := range []struct {
+		name    string
+		baseURL string
+		timeout int
+		want    time.Duration
+	}{
+		{"hosted unset", hosted, 0, 60 * time.Second},
+		{"hosted chosen", hosted, 300, 300 * time.Second},
+		{"local unset", local, 0, LocalFirstByteSeconds * time.Second},
+		{"local chosen lower", local, 30, LocalFirstByteSeconds * time.Second},
+		{"local chosen above the budget", local, 3600, 3600 * time.Second},
+		{"lan host", "http://gpu-box:8080/v1", 0, LocalFirstByteSeconds * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{BaseURL: tc.baseURL, Timeout: tc.timeout}
+			if got := c.GetFirstByteTimeout(); got != tc.want {
+				t.Errorf("GetFirstByteTimeout() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if LocalFirstByteSeconds < 1800 {
+		t.Errorf("LocalFirstByteSeconds = %d: a loaded machine took ~563 s to the first byte and 11.5 min after plan mode", LocalFirstByteSeconds)
+	}
+}

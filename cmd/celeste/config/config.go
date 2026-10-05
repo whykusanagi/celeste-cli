@@ -1265,6 +1265,12 @@ const DefaultTimeoutSeconds = 60
 // 14B model took longer than 300 s.
 const LocalTimeoutSeconds = 600
 
+// LocalFirstByteSeconds is how long a request to a local server may wait
+// for the first byte of the reply (GetFirstByteTimeout). Prefill sends
+// nothing: on a loaded machine a 32K prompt on a 14B model took ~563 s to
+// the first byte, and a full re-prefill after plan mode 11.5 min (#359).
+const LocalFirstByteSeconds = 1800
+
 // GetTimeout returns the request timeout. It is a stall timeout: a request
 // fails when nothing arrives for this long, however long the reply takes in
 // all (llm.MaxRequestDuration bounds that). A local endpoint whose timeout
@@ -1278,4 +1284,16 @@ func (c *Config) GetTimeout() time.Duration {
 		return LocalTimeoutSeconds * time.Second
 	}
 	return DefaultTimeoutSeconds * time.Second
+}
+
+// GetFirstByteTimeout returns how long a request may wait for the first
+// byte of the reply. For a local endpoint it is LocalFirstByteSeconds, or
+// GetTimeout when that is longer; once data flows, GetTimeout applies
+// between chunks. Hosted providers use GetTimeout for both.
+func (c *Config) GetFirstByteTimeout() time.Duration {
+	t := c.GetTimeout()
+	if providers.IsLocalEndpoint(c.BaseURL) {
+		return max(t, LocalFirstByteSeconds*time.Second)
+	}
+	return t
 }

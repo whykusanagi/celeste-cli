@@ -135,6 +135,10 @@ type retryOpts struct {
 	// never cut by it, so a slow local model can take as long as it needs,
 	// while a dead connection still fails after one idle period.
 	stall time.Duration
+	// firstByte, when longer than stall, is how long an attempt may wait
+	// for the first byte of the reply before stall takes over (#359): a
+	// local model prefilling a long prompt sends nothing for minutes.
+	firstByte time.Duration
 }
 
 // withRetry runs fn, retrying transient errors per policy. Each attempt gets a
@@ -149,14 +153,20 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 			ctx, cancel = context.WithTimeout(base, opts.timeout)
 		}
 		stopStall := func() {}
+		var watch *stallWatch
 		if opts.stall > 0 {
-			ctx, stopStall = withStall(ctx, opts.stall)
+			ctx, watch, stopStall = withStall(ctx, opts.stall, opts.firstByte)
 		}
 		err := fn(ctx)
 		// Capture before cancel(): once cancelled, ctx.Err() no longer tells us
 		// whether the attempt ran out of time or was torn down.
 		attemptStalled := opts.stall > 0 && errors.Is(context.Cause(ctx), ErrStalled) && base.Err() == nil
 		attemptTimedOut := !attemptStalled && opts.timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
+		// The first-byte wait ends with the stall cause or, when the budget
+		// reaches the request cap, with the cap's deadline. Either way the
+		// model never sent a byte.
+		noFirstByte := watch != nil && !watch.started.Load() && opts.firstByte > opts.stall &&
+			(errors.Is(context.Cause(ctx), errNoFirstByte) || attemptTimedOut)
 		stopStall()
 		cancel()
 
@@ -190,6 +200,17 @@ func withRetry(base context.Context, opts retryOpts, fn func(ctx context.Context
 		// A stall is the same: the next attempt would wait just as long for a
 		// model that is still busy (a local model prefilling) or a connection
 		// that is gone.
+		if noFirstByte && base.Err() == nil {
+			waited := opts.firstByte
+			if opts.timeout > 0 {
+				waited = min(waited, opts.timeout)
+			}
+			const hint = "%w: nothing arrived for %s (the first-byte budget for a local server); the model may still be reading the prompt: shorten it, free up the machine, use a smaller model, or raise the budget with `celeste config --set-timeout <seconds>` above it (this also lengthens the stall timeout between chunks)"
+			if errors.Is(err, ErrStalled) {
+				return fmt.Errorf(hint, errNoFirstByte, waited)
+			}
+			return fmt.Errorf(hint+": %w", errNoFirstByte, waited, err)
+		}
 		if attemptStalled {
 			const hint = "%w for %s (the stall timeout); a slow local model may need longer: raise it with `celeste config --set-timeout <seconds>`"
 			// A provider error that already says it stalled adds nothing.
