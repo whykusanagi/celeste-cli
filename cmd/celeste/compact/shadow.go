@@ -16,18 +16,14 @@ import (
 // maxGoalChars caps the goal and latest message sent to Jev.
 const maxGoalChars = 2000
 
-// Shadow wires Jev into opts in shadow mode (#175): Plan keeps its rules
+// shadow wires Jev into opts in shadow mode (#175): Plan keeps its rules
 // exactly, and after the prune the caller runs report, which asks Jev and
 // logs what it would have elided next to what the rules did. With async the
 // call runs in the background (the TUI must not block) and at most one is in
 // flight; without it, report returns only after logging, so nothing writes
 // to the caller's output after a run ends. A nil client makes report a no-op.
-func Shadow(c *jev.Client, msgs []tui.ChatMessage, opts Options, logf func(string), async bool) (Options, func(Result)) {
-	return shadow(context.Background(), c, msgs, opts, logf, async)
-}
-
-// shadow is Shadow with the context a synchronous report asks Jev under;
-// an async one outlives its caller and uses none.
+// ctx is what a synchronous report asks Jev under; an async one outlives its
+// caller and uses none.
 func shadow(ctx context.Context, c *jev.Client, msgs []tui.ChatMessage, opts Options, logf func(string), async bool) (Options, func(Result)) {
 	if async {
 		ctx = context.Background()
