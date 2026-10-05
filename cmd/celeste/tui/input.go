@@ -388,7 +388,9 @@ func (m InputModel) View() string {
 		inputView += "\n" + hintLine
 	}
 	if m.notice != "" {
-		inputView += "\n" + inputNoticeStyle.Render("  "+m.notice)
+		// Wrapped, not cut, so the advice stays readable at 80 columns
+		// (C1); continuation rows hang under the text.
+		inputView += "\n" + inputNoticeStyle.Render(wrapText("  "+m.notice, m.width))
 	}
 	if m.rendered != nil {
 		m.rendered.view, m.rendered.ok = inputView, true
