@@ -46,6 +46,14 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 	// Track whether each line is inside a class for method detection
 	var currentClass string
 	classIndent := -1
+	classLine := 0
+	// enterContainer records a class-like declaration whose indented
+	// functions are methods. PHP also counts interfaces, traits and enums.
+	enterContainer := func(name, line string, lineNo int) {
+		currentClass = name
+		classIndent = countLeadingSpaces(line)
+		classLine = lineNo
+	}
 
 	for lineNum, line := range lines {
 		lineNo := lineNum + 1 // 1-based
@@ -57,8 +65,7 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				result.Symbols = append(result.Symbols, Symbol{
 					Name: name, Kind: SymbolClass, File: path, Line: lineNo,
 				})
-				currentClass = name
-				classIndent = countLeadingSpaces(line)
+				enterContainer(name, line, lineNo)
 			}
 		}
 
@@ -71,13 +78,23 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				classIndent = -1
 			}
 		}
+		// PHP: the container ends at the first line back at its own indent
+		// (normally its closing brace). An Allman-style opening brace on
+		// its own line does not end it.
+		if currentClass != "" && p.language == "php" && lineNo != classLine {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && trimmed != "{" && countLeadingSpaces(line) <= classIndent {
+				currentClass = ""
+				classIndent = -1
+			}
+		}
 
 		// Check function/method declarations
 		for _, re := range p.patterns.function {
 			if m := re.FindStringSubmatch(line); m != nil {
 				name := m[1]
 				// In Python, methods are indented functions inside a class
-				if p.language == "python" && currentClass != "" {
+				if (p.language == "python" || p.language == "php") && currentClass != "" {
 					indent := countLeadingSpaces(line)
 					if indent > classIndent {
 						result.Symbols = append(result.Symbols, Symbol{
@@ -98,6 +115,9 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				result.Symbols = append(result.Symbols, Symbol{
 					Name: m[1], Kind: SymbolInterface, File: path, Line: lineNo,
 				})
+				if p.language == "php" {
+					enterContainer(m[1], line, lineNo)
+				}
 			}
 		}
 
@@ -107,6 +127,9 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 				result.Symbols = append(result.Symbols, Symbol{
 					Name: m[1], Kind: SymbolType, File: path, Line: lineNo,
 				})
+				if p.language == "php" {
+					enterContainer(m[1], line, lineNo)
+				}
 			}
 		}
 
@@ -184,6 +207,17 @@ func (p *GenericParser) patternsForLanguage(lang string) languagePatterns {
 			importDcl: compileAll(`^\s*use\s+([^;{]+)`),
 			constDecl: compileAll(`^\s*(?:pub\s+)?const\s+(\w+)\s*:`),
 		}
+	case "php":
+		// Kinds follow the tree-sitter path: a trait is an interface, an
+		// enum is a type. Only unindented `use` lines are imports; an
+		// indented `use Foo;` inside a class body is a trait use.
+		return languagePatterns{
+			function:  compileAll(`^\s*(?:(?:public|protected|private|static|final|abstract)\s+)*function\s+&?(\w+)\s*\(`),
+			class:     compileAll(`^\s*(?:(?:final|abstract|readonly)\s+)*class\s+(\w+)`),
+			iface:     compileAll(`^\s*interface\s+(\w+)`, `^\s*trait\s+(\w+)`),
+			typeDecl:  compileAll(`^\s*enum\s+(\w+)`),
+			importDcl: compileAll(`^use\s+(?:function\s+|const\s+)?\\?([\w\\]+)`),
+		}
 	default:
 		// Fallback: try common patterns
 		return languagePatterns{
@@ -237,6 +271,9 @@ func (p *GenericParser) extractCallEdges(source string, symbols []Symbol) []RawE
 			continue
 		}
 		body := extractBody(source, sym.Line)
+		if p.language == "php" {
+			body = extractBracedBody(body)
+		}
 		matches := callPattern.FindAllStringSubmatch(body, -1)
 		seen := make(map[string]bool)
 		for _, match := range matches {
@@ -268,6 +305,31 @@ func extractBody(source string, startLine int) string {
 		end = len(lines)
 	}
 	return strings.Join(lines[startLine-1:end], "\n")
+}
+
+// extractBracedBody trims a brace-language body window to the declaration
+// itself: everything up to the brace that closes the first one opened, or
+// up to the first ';' when the declaration has no body (an abstract or
+// interface method). Braces inside strings and comments are not special;
+// this is a heuristic, like the rest of the regex parser.
+func extractBracedBody(body string) string {
+	depth := 0
+	for i, ch := range body {
+		switch ch {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth <= 0 {
+				return body[:i+1]
+			}
+		case ';':
+			if depth == 0 {
+				return body[:i+1]
+			}
+		}
+	}
+	return body
 }
 
 // isGenericKeyword returns true for common keywords across JS/TS/Python/Rust
