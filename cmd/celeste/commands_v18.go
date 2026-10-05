@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -328,7 +329,10 @@ func runIndexCommand(args []string) {
 
 	fmt.Printf("Indexing %s...\n", cwd)
 	start := time.Now()
-	if err := indexer.Update(); err != nil {
+	if err := indexer.Update(); errors.Is(err, codegraph.ErrIndexBusy) {
+		// Another celeste process is indexing this project (#392).
+		fmt.Println("Another celeste process is indexing this project; showing the index as it is.")
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

@@ -120,6 +120,8 @@ type MinHashEntry struct {
 // Store manages the SQLite database for the code graph.
 type Store struct {
 	db *sql.DB
+	// path is the database file; the index lock file sits next to it.
+	path string
 }
 
 // NewStore opens (or creates) a SQLite database at the given path and
@@ -138,7 +140,11 @@ func NewStore(dbPath string) (*Store, error) {
 	// for the same reason: run once through db.Exec it reached only one
 	// pooled connection, and ON DELETE CASCADE (symbol_tokens, lsh_bands,
 	// edges) applied only to deletes that happened to run there (#389).
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+	//
+	// busy_timeout comes first so every later pragma and statement waits
+	// up to 10 s for another connection's or process's write lock instead
+	// of failing at once with SQLITE_BUSY (#392).
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -149,7 +155,7 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, path: dbPath}
 	if err := s.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -286,6 +292,15 @@ func (s *Store) SetMeta(key string, value []byte) error {
 // not an error.
 func (s *Store) DeleteMeta(key string) error {
 	if _, err := s.db.Exec("DELETE FROM meta WHERE key = ?", key); err != nil {
+		return fmt.Errorf("delete meta %q: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteMetaIf removes a key only while it still holds value, so an
+// indexer clears only the marks it set itself (#392).
+func (s *Store) DeleteMetaIf(key, value string) error {
+	if _, err := s.db.Exec("DELETE FROM meta WHERE key = ? AND value = ?", key, []byte(value)); err != nil {
 		return fmt.Errorf("delete meta %q: %w", key, err)
 	}
 	return nil

@@ -42,7 +42,7 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 	}
 	// From here the pass stores symbols and file records before it rewrites
 	// the edges; an interruption in between must not look finished.
-	if err := idx.store.SetMeta(metaGoPassPending, []byte("1")); err != nil {
+	if err := idx.store.SetMeta(metaGoPassPending, []byte(idx.token)); err != nil {
 		return err
 	}
 
@@ -105,7 +105,7 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 	if err := idx.store.SetMeta(metaGoModules, []byte(goModFingerprint(idx.workspace, goFiles))); err != nil {
 		return err
 	}
-	return idx.store.DeleteMeta(metaGoPassPending)
+	return idx.store.DeleteMetaIf(metaGoPassPending, idx.token)
 }
 
 // goModulesChanged reports whether go.mod/go.sum changed since the last Go

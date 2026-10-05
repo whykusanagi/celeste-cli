@@ -81,6 +81,10 @@ type Indexer struct {
 	// racing a nested run's refreshIndex, and the tree-sitter parsers are
 	// not safe for concurrent use (2.0 F2e M6).
 	buildMu sync.Mutex
+	// token identifies the current Build or Update run in the marks it
+	// sets (metaBuildInProgress, metaGoPassPending), so it clears only its
+	// own. Set with the index lock held, under buildMu.
+	token string
 }
 
 // DefaultIndexPath returns the path to the code graph database for a project.
@@ -231,10 +235,17 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	// Another Indexer on this database may be building or updating; wait
+	// for it (bounded) rather than empty the graph under it (#392).
+	lock, err := idx.acquireIndexLock(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
 	return idx.buildLocked(ctx)
 }
 
-// buildLocked is BuildWithContext with buildMu held. A full build starts
+// buildLocked is BuildWithContext with buildMu and the index lock held. A full build starts
 // from an empty graph so rows from an older index (or an older index
 // version) never linger next to the new ones. Readers see an empty or
 // partial graph until it finishes; Update never empties the index, and
@@ -246,7 +257,7 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	}
 	// Mark the build unfinished before the graph is emptied; the mark is
 	// cleared only after the last pass commits (#388).
-	if err := idx.store.SetMeta(metaBuildInProgress, []byte("1")); err != nil {
+	if err := idx.store.SetMeta(metaBuildInProgress, []byte(idx.token)); err != nil {
 		return fmt.Errorf("mark build in progress: %w", err)
 	}
 	if err := idx.store.ResetGraph(); err != nil {
@@ -276,6 +287,10 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 		allRawEdges = append(allRawEdges, raw...)
 	}
 
+	if testHookAfterPass1 != nil {
+		testHookAfterPass1()
+	}
+
 	// Pass 2: resolve and store all edges now that every symbol is in the DB.
 	// Cross-file call targets that weren't available during pass 1 are now
 	// resolvable via GetSymbolIDByName.
@@ -289,7 +304,8 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 			return err
 		}
 	} else if err := idx.store.DeleteMeta(metaGoPassPending); err != nil {
-		// No Go pass ran, so a mark left by an earlier killed one is stale.
+		// No Go pass ran, so a mark left by an earlier killed one is stale:
+		// this run holds the index lock, so no live indexer owns it.
 		return fmt.Errorf("clear go pass mark: %w", err)
 	}
 
@@ -312,7 +328,7 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
 		return fmt.Errorf("record index version: %w", err)
 	}
-	if err := idx.store.DeleteMeta(metaBuildInProgress); err != nil {
+	if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
 		return fmt.Errorf("mark build finished: %w", err)
 	}
 	return nil
@@ -334,6 +350,18 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	// Another Indexer on this database is building or updating: skip
+	// rather than race it (#392). Its run brings the index up to date.
+	lock, err := idx.acquireIndexLock(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
+	return idx.updateLocked(ctx)
+}
+
+// updateLocked is UpdateWithContext with buildMu and the index lock held.
+func (idx *Indexer) updateLocked(ctx context.Context) error {
 	// A full build that never finished left file records whose hashes
 	// match while edges are missing (#388). The graph is not emptied and
 	// rebuilt: on a repo whose build outlasts each run (an Env closed
@@ -347,6 +375,13 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 		return err
 	}
 	recovering := mark != nil
+	if recovering {
+		// The run that set the mark is gone (this one holds the index
+		// lock); take the mark over so this run can clear it.
+		if err := idx.store.SetMeta(metaBuildInProgress, []byte(idx.token)); err != nil {
+			return fmt.Errorf("mark build in progress: %w", err)
+		}
+	}
 	// Likewise a Go pass that stopped part-way stored symbols and file
 	// records but not (all of) the Go edges; rerun it.
 	goPending, err := idx.store.GetMeta(metaGoPassPending)
@@ -398,7 +433,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 			if DetectLanguage(path) == "go" && !goRemoved {
 				// Once the file record is gone nothing else says the Go
 				// edges need rewriting, so mark the Go pass first.
-				if err := idx.store.SetMeta(metaGoPassPending, []byte("1")); err != nil {
+				if err := idx.store.SetMeta(metaGoPassPending, []byte(idx.token)); err != nil {
 					return err
 				}
 				goRemoved = true
@@ -469,6 +504,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 			return err
 		}
 	} else if recovering {
+		// Stale, as in buildLocked: this run holds the index lock.
 		if err := idx.store.DeleteMeta(metaGoPassPending); err != nil {
 			return fmt.Errorf("clear go pass mark: %w", err)
 		}
@@ -495,7 +531,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 		return fmt.Errorf("record index version: %w", err)
 	}
 	if recovering {
-		if err := idx.store.DeleteMeta(metaBuildInProgress); err != nil {
+		if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
 			return fmt.Errorf("mark build finished: %w", err)
 		}
 	}

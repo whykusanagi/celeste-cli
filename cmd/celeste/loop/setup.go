@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -486,6 +487,18 @@ func (e *Env) captureGit(ws string) string {
 	return ""
 }
 
+// reportIndexUpdate reports a failed code-graph update. An index that
+// another celeste process (or the MCP server) is writing is not a failure:
+// the update skipped, and that run brings the index up to date (#392).
+func (e *Env) reportIndexUpdate(err error) {
+	switch {
+	case errors.Is(err, codegraph.ErrIndexBusy):
+		e.opts.Notice("code graph is being indexed by another celeste process, continuing with the index as it is")
+	case err != nil:
+		e.warn("code graph update failed: %v", err)
+	}
+}
+
 func (e *Env) setupCodeGraph(ws string) string {
 	idx, err := codegraph.NewIndexer(ws, codegraph.DefaultIndexPath(ws))
 	if err != nil {
@@ -507,9 +520,7 @@ func (e *Env) setupCodeGraph(ws string) string {
 	}()
 	select {
 	case err := <-done:
-		if err != nil {
-			e.warn("code graph update failed: %v", err)
-		}
+		e.reportIndexUpdate(err)
 	case <-time.After(codeGraphTimeout):
 		e.opts.Notice(fmt.Sprintf("code graph update timed out (%s), skipping", codeGraphTimeout))
 	}

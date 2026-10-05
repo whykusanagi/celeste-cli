@@ -30,7 +30,18 @@ the Go pass and only then clears the mark, so repeated short runs (a chat
 opened and closed before a long build ends) each make progress. An `Update`
 that finds the second mark reruns the Go pass. A build or update that was
 cancelled, killed or cut off by a power loss is finished by the next update
-rather than trusted because its file hashes match. An index left
+rather than trusted because its file hashes match. Each mark holds a
+random token of the run that set it, and a run clears only its own.
+
+Several indexers can open one database: the MCP server's, an MCP chat's, the
+TUI's and `celeste index`. A build or update holds an exclusive OS file lock
+on `codegraph.db.lock` next to the database (`flock` on Linux and macOS,
+`LockFileEx` on Windows), so only one of them writes at a time. An update
+that finds the lock taken skips, since the other run brings the index up to
+date; an explicit build waits for it, up to two minutes. The OS releases the
+lock when its process exits or is killed, so a lock file left behind never
+blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
+a reader waits for a writer's SQLite lock instead of failing. An index left
 incomplete by a version without these marks has nothing to repair it: rebuild
 it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
 in the TUI (`celeste index` only updates). Three tables:
