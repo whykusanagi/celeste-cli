@@ -209,3 +209,16 @@ func TestLocalFallbackFollowsTheHostRule(t *testing.T) {
 		t.Errorf("%s: timeout %v, want the hosted default", proxy, got)
 	}
 }
+
+// wait blocks until no probe for baseURL and model is running (tests).
+func (c *windowCache) wait(baseURL, model string) {
+	c.mu.Lock()
+	var ch chan struct{}
+	if e := c.entries[windowKey(baseURL, model)]; e != nil {
+		ch = e.inflight
+	}
+	c.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+}
