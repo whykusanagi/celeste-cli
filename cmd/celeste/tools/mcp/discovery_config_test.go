@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,4 +85,28 @@ func TestNewManagerMulti_SkipsDisabledAcrossFiles(t *testing.T) {
 	require.NoError(t, mgr.Start(context.Background()))
 	assert.Empty(t, mgr.ServerStatus())
 	assert.Equal(t, 0, registry.Count())
+}
+
+// SplitGlobal is the one rule for which configs a mode loads: home-level
+// configs everywhere, workspace configs only in the interactive chat
+// (loop.setupMCP and celeste mcp list both use it, audit C5).
+func TestSplitGlobal(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	paths := []string{
+		filepath.Join(home, ".celeste", "mcp.json"),
+		filepath.Join(home, ".cursor", "mcp.json"),
+		filepath.Join(ws, ".mcp.json"),
+		filepath.Join(ws, ".celeste", "mcp.json"),
+	}
+	global, workspace := SplitGlobal(paths, home)
+	if want := paths[:2]; !slices.Equal(global, want) {
+		t.Errorf("global = %v, want %v", global, want)
+	}
+	if want := paths[2:]; !slices.Equal(workspace, want) {
+		t.Errorf("workspace = %v, want %v", workspace, want)
+	}
+	// With no home every path is a workspace one.
+	if g, w := SplitGlobal(paths, ""); len(g) != 0 || len(w) != len(paths) {
+		t.Errorf("no home: global %v, workspace %v", g, w)
+	}
 }

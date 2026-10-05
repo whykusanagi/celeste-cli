@@ -207,3 +207,52 @@ func TestMCPList_BadWorkspaceConfigStopsTheChat(t *testing.T) {
 	assert.Contains(t, mcpListLine(t, out, "repo", filepath.Join(".", ".mcp.json")), "none ("+bad+" does not parse)")
 	assert.Contains(t, errOut, "the chat starts no MCP servers until "+bad)
 }
+
+// celeste mcp list says where each server runs from the runtime's own
+// merge (audit C5): a line that says the chat runs it is the definition
+// mcp.LoadMerged picks over every config, and one that says other modes run
+// it is the one LoadMerged picks over the home configs alone.
+func TestMCPList_RunsInMatchesTheRuntimeMerge(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{"a":{"command":"1","enabled":true},"b":{"command":"1","enabled":true},"c":{"command":"1","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(home, ".cursor", "mcp.json"), `{"mcpServers":{"b":{"command":"2","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(ws, ".mcp.json"), `{"mcpServers":{"c":{"command":"3","enabled":true},"d":{"command":"3","enabled":true}}}`)
+	writeMCPConfig(t, filepath.Join(ws, ".celeste", "mcp.json"), `{"mcpServers":{"d":{"command":"4","enabled":true}}}`)
+
+	_, out, _ := runMCPList(t, nil, ws, home)
+	paths := mcp.DiscoverConfigPaths(ws, home)
+	chat, err := mcp.LoadMerged(paths)
+	require.NoError(t, err)
+	global, _ := mcp.SplitGlobal(paths, home)
+	other, err := mcp.LoadMerged(global)
+	require.NoError(t, err)
+
+	show := func(p string) string {
+		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") && mcp.IsGlobalConfig(home, p) {
+			return filepath.Join("~", rel)
+		}
+		rel, _ := filepath.Rel(ws, p)
+		return filepath.Join(".", rel)
+	}
+	for _, name := range []string{"a", "b", "c", "d"} {
+		for _, p := range paths {
+			line := ""
+			for _, l := range strings.Split(out, "\n") {
+				if f := strings.Fields(l); len(f) >= 2 && f[0] == name && f[1] == show(p) {
+					line = l
+				}
+			}
+			if line == "" {
+				continue
+			}
+			inChat := strings.Contains(line, "all modes") || strings.Contains(line, "chat only") || strings.Contains(line, "chat once approved")
+			if got := chat.Servers[name].Origin == p; got != inChat {
+				t.Errorf("%s from %s: list says chat=%v, runtime chat merge picks %s:\n%s", name, show(p), inChat, show(chat.Servers[name].Origin), line)
+			}
+			inOther := strings.Contains(line, "all modes") || strings.Contains(line, "all but chat")
+			if got := other.Servers[name].Origin == p; got != inOther {
+				t.Errorf("%s from %s: list says other modes=%v, runtime home merge picks %q:\n%s", name, show(p), inOther, other.Servers[name].Origin, line)
+			}
+		}
+	}
+}

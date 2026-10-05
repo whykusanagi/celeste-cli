@@ -39,11 +39,6 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		return 2
 	}
 
-	global := map[string]bool{}
-	for _, p := range mcp.GlobalConfigPaths(home) {
-		global[filepath.Clean(p)] = true
-	}
-
 	show := func(path string, isGlobal bool) string {
 		base, prefix := cwd, "."
 		if isGlobal {
@@ -57,6 +52,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 
 	code := 0
 	var entries []mcpListEntry
+	var good []string // the files that parse, in precedence order
 	// The first file that does not parse: the runtime then starts no server
 	// at all where it is loaded (LoadMerged fails as a whole), so a home
 	// file stops every mode and a workspace file stops the chat.
@@ -64,7 +60,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	// DiscoverConfigPaths is lowest precedence first: a later file defining
 	// the same name replaces the earlier definition.
 	for _, p := range lastOccurrences(mcp.DiscoverConfigPaths(cwd, home)) {
-		isGlobal := global[filepath.Clean(p)]
+		isGlobal := mcp.IsGlobalConfig(home, p)
 		cfg, err := mcp.LoadConfig(p)
 		if err != nil {
 			fmt.Fprintf(errOut, "Error: %v\n", err)
@@ -77,6 +73,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			}
 			continue
 		}
+		good = append(good, p)
 		names := make([]string, 0, len(cfg.Servers))
 		for name := range cfg.Servers {
 			names = append(names, name)
@@ -116,10 +113,16 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		return "pending"
 	}
 	where := func(e mcpListEntry) string { return show(e.path, e.global) }
+	// Which definition each mode starts comes from the runtime's own code
+	// (loop.setupMCP): LoadMerged over every config for the chat, over the
+	// home configs alone for every other mode. The files were just parsed.
+	chat, _ := mcp.LoadMerged(good)
+	homeOnly, _ := mcp.SplitGlobal(good, home)
+	other, _ := mcp.LoadMerged(homeOnly)
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tSOURCE\tTRANSPORT\tENABLED\tTRUSTED\tAPPROVAL\tRUNS IN")
-	for i, e := range entries {
+	for _, e := range entries {
 		trusted := "no"
 		if e.cfg.Trusted {
 			trusted = "yes"
@@ -128,7 +131,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			}
 		}
 		ap := approval(e)
-		runs := mcpRunsIn(entries, i, where, ap == "approved")
+		runs := mcpRunsIn(e, chat.Servers[e.name].Origin, other.Servers[e.name].Origin, func(p string) string { return show(p, mcp.IsGlobalConfig(home, p)) }, ap == "approved")
 		switch {
 		case homeBad != "":
 			runs = "none (" + homeBad + " does not parse)"
@@ -170,27 +173,21 @@ func lastOccurrences(paths []string) []string {
 	return out
 }
 
-// mcpRunsIn says where entries[i] is the definition celeste starts; only an
-// enabled server starts on its own, and a workspace one only once approved.
-// Workspace configs follow every home config in precedence, and only the
-// chat loads them (loop.setupMCP).
-func mcpRunsIn(entries []mcpListEntry, i int, show func(mcpListEntry) string, approved bool) string {
-	e := entries[i]
-	var wsOverride string
-	for _, later := range entries[i+1:] {
-		if later.name != e.name {
-			continue
-		}
-		if later.global == e.global {
-			return "overridden by " + show(later)
-		}
-		if wsOverride == "" {
-			wsOverride = show(later)
-		}
-	}
+// mcpRunsIn says where e is the definition celeste starts, from the
+// runtime's merges: chatOrigin is the file whose definition of e.name the
+// chat starts, otherOrigin the one every other mode starts ("" for none).
+// Only an enabled server starts on its own, and a workspace one only once
+// approved.
+func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string) string, approved bool) string {
+	same := func(p string) bool { return p != "" && filepath.Clean(p) == filepath.Clean(e.path) }
+	inChat, inOther := same(chatOrigin), e.global && same(otherOrigin)
 	switch {
-	case !e.cfg.Enabled && wsOverride != "":
-		return "off (chat uses " + wsOverride + ")"
+	case e.global && !inOther:
+		return "overridden by " + show(otherOrigin)
+	case !e.global && !inChat:
+		return "overridden by " + show(chatOrigin)
+	case !e.cfg.Enabled && !inChat:
+		return "off (chat uses " + show(chatOrigin) + ")"
 	case !e.cfg.Enabled:
 		// Manager.Start skips it; the chat's /mcp panel can still connect it.
 		return "off (start it from the chat's /mcp)"
@@ -198,8 +195,8 @@ func mcpRunsIn(entries []mcpListEntry, i int, show func(mcpListEntry) string, ap
 		return "chat only"
 	case !e.global:
 		return "chat once approved"
-	case wsOverride != "":
-		return "all but chat (chat uses " + wsOverride + ")"
+	case !inChat:
+		return "all but chat (chat uses " + show(chatOrigin) + ")"
 	}
 	return "all modes"
 }

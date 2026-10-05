@@ -401,20 +401,13 @@ func (e *Env) warnMCPSkipped(src hooks.Source, why string) {
 // globalMCPConfigs keeps the home-level configs in paths and warns once about
 // the workspace ones it drops.
 func (e *Env) globalMCPConfigs(paths []string, home string) []string {
-	global := map[string]bool{}
-	for _, p := range mcp.GlobalConfigPaths(home) {
-		global[filepath.Clean(p)] = true
-	}
-	var kept, skipped []string
-	for _, p := range paths {
-		if global[filepath.Clean(p)] {
-			kept = append(kept, p)
-		} else {
-			skipped = append(skipped, strconv.Quote(p))
-		}
-	}
+	kept, skipped := mcp.SplitGlobal(paths, home)
 	if len(skipped) > 0 {
-		e.warn("skipping repo MCP config %s: repo MCP servers don't start in non-interactive runs (move the server to a global config such as ~/.celeste/mcp.json to use it)", strings.Join(skipped, ", "))
+		quoted := make([]string, len(skipped))
+		for i, p := range skipped {
+			quoted[i] = strconv.Quote(p)
+		}
+		e.warn("skipping repo MCP config %s: repo MCP servers don't start in non-interactive runs (move the server to a global config such as ~/.celeste/mcp.json to use it)", strings.Join(quoted, ", "))
 	}
 	return kept
 }
