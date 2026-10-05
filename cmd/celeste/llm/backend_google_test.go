@@ -60,6 +60,8 @@ func TestGoogleAPIVersionForBaseURL(t *testing.T) {
 		{"ai studio explicit", "https://generativelanguage.googleapis.com/v1beta", "v1beta"},
 		{"ai studio openai-compat", "https://generativelanguage.googleapis.com/v1beta/openai", "v1beta"},
 		{"vertex", "https://aiplatform.googleapis.com/v1/projects/p/locations/l", "v1"},
+		{"vertex regional", "https://us-central1-aiplatform.googleapis.com/v1", "v1"},
+		{"ai studio host only, not a path", "https://proxy.example.com/generativelanguage.googleapis.com", "v1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -8,12 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/clock"
 )
 
 // Session represents a saved conversation session.
@@ -111,23 +112,16 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
-// lastSessionID is the newest session ID handed out in this process.
-var lastSessionID atomic.Int64
-
-// UniqueNanoID is the current time in nanoseconds, moved past the previous ID
-// when the clock hasn't advanced: Windows' clock is coarse, and two sessions
+// UniqueNanoID is the current time in nanoseconds from clock.Now, which
+// never repeats in this process: Windows' clock is coarse, and two sessions
 // with one ID overwrite each other's file.
 func UniqueNanoID() string {
-	for {
-		now, last := time.Now().UnixNano(), lastSessionID.Load()
-		if now <= last {
-			now = last + 1
-		}
-		if lastSessionID.CompareAndSwap(last, now) {
-			return fmt.Sprintf("%d", now)
-		}
-	}
+	return strconv.FormatInt(sessionClock().UnixNano(), 10)
 }
+
+// sessionClock is the clock UniqueNanoID reads; tests replace it to know
+// the next ID.
+var sessionClock = clock.Now
 
 // newSessionID is a UniqueNanoID no session file in the directory has yet:
 // another celeste process may have used it on the same clock tick. Two

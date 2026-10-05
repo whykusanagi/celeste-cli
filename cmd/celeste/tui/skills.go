@@ -105,7 +105,7 @@ func descLines(desc string, width, maxLines int) []string {
 	if len(lines) > maxLines {
 		last := lines[maxLines-1]
 		lines = lines[:maxLines]
-		lines[maxLines-1] = truncateLine(last+" …", width)
+		lines[maxLines-1] = fitWidth(last+" …", width)
 	}
 	return lines
 }

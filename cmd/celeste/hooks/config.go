@@ -153,10 +153,13 @@ func unsafeRune(s string) rune {
 	return -1
 }
 
-// safeText returns s, or s quoted when it holds a rune unsafeRune rejects
-// or invalid UTF-8, for error text that may echo file content.
-func safeText(s string) string {
-	if unsafeRune(s) >= 0 || !utf8.ValidString(s) {
+// SafeText returns s, or s Go-quoted when showing it could act on or hide
+// text on a terminal: invalid UTF-8 (it decodes as a printable U+FFFD), a
+// rune unsafeRune rejects, or any other non-printable rune. It is the one
+// rule for untrusted text celeste shows: hook errors, the approval prompt
+// and `celeste mcp list`.
+func SafeText(s string) string {
+	if !utf8.ValidString(s) || unsafeRune(s) >= 0 || strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
 		return strconv.Quote(s)
 	}
 	return s

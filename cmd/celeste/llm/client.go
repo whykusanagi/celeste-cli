@@ -12,6 +12,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
@@ -75,8 +76,6 @@ type Config struct {
 	// nothing for minutes (#359). Zero, or anything up to Timeout, means
 	// Timeout covers the first byte too. FirstByteBudget applies the cap.
 	FirstByteTimeout time.Duration
-	SimulateTyping   bool
-	TypingSpeed      int // chars per second
 
 	// Google Cloud authentication (for Gemini/Vertex AI)
 	GoogleCredentialsFile string // Path to service account JSON file
@@ -102,8 +101,6 @@ func ConfigFrom(cfg *config.Config) *Config {
 		Model:                 cfg.Model,
 		Timeout:               cfg.GetTimeout(),
 		FirstByteTimeout:      cfg.GetFirstByteTimeout(),
-		SimulateTyping:        cfg.SimulateTyping,
-		TypingSpeed:           cfg.TypingSpeed,
 		GoogleCredentialsFile: cfg.GoogleCredentialsFile,
 		GoogleUseADC:          cfg.GoogleUseADC,
 		ContextLimit:          cfg.ContextLimit,
@@ -200,26 +197,14 @@ type systemPromptPartsSetter interface {
 	SetSystemPromptParts(static, dynamic string)
 }
 
-// JoinSystemPrompt is the whole prompt for its static and dynamic parts:
-// the bytes prompts.Prompt.String makes.
-func JoinSystemPrompt(static, dynamic string) string {
-	switch {
-	case static == "":
-		return dynamic
-	case dynamic == "":
-		return static
-	}
-	return static + "\n\n" + dynamic
-}
-
 // SetSystemPromptParts sets the system prompt from prompts.Compose's
 // parts: the byte-stable persona (Prompt.Static) and the rest
 // (Prompt.Dynamic). A backend that caches the persona on its own gets the
-// parts; the others get JoinSystemPrompt's whole prompt.
+// parts; the others get the whole prompt, prompts.Prompt.String.
 func (c *Client) SetSystemPromptParts(static, dynamic string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.systemPrompt = JoinSystemPrompt(static, dynamic)
+	c.systemPrompt = prompts.Prompt{Static: static, Dynamic: dynamic}.String()
 	c.systemStatic, c.systemDynamic = static, dynamic
 	c.applySystemPromptLocked()
 }

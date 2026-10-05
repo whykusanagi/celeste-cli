@@ -127,6 +127,8 @@ func newCompactionRunner(t *testing.T, backend *windowBackend, budgetWindow int)
 		errOut:   io.Discard,
 		budget:   ctxmgr.NewTokenBudget(budgetWindow, 500, 0),
 		pruned:   store,
+		// NewRunner sets this from the summary client's config.
+		summaryTimeout: (*llm.Config)(nil).RequestCap(),
 	}, store
 }
 

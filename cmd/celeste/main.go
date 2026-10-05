@@ -863,7 +863,7 @@ func (a *TUIClientAdapter) summarizer() (compact.SummarizeFunc, error) {
 		if cfg == nil {
 			return nil, errors.New("no configuration loaded")
 		}
-		a.summarize = agent.SmallModelSummarizer(llm.PlainConfigFrom(cfg), cfg.ResolveSmallModel())
+		a.summarize = agent.SmallModelSummarizer(llm.ConfigFrom(cfg).Plain(), cfg.ResolveSmallModel())
 	}
 	return a.summarize, nil
 }
@@ -874,7 +874,7 @@ func (a *TUIClientAdapter) SummaryTimeout() time.Duration {
 	if a.baseConfig == nil {
 		return (*llm.Config)(nil).RequestCap()
 	}
-	return llm.PlainConfigFrom(a.baseConfig).RequestCap()
+	return llm.ConfigFrom(a.baseConfig).Plain().RequestCap()
 }
 
 var errCompactionBlocked = errors.New("compaction blocked by a PreCompact hook")

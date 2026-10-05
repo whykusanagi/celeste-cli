@@ -137,9 +137,7 @@ func (a *Agent) setupEnv(ctx context.Context, s *session) *RPCError {
 	a.connectMCP(ctx, s.id, s.cwd, env, s.mcpServers)
 	env.RefreshDiscovery()
 
-	llmCfg := llm.ConfigFrom(s.cfg)
-	llmCfg.SimulateTyping = false // the editor streams; typing delays only slow it
-	client := llm.NewClient(llmCfg, env.Registry)
+	client := llm.NewClient(llm.ConfigFrom(s.cfg), env.Registry)
 	client.SetToolMode(tools.ModeChat)
 	env.StartSession(ctx, "acp")
 	// The persona steps down for a small window (W5 guard); its notice

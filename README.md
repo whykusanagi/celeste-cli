@@ -1103,7 +1103,7 @@ Useful flags beyond `--goal`:
 
 **Unattended runs need `-auto-approve`.** `celeste agent` has no interactive
 approval prompt, in a terminal or otherwise. Under the default policy only
-`read_file`, `list_files` and `search_files` are granted, so every other tool is
+`read_file`, `list_files` and `search` are granted, so every other tool is
 denied and the agent can read but never write. Rather than burning the whole turn
 budget discovering that, the runner refuses to start and names the tools it cannot
 execute. Pass `-auto-approve` (invoking the agent is the approval, the same

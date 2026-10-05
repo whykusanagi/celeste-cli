@@ -59,6 +59,21 @@ func (r *Runner) completion(ctx context.Context, state *RunState, final string, 
 	return gate, vetoed
 }
 
+// isCompletionResponse is the shadow-mode rule (completion_gate off or
+// shadow, the default): the marker anywhere in the reply, case-insensitive.
+// completion decides with it and logs where markerOnLine disagrees; it goes
+// once completion_gate defaults to on.
+func isCompletionResponse(content string, options Options) bool {
+	text := strings.TrimSpace(content)
+	if text == "" {
+		return false
+	}
+	if options.CompletionMarker != "" && strings.Contains(strings.ToUpper(text), strings.ToUpper(options.CompletionMarker)) {
+		return true
+	}
+	return !options.RequireCompletionMarker
+}
+
 // markerOnLine reports the completion marker at the start of the reply's
 // first or last non-empty line, after markdown decoration (*, _, #, >, `).
 // Progress-marker lines before it (STEP_DONE: 1, as the agent prompt asks

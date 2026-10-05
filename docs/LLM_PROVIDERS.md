@@ -34,8 +34,24 @@ Pick wisely, or I'll tease your slow responses~ 😉
 Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
 ## Local models (mlx-vlm, Ollama, LM Studio, llama.cpp)
 
-Any OpenAI-compatible server on `127.0.0.1`, `localhost`, `0.0.0.0` or `[::1]`
-detects as the **local** provider and is treated as tool-capable, on any port.
+Any OpenAI-compatible server on this machine or the local network detects as
+the **local** provider and is treated as tool-capable, on any port: a host of
+`localhost`, a loopback, private or link-local address (`127.0.0.1`, `[::1]`,
+`0.0.0.0`, `192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`), a single-label name
+(`gpu-box`) or a `.local`, `.lan`, `.internal` or `.home.arpa` name. The host
+decides, not the rest of the URL: `https://proxy.example.com/localhost/v1` is
+not local. The same rule picks the local timeouts, asks the server for its
+window and applies the 8192 fallback below.
+
+A proxy on the LAN or on an `.internal` or bare host name (LiteLLM, vLLM, a
+corporate gateway) detects as local too. Setup then does not ask for an API key,
+and a server that does not report its window gets the 8192 fallback, even when
+it serves a hosted model such as `gpt-4o`. For such a proxy, set both:
+
+```bash
+celeste config -config proxy --set-key <the proxy's key>
+celeste config -config proxy --set-context-limit 128000
+```
 
 ```bash
 celeste config -config local --set-url http://127.0.0.1:8080/v1
@@ -157,7 +173,8 @@ A local server sends nothing while it reads the prompt, and the first turn of
 a chat is long: on a 14B model at a 32K window, ~16K prompt tokens plus
 thinking took more than 300 s before the first byte. So a local endpoint
 (`127.0.0.1`, `localhost`, a private or link-local address, a single-label or
-`.local`/`.lan` host) whose timeout is unset or still the 60 s default gets
+`.local`/`.lan`/`.internal`/`.home.arpa` host: the same rule as the **local**
+provider) whose timeout is unset or still the 60 s default gets
 **600 s**. `config` shows the value in use:
 
 ```bash

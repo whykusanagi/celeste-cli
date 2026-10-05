@@ -241,7 +241,7 @@ func (m ToolProgressModel) renderEntry(e toolProgressEntry) string {
 		if detailWidth < 8 {
 			detailWidth = 8
 		}
-		detail := truncateStr(e.message, detailWidth)
+		detail := fitRow(e.message, detailWidth)
 		line += "\n" + lipgloss.NewStyle().Foreground(ColorTextMuted).Render(detail)
 	}
 

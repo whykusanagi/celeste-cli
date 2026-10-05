@@ -174,13 +174,15 @@ type TurnStats struct {
 	Dropped bool
 }
 
+// DefaultOptions leaves RequestTimeout at 0, "the request cap": NewRunner
+// sets it from the profile's timeout unless it was set explicitly, and
+// normalizeOptions falls back to the cap of the default stall timeout.
 func DefaultOptions() Options {
 	return Options{
 		MaxTurns:                      50,
 		MaxToolCallsPerTurn:           8,
 		MaxConsecutiveNoToolTurns:     3,
 		MaxConsecutiveInvalidToolArgs: 3,
-		RequestTimeout:                90 * time.Second,
 		ToolTimeout:                   45 * time.Second,
 		RequireCompletionMarker:       true,
 		CompletionMarker:              "TASK_COMPLETE:",

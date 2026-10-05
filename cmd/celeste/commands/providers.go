@@ -316,7 +316,7 @@ func showProviderInfo(name string, ctx *CommandContext) *CommandResult {
 	case "local":
 		output.WriteString("  Unit Tests: ✅ PASS\n")
 		output.WriteString("  Integration: run against your own server\n")
-		output.WriteString("  Status: Any OpenAI-compatible server on localhost, any port\n")
+		output.WriteString("  Status: Any OpenAI-compatible server on this machine or the LAN, any port\n")
 	}
 
 	// Known limitations and features

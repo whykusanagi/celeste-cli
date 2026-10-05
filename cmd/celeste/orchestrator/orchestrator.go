@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
@@ -295,9 +296,7 @@ func (o *orchRun) runDebate(ctx context.Context, li laneInheritance, goal, prima
 			reviewSummary = "no issues found"
 		} else {
 			reviewSummary = fmt.Sprintf("%d issue(s): %s", len(lastIssues), lastIssues[0].Description)
-			if len(reviewSummary) > 100 {
-				reviewSummary = reviewSummary[:100] + "…"
-			}
+			reviewSummary = eventPreview(reviewSummary)
 		}
 		o.emit(OrchestratorEvent{Kind: EventReviewDraft, Model: assignment.Reviewer, Text: reviewSummary, Response: reviewOutput, Duration: reviewElapsed, InputTokens: reviewIn, OutputTokens: reviewOut})
 		verdict := dm.Verdict(lastIssues)
@@ -323,9 +322,7 @@ func (o *orchRun) runDebate(ctx context.Context, li laneInheritance, goal, prima
 		if nl := strings.IndexByte(defensePreview, '\n'); nl > 0 {
 			defensePreview = defensePreview[:nl]
 		}
-		if len(defensePreview) > 100 {
-			defensePreview = defensePreview[:100] + "…"
-		}
+		defensePreview = eventPreview(defensePreview)
 		o.emit(OrchestratorEvent{Kind: EventDefense, Model: assignment.Primary, Text: defensePreview, Response: defenseOutput, Duration: defenseElapsed, InputTokens: defenseIn, OutputTokens: defenseOut})
 		reviewPrompt = fmt.Sprintf("Review the revised output:\n%s", defenseOutput)
 	}
@@ -383,4 +380,13 @@ func parseIssues(text string) []Issue {
 		}
 	}
 	return nil
+}
+
+// eventPreview caps a review or defense line for the action feed at 100
+// bytes, marking the cut with "…" and never splitting a UTF-8 character.
+func eventPreview(s string) string {
+	if len(s) <= 100 {
+		return s
+	}
+	return textutil.CutBytes(s, 100) + "…"
 }

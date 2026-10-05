@@ -242,6 +242,7 @@ type LLMClient interface {
 // by the small-model role (it blocks, so the app calls it from a command).
 // A context overflow during a turn is the loop's to retry (2.0 F2d).
 type ContextCompactor interface {
+	SummaryTimeouter
 	CompactContext(msgs []ChatMessage, window, used int, force bool) CompactOutcome
 	SummarizeContext(ctx context.Context, msgs []ChatMessage, focus string) (SummaryOutcome, error)
 }
@@ -1828,47 +1829,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.persistSession()
 			return m, tea.Quit
 		}
-		switch lowerContent {
-		case "clear":
-			m.chat = m.chat.Clear()
-			m.untrackPlan()
-			m.status = m.status.SetText("Chat cleared")
-			return m, nil
-		case "help":
-			// Use context-aware /help command instead of static helpText()
-			helpCmd := &commands.Command{Name: "help"}
-			ctx := &commands.CommandContext{NSFWMode: m.nsfwMode}
-			result := commands.Execute(helpCmd, ctx)
-			if result.Success {
-				m.chat = m.chat.AddSystemMessage(result.Message)
-			}
-			return m, nil
-		case "tools", "skills":
-			// Switch to interactive skills view
-			m.viewMode = "skills"
-
-			// Create skills browser with current skills list
-			skillsList := []SkillDefinition{}
-			if m.llmClient != nil {
-				skillsList = m.llmClient.GetSkills()
-			}
-			model := NewSkillsBrowserModel(skillsList)
-			model.width, model.height = m.width, m.height
-			m.skillsBrowser = &model
-
-			return m, m.skillsBrowser.Init()
-
-		case "debug":
-			// Show tools/skills debug info (old behavior for debug command)
-			skills := m.getAvailableSkills()
-			debugMsg := fmt.Sprintf("📋 Available Tools (%d):\n", len(skills))
-			for _, s := range skills {
-				debugMsg += fmt.Sprintf("  • %s: %s\n", s.Name, s.Description)
-			}
-			debugMsg += "\n⚠️  Tool calls need a model and endpoint that support tool calling.\n"
-			debugMsg += fmt.Sprintf("\nLog file: %s", GetLogPath())
-			m.chat = m.chat.AddSystemMessage(debugMsg)
-			return m, nil
+		if run := legacyCommands[lowerContent]; run != nil {
+			return run(m)
 		}
 
 		// Check for routing hints (hashtags or keywords at end)
@@ -2410,7 +2372,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Model != "" {
 				reviewer = msg.Model
 			}
-			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, truncateText(msg.Text, 60))
+			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, fitRow(msg.Text, 60))
 			if msg.Duration > 0 || msg.InputTokens > 0 {
 				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
 			}
@@ -2425,7 +2387,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Model != "" {
 				model = msg.Model
 			}
-			entry := fmt.Sprintf("🛡 [%s] %s", model, truncateText(msg.Text, 60))
+			entry := fmt.Sprintf("🛡 [%s] %s", model, fitRow(msg.Text, 60))
 			if msg.Duration > 0 || msg.InputTokens > 0 {
 				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
 			}
@@ -3880,13 +3842,6 @@ func humanizeTime(t time.Time) string {
 	} else {
 		return t.Format("Jan 2, 2006")
 	}
-}
-
-func truncateText(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
 }
 
 // fetchElevenLabsVoices calls the ElevenLabs API and returns a formatted voice list.

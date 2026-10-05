@@ -326,7 +326,7 @@ func (m GraphModel) renderOverview() string {
 		}
 
 		line := fmt.Sprintf(" %s %-50s  %d syms%s",
-			expandIcon, truncate(node.File, 50), symCount, connStr)
+			expandIcon, elideLeft(node.File, 50), symCount, connStr)
 
 		if isCursor {
 			sb.WriteString(graphCursorStyle.Width(width - 2).Render(line))
@@ -510,13 +510,6 @@ func symbolIcon(kind string) string {
 	default:
 		return "·"
 	}
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return "..." + s[len(s)-max+3:]
 }
 
 // Corrupted-theme graph styles

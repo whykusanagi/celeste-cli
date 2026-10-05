@@ -1,6 +1,7 @@
 package compact
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -49,7 +50,7 @@ func TestShadowOptionsKeepRulesOrder(t *testing.T) {
 	msgs := history(steps...)
 	base := Options{Window: 200_000, Used: Estimate(msgs)}
 	want := Plan(msgs, base)
-	opts, report := Shadow(nil, msgs, base, func(string) {}, true)
+	opts, report := shadow(context.Background(), nil, msgs, base, func(string) {}, true)
 	got := Plan(msgs, opts)
 	if len(got.Edits) != len(want.Edits) || got.Edits[0].ToolCallID != want.Edits[0].ToolCallID {
 		t.Errorf("shadow changed the plan: %d edits vs %d", len(got.Edits), len(want.Edits))
@@ -113,7 +114,7 @@ func TestShadowReportSkipsWhenNothingElided(t *testing.T) {
 	}
 	msgs := history(steps...)
 	logged := false
-	opts, report := Shadow(&jev.Client{Key: "k", URL: srv.URL}, msgs, Options{Window: 200_000, Used: Estimate(msgs)}, func(string) { logged = true }, false)
+	opts, report := shadow(context.Background(), &jev.Client{Key: "k", URL: srv.URL}, msgs, Options{Window: 200_000, Used: Estimate(msgs)}, func(string) { logged = true }, false)
 	Plan(msgs, opts) // captures candidates
 	report(Result{}) // ...but the prune was abandoned
 	if logged {
@@ -134,7 +135,7 @@ func TestShadowSyncLogsBeforeReturning(t *testing.T) {
 	}
 	msgs := history(steps...)
 	var line string
-	opts, report := Shadow(&jev.Client{Key: "k", URL: srv.URL}, msgs, Options{Window: 200_000, Used: Estimate(msgs)}, func(s string) { line = s }, false)
+	opts, report := shadow(context.Background(), &jev.Client{Key: "k", URL: srv.URL}, msgs, Options{Window: 200_000, Used: Estimate(msgs)}, func(s string) { line = s }, false)
 	report(Plan(msgs, opts))
 	if !strings.Contains(line, "jev shadow") {
 		t.Errorf("sync report did not log before returning: %q", line)

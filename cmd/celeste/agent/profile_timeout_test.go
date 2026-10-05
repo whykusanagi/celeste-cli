@@ -89,3 +89,18 @@ func TestAgentHostedKeepsProfileStall(t *testing.T) {
 		t.Errorf("client stall timeout = %v, want 60s", got)
 	}
 }
+
+// The pre-L3 90 s turn deadline is gone from the defaults (audit M2): an
+// Options built without NewRunner reads "the request cap" (0), and
+// normalizeOptions falls back to the request cap of the default stall
+// timeout, never 90 s.
+func TestDefaultOptionsHasNoFixedTurnDeadline(t *testing.T) {
+	if got := DefaultOptions().RequestTimeout; got != 0 {
+		t.Fatalf("DefaultOptions().RequestTimeout = %v, want 0 (the request cap)", got)
+	}
+	opts := Options{}
+	normalizeOptions(&opts)
+	if want := llm.MaxRequestDuration((*llm.Config)(nil).StallTimeout()); opts.RequestTimeout != want {
+		t.Fatalf("normalized RequestTimeout = %v, want the request cap %v", opts.RequestTimeout, want)
+	}
+}
