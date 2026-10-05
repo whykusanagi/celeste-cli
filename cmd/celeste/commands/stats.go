@@ -205,8 +205,8 @@ func renderCorruptedHeader(frame int) string {
 
 	var sb strings.Builder
 	sb.WriteString("▓▒░ ═══════════════════════════════════════════════════════════ ░▒▓\n")
-	sb.WriteString(style.Render(fmt.Sprintf("                   %s  %s  %s\n", eyes, titleFlickered, eyes)))
-	sb.WriteString(phraseStyle.Render(fmt.Sprintf("           ⟨ %s ⟩\n", phraseFlickered)))
+	sb.WriteString(renderLine(style, fmt.Sprintf("                   %s  %s  %s\n", eyes, titleFlickered, eyes)))
+	sb.WriteString(renderLine(phraseStyle, fmt.Sprintf("           ⟨ %s ⟩\n", phraseFlickered)))
 	sb.WriteString("▓▒░ ═══════════════════════════════════════════════════════════ ░▒▓\n\n")
 	return sb.String()
 }
@@ -226,7 +226,7 @@ func renderCorruptedFooter() string {
 
 	var sb strings.Builder
 	sb.WriteString("▓▒░ ═══════════════════════════════════════════════════════════ ░▒▓\n")
-	sb.WriteString(style.Render(fmt.Sprintf("           ⟨ %s ⟩\n", phrase)))
+	sb.WriteString(renderLine(style, fmt.Sprintf("           ⟨ %s ⟩\n", phrase)))
 	sb.WriteString("▓▒░ ═══════════════════════════════════════════════════════════ ░▒▓\n")
 	return sb.String()
 }
@@ -234,7 +234,7 @@ func renderCorruptedFooter() string {
 // renderSectionHeader creates a section header with block character
 func renderSectionHeader(title string) string {
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color(colorPurpleNeon)).Bold(true)
-	return style.Render(fmt.Sprintf("█ %s:\n", strings.ToUpper(title)))
+	return renderLine(style, fmt.Sprintf("█ %s:\n", strings.ToUpper(title)))
 }
 
 // renderDataRow renders a data row with bullet point
@@ -285,6 +285,16 @@ func renderProgressBar(filled int, total int, width int) string {
 // renderWithColor applies a color style to text
 func renderWithColor(text string, color string) string {
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+	return renderLine(style, text)
+}
+
+// renderLine styles text, keeping its trailing newline outside the styled
+// block: lipgloss pads every line of a block to its widest, so a styled
+// "text\n" ends in a row of spaces that pushes the next row right (C6).
+func renderLine(style lipgloss.Style, text string) string {
+	if body, ok := strings.CutSuffix(text, "\n"); ok {
+		return style.Render(body) + "\n"
+	}
 	return style.Render(text)
 }
 

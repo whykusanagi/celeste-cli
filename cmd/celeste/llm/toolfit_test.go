@@ -121,3 +121,20 @@ func TestToolNoticeFollowsTheLastFit(t *testing.T) {
 		t.Fatalf("a stale notice: %q", n)
 	}
 }
+
+// K2: a tool filter narrows the set before the fit, so the fit's Total and
+// the notice count only the tools sent.
+func TestToolFilterRunsBeforeTheFit(t *testing.T) {
+	c := fitClient(8_192)
+	c.SetToolFilter(func(defs []tui.SkillDefinition) []tui.SkillDefinition {
+		return slices.DeleteFunc(slices.Clone(defs), func(d tui.SkillDefinition) bool { return d.Name == "submit_plan" })
+	})
+	defs := c.GetSkills()
+	if slices.ContainsFunc(defs, func(d tui.SkillDefinition) bool { return d.Name == "submit_plan" }) {
+		t.Fatal("the filtered tool was sent")
+	}
+	want := fmt.Sprintf("so %d of 48 tools are sent", len(defs))
+	if n := c.TakeToolNotice(); !strings.Contains(n, want) {
+		t.Fatalf("notice %q, want %q", n, want)
+	}
+}

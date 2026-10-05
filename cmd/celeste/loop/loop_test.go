@@ -101,6 +101,37 @@ func TestLoopEventsInOrder(t *testing.T) {
 	}
 }
 
+// C5: EventToolStart carries the call's start time, taken before the loop
+// stamps the call's result and the reply after it.
+func TestLoopToolStartCarriesItsTime(t *testing.T) {
+	l, _ := fakeLoop(t,
+		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "c1", Name: "echo", Args: `{}`}}},
+		fakeprovider.Turn{Text: "done"},
+	)
+	wait := collect(l)
+	msgs, _, err := l.Run(context.Background(), userMsg("go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var at time.Time
+	for _, e := range wait() {
+		if e.Kind == EventToolStart {
+			at = e.At
+		}
+	}
+	if at.IsZero() {
+		t.Fatal("EventToolStart has no start time")
+	}
+	if !msgs[1].Timestamp.IsZero() && at.Before(msgs[1].Timestamp) {
+		t.Fatalf("the call starts %v, before the message that asked for it %v", at, msgs[1].Timestamp)
+	}
+	for _, m := range msgs[2:] {
+		if !at.Before(m.Timestamp) {
+			t.Fatalf("%s message stamped %v, not after the call's start %v", m.Role, m.Timestamp, at)
+		}
+	}
+}
+
 func TestLoopTurnCap(t *testing.T) {
 	l, srv := fakeLoop(t,
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "c1", Name: "echo", Args: `{"k":"1"}`}}},

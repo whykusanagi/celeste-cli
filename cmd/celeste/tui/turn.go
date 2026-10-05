@@ -69,6 +69,11 @@ type ToolTurnMsg struct {
 type ToolStartMsg struct {
 	ID, Name string
 	Args     map[string]any
+	// Started is when the loop started the call, on its own clock (zero:
+	// unknown, now). The call's log is placed by it among the messages the
+	// loop stamped, so a reply the loop stamped before the chat got to
+	// this message still renders after the log (C5).
+	Started time.Time
 }
 
 type ToolResultMsg struct {
@@ -275,6 +280,7 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 				m.contextTracker.CurrentTokens -= msg.Saved
 			}
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			m = m.syncContextBar() // K1: the bar follows the header
 		}
 		m.chat = m.chat.AddSystemMessage("🗜 Context compacted: " + msg.Line)
 		LogInfo("context compacted: " + msg.Line)
@@ -345,7 +351,11 @@ func (m AppModel) finishTyping() AppModel {
 func (m AppModel) onToolStart(msg ToolStartMsg) (AppModel, tea.Cmd) {
 	LogSkillCall(msg.Name, msg.Args)
 	m = m.finishTyping()
-	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: time.Now()})
+	started := msg.Started
+	if started.IsZero() {
+		started = time.Now()
+	}
+	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: started})
 	m.skills = m.skills.SetExecuting(msg.Name)
 	m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{ToolCallID: msg.ID, ToolName: msg.Name, State: "executing"})
 	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", msg.Name))
@@ -591,18 +601,7 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 				u.TotalTokens,
 			)
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
-
-			// Update context bar
-			budgetMsg := ContextBudgetMsg{
-				UsedTokens:   m.contextTracker.CurrentTokens,
-				MaxTokens:    m.contextTracker.MaxTokens,
-				UsagePercent: float64(m.contextTracker.CurrentTokens) / float64(m.contextTracker.MaxTokens) * 100,
-			}
-			if m.contextTracker.Budget != nil {
-				budgetMsg.CompactCount = m.contextTracker.Budget.CompactCount
-				budgetMsg.TurnCount = m.contextTracker.Budget.TurnCount
-			}
-			m.contextBar, _ = m.contextBar.Update(budgetMsg)
+			m = m.syncContextBar()
 		}
 	} else if content != "" {
 		// API didn't return token usage — estimate from response length and
@@ -612,6 +611,7 @@ func (m AppModel) recordUsage(u *TokenUsage, content string) AppModel {
 			cur := m.contextTracker.CurrentTokens + estOut
 			m.contextTracker.UpdateTokens(0, estOut, cur)
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
+			m = m.syncContextBar()
 		}
 		// Leave lastMsgInTok/lastMsgOutTok at 0 so the TickMsg inferred path runs.
 	}

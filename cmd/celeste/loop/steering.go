@@ -2,7 +2,6 @@ package loop
 
 import (
 	"sync"
-	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
@@ -68,7 +67,7 @@ func ReminderMessage(r Reminder) Message {
 	return Message{
 		Role:      "user",
 		Content:   "<system-reminder>\n" + r.Text + "\n</system-reminder>",
-		Timestamp: time.Now(),
+		Timestamp: stampNow(),
 		Metadata:  map[string]any{"hidden": true, tui.MetaPromptHookDone: true, MetaReminder: r.Source},
 	}
 }

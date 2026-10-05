@@ -84,7 +84,7 @@ func TestCommandOutputsKeepPlaceholdersAndLines(t *testing.T) {
 
 			m = auditSend(t, m, "/help")
 			help := lastSystemRender(t, m, sz.w-4)
-			for _, want := range []string{"/agent <goal>", "/agent resume <id> Resume an existing agent run", "/endpoint <name>", "/orch <goal>"} {
+			for _, want := range []string{"/agent <goal>", "/agent resume <id>", "Resume an existing agent run", "/endpoint <name>", "/orch <goal>"} {
 				assert.Contains(t, help, want)
 			}
 			// Line breaks kept: each command is on its own row.

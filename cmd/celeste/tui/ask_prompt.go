@@ -228,7 +228,6 @@ func (m AskPromptModel) optionsView() string {
 				box = "[ ] "
 			}
 		}
-		line := cursor + box + opt.Label
 		style := lipgloss.NewStyle().Foreground(ColorText)
 		if i == m.selected {
 			style = lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true)
@@ -236,12 +235,59 @@ func (m AskPromptModel) optionsView() string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(style.Render(line))
-		if opt.Description != "" {
-			b.WriteString(lipgloss.NewStyle().Foreground(ColorTextMuted).Render("  " + opt.Description))
-		}
+		b.WriteString(optionRows(cursor+box, opt, m.width, style, lipgloss.NewStyle().Foreground(ColorTextMuted)))
 	}
 	return m.block(b.String())
+}
+
+// optionRows lays one option out in rows of at most width cells (0:
+// unbounded): the label after prefix, its description two spaces after
+// it. Text that does not fit wraps under its own start, never to column
+// 0: the description under itself while that leaves it half the row, else
+// on the rows below, under the label.
+func optionRows(prefix string, opt AskOption, width int, label, desc lipgloss.Style) string {
+	indent := lipgloss.Width(prefix)
+	head := prefix + opt.Label
+	if strings.TrimSpace(opt.Description) == "" {
+		opt.Description = ""
+	}
+	if width <= 0 || lipgloss.Width(head)+2+lipgloss.Width(opt.Description) <= width {
+		out := label.Render(head)
+		if opt.Description != "" {
+			out += desc.Render("  " + opt.Description)
+		}
+		return out
+	}
+	hang := func(text string, col int, style lipgloss.Style) []string {
+		rows := wrapWords(strings.Fields(text), max(width-col, 1))
+		for i := range rows {
+			rows[i] = style.Render(strings.Repeat(" ", col) + rows[i])
+		}
+		return rows
+	}
+	labelRows := wrapWords(strings.Fields(opt.Label), max(width-indent, 1))
+	if len(labelRows) == 0 {
+		labelRows = []string{""}
+	}
+	var rows []string
+	for i, r := range labelRows {
+		if i == 0 {
+			rows = append(rows, label.Render(prefix+r))
+		} else {
+			rows = append(rows, label.Render(strings.Repeat(" ", indent)+r))
+		}
+	}
+	if opt.Description == "" {
+		return strings.Join(rows, "\n")
+	}
+	last := lipgloss.Width(prefix + labelRows[len(labelRows)-1])
+	if col := last + 2; len(labelRows) == 1 && col <= width/2 {
+		descRows := wrapWords(strings.Fields(opt.Description), width-col)
+		rows[0] += desc.Render("  " + descRows[0])
+		rows = append(rows, hang(strings.Join(descRows[1:], " "), col, desc)...)
+		return strings.Join(rows, "\n")
+	}
+	return strings.Join(append(rows, hang(opt.Description, indent+2, desc)...), "\n")
 }
 
 // footer is the key help; scroll adds the PgUp/PgDn hint and position.

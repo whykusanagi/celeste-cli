@@ -125,11 +125,20 @@ func TestWideHelpRowsKeepIndentAndColumns(t *testing.T) {
 			helpRowsKeepColumns(t, help, w)
 			for _, want := range []string{
 				"  /confirm           Toggle confirm mode",
-				"  /agents kill <id|name> Cancel a specific in-flight subagent",
-				"  /set-model [model] List or set the chat model",
+				"  /agents kill <id|name>\n" + helpPad + "Cancel a running subagent",
+				"  /set-model [model]\n" + helpPad + "List or set the chat model",
+				"  /config            List available config profiles",
+				"  /config set-key <k>\n" + helpPad + "Set API key",
 				"  /list-models       List models",
 			} {
 				assert.True(t, hasRowPrefix(help, want), "missing row starting %q in\n%s", want, help)
+			}
+			// C2: a wrapped description hangs under its own column, never
+			// at the command's indent.
+			for _, r := range strings.Split(help, "\n") {
+				if strings.HasPrefix(r, "   ") && !strings.HasPrefix(r, helpPad) && strings.TrimSpace(r) != "" {
+					t.Errorf("row hangs at the wrong column: %q", r)
+				}
 			}
 			frame := auditView(m)
 			assertFrameFits(t, frame, sz.w, sz.h)
@@ -156,9 +165,30 @@ func TestWideHelpRowsKeepIndentAndColumns(t *testing.T) {
 	}
 }
 
+// helpPad is the indent of /help's description column.
+var helpPad = strings.Repeat(" ", 21)
+
+// hasRowPrefix reports whether out has a row starting with prefix; a
+// prefix with newlines matches consecutive rows, the last by its start.
 func hasRowPrefix(out, prefix string) bool {
-	for _, l := range strings.Split(out, "\n") {
-		if strings.HasPrefix(l, prefix) {
+	want := strings.Split(prefix, "\n")
+	rows := strings.Split(out, "\n")
+	for i := range rows {
+		if i+len(want) > len(rows) {
+			break
+		}
+		ok := true
+		for j, w := range want {
+			r := rows[i+j]
+			if j < len(want)-1 {
+				r = strings.TrimRight(r, " ")
+			}
+			if !strings.HasPrefix(r, w) {
+				ok = false
+				break
+			}
+		}
+		if ok {
 			return true
 		}
 	}

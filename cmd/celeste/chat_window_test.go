@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts/promptstest"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/builtin"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
@@ -252,5 +254,38 @@ func TestToolWindowFollowsThePrompt(t *testing.T) {
 	a.FollowWindow()
 	if n := len(a.client.GetSkills()); n >= all {
 		t.Fatalf("after following 8,192: %d tools, want fewer than %d", n, all)
+	}
+}
+
+// K2: the small-window tool notice reports what the requests carry. Outside
+// plan mode no request carries submit_plan, so the notice neither counts it
+// nor spends the fit's budget on it.
+func TestChatToolNoticeCountsWhatIsSent(t *testing.T) {
+	promptstest.Install(t)
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "one"})
+	m, deps, _ := chatAppWithContextLimit(t, srv, 8192)
+	m = drive(t, m, []tea.Msg{tui.SendMessageMsg{Content: "first"}},
+		func(m tea.Model) bool { return lastAssistant(m) == "one" && turnIdle(m) }, 30*time.Second)
+	var notice string
+	for _, msg := range chatMessages(m) {
+		if msg.Role == "system" && strings.Contains(msg.Content, "too small for all the tool definitions") {
+			notice = msg.Content
+		}
+	}
+	if notice == "" {
+		t.Fatal("no tool notice at 8,192")
+	}
+	_, sent := requestPrefix(t, srv, 0)
+	offered := offeredTools(t, srv.Requests()[0])
+	if hasName(offered, builtin.SubmitPlanName) {
+		t.Fatalf("submit_plan was sent outside plan mode: %v", offered)
+	}
+	all := len(deps.adapter.registry.GetTools(tools.ModeChat)) - 1 // submit_plan is plan mode's
+	want := fmt.Sprintf("so %d of %d tools are sent", sent, all)
+	if !strings.Contains(notice, want) {
+		t.Fatalf("the notice does not say %q: %s", want, notice)
+	}
+	if got := len(deps.adapter.GetSkills()); got != sent {
+		t.Fatalf("GetSkills offers %d tools, the request carried %d", got, sent)
 	}
 }

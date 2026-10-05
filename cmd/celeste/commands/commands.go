@@ -787,19 +787,22 @@ const chatCommandsHelp = `Chat:
   /user              Show current user identity
   /user <name>       Set who Celeste addresses you as (default: Summoner)
   /user reset        Reset to default (Summoner)
-  /confirm           Toggle confirm mode (propose actions before executing)
+  /confirm           Toggle confirm mode (propose actions before acting)
   /agents            List spawned subagents and their status
-  /agents resume <id> Resume a failed subagent from its last checkpoint
-  /agents kill <id|name> Cancel a specific in-flight subagent (id, task id, or on-screen name)
+  /agents resume <id>
+                     Resume a failed subagent from its last checkpoint
+  /agents kill <id|name>
+                     Cancel a running subagent (id, task id, or name)
   /voice             Show ElevenLabs TTS config
   /voice list        List available ElevenLabs voices
   /voice set-key     Set ElevenLabs API key
   /voice set-voice   Set default voice ID
-  /config             List available config profiles
-  /config <name>      Load a named config profile
-  /config set-key <k> Set API key
-  /config set-model   Set LLM model (e.g. grok-build-0.1)
-  /config set-url     Set API base URL
+  /config            List available config profiles
+  /config <name>     Load a named config profile
+  /config set-key <k>
+                     Set API key
+  /config set-model  Set LLM model (e.g. grok-build-0.1)
+  /config set-url    Set API base URL
   /model <name>      Change the model
   /providers         List AI providers (--tools, info <name>, current)
 
@@ -822,8 +825,8 @@ Project:
   /handoff [focus]   Summarize this session into a new one
   /diff              List the files this session changed
   /undo              Undo the last file change (repeat to go back)
-  /rewind [n]        Take back the last n prompts and the file changes they made
-  /fork              Continue in a copy of this session (the original is kept)
+  /rewind [n]        Take back the last n prompts and their file changes
+  /fork              Continue in a copy of this session (original kept)
   /costs             Show session costs
   /stats             Show usage statistics
   /export [format]   Export the session (json, md, csv)
@@ -833,15 +836,17 @@ Project:
 Agent & Orchestrator:
   /agent <goal>      Run autonomous task loop
   /agent list-runs   List checkpointed agent runs
-  /agent resume <id> Resume an existing agent run
+  /agent resume <id>
+                     Resume an existing agent run
   /orch <goal>       Multi-model orchestrated run (also /orchestrate)
 
 Settings:
   /effort <level>    Set reasoning effort (off/low/medium/high/max)
   /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
   /safe              Return to safe mode
-  /set-model [model] List or set the chat model (the image model in NSFW mode)
-  /list-models       List models (also /image-model, the old name for /set-model)
+  /set-model [model]
+                     List or set the chat model (image model in NSFW)
+  /list-models       List models (/image-model: old name of /set-model)
 
 Tools:
   /tools, /skills    Browse available tools interactively
@@ -912,7 +917,7 @@ Tip: Ask the uncensored LLM to write detailed NSFW prompts, then use
   /agent fix tests       → Run autonomous code-fix loop
   /orch write a script   → Multi-model orchestrated run
   /endpoint google       → Switch to Google Vertex AI
-  /model grok-build-0.1   → Use Grok model
+  /model grok-build-0.1  → Use Grok model
 
 Tip: Type / and press Tab for command autocomplete.`
 	}

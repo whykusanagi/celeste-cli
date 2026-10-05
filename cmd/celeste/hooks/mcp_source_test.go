@@ -25,7 +25,7 @@ func TestMCPSourceKeyAndPrompt(t *testing.T) {
 		t.Fatal("y did not approve")
 	}
 	got := out.String()
-	for _, want := range []string{`MCP server "odd#mcp:name"`, "have changed", `command: "sh"`, "Trust it?"} {
+	for _, want := range []string{`MCP server "odd#mcp:name"`, "has changed since you approved it:", `command: "sh"`, "Trust it?"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, got)
 		}
@@ -34,5 +34,21 @@ func TestMCPSourceKeyAndPrompt(t *testing.T) {
 	DescribeSource(&out, MCPSource(file, "x", "bad\x1bline", ""))
 	if strings.Contains(out.String(), "\x1b") {
 		t.Fatalf("a control character reached the terminal: %q", out.String())
+	}
+}
+
+// C4: the prompt for one MCP server speaks of it in the singular.
+func TestMCPPromptIsSingular(t *testing.T) {
+	src := MCPSource(filepath.Join("repo", ".mcp.json"), "repo-stub", `command: "sh"`, "h1")
+	var out bytes.Buffer
+	PromptApprover(strings.NewReader("n\n"), &out)(src, Untrusted)
+	got := out.String()
+	if !strings.Contains(got, `" is not trusted yet:`) || strings.Contains(got, " are not trusted") {
+		t.Errorf("untrusted prompt not singular:\n%s", got)
+	}
+	out.Reset()
+	PromptApprover(strings.NewReader("n\n"), &out)(src, Changed)
+	if got := out.String(); !strings.Contains(got, " has changed since you approved it:") || strings.Contains(got, "approved them") {
+		t.Errorf("changed prompt not singular:\n%s", got)
 	}
 }

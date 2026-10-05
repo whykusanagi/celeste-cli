@@ -152,7 +152,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		res.FinalText = rep.text
 
 		if len(calls) == 0 {
-			msgs = append(msgs, tui.AttachProviderBlocks(Message{Role: "assistant", Content: rep.text, Timestamp: time.Now()}, rep.blocks))
+			msgs = append(msgs, tui.AttachProviderBlocks(Message{Role: "assistant", Content: rep.text, Timestamp: stampNow()}, rep.blocks))
 			res.ToolCallsLastTurn = 0
 			res.NoToolTurns++
 			l.emit(Event{Kind: EventTurnEnd, Turn: turn, History: cloneHistory(msgs)})
@@ -183,7 +183,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 			res.StopReason = StopIdentical
 			return msgs, res, nil
 		}
-		turnMsg := Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: time.Now()}
+		turnMsg := Message{Role: "assistant", Content: rep.text, ToolCalls: toToolCallInfo(native), Timestamp: stampNow()}
 		if len(native) == len(rep.calls) && len(calls) == len(native) {
 			// The blocks hold every call the provider made: after
 			// MaxCallsPerTurn dropped some, they would replay tool_use
@@ -248,7 +248,7 @@ func (l *Loop) joinSteers(ctx context.Context, msgs []Message) ([]Message, int) 
 	l.mu.Unlock()
 	joined := 0
 	for i, s := range pending {
-		msg := Message{Role: "user", Content: s, Timestamp: time.Now()}
+		msg := Message{Role: "user", Content: s, Timestamp: stampNow()}
 		if l.CheckPrompt != nil {
 			out, v, err := l.CheckPrompt(ctx, msg)
 			if err != nil {

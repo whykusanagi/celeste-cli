@@ -154,6 +154,11 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// The tool schemas follow the same window: a small one gets a core set
 	// (#310).
 	client.SetWindowFunc(tuiClient.windowForTools)
+	// Plan mode narrows them first, so the fit and its notice count only
+	// the tools a request carries (K2).
+	client.SetToolFilter(func(defs []tui.SkillDefinition) []tui.SkillDefinition {
+		return planFilter(defs, plan, registry)
+	})
 
 	// Subagents and /agent nest under the chat's Env (2.0 F2e): they share
 	// its MCP clients (global servers only), hooks (this session's ID) and

@@ -104,6 +104,13 @@ type InputModel struct {
 	deferView     bool      // A burst is landing: View may show the last render
 	redrawPending bool      // An inputRedrawMsg is on its way
 	rendered      *inputRender
+	// The held tail of an overflowed paste (K3), see input_tail.go.
+	tailArmed   bool      // No key has arrived since the overflow's burst ended
+	tailOpen    bool      // The burst's last key was not a rune run
+	tailPending []rune    // The first rune run after the burst, held to settle
+	tailSpaces  int       // Spaces that came right after tailPending, held too
+	tailAt      time.Time // When the last held key arrived
+	tailSeq     int       // Which settle tick is the held keys'
 }
 
 // NewInputModel creates a new input model using textarea for word-wrap support.
@@ -205,7 +212,17 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		m.textArea, cmd = m.textArea.Update(msg)
 		return m, cmd
 
+	case tailSettleMsg:
+		if msg.seq == m.tailSeq {
+			m.settleTailQuiet()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		var held bool
+		if m, held, cmd = m.settleTail(msg); held {
+			return m, cmd
+		}
 		m.deferView = false
 		now := keyClock()
 		prevKeyAt := m.lastKeyAt
@@ -215,7 +232,16 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			// The rest of a paste that did not fit: dropped whole,
 			// Enter included, so no fragment of it lands or is sent.
 			m.overflowAt = now
+			m.tailOpen = !plainRuneRun(msg)
 			return m, nil
+		}
+		if m.tailArmed {
+			// The first key after an overflowed burst may carry the
+			// burst's last word, held back by the terminal reader (K3).
+			m.tailArmed = false
+			if m.tailOpen && plainRuneRun(msg) {
+				return m, m.holdTail(msg.Runes, now)
+			}
 		}
 		runes := insertedRunes(msg)
 		if runes != nil && !msg.Paste {
@@ -230,6 +256,12 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			}
 		}
 		if runes != nil && !m.admit(runes, msg.Paste) {
+			if m.tailArmed {
+				// The overflowing key may be the burst's last delivered
+				// one: judge it as a dropped key would be, so a word the
+				// reader holds back after it is still caught (K3).
+				m.tailOpen = !plainRuneRun(msg)
+			}
 			return m, nil
 		}
 		if isTextBurst(msg) || (runes != nil && !msg.Paste && !msg.Alt && inPaste) {
@@ -373,27 +405,74 @@ func (m InputModel) View() string {
 	// Render typeahead suggestions below input
 	var hintLine string
 	if len(m.suggestions) > 0 {
-		parts := make([]string, len(m.suggestions))
-		for i, s := range m.suggestions {
-			if i == m.suggestionIdx {
-				parts[i] = suggestionActiveStyle.Render("/" + s)
-			} else {
-				parts[i] = suggestionDimStyle.Render("/" + s)
-			}
-		}
-		hintLine = suggestionTabStyle.Render("  ") + strings.Join(parts, suggestionDimStyle.Render(" · "))
+		hintLine = suggestionRow(m.suggestions, m.suggestionIdx, m.width)
 	}
 
 	if hintLine != "" {
 		inputView += "\n" + hintLine
 	}
 	if m.notice != "" {
-		inputView += "\n" + inputNoticeStyle.Render("  "+m.notice)
+		// Wrapped, not cut, so the advice stays readable at 80 columns
+		// (C1); continuation rows hang under the text.
+		inputView += "\n" + inputNoticeStyle.Render(wrapText("  "+m.notice, m.width))
 	}
 	if m.rendered != nil {
 		m.rendered.view, m.rendered.ok = inputView, true
 	}
 	return inputView
+}
+
+// suggestionRow lays the typeahead suggestions out on one row of at most
+// width cells (0: unbounded). Whole names only: those that do not fit are
+// left out and a "…" marks the side they were on, and the window starts
+// late enough that the highlighted one is on screen.
+func suggestionRow(suggestions []string, active, width int) string {
+	const lead, sep, more = "  ", " · ", " …"
+	names := make([]string, len(suggestions))
+	for i, s := range suggestions {
+		names[i] = "/" + s
+	}
+	fits := func(from, to int) bool { // names[from:to] with their marks
+		w := lipgloss.Width(lead + strings.Join(names[from:to], sep))
+		if from > 0 {
+			w += lipgloss.Width("…" + sep)
+		}
+		if to < len(names) {
+			w += lipgloss.Width(more)
+		}
+		return width <= 0 || w <= width
+	}
+	from, to := 0, len(names)
+	if !fits(from, to) {
+		// Grow a window from the first name, sliding it until the
+		// highlighted name is in it.
+		to = from + 1
+		for to < len(names) && fits(from, to+1) {
+			to++
+		}
+		for active >= to && to < len(names) {
+			to++
+			for from < active && !fits(from, to) {
+				from++
+			}
+		}
+	}
+	parts := make([]string, 0, to-from+2)
+	if from > 0 {
+		parts = append(parts, suggestionDimStyle.Render("…"))
+	}
+	for i := from; i < to; i++ {
+		if i == active {
+			parts = append(parts, suggestionActiveStyle.Render(names[i]))
+		} else {
+			parts = append(parts, suggestionDimStyle.Render(names[i]))
+		}
+	}
+	row := suggestionTabStyle.Render(lead) + strings.Join(parts, suggestionDimStyle.Render(sep))
+	if to < len(names) {
+		row += suggestionDimStyle.Render(more)
+	}
+	return row
 }
 
 // SetHistory sets the command history.

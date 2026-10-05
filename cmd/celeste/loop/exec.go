@@ -68,7 +68,7 @@ func (l *Loop) runCalls(ctx context.Context, calls []llm.ToolCallResult, lim Lim
 				}
 			}
 		}
-		l.emit(Event{Kind: EventToolStart, Call: p.call})
+		l.emit(Event{Kind: EventToolStart, Call: p.call, At: stampNow()})
 	}
 
 	l.execute(ctx, ps, lim)
@@ -350,9 +350,9 @@ func (l *Loop) nextSpill() int64 {
 // before the loop); other metadata stays off the provider's messages.
 func toolMessage(c ToolCall, content string, meta map[string]any, keep bool) Message {
 	if strings.HasPrefix(c.ID, "text-tc-") {
-		return Message{Role: "user", Content: fmt.Sprintf("[Tool Result: %s]\n%s", c.Name, content), Timestamp: time.Now()}
+		return Message{Role: "user", Content: fmt.Sprintf("[Tool Result: %s]\n%s", c.Name, content), Timestamp: stampNow()}
 	}
-	msg := Message{Role: "tool", ToolCallID: c.ID, Name: c.Name, Content: content, Timestamp: time.Now()}
+	msg := Message{Role: "tool", ToolCallID: c.ID, Name: c.Name, Content: content, Timestamp: stampNow()}
 	if kind, _ := meta["type"].(string); keep && kind == "image" {
 		// A copy: EventToolResult carries meta, and a consumer changing
 		// one must not change the other.

@@ -58,6 +58,11 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 			DescribeSource(out, src)
 			fmt.Fprint(out, "These settings loosen the sandbox bash commands run in (more writable directories, the network, or no sandbox).\nTrust them? [y/N]: ")
 		case KindRepoMCP:
+			// One server: singular verbs (C4).
+			what = "is not trusted yet"
+			if status == Changed {
+				what = "has changed since you approved it"
+			}
 			fmt.Fprintf(out, "\nMCP server %s in %s %s:\n", strconv.Quote(MCPServerName(src)), strconv.Quote(SourceFile(src)), what)
 			DescribeSource(out, src)
 			fmt.Fprint(out, "Starting it runs this command on this machine with your permissions (or connects to this URL).\nTrust it? [y/N]: ")
