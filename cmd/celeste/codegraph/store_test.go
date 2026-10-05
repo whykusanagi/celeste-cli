@@ -250,3 +250,37 @@ func newTestStore(t *testing.T) *Store {
 	require.NoError(t, err)
 	return store
 }
+
+// Call targets resolve to a callable before any other kind of symbol with
+// the same name, then to one in the caller's own file.
+func TestStore_GetCallableIDByName(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	importID, err := s.UpsertSymbol(Symbol{Name: "get", Kind: SymbolImport, File: "a.py", Line: 1})
+	require.NoError(t, err)
+	otherID, err := s.UpsertSymbol(Symbol{Name: "get", Kind: SymbolMethod, File: "a.py", Line: 5})
+	require.NoError(t, err)
+	localID, err := s.UpsertSymbol(Symbol{Name: "get", Kind: SymbolFunction, File: "b.py", Line: 3})
+	require.NoError(t, err)
+
+	plain, ok := s.GetSymbolIDByName("get")
+	require.True(t, ok)
+	assert.Equal(t, importID, plain, "plain lookup keeps its first-stored behaviour")
+
+	id, ok := s.GetCallableIDByName("get", "b.py")
+	require.True(t, ok)
+	assert.Equal(t, localID, id, "same-file callable wins")
+
+	id, ok = s.GetCallableIDByName("get", "c.py")
+	require.True(t, ok)
+	assert.Equal(t, otherID, id, "a callable beats an import")
+
+	typeID, err := s.UpsertSymbol(Symbol{Name: "Celsius", Kind: SymbolType, File: "t.go", Line: 1})
+	require.NoError(t, err)
+	id, ok = s.GetCallableIDByName("Celsius", "x.go")
+	require.True(t, ok, "a non-callable still resolves when nothing callable has the name")
+	assert.Equal(t, typeID, id)
+
+	_, ok = s.GetCallableIDByName("missing", "b.py")
+	assert.False(t, ok)
+}

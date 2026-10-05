@@ -232,3 +232,100 @@ pub fn create_server(config: Config) -> Server {
 	require.NotNil(t, fn)
 	assert.Equal(t, SymbolFunction, fn.Kind)
 }
+
+// Call targets defined in another file are still edges: the indexer
+// resolves them by name once every file's symbols are stored, and drops
+// the ones nothing declares. Keeping only same-file targets lost every
+// cross-file edge in CGO_ENABLED=0 builds (#47, #347).
+func TestGenericParser_CrossFileCallEdges(t *testing.T) {
+	src := `def process(items):
+    store = Store()
+    return in_databricks(items)
+
+def other():
+    pass
+`
+	path := writeTestFile(t, "calls.py", src)
+	result, err := NewGenericParser("python").ParseFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "process", TargetName: "in_databricks", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "process", TargetName: "Store", Kind: EdgeCalls})
+	// The next declaration inside the body window is not a call.
+	assert.NotContains(t, result.Edges, RawEdge{SourceName: "process", TargetName: "other", Kind: EdgeCalls})
+
+	php := "<?php\nfunction make(): Thing {\n    return new Thing(load_thing());\n}\n"
+	path = writeTestFile(t, "make.php", php)
+	result, err = NewGenericParser("php").ParseFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "make", TargetName: "load_thing", Kind: EdgeCalls})
+	// `new Thing(` constructs; it is not a call to a function named Thing.
+	assert.NotContains(t, result.Edges, RawEdge{SourceName: "make", TargetName: "Thing", Kind: EdgeCalls})
+}
+
+// A function's call scan must stop at the end of that function. Otherwise
+// `first` inherits every call made by the functions declared below it, and
+// the indexer turns those into false cross-file caller edges.
+func TestGenericParser_CallScanStopsAtFunctionEnd(t *testing.T) {
+	cases := []struct {
+		lang, file, src string
+	}{
+		{"python", "adj.py", "def first():\n    return 1\n\ndef second():\n    helper()\n"},
+		{"python", "adj_method.py", "class C:\n    def first(self):\n        return 1\n\n    def second(self):\n        helper()\n"},
+		{"python", "adj_sig.py", "def first(\n    a,\n    b,\n):\n    return a\n\ndef second():\n    helper()\n"},
+		{"typescript", "adj.ts", "function first(){return 1;}\nfunction second(){helper();}\n"},
+		{"typescript", "adj_obj.ts", "function first(opts: {a: number}): number {\n  return opts.a;\n}\nfunction second() {\n  helper();\n}\n"},
+		{"javascript", "adj.js", "function first() {\n  return 1;\n}\nfunction second() {\n  helper();\n}\n"},
+		{"rust", "adj.rs", "fn first() -> i32 {\n    1\n}\n\nfn second() {\n    helper();\n}\n"},
+		{"php", "adj.php", "<?php\nfunction first() { return 1; }\nfunction second() { helper(); }\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			path := writeTestFile(t, tc.file, tc.src)
+			result, err := NewGenericParser(tc.lang).ParseFile(path)
+			require.NoError(t, err)
+			assert.Contains(t, result.Edges, RawEdge{SourceName: "second", TargetName: "helper", Kind: EdgeCalls})
+			for _, e := range result.Edges {
+				assert.NotEqual(t, "first", e.SourceName, "first calls nothing, got edge to %s", e.TargetName)
+			}
+		})
+	}
+}
+
+// Braces and quotes inside strings and comments do not end a body early.
+func TestGenericParser_BracedBodyIgnoresStringsAndComments(t *testing.T) {
+	cases := []struct {
+		lang, file, src string
+	}{
+		{"php", "str.php", "<?php\nfunction second() { $s = \"}\"; helper(); }\n"},
+		{"php", "sq.php", "<?php\nfunction second() { $s = '\\'}'; helper(); }\n"},
+		{"php", "hash.php", "<?php\nfunction second() {\n    # closing } here\n    helper();\n}\n"},
+		{"javascript", "cmt.js", "function second() {\n  // a } in a comment\n  /* and } here */\n  const s = `}`;\n  helper();\n}\n"},
+		{"rust", "str.rs", "fn second<'a>(x: &'a str) {\n    let s = \"}\";\n    helper();\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			path := writeTestFile(t, tc.file, tc.src)
+			result, err := NewGenericParser(tc.lang).ParseFile(path)
+			require.NoError(t, err)
+			assert.Contains(t, result.Edges, RawEdge{SourceName: "second", TargetName: "helper", Kind: EdgeCalls})
+		})
+	}
+}
+
+// PHP language constructs are keywords only in PHP: a JS function named
+// list() still gets call edges, and callers of it still get an edge.
+func TestGenericParser_PHPKeywordsArePHPOnly(t *testing.T) {
+	path := writeTestFile(t, "list.js", "function list() {\n  helper();\n}\nfunction main() {\n  list();\n  empty();\n}\n")
+	result, err := NewGenericParser("javascript").ParseFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "list", TargetName: "helper", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "main", TargetName: "list", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "main", TargetName: "empty", Kind: EdgeCalls})
+
+	path = writeTestFile(t, "list.php", "<?php\nfunction main() {\n    list($a, $b) = pair();\n    if (empty($a)) { helper(); }\n}\n")
+	result, err = NewGenericParser("php").ParseFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "main", TargetName: "helper", Kind: EdgeCalls})
+	assert.NotContains(t, result.Edges, RawEdge{SourceName: "main", TargetName: "list", Kind: EdgeCalls})
+	assert.NotContains(t, result.Edges, RawEdge{SourceName: "main", TargetName: "empty", Kind: EdgeCalls})
+}

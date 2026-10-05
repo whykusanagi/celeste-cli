@@ -150,10 +150,10 @@ var langSpecs = map[string]langSpec{
 		TestPatterns:  []string{"test", "Test"},
 	},
 	"php": {
-		ClassTypes:    []string{"class_declaration", "interface_declaration"},
+		ClassTypes:    []string{"class_declaration", "interface_declaration", "trait_declaration", "enum_declaration"},
 		FunctionTypes: []string{"function_definition", "method_declaration"},
 		ImportTypes:   []string{"namespace_use_declaration"},
-		CallTypes:     []string{"function_call_expression", "member_call_expression"},
+		CallTypes:     []string{"function_call_expression", "member_call_expression", "nullsafe_member_call_expression", "scoped_call_expression"},
 		NameField:     "name",
 		TestPatterns:  []string{"test", "Test"},
 	},

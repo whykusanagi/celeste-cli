@@ -36,7 +36,21 @@ final readonly class SessionValidator implements Validator {
 }
 
 function refresh_session(string $t): bool {
-    return true;
+    return \App\Audit\log_refresh($t) && Clock::now() > 0;
+}
+
+enum Status: string {
+    case Active = 'active';
+
+    public function label(): string {
+        return ucfirst($this->value);
+    }
+}
+
+trait Loggable {
+    public function log(string $m): void {
+        $this?->writer?->write($m);
+    }
 }
 `
 	path := writeTempFile(t, "auth.php", src)
@@ -56,4 +70,24 @@ function refresh_session(string $t): bool {
 	assert.Equal(t, SymbolMethod, kinds["check"])
 	assert.Equal(t, SymbolFunction, kinds["refresh_session"])
 	assert.Contains(t, result.Edges, RawEdge{SourceName: "validate", TargetName: "check", Kind: EdgeCalls})
+
+	// #347: enums and traits are declarations too.
+	assert.Equal(t, SymbolType, kinds["Status"])
+	assert.Equal(t, SymbolInterface, kinds["Loggable"])
+	assert.Equal(t, SymbolMethod, kinds["label"])
+	assert.Equal(t, SymbolMethod, kinds["log"])
+
+	// #347: plain function calls produce edges; a namespaced call resolves
+	// to its last segment, the name the declaration is indexed under.
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "validate", TargetName: "refresh_session", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "check", TargetName: "strlen", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "refresh_session", TargetName: "log_refresh", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "label", TargetName: "ucfirst", Kind: EdgeCalls})
+	// Static and nullsafe method calls.
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "refresh_session", TargetName: "now", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "log", TargetName: "write", Kind: EdgeCalls})
+	for _, e := range result.Edges {
+		assert.NotEmpty(t, e.TargetName)
+		assert.NotContains(t, e.TargetName, "$", "a variable is not a call target: %+v", e)
+	}
 }

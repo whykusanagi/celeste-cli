@@ -58,6 +58,7 @@ var indexableLanguages = map[string]bool{
 	"javascript": true,
 	"typescript": true,
 	"rust":       true,
+	"php":        true,
 }
 
 // manifestToLanguage maps manifest files to their primary language.
