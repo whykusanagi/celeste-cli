@@ -161,6 +161,9 @@ type Event struct {
 	History   []Message
 	Result    Result
 	Err       error
+	// At is EventToolStart's start time, taken on the loop's goroutine, so
+	// it precedes every message the loop stamps after the call (C5).
+	At time.Time
 }
 
 // ToolCall is one call as hooks and events see it.

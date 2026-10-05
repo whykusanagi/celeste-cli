@@ -68,7 +68,7 @@ func (l *Loop) runCalls(ctx context.Context, calls []llm.ToolCallResult, lim Lim
 				}
 			}
 		}
-		l.emit(Event{Kind: EventToolStart, Call: p.call})
+		l.emit(Event{Kind: EventToolStart, Call: p.call, At: time.Now()})
 	}
 
 	l.execute(ctx, ps, lim)

@@ -344,7 +344,7 @@ func (a *TUIClientAdapter) translate(t *chatTurn, ev loop.Event, first *bool) []
 		t.compacted = false
 		return []tea.Msg{tui.HistoryMsg{History: withoutEmptyReplies(ev.History)}}
 	case loop.EventToolStart:
-		return []tea.Msg{tui.ToolStartMsg{ID: ev.Call.ID, Name: ev.Call.Name, Args: ev.Call.Input}}
+		return []tea.Msg{tui.ToolStartMsg{ID: ev.Call.ID, Name: ev.Call.Name, Args: ev.Call.Input, Started: ev.At}}
 	case loop.EventToolResult:
 		return []tea.Msg{tui.ToolResultMsg{ID: ev.Call.ID, Name: ev.Call.Name, Content: ev.Text, IsError: ev.IsError, Metadata: ev.Metadata}}
 	case loop.EventCompacted:

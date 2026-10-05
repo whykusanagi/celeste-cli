@@ -69,6 +69,11 @@ type ToolTurnMsg struct {
 type ToolStartMsg struct {
 	ID, Name string
 	Args     map[string]any
+	// Started is when the loop started the call, on its own clock (zero:
+	// unknown, now). The call's log is placed by it among the messages the
+	// loop stamped, so a reply the loop stamped before the chat got to
+	// this message still renders after the log (C5).
+	Started time.Time
 }
 
 type ToolResultMsg struct {
@@ -345,7 +350,11 @@ func (m AppModel) finishTyping() AppModel {
 func (m AppModel) onToolStart(msg ToolStartMsg) (AppModel, tea.Cmd) {
 	LogSkillCall(msg.Name, msg.Args)
 	m = m.finishTyping()
-	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: time.Now()})
+	started := msg.Started
+	if started.IsZero() {
+		started = time.Now()
+	}
+	m.chat = m.chat.AddFunctionCall(FunctionCall{ID: msg.ID, Name: msg.Name, Arguments: msg.Args, Status: "executing", Timestamp: started})
 	m.skills = m.skills.SetExecuting(msg.Name)
 	m.toolProgress, _ = m.toolProgress.Update(ToolProgressMsg{ToolCallID: msg.ID, ToolName: msg.Name, State: "executing"})
 	m.status = m.status.SetText(fmt.Sprintf("⚡ Executing: %s", msg.Name))
