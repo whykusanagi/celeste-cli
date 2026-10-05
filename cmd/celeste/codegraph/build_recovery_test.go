@@ -3,6 +3,7 @@ package codegraph
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -235,4 +236,27 @@ func TestUpdate_RecoveryReusesEdgesOfFilesItIndexed(t *testing.T) {
 	require.NoError(t, idx.Update())
 	assert.Equal(t, indexed, parsed, "only the files indexed by earlier runs are parsed again")
 	assert.Equal(t, want, edgeKeys(t, idx))
+}
+
+// #391 review: a clean build resolves non-Go edges before any Go symbol is
+// stored, so a Python call never lands on a same-named Go function. A
+// recovering update (and an incremental one) re-resolves them with the Go
+// symbols present and must not do so either.
+func TestUpdate_NonGoCallsNeverResolveToGo(t *testing.T) {
+	files := map[string]string{
+		"go.mod":  "module example.com/x\n\ngo 1.22\n",
+		"x.go":    "package x\n\nfunc helper() {}\n",
+		"py/a.py": "def caller():\n    helper()\n",
+	}
+	idx, ws := buildFixture(t, files)
+	want := edgeKeys(t, idx)
+	require.False(t, want["caller -calls-> example.com/x.helper"], "a clean build has no Python-to-Go edge")
+
+	require.NoError(t, idx.store.SetMeta(metaBuildInProgress, []byte("killed-run")))
+	require.NoError(t, idx.Update())
+	assert.Equal(t, want, edgeKeys(t, idx), "recovery")
+
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "py", "a.py"), []byte("def caller():\n    helper()\n    pass\n"), 0o644))
+	require.NoError(t, idx.Update())
+	assert.Equal(t, want, edgeKeys(t, idx), "incremental update")
 }

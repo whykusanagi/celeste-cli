@@ -514,9 +514,13 @@ func (s *Store) GetSymbolIDByName(name string) (int64, bool) {
 // among those it prefers one in preferFile, the caller's own file. A name
 // with no callable still resolves to whatever has it, which keeps Go type
 // conversions such as Celsius(x) as edges.
+//
+// A name looked up from a non-Go file never resolves to a Go symbol: a full
+// build resolves non-Go edges before the Go pass stores any Go symbol, and
+// an update, which finds them stored, must agree with it.
 func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+nonGoFilter(preferFile)+`
 		ORDER BY CASE WHEN kind IN ('function', 'method', 'class') THEN 0 ELSE 1 END,
 			CASE WHEN file = ? THEN 0 ELSE 1 END,
 			id
@@ -528,16 +532,26 @@ func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
 }
 
 // GetSymbolIDByNameInFile returns the ID of the symbol with this name,
-// preferring one declared in file over one stored first elsewhere.
+// preferring one declared in file over one stored first elsewhere. As in
+// GetCallableIDByName, a non-Go file never gets a Go symbol.
 func (s *Store) GetSymbolIDByNameInFile(name, file string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+nonGoFilter(file)+`
 		ORDER BY CASE WHEN file = ? THEN 0 ELSE 1 END, id
 		LIMIT 1`, name, file).Scan(&id)
 	if err != nil {
 		return 0, false
 	}
 	return id, true
+}
+
+// nonGoFilter is the WHERE clause that leaves out Go symbols for a lookup
+// from a non-Go file, and nothing for one from a Go file.
+func nonGoFilter(fromFile string) string {
+	if DetectLanguage(fromFile) != "go" {
+		return ` AND file NOT LIKE '%.go'`
+	}
+	return ""
 }
 
 // UpdateMinHash stores the MinHash signature for a symbol.

@@ -697,6 +697,7 @@ func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
 // callable first and to one in the caller's file next, so a call to a
 // common name such as get() does not land on an import or a type that
 // happened to be stored first.
+// A non-Go file's edge never targets a Go symbol (see GetCallableIDByName).
 func (idx *Indexer) resolveTarget(name string, kind EdgeKind, fromFile string) (int64, bool) {
 	if kind == EdgeCalls {
 		return idx.store.GetCallableIDByName(name, fromFile)
