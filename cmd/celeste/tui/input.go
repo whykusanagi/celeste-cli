@@ -256,6 +256,12 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			}
 		}
 		if runes != nil && !m.admit(runes, msg.Paste) {
+			if m.tailArmed {
+				// The overflowing key may be the burst's last delivered
+				// one: judge it as a dropped key would be, so a word the
+				// reader holds back after it is still caught (K3).
+				m.tailOpen = !plainRuneRun(msg)
+			}
 			return m, nil
 		}
 		if isTextBurst(msg) || (runes != nil && !msg.Paste && !msg.Alt && inPaste) {

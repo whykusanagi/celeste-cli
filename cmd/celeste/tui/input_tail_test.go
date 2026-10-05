@@ -317,3 +317,39 @@ func TestInputOverflowHeldTailFastTyping(t *testing.T) {
 	}
 	assert.Equal(t, "BASE xy z", m.Value())
 }
+
+// K3: when the key that overflows the limit is the space right before
+// the word the reader holds back, no dropped key follows the overflow;
+// the held word still never lands, and the key typed after it does.
+func TestInputOverflowOnLastKeyHeldTailDropped(t *testing.T) {
+	move := stoppedKeyClock(t)
+	m := NewInputModel().Focus().SetContextWindow(5000)
+	limit := m.CharLimit()
+	require.Equal(t, 20_000, limit)
+	m = typeInput(m, "BASE ")
+	move(time.Second)
+
+	// The filler fills the limit exactly; the space after it overflows,
+	// and the word after that is held back by the reader.
+	filler := rowPaste(limit - len("BASE "))
+	word := strings.Repeat("z", 79*ttyReadSize-len(filler)-1)
+	paste := filler + " " + word
+	require.Zero(t, len(paste)%ttyReadSize)
+	require.Less(t, len(word), ttyReadSize)
+
+	r := &ttyReader{}
+	for _, k := range r.paste(paste) {
+		m, _ = m.Update(k)
+	}
+	require.Equal(t, word, r.held, "the burst must end on a full read inside the word")
+	require.Equal(t, "BASE ", m.Value(), "the paste is rolled back")
+	require.Contains(t, m.Notice(), "not inserted")
+	move(2 * time.Second)
+
+	var cmd tea.Cmd
+	for _, k := range r.read("x") {
+		m, cmd = m.Update(k)
+	}
+	m = settleTicks(t, m, cmd)
+	assert.Equal(t, "BASE x", m.Value())
+}
