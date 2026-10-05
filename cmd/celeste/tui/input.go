@@ -90,7 +90,7 @@ type InputModel struct {
 	historyIndex  int
 	tempInput     string    // Stores current input when browsing history
 	suggestions   []string  // Current typeahead matches
-	suggestionIdx int       // Which suggestion is highlighted (Tab cycles)
+	suggestionIdx int       // Which suggestion is highlighted; Tab completes it
 	charLimit     int       // Character limit (0: inputCharLimit), see input_limit.go
 	notice        string    // Why the last paste or key was not inserted
 	overflowAt    time.Time // When a burst last overflowed the limit (#358)

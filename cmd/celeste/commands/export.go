@@ -164,7 +164,7 @@ func renderExportSuccess(filepath string, format string, phrase string) string {
 	phraseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(colorPurpleNeon))
 
 	var sb strings.Builder
-	sb.WriteString(checkStyle.Render("✓ Export complete\n"))
+	sb.WriteString(checkStyle.Render("✓ Export complete") + "\n")
 	sb.WriteString(fmt.Sprintf("  ▓ Format:  %s\n", format))
 	sb.WriteString(fmt.Sprintf("  ▓ Path:    %s\n", pathStyle.Render(filepath)))
 	sb.WriteString(phraseStyle.Render(fmt.Sprintf("\n⟨ %s ⟩", phrase)))

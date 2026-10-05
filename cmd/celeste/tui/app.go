@@ -1653,6 +1653,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.viewMode = "graph"
 				model := NewGraphModel(m.codeGraphIndexer)
+				model.width, model.height = m.width, m.height
 				m.graphModel = &model
 				return m, nil
 
@@ -3417,10 +3418,10 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				}
 
 				sb.WriteString("Commands:\n")
-				sb.WriteString("  /session resume <id>       - Load session by ID\n")
-				sb.WriteString("  /session resume \"<name>\"   - Load session by name\n")
+				sb.WriteString("  /session resume <id>        - Load session by ID\n")
+				sb.WriteString("  /session resume \"<name>\"    - Load session by name\n")
 				sb.WriteString("  /session rename <id> <name> - Rename a session\n")
-				sb.WriteString("  /session delete <id>       - Delete a session\n")
+				sb.WriteString("  /session delete <id>        - Delete a session\n")
 				m.chat = m.chat.AddPlainSystemMessage(sb.String())
 			}
 		} else {
