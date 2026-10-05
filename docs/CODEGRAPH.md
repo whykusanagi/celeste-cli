@@ -27,14 +27,18 @@ its last pass commits, and the Go pass does the same with
 build without resetting the graph: it keeps the files already indexed,
 indexes the missing or changed ones, rewrites every non-Go edge (it
 resolves them again, then deletes the old ones and stores the new ones in
-one transaction, so readers never see an emptied graph or missing edges
-during recovery: they see the old edges until the new ones commit), reruns
-the Go pass and only then clears the mark. Repeated short runs (a chat
+one transaction), reruns the Go pass and only then clears the mark. The
+graph is never emptied during recovery, and a file that did not change
+never loses its edges: readers see its old edges until the new ones
+commit. A missing or changed file is stored with its symbols first and
+gets its edges only when that transaction commits, so until then a reader
+sees it without edges, as during any update. Repeated short runs (a chat
 opened and closed before a long build ends) each index more files and keep
 what earlier runs stored. Rewriting the non-Go edges stops as soon as the
 run is cancelled and then changes no edge, so closing a chat never waits
 for it; the run that clears the mark is the first one that lasts through it
-(`celeste index` does). An `Update` that finds the second mark reruns the Go pass. A build or update that was
+(`celeste index` does). An `Update` that finds the second mark reruns the
+Go pass. A build or update that was
 cancelled, killed or cut off by a power loss is finished by the next update
 rather than trusted because its file hashes match. Each mark holds a
 random token of the run that set it, and a run clears only its own.

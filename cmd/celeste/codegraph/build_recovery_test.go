@@ -294,7 +294,9 @@ func nonGoEdgeCount(t *testing.T, st *Store) int {
 
 // #393 review: recovery replaces the non-Go edges in one transaction, so a
 // reader on another connection sees the old edges or the new ones, never
-// a graph without them.
+// a graph without them. No file changed here, so every edge must stay
+// visible; the hook inside ReplaceNonGoEdges checks the delete is not
+// committed on its own.
 func TestUpdate_RecoveryReadersNeverSeeMissingNonGoEdges(t *testing.T) {
 	files := wideCallFiles(60)
 	idx, _ := buildFixture(t, files)
@@ -308,9 +310,12 @@ func TestUpdate_RecoveryReadersNeverSeeMissingNonGoEdges(t *testing.T) {
 
 	var seen []int
 	testHookReresolveResolve = func() { seen = append(seen, nonGoEdgeCount(t, reader)) }
-	t.Cleanup(func() { testHookReresolveResolve = nil })
+	afterDelete := -1
+	testHookReplaceNonGoAfterDelete = func() { afterDelete = nonGoEdgeCount(t, reader) }
+	t.Cleanup(func() { testHookReresolveResolve = nil; testHookReplaceNonGoAfterDelete = nil })
 	require.NoError(t, idx.Update())
 	require.Greater(t, len(seen), 1)
+	assert.Equal(t, before, afterDelete, "between the delete and the inserts a reader still sees the old edges")
 	for i, n := range seen {
 		assert.Equal(t, before, n, "a reader during resolve stride %d sees every non-Go edge", i)
 	}

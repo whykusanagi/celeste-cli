@@ -204,9 +204,9 @@ func DisplayName(sym Symbol) string {
 
 // ReplaceNonGoEdges deletes every edge whose source is not a Go symbol and
 // inserts edges in its place, in one transaction, so an interrupted build's
-// non-Go edges are resolved again from scratch (#391) while a reader sees
-// either the old edges or the new ones. ctx is checked every 1024 inserts;
-// a cancel rolls the whole replacement back.
+// non-Go edges are resolved again from scratch (#391) while a reader on
+// another connection sees either the old edges or the new ones. ctx is
+// checked every 1024 inserts; a cancel rolls the whole replacement back.
 func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,6 +223,9 @@ func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
 		return fail(fmt.Errorf("clear non-go edges: %w", err))
+	}
+	if testHookReplaceNonGoAfterDelete != nil {
+		testHookReplaceNonGoAfterDelete()
 	}
 	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)`)
 	if err != nil {

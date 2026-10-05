@@ -555,12 +555,14 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 //
 // The raw edges are resolved first, which only reads the symbols, and the
 // delete and the inserts then run in one transaction
-// (Store.ReplaceNonGoEdges), so a reader sees the old non-Go edges or the
-// new ones and never a graph without them.
+// (Store.ReplaceNonGoEdges), so a reader sees a file's old non-Go edges or
+// its new ones, never neither. That holds for the files this run did not
+// re-index; a file it re-indexed was stored without edges (as in any
+// update) and gets them when the transaction commits.
 //
 // ctx is checked every 64 parsed files, every 1024 resolved edges and every
 // 1024 inserted edges, so a cancelled run (Env.Close) returns promptly. A
-// cancel at any point changes no edge (the transaction rolls back), and the
+// cancel in this step changes no edge (the transaction rolls back), and the
 // build_in_progress mark, still set, makes the next run do this again.
 func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, parsed map[string][]RawEdge) error {
 	var raw []RawEdge

@@ -55,6 +55,10 @@ var testHookReresolveParse func(path string)
 // resolves each stride of the non-Go raw edges it collected.
 var testHookReresolveResolve func()
 
+// testHookReplaceNonGoAfterDelete, when set, runs inside
+// Store.ReplaceNonGoEdges after the delete and before the inserts.
+var testHookReplaceNonGoAfterDelete func()
+
 // indexLock is an exclusive OS file lock on the lock file next to an index
 // database. Build and Update hold it so two Indexers on one database (the
 // MCP server's, an MCP chat Env's, the TUI's or the CLI's, in one process
