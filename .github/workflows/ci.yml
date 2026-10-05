@@ -63,18 +63,28 @@ jobs:
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
         bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid --new-session true && echo "bwrap usable"
 
+    # CGo on (the race detector needs it anyway), so the //go:build cgo
+    # tree-sitter parsers and their tests are what runs here (#376).
     - name: Run tests
       shell: bash
+      env:
+        CGO_ENABLED: "1"
       run: go test -v -race -timeout 20m -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
 
-    # Release binaries are built with CGO_ENABLED=0, which swaps the
-    # tree-sitter parsers for the regex parser. Run the code graph tests in
-    # that mode too, or its call-edge regressions go unseen.
-    - name: Run codegraph tests without cgo
+    # A runner without a C compiler would quietly drop to the regex
+    # fallback and skip every cgo-tagged test. Fail instead.
+    - name: Tree-sitter tests ran
       if: runner.os == 'Linux'
       env:
-        CGO_ENABLED: "0"
-      run: go test -count=1 -timeout 10m ./cmd/celeste/codegraph/...
+        CGO_ENABLED: "1"
+      run: |
+        set -euo pipefail
+        out="$(go test ./cmd/celeste -run 'TestTreeSitterSelfCheckPassesWithCgo' -count=1 -v)"
+        echo "$out"
+        case "$out" in
+          *"--- PASS: TestTreeSitterSelfCheckPassesWithCgo"*) ;;
+          *) echo "::error::the CGo tree-sitter tests did not run"; exit 1 ;;
+        esac
 
     - name: Check coverage threshold
       if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.6'
@@ -115,6 +125,37 @@ jobs:
         version: latest
         install-mode: goinstall
         args: --timeout=5m
+
+  # Release binaries carry tree-sitter (#376), but a CGO_ENABLED=0 source
+  # build must keep building and fall back to the regex parsers. This runs
+  # every test in that mode, the code graph's regex call-edge tests among
+  # them (it replaces the test job's codegraph-only CGO_ENABLED=0 step).
+  pure-go:
+    name: Pure-Go build (CGO_ENABLED=0)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+      with:
+        persist-credentials: false  # no git writes here
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.26.6'
+        cache: true
+
+    - name: Build, vet and test without CGo
+      env:
+        CGO_ENABLED: "0"
+      run: |
+        set -euo pipefail
+        go build ./...
+        go vet ./...
+        # The package list is meant to split into arguments.
+        # shellcheck disable=SC2046
+        go test -count=1 $(go list ./... | grep -v '/test/')
 
   persona:
     name: Persona ciphertext
@@ -220,7 +261,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, lint, docker-test]
+    needs: [test, lint, docker-test, pure-go]
 
     steps:
     - name: Check out code
