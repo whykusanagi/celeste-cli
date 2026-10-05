@@ -36,6 +36,7 @@ type Manager struct {
 	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
 	home        string              // the user's home: its configs alone may set "trusted"
 	connecting  map[string]bool     // servers with a connectClient in flight
+	admit       func(name string, cfg ServerConfig) bool
 	mu          sync.Mutex
 }
 
@@ -91,6 +92,13 @@ func NewManagerMulti(paths []string, registry *tools.Registry) *Manager {
 	return m
 }
 
+// SetAdmit makes Start skip an enabled server admit refuses (a workspace
+// server nobody approved). Connect is unaffected: the /mcp panel connects
+// a server only when the person asks. Call it before Start.
+func (m *Manager) SetAdmit(admit func(name string, cfg ServerConfig) bool) {
+	m.admit = admit
+}
+
 // Start loads the MCP configuration, connects to all configured servers,
 // discovers their tools, and registers them in the tool registry.
 // If the config file does not exist, it returns nil (no MCP configured).
@@ -109,6 +117,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	connectedServers := 0
 
 	for _, name := range startOrder(cfg.Servers) {
+		if m.admit != nil && !m.admit(name, cfg.Servers[name]) {
+			continue
+		}
 		if err := m.Connect(ctx, name, cfg.Servers[name]); err != nil {
 			log.Printf("[mcp] warning: %v", err)
 			continue

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
@@ -504,7 +505,13 @@ func TestNestedUnderTheChatDropsRepoMCPServers(t *testing.T) {
 	ws := goWorkspace(t)
 	write(t, filepath.Join(home, ".celeste", "mcp.json"), stubMCPConfig(t))
 	write(t, filepath.Join(ws, ".mcp.json"), strings.Replace(stubMCPConfig(t), `"probe"`, `"repo"`, 1))
-	chat, w := mustSetup(t, ModeChat, ws)
+	// The person approves the repo's server when the chat asks.
+	w := &warnings{}
+	chat, err := Setup(ModeChat, testCfg(), ws, SetupOptions{Warn: w.add, Approve: func(hooks.Source, hooks.TrustStatus) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(chat.Close)
 	global, repo := mcp.ToolName("probe", "echo"), mcp.ToolName("repo", "echo")
 	for _, name := range []string{global, repo} {
 		if _, ok := chat.Registry.Get(name); !ok {

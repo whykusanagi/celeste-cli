@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model. For regex rules on the model's own output (not on tool events), see [STEERING.md](STEERING.md); a project grimoire's `## Stream Rules` section is trusted with the same `celeste hooks trust`, as is a workspace `.celeste/config.json` whose `sandbox` settings loosen the sandbox (see [SANDBOX.md](SANDBOX.md)).
+Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model. For regex rules on the model's own output (not on tool events), see [STEERING.md](STEERING.md); a project grimoire's `## Stream Rules` section is trusted with the same `celeste hooks trust`, as is a workspace `.celeste/config.json` whose `sandbox` settings loosen the sandbox (see [SANDBOX.md](SANDBOX.md)), and each server in a workspace `.mcp.json` or `.celeste/mcp.json`: the chat starts an enabled one only once approved, and asks again when its command, args, env or URL change.
 
 **Where hooks load.** The chat UI (`celeste chat`, `celeste resume`), every agent run and MCP chat load hooks: `celeste agent`, the MCP server's `celeste` tool in both `mode: "agent"` and `mode: "chat"`, `/agent` in the chat, subagents, and `/orchestrate` lanes.
 
@@ -42,7 +42,7 @@ celeste hooks trust                # approve this directory's untrusted sources 
 celeste hooks trust --yes [path]   # approve without asking: scripts, CI, mintty
 ```
 
-`celeste hooks trust` with no path approves everything `celeste hooks list` would show for the current directory. A path argument can be a directory or a specific `hooks.json`/grimoire file that Celeste would otherwise load; pointing it at a file Celeste doesn't read from (wrong name, wrong location) is an error, not a silent no-op.
+`celeste hooks trust` with no path approves everything `celeste hooks list` would show for the current directory. A path argument can be a directory or a specific `hooks.json`/grimoire file (or a `.mcp.json` / `.celeste/mcp.json` for just its MCP servers) that Celeste would otherwise load; pointing it at a file Celeste doesn't read from (wrong name, wrong location) is an error, not a silent no-op.
 
 ## hooks.json
 

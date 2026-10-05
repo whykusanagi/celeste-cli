@@ -376,9 +376,14 @@ Deletes a project memory by name; celeste memories lists them.`,
 Lists saved chat sessions, or opens the chat UI on the one given.`,
 	"plan":   planCLIUsage,
 	"revert": revertUsage,
-	"mcp": `Usage: celeste mcp install [--client <name>] [--dry-run] [--port N]
+	"mcp": `Usage: celeste mcp list
+       celeste mcp install [--client <name>] [--dry-run] [--port N]
 
-Adds celeste to MCP clients' configs.
+list shows the MCP servers configured in your home and this directory: each
+one's source, transport, enabled and trusted flags and where it runs
+(celeste mcp list --help).
+
+install adds celeste to MCP clients' configs.
   --client <name>  all (the default), claude-desktop, claude-code, cursor,
                    celeste-cli or codex
   --dry-run        print the changes without writing them

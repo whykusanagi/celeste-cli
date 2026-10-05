@@ -39,6 +39,7 @@ echo "---"
 
 check "version"            "$CELESTE version"                     "Celeste CLI"
 check "mcp install dry-run" "$CELESTE mcp install --dry-run"      "would write"
+check "mcp list"            "$CELESTE mcp list"
 check "mcp install codex"   "$CELESTE mcp install --client codex" "mcp_servers.celeste"
 check "index status"        "$CELESTE index status"               "Symbols:"
 
