@@ -236,7 +236,8 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 
 // buildLocked is BuildWithContext with buildMu held. A full build starts
 // from an empty graph so rows from an older index (or an older index
-// version) never linger next to the new ones.
+// version) never linger next to the new ones. Readers see an empty or
+// partial graph until it finishes; Update never empties the index.
 func (idx *Indexer) buildLocked(ctx context.Context) error {
 	files, err := idx.walkSourceFiles()
 	if err != nil {

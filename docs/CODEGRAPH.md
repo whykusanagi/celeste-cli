@@ -31,10 +31,16 @@ prints it: `pkg/path.Func`, `(*pkg/path.T).Method`, `(pkg/path.Iface).Method`.
 `implements` lists the interfaces a Go method satisfies (`error,fmt.Stringer`).
 `files.resolution` is `typed` or `approximate` for Go files (see below).
 
-`meta.graph_version` records the edge format. When it differs from the
-version the binary expects (or is missing), `Update` rebuilds the index from
-scratch instead of mixing old and new edges. Version 2 is the type-checked Go
-graph (#375).
+`meta.graph_version` records the edge format. Version 2 is the type-checked
+Go graph (#375). When an existing index has another version (or none),
+`Update` deletes only the Go rows (symbols, files, BM25/LSH rows and every
+edge touching a Go symbol) in one transaction and re-runs the Go pass; other
+languages keep their rows, because version 2 does not change them. The
+version is stamped only when that update completes, so an update cancelled
+part-way (a session closed during indexing) is redone by the next one. An
+empty index gets a full build. Go `init` functions are stored under
+`pkg/path.init#<file>`, one per file, since every `init` in a package shares
+the name `pkg/path.init`.
 
 Database stored at `~/.celeste/projects/<sha256-prefix>/codegraph.db` to avoid polluting project directories.
 
@@ -63,8 +69,13 @@ the exact function or method:
   Everything else (standard library, module dependencies) is type-checked
   from source without function bodies. Their directories come from one
   `go list -e -deps -test ./...` per module, run with `GOPROXY=off` and
-  `GOTOOLCHAIN=local` so indexing never downloads anything. Without the `go`
-  command only the standard library resolves (through GOROOT).
+  `GOTOOLCHAIN=local` so indexing never downloads anything, and with an
+  explicit `-mod=readonly` (`-mod=vendor` for a vendored module) so a
+  `GOFLAGS=-mod=mod` in the environment cannot rewrite the indexed `go.mod`.
+  Without the `go` command, the standard library resolves only when the
+  `GOROOT` environment variable points at a Go installation: release binaries
+  are built with `-trimpath` and have no built-in GOROOT. Otherwise no import
+  resolves and almost every file is approximate.
 - **Direct calls.** `f()`, `pkg.F()`, `x.M()` and `a.b.c.M()` resolve
   through `types.Info`, so a call to `update` in package `b` reaches
   `b.update`, never a same-named function elsewhere, and `t.Update()` reaches
@@ -118,7 +129,7 @@ extraction with heuristic call detection.
 
 ### Full Build
 
-Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept).
+Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index.
 
 ### Incremental Updates
 
@@ -232,7 +243,8 @@ New `lsh_bands(band_id, band_hash, symbol_id)` SQLite table. Band hashes precomp
 - `implements` (Go): from an interface method to each module method that
   implements it.
 
-Imports, embeds and type references are not tracked as edges. Outside Go
+Imports, embeds and type references other than conversions are not tracked
+as edges. Outside Go
 (and in approximate Go files) edges still resolve by bare symbol name, so
 same-named functions in different packages can collapse onto one node.
 

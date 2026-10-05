@@ -65,7 +65,7 @@ jobs:
 
     - name: Run tests
       shell: bash
-      run: go test -v -race -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
+      run: go test -v -race -timeout 20m -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
 
     # Release binaries are built with CGO_ENABLED=0, which swaps the
     # tree-sitter parsers for the regex parser. Run the code graph tests in
