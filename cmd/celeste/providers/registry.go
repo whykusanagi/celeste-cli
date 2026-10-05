@@ -353,12 +353,15 @@ func IsAnthropicURL(baseURL string) bool {
 	if baseURL == "" {
 		return false
 	}
-	if !strings.Contains(baseURL, "://") {
-		baseURL = "https://" + baseURL
-	}
+	// Only a real leading scheme counts: "api.anthropic.com/v1?r=http://x"
+	// has "://" in its query but no scheme, and "host:443/v1" parses as an
+	// opaque URL with no host.
 	u, err := url.Parse(baseURL)
-	if err != nil {
-		return false
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		u, err = url.Parse("https://" + baseURL)
+		if err != nil {
+			return false
+		}
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	return host == "anthropic.com" || strings.HasSuffix(host, ".anthropic.com")
