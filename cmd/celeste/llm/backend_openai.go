@@ -523,7 +523,7 @@ func (b *OpenAIBackend) convertMessages(messages []tui.ChatMessage) []openai.Cha
 
 	// Add the system prompt if set, as one string. There is no cache split
 	// here: Anthropic's OpenAI-compatible endpoint does not support prompt
-	// caching (it hoists and joins system messages), and an api.anthropic.com
+	// caching (it hoists and joins system messages), and an Anthropic-hosted
 	// URL always gets the native backend (DetectBackendType), which caches
 	// the static persona on its own breakpoint (#309).
 	if prompt := b.prompt(); prompt != "" {
