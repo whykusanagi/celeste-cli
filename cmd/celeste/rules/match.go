@@ -60,6 +60,10 @@ type Matcher struct {
 	fired   map[string]bool
 	tail    []byte // up to scanBack scanned bytes of this request's reply, then the unscanned ones
 	pending int    // bytes at the end of tail not scanned yet
+	// midLine: tail starts inside a line, because keepFrom cut the reply
+	// there. A scan then prefixes a non-newline byte so (?m)^ does not
+	// take the cut for a line start (#330 review I1).
+	midLine bool
 }
 
 // NewMatcher returns a matcher over set (nil: no rules).
@@ -74,7 +78,7 @@ func (m *Matcher) Facts() *Facts { return &m.facts }
 // each rule fires at most once per request.
 func (m *Matcher) StartRequest() {
 	m.request++
-	m.tail, m.pending = m.tail[:0], 0
+	m.tail, m.pending, m.midLine = m.tail[:0], 0, false
 	m.fired = map[string]bool{}
 }
 
@@ -90,7 +94,7 @@ func (m *Matcher) Text(delta string) []Hit {
 	if m.pending < scanEvery && !strings.Contains(delta, "\n") {
 		return nil
 	}
-	return m.scan()
+	return m.scan(false)
 }
 
 // Flush scans text the batching held back. Call it once the stream ends.
@@ -98,15 +102,37 @@ func (m *Matcher) Flush() []Hit {
 	if m.set.Len() == 0 || m.pending == 0 {
 		return nil
 	}
-	return m.scan()
+	return m.scan(true)
 }
 
 // scan runs the text rules over the scanned context and the pending bytes,
-// then keeps the last scanBack bytes as context for the next scan.
-func (m *Matcher) scan() []Hit {
-	window := string(m.tail)
-	kept := keepTail(window, scanBack)
-	m.tail, m.pending = append(m.tail[:0], kept...), 0
+// then keeps the last scanBack bytes as context for the next scan. Unless
+// final (Flush), a word still streaming at the end of the batch is held
+// back for the next scan, so TASK_COMPLETE followed by a D in the next
+// delta is judged as TASK_COMPLETED, not as TASK_COMPLETE\b (#330 review I2).
+func (m *Matcher) scan(final bool) []Hit {
+	text := string(m.tail)
+	held := ""
+	if !final {
+		switch w := trailingWord(text); {
+		case w > scanBack:
+			// A run longer than the context is no marker: scan it all.
+		case w == len(text):
+			return nil // one word so far: wait for its end
+		default:
+			text, held = text[:len(text)-w], text[len(text)-w:]
+		}
+	}
+	window := text
+	if m.midLine {
+		window = "\x00" + text
+	}
+	cut := keepFrom(text, scanBack)
+	if cut > 0 {
+		m.midLine = text[cut-1] != '\n'
+	}
+	m.tail = append(append(m.tail[:0], text[cut:]...), held...)
+	m.pending = len(held)
 	var hits []Hit
 	for _, r := range m.set.Rules {
 		for _, sc := range r.Scopes {
@@ -114,13 +140,28 @@ func (m *Matcher) scan() []Hit {
 				continue
 			}
 			if loc := r.Condition.FindStringIndex(window); loc != nil {
-				if h, ok := m.fire(r, Hit{Rule: r, Scope: sc, Text: window[loc[0]:loc[1]]}); ok {
+				hit := strings.TrimPrefix(window[loc[0]:loc[1]], "\x00")
+				if h, ok := m.fire(r, Hit{Rule: r, Scope: sc, Text: hit}); ok {
 					hits = append(hits, h)
 				}
 			}
 		}
 	}
 	return hits
+}
+
+// trailingWord returns the length of the run of word bytes
+// ([A-Za-z0-9_]) that ends s.
+func trailingWord(s string) int {
+	n := 0
+	for i := len(s) - 1; i >= 0; i-- {
+		c := s[i]
+		if c != '_' && (c < '0' || c > '9') && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // Calls checks a turn's complete tool calls and returns the tool_args
@@ -251,14 +292,15 @@ func fieldText(v any) (string, bool) {
 	}
 }
 
-// keepTail returns at most n trailing bytes of s, starting on a rune.
-func keepTail(s string, n int) string {
+// keepFrom returns the offset in s from which at most n trailing bytes
+// remain, moved forward to a rune start.
+func keepFrom(s string, n int) int {
 	if len(s) <= n {
-		return s
+		return 0
 	}
 	i := len(s) - n
 	for i < len(s) && !utf8.RuneStart(s[i]) {
 		i++
 	}
-	return s[i:]
+	return i
 }

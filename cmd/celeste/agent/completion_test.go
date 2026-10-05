@@ -30,6 +30,27 @@ func TestMarkerOnLine(t *testing.T) {
 		"I will say TASK_COMPLETE when the tests pass.":                 false,
 		"Not yet: TASK_COMPLETE comes after the build.\nRunning it now": false,
 		"": false,
+		// #330: models that print progress markers (the agent prompt asks
+		// for STEP_DONE: <n>) on the lines before the completion marker.
+		"STEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\n- files: hello.txt\n- checks: read it back": true,
+		"STEP_DONE: 1\nSTEP_DONE: 2\n\n**TASK_COMPLETE:** done\nSummary follows.":                  true,
+		"step_done: 1\ntask_complete: done\nnotes":                                                 true,
+		// Only progress markers before the completion marker are skipped.
+		"Wrote it.\nTASK_COMPLETE: done\nSTEP_DONE: 3":         false,
+		"STEP_DONE: 1\nTASK_COMPLETE_LATER: after tests\nmore": false,
+		"STEP_DONE: 1": false,
+		"STEP_DONE: 1\nSTEP_DONE: 2\nTASK_COMPLETE": true,
+		// A reasoning block whose opening tag the chat template sent
+		// (qwen3 on servers without a reasoning parser): only the reply
+		// after </think> is judged.
+		"The user wants hello.txt.\nI will answer TASK_COMPLETE: after.\n</think>\n\nSTEP_DONE: 1\nTASK_COMPLETE: wrote hello.txt\nfiles: hello.txt": true,
+		"TASK_COMPLETE: fixed the </think> parser\ndetails": true,
+		// Reasoning cut off right after </think> (max_tokens) has no
+		// reply to judge: it never completes (#330 review M1).
+		"TASK_COMPLETE: escaped the tag:\n</think>\n":                              false,
+		"TASK_COMPLETE: I think I am done, but let me check.\n</think>\n":          false,
+		"TASK_COMPLETE: after verify\n</think>\nStill checking":                    false,
+		"Okay, TASK_COMPLETE: is what I must say.\n</think>\nStill working.\nmore": false,
 	} {
 		if got := markerOnLine(text, o); got != want {
 			t.Errorf("markerOnLine(%q) = %v, want %v", text, got, want)
@@ -38,6 +59,9 @@ func TestMarkerOnLine(t *testing.T) {
 	o.RequireCompletionMarker = false
 	if !markerOnLine("any reply", o) {
 		t.Error("without RequireCompletionMarker any reply completes")
+	}
+	if markerOnLine("I am done.\n</think>\n", o) {
+		t.Error("leaked reasoning with no reply after it completed")
 	}
 }
 
@@ -89,6 +113,35 @@ func TestCompletionGateShadowKeepsTheOldCheck(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "completion gate (shadow): would reject") {
 		t.Errorf("errOut = %q", errOut.String())
+	}
+}
+
+// qwen3Final is a qwen3:14b-style final reply from the 2.0 local smoke
+// (#328 L8): a progress marker on the line before the completion marker,
+// then the deliverables.
+const qwen3Final = "STEP_DONE: 1\nTASK_COMPLETE: Created hello.txt with the requested greeting.\n\n- Files: hello.txt (new)\n- Commands: cat hello.txt -> hello world\n- Risks: none"
+
+// #330: the shadow gate agrees with the old check on a reply whose
+// progress markers come before TASK_COMPLETE, with the reasoning streamed
+// as Ollama sends it (a separate reasoning field) or inlined in <think>.
+func TestCompletionGateAcceptsProgressMarkersBeforeTheMarker(t *testing.T) {
+	for name, final := range map[string]fakeprovider.Turn{
+		"reasoning field": {ReasoningDeltas: []string{"The file is written and read back. ", "I should finish with TASK_COMPLETE: now."}, Deltas: []string{"STEP_DONE: 1\n", qwen3Final[len("STEP_DONE: 1\n"):]}},
+		"inline think":    {Deltas: []string{"<think>\nI wrote hello.txt; reply TASK_COMPLETE: next.\n</think>\n\n", qwen3Final}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, mode := range []string{"shadow", "on"} {
+				srv := fakeprovider.NewOpenAI(t, final)
+				r, errOut := steerRunner(t, srv, func(c *config.Config) { c.CompletionGate = mode })
+				st, err := r.RunGoal(context.Background(), "write hello.txt")
+				if err != nil || st.Status != StatusCompleted || len(srv.Requests()) != 1 {
+					t.Fatalf("%s: status=%s requests=%d err=%v", mode, st.Status, len(srv.Requests()), err)
+				}
+				if strings.Contains(errOut.String(), "completion gate (shadow)") {
+					t.Errorf("%s: the gate disagreed: %q", mode, errOut.String())
+				}
+			}
+		})
 	}
 }
 
@@ -187,5 +240,50 @@ func TestCompletionGateVetoSettlesThePendingConcern(t *testing.T) {
 				t.Errorf("the settled concern was given too: %q", rem.Text)
 			}
 		}
+	}
+}
+
+// #330: the task-complete-before-verify rule, in shadow (the default), on
+// a qwen3-style run whose reasoning names TASK_COMPLETE: it stays quiet
+// when the edit was checked, and says it would interrupt when it was not.
+// Reasoning (a separate field, or inlined in <think>) never reaches it.
+func TestTaskCompleteRuleOnReasoningModelRun(t *testing.T) {
+	write := fakeprovider.ToolCall{ID: "w", Name: "write_file", Args: `{"path":"hello.txt","content":"hello world\n"}`}
+	check := fakeprovider.ToolCall{ID: "c", Name: "bash", Args: `{"command":"cat hello.txt"}`}
+	think := []string{"I must write hello.txt, check it, then reply\n", "TASK_COMPLETE: with the summary.\n"}
+	for name, tc := range map[string]struct {
+		turns []fakeprovider.Turn
+		fires bool
+	}{
+		"checked": {turns: []fakeprovider.Turn{
+			{ReasoningDeltas: think, ToolCalls: []fakeprovider.ToolCall{write}},
+			{ReasoningDeltas: think, ToolCalls: []fakeprovider.ToolCall{check}},
+			{ReasoningDeltas: think, Deltas: []string{qwen3Final}},
+		}},
+		"checked, inline think": {turns: []fakeprovider.Turn{
+			{ToolCalls: []fakeprovider.ToolCall{write}},
+			{ToolCalls: []fakeprovider.ToolCall{check}},
+			{Deltas: []string{"<think>\n" + strings.Join(think, ""), "</think>\n\n", qwen3Final}},
+		}},
+		"unchecked": {turns: []fakeprovider.Turn{
+			{ReasoningDeltas: think, ToolCalls: []fakeprovider.ToolCall{write}},
+			{ReasoningDeltas: think, Deltas: []string{qwen3Final}},
+		}, fires: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := fakeprovider.NewOpenAI(t, tc.turns...)
+			r, errOut := steerRunner(t, srv, nil)
+			st, err := r.RunGoal(context.Background(), "write hello.txt")
+			if err != nil || st.Status != StatusCompleted || len(srv.Requests()) != len(tc.turns) {
+				t.Fatalf("status=%s requests=%d err=%v\n%s", st.Status, len(srv.Requests()), err, errOut)
+			}
+			fired := strings.Contains(errOut.String(), "stream rule task-complete-before-verify would interrupt")
+			if fired != tc.fires {
+				t.Errorf("fired=%v, want %v: %q", fired, tc.fires, errOut.String())
+			}
+			if strings.Contains(errOut.String(), "completion gate (shadow)") {
+				t.Errorf("the gate disagreed: %q", errOut.String())
+			}
+		})
 	}
 }
