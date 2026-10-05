@@ -43,8 +43,16 @@ TUI's and `celeste index`. A build or update holds an exclusive OS file lock
 on `codegraph.db.lock` next to the database (`flock` on Linux and macOS,
 `LockFileEx` on Windows), so only one of them writes at a time. An update
 that finds the lock taken skips, since the other run brings the index up to
-date; an explicit build waits for it, up to two minutes, and so does a
-rebuild or reset before it deletes the database files. The OS releases the
+date (the TUI, `celeste index` and the MCP `celeste_index` tool say so
+instead of failing); an explicit build waits for it, up to two minutes, and
+so does a rebuild or reset before it deletes the database files. A rebuild
+keeps the lock until the new index is built, so no other indexer starts on
+the deleted database in between. On Windows the database cannot be deleted
+while another process (a TUI, another MCP server) has it open, even an idle
+one: a rebuild then resets the graph and rebuilds it in place, and a reset
+says the files are in use and deletes nothing. On Linux and macOS the delete
+succeeds, and such a process keeps using the old, deleted file until it
+reopens the index. The OS releases the
 lock when its process exits or is killed, so a lock file left behind never
 blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
 a reader waits for a writer's SQLite lock instead of failing. An index left

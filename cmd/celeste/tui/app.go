@@ -1285,14 +1285,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = m.status.SetText("Rebuilding index...")
 					indexer := m.codeGraphIndexer
 					return m, func() tea.Msg {
-						err := indexer.Build()
-						if err != nil {
-							return StreamErrorMsg{Err: fmt.Errorf("rebuild failed: %w", err)}
-						}
-						stats, _ := indexer.Stats()
-						msg := fmt.Sprintf("Index rebuilt: %d files, %d symbols, %d edges",
-							stats.TotalFiles, stats.TotalSymbols, stats.TotalEdges)
-						return AgentProgressMsg{Kind: AgentProgressResponse, Text: msg}
+						return indexRunResult("rebuild", "rebuilt", indexer.Build(), indexer)
 					}
 
 				case "update":
@@ -1302,14 +1295,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = m.status.SetText("Updating index...")
 					indexer := m.codeGraphIndexer
 					return m, func() tea.Msg {
-						err := indexer.Update()
-						if err != nil {
-							return StreamErrorMsg{Err: fmt.Errorf("update failed: %w", err)}
-						}
-						stats, _ := indexer.Stats()
-						msg := fmt.Sprintf("Index updated: %d files, %d symbols, %d edges",
-							stats.TotalFiles, stats.TotalSymbols, stats.TotalEdges)
-						return AgentProgressMsg{Kind: AgentProgressResponse, Text: msg}
+						return indexRunResult("update", "updated", indexer.Update(), indexer)
 					}
 
 				case "snapshot":

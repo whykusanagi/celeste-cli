@@ -25,6 +25,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -231,7 +232,13 @@ func (s *Server) indexUpdate(ctx context.Context, workspace string) ([]ContentBl
 	}
 	SendProgress(ctx, fmt.Sprintf("starting incremental update on %s", workspace), 0)
 	start := time.Now()
-	if err := idx.UpdateWithContext(ctx); err != nil {
+	// Another indexer (a TUI, a chat, another MCP server) writing this
+	// index is not a failure: its run brings the index up to date, so the
+	// update reports the index as it is (#392).
+	busy := false
+	if err := idx.UpdateWithContext(ctx); errors.Is(err, codegraph.ErrIndexBusy) {
+		busy = true
+	} else if err != nil {
 		return nil, fmt.Errorf("update: %w", err)
 	}
 	elapsed := time.Since(start).Round(time.Millisecond)
@@ -247,6 +254,9 @@ func (s *Server) indexUpdate(ctx context.Context, workspace string) ([]ContentBl
 		"total_files":   stats.TotalFiles,
 		"total_symbols": stats.TotalSymbols,
 		"total_edges":   stats.TotalEdges,
+	}
+	if busy {
+		report["skipped"] = "another celeste process is indexing this workspace; the stats are the index as it is now"
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	return []ContentBlock{{Type: "text", Text: string(data)}}, nil
@@ -271,22 +281,29 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	// and the next chat call opens the rebuilt index.
 	s.chatEnvs.invalidate(workspace)
 
-	// Remove the existing db + WAL files so Build starts fresh. RemoveIndex
-	// takes the index lock first, so a TUI or CLI process that is writing
-	// this index finishes before its database is deleted (#392).
-	if err := codegraph.RemoveIndex(ctx, codegraph.DefaultIndexPath(workspace)); err != nil {
-		return nil, fmt.Errorf("remove index: %w", err)
-	}
-
-	idx, _, err := s.indexerFor(workspace)
-	if err != nil {
-		return nil, err
-	}
+	// Remove the existing db + WAL files and build afresh. Rebuild holds
+	// the index lock from before the delete until the build ends, so a TUI
+	// or CLI process that is writing this index finishes first and no other
+	// indexer starts on the deleted database in between (#392). Waiting for
+	// that lock is bounded (two minutes), and so is the build's own work by
+	// ctx. When the old files are in use by another process (Windows) the
+	// graph is reset and rebuilt in place.
 	SendProgress(ctx, fmt.Sprintf("starting full rebuild on %s", workspace), 0)
 	start := time.Now()
-	if err := idx.BuildWithContext(ctx); err != nil {
-		return nil, fmt.Errorf("build: %w", err)
+	idx, removed, err := codegraph.Rebuild(ctx, workspace, codegraph.DefaultIndexPath(workspace))
+	if err != nil {
+		return nil, fmt.Errorf("rebuild: %w", err)
 	}
+	s.indexerMu.Lock()
+	if cur, ok := s.indexers[workspace]; ok && cur != nil {
+		// A call opened the index while this rebuild ran; keep its
+		// Indexer, which other calls may be using.
+		_ = idx.Close()
+		idx = cur
+	} else {
+		s.indexers[workspace] = idx
+	}
+	s.indexerMu.Unlock()
 	elapsed := time.Since(start).Round(time.Millisecond)
 	SendProgress(ctx, fmt.Sprintf("rebuild complete in %s", elapsed), 1.0)
 	stats, err := idx.Stats()
@@ -300,6 +317,9 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 		"total_files":   stats.TotalFiles,
 		"total_symbols": stats.TotalSymbols,
 		"total_edges":   stats.TotalEdges,
+	}
+	if !removed {
+		report["note"] = "the old index files are in use by another process, so the index was rebuilt in place"
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	return []ContentBlock{{Type: "text", Text: string(data)}}, nil

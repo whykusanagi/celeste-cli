@@ -251,3 +251,98 @@ func TestRemoveIndex_WaitsForTheLock(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 	require.NoError(t, RemoveIndex(context.Background(), db), "removing a missing index is fine")
 }
+
+// failRemove makes deleting the main database file fail as it does on
+// Windows while another process has the database open.
+func failRemove(t *testing.T, db string) {
+	t.Helper()
+	old := removeFile
+	removeFile = func(name string) error {
+		if name == db {
+			return &os.PathError{Op: "remove", Path: name, Err: errors.New("sharing violation")}
+		}
+		return old(name)
+	}
+	t.Cleanup(func() { removeFile = old })
+}
+
+// #392 review: on Windows the database cannot be deleted while another
+// process has it open, even when that process is idle. RemoveIndex reports
+// that as ErrIndexInUse and deletes nothing, not the WAL either.
+func TestRemoveIndex_FilesInUseIsErrIndexInUse(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "cg.db")
+	store, err := NewStore(db)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	require.NoError(t, os.WriteFile(db+"-wal", nil, 0o644))
+	failRemove(t, db)
+
+	err = RemoveIndex(context.Background(), db)
+	require.ErrorIs(t, err, ErrIndexInUse)
+	for _, p := range []string{db, db + "-wal"} {
+		_, serr := os.Stat(p)
+		assert.NoError(t, serr, "%s must stay", filepath.Base(p))
+	}
+}
+
+// A rebuild deletes the old database and builds a new one.
+func TestRebuild_RemovesAndBuilds(t *testing.T) {
+	files := manyPyFiles(20)
+	ref, _ := buildFixture(t, files)
+	ws := writeFixture(t, files)
+	db := filepath.Join(t.TempDir(), "cg.db")
+	old := openIndexer(t, ws, db)
+	require.NoError(t, old.store.SetMeta("stale_key", []byte("x")))
+	require.NoError(t, old.Close())
+
+	idx, removed, err := Rebuild(context.Background(), ws, db)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	assert.True(t, removed)
+	v, err := idx.store.GetMeta("stale_key")
+	require.NoError(t, err)
+	assert.Nil(t, v, "the old database was deleted")
+	assert.Equal(t, edgeKeys(t, ref), edgeKeys(t, idx))
+}
+
+// #392 review: when the old files are in use (Windows), a rebuild resets
+// the graph in place instead of failing, as it did before the index lock.
+func TestRebuild_FilesInUseResetsInPlace(t *testing.T) {
+	files := manyPyFiles(20)
+	ref, _ := buildFixture(t, files)
+	ws := writeFixture(t, files)
+	db := filepath.Join(t.TempDir(), "cg.db")
+	other := openIndexer(t, ws, db) // another process's idle Indexer
+	require.NoError(t, other.Build())
+	failRemove(t, db)
+
+	idx, removed, err := Rebuild(context.Background(), ws, db)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	assert.False(t, removed)
+	assert.Equal(t, edgeKeys(t, ref), edgeKeys(t, idx))
+}
+
+// #392 review: a rebuild holds one lock across the delete and the build, so
+// another indexer cannot start on the deleted database in between.
+func TestRebuild_HoldsTheLockThroughTheBuild(t *testing.T) {
+	files := manyPyFiles(20)
+	ws := writeFixture(t, files)
+	db := filepath.Join(t.TempDir(), "cg.db")
+	other := openIndexer(t, ws, db)
+	require.NoError(t, other.Build())
+	require.NoError(t, other.Close())
+	other = openIndexer(t, ws, db)
+
+	var hookErr error
+	testHookAfterPass1 = func() {
+		testHookAfterPass1 = nil
+		hookErr = other.Update()
+	}
+	t.Cleanup(func() { testHookAfterPass1 = nil })
+
+	idx, _, err := Rebuild(context.Background(), ws, db)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	require.ErrorIs(t, hookErr, ErrIndexBusy)
+}

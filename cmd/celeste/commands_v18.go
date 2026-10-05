@@ -282,15 +282,10 @@ func runIndexCommand(args []string) {
 	if len(args) > 0 {
 		switch args[0] {
 		case "rebuild", "--rebuild":
-			// Delete and rebuild from scratch
-			// Removing waits for another celeste process that is writing
-			// the index rather than delete it under that process (#392).
-			dbPath := codegraph.DefaultIndexPath(cwd)
-			if err := codegraph.RemoveIndex(context.Background(), dbPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: could not remove old index: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println("Old index removed. Rebuilding...")
+			// Delete and rebuild from scratch. Rebuild waits for another
+			// celeste process that is writing the index and keeps the lock
+			// until the new index is built (#392).
+			os.Exit(runIndexRebuild(cwd, os.Stdout, os.Stderr))
 
 		case "status":
 			dbPath := codegraph.DefaultIndexPath(cwd)
@@ -310,13 +305,7 @@ func runIndexCommand(args []string) {
 
 		case "reset":
 			// Delete index entirely
-			dbPath := codegraph.DefaultIndexPath(cwd)
-			if err := codegraph.RemoveIndex(context.Background(), dbPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: could not delete index: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println("Index deleted for current project.")
-			return
+			os.Exit(runIndexReset(cwd, os.Stdout, os.Stderr))
 		}
 	}
 
@@ -342,6 +331,45 @@ func runIndexCommand(args []string) {
 
 	fmt.Println(indexer.ProjectSummary())
 	fmt.Printf("Completed in %s\n", elapsed.Round(time.Millisecond))
+}
+
+// runIndexRebuild deletes the project's index and builds it again, and
+// returns the exit code. When the old files are in use by another process
+// (Windows) the graph is reset and rebuilt in place, as before the index
+// lock.
+func runIndexRebuild(cwd string, stdout, stderr io.Writer) int {
+	start := time.Now()
+	fmt.Fprintf(stdout, "Rebuilding the index of %s...\n", cwd)
+	idx, removed, err := codegraph.Rebuild(context.Background(), cwd, codegraph.DefaultIndexPath(cwd))
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: could not rebuild the index: %v\n", err)
+		return 1
+	}
+	defer idx.Close()
+	if !removed {
+		fmt.Fprintln(stderr, "Warning: the old index files are in use by another celeste process, so the index was rebuilt in place.")
+	}
+	fmt.Fprintln(stdout, idx.ProjectSummary())
+	fmt.Fprintf(stdout, "Completed in %s\n", time.Since(start).Round(time.Millisecond))
+	return 0
+}
+
+// runIndexReset deletes the project's index and returns the exit code.
+// Index files that another process has open (Windows) are reported but are
+// not a failure: nothing was deleted, and closing that process and running
+// reset again deletes them.
+func runIndexReset(cwd string, stdout, stderr io.Writer) int {
+	err := codegraph.RemoveIndex(context.Background(), codegraph.DefaultIndexPath(cwd))
+	switch {
+	case errors.Is(err, codegraph.ErrIndexInUse):
+		fmt.Fprintln(stderr, "Index not deleted: its files are in use by another celeste process. Close it and run `celeste index reset` again.")
+		return 0
+	case err != nil:
+		fmt.Fprintf(stderr, "Error: could not delete index: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "Index deleted for current project.")
+	return 0
 }
 
 // generateMemorySlug creates a short slug from text for use as a memory name.

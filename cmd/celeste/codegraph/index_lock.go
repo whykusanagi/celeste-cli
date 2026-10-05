@@ -17,6 +17,16 @@ import (
 // holds the index's write lock (#392).
 var ErrIndexBusy = errors.New("the code graph index is being written by another indexer")
 
+// ErrIndexInUse is returned by RemoveIndex when the database file could
+// not be deleted although no indexer holds the index lock: on Windows,
+// SQLite opens the file without FILE_SHARE_DELETE, so a TUI or MCP server
+// that merely has the index open blocks the delete. Nothing is deleted
+// then; a rebuild resets the graph in place instead.
+var ErrIndexInUse = errors.New("the code graph index files are in use by another process")
+
+// removeFile deletes one index file; a var so tests can make it fail.
+var removeFile = os.Remove
+
 // errLocked is what lockFile returns when another holder has the lock;
 // errLockUnsupported is what it returns when the file system cannot lock
 // files at all (some network file systems).
@@ -95,11 +105,15 @@ func (l *indexLock) unlock() {
 // retries until ctx ends or buildLockWait passes. An in-memory store (no
 // path) needs no lock.
 func (idx *Indexer) acquireIndexLock(ctx context.Context, wait bool) (*indexLock, error) {
-	idx.token = newOwnerToken()
-	if idx.store.path == "" {
-		return &indexLock{}, nil
+	lock := &indexLock{}
+	if idx.store.path != "" {
+		var err error
+		if lock, err = lockIndex(ctx, idx.store.path, wait); err != nil {
+			return nil, err
+		}
 	}
-	return lockIndex(ctx, idx.store.path, wait)
+	idx.token = newOwnerToken()
+	return lock, nil
 }
 
 // lockIndex takes the lock of the index database at dbPath, waiting as
@@ -134,11 +148,13 @@ func newOwnerToken() string {
 }
 
 // RemoveIndex deletes the index database at dbPath with its WAL and shared
-// memory files, for a rebuild or reset. It takes the index lock first,
-// waiting as an explicit Build does, so it never deletes a database another
-// indexer is writing; it returns ErrIndexBusy when the wait runs out.
+// memory files, for a reset. It takes the index lock first, waiting as an
+// explicit Build does, so it never deletes a database another indexer is
+// writing; it returns ErrIndexBusy when the wait runs out, and
+// ErrIndexInUse when another process has the database open on Windows.
 // Missing files are not an error. The caller closes its own Indexer on the
-// database first.
+// database first. A rebuild uses Rebuild, which keeps the lock until the
+// new index is built.
 func RemoveIndex(ctx context.Context, dbPath string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return fmt.Errorf("index directory: %w", err)
@@ -148,10 +164,62 @@ func RemoveIndex(ctx context.Context, dbPath string) error {
 		return err
 	}
 	defer lock.unlock()
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Remove(dbPath + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	return removeIndexFiles(dbPath)
+}
+
+// removeIndexFiles deletes the database files at dbPath; the caller holds
+// the index lock. The main file goes first: when it cannot be deleted
+// (another process has it open on Windows) it returns ErrIndexInUse and
+// leaves the WAL and shared memory files, which belong to that open
+// database. On unix the delete succeeds even then, and a process that
+// still has the old database open keeps reading and writing the unlinked
+// file until it reopens the index; that was so before the index lock too.
+func removeIndexFiles(dbPath string) error {
+	if err := removeFile(dbPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %v", ErrIndexInUse, err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := removeFile(dbPath + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove index: %w", err)
 		}
 	}
 	return nil
+}
+
+// Rebuild deletes the index database at dbPath and builds a new one for
+// workspace, holding the index lock from before the delete until the
+// build has finished, so no other indexer can start on the half-removed
+// database in between. Taking the lock waits up to two minutes for
+// another indexer, as an explicit Build does (ErrIndexBusy after that).
+// removed is false when the old files were in use (ErrIndexInUse, on
+// Windows) and the build reset the graph in place instead. The returned
+// Indexer is open and the caller closes it; the caller closes its own
+// Indexer on the database first.
+func Rebuild(ctx context.Context, workspace, dbPath string) (idx *Indexer, removed bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return nil, false, fmt.Errorf("index directory: %w", err)
+	}
+	lock, err := lockIndex(ctx, dbPath, true)
+	if err != nil {
+		return nil, false, err
+	}
+	defer lock.unlock()
+	removed = true
+	if err := removeIndexFiles(dbPath); errors.Is(err, ErrIndexInUse) {
+		removed = false
+	} else if err != nil {
+		return nil, false, err
+	}
+	idx, err = NewIndexer(workspace, dbPath)
+	if err != nil {
+		return nil, removed, err
+	}
+	idx.buildMu.Lock()
+	defer idx.buildMu.Unlock()
+	idx.token = newOwnerToken()
+	if err := idx.buildLocked(ctx); err != nil {
+		_ = idx.Close()
+		return nil, removed, err
+	}
+	return idx, removed, nil
 }
