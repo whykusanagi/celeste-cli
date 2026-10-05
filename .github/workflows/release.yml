@@ -171,7 +171,7 @@ jobs:
 
     # Every binary runs on the runner that built it, release or dry run:
     # it starts, it carries working tree-sitter parsers (index selfcheck
-    # indexes a small TypeScript/PHP/Python repo and fails on the regex
+    # indexes a small TypeScript/PHP/Python/Java repo and fails on the regex
     # fallback), its persona decrypts, and it links only what every
     # machine of that OS has.
     - name: Smoke test on this runner
@@ -213,7 +213,14 @@ jobs:
             fi
             ;;
           windows-*)
-            dlls="$(objdump -p "$bin" | grep 'DLL Name')"
+            # objdump ships with the MinGW gcc; take whichever name the
+            # image puts on PATH and fail loudly if neither is there.
+            od="$(command -v objdump || command -v x86_64-w64-mingw32-objdump || true)"
+            if [ -z "$od" ]; then
+              echo "::error::no objdump on PATH to check $bin's DLL imports"
+              exit 1
+            fi
+            dlls="$("$od" -p "$bin" | grep 'DLL Name')"
             echo "$dlls"
             case "$dlls" in
               *libgcc*|*libwinpthread*|*libstdc*)
