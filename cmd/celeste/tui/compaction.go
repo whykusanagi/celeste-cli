@@ -238,12 +238,18 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 	}
 	m.summarizing = true
 	m.handingOff = true
+	m.handoffCancelled = false
+	// Input queued before /handoff waits with what is typed during it, so
+	// a queued follow-up does not reach the new session ahead of the
+	// notes; steers first, as dispatchQueued would send them.
+	m.handoffHeld = append(append(m.handoffHeld, m.steerQueue...), m.followUpQueue...)
+	m.steerQueue, m.followUpQueue = nil, nil
 	m.status = m.status.SetText(handoffStatus)
-	m.chat = m.chat.AddSystemMessage("🤝 Writing handoff notes…")
+	m.chat = m.chat.AddSystemMessage("🤝 Writing handoff notes… (Esc cancels)")
 	snapshot := append([]ChatMessage(nil), msgs...)
-	timeout := m.summaryTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), m.summaryTimeout())
+	m.handoffCancel = cancel
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		text, err := c.HandoffContext(ctx, snapshot, focus)
 		return HandoffReadyMsg{
@@ -256,7 +262,45 @@ func (m AppModel) startHandoff(focus string) (AppModel, tea.Cmd) {
 }
 
 // handoffStatus is the status bar text while /handoff writes its notes.
-const handoffStatus = "🤝 Handoff in progress: input waits for the new session"
+const handoffStatus = "🤝 Handoff in progress: input waits for the new session · Esc cancels"
+
+// cancelHandoff stops a running handoff. Its HandoffReadyMsg still arrives
+// and takes the failure path, which releases held input to the current
+// session.
+func (m AppModel) cancelHandoff() AppModel {
+	if m.handoffCancel != nil {
+		m.handoffCancel()
+		m.handoffCancel = nil
+	}
+	m.handoffCancelled = true
+	if m.status.text == handoffStatus {
+		m.status = m.status.SetText("Cancelling handoff…")
+	}
+	return m
+}
+
+// isQuitWord reports whether lowered input is one of the words that quit.
+func isQuitWord(lower string) bool {
+	switch lower {
+	case "exit", "quit", "q", ":q", ":quit", ":exit":
+		return true
+	}
+	return false
+}
+
+// isLegacyTextCommand reports whether input is a command rather than chat
+// text: a slash command or one of the bare legacy command words.
+func isLegacyTextCommand(content string) bool {
+	if strings.HasPrefix(content, "/") {
+		return true
+	}
+	switch lower := strings.ToLower(content); lower {
+	case "clear", "help", "tools", "skills", "debug":
+		return true
+	default:
+		return isQuitWord(lower)
+	}
+}
 
 // holdForHandoff keeps input submitted during a handoff away from the
 // session it is replacing (#352).
@@ -280,7 +324,7 @@ func (m AppModel) releaseHandoffHeld(started bool) AppModel {
 	}
 	var text []string
 	for _, h := range held {
-		if strings.HasPrefix(h, "/") {
+		if isLegacyTextCommand(h) {
 			m.followUpQueue = append(m.followUpQueue, h)
 		} else {
 			text = append(text, h)
@@ -296,8 +340,17 @@ func (m AppModel) releaseHandoffHeld(started bool) AppModel {
 // applyHandoff starts the new session with the handoff notes in the input.
 func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 	m.summarizing = false
-	if m.status.text == handoffStatus {
+	if m.handoffCancel != nil {
+		m.handoffCancel()
+		m.handoffCancel = nil
+	}
+	if m.status.text == handoffStatus || m.status.text == "Cancelling handoff…" {
 		m.status = m.status.SetText("Ready")
+	}
+	if m.handoffCancelled {
+		m.handoffCancelled = false
+		m.chat = m.chat.AddSystemMessage("Handoff cancelled: this session continues.")
+		return m.releaseHandoffHeld(false)
 	}
 	if msg.Err != nil {
 		m.chat = m.chat.AddSystemMessage("Handoff failed: " + errorText(msg.Err))

@@ -343,7 +343,7 @@ func (s *SplitPanel) renderArtifact(width, contentH int) string {
 
 // rightMarker is the right pane's position marker and its paging keys.
 func rightMarker(start, end, total int) string {
-	return fmt.Sprintf("line %d-%d / %d · ctrl+↑/↓ scroll", start+1, end, total)
+	return fmt.Sprintf("line %d-%d / %d · ctrl/alt+↑/↓ scroll", start+1, end, total)
 }
 
 // viewNarrow is the feed alone for a terminal under 40 columns: the rows
