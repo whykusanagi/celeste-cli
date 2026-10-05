@@ -14,7 +14,13 @@ The code graph provides structural understanding of codebases through three sear
 
 ## Storage
 
-SQLite (WAL mode) via `modernc.org/sqlite` (pure Go, no CGo). Three tables:
+SQLite (WAL mode, `synchronous=NORMAL` on every connection) via
+`modernc.org/sqlite` (pure Go, no CGo). Index writes are autocommitted, about
+a hundred per symbol; with `synchronous=NORMAL` a commit appends to the WAL
+and the fsync waits for the next checkpoint, so a build does not pay a disk
+flush per write (each one costs tens of milliseconds on Windows). The index is
+derived data: a power loss can drop the last commits but cannot corrupt the
+database, and the next update re-indexes whatever is missing. Three tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,
