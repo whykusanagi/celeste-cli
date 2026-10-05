@@ -151,6 +151,18 @@ type TodoTool struct {
 	store *TodoStore
 }
 
+// InternalState reports that create, update and list change (or read) only
+// the session's todo list, which tracks the model's own progress: the
+// permission checker auto-allows them, so an approved plan's status
+// updates never prompt (#357). delete and clear_done still ask.
+func (t *TodoTool) InternalState(input map[string]any) bool {
+	switch action, _ := input["action"].(string); action {
+	case "create", "update", "list":
+		return true
+	}
+	return false
+}
+
 // NewTodoTool creates a TodoTool with file-backed persistence in the workspace.
 func NewTodoTool(workspace string) *TodoTool {
 	return &TodoTool{

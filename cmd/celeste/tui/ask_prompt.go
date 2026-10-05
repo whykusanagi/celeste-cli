@@ -37,6 +37,8 @@ type AskPromptModel struct {
 	// space) arrived; zero after any other key. An Enter in the same
 	// burst is part of a paste, not a choice (#326).
 	pickAt time.Time
+	// deadline is when the question expires (zero: no deadline shown).
+	deadline time.Time
 }
 
 // askTypedHint replaces the footer while typed keys are being ignored.
@@ -71,6 +73,7 @@ func (m AskPromptModel) Update(msg tea.Msg) (AskPromptModel, tea.Cmd) {
 		m.typed = false
 		m.pickAt = time.Time{}
 		m.checked = map[int]bool{}
+		m.deadline = msg.Deadline
 
 	case tea.KeyMsg:
 		if !m.active {
@@ -249,6 +252,9 @@ func (m AskPromptModel) footer(scroll string) string {
 	}
 	if scroll != "" {
 		f += " • PgUp/PgDn scroll " + scroll
+	}
+	if !m.deadline.IsZero() {
+		f += " • expires at " + m.deadline.Format("15:04")
 	}
 	if m.typed {
 		return m.block(lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(askTypedHint))

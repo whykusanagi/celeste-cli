@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,4 +50,13 @@ func TestAskTool_Cancelled(t *testing.T) {
 		"question": "q", "options": []any{map[string]any{"label": "x"}},
 	}, nil)
 	assert.Contains(t, res.Content, "cancelled")
+}
+
+// #356: the user answers ask in a modal, which takes longer than the
+// default tool timeout; ask gets the same long timeout as submit_plan.
+func TestAskTool_HasTheAnswerTimeout(t *testing.T) {
+	ask := NewAskTool(tools.NewRegistry())
+	plan := NewSubmitPlanTool(t.TempDir(), nil, nil)
+	assert.Equal(t, 30*time.Minute, tools.TimeoutFor(ask, 45*time.Second))
+	assert.Equal(t, tools.TimeoutFor(plan, 45*time.Second), tools.TimeoutFor(ask, 45*time.Second))
 }
