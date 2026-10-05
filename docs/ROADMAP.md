@@ -161,8 +161,6 @@ of the workstream plan named.
 
 ### Code graph
 
-- [ ] Release binaries with the tree-sitter parsers (a CGo cross-toolchain);
-      today's release builds are pure Go and use the fallback parsers.
 - [ ] Automatic stale-index detection with a rebuild prompt.
 - [ ] A pluggable local reranker (llama.cpp bridge or ONNX) behind the existing
       `Reranker` interface, with no cloud dependency.

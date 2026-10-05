@@ -28,6 +28,23 @@ go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest
 | A signed binary from the [Releases](https://github.com/whykusanagi/celeste-cli/releases) page | Unchanged. Verify it as described in [VERIFY.md](VERIFY.md). |
 | Go code that imports celeste packages | Change the imports to `github.com/whykusanagi/celeste-cli/v2/cmd/...`. |
 
+## Release binaries include tree-sitter
+
+1.x release binaries were built with `CGO_ENABLED=0`, so the code graph parsed every language
+except Go with regex. 2.0 release binaries are built with CGo on each platform's own runner and
+include the tree-sitter parsers for TypeScript, PHP, Python, Rust, Java, C/C++ and Ruby, with
+more accurate call edges ([#376](https://github.com/whykusanagi/celeste-cli/issues/376)).
+Rebuild an index made by 1.x to get them: `celeste index rebuild`.
+
+| Platform | 2.0 release binary |
+|---|---|
+| Linux (amd64, arm64) | Still statically linked: it needs no particular glibc and runs on the same systems as 1.x. |
+| macOS (Intel, Apple silicon) | Links only the system libraries, as before. Needs macOS 12 or later, which Go 1.26 already required. |
+| Windows (amd64) | Needs no DLL beyond the ones Windows ships. |
+
+A build from source compiles the parsers with the local C compiler. With `CGO_ENABLED=0`, or
+without a C compiler, it still builds and falls back to the regex parsers.
+
 ## The persona
 
 Celeste's persona is not open source. Official release binaries carry the key that
