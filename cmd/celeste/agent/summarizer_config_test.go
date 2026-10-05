@@ -24,8 +24,9 @@ func TestSmallModelSummarizerSendsItsSystemPrompt(t *testing.T) {
 		mu.Lock()
 		body = string(b)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"summary"}]},"finishReason":"STOP"}]}`)
+		// The Google sync path streams (#349).
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"summary\"}]},\"finishReason\":\"STOP\"}]}\n\n")
 	}))
 	defer srv.Close()
 

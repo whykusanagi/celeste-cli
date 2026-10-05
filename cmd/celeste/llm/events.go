@@ -35,10 +35,10 @@ const (
 
 	// EventThinkingDelta is emitted as the model's reasoning streams, for
 	// a "thinking" indicator only: it is never reply text and never joins
-	// the history. Only the OpenAI-compatible chat-completions backend
-	// emits it (reasoning / reasoning_content deltas and inlined <think>
-	// blocks, L4); Anthropic and Responses thinking are kept as provider
-	// blocks instead.
+	// the history. The OpenAI-compatible chat-completions backend emits it
+	// (reasoning / reasoning_content deltas and inlined <think> blocks, L4),
+	// and Google emits it for Gemini thought parts; Anthropic and Responses
+	// thinking are kept as provider blocks instead.
 	EventThinkingDelta
 )
 
