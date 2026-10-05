@@ -11,8 +11,9 @@ import (
 )
 
 // CodeGraphTool queries call relationships in the code graph.
-// Supports queries like "what calls X", "callers of Z". Edges are calls
-// only — the graph does not track implements, embeds or references.
+// Supports queries like "what calls X", "callers of Z". Edge kinds are
+// calls, references (Go: a function taken as a value) and implements (Go:
+// interface method to implementing method); embeds are not tracked.
 type CodeGraphTool struct {
 	BaseTool
 	indexer *codegraph.Indexer
@@ -24,7 +25,8 @@ func NewCodeGraphTool(indexer *codegraph.Indexer) *CodeGraphTool {
 		BaseTool: BaseTool{
 			ToolName: "code_graph",
 			ToolDescription: "Query call relationships in the codebase. " +
-				"Find what calls a function and what it calls (calls edges only). " +
+				"Find what calls a function and what it calls. Edges are calls; for Go also references " +
+				"(a function taken as a value) and implements (interface method -> implementing method). " +
 				"First use code_search to find the symbol name, then use code_graph to explore relationships.",
 			ToolParameters: json.RawMessage(`{
 				"type": "object",
@@ -85,9 +87,15 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 	store := t.indexer.Store()
 
 	for _, sym := range syms {
-		fmt.Fprintf(&b, "## %s (%s) — %s:%d\n", sym.Name, sym.Kind, sym.File, sym.Line)
+		fmt.Fprintf(&b, "## %s (%s) — %s:%d\n", codegraph.DisplayName(sym), sym.Kind, sym.File, sym.Line)
 		if sym.Signature != "" {
 			fmt.Fprintf(&b, "  %s\n", sym.Signature)
+		}
+		if sym.Implements != "" {
+			fmt.Fprintf(&b, "  Implements: %s\n", strings.ReplaceAll(sym.Implements, ",", ", "))
+		}
+		if store.FileResolution(sym.File) == codegraph.GoResolutionApproximate {
+			b.WriteString("  (approximate: this file did not type-check; its call edges may be incomplete or resolved by name)\n")
 		}
 
 		// Get edges
@@ -97,7 +105,7 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 				fmt.Fprintf(&b, "\n  Called by:\n")
 				for _, e := range edges {
 					if caller, err := store.GetSymbol(e.SourceID); err == nil {
-						fmt.Fprintf(&b, "    <- %s (%s) %s:%d\n", caller.Name, e.Kind, caller.File, caller.Line)
+						fmt.Fprintf(&b, "    <- %s (%s) %s:%d\n", codegraph.DisplayName(*caller), e.Kind, caller.File, caller.Line)
 					}
 				}
 			}
@@ -109,7 +117,7 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 				fmt.Fprintf(&b, "\n  Calls:\n")
 				for _, e := range edges {
 					if callee, err := store.GetSymbol(e.TargetID); err == nil {
-						fmt.Fprintf(&b, "    -> %s (%s) %s:%d\n", callee.Name, e.Kind, callee.File, callee.Line)
+						fmt.Fprintf(&b, "    -> %s (%s) %s:%d\n", codegraph.DisplayName(*callee), e.Kind, callee.File, callee.Line)
 					}
 				}
 			}
