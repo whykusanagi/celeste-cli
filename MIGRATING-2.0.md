@@ -59,7 +59,7 @@ same caps, guards, permissions and hooks. These are intentional changes:
 |---|---|
 | Each mode had its own loop and rules | One loop. A run stops after 3 identical tool calls in a row, 6 turns without progress, or 3 turns of invalid arguments. The chat's 25-turn cap counts every model turn. |
 | Tool calls ran one at a time (agent runs, MCP chat) | Calls marked safe (reads, searches) run in parallel; their results keep the call order. |
-| One timeout for every tool in agent runs | Each tool has its own timeout: 45 s by default, `bash` and `generate_speech` 5 min, `spawn_agent` 10 min, `audio_render` 2 min. These override `--tool-timeout` in agent runs. |
+| One timeout for every tool in agent runs | Each tool has its own timeout: 45 s by default, `bash` and `generate_speech` 5 min, `spawn_agent` 10 min, `audio_render` 2 min, `ask` and `submit_plan` 30 min (they wait on your answer). These override `--tool-timeout` in agent runs. |
 | Large tool results were trimmed on every request | A result over 128 KiB is saved whole to a file readable by you only (0600, in a 0700 directory, also in the chat; 1.x wrote 0644 files) and the conversation keeps 128 KiB of it, start and end. See "Sessions and agent checkpoints". |
 | Agent runs and MCP chat loaded only part of your setup | They also load hooks, custom tools (`~/.celeste/skills`), MCP servers from your home configs, memories, the grimoire and the code-graph summary. With 3 or more custom tools or a large MCP server, a run passes 40 tools and switches on tool discovery (`find_tools`). |
 | A repository's `.mcp.json` or `.celeste/mcp.json` started in every mode | Starts only in the interactive chat. Agent runs, MCP chat, `celeste acp` and subagents use your home-level MCP configs only. |

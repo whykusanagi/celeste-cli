@@ -27,10 +27,11 @@ const (
 	planKeepResult = "The user wants changes to the plan; keep planning (read-only) and submit again."
 	planHeadless   = "plan mode needs the interactive chat"
 
-	// submitPlanTimeout bounds the approval modal: the user is reading a
-	// plan, which takes longer than the default tool timeout. Esc or the
-	// end of the turn still cancels it sooner.
-	submitPlanTimeout = 30 * time.Minute
+	// answerTimeout bounds a tool that waits on the user in a modal
+	// (submit_plan's approval, ask's question): reading a plan or
+	// weighing a choice takes longer than the default tool timeout. Esc
+	// or the end of the turn still cancels it sooner.
+	answerTimeout = 30 * time.Minute
 )
 
 // PlanFile is .celeste/plan.json: the approved plan.
@@ -121,7 +122,7 @@ func NewSubmitPlanTool(workspace string, ask func(context.Context, tools.AskRequ
 			ReadOnly:       true,
 			Interrupt:      tools.InterruptCancel,
 			RequiredFields: []string{"steps"},
-			ExecTimeout:    submitPlanTimeout,
+			ExecTimeout:    answerTimeout,
 		},
 		workspace: workspace,
 		ask:       ask,

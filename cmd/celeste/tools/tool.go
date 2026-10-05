@@ -34,6 +34,27 @@ func TimeoutFor(t Tool, def time.Duration) time.Duration {
 	return def
 }
 
+// InternalStater is implemented by tools whose call, for some inputs,
+// changes only the session's own bookkeeping (the todo list), never the
+// user's files or the outside world. The permission checker treats such a
+// call as read-only: it is auto-allowed in the default mode without a
+// prompt. Hooks still see it, and the tool stays non-read-only everywhere
+// else (plan mode does not offer it).
+type InternalStater interface {
+	InternalState(input map[string]any) bool
+}
+
+// PermissionReadOnly reports whether the permission checker treats this
+// call of t as read-only: t is read-only, or the call only changes internal
+// state (InternalStater).
+func PermissionReadOnly(t Tool, input map[string]any) bool {
+	if t.IsReadOnly() {
+		return true
+	}
+	is, ok := t.(InternalStater)
+	return ok && is.InternalState(input)
+}
+
 // RiskRater is implemented by tools that rate a call's risk from its input
 // (bash rates its command). It returns "read", "write" or "destructive";
 // anything else ("" included) falls back to the name heuristic. The permission prompt shows the rating.

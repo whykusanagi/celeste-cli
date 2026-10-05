@@ -129,13 +129,15 @@ func inputSummary(input map[string]any) string {
 }
 
 // toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
-// Tool has Name() while ToolInfo expects ToolName().
+// Tool has Name() while ToolInfo expects ToolName(). It describes one call:
+// a call that only changes internal state counts as read-only (#357).
 type toolInfoAdapter struct {
-	tool Tool
+	tool  Tool
+	input map[string]any
 }
 
 func (a *toolInfoAdapter) ToolName() string { return a.tool.Name() }
-func (a *toolInfoAdapter) IsReadOnly() bool { return a.tool.IsReadOnly() }
+func (a *toolInfoAdapter) IsReadOnly() bool { return PermissionReadOnly(a.tool, a.input) }
 
 // PreToolHookResult is the combined verdict of the PreToolUse hooks.
 type PreToolHookResult struct {
@@ -500,7 +502,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 	forceAsk := false
 	if hooks != nil {
 		if checker != nil {
-			if res := checker.Check(&toolInfoAdapter{tool: tool}, input); res.Decision == permissions.Deny {
+			if res := checker.Check(&toolInfoAdapter{tool: tool, input: input}, input); res.Decision == permissions.Deny {
 				return ToolResult{Content: fmt.Sprintf("Permission denied: %s", res.Reason), Error: true}, nil
 			}
 		}
@@ -528,7 +530,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 
 	advice := ""
 	if a, _ := ctx.Value(advisorKey{}).(AskAdvisor); a != nil && !forceAsk && allowed(tool, input, checker) {
-		if ask, why := a(hookCtx, AdvisedCall{Name: name, Input: input, ReadOnly: tool.IsReadOnly()}); ask {
+		if ask, why := a(hookCtx, AdvisedCall{Name: name, Input: input, ReadOnly: PermissionReadOnly(tool, input)}); ask {
 			forceAsk, advice = true, why
 		}
 	}
@@ -561,7 +563,7 @@ func (r *Registry) ExecuteWithProgress(ctx context.Context, name string, input m
 
 // allowed reports the policy's decision for the call is Allow.
 func allowed(tool Tool, input map[string]any, checker *permissions.Checker) bool {
-	return checker == nil || checker.Check(&toolInfoAdapter{tool: tool}, input).Decision == permissions.Allow
+	return checker == nil || checker.Check(&toolInfoAdapter{tool: tool, input: input}, input).Decision == permissions.Allow
 }
 
 // checkPermission applies the permission gate. forceAsk (a PreToolUse hook
@@ -571,7 +573,7 @@ func allowed(tool Tool, input map[string]any, checker *permissions.Checker) bool
 func (r *Registry) checkPermission(tool Tool, name string, input map[string]any, checker *permissions.Checker, prompt PromptFunc, forceAsk bool, advice string) (ToolResult, bool) {
 	decision, reason := permissions.Allow, ""
 	if checker != nil {
-		res := checker.Check(&toolInfoAdapter{tool: tool}, input)
+		res := checker.Check(&toolInfoAdapter{tool: tool, input: input}, input)
 		decision, reason = res.Decision, res.Reason
 	}
 	if decision == permissions.Deny {
