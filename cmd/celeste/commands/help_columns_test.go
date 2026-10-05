@@ -31,3 +31,16 @@ func TestHelpDescriptionsShareOneColumn(t *testing.T) {
 		}
 	}
 }
+
+// helpRowMax is the widest /help row that fits the System bubble of an
+// 80-column chat without wrapping.
+const helpRowMax = 74
+
+// Every /help row fits an 80-column chat on one line.
+func TestHelpRowsFitEightyColumns(t *testing.T) {
+	for _, r := range strings.Split(chatCommandsHelp, "\n") {
+		if n := len([]rune(r)); n > helpRowMax {
+			t.Errorf("row is %d columns, over %d: %q", n, helpRowMax, r)
+		}
+	}
+}

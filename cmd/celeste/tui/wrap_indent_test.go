@@ -125,7 +125,7 @@ func TestWideHelpRowsKeepIndentAndColumns(t *testing.T) {
 			helpRowsKeepColumns(t, help, w)
 			for _, want := range []string{
 				"  /confirm           Toggle confirm mode",
-				"  /agents kill <id|name>\n" + helpPad + "Cancel a specific in-flight subagent",
+				"  /agents kill <id|name>\n" + helpPad + "Cancel a running subagent",
 				"  /set-model [model]\n" + helpPad + "List or set the chat model",
 				"  /config            List available config profiles",
 				"  /config set-key <k>\n" + helpPad + "Set API key",

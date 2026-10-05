@@ -787,12 +787,12 @@ const chatCommandsHelp = `Chat:
   /user              Show current user identity
   /user <name>       Set who Celeste addresses you as (default: Summoner)
   /user reset        Reset to default (Summoner)
-  /confirm           Toggle confirm mode (propose actions before executing)
+  /confirm           Toggle confirm mode (propose actions before acting)
   /agents            List spawned subagents and their status
   /agents resume <id>
                      Resume a failed subagent from its last checkpoint
   /agents kill <id|name>
-                     Cancel a specific in-flight subagent (id, task id, or on-screen name)
+                     Cancel a running subagent (id, task id, or name)
   /voice             Show ElevenLabs TTS config
   /voice list        List available ElevenLabs voices
   /voice set-key     Set ElevenLabs API key
@@ -825,8 +825,8 @@ Project:
   /handoff [focus]   Summarize this session into a new one
   /diff              List the files this session changed
   /undo              Undo the last file change (repeat to go back)
-  /rewind [n]        Take back the last n prompts and the file changes they made
-  /fork              Continue in a copy of this session (the original is kept)
+  /rewind [n]        Take back the last n prompts and their file changes
+  /fork              Continue in a copy of this session (original kept)
   /costs             Show session costs
   /stats             Show usage statistics
   /export [format]   Export the session (json, md, csv)
@@ -845,8 +845,8 @@ Settings:
   /nsfw              Switch to NSFW mode (Venice.ai, uncensored)
   /safe              Return to safe mode
   /set-model [model]
-                     List or set the chat model (the image model in NSFW mode)
-  /list-models       List models (also /image-model, the old name for /set-model)
+                     List or set the chat model (image model in NSFW)
+  /list-models       List models (/image-model: old name of /set-model)
 
 Tools:
   /tools, /skills    Browse available tools interactively
