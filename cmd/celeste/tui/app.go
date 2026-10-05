@@ -118,6 +118,16 @@ type AppModel struct {
 	// summarizing is set while a compaction summary is being written, so
 	// only one runs at a time.
 	summarizing bool
+	// handingOff is set while /handoff writes its notes (#352). Input
+	// submitted meanwhile is held in handoffHeld rather than run against
+	// the session about to be replaced; applyHandoff releases it.
+	handingOff  bool
+	handoffHeld []string
+	// handoffCancel cancels the running handoff (Esc, Ctrl+C);
+	// handoffCancelled records that the user did, so notes that arrive
+	// anyway are not applied.
+	handoffCancel    context.CancelFunc
+	handoffCancelled bool
 
 	// The running chat turn (2.0 F2d): a loop.Loop run whose events arrive
 	// as TurnEventMsg tagged turnRun; nil when idle. loopSteers counts steers
@@ -836,6 +846,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyName(msg) == "esc" && m.turnActive() && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions() {
 			return m.interrupt(), nil
 		}
+		// Esc on an empty input, or Ctrl+C, cancels a running handoff; the
+		// current session stays.
+		if m.handoffCancel != nil && !m.turnActive() &&
+			(keyName(msg) == "ctrl+c" || (keyName(msg) == "esc" && strings.TrimSpace(m.input.Value()) == "" && !m.input.HasSuggestions())) {
+			return m.cancelHandoff(), nil
+		}
 
 		// keyName: a text burst names no key and goes to the input (#320).
 		switch keyName(msg) {
@@ -885,6 +901,25 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.chat, cmd = m.chat.Update(msg)
 				cmds = append(cmds, cmd)
+			}
+		case "ctrl+up", "alt+up", "ctrl+down", "alt+down":
+			// The split view's right pane (diff or output) pages on its
+			// own keys; PgUp/PgDn page the action feed (#353).
+			if m.splitPanelMode && m.splitPanel != nil {
+				// One right-pane page less two lines, so each step
+				// keeps the previous page's last lines in view.
+				step := max(rightPageRows(max(m.splitPanel.height, 3)-2)-2, 1)
+				if strings.HasSuffix(keyName(msg), "up") {
+					step = -step
+				}
+				m.splitPanel.ScrollRight(step)
+			} else {
+				// Outside the split view these keys go to the input, as
+				// before.
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				cmds = append(cmds, cmd)
+				m.skills = m.skills.SetCurrentInput(m.input.Value())
 			}
 		case "pgdown", "shift+down", "end":
 			if m.splitPanelMode && m.splitPanel != nil {
@@ -968,12 +1003,23 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if content != "" && m.turnActive() && !runsDuringTurn(content) {
 			return m.enqueue(content, msg.FollowUp || strings.HasPrefix(content, "/")), nil
 		}
+		// A quit word quits even during a handoff, which is abandoned.
+		if m.handingOff && isQuitWord(strings.ToLower(content)) {
+			m = m.cancelHandoff()
+			m.persistSession()
+			return m, tea.Quit
+		}
+		// A handoff is replacing the session: hold the input until the new
+		// session is in place (#352).
+		if content != "" && m.handingOff {
+			return m.holdForHandoff(content), nil
+		}
 		// Idle again, so an earlier interrupt no longer applies.
 		m.interrupted = false
 		// A status text ("Selection cancelled", "Model changed to …")
 		// belongs to the command that set it; the next one starts from
 		// Ready and sets its own (V17).
-		if content != "" && !m.streaming && !m.turnActive() && !m.mediaInFlight {
+		if content != "" && !m.streaming && !m.turnActive() && !m.mediaInFlight && !m.handingOff {
 			m.status = m.status.SetText("Ready")
 		}
 
@@ -1772,10 +1818,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle legacy text commands (for backward compatibility)
 		lowerContent := strings.ToLower(content)
-		switch lowerContent {
-		case "exit", "quit", "q", ":q", ":quit", ":exit":
+		if isQuitWord(lowerContent) {
 			m.persistSession()
 			return m, tea.Quit
+		}
+		switch lowerContent {
 		case "clear":
 			m.chat = m.chat.Clear()
 			m.untrackPlan()

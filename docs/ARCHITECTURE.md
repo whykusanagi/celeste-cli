@@ -199,7 +199,7 @@ The split panel TUI shows:
 - **Left**: live action feed — classified lane, agent turns, tool calls, debate rounds, review verdicts
 - **Right**: file diffs (colour-coded) or review verdict
 
-Both panels are scrollable (`PgUp`/`PgDn`).
+The action feed pages with `PgUp`/`PgDn` (also `Shift+↑`/`Shift+↓`, `Home`/`End`). The right pane pages with `Ctrl+↑`/`Ctrl+↓`, or `Alt+↑`/`Alt+↓` where the terminal or OS takes Ctrl+arrows (macOS Mission Control does by default).
 
 **Configure via named config** (e.g. `config.grok.json`):
 ```json
