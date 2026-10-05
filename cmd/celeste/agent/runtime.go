@@ -1198,7 +1198,7 @@ func normalizeOptions(options *Options) {
 		options.MaxConsecutiveInvalidToolArgs = defaults.MaxConsecutiveInvalidToolArgs
 	}
 	if options.RequestTimeout <= 0 {
-		options.RequestTimeout = defaults.RequestTimeout
+		options.RequestTimeout = llm.MaxRequestDuration((*llm.Config)(nil).StallTimeout())
 	}
 	if options.ToolTimeout <= 0 {
 		options.ToolTimeout = defaults.ToolTimeout
