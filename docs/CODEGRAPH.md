@@ -23,10 +23,14 @@ derived data: a power loss can drop the last commits but cannot corrupt the
 database, and commits are lost newest first. A full build sets
 `meta.build_in_progress` before it empties the graph and clears it only after
 its last pass commits, and the Go pass does the same with
-`meta.go_pass_pending`; an `Update` that finds the first mark runs a full
-build, and one that finds the second reruns the Go pass, so a build or update
-that was cancelled, killed or cut off by a power loss is finished by the next
-update rather than trusted because its file hashes match. An index left
+`meta.go_pass_pending`. An `Update` that finds the first mark finishes the
+build without emptying the graph again: it keeps the files already indexed,
+indexes the missing or changed ones, resolves every non-Go edge again, reruns
+the Go pass and only then clears the mark, so repeated short runs (a chat
+opened and closed before a long build ends) each make progress. An `Update`
+that finds the second mark reruns the Go pass. A build or update that was
+cancelled, killed or cut off by a power loss is finished by the next update
+rather than trusted because its file hashes match. An index left
 incomplete by a version without these marks has nothing to repair it: rebuild
 it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
 in the TUI (`celeste index` only updates). Three tables:
@@ -145,7 +149,7 @@ extraction with heuristic call detection.
 
 ### Full Build
 
-Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index, except to finish a full build that was interrupted.
+Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index, not even to finish a full build that was interrupted.
 
 ### Incremental Updates
 

@@ -200,3 +200,13 @@ func DisplayName(sym Symbol) string {
 	}
 	return "(" + star + recv + ")." + sym.Name
 }
+
+// DeleteNonGoEdges deletes every edge whose source is not a Go symbol, so an
+// interrupted build's non-Go edges can be resolved again from scratch
+// without emptying the graph (#391).
+func (s *Store) DeleteNonGoEdges() error {
+	if _, err := s.db.Exec(`DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
+		return fmt.Errorf("clear non-go edges: %w", err)
+	}
+	return nil
+}

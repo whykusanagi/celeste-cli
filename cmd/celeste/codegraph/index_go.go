@@ -19,8 +19,9 @@ const (
 	// metaBuildInProgress is set before a full build empties the graph and
 	// cleared only once every pass has committed. A build interrupted in
 	// between (cancelled, killed, power loss) leaves file records whose
-	// hashes match while edges are missing, so Update rebuilds when it
-	// finds the mark instead of trusting the hashes (#388).
+	// hashes match while edges are missing, so Update finishes the build
+	// when it finds the mark instead of trusting the hashes (#388), without
+	// emptying the graph again (#391).
 	metaBuildInProgress = "build_in_progress"
 	// metaGoPassPending is set before the Go pass writes its first row and
 	// cleared once its edges, implementations and module fingerprint are

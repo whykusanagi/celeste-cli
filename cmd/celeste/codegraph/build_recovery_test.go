@@ -2,6 +2,7 @@ package codegraph
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -104,4 +105,69 @@ func TestBuild_ClearsGoPassMarkWithoutGoFiles(t *testing.T) {
 	v, err := idx.store.GetMeta(metaGoPassPending)
 	require.NoError(t, err)
 	assert.Nil(t, v, "a complete build leaves no Go-pass mark")
+}
+
+// manyPyFiles is a Python workspace larger than one 64-file ctx stride,
+// whose calls cross files, so its edges depend on every file's symbols.
+func manyPyFiles(n int) map[string]string {
+	files := map[string]string{}
+	for i := 0; i < n; i++ {
+		files[fmt.Sprintf("py/m%03d.py", i)] = fmt.Sprintf(
+			"def caller_%d():\n    helper_%d()\n\ndef helper_%d():\n    pass\n", i, (i+1)%n, i)
+	}
+	return files
+}
+
+func graphCounts(t *testing.T, idx *Indexer) (files, symbols int) {
+	t.Helper()
+	st, err := idx.store.Stats()
+	require.NoError(t, err)
+	return st.TotalFiles, st.TotalSymbols
+}
+
+// #391: an Update that finds an unfinished build must not empty the graph
+// and start over. Repeated short runs, each cancelled part-way (a user who
+// keeps opening and closing celeste chat), keep the files the earlier runs
+// indexed, index more, and the last one leaves the graph a clean build
+// would.
+func TestUpdate_RepeatedCancellationMakesProgressAndKeepsGraph(t *testing.T) {
+	files := manyPyFiles(150)
+	ref, _ := buildFixture(t, files)
+	want := edgeKeys(t, ref)
+	requireEdges(t, want, "caller_0 -calls-> helper_1", "caller_149 -calls-> helper_0")
+
+	ws := writeFixture(t, files)
+	idx, err := NewIndexer(ws, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+
+	// The build stops inside pass 1, after its first stride of 64 files.
+	err = idx.BuildWithContext(&failAfterCtx{Context: context.Background(), n: 2})
+	require.ErrorIs(t, err, context.Canceled)
+	prevFiles, prevSyms := graphCounts(t, idx)
+	require.Positive(t, prevFiles)
+
+	finished := false
+	for run := 0; run < 10 && !finished; run++ {
+		// Three checks pass: the entry, the scan's first file and the
+		// first re-indexed file; the next one cancels the run.
+		err := idx.UpdateWithContext(&failAfterCtx{Context: context.Background(), n: 3})
+		nFiles, nSyms := graphCounts(t, idx)
+		require.GreaterOrEqual(t, nFiles, prevFiles, "run %d dropped indexed files", run)
+		require.GreaterOrEqual(t, nSyms, prevSyms, "run %d dropped symbols", run)
+		if err == nil {
+			finished = true
+			break
+		}
+		require.ErrorIs(t, err, context.Canceled)
+		mark, gerr := idx.store.GetMeta(metaBuildInProgress)
+		require.NoError(t, gerr)
+		require.NotNil(t, mark, "a cancelled recovery keeps the mark")
+		prevFiles, prevSyms = nFiles, nSyms
+	}
+	require.True(t, finished, "repeated short runs must finish the index")
+	assert.Equal(t, want, edgeKeys(t, idx))
+	mark, err := idx.store.GetMeta(metaBuildInProgress)
+	require.NoError(t, err)
+	assert.Nil(t, mark)
 }
