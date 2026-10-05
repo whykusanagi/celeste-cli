@@ -190,13 +190,28 @@ func lastOccurrences(paths []string) []string {
 func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string) string, approved bool) string {
 	same := func(p string) bool { return p != "" && filepath.Clean(p) == filepath.Clean(e.path) }
 	inChat, inOther := same(chatOrigin), e.global && same(otherOrigin)
+	// An empty origin means the server left its file between the two
+	// reads (review m4): say so rather than name no file.
+	const removed = "removed since listing"
+	src := func(p string) string {
+		if p == "" {
+			return "nothing, " + removed
+		}
+		return show(p)
+	}
+	overridden := func(p string) string {
+		if p == "" {
+			return "none (" + removed + ")"
+		}
+		return "overridden by " + show(p)
+	}
 	switch {
 	case e.global && !inOther:
-		return "overridden by " + show(otherOrigin)
+		return overridden(otherOrigin)
 	case !e.global && !inChat:
-		return "overridden by " + show(chatOrigin)
+		return overridden(chatOrigin)
 	case !e.cfg.Enabled && !inChat:
-		return "off (chat uses " + show(chatOrigin) + ")"
+		return "off (chat uses " + src(chatOrigin) + ")"
 	case !e.cfg.Enabled:
 		// Manager.Start skips it; the chat's /mcp panel can still connect it.
 		return "off (start it from the chat's /mcp)"
@@ -205,7 +220,7 @@ func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string)
 	case !e.global:
 		return "chat once approved"
 	case !inChat:
-		return "all but chat (chat uses " + show(chatOrigin) + ")"
+		return "all but chat (chat uses " + src(chatOrigin) + ")"
 	}
 	return "all modes"
 }
