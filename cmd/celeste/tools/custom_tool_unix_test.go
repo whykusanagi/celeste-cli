@@ -122,3 +122,25 @@ func TestCustomToolNamesTheCallersDeadline(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 }
+
+// A deadline that has already passed when the command would start is still
+// the caller's deadline, not a bare start error: on a loaded machine a short
+// deadline can end before sh is even started.
+func TestCustomToolNamesTheCallersDeadlineBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	res, _ := loadCustomTool(t, "sleep 5").Execute(ctx, map[string]any{}, nil)
+	if !res.Error || !strings.Contains(res.Content, "the caller's deadline ended it") {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+// A call cancelled before the command starts says it was cancelled.
+func TestCustomToolCancelledBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, _ := loadCustomTool(t, "sleep 5").Execute(ctx, map[string]any{}, nil)
+	if !res.Error || !strings.Contains(res.Content, "cancelled; the command") {
+		t.Fatalf("res = %+v", res)
+	}
+}
