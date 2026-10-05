@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
 
 const maxActionEntries = 200
@@ -245,11 +244,7 @@ func splitPane(content string, w, h int, border string) string {
 // fitLine makes l one terminal row at most width columns wide: tabs become
 // spaces, carriage returns go, and the rest is cut with "…".
 func fitLine(l string, width int) string {
-	l = strings.ReplaceAll(strings.ReplaceAll(l, "\t", "    "), "\r", "")
-	if width < 1 {
-		return ""
-	}
-	return ansi.Truncate(l, width, "…")
+	return fitWidth(strings.ReplaceAll(strings.ReplaceAll(l, "\t", "    "), "\r", ""), width)
 }
 
 func (s *SplitPanel) renderActionFeed(width, contentH int) string {

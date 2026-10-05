@@ -2410,7 +2410,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Model != "" {
 				reviewer = msg.Model
 			}
-			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, truncateText(msg.Text, 60))
+			entry := fmt.Sprintf("🔍 [%s] %s", reviewer, fitWidth(msg.Text, 60))
 			if msg.Duration > 0 || msg.InputTokens > 0 {
 				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
 			}
@@ -2425,7 +2425,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Model != "" {
 				model = msg.Model
 			}
-			entry := fmt.Sprintf("🛡 [%s] %s", model, truncateText(msg.Text, 60))
+			entry := fmt.Sprintf("🛡 [%s] %s", model, fitWidth(msg.Text, 60))
 			if msg.Duration > 0 || msg.InputTokens > 0 {
 				entry += " " + formatOrchestratorStats(msg.Duration, msg.InputTokens, msg.OutputTokens)
 			}
@@ -3880,13 +3880,6 @@ func humanizeTime(t time.Time) string {
 	} else {
 		return t.Format("Jan 2, 2006")
 	}
-}
-
-func truncateText(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
 }
 
 // fetchElevenLabsVoices calls the ElevenLabs API and returns a formatted voice list.
