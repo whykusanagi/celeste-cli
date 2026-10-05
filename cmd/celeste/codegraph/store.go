@@ -282,6 +282,15 @@ func (s *Store) SetMeta(key string, value []byte) error {
 	return nil
 }
 
+// DeleteMeta removes a key from the meta table. Removing a missing key is
+// not an error.
+func (s *Store) DeleteMeta(key string) error {
+	if _, err := s.db.Exec("DELETE FROM meta WHERE key = ?", key); err != nil {
+		return fmt.Errorf("delete meta %q: %w", key, err)
+	}
+	return nil
+}
+
 // UpsertSymbol inserts or updates a symbol. Uniqueness is determined by
 // (name, kind, package, file, qual_name), so two Go methods with the same
 // name on different receivers in one file stay separate rows. Returns the
