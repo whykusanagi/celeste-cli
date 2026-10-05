@@ -12,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
@@ -83,7 +84,7 @@ func (b *AnthropicBackend) SetSystemPrompt(prompt string) {
 // identity, sliders, project context, git, date). Requests carry a cache
 // breakpoint right after the static part (#309).
 func (b *AnthropicBackend) SetSystemPromptParts(static, dynamic string) {
-	prompt := JoinSystemPrompt(static, dynamic)
+	prompt := prompts.Prompt{Static: static, Dynamic: dynamic}.String()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.systemPrompt != "" && prompt != b.systemPrompt {
