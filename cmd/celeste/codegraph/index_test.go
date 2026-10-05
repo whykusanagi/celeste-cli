@@ -46,6 +46,27 @@ func (h *Handler) Handle() {}
 	assert.Greater(t, stats.TotalFiles, 0, "should have indexed files")
 }
 
+// Java, C, C++ and Ruby files are indexable in every build. Without cgo
+// they go to the regex fallback, which must not fail the build.
+func TestIndexer_BuildsJavaCCppRubyInEveryMode(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "A.java", "class A {\n  void run() { helper(); }\n  void helper() {}\n}\n")
+	writeFile(t, dir, "b.rb", "def foo\n  bar\nend\n")
+	writeFile(t, dir, "c.c", "int main(void) { return 0; }\n")
+	writeFile(t, dir, "d.cpp", "int add(int a, int b) { return a + b; }\n")
+
+	dbPath := filepath.Join(dir, ".celeste", "codegraph.db")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o755))
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+
+	stats, err := idx.Stats()
+	require.NoError(t, err)
+	assert.Equal(t, 4, stats.TotalFiles, "every source file is recorded")
+}
+
 func TestIndexer_IncrementalUpdate(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "go.mod", "module testproject\n\ngo 1.26\n")

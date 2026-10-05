@@ -77,12 +77,13 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
 - [ ] Version constants left for release-please (don't hand-edit the `x-release-please-version` markers)
 - [ ] Version-dependent tests assert against the version constant, not a literal (so the auto-bump doesn't break CI)
 - [ ] Merge to `main` → review the release-please PR's generated CHANGELOG + version → merge it (no tag or release is created)
+- [ ] **Release dry run** on the release-please branch or `main`: Actions → Release → Run workflow (or `gh workflow run release.yml --ref <branch>`). It builds all five binaries with CGo on their own runners and smoke-tests each one (`--version`, `index selfcheck`, `persona verify`, link check) without a tag. Nothing leaves the runners: no artifacts, no release. Every `Build` job must be green before tagging.
 - [ ] **[owner]** Sign and push the tag on the merge commit with the signing subkey, then check it:
   ```bash
   git fetch origin
   git tag -s vX.Y.Z -u 'F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB!' -m "celeste-cli X.Y.Z" <merge sha>
   git tag -v vX.Y.Z          # Good signature, primary 9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55
-  git push origin vX.Y.Z     # runs release.yml: build, persona verify, sign, publish
+  git push origin vX.Y.Z     # runs release.yml: build + smoke on each runner, persona verify, sign, publish
   ```
 - [ ] **[owner]** Relabel the merged Release PR, or release-please refuses to open the next one:
   `gh pr edit <n> --remove-label "autorelease: pending" --add-label "autorelease: tagged"`

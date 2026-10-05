@@ -96,7 +96,7 @@ Database stored at `~/.celeste/projects/<sha256-prefix>/codegraph.db` to avoid p
 
 ## Parsing
 
-Two strategies depending on language:
+Three strategies depending on language and build:
 
 ### Go (type-checked)
 
@@ -164,16 +164,21 @@ Known limits: function values are tracked per slot, not per instance (every
 through values that leave the module and come back are not followed; generic
 types do not get interface `implements` edges.
 
-### Other Languages (regex-based, broad coverage)
+### Tree-sitter (AST-based, CGo builds)
 
-Covers Python, JavaScript, TypeScript, and Rust. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
+TypeScript, PHP, Python, Rust, Java, C/C++ and Ruby (plus TSX and JavaScript through the TypeScript grammar) are parsed with tree-sitter grammars (`parser_multi_cgo.go`, `parser_ts_cgo.go`, node types in `parser_ts_languages.go`). Call edges come from the language's call-expression nodes, and Python decorators and base classes are recorded for the structural review. The grammars are C, so these files are behind `//go:build cgo`.
+
+Release binaries are built with CGo on each platform's own runner and include all of these parsers. Every release build runs `celeste index selfcheck` before it ships: it indexes a small TypeScript/PHP/Python/Java repo and fails unless the tree-sitter results are in the graph. Which file extensions the indexer walks is set separately, by `indexableLanguages` in `detect.go`; every language above is in it.
+
+### Regex fallback (CGO_ENABLED=0)
+
+A source build with `CGO_ENABLED=0`, or on a machine without a C compiler, compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. It has patterns for Python, JavaScript, TypeScript, Rust and PHP. Java, C, C++ and Ruby files are still indexed in that build, but only a generic `function`/`def`/`class` pattern applies to them, so they yield few symbols and edges. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
 
 Python class/method detection uses indentation tracking to distinguish top-level functions from methods inside classes.
 
 ### Tradeoff
 
-Go gets type-checked call graphs. Other languages get fast-but-approximate
-extraction with heuristic call detection.
+Go gets type-checked call graphs (`go/types`) in every build. The tree-sitter languages get AST fidelity in release binaries and CGo source builds; a `CGO_ENABLED=0` build trades that for fast-but-approximate regex extraction with heuristic call detection, and needs no C toolchain.
 
 ## Indexing
 
@@ -300,4 +305,4 @@ same-named functions in different packages can collapse onto one node.
 
 ## Supported Languages (indexable)
 
-Go (go/types), Python (regex), JavaScript (regex), TypeScript (regex), Rust (regex)
+Go (go/types, every build). TypeScript/TSX, JavaScript, PHP, Python, Rust, Java, C, C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`) and Ruby (tree-sitter in CGo builds, including release binaries). With `CGO_ENABLED=0` the same files go to the regex parser: Python, JavaScript, TypeScript, Rust and PHP have their own patterns; Java, C, C++ and Ruby get only the generic fallback.

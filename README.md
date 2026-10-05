@@ -24,7 +24,7 @@ Celeste CLI is a **full standalone agentic development tool** with her own perso
 - 🎨 **Premium TUI** - Flicker-free rendering with corrupted-theme aesthetics
 - 🔮 **48 Built-in Tools** - File I/O, shell, web search, code graph, code review, collections search, git, crypto, subagent orchestration, and more
 - 📖 **`.grimoire` Project Context** - Persona-themed project config files with auto-discovery; `AGENTS.md` / `CLAUDE.md` are read too
-- 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter TypeScript parsing for accurate call-graph edges; embedded celeste-stopwords v1.0.0 noise filter
+- 🧠 **Code Graph + Semantic Search** - MinHash + BM25 fused ranking with LSH band table for sub-linear queries, structural rerank; tree-sitter parsing (TypeScript, PHP, Python, Rust, Java, C/C++ and Ruby) for accurate call-graph edges in release binaries (a `CGO_ENABLED=0` source build falls back to regex parsers); embedded celeste-stopwords v1.0.0 noise filter
 - 🔍 **Graph-Based Code Review** - Structural analysis detecting stubs, lazy redirects, placeholders, error swallowing, and hardcoded values
 - 🔌 **Direct Codegraph MCP Tools** - `celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` served verbatim from the cached graph (no chat-LLM round-trip, no `max_tokens` ceiling, streaming progress notifications)
 - 🔒 **Permission System** - Multi-layer allow/deny/ask rules with pattern matching
@@ -110,6 +110,11 @@ cd celeste-cli
 # Build + install to ~/.local/bin (handles macOS code-signing for you)
 make install
 ```
+
+The code graph's tree-sitter parsers are C, so a source build compiles them with CGo and
+needs a C compiler (Xcode's command line tools, `gcc`, or MinGW-w64 on Windows). Without one,
+or with `CGO_ENABLED=0`, celeste still builds and the code graph falls back to regex parsers,
+with less accurate call edges. Release binaries always include tree-sitter.
 
 A build from a checkout never downloads anything. It runs Celeste's **public persona** (a
 one-line identity, the honesty rule and the voice boundary rule) and says so at startup: the
@@ -282,7 +287,7 @@ For security issues, see our [Security Policy](SECURITY.md) or contact security@
 code-graph tools appear once you index a project, plus collections search when you
 configure collections:
 - Dev Tools (bash, read/write/patch files, search, list files)
-- Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter TypeScript parsing)
+- Code Graph (semantic search with MinHash+BM25 fusion, code review, symbol analysis, tree-sitter parsing)
 - Direct Codegraph MCP Tools (`celeste_index`, `celeste_code_search`, `celeste_code_review`, `celeste_code_graph`, `celeste_code_symbols` — verbatim, no chat-LLM round-trip)
 - Git (status, log)
 - Web (search, fetch)

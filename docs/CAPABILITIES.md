@@ -6,7 +6,7 @@ Celeste CLI packs **48 dev-crushing tools**, code graphs that expose every secre
 
 **40+ Tools Across Categories:**
 - **Dev Tools** (15+): `bash`, `read_file`, `write_file`, `patch_file`, `list_files`, `search`, `git_status`, `git_log`
-- **Code Intel** (6): `code_graph`, `code_review`, `code_search`, `code_symbols` — graph queries, stub detection, lazy redirects, MinHash + BM25 fused ranking, tree-sitter TypeScript parser, structural rerank
+- **Code Intel** (6): `code_graph`, `code_review`, `code_search`, `code_symbols` — graph queries, stub detection, lazy redirects, MinHash + BM25 fused ranking, tree-sitter parsers for TypeScript, PHP, Python, Rust, Java, C/C++ and Ruby (release binaries and CGo source builds; `CGO_ENABLED=0` falls back to regex), structural rerank
 - **AI/Collections** (4): `collections_search`, MCP client, memories, todos
 - **Web/Productivity** (8): `web_search`, `web_fetch`, `currency`, `units`, `timezone`
 - **Crypto/Media** (7): `hash`, `qrcode`, `encoding`, Alchemy/IPFS/wallet
