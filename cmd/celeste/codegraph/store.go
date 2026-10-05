@@ -125,7 +125,15 @@ type Store struct {
 // NewStore opens (or creates) a SQLite database at the given path and
 // initializes the schema.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// synchronous=NORMAL on every pooled connection (a DSN pragma, unlike
+	// db.Exec, reaches each one): in WAL mode a commit then appends to the
+	// WAL without an fsync, which is deferred to checkpoints. Index writes
+	// are autocommitted, about a hundred per symbol, and with the default
+	// FULL each fsync costs tens of milliseconds on Windows, which made an
+	// index build take seconds to minutes there (#385). The index is
+	// derived data: a power loss can drop the last commits, never corrupt
+	// the database, and the next update re-indexes what is missing.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
