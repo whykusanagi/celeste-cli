@@ -471,7 +471,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	// Honour the configured context_limit, as the TUI does: for local models it
 	// is the only way to know the window (#169). The persona steps down for
 	// it (W5 guard).
-	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit)
+	contextLimit, known := config.ResolveContextLimit(cfg.BaseURL, model, cfg.ContextLimit, cfg.APIKey)
 
 	// Build the system prompt: the persona profile (spine unless the caller
 	// picked a level, stepped down on a small window), then the agent
@@ -509,7 +509,11 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		}
 	}
 	// The tool schemas the run offers count too (#234 item 1).
+	// On a small window they are a fitted core set, said once (#310).
 	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, compact.DefinitionTokens(client.GetSkills()))
+	if n := client.TakeToolNotice(); n != "" {
+		fmt.Fprintln(errOut, prompts.NoticePrefix+n)
+	}
 
 	return &Runner{
 		client:    client,

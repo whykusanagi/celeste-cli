@@ -189,3 +189,15 @@ func TestDocsDescribeThePersonaMechanismOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// #310 shipped in 2.0: the docs describe the tool fit and the reported
+// local window, and no longer defer the fix to 2.1.
+func TestDocsDescribeTheSmallWindowToolFit(t *testing.T) {
+	mig := repoDoc(t, "MIGRATING-2.0.md")
+	requireAll(t, "MIGRATING-2.0.md", mig, "core set of tools", "find_tools")
+	prov := repoDoc(t, "docs/LLM_PROVIDERS.md")
+	requireAll(t, "docs/LLM_PROVIDERS.md", prov, "/api/ps", "/props", "reported by the server", "core set of tools")
+	for _, name := range []string{"MIGRATING-2.0.md", "docs/ROADMAP.md", "CHANGELOG.md"} {
+		requireNone(t, name, repoDoc(t, name), "planned for 2.1", "stays for 2.1")
+	}
+}

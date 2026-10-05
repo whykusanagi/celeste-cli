@@ -72,20 +72,55 @@ reasoning parser send it, is kept out of the reply and the history.
 
 ### Set the context window
 
-celeste cannot know a local server's context window. The model name is an
-arbitrary string, so nothing in the model table matches it and the fallback is a
-conservative 8192 tokens. Left alone that truncates a model with a 128k window
-long before it needs to be, so set it to whatever you started the server with:
+A local server's model name is an arbitrary string, so the model table cannot
+tell its context window. With no `context_limit`, celeste asks the server and
+uses the window it reports:
+
+| Server | Where the window comes from |
+|---|---|
+| Ollama | the loaded model's `context_length` in `/api/ps`, else `num_ctx` in the model's parameters (`/api/show`) |
+| llama.cpp | `n_ctx` in `/props` |
+| LM Studio | the loaded model's `loaded_context_length` in `/api/v0/models/<model>` |
+
+A model's trained maximum is never used: the server runs it with what it was
+started with, often far less. The endpoint's API key, if it has one, is sent
+as a Bearer token, so a llama.cpp or LM Studio server started with a key
+answers too (the probe only ever goes to a host on this machine or the local
+network). The answer is asked again in the background after a minute, so a
+model that loads with its first request is picked up on a later one, and the
+chat never waits on the server while you type. Once a server has reported a
+window, it is kept until the server reports a different one: an Ollama model
+unloaded after its idle `keep_alive` reports nothing, and the window does not
+drop back to the fallback. When the server has never reported a window
+(Ollama with the model not loaded and no `num_ctx`, mlx-vlm, other servers),
+the fallback is a conservative 8192 tokens. Left alone that
+truncates a model with a 128k window long before it needs to be, so set it to
+whatever you started the server with:
 
 ```bash
 celeste config -config local --set-context-limit 32768
 celeste config -config local            # Context Limit: 32768 tokens (configured)
 ```
 
-`config` reports where the number came from: `configured`, `model default`, or
-`fallback, model unknown, set --set-context-limit`. That last one means celeste
-is guessing, so set it. The guess is 8192 on a local endpoint and 128k for a
-hosted model missing from the table.
+`config` reports where the number came from: `configured`,
+`reported by the server`, `model default`, or
+`fallback, model unknown, set --set-context-limit`.
+That last one means celeste is guessing, so set it. The guess is 8192 on a local
+endpoint and 128k for a hosted model missing from the table.
+
+On a small window the persona steps down (see `MIGRATING-2.0.md`) and the tool
+definitions are fitted too. When the system prompt and every tool schema would
+leave less than a quarter of the window for history, celeste sends a
+core set of tools (`read_file`, `write_file`, `patch_file`, `list_files`, `search`, `bash`,
+`todo`, plan mode's `submit_plan` and `find_tools`) with short descriptions, then
+the other tools while they fit, MCP tools last, and says so once, naming
+`context_limit`. `find_tools` activates any tool that was left out. The tools it
+activated are sent next, newest first: the most recent always, older ones while
+they fit, so repeated searches cannot push the request past the window (the
+notice says when older activations were dropped; `find_tools` activates them
+again). At 8,192 tokens the chat's first
+request goes from ~13.9k tokens to under 5.2k; at 32K and above every tool is
+sent as before.
 
 `--set-context-limit 0` clears the setting and returns to the model default.
 

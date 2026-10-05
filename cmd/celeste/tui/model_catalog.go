@@ -36,6 +36,17 @@ type ServedModelsRefresher interface {
 	RefreshServedModels()
 }
 
+// WindowFollower is implemented by clients whose prompt and tool set follow
+// the model's context window; the chat calls it when a local server's
+// window arrives from a background probe (LocalWindowMsg).
+type WindowFollower interface {
+	FollowWindow()
+}
+
+// LocalWindowMsg says a local server reported a context window that
+// differs from the one the chat knew, off the Update goroutine (#310).
+type LocalWindowMsg struct{}
+
 // catalogReadyMsg says an endpoint's catalog (and checks of its unlisted
 // models) has been loaded into memory, off the Update goroutine.
 type catalogReadyMsg struct {

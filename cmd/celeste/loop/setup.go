@@ -158,7 +158,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		opts.SessionID = fmt.Sprintf("%s-%d-%s", mode, os.Getpid(), config.UniqueNanoID())
 	}
 	env := &Env{Mode: mode, Workspace: ws, ToolMode: tools.ModeChat, opts: opts, home: home}
-	env.window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit)
+	env.window, _ = config.ResolveContextLimit(cfg.BaseURL, cfg.Model, cfg.ContextLimit, cfg.APIKey)
 	if mode == ModeAgent {
 		env.ToolMode = tools.ModeAgent
 	}
