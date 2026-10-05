@@ -228,7 +228,7 @@ New `lsh_bands(band_id, band_hash, symbol_id)` SQLite table. Band hashes precomp
   values, fields, map/slice elements and factory results, and calls through
   interface methods.
 - `references` (Go): the source takes the target as a value without calling
-  it there.
+  it there, or converts to the target type (`Celsius(x)`).
 - `implements` (Go): from an interface method to each module method that
   implements it.
 

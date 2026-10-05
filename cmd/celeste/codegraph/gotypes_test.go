@@ -119,6 +119,10 @@ func target4() {}
 func factory() func() { return target4 }
 
 func UseFactory() { factory()() }
+
+type Celsius float64
+
+func Conv(x float64) Celsius { return Celsius(x) }
 `,
 
 	// (3) interfaces: module interface dispatch plus external interfaces.
@@ -307,6 +311,7 @@ func TestGoTypes_IndirectCalls(t *testing.T) {
 		{"value taken in literal", p + "NewS -references-> " + p + "target1"},
 		{"value in package var", p + "handlers -references-> " + p + "handleA"},
 		{"value passed as arg", p + "init -references-> " + p + "handleC"},
+		{"type conversion", p + "Conv -references-> " + p + "Celsius"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { requireEdges(t, got, c.edge) })

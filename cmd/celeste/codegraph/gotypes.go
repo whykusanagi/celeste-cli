@@ -401,7 +401,19 @@ func staticCallee(info *types.Info, call *ast.CallExpr) *types.Func {
 func (a *goAnalyzer) call(info *types.Info, file, src, srcName string, call *ast.CallExpr, called map[*ast.Ident]bool, approx bool) {
 	fun := calleeExpr(info, call.Fun)
 	if tv, ok := info.Types[unparen(call.Fun)]; ok && tv.IsType() {
-		return // conversion
+		// A conversion T(x) calls nothing; it references the type, as the
+		// heuristic parser's T(x) edge always did.
+		var tn types.Object
+		switch f := fun.(type) {
+		case *ast.Ident:
+			tn = info.Uses[f]
+		case *ast.SelectorExpr:
+			tn = info.Uses[f.Sel]
+		}
+		if tn, ok := tn.(*types.TypeName); ok {
+			a.edge(src, tn, EdgeReferences)
+		}
+		return
 	}
 	switch f := fun.(type) {
 	case *ast.Ident:
