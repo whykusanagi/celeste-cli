@@ -23,7 +23,9 @@ type fakeCompactClient struct {
 	stillOver bool   // report the history still over the threshold
 	summaries []string
 	handoffs  []string
-	sumErr    error
+	// handoffBlock makes HandoffContext wait until its context ends.
+	handoffBlock bool
+	sumErr       error
 	// summaryCap is what SummaryTimeout reports; deadlines records how far
 	// away each summary's and handoff's deadline was (#345).
 	summaryCap time.Duration
@@ -77,6 +79,10 @@ func (f *fakeCompactClient) SummarizeContext(ctx context.Context, msgs []ChatMes
 func (f *fakeCompactClient) HandoffContext(ctx context.Context, msgs []ChatMessage, focus string) (string, error) {
 	f.recordDeadline(ctx)
 	f.handoffs = append(f.handoffs, focus)
+	if f.handoffBlock {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	if f.sumErr != nil {
 		return "", f.sumErr
 	}

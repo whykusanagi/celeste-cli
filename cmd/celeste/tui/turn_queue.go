@@ -52,7 +52,7 @@ func (m AppModel) enqueue(content string, followUp bool) AppModel {
 // leftover steers first (joined into one message), then follow-ups one at a
 // time. It returns a nil command when there is nothing to send yet.
 func (m AppModel) dispatchQueued() (AppModel, tea.Cmd) {
-	if m.dispatchPending || m.viewMode != "chat" || m.turnActive() ||
+	if m.dispatchPending || m.handingOff || m.viewMode != "chat" || m.turnActive() ||
 		m.permissionPrompt.Active() || m.askPrompt.Active() {
 		return m, nil
 	}
