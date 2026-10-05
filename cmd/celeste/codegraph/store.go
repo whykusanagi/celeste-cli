@@ -120,6 +120,8 @@ type MinHashEntry struct {
 // Store manages the SQLite database for the code graph.
 type Store struct {
 	db *sql.DB
+	// path is the database file; the index lock file sits next to it.
+	path string
 }
 
 // NewStore opens (or creates) a SQLite database at the given path and
@@ -133,7 +135,16 @@ func NewStore(dbPath string) (*Store, error) {
 	// index build take seconds to minutes there (#385). The index is
 	// derived data: a power loss can drop the last commits, never corrupt
 	// the database, and the next update re-indexes what is missing.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=synchronous(NORMAL)")
+	//
+	// foreign_keys is a per-connection setting too, so it goes in the DSN
+	// for the same reason: run once through db.Exec it reached only one
+	// pooled connection, and ON DELETE CASCADE (symbol_tokens, lsh_bands,
+	// edges) applied only to deletes that happened to run there (#389).
+	//
+	// busy_timeout comes first so every later pragma and statement waits
+	// up to 10 s for another connection's or process's write lock instead
+	// of failing at once with SQLITE_BUSY (#392).
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -144,13 +155,7 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
-	// Enable foreign keys.
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	s := &Store{db: db}
+	s := &Store{db: db, path: dbPath}
 	if err := s.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -279,6 +284,24 @@ func (s *Store) SetMeta(key string, value []byte) error {
 	)
 	if err != nil {
 		return fmt.Errorf("set meta %q: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteMeta removes a key from the meta table. Removing a missing key is
+// not an error.
+func (s *Store) DeleteMeta(key string) error {
+	if _, err := s.db.Exec("DELETE FROM meta WHERE key = ?", key); err != nil {
+		return fmt.Errorf("delete meta %q: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteMetaIf removes a key only while it still holds value, so an
+// indexer clears only the marks it set itself (#392).
+func (s *Store) DeleteMetaIf(key, value string) error {
+	if _, err := s.db.Exec("DELETE FROM meta WHERE key = ? AND value = ?", key, []byte(value)); err != nil {
+		return fmt.Errorf("delete meta %q: %w", key, err)
 	}
 	return nil
 }
@@ -491,9 +514,13 @@ func (s *Store) GetSymbolIDByName(name string) (int64, bool) {
 // among those it prefers one in preferFile, the caller's own file. A name
 // with no callable still resolves to whatever has it, which keeps Go type
 // conversions such as Celsius(x) as edges.
+//
+// A name looked up from a non-Go file never resolves to a Go symbol: a full
+// build resolves non-Go edges before the Go pass stores any Go symbol, and
+// an update, which finds them stored, must agree with it.
 func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+nonGoFilter(preferFile)+`
 		ORDER BY CASE WHEN kind IN ('function', 'method', 'class') THEN 0 ELSE 1 END,
 			CASE WHEN file = ? THEN 0 ELSE 1 END,
 			id
@@ -505,16 +532,26 @@ func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
 }
 
 // GetSymbolIDByNameInFile returns the ID of the symbol with this name,
-// preferring one declared in file over one stored first elsewhere.
+// preferring one declared in file over one stored first elsewhere. As in
+// GetCallableIDByName, a non-Go file never gets a Go symbol.
 func (s *Store) GetSymbolIDByNameInFile(name, file string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+nonGoFilter(file)+`
 		ORDER BY CASE WHEN file = ? THEN 0 ELSE 1 END, id
 		LIMIT 1`, name, file).Scan(&id)
 	if err != nil {
 		return 0, false
 	}
 	return id, true
+}
+
+// nonGoFilter is the WHERE clause that leaves out Go symbols for a lookup
+// from a non-Go file, and nothing for one from a Go file.
+func nonGoFilter(fromFile string) string {
+	if DetectLanguage(fromFile) != "go" {
+		return ` AND file NOT LIKE '%.go'`
+	}
+	return ""
 }
 
 // UpdateMinHash stores the MinHash signature for a symbol.

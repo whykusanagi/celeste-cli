@@ -315,6 +315,27 @@ func TestSetupTimingNoticesGoToNotice(t *testing.T) {
 	}
 }
 
+// An index that another celeste process is writing is not a failure: the
+// update skips (#392) and Setup says so as a notice, not a warning.
+func TestSetupBusyIndexIsANotice(t *testing.T) {
+	setupHome(t)
+	origUpdate := updateCodeGraph
+	t.Cleanup(func() { updateCodeGraph = origUpdate })
+	updateCodeGraph = func(context.Context, *codegraph.Indexer) error { return codegraph.ErrIndexBusy }
+	warns, notices := &warnings{}, &warnings{}
+	env, err := Setup(ModeMCPChat, testCfg(), t.TempDir(), SetupOptions{Warn: warns.add, Notice: notices.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	if !strings.Contains(notices.all(), "another celeste process") {
+		t.Fatalf("notices = %q", notices.all())
+	}
+	if strings.Contains(warns.all(), "code graph") {
+		t.Fatalf("a busy index reached Warn: %q", warns.all())
+	}
+}
+
 // /grimoire and /index show the grimoire (with memories) and the code-graph
 // summary on their own; ProjectContext is their join.
 func TestSetupExposesGrimoireAndCodeGraphText(t *testing.T) {

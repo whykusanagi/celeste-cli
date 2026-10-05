@@ -86,16 +86,6 @@ func RegisterHandlers(s *Server) {
 	registerCodegraphTools(s)
 }
 
-// removeIfExists deletes a file at path if present, swallowing
-// not-found errors. Used by indexRebuild to clear stale SQLite files
-// before re-opening.
-func removeIfExists(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil
-	}
-	return os.Remove(path)
-}
-
 // --- celeste tool ---
 
 func celesteToolDef() mcp.MCPToolDef {

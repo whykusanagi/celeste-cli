@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -14,9 +15,9 @@ const goSourceFilter = `SELECT id FROM symbols WHERE file LIKE '%.go'`
 
 // ResetGraph deletes every symbol, edge, file record and BM25/LSH row so a
 // full Build starts from an empty graph. Meta (MinHash seeds) and snapshots
-// are kept. Dependent rows are deleted explicitly rather than relying on
-// ON DELETE CASCADE, which only applies on connections that enabled
-// foreign_keys.
+// are kept. Dependent rows are deleted explicitly, children first, so the
+// reset does not depend on ON DELETE CASCADE (which every connection now
+// enforces, #389) and token_stats, which has no foreign key, is cleared too.
 func (s *Store) ResetGraph() error {
 	return s.inTx(func(tx *sql.Tx) error {
 		for _, q := range []string{
@@ -199,4 +200,53 @@ func DisplayName(sym Symbol) string {
 		recv = recv[i+1:]
 	}
 	return "(" + star + recv + ")." + sym.Name
+}
+
+// ReplaceNonGoEdges deletes every edge whose source is not a Go symbol and
+// inserts edges in its place, in one transaction, so an interrupted build's
+// non-Go edges are resolved again from scratch (#391) while a reader on
+// another connection sees either the old edges or the new ones. ctx is
+// checked every 1024 inserts; a cancel rolls the whole replacement back.
+func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// fail prefers the context's error, so a cancel that interrupts a
+	// statement is reported as the cancel it is.
+	fail := func(err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
+		return fail(fmt.Errorf("clear non-go edges: %w", err))
+	}
+	if testHookReplaceNonGoAfterDelete != nil {
+		testHookReplaceNonGoAfterDelete()
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fail(err)
+	}
+	defer stmt.Close()
+	for i, e := range edges {
+		if i&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if _, err := stmt.ExecContext(ctx, e.SourceID, e.TargetID, e.Kind); err != nil {
+			return fail(fmt.Errorf("insert non-go edge: %w", err))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
+	}
+	return nil
 }

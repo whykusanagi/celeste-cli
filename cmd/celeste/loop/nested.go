@@ -194,8 +194,8 @@ func (e *Env) refreshIndex() {
 	}()
 	select {
 	case err := <-done:
-		if err != nil && o.indexCtx.Err() == nil {
-			e.warn("code graph update failed: %v", err)
+		if o.indexCtx.Err() == nil {
+			e.reportIndexUpdate(err)
 		}
 	case <-timer.C:
 		timedOut()

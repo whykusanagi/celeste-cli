@@ -14,21 +14,64 @@ The code graph provides structural understanding of codebases through three sear
 
 ## Storage
 
-SQLite (WAL mode, `synchronous=NORMAL` on every connection) via
+SQLite (WAL mode, `synchronous=NORMAL` and `foreign_keys` on every connection) via
 `modernc.org/sqlite` (pure Go, no CGo). Index writes are autocommitted, about
 a hundred per symbol; with `synchronous=NORMAL` a commit appends to the WAL
 and the fsync waits for the next checkpoint, so a build does not pay a disk
 flush per write (each one costs tens of milliseconds on Windows). The index is
 derived data: a power loss can drop the last commits but cannot corrupt the
-database. If an index looks incomplete afterwards, run `celeste index` for a
-full rebuild. Three tables:
+database, and commits are lost newest first. A full build sets
+`meta.build_in_progress` before it empties the graph and clears it only after
+its last pass commits, and the Go pass does the same with
+`meta.go_pass_pending`. An `Update` that finds the first mark finishes the
+build without resetting the graph: it keeps the files already indexed,
+indexes the missing or changed ones, rewrites every non-Go edge (it
+resolves them again, then deletes the old ones and stores the new ones in
+one transaction), reruns the Go pass and only then clears the mark. The
+graph is never emptied during recovery, and a file that did not change
+never loses its edges: readers see its old edges until the new ones
+commit. A missing or changed file is stored with its symbols first and
+gets its edges only when that transaction commits, so until then a reader
+sees it without edges, as during any update. Repeated short runs (a chat
+opened and closed before a long build ends) each index more files and keep
+what earlier runs stored. Rewriting the non-Go edges stops as soon as the
+run is cancelled and then changes no edge, so closing a chat never waits
+for it; the run that clears the mark is the first one that lasts through it
+(`celeste index` does). An `Update` that finds the second mark reruns the
+Go pass. A build or update that was
+cancelled, killed or cut off by a power loss is finished by the next update
+rather than trusted because its file hashes match. Each mark holds a
+random token of the run that set it, and a run clears only its own.
+
+Several indexers can open one database: the MCP server's, an MCP chat's, the
+TUI's and `celeste index`. A build or update holds an exclusive OS file lock
+on `codegraph.db.lock` next to the database (`flock` on Linux and macOS,
+`LockFileEx` on Windows), so only one of them writes at a time. An update
+that finds the lock taken skips, since the other run brings the index up to
+date (the TUI, `celeste index` and the MCP `celeste_index` tool say so
+instead of failing); an explicit build waits for it, up to two minutes, and
+so does a rebuild or reset before it deletes the database files. A rebuild
+keeps the lock until the new index is built, so no other indexer starts on
+the deleted database in between. On Windows the database cannot be deleted
+while another process (a TUI, another MCP server) has it open, even an idle
+one: a rebuild then resets the graph and rebuilds it in place, and a reset
+says the files are in use and deletes nothing. On Linux and macOS the delete
+succeeds, and such a process keeps using the old, deleted file until it
+reopens the index. The OS releases the
+lock when its process exits or is killed, so a lock file left behind never
+blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
+a reader waits for a writer's SQLite lock instead of failing. An index left
+incomplete by a version without these marks has nothing to repair it: rebuild
+it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
+in the TUI (`celeste index` only updates). Three tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,
          qual_name, implements, minhash BLOB)
 edges   (source_id, target_id, kind)  -- directional, unique on (src, dst, kind)
 files   (path, language, size, content_hash, indexed_at, resolution)
-meta    (key, value)                  -- minhash_seeds, graph_version, go_modules
+meta    (key, value)                  -- minhash_seeds, graph_version, go_modules,
+                                      -- build_in_progress, go_pass_pending
 ```
 
 Indexed on `symbols.name`, `symbols.file`, `symbols.package`, `symbols.qual_name`, `edges.source_id`, `edges.target_id`.
@@ -141,7 +184,7 @@ Go gets type-checked call graphs (`go/types`) in every build. The tree-sitter la
 
 ### Full Build
 
-Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index.
+Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index, not even to finish a full build that was interrupted.
 
 ### Incremental Updates
 

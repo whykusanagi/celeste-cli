@@ -81,6 +81,10 @@ type Indexer struct {
 	// racing a nested run's refreshIndex, and the tree-sitter parsers are
 	// not safe for concurrent use (2.0 F2e M6).
 	buildMu sync.Mutex
+	// token identifies the current Build or Update run in the marks it
+	// sets (metaBuildInProgress, metaGoPassPending), so it clears only its
+	// own. Set with the index lock held, under buildMu.
+	token string
 }
 
 // DefaultIndexPath returns the path to the code graph database for a project.
@@ -231,17 +235,30 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	// Another Indexer on this database may be building or updating; wait
+	// for it (bounded) rather than empty the graph under it (#392).
+	lock, err := idx.acquireIndexLock(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
 	return idx.buildLocked(ctx)
 }
 
-// buildLocked is BuildWithContext with buildMu held. A full build starts
+// buildLocked is BuildWithContext with buildMu and the index lock held. A full build starts
 // from an empty graph so rows from an older index (or an older index
 // version) never linger next to the new ones. Readers see an empty or
-// partial graph until it finishes; Update never empties the index.
+// partial graph until it finishes; Update never empties the index, and
+// finishes a build that was interrupted (metaBuildInProgress) in place.
 func (idx *Indexer) buildLocked(ctx context.Context) error {
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
+	}
+	// Mark the build unfinished before the graph is emptied; the mark is
+	// cleared only after the last pass commits (#388).
+	if err := idx.store.SetMeta(metaBuildInProgress, []byte(idx.token)); err != nil {
+		return fmt.Errorf("mark build in progress: %w", err)
 	}
 	if err := idx.store.ResetGraph(); err != nil {
 		return err
@@ -270,15 +287,26 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 		allRawEdges = append(allRawEdges, raw...)
 	}
 
+	if testHookAfterPass1 != nil {
+		testHookAfterPass1()
+	}
+
 	// Pass 2: resolve and store all edges now that every symbol is in the DB.
 	// Cross-file call targets that weren't available during pass 1 are now
 	// resolvable via GetSymbolIDByName.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	idx.resolveAndStoreEdges(allRawEdges)
 
 	if len(goFiles) > 0 {
 		if err := idx.indexGo(ctx, goFiles, nil); err != nil {
 			return err
 		}
+	} else if err := idx.store.DeleteMeta(metaGoPassPending); err != nil {
+		// No Go pass ran, so a mark left by an earlier killed one is stale:
+		// this run holds the index lock, so no live indexer owns it.
+		return fmt.Errorf("clear go pass mark: %w", err)
 	}
 
 	// Persist the MinHasher seeds so a subsequent process can restore
@@ -300,6 +328,9 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
 		return fmt.Errorf("record index version: %w", err)
 	}
+	if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
+		return fmt.Errorf("mark build finished: %w", err)
+	}
 	return nil
 }
 
@@ -319,6 +350,44 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	// Another Indexer on this database is building or updating: skip
+	// rather than race it (#392). Its run brings the index up to date.
+	lock, err := idx.acquireIndexLock(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
+	return idx.updateLocked(ctx)
+}
+
+// updateLocked is UpdateWithContext with buildMu and the index lock held.
+func (idx *Indexer) updateLocked(ctx context.Context) error {
+	// A full build that never finished left file records whose hashes
+	// match while edges are missing (#388). The graph is not emptied and
+	// rebuilt: on a repo whose build outlasts each run (an Env closed
+	// after a few seconds) that never finishes and shows readers an empty
+	// graph every time (#391). The files already indexed are kept, the
+	// loop below indexes the rest, every non-Go edge is resolved again and
+	// the Go pass is rerun; the mark is cleared only when all of it has
+	// committed.
+	mark, err := idx.store.GetMeta(metaBuildInProgress)
+	if err != nil {
+		return err
+	}
+	recovering := mark != nil
+	if recovering {
+		// The run that set the mark is gone (this one holds the index
+		// lock); take the mark over so this run can clear it.
+		if err := idx.store.SetMeta(metaBuildInProgress, []byte(idx.token)); err != nil {
+			return fmt.Errorf("mark build in progress: %w", err)
+		}
+	}
+	// Likewise a Go pass that stopped part-way stored symbols and file
+	// records but not (all of) the Go edges; rerun it.
+	goPending, err := idx.store.GetMeta(metaGoPassPending)
+	if err != nil {
+		return err
+	}
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
 		return fmt.Errorf("get indexed files: %w", err)
@@ -329,10 +398,12 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	// Go pass, while other languages keep their rows. If this is cancelled
 	// the version stays old and the next Update repeats it. An empty index
 	// gets a full two-pass Build instead.
+	if len(indexedFiles) == 0 {
+		// Nothing to keep: an empty index (or a build cancelled before it
+		// stored a file) gets the two-pass Build.
+		return idx.buildLocked(ctx)
+	}
 	if v, err := idx.store.GetMeta(metaGraphVersion); err != nil || string(v) != graphVersion {
-		if len(indexedFiles) == 0 {
-			return idx.buildLocked(ctx)
-		}
 		if err := idx.store.ResetGo(); err != nil {
 			return err
 		}
@@ -359,20 +430,35 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	goRemoved := false
 	for path := range indexedMap {
 		if !currentSet[path] {
-			_ = idx.store.DeleteFileSymbols(path)
-			_ = idx.store.DeleteFile(path)
-			if DetectLanguage(path) == "go" {
+			if DetectLanguage(path) == "go" && !goRemoved {
+				// Once the file record is gone nothing else says the Go
+				// edges need rewriting, so mark the Go pass first.
+				if err := idx.store.SetMeta(metaGoPassPending, []byte(idx.token)); err != nil {
+					return err
+				}
 				goRemoved = true
 			}
+			_ = idx.store.DeleteFileSymbols(path)
+			_ = idx.store.DeleteFile(path)
 		}
 	}
 
 	// Index new or changed files. Changed Go files are collected and
-	// re-indexed together by the Go pass, which needs whole packages.
+	// re-indexed together by the Go pass, which needs whole packages. ctx
+	// is checked every 64 re-indexed files (and every 1024 scanned ones),
+	// so a cancelled run still stores a stride of new files and the next
+	// one carries on from there.
 	var goFiles []string
 	goChanged := map[string]bool{}
+	reindexed := 0
+	// While recovering, the raw edges of the files this run re-indexes are
+	// kept, so the re-resolve below does not parse them a second time.
+	var recoveredEdges map[string][]RawEdge
+	if recovering {
+		recoveredEdges = map[string][]RawEdge{}
+	}
 	for i, path := range currentFiles {
-		if i&63 == 0 {
+		if i&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -392,15 +478,43 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 			goChanged[path] = true
 			continue
 		}
-		// Re-index this file
+		if reindexed&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		reindexed++
+		// Re-index this file. While recovering, its edges are resolved
+		// with every other file's below, as a build's pass 2 does.
 		_ = idx.store.DeleteFileSymbols(path)
+		if recovering {
+			if raw, err := idx.indexFileSymbols(path); err == nil {
+				recoveredEdges[path] = raw
+			}
+			continue
+		}
 		if err := idx.indexFile(path); err != nil {
 			continue
 		}
 	}
-	if len(goChanged) > 0 || goRemoved || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
+	if recovering {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := idx.reresolveNonGoEdges(ctx, currentFiles, recoveredEdges); err != nil {
+			return err
+		}
+	}
+	// A recovering update reruns the Go pass as the interrupted build would
+	// have (without Go files, it clears a stale Go-pass mark as a build does).
+	if (recovering && len(goFiles) > 0) || len(goChanged) > 0 || goRemoved || goPending != nil || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
 		if err := idx.indexGo(ctx, goFiles, goChanged); err != nil {
 			return err
+		}
+	} else if recovering {
+		// Stale, as in buildLocked: this run holds the index lock.
+		if err := idx.store.DeleteMeta(metaGoPassPending); err != nil {
+			return fmt.Errorf("clear go pass mark: %w", err)
 		}
 	}
 
@@ -424,7 +538,72 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
 		return fmt.Errorf("record index version: %w", err)
 	}
+	if recovering {
+		if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
+			return fmt.Errorf("mark build finished: %w", err)
+		}
+	}
 	return nil
+}
+
+// reresolveNonGoEdges finishes an interrupted build's pass 2 without
+// emptying the graph (#391): it collects every non-Go file's raw edges
+// (from parsed, for the files this run already re-indexed, else by parsing
+// the file again), deletes every edge that starts at a non-Go symbol and
+// resolves the raw edges against the symbols now stored, as a build's pass
+// 2 does. The Go pass rewrites Go-sourced edges itself.
+//
+// The raw edges are resolved first, which only reads the symbols, and the
+// delete and the inserts then run in one transaction
+// (Store.ReplaceNonGoEdges), so a reader sees a file's old non-Go edges or
+// its new ones, never neither. That holds for the files this run did not
+// re-index; a file it re-indexed was stored without edges (as in any
+// update) and gets them when the transaction commits.
+//
+// ctx is checked every 64 parsed files, every 1024 resolved edges and every
+// 1024 inserted edges, so a cancelled run (Env.Close) returns promptly. A
+// cancel in this step changes no edge (the transaction rolls back), and the
+// build_in_progress mark, still set, makes the next run do this again.
+func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, parsed map[string][]RawEdge) error {
+	var raw []RawEdge
+	n := 0
+	for _, path := range files {
+		if DetectLanguage(path) == "go" {
+			continue
+		}
+		if edges, ok := parsed[path]; ok {
+			raw = append(raw, edges...)
+			continue
+		}
+		if n&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		n++
+		if testHookReresolveParse != nil {
+			testHookReresolveParse(path)
+		}
+		res, err := idx.parseFile(path)
+		if err != nil || res == nil {
+			continue
+		}
+		for i := range res.Edges {
+			res.Edges[i].SourceFile = path
+		}
+		raw = append(raw, res.Edges...)
+	}
+	var edges []Edge
+	for start := 0; start < len(raw); start += 1024 {
+		if testHookReresolveResolve != nil {
+			testHookReresolveResolve()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		edges = append(edges, idx.resolveEdges(raw[start:min(start+1024, len(raw))])...)
+	}
+	return idx.store.ReplaceNonGoEdges(ctx, edges)
 }
 
 // indexFileSymbols parses a file, stores its symbols (with MinHash / LSH / tokens)
@@ -432,33 +611,9 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 // resolution. Used by Build() in its first pass so all symbols exist in the DB
 // before any edges are inserted (fixing cross-file caller-count issue #47).
 func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
-	absPath := filepath.Join(idx.workspace, relPath)
 	lang := DetectLanguage(relPath)
-
-	var result *ParseResult
-	var err error
-
-	if lang == "go" {
-		parser := NewGoParser()
-		result, err = parser.ParseFile(absPath)
-	} else if idx.tryMultiParser(absPath) {
-		if idx.multiParser == nil {
-			idx.multiParser = NewMultiLangParser()
-		}
-		result, err = idx.multiParser.ParseFile(absPath)
-	} else if lang == "typescript" {
-		if idx.tsParser == nil {
-			idx.tsParser = NewTSParser()
-		}
-		result, err = idx.tsParser.ParseFile(absPath)
-	} else if indexableLanguages[lang] {
-		parser := NewGenericParser(lang)
-		result, err = parser.ParseFile(absPath)
-	} else {
-		return nil, nil // no parser for this language
-	}
-
-	if err != nil {
+	result, err := idx.parseFile(relPath)
+	if err != nil || result == nil {
 		return nil, err
 	}
 
@@ -526,6 +681,15 @@ func (idx *Indexer) storeFileRecord(relPath, lang, resolution string) {
 // inserts them into the edges table. Called by Build() after indexFileSymbols
 // has run over all files, ensuring every target symbol is already present.
 func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
+	for _, e := range idx.resolveEdges(edges) {
+		_ = idx.store.AddEdge(e.SourceID, e.TargetID, e.Kind)
+	}
+}
+
+// resolveEdges resolves raw (name-based) edges to symbol IDs against the
+// stored symbols, leaving out any edge whose source or target is not found.
+func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
+	var out []Edge
 	for _, edge := range edges {
 		sourceID, ok1 := idx.store.GetSymbolIDByNameInFile(edge.SourceName, edge.SourceFile)
 		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
@@ -537,15 +701,17 @@ func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
 			}
 		}
 		if ok1 && ok2 {
-			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
+			out = append(out, Edge{SourceID: sourceID, TargetID: targetID, Kind: edge.Kind})
 		}
 	}
+	return out
 }
 
 // resolveTarget looks up an edge's target by name. A call resolves to a
 // callable first and to one in the caller's file next, so a call to a
 // common name such as get() does not land on an import or a type that
 // happened to be stored first.
+// A non-Go file's edge never targets a Go symbol (see GetCallableIDByName).
 func (idx *Indexer) resolveTarget(name string, kind EdgeKind, fromFile string) (int64, bool) {
 	if kind == EdgeCalls {
 		return idx.store.GetCallableIDByName(name, fromFile)
@@ -555,36 +721,9 @@ func (idx *Indexer) resolveTarget(name string, kind EdgeKind, fromFile string) (
 
 // indexFile parses a single file and stores its symbols, edges, and MinHash.
 func (idx *Indexer) indexFile(relPath string) error {
-	absPath := filepath.Join(idx.workspace, relPath)
 	lang := DetectLanguage(relPath)
-
-	var result *ParseResult
-	var err error
-
-	if lang == "go" {
-		// Go uses its own AST parser (go/parser, not tree-sitter)
-		parser := NewGoParser()
-		result, err = parser.ParseFile(absPath)
-	} else if idx.tryMultiParser(absPath) {
-		// Multi-language tree-sitter parser (Python, Rust, Java, C, C++, etc.)
-		if idx.multiParser == nil {
-			idx.multiParser = NewMultiLangParser()
-		}
-		result, err = idx.multiParser.ParseFile(absPath)
-	} else if lang == "typescript" {
-		// Dedicated TS parser (preserves existing behavior for TS-only builds)
-		if idx.tsParser == nil {
-			idx.tsParser = NewTSParser()
-		}
-		result, err = idx.tsParser.ParseFile(absPath)
-	} else if indexableLanguages[lang] {
-		parser := NewGenericParser(lang)
-		result, err = parser.ParseFile(absPath)
-	} else {
-		return nil // no parser for this language
-	}
-
-	if err != nil {
+	result, err := idx.parseFile(relPath)
+	if err != nil || result == nil {
 		return err
 	}
 
@@ -620,6 +759,34 @@ func (idx *Indexer) indexFile(relPath string) error {
 	idx.storeFileRecord(relPath, lang, "")
 
 	return nil
+}
+
+// parseFile parses one workspace file with the parser for its language. It
+// returns a nil result for a language without a parser.
+func (idx *Indexer) parseFile(relPath string) (*ParseResult, error) {
+	absPath := filepath.Join(idx.workspace, relPath)
+	lang := DetectLanguage(relPath)
+
+	switch {
+	case lang == "go":
+		// Go uses its own AST parser (go/parser, not tree-sitter)
+		return NewGoParser().ParseFile(absPath)
+	case idx.tryMultiParser(absPath):
+		// Multi-language tree-sitter parser (Python, Rust, Java, C, C++, etc.)
+		if idx.multiParser == nil {
+			idx.multiParser = NewMultiLangParser()
+		}
+		return idx.multiParser.ParseFile(absPath)
+	case lang == "typescript":
+		// Dedicated TS parser (preserves existing behavior for TS-only builds)
+		if idx.tsParser == nil {
+			idx.tsParser = NewTSParser()
+		}
+		return idx.tsParser.ParseFile(absPath)
+	case indexableLanguages[lang]:
+		return NewGenericParser(lang).ParseFile(absPath)
+	}
+	return nil, nil // no parser for this language
 }
 
 // walkSourceFiles returns relative paths of all indexable source files.
