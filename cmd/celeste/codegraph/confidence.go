@@ -52,6 +52,18 @@ const (
 	// and Go interface-only types. Probably not runtime code the
 	// user wants to find.
 	WarnDeclarationOnlyType = "type/interface declaration without references"
+
+	// WarnViaInterface — a Go method with no edges that implements an
+	// interface (symbols.implements). It is called through that
+	// interface, often by code outside the module (fmt, sort, a
+	// framework), so zero edges is expected and not dead code.
+	WarnViaInterface = "no direct callers — reached through an interface it implements"
+
+	// WarnApproximateGraph — the symbol's Go file did not type-check
+	// (broken code, missing dependency, excluded by build tags), so its
+	// call edges came from the bare-name heuristic and may be wrong or
+	// missing.
+	WarnApproximateGraph = "approximate call graph: Go file did not type-check"
 )
 
 // computeConfidenceWarnings derives the list of confidence warnings for
@@ -92,7 +104,9 @@ func computeConfidenceWarnings(sym Symbol, similarity float64, pathFlags []PathF
 	// celeste's regex parser undercounts edges for non-Go languages
 	// (SPEC §8.2 Issue #2). The warning text reflects that ambiguity
 	// so LLMs don't confidently declare symbols dead.
-	if edgeCount == 0 {
+	if edgeCount == 0 && sym.Implements != "" {
+		warnings = append(warnings, WarnViaInterface)
+	} else if edgeCount == 0 {
 		warnings = append(warnings, WarnZeroEdge)
 	}
 

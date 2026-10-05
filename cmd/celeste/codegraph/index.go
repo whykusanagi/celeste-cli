@@ -231,19 +231,35 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	return idx.buildLocked(ctx)
+}
+
+// buildLocked is BuildWithContext with buildMu held. A full build starts
+// from an empty graph so rows from an older index (or an older index
+// version) never linger next to the new ones.
+func (idx *Indexer) buildLocked(ctx context.Context) error {
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
 	}
+	if err := idx.store.ResetGraph(); err != nil {
+		return err
+	}
 
 	// Pass 1: store all symbols, MinHash, tokens, LSH bands, and file records.
-	// Collect raw edges for deferred resolution in pass 2.
+	// Collect raw edges for deferred resolution in pass 2. Go files are
+	// handled together afterwards by the type-checked Go pass.
 	var allRawEdges []RawEdge
+	var goFiles []string
 	for i, path := range files {
 		if i&63 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+		}
+		if DetectLanguage(path) == "go" {
+			goFiles = append(goFiles, path)
+			continue
 		}
 		raw, err := idx.indexFileSymbols(path)
 		if err != nil {
@@ -257,6 +273,12 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 	// Cross-file call targets that weren't available during pass 1 are now
 	// resolvable via GetSymbolIDByName.
 	idx.resolveAndStoreEdges(allRawEdges)
+
+	if len(goFiles) > 0 {
+		if err := idx.indexGo(ctx, goFiles, nil); err != nil {
+			return err
+		}
+	}
 
 	// Persist the MinHasher seeds so a subsequent process can restore
 	// the same hash family and compare signatures meaningfully. Idempotent
@@ -274,6 +296,9 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 		return fmt.Errorf("rebuild token stats: %w", err)
 	}
 
+	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
+		return fmt.Errorf("record index version: %w", err)
+	}
 	return nil
 }
 
@@ -293,6 +318,11 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	// An index written by an older graph version (or never stamped) is
+	// rebuilt from scratch: its edges were resolved differently.
+	if v, err := idx.store.GetMeta(metaGraphVersion); err != nil || string(v) != graphVersion {
+		return idx.buildLocked(ctx)
+	}
 	// Get currently indexed files
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
@@ -314,19 +344,30 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	}
 
 	// Delete symbols for removed files
+	goRemoved := false
 	for path := range indexedMap {
 		if !currentSet[path] {
 			_ = idx.store.DeleteFileSymbols(path)
 			_ = idx.store.DeleteFile(path)
+			if DetectLanguage(path) == "go" {
+				goRemoved = true
+			}
 		}
 	}
 
-	// Index new or changed files
+	// Index new or changed files. Changed Go files are collected and
+	// re-indexed together by the Go pass, which needs whole packages.
+	var goFiles []string
+	goChanged := map[string]bool{}
 	for i, path := range currentFiles {
 		if i&63 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+		}
+		isGo := DetectLanguage(path) == "go"
+		if isGo {
+			goFiles = append(goFiles, path)
 		}
 		hash, err := fileContentHash(filepath.Join(idx.workspace, path))
 		if err != nil {
@@ -335,10 +376,19 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 		if existing, ok := indexedMap[path]; ok && existing.ContentHash == hash {
 			continue // unchanged
 		}
+		if isGo {
+			goChanged[path] = true
+			continue
+		}
 		// Re-index this file
 		_ = idx.store.DeleteFileSymbols(path)
 		if err := idx.indexFile(path); err != nil {
 			continue
+		}
+	}
+	if len(goChanged) > 0 || goRemoved {
+		if err := idx.indexGo(ctx, goFiles, goChanged); err != nil {
+			return err
 		}
 	}
 
@@ -397,24 +447,51 @@ func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
 		return nil, err
 	}
 
-	source, _ := os.ReadFile(absPath)
+	idx.storeFileSymbols(relPath, lang, result.Symbols)
+	idx.storeFileRecord(relPath, lang, "")
+	for i := range result.Edges {
+		result.Edges[i].SourceFile = relPath
+	}
+	return result.Edges, nil
+}
 
-	for _, sym := range result.Symbols {
+// storeFileSymbols stores a file's symbols with their MinHash signature,
+// BM25 tokens and LSH bands, and returns name -> ID for the stored rows.
+func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) map[string]int64 {
+	source, _ := os.ReadFile(filepath.Join(idx.workspace, relPath))
+	ids := make(map[string]int64, len(syms))
+	for _, sym := range syms {
 		sym.File = relPath
 		id, err := idx.store.UpsertSymbol(sym)
 		if err != nil {
 			continue
 		}
+		if _, ok := ids[sym.Name]; !ok {
+			ids[sym.Name] = id
+		}
 		if sym.Kind != SymbolImport {
 			shingles := ShinglesForSymbol(sym, source, lang)
 			sig := idx.hasher.Signature(shingles)
 			_ = idx.store.UpdateMinHash(id, sig)
+			// Persist per-symbol token frequencies so BM25 scoring has
+			// something to read at query time. Same filtered shingle
+			// set the MinHash saw — the two signals stay in lock-step
+			// on what counts as a meaningful token for this symbol.
 			_ = idx.store.UpsertSymbolTokens(id, shingles)
+			// Compute and persist LSH band hashes so query-time search
+			// can use the lsh_bands table instead of brute-force.
+			// 64 bands × 2 elements from the 128-element signature.
 			bands := ComputeBandHashes(sig)
 			_ = idx.store.UpsertLSHBands(id, bands)
 		}
 	}
+	return ids
+}
 
+// storeFileRecord records a file's size and content hash (and, for Go, its
+// call-graph resolution) for incremental updates.
+func (idx *Indexer) storeFileRecord(relPath, lang, resolution string) {
+	absPath := filepath.Join(idx.workspace, relPath)
 	info, _ := os.Stat(absPath)
 	hash, _ := fileContentHash(absPath)
 	var size int64
@@ -426,12 +503,8 @@ func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
 		Language:    lang,
 		Size:        size,
 		ContentHash: hash,
+		Resolution:  resolution,
 	})
-
-	for i := range result.Edges {
-		result.Edges[i].SourceFile = relPath
-	}
-	return result.Edges, nil
 }
 
 // resolveAndStoreEdges resolves raw (name-based) edges to symbol IDs and
@@ -500,36 +573,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 		return err
 	}
 
-	// Read source for shingle generation
-	source, _ := os.ReadFile(absPath)
-
-	// Store symbols and compute MinHash
-	symbolIDs := make(map[string]int64) // name -> ID
-	for _, sym := range result.Symbols {
-		sym.File = relPath // use relative path
-		id, err := idx.store.UpsertSymbol(sym)
-		if err != nil {
-			continue
-		}
-		symbolIDs[sym.Name] = id
-
-		// Compute MinHash for non-import symbols
-		if sym.Kind != SymbolImport {
-			shingles := ShinglesForSymbol(sym, source, lang)
-			sig := idx.hasher.Signature(shingles)
-			_ = idx.store.UpdateMinHash(id, sig)
-			// Persist per-symbol token frequencies so BM25 scoring has
-			// something to read at query time. Same filtered shingle
-			// set the MinHash saw — the two signals stay in lock-step
-			// on what counts as a meaningful token for this symbol.
-			_ = idx.store.UpsertSymbolTokens(id, shingles)
-			// Compute and persist LSH band hashes so query-time search
-			// can use the lsh_bands table instead of brute-force.
-			// 64 bands × 2 elements from the 128-element signature.
-			bands := ComputeBandHashes(sig)
-			_ = idx.store.UpsertLSHBands(id, bands)
-		}
-	}
+	symbolIDs := idx.storeFileSymbols(relPath, lang, result.Symbols)
 
 	// Store edges (resolve names to IDs)
 	// First try local file symbols, then fall back to global store lookup
@@ -558,19 +602,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 		}
 	}
 
-	// Store file record
-	info, _ := os.Stat(absPath)
-	hash, _ := fileContentHash(absPath)
-	var size int64
-	if info != nil {
-		size = info.Size()
-	}
-	_ = idx.store.UpsertFile(FileRecord{
-		Path:        relPath,
-		Language:    lang,
-		Size:        size,
-		ContentHash: hash,
-	})
+	idx.storeFileRecord(relPath, lang, "")
 
 	return nil
 }
@@ -810,6 +842,8 @@ func (idx *Indexer) SemanticSearchWithContext(ctx context.Context, query string,
 		idfMap, _ = idx.store.GetIDFs(queryShingles)
 	}
 
+	resolutions, _ := idx.store.FileResolutions()
+
 	var allCandidates []SearchResult
 	for _, r := range results {
 		sym, err := idx.store.GetSymbol(r.symbolID)
@@ -827,6 +861,9 @@ func (idx *Indexer) SemanticSearchWithContext(ctx context.Context, query string,
 		edgeCount := len(edgesOut) + len(edgesIn)
 
 		warnings := computeConfidenceWarnings(*sym, r.similarity, flags, edgeCount)
+		if resolutions[sym.File] == GoResolutionApproximate {
+			warnings = append(warnings, WarnApproximateGraph)
+		}
 
 		// Per-candidate BM25 score + matched-token list. Only computed
 		// if the corpus stats exist (otherwise we'd do pointless table
@@ -1013,6 +1050,16 @@ func (idx *Indexer) ProjectSummary() string {
 		}
 		sort.Strings(kinds)
 		fmt.Fprintf(&b, "Symbols: %s\n", strings.Join(kinds, ", "))
+	}
+
+	if res, err := idx.store.FileResolutions(); err == nil && len(res) > 0 {
+		typed := 0
+		for _, r := range res {
+			if r == GoResolutionTyped {
+				typed++
+			}
+		}
+		fmt.Fprintf(&b, "Go call graph: %d files type-checked, %d approximate\n", typed, len(res)-typed)
 	}
 
 	return b.String()
@@ -1256,6 +1303,8 @@ type FunctionEdgeInfo struct {
 	Signature   string
 	Decorators  string // comma-separated decorator names captured at parse time
 	BaseClasses string // comma-separated base-class names of the enclosing class
+	Implements  string // Go: interfaces this method satisfies (symbols.implements)
+	Resolution  string // Go: files.resolution of the symbol's file
 	OutEdges    int
 	InEdges     int
 }
@@ -1428,12 +1477,21 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 		return CodeSmell{}, false
 	}
 
-	// Score: zero-caller stubs are more likely dead code
+	// Score: zero-caller stubs are more likely dead code — unless the
+	// method implements an interface, in which case it is called through
+	// the interface (often by code outside the module, like fmt or sort)
+	// and has no direct caller by design.
 	score := 3.0
 	reason := "zero outgoing calls and zero body calls"
-	if c.InEdges == 0 {
+	switch {
+	case c.InEdges == 0 && c.Implements != "":
+		reason = "zero outgoing calls; reached through " + c.Implements + ", not dead code"
+	case c.InEdges == 0:
 		score += 2.0
 		reason = "zero outgoing AND incoming edges (likely dead code)"
+	}
+	if c.Resolution == GoResolutionApproximate {
+		reason += " (approximate: file did not type-check, edges may be missing)"
 	}
 
 	return CodeSmell{
