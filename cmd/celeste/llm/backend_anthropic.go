@@ -12,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
@@ -66,7 +67,7 @@ func NewAnthropicBackend(config *Config) (*AnthropicBackend, error) {
 	return &AnthropicBackend{
 		client:          &client,
 		config:          config,
-		bindingControls: config.BaseURL == "" || isAnthropicProvider(config.BaseURL),
+		bindingControls: config.BaseURL == "" || providers.IsAnthropicURL(config.BaseURL),
 	}, nil
 }
 

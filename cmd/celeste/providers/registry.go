@@ -307,24 +307,32 @@ func DetectProvider(baseURL string) string {
 		}
 	}
 
-	// Anthropic is decided by host, the same rule the backend choice uses
-	// (#372), so a proxy path that merely mentions anthropic.com is not it.
-	if IsAnthropicURL(baseURL) {
+	// Anthropic, xAI and Google are decided by host, the same rules the
+	// backend choice uses (#372), so a proxy path that merely mentions one
+	// of their domains is not it.
+	switch {
+	case IsAnthropicURL(baseURL):
 		return "anthropic"
+	case IsXAIURL(baseURL):
+		return "grok"
+	case IsGeminiURL(baseURL):
+		return "gemini"
+	case IsVertexURL(baseURL):
+		return "vertex"
+	// A server on this machine or the local network, by its parsed host
+	// (#377): the same rule as the timeouts and the window probe. No
+	// hosted provider has a local host, so none is shadowed, and a LAN
+	// server whose path names a hosted domain stays local.
+	case IsLocalHost(baseURL):
+		return "local"
 	}
 
 	// Check partial matches
 	switch {
 	case strings.Contains(baseURL, "openai.com"):
 		return "openai"
-	case strings.Contains(baseURL, "x.ai"):
-		return "grok"
 	case strings.Contains(baseURL, "venice.ai"):
 		return "venice"
-	case strings.Contains(baseURL, "generativelanguage.googleapis.com"):
-		return "gemini"
-	case strings.Contains(baseURL, "aiplatform.googleapis.com") || strings.Contains(baseURL, "vertexai"):
-		return "vertex"
 	case strings.Contains(baseURL, "openrouter.ai"):
 		return "openrouter"
 	case strings.Contains(baseURL, "sakana.ai"):
@@ -333,25 +341,17 @@ func DetectProvider(baseURL string) string {
 		return "digitalocean"
 	case strings.Contains(baseURL, "elevenlabs.io"):
 		return "elevenlabs"
-	// Local servers, checked LAST so a hosted provider can never be shadowed.
-	// Matching on host substrings only: an empty baseURL contains none of them
-	// and still falls through to "unknown".
-	case strings.Contains(baseURL, "127.0.0.1"), strings.Contains(baseURL, "localhost"), strings.Contains(baseURL, "0.0.0.0"), strings.Contains(baseURL, "[::1]"):
-		return "local"
 	default:
 		return "unknown"
 	}
 }
 
-// IsAnthropicURL reports whether baseURL points at Anthropic: its host is
-// anthropic.com or a subdomain of it, in any case, with or without a
-// trailing dot or port. It is the one rule both DetectProvider (the header,
-// capabilities, context windows) and the llm backend choice use (#372). A
-// URL without a scheme is read as https.
-func IsAnthropicURL(baseURL string) bool {
+// urlHost returns baseURL's host, lower-cased, without a trailing dot or
+// port, or "" when there is none. A URL without a scheme is read as https.
+func urlHost(baseURL string) string {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
-		return false
+		return ""
 	}
 	// Only a real leading scheme counts: "api.anthropic.com/v1?r=http://x"
 	// has "://" in its query but no scheme, and "host:443/v1" parses as an
@@ -360,11 +360,49 @@ func IsAnthropicURL(baseURL string) bool {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		u, err = url.Parse("https://" + baseURL)
 		if err != nil {
-			return false
+			return ""
 		}
 	}
-	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
-	return host == "anthropic.com" || strings.HasSuffix(host, ".anthropic.com")
+	return strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+}
+
+// hostIs reports whether host is domain or a subdomain of it.
+func hostIs(host, domain string) bool {
+	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+// IsAnthropicURL reports whether baseURL points at Anthropic: its host is
+// anthropic.com or a subdomain of it, in any case, with or without a
+// trailing dot or port. It is the one rule both DetectProvider (the header,
+// capabilities, context windows) and the llm backend choice use (#372). A
+// URL without a scheme is read as https.
+func IsAnthropicURL(baseURL string) bool {
+	return hostIs(urlHost(baseURL), "anthropic.com")
+}
+
+// IsXAIURL reports whether baseURL's host is x.ai or a subdomain of it. It
+// is the one rule DetectProvider ("grok") and the llm backend choice use.
+func IsXAIURL(baseURL string) bool {
+	return hostIs(urlHost(baseURL), "x.ai")
+}
+
+// IsGeminiURL reports whether baseURL's host is Google AI Studio's
+// generativelanguage.googleapis.com.
+func IsGeminiURL(baseURL string) bool {
+	return urlHost(baseURL) == "generativelanguage.googleapis.com"
+}
+
+// IsVertexURL reports whether baseURL's host is Vertex AI's
+// aiplatform.googleapis.com, global or regional (REGION-aiplatform...).
+func IsVertexURL(baseURL string) bool {
+	host := urlHost(baseURL)
+	return hostIs(host, "aiplatform.googleapis.com") || strings.HasSuffix(host, "-aiplatform.googleapis.com")
+}
+
+// IsGoogleURL reports whether baseURL is Gemini (AI Studio) or Vertex AI:
+// the endpoints the native Google backend serves.
+func IsGoogleURL(baseURL string) bool {
+	return IsGeminiURL(baseURL) || IsVertexURL(baseURL)
 }
 
 // ModelDetection provides heuristics for detecting model capabilities.
@@ -434,29 +472,21 @@ func (d *ModelDetection) SupportsTools(modelID string) bool {
 	}
 }
 
-// IsLocalEndpoint reports whether baseURL is a server on this machine or the
-// local network: the "local" provider, or an address no hosted provider
-// uses (a private or link-local IP, a single-label host, or a .local, .lan,
-// .internal or .home.arpa name). Such a server runs the model on the
-// user's own hardware, which can take minutes before the first byte.
+// IsLocalEndpoint reports whether baseURL is a server on this machine or
+// the local network. It is IsLocalHost: one rule for the timeouts, the
+// window probe and fallback, and the "local" provider (#377).
 func IsLocalEndpoint(baseURL string) bool {
-	if baseURL == "" {
-		return false
-	}
-	return DetectProvider(baseURL) == "local" || IsLocalHost(baseURL)
+	return IsLocalHost(baseURL)
 }
 
 // IsLocalHost reports whether baseURL's parsed host is this machine or the
 // local network: localhost, a loopback, private, link-local or unspecified
 // IP, a single-label host, or a .local, .lan, .internal or .home.arpa name.
-// Unlike DetectProvider's substring match, a hosted URL that merely
-// contains "localhost" is not local.
+// A hosted URL that merely contains "localhost" in its path is not local.
+// Such a server runs the model on the user's own hardware, which can take
+// minutes before the first byte.
 func IsLocalHost(baseURL string) bool {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	host := urlHost(baseURL)
 	if host == "" {
 		return false
 	}

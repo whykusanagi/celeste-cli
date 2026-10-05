@@ -99,14 +99,13 @@ func ResolveContextLimitSource(baseURL, model string, override int, apiKey strin
 		return override, SourceConfigured
 	}
 	// A server on this machine or the local network is asked for its own
-	// window (#310), decided on the parsed host so a hosted URL is never
-	// probed.
+	// window (#310), and gets the local fallback when it does not say. Both
+	// are decided on the parsed host (#377), so a hosted URL is never
+	// probed and a LAN server never gets a hosted model's window.
 	if providers.IsLocalHost(baseURL) {
 		if n := localWindow(baseURL, apiKey, model); n > 0 {
 			return n, SourceReported
 		}
-	}
-	if providers.DetectProvider(baseURL) == "local" {
 		return ctxmgr.LocalDefaultLimit, SourceFallback
 	}
 	n, known := LookupModelLimit(model)

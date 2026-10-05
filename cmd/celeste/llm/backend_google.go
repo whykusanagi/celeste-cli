@@ -14,6 +14,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/imagefit"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
@@ -39,7 +40,7 @@ type GoogleBackend struct {
 // Vertex (aiplatform.googleapis.com) keeps v1, which is its own convention and
 // a separate service — do not fold the two together.
 func googleAPIVersion(baseURL string) string {
-	if baseURL == "" || strings.Contains(baseURL, "generativelanguage.googleapis.com") {
+	if baseURL == "" || providers.IsGeminiURL(baseURL) {
 		return "v1beta"
 	}
 	return "v1"
@@ -75,7 +76,7 @@ func NewGoogleBackend(config *Config) (*GoogleBackend, error) {
 	// Method 3 & 4: Environment variable or ADC (handled automatically by SDK)
 
 	// Override base URL if needed (for Vertex AI)
-	if config.BaseURL != "" && !strings.Contains(config.BaseURL, "generativelanguage.googleapis.com") {
+	if config.BaseURL != "" && !providers.IsGeminiURL(config.BaseURL) {
 		clientConfig.HTTPOptions.BaseURL = config.BaseURL
 	}
 

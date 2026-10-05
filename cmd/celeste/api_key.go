@@ -25,7 +25,7 @@ import (
 // setup must not wave through a now-OpenAI-or-similar profile that has no
 // api_key and genuinely needs one. llm.NewGoogleBackend only ever engages
 // for a generativelanguage.googleapis.com or aiplatform.googleapis.com
-// base_url (llm/interface.go), so this mirrors that same detection.
+// base_url (providers.IsGoogleURL, which DetectProvider uses too).
 func needsAPIKey(cfg *config.Config) bool {
 	if cfg == nil {
 		return true
