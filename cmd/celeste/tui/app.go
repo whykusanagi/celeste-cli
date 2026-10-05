@@ -242,6 +242,7 @@ type LLMClient interface {
 // by the small-model role (it blocks, so the app calls it from a command).
 // A context overflow during a turn is the loop's to retry (2.0 F2d).
 type ContextCompactor interface {
+	SummaryTimeouter
 	CompactContext(msgs []ChatMessage, window, used int, force bool) CompactOutcome
 	SummarizeContext(ctx context.Context, msgs []ChatMessage, focus string) (SummaryOutcome, error)
 }
