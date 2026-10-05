@@ -140,10 +140,10 @@ func TestComposeGuardFloorKeepsTheChatRules(t *testing.T) {
 // The content prompt steps down with its window too.
 func TestContentPromptUsesTheWindow(t *testing.T) {
 	composeEnv(t, false)
-	if got := GetContentPrompt(8192, "", "", "", ""); !strings.HasPrefix(got, mustProfile(ProfileLite).SystemPrompt) {
+	if got := ContentPrompt(8192, "", "", "", "").String(); !strings.HasPrefix(got, mustProfile(ProfileLite).SystemPrompt) {
 		t.Fatal("content prompt at 8,192 is not on lite")
 	}
-	if got := GetContentPrompt(0, "", "", "", ""); !strings.HasPrefix(got, mustProfile(ProfileFull).SystemPrompt) {
+	if got := ContentPrompt(0, "", "", "", "").String(); !strings.HasPrefix(got, mustProfile(ProfileFull).SystemPrompt) {
 		t.Fatal("content prompt with an unknown window is not on full")
 	}
 }
@@ -169,13 +169,13 @@ func TestGuardNoticeAtTheFloor(t *testing.T) {
 	}
 }
 
-// GetContentPrompt drops the guard's notice from its prompt, so it logs it,
+// ContentPrompt drops the guard's notice from its prompt, so it logs it,
 // once (window 8189 is used by no other test).
 func TestContentPromptLogsTheGuardNotice(t *testing.T) {
 	personaHome(t)
 	logs := captureLog(t)
-	_ = GetContentPrompt(8189, "", "short", "", "")
-	_ = GetContentPrompt(8189, "", "short", "", "")
+	_ = ContentPrompt(8189, "", "short", "", "").String()
+	_ = ContentPrompt(8189, "", "short", "", "").String()
 	if got := strings.Count(logs.String(), "[persona] Persona: using the lite profile"); got != 1 {
 		t.Errorf("want the notice logged once, got %d: %q", got, logs.String())
 	}
