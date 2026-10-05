@@ -415,7 +415,7 @@ func TestGoTypes_InitFunctionsPerFile(t *testing.T) {
 	for rows.Next() {
 		var file, tgt string
 		require.NoError(t, rows.Scan(&file, &tgt))
-		got[file+" -> "+tgt] = true
+		got[filepath.ToSlash(file)+" -> "+tgt] = true // the store keeps native paths
 	}
 	require.NoError(t, rows.Err())
 	assert.Equal(t, map[string]bool{"p/x.go -> helperA": true, "p/y.go -> helperB": true}, got)
