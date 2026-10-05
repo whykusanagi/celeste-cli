@@ -35,6 +35,26 @@ func (s *Store) ResetGraph() error {
 	})
 }
 
+// ResetGo deletes every Go symbol, file record and the edges and BM25/LSH
+// rows attached to Go symbols, in one transaction. Rows for other languages
+// are kept: an index upgrade only changes how Go is resolved.
+func (s *Store) ResetGo() error {
+	return s.inTx(func(tx *sql.Tx) error {
+		for _, q := range []string{
+			`DELETE FROM edges WHERE source_id IN (` + goSourceFilter + `) OR target_id IN (` + goSourceFilter + `)`,
+			`DELETE FROM lsh_bands WHERE symbol_id IN (` + goSourceFilter + `)`,
+			`DELETE FROM symbol_tokens WHERE symbol_id IN (` + goSourceFilter + `)`,
+			`DELETE FROM symbols WHERE file LIKE '%.go'`,
+			`DELETE FROM files WHERE language = 'go' OR path LIKE '%.go'`,
+		} {
+			if _, err := tx.Exec(q); err != nil {
+				return fmt.Errorf("reset go rows: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
 // GoQualIDs maps each qualified Go name to its symbol ID. When two rows
 // share a qualified name (several init functions in one package) the
 // lowest ID wins, so the mapping is deterministic.

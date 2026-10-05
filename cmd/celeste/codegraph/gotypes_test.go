@@ -425,6 +425,55 @@ func TestGoTypes_OldIndexVersionRebuilds(t *testing.T) {
 	assert.Equal(t, graphVersion, string(v))
 }
 
+// failAfterCtx is a context whose Err starts reporting cancellation after
+// n calls, so a test can abort an index pass part-way through.
+type failAfterCtx struct {
+	context.Context
+	n int
+}
+
+func (c *failAfterCtx) Err() error {
+	if c.n <= 0 {
+		return context.Canceled
+	}
+	c.n--
+	return nil
+}
+
+// An upgrade from an older graph version only redoes the Go rows: other
+// languages keep their symbols and edges even when the upgrade is cancelled,
+// and the next Update finishes it.
+func TestGoTypes_CancelledUpgradeKeepsOtherLanguages(t *testing.T) {
+	files := map[string]string{}
+	for k, v := range goFixture {
+		files[k] = v
+	}
+	files["py/mod.py"] = "def caller():\n    callee()\n\ndef callee():\n    pass\n"
+	idx, _ := buildFixture(t, files)
+	before := edgeKeys(t, idx)
+	requireEdges(t, before, "caller -calls-> callee", fx+"b.UseT -calls-> ("+fx+"a.T).Update")
+
+	require.NoError(t, idx.store.SetMeta(metaGraphVersion, []byte("1")))
+	err := idx.UpdateWithContext(&failAfterCtx{Context: context.Background(), n: 1})
+	require.ErrorIs(t, err, context.Canceled)
+
+	requireEdges(t, edgeKeys(t, idx), "caller -calls-> callee")
+	syms, err := idx.store.SearchSymbolsByName("callee")
+	require.NoError(t, err)
+	assert.NotEmpty(t, syms, "a cancelled upgrade must not drop other languages' symbols")
+	v, err := idx.store.GetMeta(metaGraphVersion)
+	require.NoError(t, err)
+	assert.Equal(t, "1", string(v), "the version is stamped only once the upgrade completes")
+
+	require.NoError(t, idx.Update())
+	got := edgeKeys(t, idx)
+	requireEdges(t, got, "caller -calls-> callee", fx+"b.UseT -calls-> ("+fx+"a.T).Update")
+	assert.Equal(t, len(before), len(got))
+	v, err = idx.store.GetMeta(metaGraphVersion)
+	require.NoError(t, err)
+	assert.Equal(t, graphVersion, string(v))
+}
+
 // TestGoTypes_ThisRepository runs the Go pass over celeste's own cmd/celeste
 // and checks call edges the old name-based heuristic got wrong or missed.
 func TestGoTypes_ThisRepository(t *testing.T) {

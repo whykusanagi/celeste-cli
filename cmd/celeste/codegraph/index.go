@@ -318,15 +318,26 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
-	// An index written by an older graph version (or never stamped) is
-	// rebuilt from scratch: its edges were resolved differently.
-	if v, err := idx.store.GetMeta(metaGraphVersion); err != nil || string(v) != graphVersion {
-		return idx.buildLocked(ctx)
-	}
-	// Get currently indexed files
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
 		return fmt.Errorf("get indexed files: %w", err)
+	}
+	// An index written by an older graph version (or never stamped) had its
+	// Go edges resolved by name. Only the Go rows are dropped; the
+	// incremental pass below then sees every Go file as new and re-runs the
+	// Go pass, while other languages keep their rows. If this is cancelled
+	// the version stays old and the next Update repeats it. An empty index
+	// gets a full two-pass Build instead.
+	if v, err := idx.store.GetMeta(metaGraphVersion); err != nil || string(v) != graphVersion {
+		if len(indexedFiles) == 0 {
+			return idx.buildLocked(ctx)
+		}
+		if err := idx.store.ResetGo(); err != nil {
+			return err
+		}
+		if indexedFiles, err = idx.store.GetAllFiles(); err != nil {
+			return fmt.Errorf("get indexed files: %w", err)
+		}
 	}
 	indexedMap := make(map[string]FileRecord)
 	for _, f := range indexedFiles {
@@ -409,6 +420,9 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 		return fmt.Errorf("rebuild token stats: %w", err)
 	}
 
+	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
+		return fmt.Errorf("record index version: %w", err)
+	}
 	return nil
 }
 
