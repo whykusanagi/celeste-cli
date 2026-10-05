@@ -383,6 +383,9 @@ func (w *multiWalker) extractImportName(node *tree_sitter.Node) string {
 
 // extractCallTarget gets the function/method name from a call node.
 func (w *multiWalker) extractCallTarget(node *tree_sitter.Node) string {
+	if w.lang == "php" {
+		return w.phpCallTarget(node)
+	}
 	// Try "function" field (JS/TS/Go/Rust/Java/C/C++)
 	if fn := node.ChildByFieldName("function"); fn != nil {
 		return w.identFromExpr(fn)
@@ -398,6 +401,39 @@ func (w *multiWalker) extractCallTarget(node *tree_sitter.Node) string {
 	// Python: call node has first child as the callee
 	if w.lang == "python" && node.NamedChildCount() > 0 {
 		return w.identFromExpr(node.NamedChild(0))
+	}
+	return ""
+}
+
+// phpCallTarget returns the callee name of a PHP call node. PHP names are
+// "name" / "qualified_name" nodes, which identFromExpr does not know, so
+// plain calls such as refresh_session() used to produce no edge (#347).
+//
+//	function_call_expression        function: name | qualified_name | relative_name
+//	member_call_expression          name: name  ($obj->m())
+//	nullsafe_member_call_expression name: name  ($obj?->m())
+//	scoped_call_expression          name: name  (Cls::m())
+//
+// A namespaced call (\App\f()) resolves to its last segment, the name the
+// function declaration is indexed under. Dynamic callees ($fn(), $o->$m())
+// have no static target and return "".
+func (w *multiWalker) phpCallTarget(node *tree_sitter.Node) string {
+	callee := node.ChildByFieldName("name")
+	if node.Kind() == "function_call_expression" {
+		callee = node.ChildByFieldName("function")
+	}
+	if callee == nil {
+		return ""
+	}
+	switch callee.Kind() {
+	case "name":
+		return w.nodeText(callee)
+	case "qualified_name", "relative_name":
+		text := w.nodeText(callee)
+		if i := strings.LastIndexByte(text, '\\'); i >= 0 {
+			text = text[i+1:]
+		}
+		return strings.TrimSpace(text)
 	}
 	return ""
 }
