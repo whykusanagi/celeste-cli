@@ -67,15 +67,18 @@ const (
 )
 
 // DetectBackendType determines which backend to use based on the base URL.
+// The Anthropic host check runs first, as in DetectProvider: the xAI and
+// Google checks are substring matches that a path or query on an
+// Anthropic host could otherwise trip (#372).
 func DetectBackendType(baseURL string) BackendType {
+	if isAnthropicProvider(baseURL) {
+		return BackendTypeAnthropic
+	}
 	if isXAIProvider(baseURL) {
 		return BackendTypeXAI
 	}
 	if isGoogleProvider(baseURL) {
 		return BackendTypeGoogle
-	}
-	if isAnthropicProvider(baseURL) {
-		return BackendTypeAnthropic
 	}
 	return BackendTypeOpenAI
 }

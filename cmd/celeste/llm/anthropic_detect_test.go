@@ -24,6 +24,8 @@ func TestBackendChoiceAgreesWithDetectProvider(t *testing.T) {
 		{"http://127.0.0.1:18765/anthropic.com/", false},
 		{"https://notanthropic.com/v1", false},
 		{"https://api.anthropic.com.example.org", false},
+		{"https://api.anthropic.com/v1?u=generativelanguage.googleapis.com", true},
+		{"https://api.anthropic.com/x.ai/v1", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.baseURL, func(t *testing.T) {
