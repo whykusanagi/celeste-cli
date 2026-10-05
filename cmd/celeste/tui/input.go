@@ -399,15 +399,7 @@ func (m InputModel) View() string {
 	// Render typeahead suggestions below input
 	var hintLine string
 	if len(m.suggestions) > 0 {
-		parts := make([]string, len(m.suggestions))
-		for i, s := range m.suggestions {
-			if i == m.suggestionIdx {
-				parts[i] = suggestionActiveStyle.Render("/" + s)
-			} else {
-				parts[i] = suggestionDimStyle.Render("/" + s)
-			}
-		}
-		hintLine = suggestionTabStyle.Render("  ") + strings.Join(parts, suggestionDimStyle.Render(" · "))
+		hintLine = suggestionRow(m.suggestions, m.suggestionIdx, m.width)
 	}
 
 	if hintLine != "" {
@@ -422,6 +414,59 @@ func (m InputModel) View() string {
 		m.rendered.view, m.rendered.ok = inputView, true
 	}
 	return inputView
+}
+
+// suggestionRow lays the typeahead suggestions out on one row of at most
+// width cells (0: unbounded). Whole names only: those that do not fit are
+// left out and a "…" marks the side they were on, and the window starts
+// late enough that the highlighted one is on screen.
+func suggestionRow(suggestions []string, active, width int) string {
+	const lead, sep, more = "  ", " · ", " …"
+	names := make([]string, len(suggestions))
+	for i, s := range suggestions {
+		names[i] = "/" + s
+	}
+	fits := func(from, to int) bool { // names[from:to] with their marks
+		w := lipgloss.Width(lead + strings.Join(names[from:to], sep))
+		if from > 0 {
+			w += lipgloss.Width("…" + sep)
+		}
+		if to < len(names) {
+			w += lipgloss.Width(more)
+		}
+		return width <= 0 || w <= width
+	}
+	from, to := 0, len(names)
+	if !fits(from, to) {
+		// Grow a window from the first name, sliding it until the
+		// highlighted name is in it.
+		to = from + 1
+		for to < len(names) && fits(from, to+1) {
+			to++
+		}
+		for active >= to && to < len(names) {
+			to++
+			for from < active && !fits(from, to) {
+				from++
+			}
+		}
+	}
+	parts := make([]string, 0, to-from+2)
+	if from > 0 {
+		parts = append(parts, suggestionDimStyle.Render("…"))
+	}
+	for i := from; i < to; i++ {
+		if i == active {
+			parts = append(parts, suggestionActiveStyle.Render(names[i]))
+		} else {
+			parts = append(parts, suggestionDimStyle.Render(names[i]))
+		}
+	}
+	row := suggestionTabStyle.Render(lead) + strings.Join(parts, suggestionDimStyle.Render(sep))
+	if to < len(names) {
+		row += suggestionDimStyle.Render(more)
+	}
+	return row
 }
 
 // SetHistory sets the command history.
