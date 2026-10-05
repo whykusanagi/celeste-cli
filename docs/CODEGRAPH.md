@@ -122,7 +122,7 @@ Release binaries are built with CGo on each platform's own runner and include al
 
 ### Regex fallback (CGO_ENABLED=0)
 
-A source build with `CGO_ENABLED=0`, or on a machine without a C compiler, compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. It covers Python, JavaScript, TypeScript, and Rust. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
+A source build with `CGO_ENABLED=0`, or on a machine without a C compiler, compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. It covers Python, JavaScript, TypeScript, Rust and PHP. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
 
 Python class/method detection uses indentation tracking to distinguish top-level functions from methods inside classes.
 
