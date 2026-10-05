@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,9 +34,7 @@ func TestNewSessionIDsAreUniqueAndIncreasing(t *testing.T) {
 func TestNewSessionSkipsAnIDWhoseFileExists(t *testing.T) {
 	dir := t.TempDir()
 	m := &SessionManager{sessionsDir: dir}
-	future := time.Now().UnixNano() + int64(time.Hour)
-	lastSessionID.Store(future)
-	taken := fmt.Sprintf("%d", future+1)
+	taken := fakeSessionClock(t, time.Now().Add(time.Hour))
 	if err := os.WriteFile(filepath.Join(dir, taken+".json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
