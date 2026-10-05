@@ -14,21 +14,27 @@ The code graph provides structural understanding of codebases through three sear
 
 ## Storage
 
-SQLite (WAL mode, `synchronous=NORMAL` on every connection) via
+SQLite (WAL mode, `synchronous=NORMAL` and `foreign_keys` on every connection) via
 `modernc.org/sqlite` (pure Go, no CGo). Index writes are autocommitted, about
 a hundred per symbol; with `synchronous=NORMAL` a commit appends to the WAL
 and the fsync waits for the next checkpoint, so a build does not pay a disk
 flush per write (each one costs tens of milliseconds on Windows). The index is
 derived data: a power loss can drop the last commits but cannot corrupt the
-database. If an index looks incomplete afterwards, run `celeste index` for a
-full rebuild. Three tables:
+database, and commits are lost newest first. A full build sets
+`meta.build_in_progress` before it empties the graph and clears it only after
+its last pass commits, and the Go pass does the same with
+`meta.go_pass_pending`; an `Update` that finds the first mark runs a full
+build, and one that finds the second reruns the Go pass, so a build or update
+that was cancelled, killed or cut off by a power loss is finished by the next
+update rather than trusted because its file hashes match. Three tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,
          qual_name, implements, minhash BLOB)
 edges   (source_id, target_id, kind)  -- directional, unique on (src, dst, kind)
 files   (path, language, size, content_hash, indexed_at, resolution)
-meta    (key, value)                  -- minhash_seeds, graph_version, go_modules
+meta    (key, value)                  -- minhash_seeds, graph_version, go_modules,
+                                      -- build_in_progress, go_pass_pending
 ```
 
 Indexed on `symbols.name`, `symbols.file`, `symbols.package`, `symbols.qual_name`, `edges.source_id`, `edges.target_id`.
@@ -136,7 +142,7 @@ extraction with heuristic call detection.
 
 ### Full Build
 
-Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index.
+Walks the file tree respecting `.gitignore` + a hardcoded skip list (`node_modules`, `vendor`, `venv`, `.git`, `dist`, `build`, `target`, etc.). For each indexable file: parse, store symbols, resolve edges, compute MinHash signatures, record file metadata. A full build starts from an empty graph (symbols, edges, files and BM25/LSH rows are cleared; MinHash seeds are kept), so search, `code_graph` and `code_review` see an empty or partial graph until it finishes. `Update` never empties the index, except to finish a full build that was interrupted.
 
 ### Incremental Updates
 

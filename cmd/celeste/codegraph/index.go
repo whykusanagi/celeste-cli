@@ -237,11 +237,17 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 // buildLocked is BuildWithContext with buildMu held. A full build starts
 // from an empty graph so rows from an older index (or an older index
 // version) never linger next to the new ones. Readers see an empty or
-// partial graph until it finishes; Update never empties the index.
+// partial graph until it finishes; Update never empties the index, except
+// to finish a build that was interrupted (metaBuildInProgress).
 func (idx *Indexer) buildLocked(ctx context.Context) error {
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
+	}
+	// Mark the build unfinished before the graph is emptied; the mark is
+	// cleared only after the last pass commits (#388).
+	if err := idx.store.SetMeta(metaBuildInProgress, []byte("1")); err != nil {
+		return fmt.Errorf("mark build in progress: %w", err)
 	}
 	if err := idx.store.ResetGraph(); err != nil {
 		return err
@@ -273,6 +279,9 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	// Pass 2: resolve and store all edges now that every symbol is in the DB.
 	// Cross-file call targets that weren't available during pass 1 are now
 	// resolvable via GetSymbolIDByName.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	idx.resolveAndStoreEdges(allRawEdges)
 
 	if len(goFiles) > 0 {
@@ -300,6 +309,9 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
 		return fmt.Errorf("record index version: %w", err)
 	}
+	if err := idx.store.DeleteMeta(metaBuildInProgress); err != nil {
+		return fmt.Errorf("mark build finished: %w", err)
+	}
 	return nil
 }
 
@@ -319,6 +331,20 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	}
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
+	// A full build that never finished left file records whose hashes
+	// match while its edges are missing; the hashes cannot be trusted, so
+	// finish the job with a full build (#388).
+	if mark, err := idx.store.GetMeta(metaBuildInProgress); err != nil {
+		return err
+	} else if mark != nil {
+		return idx.buildLocked(ctx)
+	}
+	// Likewise a Go pass that stopped part-way stored symbols and file
+	// records but not (all of) the Go edges; rerun it.
+	goPending, err := idx.store.GetMeta(metaGoPassPending)
+	if err != nil {
+		return err
+	}
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
 		return fmt.Errorf("get indexed files: %w", err)
@@ -359,11 +385,16 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	goRemoved := false
 	for path := range indexedMap {
 		if !currentSet[path] {
-			_ = idx.store.DeleteFileSymbols(path)
-			_ = idx.store.DeleteFile(path)
-			if DetectLanguage(path) == "go" {
+			if DetectLanguage(path) == "go" && !goRemoved {
+				// Once the file record is gone nothing else says the Go
+				// edges need rewriting, so mark the Go pass first.
+				if err := idx.store.SetMeta(metaGoPassPending, []byte("1")); err != nil {
+					return err
+				}
 				goRemoved = true
 			}
+			_ = idx.store.DeleteFileSymbols(path)
+			_ = idx.store.DeleteFile(path)
 		}
 	}
 
@@ -398,7 +429,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 			continue
 		}
 	}
-	if len(goChanged) > 0 || goRemoved || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
+	if len(goChanged) > 0 || goRemoved || goPending != nil || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
 		if err := idx.indexGo(ctx, goFiles, goChanged); err != nil {
 			return err
 		}

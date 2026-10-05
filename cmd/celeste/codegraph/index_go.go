@@ -16,6 +16,16 @@ const (
 	graphVersion     = "2"
 	// metaGoModules holds goModFingerprint as of the last Go pass.
 	metaGoModules = "go_modules"
+	// metaBuildInProgress is set before a full build empties the graph and
+	// cleared only once every pass has committed. A build interrupted in
+	// between (cancelled, killed, power loss) leaves file records whose
+	// hashes match while edges are missing, so Update rebuilds when it
+	// finds the mark instead of trusting the hashes (#388).
+	metaBuildInProgress = "build_in_progress"
+	// metaGoPassPending is set before the Go pass writes its first row and
+	// cleared once its edges, implementations and module fingerprint are
+	// stored. Update reruns the Go pass when it finds the mark.
+	metaGoPassPending = "go_pass_pending"
 )
 
 // indexGo runs the type-checked Go pass over every Go file in the workspace
@@ -27,6 +37,11 @@ const (
 func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[string]bool) error {
 	res, err := analyzeGo(ctx, idx.workspace, goFiles)
 	if err != nil {
+		return err
+	}
+	// From here the pass stores symbols and file records before it rewrites
+	// the edges; an interruption in between must not look finished.
+	if err := idx.store.SetMeta(metaGoPassPending, []byte("1")); err != nil {
 		return err
 	}
 
@@ -86,7 +101,10 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 	if err := idx.store.SetGoImplements(impl); err != nil {
 		return err
 	}
-	return idx.store.SetMeta(metaGoModules, []byte(goModFingerprint(idx.workspace, goFiles)))
+	if err := idx.store.SetMeta(metaGoModules, []byte(goModFingerprint(idx.workspace, goFiles))); err != nil {
+		return err
+	}
+	return idx.store.DeleteMeta(metaGoPassPending)
 }
 
 // goModulesChanged reports whether go.mod/go.sum changed since the last Go
