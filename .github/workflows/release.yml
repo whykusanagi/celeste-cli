@@ -4,20 +4,61 @@ on:
   push:
     tags:
       - 'v*'
+  # Dry run (#376): Actions > Release > Run workflow, on any branch, no tag.
+  # Builds every target on its own runner and smoke-tests it there, and
+  # nothing leaves the runners: no artifacts, no release. The release job
+  # below only runs for a pushed v* tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+# One run per tag (or dry-run branch) at a time. A second run waits; a run
+# that is signing or publishing is never cancelled halfway.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
+  # One job per target, each on a runner of that OS and architecture, so CGo
+  # compiles the tree-sitter parsers (TypeScript, PHP, Python, Rust, Java,
+  # C/C++, Ruby) into the binary with the runner's own C compiler (#376).
+  # Until v2.0.0 every release was CGO_ENABLED=0 and shipped only the regex
+  # fallback.
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    # Builds only read the repository; the release job alone writes.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Linux links fully statically (see the build step), so the
+          # runner's glibc sets no floor; 22.04 is the oldest supported one.
+          - target: linux-amd64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+          # macos-13 is retired and macos-14 is deprecated: the last Intel
+          # image is macos-15-intel.
+          - target: darwin-amd64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+          # The image's preinstalled MinGW-w64 gcc is on PATH.
+          - target: windows-amd64
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
     - name: Check out code
       uses: actions/checkout@v7
       with:
-        fetch-depth: 0
+        persist-credentials: false  # no git writes here
 
     - name: Set up Go
       uses: actions/setup-go@v7
@@ -29,54 +70,221 @@ jobs:
         # in lockstep with the CI Security Scan toolchain, or the scan passes
         # while the artifacts users download stay vulnerable.
         go-version: '1.26.6'
+        # A release compiles every C object from scratch: no build cache
+        # shared with CI runs, whose objects carry other flags.
+        cache: false
 
     - name: Get version from tag
       id: get_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      run: |
+        if [ "$GITHUB_EVENT_NAME" = push ]; then
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        else
+          # A dry run has no tag. A pre-release below every real version.
+          echo "VERSION=0.0.0-dryrun.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Build binaries
+      id: build
       env:
-        # v1.9.0 introduces a CGo tree-sitter TypeScript parser behind a
-        # //go:build cgo constraint. Release binaries are built pure-Go
-        # (CGO_ENABLED=0) so every platform in the release matrix gets
-        # the same fully-static artifact and the parser_ts_stub.go
-        # fallback. Users who want the tree-sitter improvement can
-        # build from source with CGo enabled. The v2.1.0 release
-        # workflow will replace this with a zig-cc cross-toolchain or
-        # a native-runner matrix so the tree-sitter parser ships with
-        # pre-built binaries too.
-        CGO_ENABLED: "0"
+        # #376: CGo on, so the //go:build cgo tree-sitter parsers are
+        # compiled in instead of the parser_*_stub.go regex fallbacks.
+        CGO_ENABLED: "1"
         # The persona key (W5 rulings 15, 20). Only this step sees it. It
         # reaches the shell as an environment variable, never as workflow
         # text, and nothing below echoes it or the flags that carry it;
         # GitHub also masks it in logs.
         CELESTE_PERSONA_KEY: ${{ secrets.CELESTE_PERSONA_KEY }}
         VERSION: ${{ steps.get_version.outputs.VERSION }}
+        TARGET: ${{ matrix.target }}
       run: |
         set -euo pipefail
         # The secret was uploaded from a key file that ends in a newline:
         # trim whitespace before checking its shape.
         PERSONA_KEY="$(printf '%s' "$CELESTE_PERSONA_KEY" | tr -d ' \t\r\n')"
+        PERSONA=yes
         if ! [[ "$PERSONA_KEY" =~ ^[0-9a-fA-F]{64}$ ]]; then
-          echo "::error::the CELESTE_PERSONA_KEY secret is missing or is not 64 hex characters"
-          exit 1
+          if [ "$GITHUB_EVENT_NAME" != push ] && [ -z "$PERSONA_KEY" ]; then
+            # A dry run where the secret is not available (a fork): build
+            # the public persona and skip persona verify. A tag never may.
+            echo "::warning::no CELESTE_PERSONA_KEY secret: this dry run builds the public persona and skips persona verify"
+            PERSONA=no
+          else
+            echo "::error::the CELESTE_PERSONA_KEY secret is missing or is not 64 hex characters"
+            exit 1
+          fi
         fi
+        echo "persona=$PERSONA" >> "$GITHUB_OUTPUT"
         # -X main.Channel=release is what makes a binary official to
         # celeste update and the go install upgrade (W5 ruling 29).
         # -trimpath: without it the toolchain copies the whole -ldflags
         # string, key included, into the binary's build info.
-        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release -X github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts.personaKey=${PERSONA_KEY}"
-        build() { GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" ./cmd/celeste; }
-        build linux amd64 celeste-linux-amd64
-        build linux arm64 celeste-linux-arm64
-        build darwin amd64 celeste-darwin-amd64
-        build darwin arm64 celeste-darwin-arm64
-        build windows amd64 celeste-windows-amd64.exe
+        LDFLAGS="-X main.Version=${VERSION} -X main.CommitSHA=${GITHUB_SHA} -X main.Channel=release"
+        if [ "$PERSONA" = yes ]; then
+          LDFLAGS="$LDFLAGS -X github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts.personaKey=${PERSONA_KEY}"
+        fi
+        TAGS=""
+        case "$TARGET" in
+          linux-*)
+            # Fully static, as the CGO_ENABLED=0 binaries were: no glibc
+            # version floor. netgo and osusergo keep the pure-Go DNS
+            # resolver and user lookup those binaries had, so nothing needs
+            # glibc's NSS modules at run time.
+            TAGS="netgo,osusergo"
+            LDFLAGS="$LDFLAGS -linkmode=external -extldflags=-static"
+            ;;
+          darwin-*)
+            # Go 1.26 supports macOS 12 and later; compile the C parsers for
+            # the same floor instead of the runner's own macOS version.
+            export MACOSX_DEPLOYMENT_TARGET=12.0
+            export CGO_CFLAGS="-O2 -g -mmacosx-version-min=12.0"
+            ;;
+          windows-*)
+            # Link libgcc and winpthread in: no MinGW DLLs beside the .exe.
+            LDFLAGS="$LDFLAGS -linkmode=external -extldflags=-static"
+            ;;
+        esac
+        build() { GOOS="$1" GOARCH="$2" go build -trimpath -tags "$TAGS" -ldflags "$LDFLAGS" -o "dist/$3" ./cmd/celeste; }
+        # Each runner builds only its own target: CGo needs that OS's C
+        # toolchain. The names below are the updater contract's.
+        case "$TARGET" in
+          linux-amd64)
+            build linux amd64 celeste-linux-amd64
+            ;;
+          linux-arm64)
+            build linux arm64 celeste-linux-arm64
+            ;;
+          darwin-amd64)
+            build darwin amd64 celeste-darwin-amd64
+            ;;
+          darwin-arm64)
+            build darwin arm64 celeste-darwin-arm64
+            ;;
+          windows-amd64)
+            build windows amd64 celeste-windows-amd64.exe
+            ;;
+          *)
+            echo "::error::unknown target $TARGET"
+            exit 1
+            ;;
+        esac
+
+    # Every binary runs on the runner that built it, release or dry run:
+    # it starts, it carries working tree-sitter parsers (index selfcheck
+    # indexes a small TypeScript/PHP/Python/Java repo and fails on the regex
+    # fallback), its persona decrypts, and it links only what every
+    # machine of that OS has.
+    - name: Smoke test on this runner
+      env:
+        TARGET: ${{ matrix.target }}
+        PERSONA: ${{ steps.build.outputs.persona }}
+      run: |
+        set -euo pipefail
+        bin="dist/celeste-${TARGET}"
+        case "$TARGET" in windows-*) bin="${bin}.exe" ;; esac
+        "./$bin" --version
+        "./$bin" index selfcheck
+        if [ "$PERSONA" = yes ]; then
+          "./$bin" persona verify
+        fi
+        # Captured, not piped into grep -q: under pipefail an early grep
+        # exit could SIGPIPE the producer and hide a match.
+        case "$TARGET" in
+          linux-*)
+            info="$(file "$bin")"
+            echo "$info"
+            case "$info" in
+              *"statically linked"*|*"static-pie linked"*) ;;
+              *) echo "::error::$bin is not statically linked"; exit 1 ;;
+            esac
+            ;;
+          darwin-*)
+            libs="$(otool -L "$bin" | tail -n +2)"
+            echo "$libs"
+            if printf '%s\n' "$libs" | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' >/dev/null; then
+              echo "::error::$bin links a library outside the OS"
+              exit 1
+            fi
+            minos="$(vtool -show-build "$bin" | awk '$1 == "minos" {print $2}')"
+            echo "minos $minos"
+            if [ "$minos" != 12.0 ]; then
+              echo "::error::$bin requires macOS $minos, want 12.0"
+              exit 1
+            fi
+            ;;
+          windows-*)
+            # objdump ships with the MinGW gcc; take whichever name the
+            # image puts on PATH and fail loudly if neither is there.
+            od="$(command -v objdump || command -v x86_64-w64-mingw32-objdump || true)"
+            if [ -z "$od" ]; then
+              echo "::error::no objdump on PATH to check $bin's DLL imports"
+              exit 1
+            fi
+            dlls="$("$od" -p "$bin" | grep 'DLL Name')"
+            echo "$dlls"
+            case "$dlls" in
+              *libgcc*|*libwinpthread*|*libstdc*)
+                echo "::error::$bin needs MinGW DLLs"
+                exit 1
+                ;;
+            esac
+            ;;
+        esac
+
+    # Tag builds only: a dry-run binary carries the persona key but no
+    # signature, so it stays on its runner.
+    - name: Upload binary
+      if: github.event_name == 'push'
+      uses: actions/upload-artifact@v7
+      with:
+        name: celeste-${{ matrix.target }}
+        path: dist/celeste-${{ matrix.target }}*
+        if-no-files-found: error
+        retention-days: 7
+
+  release:
+    name: Create Release
+    needs: build
+    # Only a pushed v* tag publishes. A workflow_dispatch dry run stops after
+    # the build job, even when started from a tag.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        # Lockstep with the build job (see the comment there).
+        go-version: '1.26.6'
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+    - name: Download binaries
+      uses: actions/download-artifact@v8
+      with:
+        pattern: celeste-*
+        path: dist
+        merge-multiple: true
+
+    # Artifacts do not keep file modes: restore the executable bit the
+    # archives have always carried.
+    - name: Restore executable bits
+      run: |
+        set -euo pipefail
+        chmod 0755 dist/celeste-*
+        ls -l dist
 
     # Fail the release, not users (W5 ruling 20): the runner can execute the
     # linux-amd64 binary, and `persona verify` exits non-zero unless all
-    # four profiles decrypt and match SOURCE.json. The other four come from
-    # the same source and flags. No artifact may record the key in its
+    # four profiles decrypt and match SOURCE.json (each build job already
+    # ran it on its own binary). No artifact may record the key in its
     # build info. Nothing is archived, signed or published if this fails.
     - name: Verify the persona
       run: |

@@ -306,6 +306,10 @@ func runIndexCommand(args []string) {
 			fmt.Println(indexer.ProjectSummary())
 			return
 
+		case "selfcheck":
+			// Hidden: the release workflow's proof that tree-sitter shipped.
+			os.Exit(runIndexSelfCheck())
+
 		case "reset":
 			// Delete index entirely
 			dbPath := codegraph.DefaultIndexPath(cwd)
