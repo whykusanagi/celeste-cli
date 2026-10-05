@@ -54,6 +54,7 @@ func analyzeGo(ctx context.Context, workspace string, relFiles []string) (*goRes
 	if err != nil {
 		return nil, err
 	}
+	defer probe("analyze (post-load)")()
 	a := &goAnalyzer{
 		l:       l,
 		module:  map[*types.Package]bool{},

@@ -134,6 +134,8 @@ func loadGo(ctx context.Context, workspace string, relFiles []string) (*goLoader
 	}
 	sort.Strings(dirs)
 
+	defer probe("loadGo total")()
+	stopParse := probe("loadGo parse+dirs")
 	modRoots := map[string]bool{}
 	modCache := map[string][2]string{}
 	for _, d := range dirs {
@@ -158,11 +160,20 @@ func loadGo(ctx context.Context, workspace string, relFiles []string) (*goLoader
 		l.loadDir(absDir, importPath, byDir[d])
 	}
 
-	if goBin, err := exec.LookPath("go"); err == nil {
+	stopParse()
+	stopLP := probe("lookpath go")
+	goBin, lpErr := exec.LookPath("go")
+	stopLP()
+	if probeOn {
+		fmt.Fprintf(os.Stderr, "cgprobe: bctx.GOROOT=%q modRoots=%d dirs=%d\n", l.bctx.GOROOT, len(modRoots), len(dirs))
+	}
+	if err := lpErr; err == nil {
 		if l.bctx.GOROOT == "" {
 			// Release binaries are built with -trimpath, so they do not
 			// know a GOROOT; ask the go command for the standard library.
+			stop := probe("go env GOROOT")
 			l.bctx.GOROOT = goEnvGOROOT(ctx, goBin)
+			stop()
 		}
 		roots := make([]string, 0, len(modRoots))
 		for r := range modRoots {
@@ -170,13 +181,18 @@ func loadGo(ctx context.Context, workspace string, relFiles []string) (*goLoader
 		}
 		sort.Strings(roots)
 		for _, r := range roots {
+			stop := probe("go list module")
 			l.listModule(goBin, r)
+			stop()
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
+	stopCheck := probe("type-check all units")
+	defer stopCheck()
+	defer probeFlush("loadGo")
 	paths := make([]string, 0, len(l.units))
 	for p := range l.units {
 		paths = append(paths, p)
@@ -371,7 +387,9 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 		dir = lp.Dir
 		names = lp.GoFiles
 	} else {
+		t0 := time.Now()
 		bp, err := l.bctx.Import(p, fromDir, 0)
+		probeAdd("build.Import", t0)
 		if err != nil && bp == nil {
 			e.err = err
 			return nil, err
@@ -387,10 +405,20 @@ func (l *goLoader) importExternal(p, fromDir string) (*types.Package, error) {
 		names = bp.GoFiles
 	}
 	key := l.stdKey(dir)
+	if probeOn {
+		probeMu.Lock()
+		probeAcc["ext imports"]++
+		if key == "" {
+			probeAcc["ext imports uncacheable"]++
+		}
+		probeMu.Unlock()
+	}
 	if pkg := stdPkgs.get(key); pkg != nil {
 		e.pkg = pkg
 		return pkg, nil
 	}
+	t1 := time.Now()
+	defer probeAdd("ext parse+check", t1)
 	var asts []*ast.File
 	for _, n := range names {
 		f, err := parser.ParseFile(l.fset, filepath.Join(dir, n), nil, parser.SkipObjectResolution)

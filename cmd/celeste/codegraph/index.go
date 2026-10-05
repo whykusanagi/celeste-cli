@@ -239,13 +239,19 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 // version) never linger next to the new ones. Readers see an empty or
 // partial graph until it finishes; Update never empties the index.
 func (idx *Indexer) buildLocked(ctx context.Context) error {
+	defer probe("BUILD total")()
+	stopW := probe("build walk")
 	files, err := idx.walkSourceFiles()
+	stopW()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
 	}
+	stopR := probe("build ResetGraph")
 	if err := idx.store.ResetGraph(); err != nil {
 		return err
 	}
+	stopR()
+	stopP1 := probe("build pass1 non-go")
 
 	// Pass 1: store all symbols, MinHash, tokens, LSH bands, and file records.
 	// Collect raw edges for deferred resolution in pass 2. Go files are
@@ -274,6 +280,7 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	// Cross-file call targets that weren't available during pass 1 are now
 	// resolvable via GetSymbolIDByName.
 	idx.resolveAndStoreEdges(allRawEdges)
+	stopP1()
 
 	if len(goFiles) > 0 {
 		if err := idx.indexGo(ctx, goFiles, nil); err != nil {
@@ -285,6 +292,8 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 	// the same hash family and compare signatures meaningfully. Idempotent
 	// — re-running Build on the same index is a no-op for seeds because
 	// loadOrInitHasher already restored them at NewIndexer time.
+	stopT := probe("build seeds+tokenstats+meta")
+	defer stopT()
 	if err := idx.persistHasherSeeds(); err != nil {
 		return fmt.Errorf("persist seeds: %w", err)
 	}
@@ -317,6 +326,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer probe("UPDATE total")()
 	idx.buildMu.Lock()
 	defer idx.buildMu.Unlock()
 	indexedFiles, err := idx.store.GetAllFiles()

@@ -25,10 +25,14 @@ const (
 // Go-sourced edge is rewritten, because a change in one package can move
 // edges that start in another.
 func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[string]bool) error {
+	stopA := probe("analyzeGo total")
 	res, err := analyzeGo(ctx, idx.workspace, goFiles)
+	stopA()
 	if err != nil {
 		return err
 	}
+	defer probe("indexGo store")()
+	stopSym := probe("  symbols")
 
 	resolutions := make(map[string]string, len(res.files))
 	parsed := make(map[string]bool, len(res.files))
@@ -53,10 +57,14 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 			_ = idx.store.DeleteFileSymbols(rel)
 		}
 	}
+	stopSym()
+	stopRes := probe("  SetFileResolutions")
 	if err := idx.store.SetFileResolutions(resolutions); err != nil {
 		return err
 	}
 
+	stopRes()
+	stopQ := probe("  GoQualIDs+edges")
 	quals, err := idx.store.GoQualIDs()
 	if err != nil {
 		return err
@@ -77,6 +85,9 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 		return err
 	}
 
+	stopQ()
+	stopI := probe("  SetGoImplements")
+	defer stopI()
 	impl := make(map[int64]string, len(res.implements))
 	for q, names := range res.implements {
 		if id, ok := quals[q]; ok {
@@ -86,7 +97,10 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 	if err := idx.store.SetGoImplements(impl); err != nil {
 		return err
 	}
-	return idx.store.SetMeta(metaGoModules, []byte(goModFingerprint(idx.workspace, goFiles)))
+	stopFP := probe("goModFingerprint")
+	fp := goModFingerprint(idx.workspace, goFiles)
+	stopFP()
+	return idx.store.SetMeta(metaGoModules, []byte(fp))
 }
 
 // goModulesChanged reports whether go.mod/go.sum changed since the last Go
