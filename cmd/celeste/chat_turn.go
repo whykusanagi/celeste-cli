@@ -170,7 +170,7 @@ func (a *TUIClientAdapter) newTurnLoop(req tui.TurnRequest, t *chatTurn) *loop.L
 	}
 	lim.KeepToolMetadata = true
 	l := &loop.Loop{
-		Client:       chatLLM{client: a.client, tools: req.Tools, plan: a.plan, reg: a.registry},
+		Client:       chatLLM{client: a.client, tools: req.Tools},
 		Tools:        a.registry,
 		Limits:       lim,
 		Gate:         a.gate,
@@ -439,13 +439,12 @@ func (a *TUIClientAdapter) doneMsg(t *chatTurn, res loop.Result, err error) tui.
 
 // chatLLM is the chat's loop.LLM: the shared client, offering no tools when
 // the chat has them off (NSFW mode, a provider without function calling),
-// and only the plan-mode tools while plan mode is on (read per request, so
-// an approval mid-turn offers the full set on the next one).
+// and only the plan-mode tools while plan mode is on (the client's tool
+// filter reads it per request, so an approval mid-turn offers the full set
+// on the next one).
 type chatLLM struct {
 	client *llm.Client
 	tools  bool
-	plan   *planState
-	reg    *tools.Registry
 }
 
 func (c chatLLM) SendMessageStreamEvents(ctx context.Context, msgs []tui.ChatMessage, defs []tui.SkillDefinition, cb llm.StreamEventCallback) error {
@@ -456,7 +455,7 @@ func (c chatLLM) GetSkills() []tui.SkillDefinition {
 	if !c.tools {
 		return nil
 	}
-	return planFilter(c.client.GetSkills(), c.plan, c.reg)
+	return c.client.GetSkills()
 }
 
 // chatCompactor is the chat's loop.Compactor: before every request it

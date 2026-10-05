@@ -47,6 +47,9 @@ type Client struct {
 	// windowFn, when set, is the context window GetSkills fits the tools
 	// to; nil resolves it from config (SetWindowFunc).
 	windowFn func() int
+	// toolFilter, when set, narrows the registry's tools before the fit
+	// (SetToolFilter), so the fit and its notice count only what is sent.
+	toolFilter func([]tui.SkillDefinition) []tui.SkillDefinition
 	// lastFit and lastWindow are GetSkills' last tool fit, for
 	// TakeToolNotice; toolNotices dedupes its notice for this client's
 	// session (#310 review: per session, not per process); nil until
@@ -487,6 +490,17 @@ func (c *Client) SetWindowFunc(fn func() int) {
 	c.windowFn = fn
 }
 
+// SetToolFilter makes GetSkills narrow the tools with fn before fitting
+// them to the window (the chat drops submit_plan outside plan mode, and
+// every write tool in it), so the fit spends its budget only on tools that
+// are sent and TakeToolNotice counts those (K2). fn is called without the
+// client's lock held and must not modify its argument.
+func (c *Client) SetToolFilter(fn func([]tui.SkillDefinition) []tui.SkillDefinition) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.toolFilter = fn
+}
+
 // GetSkills returns the tools the model may call in this client's mode,
 // fitted to the context window next to the system prompt
 // (compact.FitTools): on a small window a core set with short
@@ -494,9 +508,12 @@ func (c *Client) SetWindowFunc(fn func() int) {
 // while they fit). When that reduces the set, TakeToolNotice says so once.
 func (c *Client) GetSkills() []tui.SkillDefinition {
 	c.mu.RLock()
-	mode, cfg, system, windowFn := c.toolMode, c.config, c.systemPrompt, c.windowFn
+	mode, cfg, system, windowFn, filter := c.toolMode, c.config, c.systemPrompt, c.windowFn, c.toolFilter
 	c.mu.RUnlock()
 	defs := skillDefinitions(c.registry, mode)
+	if filter != nil {
+		defs = filter(defs)
+	}
 	window := 0
 	switch {
 	case windowFn != nil:
