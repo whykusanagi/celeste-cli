@@ -27,6 +27,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
@@ -918,7 +919,8 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	if a.state != nil {
 		state = a.state()
 	}
-	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, Overhead: int(a.overhead.Load()), State: state}, hooked)
+	overhead := int(a.overhead.Load())
+	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, Overhead: overhead, State: state}, hooked)
 	if blocked != "" {
 		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
 	}
@@ -931,11 +933,19 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	a.hooks.PostCompact(ctx, trigger, res.Summary)
 	// out is the summary messages followed by the untouched tail.
 	summaryLen := len(out) - (len(msgs) - res.Cut)
+	if overhead <= 0 && a.client != nil {
+		// No turn has measured the prefix yet (a /compact on a resumed
+		// session): the system prompt and the tool schemas, as the turn's
+		// meter counts them.
+		overhead = ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(a.client.GetSkills())
+	}
 	return tui.SummaryOutcome{
 		Cut:         res.Cut,
 		Messages:    out[:summaryLen],
 		Line:        res.Line(),
 		TokensAfter: res.TokensAfter,
+		// The header and the context bar show the next request (#400).
+		ContextTokens: overhead + res.TokensAfter,
 	}, nil
 }
 

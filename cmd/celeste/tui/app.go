@@ -264,7 +264,11 @@ type SummaryOutcome struct {
 	Cut         int
 	Messages    []ChatMessage
 	Line        string
-	TokensAfter int
+	TokensAfter int // the summarized history alone (summary and kept messages)
+	// ContextTokens is what the next request sends after the summary: the
+	// system prompt, the tool schemas, the summary and the kept messages
+	// (#400). 0: unknown, and TokensAfter is shown.
+	ContextTokens int
 }
 
 // AgentCommandRunner is an optional extension for handling /agent from TUI.

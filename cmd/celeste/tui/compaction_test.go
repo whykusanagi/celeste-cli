@@ -32,6 +32,8 @@ type fakeCompactClient struct {
 	deadlines  []time.Duration
 	// tokensAfter is the estimate a summary reports (K1).
 	tokensAfter int
+	// contextTokens is the next request's size a summary reports (#400).
+	contextTokens int
 }
 
 // SummaryTimeout is summaryCap, or the default 30-minute request cap.
@@ -78,10 +80,11 @@ func (f *fakeCompactClient) SummarizeContext(ctx context.Context, msgs []ChatMes
 	}
 	cut := len(msgs) / 2
 	return SummaryOutcome{
-		Cut:         cut,
-		Messages:    []ChatMessage{{Role: "user", Content: "<compacted-context>summary</compacted-context>"}},
-		Line:        "summarized for test",
-		TokensAfter: f.tokensAfter,
+		Cut:           cut,
+		Messages:      []ChatMessage{{Role: "user", Content: "<compacted-context>summary</compacted-context>"}},
+		Line:          "summarized for test",
+		TokensAfter:   f.tokensAfter,
+		ContextTokens: f.contextTokens,
 	}, nil
 }
 
@@ -356,4 +359,53 @@ func TestTurnCompactionUpdatesContextBar(t *testing.T) {
 	m, _ = feed(t, m, CompactedMsg{Line: "pruned", Saved: 20_000})
 	assert.Equal(t, 30_000, m.contextTracker.CurrentTokens)
 	assert.Equal(t, 30_000, m.contextBar.usedTokens)
+}
+
+// #400: after an automatic summary the header and the context bar show what
+// the next request will send (system prompt, tool schemas, the summary and
+// the kept messages), not the summary's own size. The smoke showed
+// "469 / 32.8K (1%)" while the next request was 16.6K (51%).
+func TestAutoSummaryShowsTheNextRequestSize(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m, client := newCompactTestApp(t)
+			client.tokensAfter = 469
+			client.contextTokens = 16_600
+			m.contextTracker.MaxTokens = 32_800
+			sized, _ := m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+			m = sized.(AppModel)
+			m = runToolTurn(t, m)
+			m, _ = step(t, m, ContextBudgetMsg{UsedTokens: 30_000, MaxTokens: 32_800, UsagePercent: 91, TurnCount: 4})
+
+			m, cmd := feed(t, m, TurnDoneMsg{Stop: "done", Summarize: true})
+			require.True(t, m.summarizing, "the turn asked for a summary")
+			m = runCmd(t, m, cmd)
+			require.False(t, m.summarizing)
+
+			assert.Equal(t, 16_600, m.contextTracker.CurrentTokens)
+			assert.Equal(t, 16_600, m.contextBar.usedTokens, "the bar must show the next request")
+			frame := auditView(m)
+			assert.Contains(t, frame, "16.6K / 32.8K", frame)
+			assert.NotContains(t, frame, "469 / 32.8K", frame)
+			assertFrameFits(t, frame, sz.w, sz.h)
+		})
+	}
+}
+
+// Messages sent while the summary was being written are counted on top of
+// the size the summary reported.
+func TestSummaryCountsMessagesSentWhileItWasWritten(t *testing.T) {
+	m, client := newCompactTestApp(t)
+	client.contextTokens = 10_000
+	m = runToolTurn(t, m)
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+	m, cmd := step(t, m, SendMessageMsg{Content: "/compact"})
+	msgs := collectMsgs(cmd)
+	m.chat = m.chat.AppendLLM(ChatMessage{Role: "user", Content: strings.Repeat("x", 4000)})
+	for _, msg := range msgs {
+		if s, ok := msg.(ContextSummarizedMsg); ok {
+			m, _ = step(t, m, s)
+		}
+	}
+	assert.Equal(t, 10_000+config.EstimateTokens(strings.Repeat("x", 4000)), m.contextTracker.CurrentTokens)
 }
