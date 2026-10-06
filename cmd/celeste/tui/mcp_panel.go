@@ -186,9 +186,6 @@ func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 	return m, nil
 }
 
-// mcpPanelKeys is the panel's key-hint footer.
-const mcpPanelKeys = "↑↓ nav · space toggle · c connect · d disconnect · r reconnect · esc close"
-
 // View renders the MCP panel.
 func (m MCPPanelModel) View() string {
 	if !m.active {
@@ -215,7 +212,6 @@ func (m MCPPanelModel) View() string {
 	nameStyle := lipgloss.NewStyle().Foreground(ColorText)
 	infoStyle := lipgloss.NewStyle().Foreground(ColorTextSecondary)
 	cursorStyle := lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true)
-	footerStyle := lipgloss.NewStyle().Foreground(ColorTextMuted)
 
 	edge := borderStyle.Render("│")
 	row := func(content string) string { return edge + padRight(content, innerW) + edge }
@@ -259,10 +255,9 @@ func (m MCPPanelModel) View() string {
 
 	lines = append(lines, row(""))
 	lines = append(lines, row(infoStyle.Render(fmt.Sprintf("  Total: %d external tools available", totalTools))))
+	// The keys are on the app's hint row (hintsFor): the panel repeats no
+	// footer of its own (#398 C4).
 	lines = append(lines, borderStyle.Render("╰"+strings.Repeat("─", innerW)+"╯"))
-
-	// Key hints, short enough for 80 columns (cut with "…" below that).
-	lines = append(lines, footerStyle.Render(fitWidth(mcpPanelKeys, w)))
 
 	return strings.Join(lines, "\n")
 }

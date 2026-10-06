@@ -127,3 +127,20 @@ func TestHandoffResetsSkillsRow(t *testing.T) {
 		})
 	}
 }
+
+// #398 C4: /mcp shows one key-hint row, not the panel's and the status
+// bar's near-copies.
+func TestMCPShowsOneKeyHintRow(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m := newAuditApp(t, &fakeCompactClient{}, sz.w, sz.h)
+			m, _ = step(t, m, SendMessageMsg{Content: "/mcp"})
+			require.True(t, m.mcpPanel.Active())
+			frame := auditView(m)
+			assertFrameFits(t, frame, sz.w, sz.h)
+			assert.Contains(t, frame, "MCP Servers")
+			assert.Equal(t, 1, strings.Count(frame, "space toggle"), "key-hint rows:\n%s", frame)
+			assert.Contains(t, lineWith(frame, "space toggle"), "esc close")
+		})
+	}
+}
