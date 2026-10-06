@@ -93,8 +93,13 @@ as it finishes an interrupted one, so the other languages keep their rows
 until each file is parsed again, every non-Go edge is resolved again, and the
 result is the graph a fresh build gives (an index from v1.16 resolved each
 file's calls before the later files were stored, so it lacks edges a build
-has). An update cut short part-way (a session closed during indexing) keeps
-what it stored, and the next one carries on. An empty index gets a full
+has). Until the upgrade finishes, a re-parsed file's non-Go edges (into and
+out of it) are missing: they return when the non-Go edges are resolved again
+in one transaction. An update cut short part-way (a session closed during
+indexing) keeps what it stored, and the next one carries on. Each run
+type-checks the whole module before it stores any Go file, so a run must
+outlast that type-check (and the non-Go re-resolve) to add Go rows; runs
+shorter than that never finish the Go pass. An empty index gets a full
 build. Go `init` functions are stored under
 `pkg/path.init#<file>`, one per file, since every `init` in a package shares
 the name `pkg/path.init`.

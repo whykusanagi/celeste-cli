@@ -544,9 +544,9 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		return fmt.Errorf("rebuild token stats: %w", err)
 	}
 
-	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
-		return fmt.Errorf("record index version: %w", err)
-	}
+	// The graph version needs no stamp here: UpgradeGraph (above) and
+	// ResetGraph (a full build) stamp it in the transaction that empties
+	// the graph (#394).
 	if recovering {
 		if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
 			return fmt.Errorf("mark build finished: %w", err)

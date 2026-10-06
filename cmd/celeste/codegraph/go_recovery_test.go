@@ -240,8 +240,12 @@ func TestUpdate_FreshIndexAcrossShortSessionsReachesFullCount(t *testing.T) {
 
 // v1Index writes the index v1.16 left: every file indexed on its own in
 // walk order (its Update path), so a call to a file later in the order has
-// no edge; Go edges resolved by name; no qualified names and no graph
-// version. extra adds a row v1.16's parsers gave that 2.0's do not.
+// no edge; no qualified names and no graph version, plus a stale row
+// (v1only) that 2.0's parsers do not give. It indexes with 2.0's indexFile,
+// so its Go edges are 2.0's, not v1.16's name-resolved ones; the upgrade
+// drops every Go edge, so that does not matter. v1.16's schema (no qual_name,
+// implements or resolution columns) is covered by
+// TestUpgrade_V1SchemaMatchesFreshBuild.
 func v1Index(t *testing.T, ws, db string) {
 	t.Helper()
 	idx, err := NewIndexer(ws, db)
@@ -279,6 +283,38 @@ func TestUpgrade_V1IndexMatchesFreshBuild(t *testing.T) {
 	require.NoError(t, idx.Update())
 	assert.Equal(t, want, edgeKeys(t, idx))
 	assert.Equal(t, len(want), len(edgeKeys(t, idx)))
+	assert.Equal(t, wantSyms, symbolKeys(t, idx))
+	requireFinished(t, idx)
+}
+
+// A v1.16 database also lacks the qual_name, implements and resolution
+// columns. Opening it adds them, and the upgrade still ends at the graph a
+// fresh build gives.
+func TestUpgrade_V1SchemaMatchesFreshBuild(t *testing.T) {
+	requireGoToolchain(t)
+	files := manyGoFiles(12)
+	ref, _ := buildFixture(t, files)
+	want, wantSyms := edgeKeys(t, ref), symbolKeys(t, ref)
+
+	ws := writeFixture(t, files)
+	db := filepath.Join(t.TempDir(), "cg.db")
+	v1Index(t, ws, db)
+	st, err := NewStore(db)
+	require.NoError(t, err)
+	for _, stmt := range []string{
+		`DROP INDEX idx_symbols_qual`,
+		`ALTER TABLE symbols DROP COLUMN qual_name`,
+		`ALTER TABLE symbols DROP COLUMN implements`,
+		`ALTER TABLE files DROP COLUMN resolution`,
+	} {
+		_, err := st.db.Exec(stmt)
+		require.NoError(t, err, stmt)
+	}
+	require.NoError(t, st.Close())
+
+	idx := openIndexer(t, ws, db)
+	require.NoError(t, idx.Update())
+	assert.Equal(t, want, edgeKeys(t, idx))
 	assert.Equal(t, wantSyms, symbolKeys(t, idx))
 	requireFinished(t, idx)
 }
