@@ -33,6 +33,11 @@ import (
 // default 60 chars/sec = 3 per tick) sets how many characters each tick shows.
 const typingTickInterval = 50 * time.Millisecond // 20fps
 
+// modalWaitTickInterval is the chain's interval while only a tool waiting
+// on the ask or permission modal moves on screen (#401): the elapsed time
+// still counts, a redraw a second instead of ten.
+const modalWaitTickInterval = time.Second
+
 // AppModel is the root model for the Celeste TUI application.
 type AppModel struct {
 	// Sub-components
@@ -82,6 +87,7 @@ type AppModel struct {
 	// scheduled and not yet handled: at most one chain runs (2.0 F2e).
 	tickPending bool
 	tickGen     uint64
+	tickEvery   time.Duration // the interval the chain's last tick was scheduled with
 
 	// streamDone is true once StreamDoneMsg has been received for the
 	// currently-rendering assistant message. It coordinates the typing
@@ -859,14 +865,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.permissionPrompt.Active() {
 			var cmd tea.Cmd
 			m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
-			return m, cmd
+			return m, tea.Batch(cmd, m.resumeTickAfterModal())
 		}
 
 		// If ask prompt is active, route keys to it before normal handling
 		if m.askPrompt.Active() {
 			var cmd tea.Cmd
 			m.askPrompt, cmd = m.askPrompt.Update(msg)
-			return m, cmd
+			return m, tea.Batch(cmd, m.resumeTickAfterModal())
 		}
 
 		// The MCP panel and the selector act on single keys too (#320).
