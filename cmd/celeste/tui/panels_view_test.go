@@ -37,15 +37,14 @@ func mcpPanelAt(w int) MCPPanelModel {
 	return p
 }
 
-// V8: every box row has its right border, the box is one width, and the
-// footer fits at 80 columns.
+// V8: every box row has its right border and the box is one width. The
+// keys are on the app's hint row, not a panel footer (#398 C4).
 func TestMCPPanelViewBoxedAndFits(t *testing.T) {
 	for _, sz := range panelAuditSizes {
 		view := mcpPanelAt(sz.w).View()
 		assertFitsWidth(t, view, sz.w)
 		lines := strings.Split(stripANSI(view), "\n")
-		footer := lines[len(lines)-1]
-		box := lines[:len(lines)-1]
+		box := lines
 		boxW := lipgloss.Width(box[0])
 		for i, ln := range box {
 			if lipgloss.Width(ln) != boxW {
@@ -60,9 +59,6 @@ func TestMCPPanelViewBoxedAndFits(t *testing.T) {
 			if !strings.Contains(stripANSI(view), want) {
 				t.Fatalf("%dx%d: the panel lacks %q:\n%s", sz.w, sz.h, want, stripANSI(view))
 			}
-		}
-		if !strings.Contains(footer, "close") && !strings.Contains(footer, "Close") {
-			t.Fatalf("%dx%d: the footer lost its close hint: %q", sz.w, sz.h, footer)
 		}
 	}
 }

@@ -20,8 +20,17 @@ var legacyCommands = map[string]func(AppModel) (AppModel, tea.Cmd){
 	"debug":  AppModel.legacyDebug,
 }
 
+// legacyClear does what /clear does: with a session manager it saves the
+// old session and starts a new one, so the transcript stays resumable
+// instead of being overwritten by the emptied chat (#398).
 func (m AppModel) legacyClear() (AppModel, tea.Cmd) {
+	if m.sessionManager != nil {
+		m = m.handleSessionAction(&commands.SessionAction{Action: "new"})
+		m.status = m.status.SetText("Chat cleared")
+		return m, nil
+	}
 	m.chat = m.chat.Clear()
+	m.skills = m.skills.ResetStatus()
 	m.untrackPlan()
 	m.status = m.status.SetText("Chat cleared")
 	return m, nil
