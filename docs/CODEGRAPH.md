@@ -270,6 +270,22 @@ method with its edge counts and source body and reports these kinds:
 - `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
   checks on the body.
 
+The `kinds` argument is a comma-separated, case-insensitive list of these
+kinds, or `ALL` (the default). An unknown kind is an error that lists the
+valid ones, so a typo is never reported as a clean codebase.
+
+## Queries Without an Index
+
+The MCP query tools (`celeste_code_review`, `celeste_code_graph`,
+`celeste_code_search`, `celeste_code_symbols`) never build an index. On a
+workspace whose index was never built they return an error result
+(`isError: true`) saying there is no code graph index and to run
+`celeste_index` with `operation: "rebuild"` or `celeste index`, instead of an
+empty answer that reads as "no findings" or "symbol not found". A query does
+not create the index database either. Every soft tool error (a missing or
+invalid argument, no index, an unknown background run) is an `isError`
+result with the tool's message; JSON-RPC errors are kept for protocol faults.
+
 ## LSH Banding (planned)
 
 The MinHash signatures are already LSH-ready. The planned optimization partitions the 128 hash values into B bands of R rows (e.g., 16 bands x 8 rows), hashes each band into a bucket, and only compares symbols sharing a bucket with the query. This reduces search from O(N) brute-force to O(1) approximate lookup.

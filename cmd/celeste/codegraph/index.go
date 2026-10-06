@@ -1189,6 +1189,26 @@ func (idx *Indexer) Stats() (*StoreStats, error) {
 	return idx.store.Stats()
 }
 
+// HasIndex reports whether this index has been built: a build or update
+// finished (it records the graph version), or the store holds files or
+// symbols from an earlier one. A database that was only opened, which is
+// what NewIndexer leaves behind for a never-indexed workspace, has none of
+// these (#399).
+func (idx *Indexer) HasIndex() (bool, error) {
+	v, err := idx.store.GetMeta(metaGraphVersion)
+	if err != nil {
+		return false, err
+	}
+	if len(v) > 0 {
+		return true, nil
+	}
+	stats, err := idx.store.Stats()
+	if err != nil {
+		return false, err
+	}
+	return stats.TotalFiles > 0 || stats.TotalSymbols > 0, nil
+}
+
 // ProjectSummary returns a brief summary suitable for the system prompt.
 func (idx *Indexer) ProjectSummary() string {
 	stats, err := idx.store.Stats()

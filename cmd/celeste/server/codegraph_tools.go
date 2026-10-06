@@ -27,7 +27,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
+	"os"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
@@ -77,6 +79,40 @@ func (s *Server) workspaceFromArgs(args map[string]any) (string, error) {
 	return workspace, nil
 }
 
+// noIndexError is the soft error the query tools return for a workspace
+// whose code graph was never built. Without it a query reads an empty graph
+// and answers "Codebase looks clean" or "Symbol not found" (#399).
+func noIndexError(workspace string) error {
+	return softError("No code graph index for %s; run celeste_index (operation rebuild) or `celeste index` to build one.", workspace)
+}
+
+// queryIndexer is indexerFor for the read-only query tools: it fails with
+// noIndexError when the workspace has no built index. A workspace with no
+// index database on disk is answered without opening one, so a query never
+// creates the database.
+func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error) {
+	s.indexerMu.Lock()
+	open := s.indexers[workspace] != nil
+	s.indexerMu.Unlock()
+	if !open {
+		if _, err := os.Stat(codegraph.IndexPath(workspace)); errors.Is(err, fs.ErrNotExist) {
+			return nil, false, noIndexError(workspace)
+		}
+	}
+	idx, cached, err := s.indexerFor(workspace)
+	if err != nil {
+		return nil, false, err
+	}
+	built, err := idx.HasIndex()
+	if err != nil {
+		return nil, false, fmt.Errorf("read index: %w", err)
+	}
+	if !built {
+		return nil, false, noIndexError(workspace)
+	}
+	return idx, cached, nil
+}
+
 // makeDirectToolHandler builds an MCP ToolHandler that runs a celeste
 // builtin tool against the per-workspace Indexer and returns the
 // result as a single text ContentBlock. All the direct-query tools
@@ -94,7 +130,7 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 		// would fail their ValidateInput checks if they ever get one.
 		delete(args, "workspace")
 
-		idx, cached, err := s.indexerFor(workspace)
+		idx, cached, err := s.queryIndexer(workspace)
 		if err != nil {
 			return nil, err
 		}
