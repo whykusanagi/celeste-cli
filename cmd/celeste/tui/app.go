@@ -1770,6 +1770,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// nothing to save, and the chat is cleared here.
 				if result.StateChange.ClearHistory && (!result.StateChange.NewSession || m.sessionManager == nil) {
 					m.chat = m.chat.Clear()
+					m.skills = m.skills.ResetStatus()
 					m.untrackPlan()
 				}
 				if result.StateChange.NewSession {

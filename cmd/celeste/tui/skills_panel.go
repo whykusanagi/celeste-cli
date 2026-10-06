@@ -72,6 +72,16 @@ func (s SkillsModel) SetCompleted(name string) SkillsModel {
 	return s
 }
 
+// ResetStatus drops the last call's ⚙ row: a new session starts without
+// the old one's tool status (#398 C1).
+func (s SkillsModel) ResetStatus() SkillsModel {
+	s.executingSkill = ""
+	s.lastCompleted = ""
+	s.lastError = ""
+	s.lastErrorSkill = ""
+	return s
+}
+
 func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, count int, reason string) SkillsModel {
 	s.endpoint = endpoint
 	s.model = model

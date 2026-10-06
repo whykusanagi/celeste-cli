@@ -4,9 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // failedToolTurn runs one turn whose single tool call fails.
@@ -77,6 +79,51 @@ func TestSkillsErrorRowFitsWithEllipsis(t *testing.T) {
 			require.NotEmpty(t, row, "the ⚙ row is on screen:\n%s", frame)
 			assert.True(t, strings.HasSuffix(row, "…"), "row %q must end with …", row)
 			assert.LessOrEqual(t, lipgloss.Width(row), sz.w)
+		})
+	}
+}
+
+func resize(t *testing.T, m AppModel, w, h int) AppModel {
+	t.Helper()
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: w, Height: h})
+	return m
+}
+
+// #398 C1: the ⚙ row of the last call does not carry over into the session
+// /clear starts.
+func TestClearResetsSkillsRow(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m, _ := newCompactTestApp(t)
+			mgr := &diskSessions{mgr: config.NewSessionManager()}
+			m = m.SetSessionManager(mgr, mgr.mgr.NewSession())
+			m = resize(t, m, sz.w, sz.h)
+			m = runToolTurn(t, m)
+			m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+			require.Contains(t, auditView(m), "⚙ tool_a ✓")
+
+			m, _ = step(t, m, SendMessageMsg{Content: "/clear"})
+			frame := auditView(m)
+			assertFrameFits(t, frame, sz.w, sz.h)
+			assert.NotContains(t, frame, "⚙ tool_a")
+			assert.Contains(t, frame, "New session created")
+		})
+	}
+}
+
+// #398 C1: nor into the session /handoff starts.
+func TestHandoffResetsSkillsRow(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m, ready := startTestHandoff(t, nil)
+			m = resize(t, m, sz.w, sz.h)
+			require.Contains(t, auditView(m), "⚙ tool_a ✓")
+
+			m, _ = step(t, m, ready)
+			frame := auditView(m)
+			assertFrameFits(t, frame, sz.w, sz.h)
+			assert.Contains(t, frame, "New session started")
+			assert.NotContains(t, frame, "⚙ tool_a")
 		})
 	}
 }
