@@ -700,6 +700,14 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 				targetID, ok2 = idx.resolveTarget(unqualified, edge.Kind, edge.SourceFile)
 			}
 		}
+		// C++ ns::f / Cls::f: a qualified callee resolves exactly to an
+		// out-of-line definition ("Shape::make") and otherwise to its last
+		// segment, a function defined inside a namespace block.
+		if !ok2 {
+			if i := strings.LastIndex(edge.TargetName, "::"); i >= 0 {
+				targetID, ok2 = idx.resolveTarget(edge.TargetName[i+2:], edge.Kind, edge.SourceFile)
+			}
+		}
 		if ok1 && ok2 {
 			out = append(out, Edge{SourceID: sourceID, TargetID: targetID, Kind: edge.Kind})
 		}
@@ -749,6 +757,14 @@ func (idx *Indexer) indexFile(relPath string) error {
 			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
 				unqualified := edge.TargetName[dotIdx+1:]
 				targetID, ok2 = idx.resolveTarget(unqualified, edge.Kind, relPath)
+			}
+		}
+		// C++ ns::f / Cls::f: a qualified callee resolves exactly to an
+		// out-of-line definition ("Shape::make") and otherwise to its last
+		// segment, a function defined inside a namespace block.
+		if !ok2 {
+			if i := strings.LastIndex(edge.TargetName, "::"); i >= 0 {
+				targetID, ok2 = idx.resolveTarget(edge.TargetName[i+2:], edge.Kind, relPath)
 			}
 		}
 		if ok1 && ok2 {
