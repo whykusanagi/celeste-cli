@@ -114,6 +114,39 @@ func runScopedCase(t *testing.T, c reviewCase) {
 	assert.Empty(t, smellKeys(smells, false, SmellLazyRedirect, SmellEmptyHandler))
 }
 
+// stripDead drops the " dead"/" live" suffix of STUB keys.
+func stripDead(keys []string) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = strings.TrimSuffix(strings.TrimSuffix(k, " dead"), " live")
+	}
+	sort.Strings(out)
+	return out
+}
+
+func runStubCase(t *testing.T, c reviewCase) {
+	t.Helper()
+	smells := reviewFixture(t, c.lang)
+	assert.Equal(t, stripDead(c.stubs), stripDead(smellKeys(smells, false, SmellStub)), "STUB rows")
+}
+
+// #396 G5: STUB is exactly a function with no callers whose body is empty,
+// holds only comments, or only raises "not implemented".
+func TestReview_GoStubs(t *testing.T) {
+	requireGoToolchain(t)
+	runStubCase(t, goReviewCase)
+}
+
+// #396 G5 regression on this repository: TrustPath (hooks/trust.go), a
+// one-liner with a real body, is not a STUB.
+func TestReview_RepoTrustPathIsNotAStub(t *testing.T) {
+	smells, files := repoReview(t, "../hooks/trust.go")
+	require.Contains(t, files["trust.go"], "func TrustPath(")
+	for _, s := range smells {
+		assert.False(t, s.Name == "TrustPath" && s.Kind == SmellStub, "TrustPath reported as a stub: %+v", s)
+	}
+}
+
 // #396 G3, G4: every TODO_FIXME, PLACEHOLDER and HARDCODED finding is scoped
 // to its own function body and carries the line it is on.
 func TestReview_GoScoped(t *testing.T) {
@@ -222,4 +255,63 @@ func TestReview_GoBuildConstrained(t *testing.T) {
 	assert.True(t, goBuildConstrained("a/x_arm64.go", []byte("package a\n")))
 	assert.False(t, goBuildConstrained("a/index.go", []byte("package a\n\n//go:build is not a constraint here\n")))
 	assert.False(t, goBuildConstrained("a/windowsish.go", []byte("package a\n")))
+}
+
+// #396 G5: the STUB definition, case by case.
+func TestStubBody(t *testing.T) {
+	body := func(stmts []string, comments ...string) funcSpan {
+		return funcSpan{HasBody: true, Stmts: stmts, Comments: comments}
+	}
+	cases := []struct {
+		name string
+		span funcSpan
+		want string
+	}{
+		{"empty", body(nil), stubEmpty},
+		{"python pass", body([]string{"pass"}), stubEmpty},
+		{"python ellipsis", body([]string{"..."}), stubEmpty},
+		{"docstring only", body([]string{`"""Does it."""`, "pass"}), stubEmpty},
+		{"TODO only", body(nil, "// TODO: write it"), stubTodo},
+		{"FIXME block comment", body(nil, "/* FIXME: later */"), stubTodo},
+		{"documented no-op", body(nil, "// Nothing to release: the pool owns it."), ""},
+		{"go panic", body([]string{`panic("not implemented")`}), stubNotImpl},
+		{"go panic unimplemented", body([]string{`panic("unimplemented: x")`}), stubNotImpl},
+		{"python raise", body([]string{`raise NotImplementedError("later")`}), stubNotImpl},
+		{"ruby raise", body([]string{`raise NotImplementedError`}), stubNotImpl},
+		{"ts throw", body([]string{`throw new Error("Not implemented");`}), stubNotImpl},
+		{"java throw", body([]string{`throw new UnsupportedOperationException();`}), stubNotImpl},
+		{"rust todo", body([]string{`todo!()`}), stubNotImpl},
+		{"return true", body([]string{"return true"}), ""},
+		{"return false", body([]string{"return false"}), ""},
+		{"return nil", body([]string{"return nil"}), ""},
+		{"return 0", body([]string{"return 0"}), ""},
+		{"return empty string", body([]string{`return ""`}), ""},
+		{"one-liner", body([]string{"return n + 1"}), ""},
+		{"ruby implicit return", body([]string{"@balance + amount"}), ""},
+		{"ruby puts", body([]string{"puts msg"}), ""},
+		{"other panic", body([]string{`panic("unreachable")`}), ""},
+		{"TODO next to a statement", body([]string{"x()"}, "// TODO: more"), ""},
+		{"declaration without body", funcSpan{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, stubBody(c.span))
+		})
+	}
+}
+
+// A function with callers is never a STUB, whatever its body; an empty
+// constructor is not one either.
+func TestDetectStub_CallersAndConstructors(t *testing.T) {
+	c := FunctionEdgeInfo{Name: "Flush", File: "a.go", Line: 3, Kind: "method", InEdges: 2}
+	_, ok := detectStub(c, funcSpan{HasBody: true, Comments: []string{"// TODO: x"}})
+	assert.False(t, ok, "has callers")
+	c.InEdges = 0
+	_, ok = detectStub(c, funcSpan{HasBody: true, Comments: []string{"// TODO: x"}})
+	assert.True(t, ok, "no callers, TODO-only body")
+	ctor := FunctionEdgeInfo{Name: "constructor", File: "a.ts", Line: 3, Kind: "method"}
+	_, ok = detectStub(ctor, funcSpan{HasBody: true, Constructor: true})
+	assert.False(t, ok, "empty constructor")
+	_, ok = detectStub(ctor, funcSpan{HasBody: true, Constructor: true, Comments: []string{"// TODO: wire"}})
+	assert.True(t, ok, "constructor with a TODO-only body")
 }

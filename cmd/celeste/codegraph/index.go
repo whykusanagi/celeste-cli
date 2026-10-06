@@ -1388,14 +1388,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 		if !cached {
 			data, err := os.ReadFile(absFile)
 			if err != nil {
-				// STUB detection still works without source (graph-only)
-				if wantAll || wantKind[SmellStub] {
-					if c.OutEdges == 0 && !isExpectedLeaf(c.Name) {
-						if smell, ok := detectStub(c, 0, nil); ok {
-							results = append(results, smell)
-						}
-					}
-				}
+				// No source, no body: nothing to judge.
 				continue
 			}
 			rf = rev.load(c.File, data)
@@ -1430,10 +1423,8 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- STUB detection ---
 		if wantAll || wantKind[SmellStub] {
-			if effectiveOut == 0 && !isExpectedLeaf(c.Name) {
-				if smell, ok := detectStub(c, bodyCalls, bodyLines); ok {
-					results = append(results, smell)
-				}
+			if smell, ok := detectStub(c, span); ok {
+				results = append(results, smell)
 			}
 		}
 
@@ -1599,9 +1590,18 @@ func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData [
 	}, true
 }
 
-func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmell, bool) {
+// detectStub reports a STUB: a function with no callers whose body is a
+// stub body (see stubBody). It never reports a declaration without a body
+// (an interface or abstract method), a body with any real statement
+// (a one-liner, a literal return), a function that has callers, an empty
+// constructor, a Python dunder, or a Protocol/ABC/@abstractmethod method.
+func detectStub(c FunctionEdgeInfo, s funcSpan) (CodeSmell, bool) {
 	// Skip code analysis files
 	if isCodeAnalysisFile(c.File) {
+		return CodeSmell{}, false
+	}
+	// A function with callers is in use, whatever its body (#396).
+	if c.InEdges > 0 {
 		return CodeSmell{}, false
 	}
 
@@ -1630,43 +1630,13 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 		}
 	}
 
-	// If body has calls but graph missed them, not a stub
-	if bodyCalls > 0 {
+	kind := stubBody(s)
+	if kind == "" {
 		return CodeSmell{}, false
 	}
-
-	// Skip very short utility names (min, max, abs, etc.)
-	if len(c.Name) <= 3 {
-		return CodeSmell{}, false
-	}
-
-	// Check if the body has a return statement with a non-trivial value.
-	// Functions that return struct literals, computed values, or formatted strings
-	// are simple value functions, not stubs.
-	meaningfulLines := 0
-	hasReturn := false
-	for _, line := range bodyLines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || trimmed == "{" || trimmed == "}" ||
-			strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		meaningfulLines++
-		if strings.HasPrefix(trimmed, "return ") || strings.HasPrefix(trimmed, "return\t") {
-			// Check if it returns something meaningful (not just nil/false/0)
-			returnVal := strings.TrimPrefix(trimmed, "return ")
-			returnVal = strings.TrimPrefix(returnVal, "return\t")
-			returnVal = strings.TrimSpace(returnVal)
-			if returnVal != "" && returnVal != "nil" && returnVal != "false" &&
-				returnVal != "0" && returnVal != "\"\"" && returnVal != "None" &&
-				returnVal != "null" && returnVal != "true" {
-				hasReturn = true
-			}
-		}
-	}
-
-	// If function has a meaningful return value, it's a simple function, not a stub
-	if hasReturn {
+	// An empty constructor is idiomatic (TS parameter properties, C++
+	// initializer lists, a Java no-arg constructor), not unfinished work.
+	if s.Constructor && kind == stubEmpty {
 		return CodeSmell{}, false
 	}
 
@@ -1675,13 +1645,12 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 	// the interface (often by code outside the module, like fmt or sort)
 	// and has no direct caller by design.
 	score := 3.0
-	reason := "zero outgoing calls and zero body calls"
-	switch {
-	case c.InEdges == 0 && c.Implements != "":
-		reason = "zero outgoing calls; reached through " + c.Implements + ", not dead code"
-	case c.InEdges == 0:
+	reason := kind + " and no callers"
+	if c.Implements != "" {
+		reason += "; reached through " + c.Implements + ", not dead code"
+	} else {
 		score += 2.0
-		reason = "zero outgoing AND incoming edges (likely dead code)"
+		reason += " (likely dead code)"
 	}
 	if c.Resolution == GoResolutionApproximate {
 		reason += " (approximate: file did not type-check, edges may be missing)"

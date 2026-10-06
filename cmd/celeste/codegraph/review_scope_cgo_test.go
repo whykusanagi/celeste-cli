@@ -73,3 +73,9 @@ func TestReview_TreeSitterScoped(t *testing.T) {
 		t.Run(c.lang, func(t *testing.T) { runScopedCase(t, c) })
 	}
 }
+
+func TestReview_TreeSitterStubs(t *testing.T) {
+	for _, c := range treeSitterReviewCases {
+		t.Run(c.lang, func(t *testing.T) { runStubCase(t, c) })
+	}
+}

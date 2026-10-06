@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -372,4 +373,72 @@ func fallbackBody(fnLines []string, lang string) (bool, []string, []string) {
 		}
 	}
 	return true, stmts, comments
+}
+
+// The three kinds of stub body.
+const (
+	stubEmpty   = "empty body"
+	stubTodo    = "body holds only a TODO/FIXME comment"
+	stubNotImpl = `body only raises "not implemented"`
+)
+
+// stubBody classifies a function body. A stub body is exactly one of:
+//   - empty: no statements and no comments ({}, pass, ..., a docstring);
+//   - TODO-only: no statements, and its comments carry a TODO, FIXME, XXX
+//     or HACK marker;
+//   - not implemented: its only statements raise "not implemented"
+//     (panic("not implemented"), raise NotImplementedError,
+//     throw new Error("not implemented"), UnsupportedOperationException,
+//     unimplemented!(), todo!()).
+//
+// Any other statement (a return of a literal, a call, an assignment) makes
+// the body real, and so does a comment-only body without a work marker (a
+// documented no-op). A declaration without a body is not a stub body. It
+// returns "" for a body that is not a stub.
+func stubBody(s funcSpan) string {
+	if !s.HasBody {
+		return ""
+	}
+	notImpl := false
+	for _, st := range s.Stmts {
+		t := strings.TrimSuffix(strings.TrimSpace(st), ";")
+		switch {
+		case isNoopStmt(t):
+		case isNotImplemented(t):
+			notImpl = true
+		default:
+			return ""
+		}
+	}
+	if notImpl {
+		return stubNotImpl
+	}
+	if len(s.Comments) == 0 {
+		return stubEmpty
+	}
+	for _, c := range s.Comments {
+		if workMarker.MatchString(c) {
+			return stubTodo
+		}
+	}
+	return ""
+}
+
+var workMarker = regexp.MustCompile(`\b(TODO|FIXME|XXX|HACK)\b`)
+
+// isNoopStmt reports a statement that does nothing: pass, an ellipsis, an
+// empty statement, or a docstring.
+func isNoopStmt(t string) bool {
+	switch t {
+	case "", "pass", "...", ";":
+		return true
+	}
+	return strings.HasPrefix(t, `"""`) || strings.HasPrefix(t, `'''`)
+}
+
+var notImplemented = regexp.MustCompile(`(?i)^(?:panic\s*\(.*(?:not\s+(?:yet\s+)?implemented|unimplemented|todo)|raise\s+NotImplementedError\b|throw\b.*(?:not\s+(?:yet\s+)?implemented|unimplemented|NotImplemented|UnsupportedOperationException)|(?:unimplemented|todo)!\s*\()`)
+
+// isNotImplemented reports a statement that only raises "not implemented".
+func isNotImplemented(t string) bool {
+	return notImplemented.MatchString(t)
 }

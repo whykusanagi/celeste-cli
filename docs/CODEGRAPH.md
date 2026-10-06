@@ -261,14 +261,35 @@ approximate file gets a note saying so.
 `FindCodeSmells` (the `code_review` tool) runs one pass over every function and
 method with its edge counts and source body and reports these kinds:
 
-- `STUB`: a function with no outgoing calls (graph edges, or calls counted in
-  its body) that is not a known leaf pattern such as a constructor or getter.
-  This replaces the old `FindStubs` query.
+- `STUB`: a function with no callers whose body is a stub body. A stub body
+  is exactly one of:
+  - empty: no statements and no comments (`{}`, `pass`, `...`, a docstring);
+  - TODO-only: no statements, and a comment with a `TODO`, `FIXME`, `XXX` or
+    `HACK` marker;
+  - not implemented: its only statements raise "not implemented"
+    (`panic("not implemented")`, `raise NotImplementedError`,
+    `throw new Error("not implemented")`, `UnsupportedOperationException`,
+    `unimplemented!()`, `todo!()`).
+
+  Any other statement makes the body real: a one-liner, a function that
+  returns a literal (`true`, `false`, `nil`, `0`, `""`), a call. A function
+  with callers, a declaration without a body (interface or abstract method),
+  a comment-only body without a work marker (a documented no-op), an empty
+  constructor, a Python dunder and a `Protocol`/`ABC`/`@abstractmethod`
+  method are never STUBs.
 - `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
   which has at most two outgoing calls and redirects instead, for example by
   telling the user to use the CLI.
 - `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
-  checks on the body.
+  checks on the body. `TODO_FIXME` and `HARDCODED` report the line the
+  marker or value is on.
+
+Each function's body is the span its parser recorded: go/ast for Go
+(functions and methods), tree-sitter for TypeScript, JavaScript, PHP,
+Python, Java, C, C++, Ruby and Rust in cgo builds. A nested function's lines
+belong to the nested function. Without a parser span (a `CGO_ENABLED=0`
+build) the body is found by a text scan from the definition line: braces,
+Python indentation, or Ruby's matching `end`.
 
 ## LSH Banding (planned)
 

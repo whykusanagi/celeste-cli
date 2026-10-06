@@ -348,12 +348,12 @@ func TestDetectStub_SkipsDunders(t *testing.T) {
 	dunders := []string{"__init__", "__lt__", "__setstate__", "__repr__"}
 	for _, name := range dunders {
 		c := FunctionEdgeInfo{Name: name, File: "mod.py", Line: 5, Kind: "method"}
-		if _, ok := detectStub(c, 0, []string{"pass"}); ok {
+		if _, ok := detectStub(c, bodySpan("pass")); ok {
 			t.Errorf("dunder %q should not be flagged as a stub", name)
 		}
 	}
 	c := FunctionEdgeInfo{Name: "process_records", File: "mod.py", Line: 9, Kind: "method"}
-	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
+	if _, ok := detectStub(c, bodySpan("pass")); !ok {
 		t.Errorf("non-dunder empty method should still be flagged")
 	}
 }
@@ -387,18 +387,18 @@ func TestDetectStub_SkipsProtocolAndAbstract(t *testing.T) {
 		{Name: "compute", File: "p.py", Line: 11, Kind: "method", BaseClasses: "ABC"},
 	}
 	for _, c := range cases {
-		if _, ok := detectStub(c, 0, []string{"..."}); ok {
+		if _, ok := detectStub(c, bodySpan("...")); ok {
 			t.Errorf("%q (bases %q decorators %q) should not be a stub", c.Name, c.BaseClasses, c.Decorators)
 		}
 	}
 	c := FunctionEdgeInfo{Name: "handle_request", File: "p.py", Line: 20, Kind: "method", BaseClasses: "object"}
-	if _, ok := detectStub(c, 0, []string{"pass"}); !ok {
+	if _, ok := detectStub(c, bodySpan("pass")); !ok {
 		t.Errorf("concrete empty method should still be flagged")
 	}
 	// A decorator named "abstractmethod_factory" is NOT the same as "abstractmethod"
 	// and must NOT suppress stub detection (exact-match guard, #43).
 	cFactory := FunctionEdgeInfo{Name: "handle_factory", File: "p.py", Line: 30, Kind: "method", Decorators: "abstractmethod_factory"}
-	if _, ok := detectStub(cFactory, 0, []string{"pass"}); !ok {
+	if _, ok := detectStub(cFactory, bodySpan("pass")); !ok {
 		t.Errorf("decorator %q should not suppress stub detection (not an exact abstractmethod match)", cFactory.Decorators)
 	}
 }
@@ -483,4 +483,9 @@ func TestIndexer_EdgeSourceResolvesInOwnFile(t *testing.T) {
 	src, err := idx.Store().GetSymbol(in[0].SourceID)
 	require.NoError(t, err)
 	assert.Equal(t, "b.py", src.File, "beta's caller is b.py's run")
+}
+
+// bodySpan is a function span whose body is the given statements.
+func bodySpan(stmts ...string) funcSpan {
+	return funcSpan{HasBody: true, Stmts: stmts}
 }

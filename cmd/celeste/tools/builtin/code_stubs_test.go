@@ -2,13 +2,25 @@ package builtin
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
 )
+
+// writeFuncAt writes a Go file under dir whose function name, with the given
+// body, is declared on line (1-based), so the review reads that body.
+func writeFuncAt(t *testing.T, dir, rel, pkg, name string, line int, body string) {
+	t.Helper()
+	src := "package " + pkg + "\n" + strings.Repeat("\n", line-2) + "func " + name + "() {" + body + "}\n"
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(src), 0o644))
+}
 
 func TestCodeReviewTool_Execute(t *testing.T) {
 	// Set up an in-memory code graph store with test data.
@@ -17,12 +29,21 @@ func TestCodeReviewTool_Execute(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	// Create symbols: a stub (no outgoing edges) and a non-stub (has outgoing edges).
+	// Create symbols: an empty function with a caller (in use, not a
+	// stub), an empty function nobody calls (a stub), and a caller.
 	stubID, err := store.UpsertSymbol(codegraph.Symbol{
 		Name: "ProcessOrder", Kind: codegraph.SymbolFunction,
 		Package: "orders", File: "orders/process.go", Line: 15,
 	})
 	require.NoError(t, err)
+	writeFuncAt(t, dir, "orders/process.go", "orders", "ProcessOrder", 15, "")
+
+	_, err = store.UpsertSymbol(codegraph.Symbol{
+		Name: "Abandoned", Kind: codegraph.SymbolFunction,
+		Package: "orders", File: "orders/abandoned.go", Line: 3,
+	})
+	require.NoError(t, err)
+	writeFuncAt(t, dir, "orders/abandoned.go", "orders", "Abandoned", 3, "\n\t// TODO: finish\n")
 
 	callerID, err := store.UpsertSymbol(codegraph.Symbol{
 		Name: "HandleRequest", Kind: codegraph.SymbolFunction,
@@ -51,14 +72,16 @@ func TestCodeReviewTool_Execute(t *testing.T) {
 	assert.Equal(t, "code_review", tool.Name())
 	assert.True(t, tool.IsReadOnly())
 
-	// Execute with STUB kind only — should find ProcessOrder and Respond as stubs.
+	// Execute with STUB kind only: only the uncalled Abandoned is a stub;
+	// ProcessOrder and Respond have callers (#396).
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"kinds": "STUB",
 	}, nil)
 	require.NoError(t, err)
 	assert.False(t, result.Error)
-	assert.Contains(t, result.Content, "ProcessOrder")
-	assert.Contains(t, result.Content, "Respond")
+	assert.Contains(t, result.Content, "Abandoned")
+	assert.NotContains(t, result.Content, "ProcessOrder")
+	assert.NotContains(t, result.Content, "Respond")
 	assert.NotContains(t, result.Content, "HandleRequest")
 }
 
@@ -104,6 +127,7 @@ func TestCodeReviewTool_ExcludeTests(t *testing.T) {
 		Package: "pkg", File: "pkg/handler_test.go", Line: 20,
 	})
 	require.NoError(t, err)
+	writeFuncAt(t, dir, "pkg/handler_test.go", "pkg", "helperSetup", 20, "")
 
 	// A stub in a non-test file.
 	_, err = store.UpsertSymbol(codegraph.Symbol{
@@ -111,6 +135,7 @@ func TestCodeReviewTool_ExcludeTests(t *testing.T) {
 		Package: "pkg", File: "pkg/handler.go", Line: 10,
 	})
 	require.NoError(t, err)
+	writeFuncAt(t, dir, "pkg/handler.go", "pkg", "Placeholder", 10, "")
 
 	indexer := codegraph.NewIndexerWithStore(store, dir)
 	tool := NewCodeReviewTool(indexer)
@@ -145,6 +170,7 @@ func TestCodeReviewTool_AllCategories(t *testing.T) {
 		Package: "orders", File: "orders/process.go", Line: 15,
 	})
 	require.NoError(t, err)
+	writeFuncAt(t, dir, "orders/process.go", "orders", "ProcessOrder", 15, "")
 
 	indexer := codegraph.NewIndexerWithStore(store, dir)
 	tool := NewCodeReviewTool(indexer)
