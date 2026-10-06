@@ -498,9 +498,9 @@ func registerCelesteStatusTool(s *Server) {
 			}
 			run, found := s.lookupRun(rawID)
 			if !found {
-				return []ContentBlock{{Type: "text", Text: fmt.Sprintf(
+				return nil, softError(
 					"unknown run %q. Background runs are held in memory by this MCP server, so a client restart ends them — the run is gone rather than lost. Checkpoints remain on disk; `celeste agent -list-runs` shows them.",
-					rawID)}}, nil
+					rawID)
 			}
 
 			out := map[string]any{

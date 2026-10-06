@@ -125,9 +125,9 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 		}
 		if result.Error {
 			// The underlying tool flagged a soft error — surface it
-			// to the MCP client as an isError content block. JSON-RPC
-			// level errors are reserved for plumbing faults.
-			return []ContentBlock{{Type: "text", Text: result.Content}}, nil
+			// to the MCP client as an isError result. JSON-RPC level
+			// errors are reserved for plumbing faults.
+			return nil, &toolError{msg: result.Content}
 		}
 		return []ContentBlock{{Type: "text", Text: result.Content}}, nil
 	}
