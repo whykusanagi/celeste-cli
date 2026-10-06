@@ -167,11 +167,28 @@ type TurnStats struct {
 	Elapsed      time.Duration
 	InputTokens  int
 	OutputTokens int
-	Response     string   // full assistant content for this turn (may be empty for pure tool-call turns)
-	ToolCalls    []string // names of tools called this turn
+	// Cache reads and 5-minute/1-hour cache writes within InputTokens,
+	// so a session cost prices them at their own rates (#312).
+	CacheReadTokens    int
+	CacheWriteTokens   int
+	CacheWrite1hTokens int
+	Response           string   // full assistant content for this turn (may be empty for pure tool-call turns)
+	ToolCalls          []string // names of tools called this turn
 	// Dropped: a stream rule cut this reply short and the turn re-runs
 	// (2.0 W3). The provider billed it; nothing else about it is kept.
 	Dropped bool
+}
+
+// setUsage copies a call's token usage into the stats; nil leaves them zero.
+func (s *TurnStats) setUsage(u *llm.TokenUsage) {
+	if u == nil {
+		return
+	}
+	s.InputTokens = u.PromptTokens
+	s.OutputTokens = u.CompletionTokens
+	s.CacheReadTokens = u.CacheReadTokens
+	s.CacheWriteTokens = u.CacheWriteTokens
+	s.CacheWrite1hTokens = u.CacheWrite1hTokens
 }
 
 // DefaultOptions leaves RequestTimeout at 0, "the request cap": NewRunner
