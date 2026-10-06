@@ -257,11 +257,25 @@ No API calls, no vector database, runs entirely offline. Not as good at pure sem
 
 ## Graph Queries
 
-The `code_graph` tool accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, currently only 1-hop implemented).
+The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, default 1; larger values are capped at 3). Direction is matched case-insensitively; an unknown one is an error.
 
 1. Keyword search via SQL `LIKE '%query%'` on symbol names (up to 5 matches)
-2. For each match, look up incoming edges (`GetEdgesTo`) for callers, outgoing edges (`GetEdgesFrom`) for callees
+2. For each match, walk incoming edges (`GetEdgesTo`) for callers and outgoing edges (`GetEdgesFrom`) for callees, breadth first, up to `depth` hops: depth 2 adds callers of callers (or callees of callees), depth 3 one hop more
 3. Returns formatted listing with symbol kind, file, line, signature, and relationships
+
+The first hop lists every edge of the queried symbol, in the same format a
+one-hop query has always used. Later hops list each symbol once, at the hop
+where it is first reached, never the queried symbol itself, and mark it with
+the hop and the symbol it was reached through:
+
+```
+  Called by:
+    <- middle (calls) main.go:5
+    <- main (calls) main.go:3 [hop 2, via middle]
+```
+
+The first hop always lists every edge. Past the first hop, a direction stops
+after 200 entries and says so.
 
 Go methods and interface methods are shown with their receiver,
 `(*codegraph.Indexer).Build`, so same-named methods stay apart; a method
@@ -281,6 +295,25 @@ method with its edge counts and source body and reports these kinds:
   telling the user to use the CLI.
 - `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
   checks on the body.
+
+The `kinds` argument is a comma-separated, case-insensitive list of these
+kinds, or `ALL` (the default). An unknown kind is an error that lists the
+valid ones, so a typo is never reported as a clean codebase.
+
+## Queries Without an Index
+
+The MCP query tools (`celeste_code_review`, `celeste_code_graph`,
+`celeste_code_search`, `celeste_code_symbols`) never build an index. On a
+workspace whose index was never built they return an error result
+(`isError: true`) saying there is no code graph index and to run
+`celeste_index` with `operation: "rebuild"` or `celeste index`, instead of an
+empty answer that reads as "no findings" or "symbol not found". A query does
+not create the index database either. While another indexer is building the
+index they say it is being built, and when a full build was interrupted (killed
+after it emptied the graph) they say the build did not finish and to run
+`celeste_index` with `operation: "update"` or `"rebuild"`. Every soft tool error (a missing or
+invalid argument, no index, an unknown background run) is an `isError`
+result with the tool's message; JSON-RPC errors are kept for protocol faults.
 
 ## LSH Banding (planned)
 
