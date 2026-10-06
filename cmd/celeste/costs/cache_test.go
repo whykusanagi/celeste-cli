@@ -60,3 +60,26 @@ func TestTrackerTotalsCacheTokens(t *testing.T) {
 	assert.Equal(t, 1, s.Unpriced)
 	assert.InDelta(t, 0.213, s.TotalCostUSD, 1e-9)
 }
+
+// Review: Anthropic's default model is a dated ID
+// (claude-sonnet-4-5-20250929) and Bedrock/Vertex spell IDs with a prefix or
+// an @date; they price as the model they name, not as unpriced.
+func TestDatedAndPrefixedModelIDsArePriced(t *testing.T) {
+	u := Usage{Input: 10_000, CacheRead: 8_000, Output: 100}
+	want := CostOf("claude-sonnet-4-5", u)
+	assert.Greater(t, want, 0.0)
+	for _, id := range []string{"claude-sonnet-4-5-20250929", "anthropic.claude-sonnet-4-5", "claude-sonnet-4-5@20250929", "Claude-Sonnet-4-5"} {
+		assert.True(t, Priced(id), id)
+		assert.InDelta(t, want, CostOf(id, u), 1e-12, id)
+	}
+	assert.False(t, Priced("claude-sonnet-9-9-20250929"))
+}
+
+// The current Claude models are priced, cache reads at each model's rate.
+func TestCurrentClaudeModelsArePriced(t *testing.T) {
+	for _, id := range []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-5"} {
+		assert.True(t, Priced(id), id)
+	}
+	// Claude Opus 5.5: $4 input, $0.20 cache read per 1M.
+	assert.InDelta(t, 0.20, CostOf("claude-opus-5-5", Usage{Input: 1_000_000, CacheRead: 1_000_000}), 1e-9)
+}

@@ -1,6 +1,11 @@
 // Package costs provides token cost tracking and pricing for LLM models.
 package costs
 
+import (
+	"regexp"
+	"strings"
+)
+
 // ModelCost holds the per-1M-token pricing for a model.
 type ModelCost struct {
 	Input  float64 // USD per 1M input tokens
@@ -51,9 +56,19 @@ var ModelPricing = map[string]ModelCost{
 	// Google
 	"gemini-2.0-flash": {Input: 0.10, Output: 0.40, CacheRead: 0.025},
 	// Anthropic (current models, 2026-04)
-	// Cache reads are 0.1x input, 5-minute writes 1.25x, 1-hour writes 2x.
+	// Cache writes are 1.25x input (5 minutes) and 2x (1 hour); cache reads
+	// 0.1x, except where the model lists its own read rate (Opus 5.5 $0.20,
+	// Fable 5.1 $0.25; models table, 2026-09).
+	"claude-fable-5-1":  {Input: 10.00, Output: 50.00, CacheRead: 0.25, CacheWrite: 12.50, CacheWrite1h: 20.00},
+	"claude-opus-5-5":   {Input: 4.00, Output: 20.00, CacheRead: 0.20, CacheWrite: 5.00, CacheWrite1h: 8.00},
+	"claude-opus-5":     {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25, CacheWrite1h: 10.00},
+	"claude-opus-4-8":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25, CacheWrite1h: 10.00},
+	"claude-opus-4-7":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25, CacheWrite1h: 10.00},
 	"claude-opus-4-6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25, CacheWrite1h: 10.00},
+	"claude-sonnet-5-5": {Input: 2.00, Output: 10.00, CacheRead: 0.20, CacheWrite: 2.50, CacheWrite1h: 4.00},
+	"claude-sonnet-5":   {Input: 2.00, Output: 10.00, CacheRead: 0.20, CacheWrite: 2.50, CacheWrite1h: 4.00},
 	"claude-sonnet-4-6": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75, CacheWrite1h: 6.00},
+	"claude-sonnet-4-5": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75, CacheWrite1h: 6.00},
 	"claude-haiku-4-5":  {Input: 1.00, Output: 5.00, CacheRead: 0.10, CacheWrite: 1.25, CacheWrite1h: 2.00},
 	// Venice-unique models (from docs.venice.ai, 2026-04)
 	"venice-uncensored":                    {Input: 0.20, Output: 0.90},
@@ -69,9 +84,27 @@ var ModelPricing = map[string]ModelCost{
 	"minimax-m25":                          {Input: 0.34, Output: 1.19},
 }
 
+// datedSuffix is a snapshot date on a model ID: "-20250929" or "@20250929".
+var datedSuffix = regexp.MustCompile(`[-@]\d{8}$`)
+
+// pricing finds model's row: the ID as given, else lowercased without a
+// provider prefix ("anthropic.", Bedrock) and a snapshot date (the
+// Anthropic default claude-sonnet-4-5-20250929, Vertex's @date), so a
+// dated ID prices as the model it names.
+func pricing(model string) (ModelCost, bool) {
+	if mc, ok := ModelPricing[model]; ok {
+		return mc, true
+	}
+	id := strings.ToLower(model)
+	id = strings.TrimPrefix(id, "anthropic.")
+	id = datedSuffix.ReplaceAllString(id, "")
+	mc, ok := ModelPricing[id]
+	return mc, ok
+}
+
 // Priced reports whether model is in the pricing table.
 func Priced(model string) bool {
-	_, ok := ModelPricing[model]
+	_, ok := pricing(model)
 	return ok
 }
 
@@ -79,7 +112,7 @@ func Priced(model string) bool {
 // writes at their own rates (#312). Returns 0 if the model is not in the
 // pricing table.
 func CostOf(model string, u Usage) float64 {
-	mc, ok := ModelPricing[model]
+	mc, ok := pricing(model)
 	if !ok {
 		return 0
 	}
