@@ -27,7 +27,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
+	"os"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
@@ -77,6 +79,59 @@ func (s *Server) workspaceFromArgs(args map[string]any) (string, error) {
 	return workspace, nil
 }
 
+// noIndexError is the soft error the query tools return for a workspace
+// whose code graph was never built. Without it a query reads an empty graph
+// and answers "Codebase looks clean" or "Symbol not found" (#399).
+func noIndexError(workspace string) error {
+	return softError("No code graph index for %s; run celeste_index (operation rebuild) or `celeste index` to build one.", workspace)
+}
+
+// indexBuildingError is the soft error the query tools return while an
+// indexer is building the workspace's graph and it is not yet queryable.
+func indexBuildingError(workspace string) error {
+	return softError("The code graph index for %s is being built; try again when the build finishes.", workspace)
+}
+
+// queryIndexer is indexerFor for the read-only query tools: it fails with
+// noIndexError when the workspace has no built index, and says so when the
+// index is being built or its last build did not finish. A workspace with no
+// index database on disk is answered without opening one, so a query never
+// creates the database.
+func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error) {
+	s.indexerMu.Lock()
+	open := s.indexers[workspace] != nil
+	s.indexerMu.Unlock()
+	if !open {
+		dbPath := codegraph.IndexPath(workspace)
+		if _, err := os.Stat(dbPath); errors.Is(err, fs.ErrNotExist) {
+			// A rebuild deletes the database and holds the lock until
+			// the new one is built.
+			if codegraph.IndexWriterActive(dbPath) {
+				return nil, false, indexBuildingError(workspace)
+			}
+			return nil, false, noIndexError(workspace)
+		}
+	}
+	idx, cached, err := s.indexerFor(workspace)
+	if err != nil {
+		return nil, false, err
+	}
+	state, err := idx.State()
+	if err != nil {
+		return nil, false, fmt.Errorf("read index: %w", err)
+	}
+	switch state {
+	case codegraph.IndexBuilt:
+		return idx, cached, nil
+	case codegraph.IndexBuilding:
+		return nil, false, indexBuildingError(workspace)
+	case codegraph.IndexInterrupted:
+		return nil, false, softError("The code graph index build for %s did not finish; run celeste_index (operation update or rebuild) to finish it.", workspace)
+	default:
+		return nil, false, noIndexError(workspace)
+	}
+}
+
 // makeDirectToolHandler builds an MCP ToolHandler that runs a celeste
 // builtin tool against the per-workspace Indexer and returns the
 // result as a single text ContentBlock. All the direct-query tools
@@ -94,7 +149,7 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 		// would fail their ValidateInput checks if they ever get one.
 		delete(args, "workspace")
 
-		idx, cached, err := s.indexerFor(workspace)
+		idx, cached, err := s.queryIndexer(workspace)
 		if err != nil {
 			return nil, err
 		}
@@ -125,9 +180,9 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 		}
 		if result.Error {
 			// The underlying tool flagged a soft error — surface it
-			// to the MCP client as an isError content block. JSON-RPC
-			// level errors are reserved for plumbing faults.
-			return []ContentBlock{{Type: "text", Text: result.Content}}, nil
+			// to the MCP client as an isError result. JSON-RPC level
+			// errors are reserved for plumbing faults.
+			return nil, &toolError{msg: result.Content}
 		}
 		return []ContentBlock{{Type: "text", Text: result.Content}}, nil
 	}

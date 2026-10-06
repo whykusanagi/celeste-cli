@@ -536,12 +536,14 @@ func TestCelesteStatusUnknownRunNamesRestart(t *testing.T) {
 	s := New(Config{})
 	registerCelesteStatusTool(s)
 
-	blocks, err := s.handlers["celeste_status"](context.Background(), map[string]any{"run_id": "bg-gone"})
-	if err != nil {
-		t.Fatalf("celeste_status: %v", err)
+	// An unknown run is a soft error: an isError result (#399).
+	_, err := s.handlers["celeste_status"](context.Background(), map[string]any{"run_id": "bg-gone"})
+	var te *toolError
+	if !errors.As(err, &te) {
+		t.Fatalf("celeste_status: want a toolError, got %v", err)
 	}
-	if !strings.Contains(strings.ToLower(blocks[0].Text), "restart") {
-		t.Errorf("unknown-run message should explain the restart case, got: %s", blocks[0].Text)
+	if !strings.Contains(strings.ToLower(te.msg), "restart") {
+		t.Errorf("unknown-run message should explain the restart case, got: %s", te.msg)
 	}
 }
 

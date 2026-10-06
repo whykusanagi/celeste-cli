@@ -97,6 +97,32 @@ func tryLockIndex(path string) (*indexLock, error) {
 	}
 }
 
+// IndexWriterActive reports whether an indexer (in this process or
+// another) holds the lock of the index database at dbPath. It never
+// creates the lock file, and reports false for an in-memory store ("") or
+// where the lock cannot be probed. The probe takes the lock for an
+// instant, so an Update starting in that instant skips as busy; its
+// caller's next refresh catches up.
+func IndexWriterActive(dbPath string) bool {
+	if dbPath == "" {
+		return false
+	}
+	f, err := os.OpenFile(lockPath(dbPath), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	switch err := lockFile(f); {
+	case err == nil:
+		_ = unlockFile(f)
+		return false
+	case errors.Is(err, errLocked):
+		return true
+	default:
+		return false
+	}
+}
+
 // unlock releases the lock. Safe on a nil or no-op lock.
 func (l *indexLock) unlock() {
 	if l == nil || l.f == nil {
