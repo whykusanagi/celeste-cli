@@ -287,8 +287,10 @@ method with its edge counts and source body and reports these kinds:
   method that implements an interface or abstract method or overrides a
   base-class method (Go's type-checked `implements`, `@Override`, or the same
   name declared by another class while its own class extends or implements
-  something), the exported API of a library package (an exported Go function
-  or method outside package `main`, an exported JS/TS function), and a
+  something; TS interface and abstract signatures and C++ pure virtual
+  declarations count as declarations), the exported API of a library
+  package (an exported Go function or method outside package `main`, an
+  exported JS/TS function, a public method of a public Java class), and a
   function in a Go file with build constraints (a `//go:build` line or a
   GOOS/GOARCH file name suffix), whose callers are in another platform's
   build. A base-class method that only raises "not implemented" while

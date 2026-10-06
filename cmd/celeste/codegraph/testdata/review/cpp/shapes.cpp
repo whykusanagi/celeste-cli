@@ -15,3 +15,10 @@ void unusedCpp() {
 int runShapes() {
     return geo::area(2, 3);
 }
+
+class Circle : public Shape {
+public:
+    int sides() override {
+        // TODO: count them
+    }
+};

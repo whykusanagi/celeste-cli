@@ -45,36 +45,66 @@ func (r *reviewer) treeSitterSpans(relPath string, src []byte) ([]funcSpan, bool
 		funcSet:  nodeTypeSet(spec.FunctionTypes),
 	}
 	var spans []funcSpan
-	w.collectSpans(tree.RootNode(), "", false, &spans)
+	w.collectSpans(tree.RootNode(), spanCtx{}, &spans)
 	return spans, true
 }
 
+// spanCtx is the class a node is declared in.
+type spanCtx struct {
+	class  string
+	bases  bool // the class extends or implements a type
+	public bool // Java: the class is public
+}
+
+// interfaceTypes are the interface containers the walker does not treat as
+// classes but whose members are bodiless declarations a class implements.
+var interfaceTypes = map[string]bool{"interface_declaration": true}
+
+// memberDeclTypes are bodiless member declarations: TS interface and
+// abstract method signatures.
+var memberDeclTypes = map[string]bool{"method_signature": true, "abstract_method_signature": true}
+
 // collectSpans mirrors walk: it visits the same class, function and
 // JS/TS variable-declarator nodes, and records each named function's span.
-func (w *multiWalker) collectSpans(node *tree_sitter.Node, class string, classBases bool, out *[]funcSpan) {
+// It also records the bodiless member declarations a class can implement
+// (TS interface and abstract signatures, C++ pure virtual declarations),
+// which are no symbols but tell code review a method implements one.
+func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]funcSpan) {
 	if node == nil {
 		return
 	}
 	kind := node.Kind()
-	if w.classSet[kind] {
-		name := w.extractName(node)
-		bases := classHasBases(node)
+	if w.classSet[kind] || (interfaceTypes[kind] && w.isJSLike()) {
+		inner := spanCtx{class: w.extractName(node), bases: classHasBases(node), public: w.hasModifier(node, "public")}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
-			w.collectSpans(node.NamedChild(i), name, bases, out)
+			w.collectSpans(node.NamedChild(i), inner, out)
 		}
 		return
 	}
 	if w.funcSet[kind] {
 		if name := w.extractName(node); name != "" {
-			*out = append(*out, w.spanOf(node, node, name, class, classBases))
+			*out = append(*out, w.spanOf(node, node, name, ctx))
 		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
-			w.collectSpans(node.NamedChild(i), "", false, out)
+			w.collectSpans(node.NamedChild(i), spanCtx{}, out)
 		}
 		return
 	}
-	if (kind == "lexical_declaration" || kind == "variable_declaration") &&
-		(w.lang == "javascript" || w.lang == "typescript" || w.lang == "tsx") {
+	if ctx.class != "" && w.isJSLike() && memberDeclTypes[kind] {
+		if name := w.extractName(node); name != "" {
+			*out = append(*out, w.declSpan(node, name, ctx))
+		}
+		return
+	}
+	if ctx.class != "" && w.lang == "cpp" && kind == "field_declaration" {
+		if d := node.ChildByFieldName("declarator"); d != nil && d.Kind() == "function_declarator" {
+			if name := extractCIdentifier(w.nodeText(d)); name != "" {
+				*out = append(*out, w.declSpan(node, name, ctx))
+			}
+			return
+		}
+	}
+	if (kind == "lexical_declaration" || kind == "variable_declaration") && w.isJSLike() {
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			decl := node.NamedChild(i)
 			if decl == nil || decl.Kind() != "variable_declarator" {
@@ -84,32 +114,76 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, class string, classBa
 			if nameNode != nil && value != nil {
 				switch value.Kind() {
 				case "arrow_function", "function_expression", "function":
-					*out = append(*out, w.spanOf(decl, value, w.nodeText(nameNode), "", false))
+					*out = append(*out, w.spanOf(decl, value, w.nodeText(nameNode), spanCtx{}))
 					for j := uint(0); j < value.NamedChildCount(); j++ {
-						w.collectSpans(value.NamedChild(j), "", false, out)
+						w.collectSpans(value.NamedChild(j), spanCtx{}, out)
 					}
 					continue
 				}
 			}
-			w.collectSpans(decl, class, classBases, out)
+			w.collectSpans(decl, ctx, out)
 		}
 		return
 	}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
-		w.collectSpans(node.NamedChild(i), class, classBases, out)
+		w.collectSpans(node.NamedChild(i), ctx, out)
 	}
+}
+
+func (w *multiWalker) isJSLike() bool {
+	return w.lang == "javascript" || w.lang == "typescript" || w.lang == "tsx"
+}
+
+// declSpan is the span of a bodiless member declaration.
+func (w *multiWalker) declSpan(node *tree_sitter.Node, name string, ctx spanCtx) funcSpan {
+	return funcSpan{
+		Name:          name,
+		Start:         int(node.StartPosition().Row) + 1,
+		End:           int(node.EndPosition().Row) + 1,
+		Class:         ctx.class,
+		ClassHasBases: ctx.bases,
+		Exact:         true,
+	}
+}
+
+// hasModifier reports a Java modifier (public, abstract, …) on a
+// declaration.
+func (w *multiWalker) hasModifier(node *tree_sitter.Node, mod string) bool {
+	if w.lang != "java" {
+		return false
+	}
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child != nil && child.Kind() == "modifiers" {
+			for _, f := range strings.Fields(w.nodeText(child)) {
+				if f == mod {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// blockTypes are the statement-list body nodes; any other body node (an
+// arrow function's `=> expr`, a Ruby endless method) is one expression
+// statement.
+var blockTypes = map[string]bool{
+	"statement_block": true, "block": true, "compound_statement": true,
+	"body_statement": true, "constructor_body": true, "function_body": true,
 }
 
 // spanOf builds the span of a function: outer is the node whose extent and
 // start line the index records (the variable declarator of `const f = () =>
 // …`, else the function itself), fn the function node.
-func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name, class string, classBases bool) funcSpan {
+func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name string, ctx spanCtx) funcSpan {
+	class := ctx.class
 	s := funcSpan{
 		Name:          name,
 		Start:         int(outer.StartPosition().Row) + 1,
 		End:           int(outer.EndPosition().Row) + 1,
 		Class:         class,
-		ClassHasBases: classBases,
+		ClassHasBases: ctx.bases,
 		Exact:         true,
 	}
 	// tree-sitter ends a node at the position after its last byte; a node
@@ -119,6 +193,10 @@ func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name, class string, cl
 	}
 	body := fn.ChildByFieldName("body")
 	switch {
+	case body != nil && !blockTypes[body.Kind()]:
+		// An expression body: `() => 0` returns its expression.
+		s.HasBody = true
+		s.Stmts = []string{w.nodeText(body)}
 	case body != nil:
 		s.HasBody = true
 		for i := uint(0); i < body.NamedChildCount(); i++ {
@@ -150,6 +228,10 @@ func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name, class string, cl
 		if gp := p.Parent(); gp != nil && gp.Kind() == "export_statement" {
 			s.Exported = true
 		}
+	}
+	// Java's exported API: public members of a public class.
+	if w.lang == "java" && ctx.public && w.hasModifier(fn, "public") {
+		s.Exported = true
 	}
 	for i := uint(0); i < fn.NamedChildCount(); i++ {
 		child := fn.NamedChild(i)

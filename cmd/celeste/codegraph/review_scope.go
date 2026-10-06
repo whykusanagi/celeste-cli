@@ -40,7 +40,8 @@ type funcSpan struct {
 	// Ruby initialize, a PHP __construct, a JS/TS constructor.
 	Constructor bool
 	// Exported is true for the exported API of a library: an exported Go
-	// function or method outside package main, an exported JS/TS function.
+	// function or method outside package main, an exported JS/TS function,
+	// a public method of a public Java class.
 	Exported bool
 	// Annotations lists Java annotation names (Override, Test).
 	Annotations []string
@@ -490,7 +491,7 @@ type reach struct {
 //     in a test file or with @Test, a method implementing an interface or
 //     abstract method or overriding a base-class method (@Override, or the
 //     same name declared by another class while its class has bases), an
-//     exported JS/TS function.
+//     exported JS/TS function, a public method of a public Java class.
 func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reach {
 	if f.lang == "go" {
 		switch {

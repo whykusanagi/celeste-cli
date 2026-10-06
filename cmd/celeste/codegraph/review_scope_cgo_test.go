@@ -8,8 +8,9 @@ import "testing"
 var treeSitterReviewCases = []reviewCase{
 	{
 		lang:   "typescript",
-		scoped: []string{"TODO_FIXME app.ts:reset:25", "PLACEHOLDER app.ts:apiEntry:31"},
+		scoped: []string{"TODO_FIXME app.ts:reset:25", "PLACEHOLDER app.ts:apiEntry:31", "TODO_FIXME shapes.ts:close:7"},
 		stubs: []string{
+			"STUB shapes.ts:close:6 live",
 			"STUB app.ts:reset:24 dead",
 			"STUB app.ts:neverCalled:28 dead",
 			"STUB app.ts:apiEntry:31 live",
@@ -36,8 +37,10 @@ var treeSitterReviewCases = []reviewCase{
 	},
 	{
 		lang:   "java",
-		scoped: []string{"TODO_FIXME App.java:later:13", "TODO_FIXME Pipe.java:close:4"},
+		scoped: []string{"TODO_FIXME App.java:later:13", "TODO_FIXME Pipe.java:close:4", "TODO_FIXME Lib.java:api:3"},
 		stubs: []string{
+			"STUB Lib.java:api:2 live",
+			"STUB Lib.java:hidden:6 dead",
 			"STUB App.java:unusedMethod:9 dead",
 			"STUB App.java:later:12 dead",
 			"STUB Pipe.java:close:2 live",
@@ -53,8 +56,8 @@ var treeSitterReviewCases = []reviewCase{
 	},
 	{
 		lang:   "cpp",
-		scoped: []string{},
-		stubs:  []string{"STUB shapes.cpp:unusedCpp:12 dead"},
+		scoped: []string{"TODO_FIXME shapes.cpp:sides:22"},
+		stubs:  []string{"STUB shapes.cpp:unusedCpp:12 dead", "STUB shapes.cpp:sides:21 live"},
 	},
 	{
 		lang: "ruby",
