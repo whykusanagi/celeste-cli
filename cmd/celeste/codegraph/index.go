@@ -1398,6 +1398,29 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 		files[absFile] = rf
 		decls.add(c.File, rf)
 	}
+	// Files without a function body (a C++ header, a TS interface file)
+	// still declare the methods other files implement.
+	if all, err := idx.store.GetAllFiles(); err == nil {
+		for _, fr := range all {
+			if !declLanguage(fr.Path) || (!includeTests && isTestFilePath(fr.Path)) {
+				continue
+			}
+			absFile := fr.Path
+			if !filepath.IsAbs(absFile) {
+				absFile = filepath.Join(idx.workspace, absFile)
+			}
+			if _, seen := files[absFile]; seen {
+				continue
+			}
+			data, err := os.ReadFile(absFile)
+			if err != nil {
+				continue
+			}
+			rf := rev.load(fr.Path, data)
+			files[absFile] = rf
+			decls.add(fr.Path, rf)
+		}
+	}
 
 	for _, c := range candidates {
 		if !includeTests && isTestFilePath(c.File) {

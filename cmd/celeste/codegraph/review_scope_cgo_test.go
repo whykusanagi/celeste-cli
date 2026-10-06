@@ -11,6 +11,9 @@ var treeSitterReviewCases = []reviewCase{
 		scoped: []string{"TODO_FIXME app.ts:reset:25", "PLACEHOLDER app.ts:apiEntry:31", "TODO_FIXME shapes.ts:close:7"},
 		stubs: []string{
 			"STUB shapes.ts:close:6 live",
+			// Public methods of an exported class are library API.
+			"STUB svc.ts:ping:2 live",
+			"STUB svc.ts:hidden:4 dead",
 			"STUB app.ts:reset:24 dead",
 			"STUB app.ts:neverCalled:28 dead",
 			"STUB app.ts:apiEntry:31 live",
@@ -27,8 +30,11 @@ var treeSitterReviewCases = []reviewCase{
 	},
 	{
 		lang:   "python",
-		scoped: []string{"TODO_FIXME app.py:search:9", "HARDCODED app.py:run:30", "TODO_FIXME print_job.py:run_job:6"},
+		scoped: []string{"TODO_FIXME app.py:search:9", "HARDCODED app.py:run:30", "TODO_FIXME print_job.py:run_job:6", "TODO_FIXME app.py:handler:38"},
 		stubs: []string{
+			// A framework calls what its decorator registers.
+			"STUB app.py:handler:37 live",
+			"STUB app.py:unused_static:44 dead",
 			"STUB app.py:search:8 dead",
 			"STUB app.py:never_used:21 dead",
 			"STUB app.py:not_done:25 dead",
@@ -57,7 +63,23 @@ var treeSitterReviewCases = []reviewCase{
 	{
 		lang:   "cpp",
 		scoped: []string{"TODO_FIXME shapes.cpp:sides:22"},
-		stubs:  []string{"STUB shapes.cpp:unusedCpp:12 dead", "STUB shapes.cpp:sides:21 live"},
+		stubs: []string{
+			"STUB shapes.cpp:unusedCpp:12 dead",
+			"STUB shapes.cpp:sides:21 live",
+			// Methods defined outside their class (.hpp/.h + .cpp).
+			"STUB shape.cpp:D::f:3 live",
+			"STUB shape.cpp:D::g:5 dead",
+			"STUB widget.cpp:Button::draw:3 live",
+			"STUB widget.cpp:Button::paintEvent:5 live",
+		},
+	},
+	{
+		lang: "rust",
+		stubs: []string{
+			"STUB main.rs:speak:8 live",
+			"STUB main.rs:drop:12 live",
+			"STUB main.rs:dead_rs:15 dead",
+		},
 	},
 	{
 		lang: "ruby",

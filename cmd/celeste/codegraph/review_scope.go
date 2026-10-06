@@ -40,11 +40,15 @@ type funcSpan struct {
 	// Ruby initialize, a PHP __construct, a JS/TS constructor.
 	Constructor bool
 	// Exported is true for the exported API of a library: an exported Go
-	// function or method outside package main, an exported JS/TS function,
-	// a public method of a public Java class.
+	// function or method outside package main and internal/, an exported
+	// JS/TS function or public method of an exported JS/TS class, a public
+	// method of a public Java class.
 	Exported bool
-	// Annotations lists Java annotation names (Override, Test).
+	// Annotations lists Java annotation names (Override, Test); a C++
+	// `override` or `virtual` specifier is recorded as Override.
 	Annotations []string
+	// Trait is the trait a Rust method implements (`impl Trait for X`).
+	Trait string
 	// Exact is true when the span comes from a parser rather than the
 	// text-scan fallback.
 	Exact bool
@@ -91,16 +95,25 @@ func (r *reviewer) load(relPath string, src []byte) *reviewFile {
 	}
 	if f.lang == "go" {
 		f.constrained = goBuildConstrained(relPath, src)
-		if spans, isMain, ok := goFuncSpans(src); ok {
+		if spans, isMain, ok := goFuncSpans(relPath, src); ok {
 			f.spans, f.goMain = spans, isMain
 		}
 		return f
 	}
-	if spans, ok := r.treeSitterSpans(relPath, src); ok {
+	tsLang := SupportedLanguage(strings.ToLower(path.Ext(strings.ReplaceAll(relPath, "\\", "/"))))
+	// A .h header is C to the indexer; one holding C++ (classes,
+	// namespaces) is parsed as C++ so its class declarations count.
+	if tsLang == "c" && strings.EqualFold(path.Ext(relPath), ".h") && cppHeader.Match(src) {
+		tsLang, f.lang = "cpp", "cpp"
+	}
+	if spans, ok := r.treeSitterSpans(tsLang, src); ok {
 		f.spans = spans
 	}
 	return f
 }
+
+// cppHeader matches C++-only syntax in a header.
+var cppHeader = regexp.MustCompile(`(?m)^\s*(?:class|namespace|template)\b|\b(?:public|private|protected)\s*:|\bvirtual\b|::`)
 
 // span returns the span of the function c: the parser's span with c's name
 // that starts on c's line, else the text-scan fallback from c's line.
@@ -151,14 +164,17 @@ func joinLines(lines []numberedLine) string {
 }
 
 // goFuncSpans returns the span of every function and method declared in a
-// Go file, and whether the file is in package main.
-func goFuncSpans(src []byte) ([]funcSpan, bool, bool) {
+// Go file (relPath), and whether the file is in package main.
+func goFuncSpans(relPath string, src []byte) ([]funcSpan, bool, bool) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil || file == nil {
 		return nil, false, false
 	}
 	isMain := file.Name.Name == "main"
+	// Nothing outside the module can import a package under internal/, and
+	// the index covers the whole module: its exported names are no API.
+	library := !isMain && !underInternal(relPath)
 	offset := func(p token.Pos) int { return fset.Position(p).Offset }
 	var spans []funcSpan
 	for _, decl := range file.Decls {
@@ -176,7 +192,7 @@ func goFuncSpans(src []byte) ([]funcSpan, bool, bool) {
 		if fn.Recv != nil && len(fn.Recv.List) > 0 {
 			s.Class = goRecvName(fn.Recv.List[0].Type)
 		}
-		s.Exported = !isMain && ast.IsExported(s.Name) && (s.Class == "" || ast.IsExported(s.Class))
+		s.Exported = library && ast.IsExported(s.Name) && (s.Class == "" || ast.IsExported(s.Class))
 		if fn.Body != nil {
 			for _, st := range fn.Body.List {
 				if from, to := offset(st.Pos()), offset(st.End()); from >= 0 && to <= len(src) && from < to {
@@ -194,6 +210,17 @@ func goFuncSpans(src []byte) ([]funcSpan, bool, bool) {
 		spans = append(spans, s)
 	}
 	return spans, isMain, true
+}
+
+// underInternal reports whether a path has an "internal" directory.
+func underInternal(relPath string) bool {
+	parts := strings.Split(strings.ReplaceAll(relPath, "\\", "/"), "/")
+	for _, p := range parts[:len(parts)-1] {
+		if p == "internal" {
+			return true
+		}
+	}
+	return false
 }
 
 // goRecvName returns the base type name of a method receiver.
@@ -450,6 +477,8 @@ type declSite struct {
 	file, class   string
 	hasBody       bool
 	classHasBases bool
+	// override is true for a C++ declaration marked override or virtual.
+	override bool
 }
 
 // declIndex holds every class member of the reviewed files by language and
@@ -457,7 +486,14 @@ type declSite struct {
 // (FunctionEdgeInfo.Implements).
 type declIndex map[string][]declSite
 
-func declKey(lang, name string) string { return lang + "\x00" + name }
+// declKey is the index key of a member name. C and C++ share keys: a .h
+// header holds the declarations of the .cpp files' methods.
+func declKey(lang, name string) string {
+	if lang == "c" {
+		lang = "cpp"
+	}
+	return lang + "\x00" + name
+}
 
 func (d declIndex) add(file string, f *reviewFile) {
 	if f == nil || f.lang == "go" {
@@ -468,7 +504,10 @@ func (d declIndex) add(file string, f *reviewFile) {
 			continue
 		}
 		k := declKey(f.lang, s.Name)
-		d[k] = append(d[k], declSite{file: file, class: s.Class, hasBody: s.HasBody, classHasBases: s.ClassHasBases})
+		d[k] = append(d[k], declSite{
+			file: file, class: s.Class, hasBody: s.HasBody,
+			classHasBases: s.ClassHasBases, override: hasAnnotation(s, "Override"),
+		})
 	}
 }
 
@@ -485,13 +524,17 @@ type reach struct {
 //   - Go: init, main in package main, a TestXxx/BenchmarkXxx/FuzzXxx/ExampleXxx
 //     in a _test.go file, a method satisfying an interface, a function in a
 //     build-constrained file (another platform's variant), the exported API
-//     of a library package;
+//     of a library package outside internal/;
 //   - other languages: a constructor (Java/C++ constructors, Ruby
 //     initialize, PHP __construct, JS/TS constructor), main, a test function
-//     in a test file or with @Test, a method implementing an interface or
-//     abstract method or overriding a base-class method (@Override, or the
-//     same name declared by another class while its class has bases), an
-//     exported JS/TS function, a public method of a public Java class.
+//     in a test file or with @Test, a method in a Rust `impl Trait for X`, a
+//     function a decorator registers, a method implementing an interface or
+//     abstract method or overriding a base-class method (@Override, a C++
+//     override/virtual specifier, or the same name declared by another class
+//     while its class has bases; a C++ method defined outside its class is
+//     judged by its declaration in the class), an exported JS/TS function, a
+//     public method of an exported JS/TS class, a public method of a public
+//     Java class.
 func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reach {
 	if f.lang == "go" {
 		switch {
@@ -517,10 +560,38 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 	if hasAnnotation(s, "Test") || (isTestFilePath(c.File) && testName(c.Name)) {
 		return reach{reason: "test function, run by the test runner"}
 	}
-	if s.Class != "" {
+	if s.Trait != "" {
+		return reach{reason: "implements trait " + s.Trait}
+	}
+	if dec := registeringDecorator(c.Decorators); dec != "" {
+		return reach{reason: "registered by decorator @" + dec}
+	}
+	class, name := s.Class, s.Name
+	if name == "" {
+		name = c.Name
+	}
+	bases, override := s.ClassHasBases, hasAnnotation(s, "Override")
+	// A C++ method defined outside its class (`void D::f() {}`) is a
+	// member of D: its declaration in D's body says whether D has bases
+	// and whether the method is marked override or virtual.
+	outOfClass := false
+	if class == "" && (f.lang == "cpp" || f.lang == "c") {
+		if scope, member, ok := cppQualifiedName(name); ok {
+			for _, d := range decls[declKey(f.lang, member)] {
+				if d.class == scope {
+					class, name, outOfClass = scope, member, true
+					bases = bases || d.classHasBases
+					override = override || d.override
+				}
+			}
+		}
+	}
+	if class != "" {
 		implements, overrides, overridden := false, false, false
-		for _, d := range decls[declKey(f.lang, s.Name)] {
-			if d.class == s.Class && d.file == c.File {
+		for _, d := range decls[declKey(f.lang, name)] {
+			// Skip the method itself: its own span, or for an
+			// out-of-class definition, its declaration in the class.
+			if d.class == class && (outOfClass || d.file == c.File) {
 				continue
 			}
 			switch {
@@ -533,13 +604,13 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 				overrides = true
 			}
 		}
-		if stubBody(s) == stubNotImpl && overridden && !s.ClassHasBases {
+		if stubBody(s) == stubNotImpl && overridden && !bases {
 			return reach{declaration: true}
 		}
-		if implements && (s.ClassHasBases || hasAnnotation(s, "Override")) {
+		if implements && (bases || override) {
 			return reach{reason: "implements an interface or abstract method"}
 		}
-		if hasAnnotation(s, "Override") || (overrides && s.ClassHasBases) {
+		if override || (overrides && bases) {
 			return reach{reason: "overrides a base-class method"}
 		}
 	}
@@ -547,6 +618,57 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 		return reach{reason: "exported API of a library package"}
 	}
 	return reach{}
+}
+
+// cppQualifiedName splits a qualified C++ name (`D::f`, `geo::D::f`,
+// `Box<T>::f`) into its class, without namespaces or template arguments,
+// and the member name.
+func cppQualifiedName(name string) (string, string, bool) {
+	i := strings.LastIndex(name, "::")
+	if i <= 0 {
+		return "", "", false
+	}
+	scope, member := name[:i], name[i+2:]
+	if j := strings.Index(scope, "<"); j >= 0 {
+		scope = scope[:j]
+	}
+	if j := strings.LastIndex(scope, "::"); j >= 0 {
+		scope = scope[j+2:]
+	}
+	if scope == "" || member == "" {
+		return "", "", false
+	}
+	return scope, member, true
+}
+
+// plainDecorators are decorators that wrap a function without registering
+// it anywhere: the function still needs a caller.
+var plainDecorators = map[string]bool{
+	"staticmethod": true, "classmethod": true, "abstractmethod": true,
+	"lru_cache": true, "cache": true, "wraps": true, "contextmanager": true,
+	"asynccontextmanager": true, "total_ordering": true, "dataclass": true,
+	"overload": true, "deprecated": true,
+}
+
+// registeringDecorator returns the first decorator of a function that
+// hands it to a framework (a Flask route, a click command, a pytest
+// fixture, a property): the framework calls it. It returns "" when every
+// decorator is a plain wrapper.
+func registeringDecorator(decorators string) string {
+	for _, dec := range strings.Split(decorators, ",") {
+		dec = strings.TrimSpace(dec)
+		if dec == "" {
+			continue
+		}
+		last := dec
+		if i := strings.LastIndex(dec, "."); i >= 0 {
+			last = dec[i+1:]
+		}
+		if !plainDecorators[last] {
+			return dec
+		}
+	}
+	return ""
 }
 
 func hasAnnotation(s funcSpan, name string) bool {

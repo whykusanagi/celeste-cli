@@ -285,22 +285,35 @@ method with its edge counts and source body and reports these kinds:
   `main`, a test function (Go `TestXxx`/`BenchmarkXxx`/`FuzzXxx`/`ExampleXxx`
   in a `_test.go` file, `@Test`, a test-named function in a test file), a
   method that implements an interface or abstract method or overrides a
-  base-class method (Go's type-checked `implements`, `@Override`, or the same
-  name declared by another class while its own class extends or implements
-  something; TS interface and abstract signatures and C++ pure virtual
-  declarations count as declarations), the exported API of a library
-  package (an exported Go function or method outside package `main`, an
-  exported JS/TS function, a public method of a public Java class), and a
-  function in a Go file with build constraints (a `//go:build` line or a
-  GOOS/GOARCH file name suffix), whose callers are in another platform's
-  build. A base-class method that only raises "not implemented" while
-  subclasses override it is an abstract declaration, not a STUB.
+  base-class method (Go's type-checked `implements`, `@Override`, a C++
+  `override` or `virtual` specifier, or the same name declared by another
+  class while its own class extends or implements something; TS interface
+  and abstract signatures, C++ member declarations in headers and Rust trait
+  signatures count as declarations), a C++ method defined outside its class
+  (`void D::f() {}`), judged by its declaration in `D` (a `.h` header with
+  C++ syntax is read as C++), a method in a Rust `impl Trait for X`, a
+  function a decorator registers with a framework (`@app.route`,
+  `@click.command`, `@pytest.fixture`, `@property`; plain wrappers such as
+  `@staticmethod`, `@classmethod` and `@lru_cache` still need a caller), the
+  exported API of a library package (an exported Go function or method
+  outside package `main` and outside any `internal/` directory, an exported
+  JS/TS function, a public method of an exported JS/TS class, a public
+  method of a public Java class), and a function in a Go file with build
+  constraints (a `//go:build` line or a GOOS/GOARCH file name suffix), whose
+  callers are in another platform's build. A base-class method that only
+  raises "not implemented" while subclasses override it is an abstract
+  declaration, not a STUB.
+
+  Public methods of PHP, Ruby and C++ classes are not treated as library
+  API: an uncalled one is reported as likely dead code.
 - `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
   which has at most two outgoing calls and redirects instead, for example by
   telling the user to use the CLI.
 - `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
   checks on the body. `TODO_FIXME` and `HARDCODED` report the line the
-  marker or value is on.
+  marker or value is on. A marker outside every function body (at top
+  level, at class level, or in a doc comment above a function) belongs to
+  no function and is not reported.
 
 Each function's body is the span its parser recorded: go/ast for Go
 (functions and methods), tree-sitter for TypeScript, JavaScript, PHP,

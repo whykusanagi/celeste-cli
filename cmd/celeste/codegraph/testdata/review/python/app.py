@@ -31,3 +31,15 @@ def run():
     idx = Index()
     for t in tokenize(url):
         idx.add(t)
+
+
+@app.route("/x")
+def handler():
+    # TODO: render
+    pass
+
+
+class Cfg:
+    @staticmethod
+    def unused_static():
+        pass

@@ -3,17 +3,17 @@
 package codegraph
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// treeSitterSpans parses src with the tree-sitter grammar for relPath's
-// language and returns the span of every function the indexer's walker
-// records as a symbol.
-func (r *reviewer) treeSitterSpans(relPath string, src []byte) ([]funcSpan, bool) {
-	lang := SupportedLanguage(strings.ToLower(filepath.Ext(relPath)))
+// treeSitterSpans parses src with the tree-sitter grammar of lang (the
+// grammar name SupportedLanguage gives for the file's extension) and
+// returns the span of every function the indexer's walker records as a
+// symbol.
+func (r *reviewer) treeSitterSpans(lang string, src []byte) ([]funcSpan, bool) {
 	if lang == "" || lang == "go" || !multiLangGrammars[lang] {
 		return nil, false
 	}
@@ -51,9 +51,11 @@ func (r *reviewer) treeSitterSpans(relPath string, src []byte) ([]funcSpan, bool
 
 // spanCtx is the class a node is declared in.
 type spanCtx struct {
-	class  string
-	bases  bool // the class extends or implements a type
-	public bool // Java: the class is public
+	class    string
+	bases    bool   // the class extends or implements a type
+	public   bool   // Java: the class is public
+	exported bool   // JS/TS: the class is exported
+	trait    string // Rust: the trait of an `impl Trait for X`
 }
 
 // interfaceTypes are the interface containers the walker does not treat as
@@ -66,9 +68,10 @@ var memberDeclTypes = map[string]bool{"method_signature": true, "abstract_method
 
 // collectSpans mirrors walk: it visits the same class, function and
 // JS/TS variable-declarator nodes, and records each named function's span.
-// It also records the bodiless member declarations a class can implement
-// (TS interface and abstract signatures, C++ pure virtual declarations),
-// which are no symbols but tell code review a method implements one.
+// It also records the bodiless member declarations a method can implement
+// or define (TS interface and abstract signatures, C++ member declarations,
+// Rust trait signatures), which are no symbols but tell code review a
+// method implements one, or what a C++ method defined outside its class is.
 func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]funcSpan) {
 	if node == nil {
 		return
@@ -76,6 +79,12 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]f
 	kind := node.Kind()
 	if w.classSet[kind] || (interfaceTypes[kind] && w.isJSLike()) {
 		inner := spanCtx{class: w.extractName(node), bases: classHasBases(node), public: w.hasModifier(node, "public")}
+		if p := node.Parent(); p != nil && p.Kind() == "export_statement" {
+			inner.exported = true
+		}
+		if t := node.ChildByFieldName("trait"); t != nil && w.lang == "rust" && kind == "impl_item" {
+			inner.trait = w.nodeText(t)
+		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.collectSpans(node.NamedChild(i), inner, out)
 		}
@@ -96,10 +105,20 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]f
 		}
 		return
 	}
+	if ctx.class != "" && w.lang == "rust" && kind == "function_signature_item" {
+		if name := w.extractName(node); name != "" {
+			*out = append(*out, w.declSpan(node, name, ctx))
+		}
+		return
+	}
 	if ctx.class != "" && w.lang == "cpp" && kind == "field_declaration" {
 		if d := node.ChildByFieldName("declarator"); d != nil && d.Kind() == "function_declarator" {
 			if name := extractCIdentifier(w.nodeText(d)); name != "" {
-				*out = append(*out, w.declSpan(node, name, ctx))
+				s := w.declSpan(node, name, ctx)
+				if cppOverrides(node) {
+					s.Annotations = append(s.Annotations, "Override")
+				}
+				*out = append(*out, s)
 			}
 			return
 		}
@@ -233,6 +252,14 @@ func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name string, ctx spanC
 	if w.lang == "java" && ctx.public && w.hasModifier(fn, "public") {
 		s.Exported = true
 	}
+	// JS/TS: the public methods of an exported class.
+	if w.isJSLike() && ctx.exported && kind == "method_definition" && w.publicMethod(fn) {
+		s.Exported = true
+	}
+	s.Trait = ctx.trait
+	if w.lang == "cpp" && cppOverrides(fn) {
+		s.Annotations = append(s.Annotations, "Override")
+	}
 	for i := uint(0); i < fn.NamedChildCount(); i++ {
 		child := fn.NamedChild(i)
 		if child == nil || child.Kind() != "modifiers" {
@@ -249,6 +276,46 @@ func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name string, ctx spanC
 		}
 	}
 	return s
+}
+
+// publicMethod reports whether a JS/TS method is public: no private or
+// protected modifier and no #private name.
+func (w *multiWalker) publicMethod(fn *tree_sitter.Node) bool {
+	if n := fn.ChildByFieldName("name"); n != nil && n.Kind() == "private_property_identifier" {
+		return false
+	}
+	for i := uint(0); i < fn.NamedChildCount(); i++ {
+		child := fn.NamedChild(i)
+		if child != nil && child.Kind() == "accessibility_modifier" {
+			if t := strings.TrimSpace(w.nodeText(child)); t == "private" || t == "protected" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// cppOverrides reports a C++ member declaration or definition marked
+// virtual, or with an override (or final) specifier.
+func cppOverrides(node *tree_sitter.Node) bool {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if child := node.Child(i); child != nil && child.Kind() == "virtual" {
+			return true
+		}
+	}
+	d := node.ChildByFieldName("declarator")
+	for d != nil && d.Kind() != "function_declarator" {
+		d = d.ChildByFieldName("declarator")
+	}
+	if d == nil {
+		return false
+	}
+	for i := uint(0); i < d.NamedChildCount(); i++ {
+		if child := d.NamedChild(i); child != nil && child.Kind() == "virtual_specifier" {
+			return true
+		}
+	}
+	return false
 }
 
 // collectComments appends the text of every comment inside node, skipping
@@ -270,7 +337,7 @@ func (w *multiWalker) collectComments(node *tree_sitter.Node, out *[]string) {
 // classHasBases reports whether a class declaration extends or implements
 // another type, in any of the grammars' spellings.
 func classHasBases(node *tree_sitter.Node) bool {
-	for _, field := range []string{"superclasses", "superclass", "interfaces"} {
+	for _, field := range []string{"superclasses", "superclass", "interfaces", "trait"} {
 		if node.ChildByFieldName(field) != nil {
 			return true
 		}
@@ -299,4 +366,11 @@ func isCppConstructor(name, class string) bool {
 		return scope == member
 	}
 	return false
+}
+
+// declLanguage reports whether code review parses relPath for the class
+// member declarations of other files' methods.
+func declLanguage(relPath string) bool {
+	lang := SupportedLanguage(strings.ToLower(path.Ext(strings.ReplaceAll(relPath, "\\", "/"))))
+	return lang != "" && lang != "go" && multiLangGrammars[lang]
 }

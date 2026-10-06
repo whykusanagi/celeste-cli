@@ -113,6 +113,8 @@ var goReviewCase = reviewCase{
 		"STUB store.go:Export:15 live",
 		"STUB store.go:unexportedDead:19 dead",
 		"STUB store_windows.go:platformHook:3 live",
+		// Exported, but under internal/: nothing outside the module calls it.
+		"STUB vault.go:Dead:4 dead",
 	},
 }
 
@@ -378,5 +380,67 @@ func TestReview_Reach(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			assert.Equal(t, c.want, c.f.reach(c.c, c.s, decls).reason)
 		})
+	}
+}
+
+// #396 review: more of what reaches a function nobody calls. A C++ method
+// defined outside its class is matched by its class's declaration; a Rust
+// method in `impl Trait for X` implements the trait; a function a
+// decorator registers is called by the framework.
+func TestReview_ReachMore(t *testing.T) {
+	cpp := &reviewFile{lang: "cpp"}
+	rs := &reviewFile{lang: "rust"}
+	py := &reviewFile{lang: "python"}
+	decls := declIndex{}
+	decls[declKey("cpp", "f")] = []declSite{
+		{file: "shape.hpp", class: "Base"},
+		{file: "shape.hpp", class: "D", classHasBases: true, override: true},
+	}
+	// A declaration in a .h header (language "c") shares the C++ key.
+	decls[declKey("c", "g")] = []declSite{{file: "shape.h", class: "D", classHasBases: true}}
+	decls[declKey("c", "paint")] = []declSite{{file: "w.h", class: "Button", classHasBases: true, override: true}}
+	cases := []struct {
+		name string
+		f    *reviewFile
+		c    FunctionEdgeInfo
+		s    funcSpan
+		want string
+	}{
+		{"cpp out-of-class implementation", cpp, FunctionEdgeInfo{Name: "D::f", File: "shape.cpp"}, funcSpan{Name: "D::f", HasBody: true}, "implements an interface or abstract method"},
+		{"cpp namespaced out-of-class", cpp, FunctionEdgeInfo{Name: "geo::D::f", File: "shape.cpp"}, funcSpan{Name: "geo::D::f", HasBody: true}, "implements an interface or abstract method"},
+		{"cpp out-of-class, nothing overridden", cpp, FunctionEdgeInfo{Name: "D::g", File: "shape.cpp"}, funcSpan{Name: "D::g", HasBody: true}, ""},
+		{"cpp out-of-class override specifier", cpp, FunctionEdgeInfo{Name: "Button::paint", File: "w.cpp"}, funcSpan{Name: "Button::paint", HasBody: true}, "overrides a base-class method"},
+		{"cpp namespace function", cpp, FunctionEdgeInfo{Name: "geo::f", File: "geo.cpp"}, funcSpan{Name: "geo::f", HasBody: true}, ""},
+		{"cpp in-class override specifier", cpp, FunctionEdgeInfo{Name: "h", File: "a.cpp"}, funcSpan{Name: "h", Class: "D", Annotations: []string{"Override"}}, "overrides a base-class method"},
+		{"rust trait impl", rs, FunctionEdgeInfo{Name: "drop", File: "main.rs"}, funcSpan{Name: "drop", Class: "Drop", Trait: "Drop"}, "implements trait Drop"},
+		{"rust inherent impl", rs, FunctionEdgeInfo{Name: "m", File: "main.rs"}, funcSpan{Name: "m", Class: "X"}, ""},
+		{"python route decorator", py, FunctionEdgeInfo{Name: "handler", File: "app.py", Decorators: "app.route"}, funcSpan{}, "registered by decorator @app.route"},
+		{"python staticmethod", py, FunctionEdgeInfo{Name: "s", File: "app.py", Decorators: "staticmethod"}, funcSpan{Class: "C"}, ""},
+		{"python cache", py, FunctionEdgeInfo{Name: "s", File: "app.py", Decorators: "functools.lru_cache"}, funcSpan{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, c.f.reach(c.c, c.s, decls).reason)
+		})
+	}
+}
+
+// #396 review: an exported Go function under internal/ is not library API;
+// nothing outside the module can call it.
+func TestReview_GoInternalIsNotExported(t *testing.T) {
+	src := []byte("package x\n\nfunc Dead() {}\n")
+	for path, want := range map[string]bool{
+		"pkg/x/x.go":            true,
+		"internal/x/x.go":       false,
+		"a/internal/x.go":       false,
+		`a\internal\x\x.go`:     false,
+		"internalish/x/x.go":    true,
+		"cmd/celeste/x/x.go":    true,
+		"a/b/internal/c/d/x.go": false,
+	} {
+		spans, _, ok := goFuncSpans(path, src)
+		require.True(t, ok)
+		require.Len(t, spans, 1)
+		assert.Equal(t, want, spans[0].Exported, path)
 	}
 }
