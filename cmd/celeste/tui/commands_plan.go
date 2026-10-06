@@ -162,5 +162,7 @@ func (m AppModel) sendPlanPrompt(goal string) (tea.Model, tea.Cmd) {
 	if m.turn == nil {
 		return m, turnCmd
 	}
-	return m, tea.Batch(turnCmd, m.restartTick(typingTickInterval*2))
+	// Restart before the return copies m: the call changes its tick state.
+	tick := m.restartTick(typingTickInterval * 2)
+	return m, tea.Batch(turnCmd, tick)
 }

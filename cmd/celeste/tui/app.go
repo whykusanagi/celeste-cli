@@ -865,14 +865,18 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.permissionPrompt.Active() {
 			var cmd tea.Cmd
 			m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
-			return m, tea.Batch(cmd, m.resumeTickAfterModal())
+			// Resume before the return copies m: the call changes its tick state.
+			resume := m.resumeTickAfterModal()
+			return m, tea.Batch(cmd, resume)
 		}
 
 		// If ask prompt is active, route keys to it before normal handling
 		if m.askPrompt.Active() {
 			var cmd tea.Cmd
 			m.askPrompt, cmd = m.askPrompt.Update(msg)
-			return m, tea.Batch(cmd, m.resumeTickAfterModal())
+			// Resume before the return copies m: the call changes its tick state.
+			resume := m.resumeTickAfterModal()
+			return m, tea.Batch(cmd, resume)
 		}
 
 		// The MCP panel and the selector act on single keys too (#320).
