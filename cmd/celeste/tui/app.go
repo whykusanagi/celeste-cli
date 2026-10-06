@@ -1764,7 +1764,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Persist session state
 					m.persistSession()
 				}
-				if result.StateChange.ClearHistory {
+				// With NewSession, the "new" action saves the old session's
+				// transcript and then clears the chat itself; clearing first
+				// would save it empty (#398). Without a session manager there is
+				// nothing to save, and the chat is cleared here.
+				if result.StateChange.ClearHistory && (!result.StateChange.NewSession || m.sessionManager == nil) {
 					m.chat = m.chat.Clear()
 					m.untrackPlan()
 				}
