@@ -245,7 +245,7 @@ No API calls, no vector database, runs entirely offline. Not as good at pure sem
 
 ## Graph Queries
 
-The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, default 1; larger values are capped at 3). An unknown direction is an error.
+The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, default 1; larger values are capped at 3). Direction is matched case-insensitively; an unknown one is an error.
 
 1. Keyword search via SQL `LIKE '%query%'` on symbol names (up to 5 matches)
 2. For each match, walk incoming edges (`GetEdgesTo`) for callers and outgoing edges (`GetEdgesFrom`) for callees, breadth first, up to `depth` hops: depth 2 adds callers of callers (or callees of callees), depth 3 one hop more
@@ -262,7 +262,8 @@ the hop and the symbol it was reached through:
     <- main (calls) main.go:3 [hop 2, via middle]
 ```
 
-A direction stops after 200 entries and says so.
+The first hop always lists every edge. Past the first hop, a direction stops
+after 200 entries and says so.
 
 Go methods and interface methods are shown with their receiver,
 `(*codegraph.Indexer).Build`, so same-named methods stay apart; a method

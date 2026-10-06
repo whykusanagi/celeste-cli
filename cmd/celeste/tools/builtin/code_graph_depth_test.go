@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,4 +89,52 @@ func TestCodeGraphTool_UnknownDirection(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, res.Error)
 	assert.Contains(t, res.Content, "callers, callees, both")
+}
+
+// hubGraph builds hubTarget with n direct callers (callerNNN), each called
+// by its own grandNNN.
+func hubGraph(t *testing.T, n int) *CodeGraphTool {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := codegraph.NewStore(filepath.Join(dir, "cg.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	hub, err := store.UpsertSymbol(codegraph.Symbol{Name: "hubTarget", Kind: codegraph.SymbolFunction, Package: "p", File: "p/p.go", Line: 1})
+	require.NoError(t, err)
+	for i := range n {
+		c, err := store.UpsertSymbol(codegraph.Symbol{Name: fmt.Sprintf("caller%03d", i), Kind: codegraph.SymbolFunction, Package: "p", File: "p/c.go", Line: i + 1})
+		require.NoError(t, err)
+		g, err := store.UpsertSymbol(codegraph.Symbol{Name: fmt.Sprintf("grand%03d", i), Kind: codegraph.SymbolFunction, Package: "p", File: "p/g.go", Line: i + 1})
+		require.NoError(t, err)
+		require.NoError(t, store.AddEdge(c, hub, codegraph.EdgeCalls))
+		require.NoError(t, store.AddEdge(g, c, codegraph.EdgeCalls))
+	}
+	return NewCodeGraphTool(codegraph.NewIndexerWithStore(store, dir))
+}
+
+// The entry cap never cuts the first hop: a default (depth 1) query lists
+// every caller, as it did before depth existed. Later hops stop after
+// maxGraphHops entries and say so.
+func TestCodeGraphTool_HubFirstHopUncapped(t *testing.T) {
+	const n = maxGraphHops + 50
+	tool := hubGraph(t, n)
+
+	d1 := graphQuery(t, tool, map[string]any{"symbol": "hubTarget", "direction": "callers"})
+	assert.Equal(t, n, strings.Count(d1, "    <- caller"), "every first-hop caller is listed")
+	assert.NotContains(t, d1, "stopped")
+
+	d2 := graphQuery(t, tool, map[string]any{"symbol": "hubTarget", "direction": "callers", "depth": 2})
+	assert.Equal(t, n, strings.Count(d2, "    <- caller"), "every first-hop caller is listed at depth 2")
+	assert.Equal(t, maxGraphHops, strings.Count(d2, "    <- grand"), "later hops stop at the cap")
+	assert.Contains(t, d2, fmt.Sprintf("... (stopped after %d entries past the first hop; lower depth to see fewer)", maxGraphHops))
+}
+
+// Direction is matched case-insensitively, like code_review kinds.
+func TestCodeGraphTool_DirectionCaseInsensitive(t *testing.T) {
+	tool := depthGraph(t)
+	want := graphQuery(t, tool, map[string]any{"symbol": "charlieTarget", "direction": "callers"})
+	assert.Equal(t, want, graphQuery(t, tool, map[string]any{"symbol": "charlieTarget", "direction": " Callers "}))
+	assert.Equal(t,
+		graphQuery(t, tool, map[string]any{"symbol": "charlieTarget", "direction": "both"}),
+		graphQuery(t, tool, map[string]any{"symbol": "charlieTarget", "direction": "BOTH"}))
 }

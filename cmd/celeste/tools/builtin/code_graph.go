@@ -61,7 +61,7 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	symbolName := getStringArg(input, "symbol", "")
-	direction := getStringArg(input, "direction", "both")
+	direction := strings.ToLower(strings.TrimSpace(getStringArg(input, "direction", "both")))
 	depth := getIntArg(input, "depth", 1)
 
 	if symbolName == "" {
@@ -120,8 +120,9 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 // maxGraphDepth is the most hops code_graph walks from the queried symbol.
 const maxGraphDepth = 3
 
-// maxGraphHops caps the entries one direction lists, so depth 3 from a hub
-// symbol stays a readable answer.
+// maxGraphHops caps the entries one direction lists past the first hop, so
+// depth 3 from a hub symbol stays a readable answer. The first hop is never
+// capped: a one-hop query lists every edge, as it always has.
 const maxGraphHops = 200
 
 // graphHop is one related symbol in a code_graph walk: the edge's other end,
@@ -135,7 +136,7 @@ type graphHop struct {
 }
 
 // graphWalk is the result of walkGraph; truncated is set when maxGraphHops
-// cut it short.
+// cut its later hops short.
 type graphWalk struct {
 	hops      []graphHop
 	truncated bool
@@ -147,6 +148,7 @@ type graphWalk struct {
 // symbol once, at the hop it is first reached, and never root itself.
 func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers bool) graphWalk {
 	var w graphWalk
+	later := 0 // entries past the first hop, which maxGraphHops caps
 	seen := map[int64]bool{root.ID: true}
 	frontier := []codegraph.Symbol{root}
 	for hop := 1; hop <= depth && len(frontier) > 0; hop++ {
@@ -175,9 +177,12 @@ func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers
 				if err != nil {
 					continue
 				}
-				if len(w.hops) == maxGraphHops {
-					w.truncated = true
-					return w
+				if hop > 1 {
+					if later == maxGraphHops {
+						w.truncated = true
+						return w
+					}
+					later++
 				}
 				h := graphHop{sym: *other, kind: e.Kind, hop: hop}
 				if hop > 1 {
@@ -212,6 +217,6 @@ func writeGraphHops(b *strings.Builder, heading, arrow string, w graphWalk) {
 		b.WriteString("\n")
 	}
 	if w.truncated {
-		fmt.Fprintf(b, "    ... (stopped at %d entries; lower depth to see fewer)\n", maxGraphHops)
+		fmt.Fprintf(b, "    ... (stopped after %d entries past the first hop; lower depth to see fewer)\n", maxGraphHops)
 	}
 }
