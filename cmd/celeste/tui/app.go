@@ -510,8 +510,47 @@ func (m AppModel) costsSummary() string {
 	if limit == 0 {
 		tokens = fmt.Sprintf("%d used (limit known after the first reply)", used)
 	}
-	return fmt.Sprintf("Session Costs:\n  Tokens: %s\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
-		tokens, m.contextBar.turnCount)
+	out := fmt.Sprintf("Session Costs:\n  Tokens: %s\n  Turns: %d", tokens, m.contextBar.turnCount)
+	if c, ok := m.llmClient.(SessionCoster); ok {
+		out += sessionCostText(c.SessionCost())
+	}
+	return out
+}
+
+// SessionCoster is implemented by clients that price the session's usage
+// (the chat adapter's cost tracker), for /costs.
+type SessionCoster interface {
+	SessionCost() SessionCost
+}
+
+// SessionCost is the session's usage and its price: Input is every prompt
+// token, CacheRead and CacheWrite the parts of it read from and written to
+// the prompt cache, priced at their own rates (#312).
+type SessionCost struct {
+	Input, Output         int
+	CacheRead, CacheWrite int
+	USD                   float64
+	Requests              int
+	// Unpriced counts requests on models without pricing: their tokens are
+	// counted, their cost is not.
+	Unpriced int
+}
+
+// sessionCostText is /costs' usage and cost lines.
+func sessionCostText(c SessionCost) string {
+	if c.Requests == 0 {
+		return "\n  Cost: nothing billed yet"
+	}
+	input := config.FormatNumber(c.Input) + " tokens"
+	if c.CacheRead > 0 || c.CacheWrite > 0 {
+		input += fmt.Sprintf(" (cache read %s · cache write %s)", config.FormatNumber(c.CacheRead), config.FormatNumber(c.CacheWrite))
+	}
+	out := fmt.Sprintf("\n  Input: %s\n  Output: %s tokens\n  Cost: %s (%d requests)",
+		input, config.FormatNumber(c.Output), config.FormatCost(c.USD), c.Requests)
+	if c.Unpriced > 0 {
+		out += fmt.Sprintf("\n  %d of %d requests ran on a model without pricing; the cost leaves them out.", c.Unpriced, c.Requests)
+	}
+	return out
 }
 
 // statusSessionName is the session segment: the current session's name, or

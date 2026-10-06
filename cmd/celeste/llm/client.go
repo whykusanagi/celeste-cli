@@ -12,6 +12,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
@@ -395,13 +396,25 @@ type TokenUsage struct {
 	CompletionTokens int
 	TotalTokens      int
 	// CacheReadTokens and CacheWriteTokens are the parts of PromptTokens
-	// served from or written to the prompt cache (Anthropic; OpenAI
-	// Responses reports CacheReadTokens only).
-	CacheReadTokens  int
-	CacheWriteTokens int
+	// served from or written to the prompt cache (Anthropic; OpenAI, xAI
+	// and Google report CacheReadTokens only). CacheWrite1hTokens is the
+	// part of CacheWriteTokens written with a 1-hour lifetime (Anthropic),
+	// which is priced higher than a 5-minute write (#312).
+	CacheReadTokens    int
+	CacheWriteTokens   int
+	CacheWrite1hTokens int
 	// Estimated: celeste counted these itself, because the provider sent
 	// no usage (a stream a steering rule cut short, 2.0 W3).
 	Estimated bool
+}
+
+// CostUsage is u as costs.CostOf prices it: the prompt with its cache
+// reads and writes (#312).
+func (u *TokenUsage) CostUsage() costs.Usage {
+	return costs.Usage{
+		Input: u.PromptTokens, Output: u.CompletionTokens,
+		CacheRead: u.CacheReadTokens, CacheWrite: u.CacheWriteTokens, CacheWrite1h: u.CacheWrite1hTokens,
+	}
 }
 
 type StreamChunk struct {

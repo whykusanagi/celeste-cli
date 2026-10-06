@@ -443,7 +443,7 @@ func TestRunTurnLogsRequestsResponsesAndCost(t *testing.T) {
 		"LLM requested tool call: read_file",
 		"LLM_REQUEST: 3 messages,",
 		"LLM_RESPONSE: 13 chars, no tool calls",
-		"Usage: 100 prompt + 10 completion = 110 tokens",
+		"Usage: 100 prompt (cache read 40, cache write 0) + 10 completion = 110 tokens",
 		"Session cost: $",
 	} {
 		if !strings.Contains(log, want) {

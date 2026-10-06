@@ -569,12 +569,14 @@ func continuesToolLoop(messages []tui.ChatMessage) bool {
 // tokens. Replacing the whole struct on message_delta zeroed the prompt
 // count, and ignoring the cache fields under-reported it (#189).
 type usageTracker struct {
-	input, cacheRead, cacheWrite, output int64
-	seen                                 bool
+	input, cacheRead, cacheWrite, cacheWrite1h, output int64
+	seen                                               bool
 }
 
 func (u *usageTracker) start(x anthropic.Usage) {
 	u.input, u.cacheRead, u.cacheWrite = x.InputTokens, x.CacheReadInputTokens, x.CacheCreationInputTokens
+	// Only message_start breaks the write down by lifetime (#312).
+	u.cacheWrite1h = x.CacheCreation.Ephemeral1hInputTokens
 	u.output = x.OutputTokens
 	u.seen = true
 }
@@ -602,11 +604,12 @@ func (u *usageTracker) result() *TokenUsage {
 	}
 	prompt := int(u.input + u.cacheRead + u.cacheWrite)
 	return &TokenUsage{
-		PromptTokens:     prompt,
-		CompletionTokens: int(u.output),
-		TotalTokens:      prompt + int(u.output),
-		CacheReadTokens:  int(u.cacheRead),
-		CacheWriteTokens: int(u.cacheWrite),
+		PromptTokens:       prompt,
+		CompletionTokens:   int(u.output),
+		TotalTokens:        prompt + int(u.output),
+		CacheReadTokens:    int(u.cacheRead),
+		CacheWriteTokens:   int(u.cacheWrite),
+		CacheWrite1hTokens: int(min(u.cacheWrite1h, u.cacheWrite)),
 	}
 }
 
