@@ -22,7 +22,9 @@ flush per write (each one costs tens of milliseconds on Windows). The index is
 derived data: a power loss can drop the last commits but cannot corrupt the
 database, and commits are lost newest first. A full build sets
 `meta.build_in_progress` before it empties the graph and clears it only after
-its last pass commits, and the Go pass does the same with
+its last pass commits; it stamps `meta.graph_version` in the transaction that
+empties the graph, so the rows of an unfinished build are never taken for an
+older index's. The Go pass does the same with
 `meta.go_pass_pending`. An `Update` that finds the first mark finishes the
 build without resetting the graph: it keeps the files already indexed,
 indexes the missing or changed ones, rewrites every non-Go edge (it
@@ -83,12 +85,17 @@ prints it: `pkg/path.Func`, `(*pkg/path.T).Method`, `(pkg/path.Iface).Method`.
 
 `meta.graph_version` records the edge format. Version 2 is the type-checked
 Go graph (#375). When an existing index has another version (or none),
-`Update` deletes only the Go rows (symbols, files, BM25/LSH rows and every
-edge touching a Go symbol) in one transaction and re-runs the Go pass; other
-languages keep their rows, because version 2 does not change them. The
-version is stamped only when that update completes, so an update cancelled
-part-way (a session closed during indexing) is redone by the next one. An
-empty index gets a full build. Go `init` functions are stored under
+`Update` turns it into an unfinished build of version 2 in one transaction:
+it deletes the Go rows (symbols, files, BM25/LSH rows and every edge touching
+a Go symbol), marks every other file for parsing again, sets
+`meta.build_in_progress` and stamps the version. It then finishes the build
+as it finishes an interrupted one, so the other languages keep their rows
+until each file is parsed again, every non-Go edge is resolved again, and the
+result is the graph a fresh build gives (an index from v1.16 resolved each
+file's calls before the later files were stored, so it lacks edges a build
+has). An update cut short part-way (a session closed during indexing) keeps
+what it stored, and the next one carries on. An empty index gets a full
+build. Go `init` functions are stored under
 `pkg/path.init#<file>`, one per file, since every `init` in a package shares
 the name `pkg/path.init`.
 

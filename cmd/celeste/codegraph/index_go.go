@@ -55,6 +55,15 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 		if !restore {
 			continue
 		}
+		// A cancelled run (Env.Close) stops between files; the files
+		// stored so far keep their rows and records, and the Go-pass
+		// mark makes the next run carry on from them.
+		if testHookGoStore != nil {
+			testHookGoStore(fr.rel)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if changed != nil {
 			_ = idx.store.DeleteFileSymbols(fr.rel)
 		}
