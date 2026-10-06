@@ -14,8 +14,10 @@ import (
 // A C++ call through a qualified name (ns::f(), Cls::f(), ns::a::b(),
 // ::f(), ns::f<T>()) is a call_expression whose function is a
 // qualified_identifier, and a call to a template is a template_function.
-// Each must produce an edge to the callee's own name, the name the
-// declaration is indexed under (#397).
+// Each must produce an edge whose target is the qualified callee with
+// any leading "::" and template arguments dropped; the indexer resolves
+// it exactly ("Shape::make", an out-of-line definition) or by its last
+// segment ("geo::totalArea", defined inside a namespace block) (#397).
 func TestMultiLangParser_CppQualifiedCalls(t *testing.T) {
 	src := `namespace geo {
 double totalArea() { return 1; }
@@ -41,7 +43,7 @@ void runShapes() {
 	result, err := p.ParseFile(path)
 	require.NoError(t, err)
 
-	for _, target := range []string{"totalArea", "make", "b", "globalFn", "pick", "size", "pickLocal"} {
+	for _, target := range []string{"geo::totalArea", "Shape::make", "geo::a::b", "globalFn", "geo::pick", "std::vector::size", "pickLocal"} {
 		assert.Contains(t, result.Edges, RawEdge{SourceName: "runShapes", TargetName: target, Kind: EdgeCalls})
 	}
 }
@@ -83,13 +85,15 @@ func assertCallEdge(t *testing.T, dir, caller, callee string) {
 }
 
 // A member defined out of line (int Shape::make() {...}) is indexed
-// under its own name, as an in-class definition is, so Shape::make()
-// and make() calls resolve to it (#397).
+// under its qualified name, without template arguments, so members of
+// different classes defined in one .cpp stay distinct symbols and a
+// Shape::make() call resolves to it exactly (#397).
 func TestMultiLangParser_CppOutOfLineDefinitionName(t *testing.T) {
 	src := `int Shape::make() { return helper(); }
 Shape::~Shape() {}
 int* geo::a::ptr() { return 0; }
 const Shape& Shape::self() const { return *this; }
+template <typename T> void Box<T>::put() {}
 `
 	path := writeTempFile(t, "shape.cpp", src)
 	p := NewMultiLangParser()
@@ -101,10 +105,10 @@ const Shape& Shape::self() const { return *this; }
 	for _, s := range result.Symbols {
 		names[s.Name] = true
 	}
-	for _, want := range []string{"make", "~Shape", "ptr", "self"} {
+	for _, want := range []string{"Shape::make", "Shape::~Shape", "geo::a::ptr", "Shape::self", "Box::put"} {
 		assert.Truef(t, names[want], "symbol %q not extracted; got %v", want, names)
 	}
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "make", TargetName: "helper", Kind: EdgeCalls})
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "Shape::make", TargetName: "helper", Kind: EdgeCalls})
 }
 
 func TestIndexer_CppStaticMethodOutOfLine(t *testing.T) {
@@ -113,5 +117,54 @@ func TestIndexer_CppStaticMethodOutOfLine(t *testing.T) {
 	writeFile(t, dir, "shape.cpp", "int Shape::make() { return 1; }\n")
 	writeFile(t, dir, "main.cpp", "void runShapes() { Shape::make(); }\n")
 
-	assertCallEdge(t, dir, "runShapes", "make")
+	assertCallEdge(t, dir, "runShapes", "Shape::make")
+}
+
+// Members of different classes with the same short name, defined out of
+// line in one .cpp (Circle::draw next to Square::draw, a pimpl
+// Shape::run next to Shape::Impl::run), stay distinct symbols with their
+// own lines, and each call is credited to the member that makes it.
+// Indexing them under the short name merged each pair into one row
+// (#397 review).
+func TestIndexer_CppSameFileMembersStayDistinct(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "shapes.cpp", `void helperA() {}
+void helperB() {}
+void Circle::draw() { helperA(); }
+void Square::draw() { helperB(); }
+void Shape::Impl::run() {}
+void Shape::run() { impl_->run(); Impl::run(); }
+`)
+	dbPath := filepath.Join(dir, ".celeste", "codegraph.db")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o755))
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+	store := idx.Store()
+
+	syms, err := store.GetSymbolsByFile("shapes.cpp")
+	require.NoError(t, err)
+	lines := map[string]int{}
+	for _, s := range syms {
+		lines[s.Name] = s.Line
+	}
+	assert.Equal(t, 3, lines["Circle::draw"], "symbols: %v", lines)
+	assert.Equal(t, 4, lines["Square::draw"], "symbols: %v", lines)
+	assert.Equal(t, 5, lines["Shape::Impl::run"], "symbols: %v", lines)
+	assert.Equal(t, 6, lines["Shape::run"], "symbols: %v", lines)
+	assert.NotContains(t, lines, "draw")
+	assert.NotContains(t, lines, "run")
+
+	callerNames := func(target string) map[string]int {
+		out := map[string]int{}
+		for _, c := range store.CallersOf(target) {
+			out[c.Name] = c.Line
+		}
+		return out
+	}
+	assert.Equal(t, map[string]int{"Circle::draw": 3}, callerNames("helperA"))
+	assert.Equal(t, map[string]int{"Square::draw": 4}, callerNames("helperB"))
+	// Shape::run calls Impl::run, not itself: no run -> run self-loop.
+	assert.Empty(t, callerNames("Shape::run"))
 }
