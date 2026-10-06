@@ -544,7 +544,17 @@ func (w *multiWalker) identFromExpr(node *tree_sitter.Node) string {
 			return w.nodeText(prop)
 		}
 	case "scoped_identifier":
-		return w.nodeText(node)
+		// Rust geo::f, crate::a::b, Vec::<T>::new, <T as Tr>::m: the
+		// name field is the last segment. The whole path ("geo::f") never
+		// matched a symbol, since the resolver only strips "." qualifiers
+		// (#397).
+		//   scoped_identifier  path: identifier | scoped_identifier | generic_type | bracketed_type  name: identifier
+		if name := node.ChildByFieldName("name"); name != nil {
+			return w.nodeText(name)
+		}
+	case "generic_function":
+		// Rust f::<T>(): generic_function  function: identifier | scoped_identifier | field_expression
+		return w.identFromExpr(node.ChildByFieldName("function"))
 	case "qualified_identifier":
 		// C++ ns::f, Cls::f, ns::a::b, ::f, ns::f<T>: the name field
 		// holds the last segment (itself a qualified_identifier when
