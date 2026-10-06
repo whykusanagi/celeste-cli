@@ -57,3 +57,27 @@ func TestClearWithoutSessionManagerStillClearsTheChat(t *testing.T) {
 	m, _ = step(t, m, SendMessageMsg{Content: "/clear"})
 	assert.NotContains(t, sessChatText(m), "message before clear")
 }
+
+// Typing bare "clear" (terminal habit) must not wipe the session either.
+func TestBareClearSavesTheOldSessionTranscript(t *testing.T) {
+	clearKeepsTranscript(t, func(m AppModel) AppModel {
+		m, _ = step(t, m, SendMessageMsg{Content: "clear"})
+		return m
+	})
+}
+
+func TestBareClearWithoutSessionManagerStillClearsTheChat(t *testing.T) {
+	m := NewApp(&fakeCompactClient{})
+	m.chat = m.chat.AddUserMessage("message before clear")
+	m, _ = step(t, m, SendMessageMsg{Content: "clear"})
+	assert.NotContains(t, sessChatText(m), "message before clear")
+}
+
+// /session clear saves the old session before it switches, even one never
+// saved before.
+func TestSessionClearSavesTheOldSessionTranscript(t *testing.T) {
+	clearKeepsTranscript(t, func(m AppModel) AppModel {
+		m, _ = step(t, m, SendMessageMsg{Content: "/session clear"})
+		return m
+	})
+}

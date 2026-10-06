@@ -1766,9 +1766,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// With NewSession, the "new" action saves the old session's
 				// transcript and then clears the chat itself; clearing first
-				// would save it empty (#398). Without a session manager there is
-				// nothing to save, and the chat is cleared here.
-				if result.StateChange.ClearHistory && (!result.StateChange.NewSession || m.sessionManager == nil) {
+				// would save it empty (#398). /session clear does the same.
+				// Without a session manager there is nothing to save, and the
+				// chat is cleared here.
+				sessionClears := result.StateChange.NewSession ||
+					(result.StateChange.SessionAction != nil && result.StateChange.SessionAction.Action == "clear")
+				if result.StateChange.ClearHistory && (!sessionClears || m.sessionManager == nil) {
 					m.chat = m.chat.Clear()
 					m.skills = m.skills.ResetStatus()
 					m.untrackPlan()
@@ -3249,8 +3252,9 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				m.claimWorkspace(s)
 				m.currentSession = s
 
-				// Clear current chat
+				// Clear current chat, and the old session's ⚙ tool status
 				m.chat = m.chat.Clear()
+				m.skills = m.skills.ResetStatus()
 				m.untrackPlan()
 
 				// Restore messages
@@ -3383,12 +3387,16 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		}
 
 	case "clear":
+		// Save the old session first: one never saved has no file yet (#398)
+		m.persistSession()
+
 		// Create new session automatically
 		newSession := m.sessionManager.NewSession()
 		if s, ok := newSession.(Session); ok {
 			m.currentSession = s
 			m = m.resetContextForNewSession()
 		}
+		m.chat = m.chat.Clear()
 		// Refresh system prompt so /user and /confirm changes take effect
 		if refresher, ok := m.llmClient.(PromptRefresher); ok {
 			refresher.RefreshSystemPrompt()

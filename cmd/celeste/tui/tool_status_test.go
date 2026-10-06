@@ -144,3 +144,46 @@ func TestMCPShowsOneKeyHintRow(t *testing.T) {
 		})
 	}
 }
+
+// The ⚙ row of the last call does not carry over into a resumed session.
+func TestSessionResumeResetsSkillsRow(t *testing.T) {
+	for _, sz := range auditSizes {
+		t.Run(sz.name, func(t *testing.T) {
+			m, _ := newCompactTestApp(t)
+			mgr := &diskSessions{mgr: config.NewSessionManager()}
+			other := mgr.mgr.NewSession()
+			other.Name = "Other notes"
+			other.Messages = []config.SessionMessage{{Role: "user", Content: "message from the other session"}}
+			require.NoError(t, mgr.mgr.Save(other))
+			m = m.SetSessionManager(mgr, mgr.mgr.NewSession())
+			m = resize(t, m, sz.w, sz.h)
+			m = runToolTurn(t, m)
+			m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+			require.Contains(t, auditView(m), "⚙ tool_a ✓")
+
+			m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+			frame := auditView(m)
+			assertFrameFits(t, frame, sz.w, sz.h)
+			assert.Contains(t, frame, "Resumed session")
+			assert.NotContains(t, frame, "⚙ tool_a")
+		})
+	}
+}
+
+// #398 C2: the executing and completed ⚙ rows fit too: a long MCP tool name
+// ends with … instead of running past the terminal.
+func TestSkillsExecutingAndCompletedRowsFit(t *testing.T) {
+	name := "mcp__" + strings.Repeat("server", 8) + "__" + strings.Repeat("tool", 10)
+	for _, w := range []int{40, 80} {
+		s := NewSkillsModel()
+		s.width = w
+		for label, v := range map[string]SkillsModel{
+			"executing": s.SetExecuting(name),
+			"completed": s.SetCompleted(name),
+		} {
+			row := strings.TrimRight(v.collapsedView(), " ")
+			assert.LessOrEqual(t, lipgloss.Width(row), w, "%s row %q", label, row)
+			assert.True(t, strings.HasSuffix(row, "…"), "%s row %q must end with …", label, row)
+		}
+	}
+}

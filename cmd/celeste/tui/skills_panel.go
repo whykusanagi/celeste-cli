@@ -103,12 +103,12 @@ func (s SkillsModel) collapsedView() string {
 	}
 	switch {
 	case s.executingSkill != "":
-		return SkillExecutingStyle.Render(" ⚙ " + s.executingSkill + "…")
+		return SkillExecutingStyle.Render(" " + fitRow("⚙ "+s.executingSkill+"…", w-1))
 	case s.lastError != "":
 		// ✗ marks a failed call the way ✓ marks a completed one (#398 T3).
 		return SkillErrorStyle.Render(" " + fitRow("⚙ "+safeLabel(s.lastErrorSkill)+" ✗ "+s.lastError, w-1))
 	case s.lastCompleted != "":
-		return SkillCompletedStyle.Render(" ⚙ " + s.lastCompleted + " ✓")
+		return SkillCompletedStyle.Render(" " + fitRow("⚙ "+s.lastCompleted+" ✓", w-1))
 	case !s.skillsEnabled && s.disabledReason != "":
 		return SkillErrorStyle.Render(" " + fitRow("⚙ skills off: "+s.disabledReason, w-1))
 	default:
