@@ -28,7 +28,7 @@ const (
 	// minElideTokens is the smallest tool result worth eliding.
 	minElideTokens = 200
 	// perMessageOverhead approximates role and framing tokens per message.
-	perMessageOverhead = 4
+	perMessageOverhead = tui.MessageOverheadTokens
 )
 
 // minSavings is the least a proactive prune must save: minSavingsTokens, or
@@ -44,11 +44,7 @@ func minSavings(window int) int {
 // EstimateTokens approximates the tokens a message costs: its text, tool-call
 // arguments and a small per-message overhead (about 4 characters per token).
 func EstimateTokens(msg tui.ChatMessage) int {
-	n := len(msg.Content)
-	for _, tc := range msg.ToolCalls {
-		n += len(tc.Name) + len(tc.Arguments)
-	}
-	return n/4 + perMessageOverhead
+	return tui.EstimateMessageTokens(msg)
 }
 
 // Estimate approximates the tokens a history costs.

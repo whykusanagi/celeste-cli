@@ -109,9 +109,12 @@ func TestStatusReportsGrimoireProjectAndCost(t *testing.T) {
 	if !st.Project.Indexed || st.Project.TotalFiles != 1 || st.Project.TotalSymbols != 2 {
 		t.Errorf("project = %+v, want indexed with 1 file and 2 symbols (main, helper)", st.Project)
 	}
+	// Each fake request: 100 prompt tokens, 40 of them cached, 10 out. On
+	// gpt-4.1 ($2.50 input, $0.625 cached, $15 output per 1M) that is
+	// $0.000325 a request, the cached tokens at their own rate (#312).
 	sc := st.SessionCost
-	if sc.Requests != 2 || sc.InputTokens != 200 || sc.OutputTokens != 20 || sc.UnpricedRequests != 0 || sc.TotalCostUSD != 0.0008 {
-		t.Errorf("session_cost = %+v, want 2 priced requests, 200/20 tokens, $0.0008", sc)
+	if sc.Requests != 2 || sc.InputTokens != 200 || sc.OutputTokens != 20 || sc.UnpricedRequests != 0 || sc.TotalCostUSD != 0.00065 {
+		t.Errorf("session_cost = %+v, want 2 priced requests, 200/20 tokens, $0.00065", sc)
 	}
 }
 

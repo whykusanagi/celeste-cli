@@ -353,3 +353,19 @@ type MCPConnectResultMsg struct {
 	Name string
 	Err  error
 }
+
+// EstimateMessageTokens approximates the tokens a message costs in a
+// request: its text, tool-call names and arguments, and a small per-message
+// framing overhead (about 4 characters per token). The compactor and the
+// context bar count with it, so they agree.
+func EstimateMessageTokens(msg ChatMessage) int {
+	n := len(msg.Content)
+	for _, tc := range msg.ToolCalls {
+		n += len(tc.Name) + len(tc.Arguments)
+	}
+	return n/4 + MessageOverheadTokens
+}
+
+// MessageOverheadTokens approximates the role and framing tokens of one
+// message.
+const MessageOverheadTokens = 4

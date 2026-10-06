@@ -143,11 +143,12 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) (AppModel, bool) {
 		m.chat = m.chat.AddSystemMessage("Context summary discarded: the conversation changed while it was being written.")
 		return m, false
 	}
+	sentSince := m.chat.GetLLMMessages()[len(msg.snapshot):]
 	m.chat = m.chat.ApplySummary(msg.Outcome.Cut, msg.Outcome.Messages)
 	if m.contextTracker != nil {
 		m.contextTracker.CompactionCount++
-		if msg.Outcome.TokensAfter > 0 {
-			m.contextTracker.CurrentTokens = msg.Outcome.TokensAfter
+		if n := summaryContextTokens(msg.Outcome, sentSince); n > 0 {
+			m.contextTracker.CurrentTokens = n
 			m.header = m.header.SetContextUsage(m.contextTracker.CurrentTokens, m.contextTracker.MaxTokens)
 			m = m.syncContextBar() // K1: the bar follows the header
 		}
@@ -156,6 +157,24 @@ func (m AppModel) applySummary(msg ContextSummarizedMsg) (AppModel, bool) {
 	LogInfo("context summarized: " + msg.Outcome.Line)
 	m.persistSession()
 	return m, true
+}
+
+// summaryContextTokens is the size of the next request after a summary
+// (#400): what the summary reported for the history it was written from
+// (the whole request when the client knows its fixed prefix, else the
+// history alone), plus the messages sent while it was being written.
+func summaryContextTokens(out SummaryOutcome, sentSince []ChatMessage) int {
+	n := out.ContextTokens
+	if n <= 0 {
+		n = out.TokensAfter
+	}
+	if n <= 0 {
+		return 0
+	}
+	for _, msg := range sentSince {
+		n += EstimateMessageTokens(msg)
+	}
+	return n
 }
 
 // summaryStillFits reports whether current still starts with the first cut
