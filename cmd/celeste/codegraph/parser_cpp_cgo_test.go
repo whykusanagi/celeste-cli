@@ -81,3 +81,37 @@ func assertCallEdge(t *testing.T, dir, caller, callee string) {
 	}
 	t.Errorf("no call edge %s -> %s", caller, callee)
 }
+
+// A member defined out of line (int Shape::make() {...}) is indexed
+// under its own name, as an in-class definition is, so Shape::make()
+// and make() calls resolve to it (#397).
+func TestMultiLangParser_CppOutOfLineDefinitionName(t *testing.T) {
+	src := `int Shape::make() { return helper(); }
+Shape::~Shape() {}
+int* geo::a::ptr() { return 0; }
+const Shape& Shape::self() const { return *this; }
+`
+	path := writeTempFile(t, "shape.cpp", src)
+	p := NewMultiLangParser()
+	defer p.Close()
+	result, err := p.ParseFile(path)
+	require.NoError(t, err)
+
+	names := map[string]bool{}
+	for _, s := range result.Symbols {
+		names[s.Name] = true
+	}
+	for _, want := range []string{"make", "~Shape", "ptr", "self"} {
+		assert.Truef(t, names[want], "symbol %q not extracted; got %v", want, names)
+	}
+	assert.Contains(t, result.Edges, RawEdge{SourceName: "make", TargetName: "helper", Kind: EdgeCalls})
+}
+
+func TestIndexer_CppStaticMethodOutOfLine(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "shape.hpp", "struct Shape { static int make(); };\n")
+	writeFile(t, dir, "shape.cpp", "int Shape::make() { return 1; }\n")
+	writeFile(t, dir, "main.cpp", "void runShapes() { Shape::make(); }\n")
+
+	assertCallEdge(t, dir, "runShapes", "make")
+}

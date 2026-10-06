@@ -321,6 +321,9 @@ func (w *multiWalker) extractName(node *tree_sitter.Node) string {
 			text := w.nodeText(child)
 			// For C/C++ declarators, strip pointer/ref markers and parens
 			if w.spec.NameField == "declarator" {
+				if q := cppDeclaredName(child); q != nil {
+					text = w.nodeText(q)
+				}
 				text = extractCIdentifier(text)
 			}
 			return text
@@ -656,6 +659,44 @@ func (idx *Indexer) tryMultiParser(path string) bool {
 		return false // Go has its own AST parser
 	}
 	return multiLangGrammars[lang] && langSpecs[lang].FunctionTypes != nil
+}
+
+// cppDeclaredName returns the last segment of a C++ out-of-line
+// definition's qualified name (int Shape::make() → make, Shape::~Shape →
+// ~Shape), so the member is indexed under its own name exactly as an
+// in-class definition is and Shape::make() / make() calls resolve to it
+// (#397). It returns nil when the declarator is not qualified.
+//
+//	function_definition
+//	  declarator: pointer_declarator | reference_declarator   (optional, nested)
+//	    function_declarator
+//	      declarator: qualified_identifier  scope: …  name: identifier | destructor_name | qualified_identifier | …
+func cppDeclaredName(decl *tree_sitter.Node) *tree_sitter.Node {
+	for n := decl; n != nil; {
+		switch n.Kind() {
+		case "qualified_identifier":
+			for n.Kind() == "qualified_identifier" {
+				name := n.ChildByFieldName("name")
+				if name == nil {
+					return nil
+				}
+				n = name
+			}
+			return n
+		case "function_declarator", "pointer_declarator":
+			n = n.ChildByFieldName("declarator")
+		case "reference_declarator":
+			// The referenced declarator is reference_declarator's
+			// only named child; the grammar gives it no field name.
+			if n.NamedChildCount() == 0 {
+				return nil
+			}
+			n = n.NamedChild(n.NamedChildCount() - 1)
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 // extractCIdentifier strips pointer/ref markers and parens from a C/C++
