@@ -402,11 +402,12 @@ func (m AppModel) onToolResult(msg ToolResultMsg) AppModel {
 		}
 	}
 	m.toolProgress, _ = m.toolProgress.Update(prog)
-	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, card)
 	if msg.IsError {
+		m.chat = m.chat.FailFunctionResult(msg.ID, msg.Name, card)
 		m.skills = m.skills.SetError(msg.Name, err)
 		return m
 	}
+	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, card)
 	m.skills = m.skills.SetCompleted(msg.Name)
 	if msg.Name == "nsfw_mode" {
 		// Takes effect from the next turn: TurnRequest.Tools is fixed.
