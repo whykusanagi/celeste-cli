@@ -101,10 +101,11 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	store := t.indexer.Store()
-	for _, sym := range syms {
+	names := codegraph.QualifiedNames(syms)
+	for i, sym := range syms {
 		name := codegraph.DisplayName(sym)
 		if len(syms) > 1 {
-			name = codegraph.QualifiedName(sym)
+			name = names[i]
 		}
 		fmt.Fprintf(&b, "## %s (%s) — %s:%d\n", name, sym.Kind, sym.File, sym.Line)
 		if sym.Signature != "" {
@@ -162,11 +163,12 @@ const (
 // writeCandidates lists symbols by qualified name, kind and file:line, at
 // most limit of them.
 func writeCandidates(b *strings.Builder, syms []codegraph.Symbol, limit int) {
+	names := codegraph.QualifiedNames(syms)
 	for i, sym := range syms {
 		if i == limit {
 			fmt.Fprintf(b, "  … and %d more\n", len(syms)-limit)
 			break
 		}
-		fmt.Fprintf(b, "  %s (%s) — %s:%d\n", codegraph.QualifiedName(sym), sym.Kind, sym.File, sym.Line)
+		fmt.Fprintf(b, "  %s (%s) — %s:%d\n", names[i], sym.Kind, sym.File, sym.Line)
 	}
 }

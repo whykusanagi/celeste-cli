@@ -161,6 +161,33 @@ func QualifiedName(sym Symbol) string {
 	return sym.Name
 }
 
+// QualifiedNames names each of syms as QualifiedName does, except that
+// symbols whose short names collide (two packages named util, two files
+// named core.py) get a longer name LookupSymbol still accepts: the full Go
+// qualified name, or the file path without its extension.
+func QualifiedNames(syms []Symbol) []string {
+	names := make([]string, len(syms))
+	count := map[string]int{}
+	for i, sym := range syms {
+		names[i] = QualifiedName(sym)
+		count[names[i]]++
+	}
+	for i, sym := range syms {
+		if count[names[i]] > 1 {
+			names[i] = longQualifiedName(sym)
+		}
+	}
+	return names
+}
+
+// longQualifiedName is sym's most specific name LookupSymbol accepts.
+func longQualifiedName(sym Symbol) string {
+	if q := sym.QualName; q != "" && !strings.Contains(q, "#") {
+		return q
+	}
+	return strings.TrimSuffix(sym.File, path.Ext(sym.File)) + "." + sym.Name
+}
+
 // symbolsNamed returns the symbols whose name is name, ignoring case when
 // fold is set.
 func (s *Store) symbolsNamed(name string, fold bool) ([]Symbol, error) {

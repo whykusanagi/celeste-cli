@@ -197,3 +197,32 @@ func TestKeywordSearch_RanksExactFirst(t *testing.T) {
 	assert.Equal(t, "update", syms[0].Name)
 	assert.Equal(t, "update", syms[1].Name)
 }
+
+// Same-named symbols whose short qualified names collide (same package
+// name, same file stem) are listed by a longer name that still selects one.
+func TestQualifiedNames_DisambiguateCollisions(t *testing.T) {
+	s := newTestStore(t)
+	t.Cleanup(func() { _ = s.Close() })
+	for _, sym := range []Symbol{
+		{Name: "Helper", Kind: SymbolFunction, Package: "util", File: "a/util/u.go", Line: 3, QualName: "example.com/m/a/util.Helper"},
+		{Name: "Helper", Kind: SymbolFunction, Package: "util", File: "b/util/u.go", Line: 3, QualName: "example.com/m/b/util.Helper"},
+		{Name: "Helper", Kind: SymbolFunction, File: "x/core.py", Line: 1},
+		{Name: "Helper", Kind: SymbolFunction, File: "y/core.py", Line: 1},
+		{Name: "Helper", Kind: SymbolFunction, File: "z/other.py", Line: 1},
+	} {
+		_, err := s.UpsertSymbol(sym)
+		require.NoError(t, err)
+	}
+	res, err := s.LookupSymbol("Helper")
+	require.NoError(t, err)
+	names := QualifiedNames(res.Symbols)
+	assert.Equal(t, []string{
+		"example.com/m/a/util.Helper", "example.com/m/b/util.Helper",
+		"x/core.Helper", "y/core.Helper", "other.Helper",
+	}, names)
+	for i, q := range names {
+		back, err := s.LookupSymbol(q)
+		require.NoError(t, err, q)
+		assert.Equal(t, lookupFiles(res.Symbols[i:i+1]), lookupFiles(back.Symbols), q)
+	}
+}
