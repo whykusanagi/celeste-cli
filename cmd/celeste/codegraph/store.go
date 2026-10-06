@@ -542,8 +542,8 @@ func (s *Store) GetSymbolIDByNameInFile(name, file string) (int64, bool) {
 }
 
 // sameLanguage is the WHERE clause that keeps a name lookup from fromFile
-// within its language family (languageFamily), by file extension. It is
-// empty for a file of no known language.
+// within its language family (languageFamily), by file extension. A file
+// of no known language matches any symbol outside Go.
 func sameLanguage(fromFile string) string {
 	return languageClauses[languageFamily(DetectLanguage(fromFile))]
 }
@@ -581,7 +581,7 @@ var languageClauses = func() map[string]string {
 		}
 		out[fam] = ` AND (` + strings.Join(parts, ` OR `) + `)`
 	}
-	out[""] = ""
+	out[""] = ` AND file NOT LIKE '%.go'`
 	return out
 }()
 

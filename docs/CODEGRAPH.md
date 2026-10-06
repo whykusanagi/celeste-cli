@@ -215,7 +215,11 @@ resolve at insert time:
 
 `meta.edge_scope` records that rule. An index built before it may hold edges
 that cross languages, so the next `Update` resolves every non-Go edge again
-and reruns the Go pass, once.
+and reruns the Go pass, once. On a large repository that first `Update` takes
+about as long as a full build. If it is cancelled (for example by a tool
+deadline), `edge_scope` is not recorded and the next `Update` repeats the
+work; nothing is lost in between. Running `celeste index` once after
+upgrading does it up front.
 
 ## Similarity Search: MinHash + Jaccard
 

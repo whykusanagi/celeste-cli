@@ -3,6 +3,7 @@ package codegraph
 import (
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -40,11 +41,50 @@ type LookupResult struct {
 // or contain the query. The first tier with a match is returned whole, so
 // a common name gives every symbol that has it rather than the first few
 // in alphabetical order.
+//
+// A trailing ":line" ("pkg/core.add:9", as QualifiedNames prints for
+// same-named symbols in one file) keeps the symbols declared on that line.
+// When none is, the symbols the rest of the query found are returned as
+// MatchPartial candidates.
 func (s *Store) LookupSymbol(query string) (LookupResult, error) {
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return LookupResult{}, nil
 	}
+	if rest, line, ok := splitLine(q); ok {
+		res, err := s.lookupSymbol(rest)
+		if err != nil || res.Match == MatchNone {
+			return res, err
+		}
+		var hits []Symbol
+		for _, sym := range res.Symbols {
+			if sym.Line == line {
+				hits = append(hits, sym)
+			}
+		}
+		if len(hits) == 0 {
+			return LookupResult{Match: MatchPartial, Symbols: res.Symbols}, nil
+		}
+		return LookupResult{Match: res.Match, Symbols: hits}, nil
+	}
+	return s.lookupSymbol(q)
+}
+
+// splitLine splits "name:12" into "name" and 12.
+func splitLine(q string) (string, int, bool) {
+	i := strings.LastIndex(q, ":")
+	if i <= 0 || i == len(q)-1 {
+		return "", 0, false
+	}
+	line, err := strconv.Atoi(q[i+1:])
+	if err != nil || line <= 0 || strings.ContainsAny(q[i+1:], "+-") {
+		return "", 0, false
+	}
+	return strings.TrimSpace(q[:i]), line, true
+}
+
+// lookupSymbol is LookupSymbol without the ":line" form; q is trimmed.
+func (s *Store) lookupSymbol(q string) (LookupResult, error) {
 	syms, err := s.symbolsNamed(q, false)
 	if err != nil {
 		return LookupResult{}, err
@@ -132,7 +172,7 @@ func (s *Store) RankedSearch(query string, limit int) ([]Symbol, error) {
 // symbol of another language.
 func QualifiedName(sym Symbol) string {
 	if sym.QualName == "" && DetectLanguage(sym.File) != "go" {
-		if stem := fileStem(sym.File); stem != "" && stem != "." {
+		if stem := fileStem(slashFile(sym.File)); stem != "" && stem != "." {
 			return stem + "." + sym.Name
 		}
 		return sym.Name
@@ -164,7 +204,9 @@ func QualifiedName(sym Symbol) string {
 // QualifiedNames names each of syms as QualifiedName does, except that
 // symbols whose short names collide (two packages named util, two files
 // named core.py) get a longer name LookupSymbol still accepts: the full Go
-// qualified name, or the file path without its extension.
+// qualified name, or the file path without its extension. Symbols that
+// still collide (a function and a method of one name in one file) also get
+// their line, "pkg/core.add:9".
 func QualifiedNames(syms []Symbol) []string {
 	names := make([]string, len(syms))
 	count := map[string]int{}
@@ -172,9 +214,16 @@ func QualifiedNames(syms []Symbol) []string {
 		names[i] = QualifiedName(sym)
 		count[names[i]]++
 	}
+	long := map[string]int{}
 	for i, sym := range syms {
 		if count[names[i]] > 1 {
 			names[i] = longQualifiedName(sym)
+			long[names[i]]++
+		}
+	}
+	for i, sym := range syms {
+		if long[names[i]] > 1 {
+			names[i] += ":" + strconv.Itoa(sym.Line)
 		}
 	}
 	return names
@@ -185,7 +234,15 @@ func longQualifiedName(sym Symbol) string {
 	if q := sym.QualName; q != "" && !strings.Contains(q, "#") {
 		return q
 	}
-	return strings.TrimSuffix(sym.File, path.Ext(sym.File)) + "." + sym.Name
+	file := slashFile(sym.File)
+	return strings.TrimSuffix(file, path.Ext(file)) + "." + sym.Name
+}
+
+// slashFile is an indexed path with '/' separators. The index stores
+// filepath.Rel paths, which use '\' on Windows; qualifiers and printed
+// names always use '/'.
+func slashFile(file string) string {
+	return strings.ReplaceAll(file, `\`, "/")
 }
 
 // symbolsNamed returns the symbols whose name is name, ignoring case when
@@ -255,7 +312,8 @@ func symbolScopes(sym Symbol) []string {
 			scopes = append(scopes, s)
 		}
 	}
-	noExt := strings.TrimSuffix(sym.File, path.Ext(sym.File))
+	file := slashFile(sym.File)
+	noExt := strings.TrimSuffix(file, path.Ext(file))
 	add(noExt)
 	add(strings.ReplaceAll(noExt, "/", "."))
 	if DetectLanguage(sym.File) != "go" {

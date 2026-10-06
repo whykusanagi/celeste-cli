@@ -226,3 +226,62 @@ func TestQualifiedNames_DisambiguateCollisions(t *testing.T) {
 		assert.Equal(t, lookupFiles(res.Symbols[i:i+1]), lookupFiles(back.Symbols), q)
 	}
 }
+
+// On Windows the index stores paths with backslashes (filepath.Rel). The
+// file-based scopes and printed names still use '/'.
+func TestLookupSymbol_BackslashPaths(t *testing.T) {
+	s := newTestStore(t)
+	t.Cleanup(func() { _ = s.Close() })
+	for _, sym := range []Symbol{
+		{Name: "sub", Kind: SymbolFunction, File: `pkg\win.py`, Line: 1},
+		{Name: "sub", Kind: SymbolFunction, File: `other\win.py`, Line: 1},
+	} {
+		_, err := s.UpsertSymbol(sym)
+		require.NoError(t, err)
+	}
+	for _, q := range []string{"win.sub", "pkg/win.sub", "pkg.win.sub"} {
+		res, err := s.LookupSymbol(q)
+		require.NoError(t, err, q)
+		assert.Equal(t, MatchQualified, res.Match, q)
+	}
+	res, err := s.LookupSymbol("pkg/win.sub")
+	require.NoError(t, err)
+	require.Len(t, res.Symbols, 1)
+	assert.Equal(t, "win.sub", QualifiedName(res.Symbols[0]))
+
+	all, err := s.LookupSymbol("sub")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"other/win.sub", "pkg/win.sub"}, QualifiedNames(all.Symbols))
+}
+
+// Two same-named symbols in one file (a module function and a method) are
+// told apart by their line: "pkg/core.add:9" selects one of them.
+func TestQualifiedNames_SameFileCollisionsCarryLine(t *testing.T) {
+	s := newTestStore(t)
+	t.Cleanup(func() { _ = s.Close() })
+	for _, sym := range []Symbol{
+		{Name: "add", Kind: SymbolFunction, File: "pkg/core.py", Line: 1},
+		{Name: "add", Kind: SymbolMethod, File: "pkg/core.py", Line: 9},
+		{Name: "add", Kind: SymbolFunction, File: "lib/core.py", Line: 4},
+		{Name: "add", Kind: SymbolFunction, File: "src/math.ts", Line: 2},
+	} {
+		_, err := s.UpsertSymbol(sym)
+		require.NoError(t, err)
+	}
+	res, err := s.LookupSymbol("add")
+	require.NoError(t, err)
+	names := QualifiedNames(res.Symbols)
+	assert.Equal(t, []string{"lib/core.add", "pkg/core.add:1", "pkg/core.add:9", "math.add"}, names)
+	for i, q := range names {
+		back, err := s.LookupSymbol(q)
+		require.NoError(t, err, q)
+		assert.NotEqual(t, MatchPartial, back.Match, q)
+		assert.Equal(t, lookupFiles(res.Symbols[i:i+1]), lookupFiles(back.Symbols), q)
+	}
+
+	// A line that matches nothing lists the symbols of the name as candidates.
+	miss, err := s.LookupSymbol("pkg/core.add:5")
+	require.NoError(t, err)
+	assert.Equal(t, MatchPartial, miss.Match)
+	assert.Len(t, miss.Symbols, 2)
+}

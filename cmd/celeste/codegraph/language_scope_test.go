@@ -120,3 +120,47 @@ func symbolIn(t *testing.T, s *Store, name, file string) int64 {
 	t.Fatalf("no symbol %s in %s", name, file)
 	return 0
 }
+
+// The Go side of the one-time refresh: a Go file that did not type-check
+// keeps name-resolved edges, and an older index may have sent one of them
+// to a Python function. The next Update drops it.
+func TestIndexer_UpdateDropsCrossLanguageGoEdgesOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module example.com/m\n\ngo 1.21\n")
+	writeFile(t, dir, "a_core.py", "def add(a, b):\n    return a + b\n")
+	writeFile(t, dir, "broken.go", "package m\n\nfunc Run() {\n\tundefinedThing()\n\thelperX()\n}\n\nfunc helperX() {}\n")
+
+	idx, err := NewIndexer(dir, filepath.Join(t.TempDir(), "codegraph.db"))
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+
+	store := idx.Store()
+	run := symbolIn(t, store, "Run", "broken.go")
+	pyAdd := symbolIn(t, store, "add", "a_core.py")
+	require.NoError(t, store.AddEdge(run, pyAdd, EdgeCalls))
+	require.NoError(t, store.DeleteMeta(metaEdgeScope))
+
+	require.NoError(t, idx.Update())
+	edges, err := store.GetEdgesFrom(run)
+	require.NoError(t, err)
+	for _, e := range edges {
+		assert.NotEqual(t, pyAdd, e.TargetID, "the Go-to-Python edge is gone")
+	}
+	scope, err := store.GetMeta(metaEdgeScope)
+	require.NoError(t, err)
+	assert.Equal(t, edgeScope, string(scope))
+}
+
+// A file of no known language never resolves to a Go symbol, as the old
+// non-Go filter guaranteed.
+func TestStore_UnknownLanguageNeverResolvesToGo(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	_, err := s.UpsertSymbol(Symbol{Name: "Celsius", Kind: SymbolType, File: "temp.go", Line: 1})
+	require.NoError(t, err)
+	_, ok := s.GetCallableIDByName("Celsius", "notes.unknownext")
+	assert.False(t, ok)
+	_, ok = s.GetSymbolIDByNameInFile("Celsius", "notes.unknownext")
+	assert.False(t, ok)
+}
