@@ -60,6 +60,7 @@ var ModelPricing = map[string]ModelCost{
 	// 0.1x, except where the model lists its own read rate (Opus 5.5 $0.20,
 	// Fable 5.1 $0.25; models table, 2026-09).
 	"claude-fable-5-1":  {Input: 10.00, Output: 50.00, CacheRead: 0.25, CacheWrite: 12.50, CacheWrite1h: 20.00},
+	"claude-fable-5":    {Input: 10.00, Output: 50.00, CacheRead: 0.25, CacheWrite: 12.50, CacheWrite1h: 20.00},
 	"claude-opus-5-5":   {Input: 4.00, Output: 20.00, CacheRead: 0.20, CacheWrite: 5.00, CacheWrite1h: 8.00},
 	"claude-opus-5":     {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25, CacheWrite1h: 10.00},
 	"claude-opus-4-8":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25, CacheWrite1h: 10.00},
@@ -87,16 +88,20 @@ var ModelPricing = map[string]ModelCost{
 // datedSuffix is a snapshot date on a model ID: "-20250929" or "@20250929".
 var datedSuffix = regexp.MustCompile(`[-@]\d{8}$`)
 
+// bedrockVersion is Bedrock's model version on an ID: "-v1:0" or "-v2".
+var bedrockVersion = regexp.MustCompile(`-v\d+(:\d+)?$`)
+
 // pricing finds model's row: the ID as given, else lowercased without a
-// provider prefix ("anthropic.", Bedrock) and a snapshot date (the
-// Anthropic default claude-sonnet-4-5-20250929, Vertex's @date), so a
-// dated ID prices as the model it names.
+// provider prefix ("anthropic.", Bedrock), a Bedrock version ("-v1:0") and
+// a snapshot date (the Anthropic default claude-sonnet-4-5-20250929,
+// Vertex's @date), so a dated ID prices as the model it names.
 func pricing(model string) (ModelCost, bool) {
 	if mc, ok := ModelPricing[model]; ok {
 		return mc, true
 	}
 	id := strings.ToLower(model)
 	id = strings.TrimPrefix(id, "anthropic.")
+	id = bedrockVersion.ReplaceAllString(id, "")
 	id = datedSuffix.ReplaceAllString(id, "")
 	mc, ok := ModelPricing[id]
 	return mc, ok
