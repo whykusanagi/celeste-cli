@@ -208,8 +208,14 @@ Go edges from type-checked files carry qualified names and resolve exactly
 (other languages, Go files that did not type-check) store symbol names and
 resolve at insert time:
 1. Check local file symbols first
-2. Fall back to global DB lookup by name
+2. Fall back to global DB lookup by name, within the caller's language
+   (TypeScript and JavaScript count as one, and so do C and C++, which share
+   `.h` headers): a TypeScript call never resolves to a Python function
 3. Strip qualifier prefix (`pkg.Func` -> `Func`) as a last resort
+
+`meta.edge_scope` records that rule. An index built before it may hold edges
+that cross languages, so the next `Update` resolves every non-Go edge again
+and reruns the Go pass, once.
 
 ## Similarity Search: MinHash + Jaccard
 
@@ -247,9 +253,21 @@ No API calls, no vector database, runs entirely offline. Not as good at pure sem
 
 The `code_graph` tool accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, currently only 1-hop implemented).
 
-1. Keyword search via SQL `LIKE '%query%'` on symbol names (up to 5 matches)
-2. For each match, look up incoming edges (`GetEdgesTo`) for callers, outgoing edges (`GetEdgesFrom`) for callees
+1. Find the symbol (`LookupSymbol`), taking the first of these that matches:
+   the exact name; a qualified name, in any form the tools print or a Go
+   programmer writes (`(tui.AppModel).update`, `(*acp.session).update`,
+   `AppModel.update`, `commands.Execute`, a full import path, and for other
+   languages the file stem or path, `core.add`); the name ignoring case; a
+   name that starts with or contains the query.
+2. Every symbol of that tier is kept, non-test files first. Up to 8 are shown
+   with their edges: incoming (`GetEdgesTo`) for callers, outgoing
+   (`GetEdgesFrom`) for callees. More than 8 same-named symbols, or several
+   partial matches, are listed by qualified name, kind and `file:line` so the
+   caller can query one of them.
 3. Returns formatted listing with symbol kind, file, line, signature, and relationships
+
+`code_search` in keyword mode uses the same ranking (exact and qualified
+names first, then prefix and substring matches) and prints qualified names.
 
 Go methods and interface methods are shown with their receiver,
 `(*codegraph.Indexer).Build`, so same-named methods stay apart; a method
@@ -301,7 +319,8 @@ New `lsh_bands(band_id, band_hash, symbol_id)` SQLite table. Band hashes precomp
 Imports, embeds and type references other than conversions are not tracked
 as edges. Outside Go
 (and in approximate Go files) edges still resolve by bare symbol name, so
-same-named functions in different packages can collapse onto one node.
+same-named functions in different packages of one language can collapse onto
+one node; they never cross languages.
 
 ## Supported Languages (indexable)
 

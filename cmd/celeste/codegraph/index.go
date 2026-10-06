@@ -293,7 +293,7 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 
 	// Pass 2: resolve and store all edges now that every symbol is in the DB.
 	// Cross-file call targets that weren't available during pass 1 are now
-	// resolvable via GetSymbolIDByName.
+	// resolvable by name (Store.GetCallableIDByName).
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -327,6 +327,9 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 
 	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
 		return fmt.Errorf("record index version: %w", err)
+	}
+	if err := idx.store.SetMeta(metaEdgeScope, []byte(edgeScope)); err != nil {
+		return fmt.Errorf("record edge scope: %w", err)
 	}
 	if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
 		return fmt.Errorf("mark build finished: %w", err)
@@ -388,6 +391,14 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// An index whose edges were resolved before names stayed within a
+	// language may hold cross-language edges (G8): resolve every non-Go
+	// edge again and rerun the Go pass, once.
+	scope, err := idx.store.GetMeta(metaEdgeScope)
+	if err != nil {
+		return err
+	}
+	rescope := string(scope) != edgeScope
 	indexedFiles, err := idx.store.GetAllFiles()
 	if err != nil {
 		return fmt.Errorf("get indexed files: %w", err)
@@ -497,17 +508,19 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 			continue
 		}
 	}
-	if recovering {
+	if recovering || rescope {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// recoveredEdges is nil unless recovering: the files this run
+		// re-indexed stored their edges, and are parsed again here.
 		if err := idx.reresolveNonGoEdges(ctx, currentFiles, recoveredEdges); err != nil {
 			return err
 		}
 	}
 	// A recovering update reruns the Go pass as the interrupted build would
 	// have (without Go files, it clears a stale Go-pass mark as a build does).
-	if (recovering && len(goFiles) > 0) || len(goChanged) > 0 || goRemoved || goPending != nil || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
+	if ((recovering || rescope) && len(goFiles) > 0) || len(goChanged) > 0 || goRemoved || goPending != nil || (len(goFiles) > 0 && idx.goModulesChanged(goFiles)) {
 		if err := idx.indexGo(ctx, goFiles, goChanged); err != nil {
 			return err
 		}
@@ -537,6 +550,9 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 
 	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
 		return fmt.Errorf("record index version: %w", err)
+	}
+	if err := idx.store.SetMeta(metaEdgeScope, []byte(edgeScope)); err != nil {
+		return fmt.Errorf("record edge scope: %w", err)
 	}
 	if recovering {
 		if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
@@ -738,7 +754,7 @@ func (idx *Indexer) indexFile(relPath string) error {
 	for _, edge := range result.Edges {
 		sourceID, ok1 := symbolIDs[edge.SourceName]
 		if !ok1 {
-			sourceID, ok1 = idx.store.GetSymbolIDByName(edge.SourceName)
+			sourceID, ok1 = idx.store.GetSymbolIDByNameInFile(edge.SourceName, relPath)
 		}
 		// The target goes through the store rather than symbolIDs: this
 		// file's symbols are already stored, and resolveTarget prefers

@@ -38,11 +38,11 @@ func TestIndexer_IndexesJavaCCppRuby(t *testing.T) {
 		{"run_cpp", "helper_cpp"},
 		{"run_cxx", "helper_cxx"},
 	} {
-		caller, ok := store.GetSymbolIDByName(pair[0])
+		caller, ok := uniqueSymbolID(store, pair[0])
 		if !assert.Truef(t, ok, "symbol %s not indexed", pair[0]) {
 			continue
 		}
-		callee, ok := store.GetSymbolIDByName(pair[1])
+		callee, ok := uniqueSymbolID(store, pair[1])
 		if !assert.Truef(t, ok, "symbol %s not indexed", pair[1]) {
 			continue
 		}
@@ -56,4 +56,13 @@ func TestIndexer_IndexesJavaCCppRuby(t *testing.T) {
 		}
 		assert.Truef(t, found, "no call edge %s -> %s", pair[0], pair[1])
 	}
+}
+
+// uniqueSymbolID is the ID of the one symbol with this name.
+func uniqueSymbolID(s *Store, name string) (int64, bool) {
+	res, err := s.LookupSymbol(name)
+	if err != nil || res.Match != MatchExact || len(res.Symbols) != 1 {
+		return 0, false
+	}
+	return res.Symbols[0].ID, true
 }
