@@ -407,5 +407,19 @@ func TestSummaryCountsMessagesSentWhileItWasWritten(t *testing.T) {
 			m, _ = step(t, m, s)
 		}
 	}
-	assert.Equal(t, 10_000+config.EstimateTokens(strings.Repeat("x", 4000)), m.contextTracker.CurrentTokens)
+	assert.Equal(t, 10_000+EstimateMessageTokens(ChatMessage{Role: "user", Content: strings.Repeat("x", 4000)}), m.contextTracker.CurrentTokens)
+}
+
+// Review: a message sent during the summary counts like the compactor
+// counts it, tool-call arguments and framing included, so the bar does not
+// read low until the next reply.
+func TestSummaryCountsToolCallArgumentsSentWhileItWasWritten(t *testing.T) {
+	sent := []ChatMessage{
+		{Role: "assistant", ToolCalls: []ToolCallInfo{{ID: "c9", Name: "write_file", Arguments: strings.Repeat("a", 8000)}}},
+		{Role: "user", Content: strings.Repeat("x", 400)},
+	}
+	got := summaryContextTokens(SummaryOutcome{ContextTokens: 10_000}, sent)
+	want := 10_000 + EstimateMessageTokens(sent[0]) + EstimateMessageTokens(sent[1])
+	assert.Equal(t, want, got)
+	assert.Greater(t, EstimateMessageTokens(sent[0]), 2_000, "tool-call arguments must count")
 }

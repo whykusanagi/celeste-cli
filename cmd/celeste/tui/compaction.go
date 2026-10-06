@@ -172,7 +172,7 @@ func summaryContextTokens(out SummaryOutcome, sentSince []ChatMessage) int {
 		return 0
 	}
 	for _, msg := range sentSince {
-		n += config.EstimateTokens(msg.Content)
+		n += EstimateMessageTokens(msg)
 	}
 	return n
 }
