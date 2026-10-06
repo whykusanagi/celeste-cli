@@ -33,7 +33,9 @@ func NewCodeReviewTool(indexer *codegraph.Indexer) *CodeReviewTool {
 				"to 'run X' instead of doing the work.\n\n" +
 				"- STUB: Functions with no callers whose body is empty, holds only a TODO/FIXME " +
 				"comment, or only raises \"not implemented\". A body with any real statement " +
-				"(a one-liner, a literal return) is not a stub.\n\n" +
+				"(a one-liner, a literal return) is not a stub. The reason says \"likely dead code\" " +
+				"only when nothing reaches it implicitly (constructors, init/main, tests, interface " +
+				"implementations, exported library API and build-tag variants are named instead).\n\n" +
 				"- PLACEHOLDER: Functions with zero edges, short bodies, and placeholder language " +
 				"like 'not implemented'.\n\n" +
 				"- TODO_FIXME: Unfinished work markers, scored by impact — a TODO in a function " +

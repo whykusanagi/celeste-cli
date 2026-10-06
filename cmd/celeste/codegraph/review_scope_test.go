@@ -137,6 +137,20 @@ func TestReview_GoStubs(t *testing.T) {
 	runStubCase(t, goReviewCase)
 }
 
+func runDeadCase(t *testing.T, c reviewCase) {
+	t.Helper()
+	smells := reviewFixture(t, c.lang)
+	assert.Equal(t, sorted(c.stubs...), smellKeys(smells, true, SmellStub), "STUB rows, dead or live")
+}
+
+// #396 G6: "likely dead code" is never said of code reached implicitly:
+// init/main, an interface implementation, the exported API of a library
+// package, a build-constrained file.
+func TestReview_GoDeadCode(t *testing.T) {
+	requireGoToolchain(t)
+	runDeadCase(t, goReviewCase)
+}
+
 // #396 G5 regression on this repository: TrustPath (hooks/trust.go), a
 // one-liner with a real body, is not a STUB.
 func TestReview_RepoTrustPathIsNotAStub(t *testing.T) {
@@ -304,14 +318,56 @@ func TestStubBody(t *testing.T) {
 // constructor is not one either.
 func TestDetectStub_CallersAndConstructors(t *testing.T) {
 	c := FunctionEdgeInfo{Name: "Flush", File: "a.go", Line: 3, Kind: "method", InEdges: 2}
-	_, ok := detectStub(c, funcSpan{HasBody: true, Comments: []string{"// TODO: x"}})
+	_, ok := detectStub(c, funcSpan{HasBody: true, Comments: []string{"// TODO: x"}}, reach{})
 	assert.False(t, ok, "has callers")
 	c.InEdges = 0
-	_, ok = detectStub(c, funcSpan{HasBody: true, Comments: []string{"// TODO: x"}})
+	_, ok = detectStub(c, funcSpan{HasBody: true, Comments: []string{"// TODO: x"}}, reach{})
 	assert.True(t, ok, "no callers, TODO-only body")
 	ctor := FunctionEdgeInfo{Name: "constructor", File: "a.ts", Line: 3, Kind: "method"}
-	_, ok = detectStub(ctor, funcSpan{HasBody: true, Constructor: true})
+	_, ok = detectStub(ctor, funcSpan{HasBody: true, Constructor: true}, reach{})
 	assert.False(t, ok, "empty constructor")
-	_, ok = detectStub(ctor, funcSpan{HasBody: true, Constructor: true, Comments: []string{"// TODO: wire"}})
+	_, ok = detectStub(ctor, funcSpan{HasBody: true, Constructor: true, Comments: []string{"// TODO: wire"}}, reach{})
 	assert.True(t, ok, "constructor with a TODO-only body")
+}
+
+// #396 G6: what reaches a function nobody calls, rule by rule.
+func TestReview_Reach(t *testing.T) {
+	goFile := &reviewFile{lang: "go"}
+	goMain := &reviewFile{lang: "go", goMain: true}
+	goTagged := &reviewFile{lang: "go", constrained: true}
+	java := &reviewFile{lang: "java"}
+	ts := &reviewFile{lang: "typescript"}
+	decls := declIndex{
+		declKey("java", "close"): {{file: "Closer.java", class: "Closer"}},
+	}
+	cases := []struct {
+		name string
+		f    *reviewFile
+		c    FunctionEdgeInfo
+		s    funcSpan
+		want string
+	}{
+		{"go init", goFile, FunctionEdgeInfo{Name: "init", File: "a/a.go"}, funcSpan{}, "program entry point"},
+		{"go main in main", goMain, FunctionEdgeInfo{Name: "main", File: "main.go"}, funcSpan{}, "program entry point"},
+		{"go main elsewhere", goFile, FunctionEdgeInfo{Name: "main", File: "a/a.go"}, funcSpan{}, ""},
+		{"go test", goFile, FunctionEdgeInfo{Name: "TestThing", File: "a/a_test.go"}, funcSpan{}, "test function, run by go test"},
+		{"go testing helper", goFile, FunctionEdgeInfo{Name: "testhelper", File: "a/a_test.go"}, funcSpan{}, ""},
+		{"go interface", goFile, FunctionEdgeInfo{Name: "Error", File: "a/a.go", Implements: "error"}, funcSpan{Class: "e"}, "reached through error"},
+		{"go build tag", goTagged, FunctionEdgeInfo{Name: "hardLinked", File: "a/hardlink_other.go"}, funcSpan{}, "in a build-constrained file, one platform's variant"},
+		{"go exported", goFile, FunctionEdgeInfo{Name: "Export", File: "a/a.go"}, funcSpan{Exported: true}, "exported API of a library package"},
+		{"go unexported", goFile, FunctionEdgeInfo{Name: "helper", File: "a/a.go"}, funcSpan{}, ""},
+		{"java constructor", java, FunctionEdgeInfo{Name: "Pipe", File: "Pipe.java"}, funcSpan{Class: "Pipe", Constructor: true}, "constructor, called implicitly"},
+		{"java @Test", java, FunctionEdgeInfo{Name: "checks", File: "src/A.java"}, funcSpan{Class: "A", Annotations: []string{"Test"}}, "test function, run by the test runner"},
+		{"java implements", java, FunctionEdgeInfo{Name: "close", File: "Pipe.java"}, funcSpan{Name: "close", Class: "Pipe", ClassHasBases: true}, "implements an interface or abstract method"},
+		{"java same name, no bases", java, FunctionEdgeInfo{Name: "close", File: "Door.java"}, funcSpan{Name: "close", Class: "Door"}, ""},
+		{"java @Override", java, FunctionEdgeInfo{Name: "toString", File: "A.java"}, funcSpan{Class: "A", Annotations: []string{"Override"}}, "overrides a base-class method"},
+		{"ts exported", ts, FunctionEdgeInfo{Name: "api", File: "a.ts"}, funcSpan{Exported: true}, "exported API of a library package"},
+		{"ts main", ts, FunctionEdgeInfo{Name: "main", File: "a.ts"}, funcSpan{}, "program entry point"},
+		{"ts dead", ts, FunctionEdgeInfo{Name: "unused", File: "a.ts"}, funcSpan{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, c.f.reach(c.c, c.s, decls).reason)
+		})
+	}
 }

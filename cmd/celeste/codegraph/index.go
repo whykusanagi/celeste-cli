@@ -1370,29 +1370,46 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 	var results []CodeSmell
 
-	// Parse each file once: many symbols share a file.
+	// Parse each file once: many symbols share a file. All files are
+	// loaded first, so a method can be matched against the interface and
+	// base-class declarations of other files (#396 G6).
 	rev := &reviewer{}
 	defer rev.close()
 	files := make(map[string]*reviewFile)
+	decls := declIndex{}
+	for _, c := range candidates {
+		if !includeTests && isTestFilePath(c.File) {
+			continue
+		}
+		absFile := c.File
+		if !filepath.IsAbs(absFile) {
+			absFile = filepath.Join(idx.workspace, absFile)
+		}
+		if _, seen := files[absFile]; seen {
+			continue
+		}
+		data, err := os.ReadFile(absFile)
+		if err != nil {
+			// No source, no body: nothing to judge.
+			files[absFile] = nil
+			continue
+		}
+		rf := rev.load(c.File, data)
+		files[absFile] = rf
+		decls.add(c.File, rf)
+	}
 
 	for _, c := range candidates {
 		if !includeTests && isTestFilePath(c.File) {
 			continue
 		}
-
 		absFile := c.File
 		if !filepath.IsAbs(absFile) {
 			absFile = filepath.Join(idx.workspace, absFile)
 		}
-		rf, cached := files[absFile]
-		if !cached {
-			data, err := os.ReadFile(absFile)
-			if err != nil {
-				// No source, no body: nothing to judge.
-				continue
-			}
-			rf = rev.load(c.File, data)
-			files[absFile] = rf
+		rf := files[absFile]
+		if rf == nil {
+			continue
 		}
 
 		// The function's own lines, nested functions left out (#396).
@@ -1423,7 +1440,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- STUB detection ---
 		if wantAll || wantKind[SmellStub] {
-			if smell, ok := detectStub(c, span); ok {
+			if smell, ok := detectStub(c, span, rf.reach(c, span, decls)); ok {
 				results = append(results, smell)
 			}
 		}
@@ -1595,7 +1612,7 @@ func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData [
 // (an interface or abstract method), a body with any real statement
 // (a one-liner, a literal return), a function that has callers, an empty
 // constructor, a Python dunder, or a Protocol/ABC/@abstractmethod method.
-func detectStub(c FunctionEdgeInfo, s funcSpan) (CodeSmell, bool) {
+func detectStub(c FunctionEdgeInfo, s funcSpan, r reach) (CodeSmell, bool) {
 	// Skip code analysis files
 	if isCodeAnalysisFile(c.File) {
 		return CodeSmell{}, false
@@ -1630,6 +1647,11 @@ func detectStub(c FunctionEdgeInfo, s funcSpan) (CodeSmell, bool) {
 		}
 	}
 
+	// A base-class method that only raises "not implemented" for its
+	// subclasses to override is an abstract declaration.
+	if r.declaration {
+		return CodeSmell{}, false
+	}
 	kind := stubBody(s)
 	if kind == "" {
 		return CodeSmell{}, false
@@ -1640,14 +1662,15 @@ func detectStub(c FunctionEdgeInfo, s funcSpan) (CodeSmell, bool) {
 		return CodeSmell{}, false
 	}
 
-	// Score: zero-caller stubs are more likely dead code — unless the
-	// method implements an interface, in which case it is called through
-	// the interface (often by code outside the module, like fmt or sort)
-	// and has no direct caller by design.
+	// Score: a stub nobody calls is likely dead code, unless something
+	// reaches it implicitly: the runtime (a constructor, init, main), a
+	// test runner, an interface or base class it implements, another
+	// platform's build, or a caller outside the module (an exported API,
+	// an interface from the standard library).
 	score := 3.0
 	reason := kind + " and no callers"
-	if c.Implements != "" {
-		reason += "; reached through " + c.Implements + ", not dead code"
+	if r.reason != "" {
+		reason += "; " + r.reason + ", not dead code"
 	} else {
 		score += 2.0
 		reason += " (likely dead code)"

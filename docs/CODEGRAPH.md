@@ -277,6 +277,22 @@ method with its edge counts and source body and reports these kinds:
   a comment-only body without a work marker (a documented no-op), an empty
   constructor, a Python dunder and a `Protocol`/`ABC`/`@abstractmethod`
   method are never STUBs.
+
+  The reason says "likely dead code" only when nothing reaches the function
+  implicitly. These are reached without a caller in the graph, and the
+  reason names how instead: a constructor (Java and C++ constructors, Ruby
+  `initialize`, PHP `__construct`, JS/TS `constructor`), Go `init` and a
+  `main`, a test function (Go `TestXxx`/`BenchmarkXxx`/`FuzzXxx`/`ExampleXxx`
+  in a `_test.go` file, `@Test`, a test-named function in a test file), a
+  method that implements an interface or abstract method or overrides a
+  base-class method (Go's type-checked `implements`, `@Override`, or the same
+  name declared by another class while its own class extends or implements
+  something), the exported API of a library package (an exported Go function
+  or method outside package `main`, an exported JS/TS function), and a
+  function in a Go file with build constraints (a `//go:build` line or a
+  GOOS/GOARCH file name suffix), whose callers are in another platform's
+  build. A base-class method that only raises "not implemented" while
+  subclasses override it is an abstract declaration, not a STUB.
 - `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
   which has at most two outgoing calls and redirects instead, for example by
   telling the user to use the CLI.

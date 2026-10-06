@@ -442,3 +442,138 @@ var notImplemented = regexp.MustCompile(`(?i)^(?:panic\s*\(.*(?:not\s+(?:yet\s+)
 func isNotImplemented(t string) bool {
 	return notImplemented.MatchString(t)
 }
+
+// declSite is one class member declaration, for matching a method against
+// the interface, abstract and base-class methods it implements.
+type declSite struct {
+	file, class   string
+	hasBody       bool
+	classHasBases bool
+}
+
+// declIndex holds every class member of the reviewed files by language and
+// name. Go is left out: its interface implementations are type-checked
+// (FunctionEdgeInfo.Implements).
+type declIndex map[string][]declSite
+
+func declKey(lang, name string) string { return lang + "\x00" + name }
+
+func (d declIndex) add(file string, f *reviewFile) {
+	if f == nil || f.lang == "go" {
+		return
+	}
+	for _, s := range f.spans {
+		if s.Class == "" {
+			continue
+		}
+		k := declKey(f.lang, s.Name)
+		d[k] = append(d[k], declSite{file: file, class: s.Class, hasBody: s.HasBody, classHasBases: s.ClassHasBases})
+	}
+}
+
+// reach says how a function with no callers is reached anyway. reason is
+// empty when nothing reaches it (likely dead code); declaration marks an
+// abstract-style base method (it only raises "not implemented" and
+// subclasses override it), which is no stub at all.
+type reach struct {
+	reason      string
+	declaration bool
+}
+
+// reach decides whether a function nobody calls is reached implicitly:
+//   - Go: init, main in package main, a TestXxx/BenchmarkXxx/FuzzXxx/ExampleXxx
+//     in a _test.go file, a method satisfying an interface, a function in a
+//     build-constrained file (another platform's variant), the exported API
+//     of a library package;
+//   - other languages: a constructor (Java/C++ constructors, Ruby
+//     initialize, PHP __construct, JS/TS constructor), main, a test function
+//     in a test file or with @Test, a method implementing an interface or
+//     abstract method or overriding a base-class method (@Override, or the
+//     same name declared by another class while its class has bases), an
+//     exported JS/TS function.
+func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reach {
+	if f.lang == "go" {
+		switch {
+		case s.Class == "" && (c.Name == "init" || (c.Name == "main" && f.goMain)):
+			return reach{reason: "program entry point"}
+		case strings.HasSuffix(c.File, "_test.go") && goTestName(c.Name):
+			return reach{reason: "test function, run by go test"}
+		case c.Implements != "":
+			return reach{reason: "reached through " + c.Implements}
+		case f.constrained:
+			return reach{reason: "in a build-constrained file, one platform's variant"}
+		case s.Exported:
+			return reach{reason: "exported API of a library package"}
+		}
+		return reach{}
+	}
+	if s.Constructor {
+		return reach{reason: "constructor, called implicitly"}
+	}
+	if s.Class == "" && c.Name == "main" {
+		return reach{reason: "program entry point"}
+	}
+	if hasAnnotation(s, "Test") || (isTestFilePath(c.File) && testName(c.Name)) {
+		return reach{reason: "test function, run by the test runner"}
+	}
+	if s.Class != "" {
+		implements, overrides, overridden := false, false, false
+		for _, d := range decls[declKey(f.lang, s.Name)] {
+			if d.class == s.Class && d.file == c.File {
+				continue
+			}
+			switch {
+			case !d.hasBody:
+				implements = true
+			case d.classHasBases:
+				overridden = true
+			}
+			if d.hasBody {
+				overrides = true
+			}
+		}
+		if stubBody(s) == stubNotImpl && overridden && !s.ClassHasBases {
+			return reach{declaration: true}
+		}
+		if implements && (s.ClassHasBases || hasAnnotation(s, "Override")) {
+			return reach{reason: "implements an interface or abstract method"}
+		}
+		if hasAnnotation(s, "Override") || (overrides && s.ClassHasBases) {
+			return reach{reason: "overrides a base-class method"}
+		}
+	}
+	if s.Exported {
+		return reach{reason: "exported API of a library package"}
+	}
+	return reach{}
+}
+
+func hasAnnotation(s funcSpan, name string) bool {
+	for _, a := range s.Annotations {
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
+
+// goTestName reports a name go test runs: TestXxx, BenchmarkXxx, FuzzXxx,
+// ExampleXxx (or the bare prefix).
+func goTestName(name string) bool {
+	for _, p := range []string{"Test", "Benchmark", "Fuzz", "Example"} {
+		if name == p || (strings.HasPrefix(name, p) && !isLowerASCII(name[len(p)])) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLowerASCII(b byte) bool { return b >= 'a' && b <= 'z' }
+
+// testName reports a test function name in a test file of another
+// language: test_x, testX, TestX, or a test/it/describe callback.
+func testName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "test") || strings.HasSuffix(lower, "_test") ||
+		name == "it" || name == "describe" || lower == "setup" || lower == "teardown"
+}
