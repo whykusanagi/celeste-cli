@@ -321,6 +321,11 @@ func (w *multiWalker) extractName(node *tree_sitter.Node) string {
 			text := w.nodeText(child)
 			// For C/C++ declarators, strip pointer/ref markers and parens
 			if w.spec.NameField == "declarator" {
+				if q := cppDeclaredName(child); q != nil {
+					// Already a bare qualified name; extractCIdentifier
+					// would cut it at a template's "(" or "*".
+					return cppQualifiedName(w, q)
+				}
 				text = extractCIdentifier(text)
 			}
 			return text
@@ -541,7 +546,27 @@ func (w *multiWalker) identFromExpr(node *tree_sitter.Node) string {
 			return w.nodeText(prop)
 		}
 	case "scoped_identifier":
-		return w.nodeText(node)
+		// Rust geo::f, crate::a::b, Vec::<T>::new, <T as Tr>::m: the
+		// name field is the last segment. The whole path ("geo::f") never
+		// matched a symbol, since the resolver only strips "." qualifiers
+		// (#397).
+		//   scoped_identifier  path: identifier | scoped_identifier | generic_type | bracketed_type  name: identifier
+		if name := node.ChildByFieldName("name"); name != nil {
+			return w.nodeText(name)
+		}
+	case "generic_function":
+		// Rust f::<T>(): generic_function  function: identifier | scoped_identifier | field_expression
+		return w.identFromExpr(node.ChildByFieldName("function"))
+	case "qualified_identifier":
+		// C++ ns::f, Cls::f, ns::a::b, ::f, ns::f<T>: the qualified
+		// callee with any leading "::" and template arguments dropped
+		// ("geo::a::b", "std::vector::size"). The indexer resolves it
+		// exactly (an out-of-line "Shape::make") or by its last segment
+		// (a function defined inside a namespace block) (#397).
+		return cppQualifiedName(w, node)
+	case "template_function":
+		// C++ f<T>(): template_function  name: identifier  arguments: template_argument_list
+		return w.identFromExpr(node.ChildByFieldName("name"))
 	}
 	return ""
 }
@@ -646,6 +671,68 @@ func (idx *Indexer) tryMultiParser(path string) bool {
 		return false // Go has its own AST parser
 	}
 	return multiLangGrammars[lang] && langSpecs[lang].FunctionTypes != nil
+}
+
+// cppDeclaredName returns the qualified_identifier declarator of a C++
+// out-of-line definition (int Shape::make(), Shape::~Shape(),
+// int* geo::a::ptr()), or nil when the declarator is not qualified (every
+// C declarator). The definition is indexed under the whole qualified name
+// (see cppQualifiedName), not its last segment: members of different
+// classes defined in one .cpp (Circle::draw, Square::draw) must stay
+// distinct symbols (#397).
+//
+//	function_definition
+//	  declarator: pointer_declarator | reference_declarator   (optional, nested)
+//	    function_declarator
+//	      declarator: qualified_identifier
+func cppDeclaredName(decl *tree_sitter.Node) *tree_sitter.Node {
+	for n := decl; n != nil; {
+		switch n.Kind() {
+		case "qualified_identifier":
+			return n
+		case "function_declarator", "pointer_declarator":
+			n = n.ChildByFieldName("declarator")
+		case "reference_declarator":
+			// The referenced declarator is reference_declarator's
+			// only named child; the grammar gives it no field name.
+			if n.NamedChildCount() == 0 {
+				return nil
+			}
+			n = n.NamedChild(n.NamedChildCount() - 1)
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+// cppQualifiedName renders a C++ name as scope::...::name with a leading
+// "::" and all template arguments dropped, so a definition and the calls
+// to it spell it the same way: template <class T> void Box<T>::put() and
+// Box<int>::put() are both "Box::put", ::f() is "f", ns::f<T>() is
+// "ns::f". It returns "" for a name it cannot render.
+//
+//	qualified_identifier  scope: namespace_identifier | type_identifier | template_type | …  (absent for ::f)
+//	                      name: identifier | qualified_identifier | template_function | destructor_name | operator_name | …
+func cppQualifiedName(w *multiWalker, node *tree_sitter.Node) string {
+	if node == nil {
+		return ""
+	}
+	switch node.Kind() {
+	case "qualified_identifier":
+		name := cppQualifiedName(w, node.ChildByFieldName("name"))
+		if name == "" {
+			return ""
+		}
+		scope := cppQualifiedName(w, node.ChildByFieldName("scope"))
+		if scope == "" {
+			return name
+		}
+		return scope + "::" + name
+	case "template_function", "template_type", "template_method":
+		return cppQualifiedName(w, node.ChildByFieldName("name"))
+	}
+	return w.nodeText(node)
 }
 
 // extractCIdentifier strips pointer/ref markers and parens from a C/C++
