@@ -100,3 +100,30 @@ func TestChatSummaryCountsThePrefixBeforeAnyTurn(t *testing.T) {
 		t.Fatalf("ContextTokens = %d, want %d (TokensAfter %d + system prompt + tool schemas)", out.ContextTokens, want, out.TokensAfter)
 	}
 }
+
+// Review: the prefix the compactor last measured belongs to the endpoint,
+// model, prompt and tools it measured. After a switch a summary falls back
+// to the new system prompt and tool schemas, not the old prefix.
+func TestChatSummaryDropsAStalePrefixAfterASwitch(t *testing.T) {
+	for name, change := range map[string]func(a *TUIClientAdapter){
+		"model":    func(a *TUIClientAdapter) { _ = a.ChangeModel(a.client.GetConfig().Model + "-other") },
+		"endpoint": func(a *TUIClientAdapter) { _ = a.RestoreEndpoint(a.SnapshotEndpoint()) },
+		"prompt":   func(a *TUIClientAdapter) { a.RefreshSystemPrompt() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "## Goal\nread the files"})
+			_, deps, _ := chatApp(t, srv)
+			a := deps.adapter
+			a.overhead.Store(50_000) // measured on the endpoint being left
+			change(a)
+			out, err := a.SummarizeContext(context.Background(), bigToolHistory(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := out.TokensAfter + ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(a.client.GetSkills())
+			if out.ContextTokens != want {
+				t.Fatalf("ContextTokens = %d, want %d (the new prefix, not the stale 50k)", out.ContextTokens, want)
+			}
+		})
+	}
+}

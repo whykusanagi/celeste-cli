@@ -400,6 +400,7 @@ type TUIClientAdapter struct {
 	// provider's surplus) compactWith last measured. SummarizeContext,
 	// on a tea.Cmd goroutine, sizes its kept tail with it, so the summary
 	// the compactor asked for keeps what NeedsSummary assumed (L2).
+	// A model, endpoint or prompt change resets it to 0 (unmeasured).
 	overhead atomic.Int64
 	// Running turns, so shutdown can wait for them before the Env closes.
 	runsMu  sync.Mutex
@@ -454,6 +455,9 @@ func (a *TUIClientAdapter) applySystemPrompt() {
 	})
 	a.client.SetSystemPromptParts(p.Static, p.Dynamic)
 	a.promptSet, a.promptWindow = true, window
+	// A new prompt (or the endpoint switch behind it) makes the measured
+	// prefix stale; summaries estimate it until the next turn measures it.
+	a.overhead.Store(0)
 	a.toolWindow.Store(int64(window))
 	// A compose on chat's own profile drops a pending notice from an earlier
 	// step-down that no longer applies.
@@ -691,6 +695,7 @@ func (a *TUIClientAdapter) ChangeModel(model string) error {
 	newConfig.Model = model
 
 	a.client.UpdateConfig(newConfig)
+	a.overhead.Store(0) // measured on the model being left
 	tui.LogInfo(fmt.Sprintf("Changed model to: %s", model))
 	return nil
 }
