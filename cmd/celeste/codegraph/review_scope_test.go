@@ -14,10 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// reviewFixtureCache keeps each fixture's findings: the scoped, stub and
+// dead-code tests read the same review, so each fixture is indexed once.
+// The tests using it do not run in parallel.
+var reviewFixtureCache = map[string][]CodeSmell{}
+
 // reviewFixture copies testdata/review/<lang> into a temp workspace, indexes
 // it and returns every code smell, tests excluded.
 func reviewFixture(t *testing.T, lang string) []CodeSmell {
 	t.Helper()
+	if smells, ok := reviewFixtureCache[lang]; ok {
+		return smells
+	}
 	src := filepath.Join("testdata", "review", lang)
 	ws := t.TempDir()
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
@@ -42,6 +50,7 @@ func reviewFixture(t *testing.T, lang string) []CodeSmell {
 	require.NoError(t, idx.Build())
 	smells, err := idx.FindCodeSmells(nil, 1000, false)
 	require.NoError(t, err)
+	reviewFixtureCache[lang] = smells
 	return smells
 }
 
