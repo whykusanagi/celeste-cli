@@ -190,6 +190,10 @@ type xAIStreamChunk struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 		NumSourcesUsed   int `json:"num_sources_used,omitempty"` // xAI Collections indicator
+		// PromptTokensDetails carries the cached prompt tokens (#312).
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 }
 
@@ -286,6 +290,9 @@ func (b *XAIBackend) SendMessageStream(ctx context.Context, messages []tui.ChatM
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+			if d := chunk.Usage.PromptTokensDetails; d != nil {
+				usage.CacheReadTokens = d.CachedTokens
 			}
 			if chunk.Usage.NumSourcesUsed > 0 {
 				tui.LogInfo(fmt.Sprintf("✅ xAI Collections: %d sources used in response", chunk.Usage.NumSourcesUsed))
@@ -452,6 +459,9 @@ func (b *XAIBackend) SendMessageStreamEvents(ctx context.Context, messages []tui
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+			if d := chunk.Usage.PromptTokensDetails; d != nil {
+				usage.CacheReadTokens = d.CachedTokens
 			}
 		}
 

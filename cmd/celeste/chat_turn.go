@@ -387,9 +387,9 @@ func (a *TUIClientAdapter) recordUsage(model string, u *llm.TokenUsage) *tui.Tok
 	if u == nil {
 		return nil
 	}
-	tui.LogInfo(fmt.Sprintf("  Usage: %d prompt + %d completion = %d tokens", u.PromptTokens, u.CompletionTokens, u.TotalTokens))
+	tui.LogInfo("  " + usageLine(u))
 	if a.costTracker != nil {
-		a.costTracker.RecordUsage(model, u.PromptTokens, u.CompletionTokens)
+		a.costTracker.RecordUsage(model, u.CostUsage())
 		if summary := a.costTracker.GetSummary(); summary.TotalCostUSD > 0 {
 			tui.LogInfo(fmt.Sprintf("Session cost: $%.4f (%d turns)", summary.TotalCostUSD, summary.Turns))
 		}
@@ -408,7 +408,31 @@ func (a *TUIClientAdapter) recordDroppedUsage(model string, u *llm.TokenUsage) {
 		note = " (estimated)"
 	}
 	tui.LogInfo(fmt.Sprintf("  Dropped reply usage%s: %d prompt + %d completion tokens", note, u.PromptTokens, u.CompletionTokens))
-	a.costTracker.RecordCost(model, u.PromptTokens, u.CompletionTokens)
+	a.costTracker.RecordCost(model, u.CostUsage())
+}
+
+// usageLine is the log line for one request's usage, with the cache reads
+// and writes when there are any (#312).
+func usageLine(u *llm.TokenUsage) string {
+	cache := ""
+	if u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+		cache = fmt.Sprintf(" (cache read %d, cache write %d)", u.CacheReadTokens, u.CacheWriteTokens)
+	}
+	return fmt.Sprintf("Usage: %d prompt%s + %d completion = %d tokens", u.PromptTokens, cache, u.CompletionTokens, u.TotalTokens)
+}
+
+// SessionCost implements tui.SessionCoster: the chat's priced usage so far,
+// for /costs.
+func (a *TUIClientAdapter) SessionCost() tui.SessionCost {
+	if a.costTracker == nil {
+		return tui.SessionCost{}
+	}
+	s := a.costTracker.GetSummary()
+	return tui.SessionCost{
+		Input: s.TotalInput, Output: s.TotalOutput,
+		CacheRead: s.TotalCacheRead, CacheWrite: s.TotalCacheWrite,
+		USD: s.TotalCostUSD, Requests: s.Requests, Unpriced: s.Unpriced,
+	}
 }
 
 // doneMsg ends the turn: why it stopped, the text for a cap or guard, the

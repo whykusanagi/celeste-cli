@@ -37,8 +37,8 @@ func (c *sessionCost) record(model string, u *llm.TokenUsage) {
 	c.requests++
 	c.input += u.PromptTokens
 	c.output += u.CompletionTokens
-	if _, ok := costs.ModelPricing[model]; ok {
-		c.usd += costs.GetCost(model, u.PromptTokens, u.CompletionTokens)
+	if costs.Priced(model) {
+		c.usd += costs.CostOf(model, u.CostUsage()) // cache reads and writes at their own rates (#312)
 	} else {
 		c.unpriced++
 	}
