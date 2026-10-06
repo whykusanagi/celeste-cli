@@ -468,14 +468,17 @@ func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 	return scanSymbols(rows)
 }
 
-// SearchSymbolsByName returns symbols whose name contains the query (case-insensitive).
+// SearchSymbolsByName returns symbols whose name contains the query
+// (case-insensitive). The query is literal: '%' and '_' match only
+// themselves.
 func (s *Store) SearchSymbolsByName(query string) ([]Symbol, error) {
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
 		        COALESCE(qual_name, ''), COALESCE(implements, '')
-		 FROM symbols WHERE name LIKE ? ORDER BY name`,
-		"%"+query+"%",
+		 FROM symbols WHERE name LIKE ? ESCAPE '\' ORDER BY name`,
+		"%"+esc+"%",
 	)
 	if err != nil {
 		return nil, err

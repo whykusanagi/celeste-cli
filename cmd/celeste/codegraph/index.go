@@ -1172,16 +1172,16 @@ func (idx *Indexer) SemanticSearchWithContext(ctx context.Context, query string,
 	return final, nil
 }
 
-// KeywordSearch finds symbols matching a keyword query using SQL LIKE.
+// KeywordSearch finds symbols by name: exact and qualified names first,
+// then names containing the query (Store.RankedSearch), at most limit.
 func (idx *Indexer) KeywordSearch(query string, limit int) ([]Symbol, error) {
-	syms, err := idx.store.SearchSymbolsByName(query)
-	if err != nil {
-		return nil, err
-	}
-	if len(syms) > limit {
-		syms = syms[:limit]
-	}
-	return syms, nil
+	return idx.store.RankedSearch(query, limit)
+}
+
+// LookupSymbol finds the symbols a name or qualified name refers to
+// (Store.LookupSymbol).
+func (idx *Indexer) LookupSymbol(query string) (LookupResult, error) {
+	return idx.store.LookupSymbol(query)
 }
 
 // Stats returns aggregate stats for the indexed codebase.
