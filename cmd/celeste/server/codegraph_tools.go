@@ -86,8 +86,15 @@ func noIndexError(workspace string) error {
 	return softError("No code graph index for %s; run celeste_index (operation rebuild) or `celeste index` to build one.", workspace)
 }
 
+// indexBuildingError is the soft error the query tools return while an
+// indexer is building the workspace's graph and it is not yet queryable.
+func indexBuildingError(workspace string) error {
+	return softError("The code graph index for %s is being built; try again when the build finishes.", workspace)
+}
+
 // queryIndexer is indexerFor for the read-only query tools: it fails with
-// noIndexError when the workspace has no built index. A workspace with no
+// noIndexError when the workspace has no built index, and says so when the
+// index is being built or its last build did not finish. A workspace with no
 // index database on disk is answered without opening one, so a query never
 // creates the database.
 func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error) {
@@ -95,7 +102,13 @@ func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error
 	open := s.indexers[workspace] != nil
 	s.indexerMu.Unlock()
 	if !open {
-		if _, err := os.Stat(codegraph.IndexPath(workspace)); errors.Is(err, fs.ErrNotExist) {
+		dbPath := codegraph.IndexPath(workspace)
+		if _, err := os.Stat(dbPath); errors.Is(err, fs.ErrNotExist) {
+			// A rebuild deletes the database and holds the lock until
+			// the new one is built.
+			if codegraph.IndexWriterActive(dbPath) {
+				return nil, false, indexBuildingError(workspace)
+			}
 			return nil, false, noIndexError(workspace)
 		}
 	}
@@ -103,14 +116,20 @@ func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error
 	if err != nil {
 		return nil, false, err
 	}
-	built, err := idx.HasIndex()
+	state, err := idx.State()
 	if err != nil {
 		return nil, false, fmt.Errorf("read index: %w", err)
 	}
-	if !built {
+	switch state {
+	case codegraph.IndexBuilt:
+		return idx, cached, nil
+	case codegraph.IndexBuilding:
+		return nil, false, indexBuildingError(workspace)
+	case codegraph.IndexInterrupted:
+		return nil, false, softError("The code graph index build for %s did not finish; run celeste_index (operation update or rebuild) to finish it.", workspace)
+	default:
 		return nil, false, noIndexError(workspace)
 	}
-	return idx, cached, nil
 }
 
 // makeDirectToolHandler builds an MCP ToolHandler that runs a celeste

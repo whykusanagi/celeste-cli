@@ -1189,24 +1189,57 @@ func (idx *Indexer) Stats() (*StoreStats, error) {
 	return idx.store.Stats()
 }
 
-// HasIndex reports whether this index has been built: a build or update
-// finished (it records the graph version), or the store holds files or
-// symbols from an earlier one. A database that was only opened, which is
-// what NewIndexer leaves behind for a never-indexed workspace, has none of
-// these (#399).
-func (idx *Indexer) HasIndex() (bool, error) {
+// IndexState is what State reports about an index database.
+type IndexState int
+
+const (
+	// IndexMissing: never built. A database that was only opened, which
+	// is what NewIndexer leaves behind for a never-indexed workspace.
+	IndexMissing IndexState = iota
+	// IndexBuilt: a build or update finished (it records the graph
+	// version), or the store holds files or symbols from an earlier one.
+	IndexBuilt
+	// IndexBuilding: an indexer holds the index lock while the graph is
+	// not (yet) built, or while a full build is in progress.
+	IndexBuilding
+	// IndexInterrupted: a full build started and never finished, and no
+	// indexer holds the lock to finish it. The graph may be empty or
+	// partial; an update or rebuild finishes it.
+	IndexInterrupted
+)
+
+// State reports whether this index has been built (#399). A full build
+// that was interrupted is not built even though the graph version of an
+// earlier build is still recorded: the build emptied the graph first.
+func (idx *Indexer) State() (IndexState, error) {
+	mark, err := idx.store.GetMeta(metaBuildInProgress)
+	if err != nil {
+		return IndexMissing, err
+	}
+	if mark != nil {
+		if IndexWriterActive(idx.store.path) {
+			return IndexBuilding, nil
+		}
+		return IndexInterrupted, nil
+	}
 	v, err := idx.store.GetMeta(metaGraphVersion)
 	if err != nil {
-		return false, err
+		return IndexMissing, err
 	}
 	if len(v) > 0 {
-		return true, nil
+		return IndexBuilt, nil
 	}
 	stats, err := idx.store.Stats()
 	if err != nil {
-		return false, err
+		return IndexMissing, err
 	}
-	return stats.TotalFiles > 0 || stats.TotalSymbols > 0, nil
+	if stats.TotalFiles > 0 || stats.TotalSymbols > 0 {
+		return IndexBuilt, nil
+	}
+	if IndexWriterActive(idx.store.path) {
+		return IndexBuilding, nil
+	}
+	return IndexMissing, nil
 }
 
 // ProjectSummary returns a brief summary suitable for the system prompt.

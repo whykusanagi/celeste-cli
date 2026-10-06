@@ -91,3 +91,29 @@ func TestCodeReview_UnknownKindRejected(t *testing.T) {
 	}
 	assert.NotContains(t, text, "looks clean")
 }
+
+// #399: a rebuild killed after it emptied the graph leaves the earlier
+// build's graph version behind; queries say the build did not finish
+// instead of answering from the emptied graph.
+func TestQueryTools_InterruptedRebuild(t *testing.T) {
+	srv, ws := newTestServerWithWorkspace(t)
+	writeTSFile(t, ws, "a.ts", "export function helper() { return 1 }\n")
+	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
+	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
+
+	idx, _, err := srv.indexerFor(ws)
+	require.NoError(t, err)
+	require.NoError(t, idx.Store().SetMeta("build_in_progress", []byte("dead-run")))
+	require.NoError(t, idx.Store().ResetGraph())
+
+	for _, tc := range queryToolCalls {
+		t.Run(tc.tool, func(t *testing.T) {
+			_, payload := callTool(t, srv, tc.tool, tc.args)
+			assert.Equal(t, true, payload["isError"])
+			text := payloadText(t, payload)
+			assert.Contains(t, text, "did not finish")
+			assert.Contains(t, text, "celeste_index")
+			assert.NotContains(t, text, "looks clean")
+		})
+	}
+}

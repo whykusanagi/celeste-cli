@@ -296,7 +296,10 @@ workspace whose index was never built they return an error result
 (`isError: true`) saying there is no code graph index and to run
 `celeste_index` with `operation: "rebuild"` or `celeste index`, instead of an
 empty answer that reads as "no findings" or "symbol not found". A query does
-not create the index database either. Every soft tool error (a missing or
+not create the index database either. While another indexer is building the
+index they say it is being built, and when a full build was interrupted (killed
+after it emptied the graph) they say the build did not finish and to run
+`celeste_index` with `operation: "update"` or `"rebuild"`. Every soft tool error (a missing or
 invalid argument, no index, an unknown background run) is an `isError`
 result with the tool's message; JSON-RPC errors are kept for protocol faults.
 
