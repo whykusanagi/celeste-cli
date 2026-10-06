@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -255,4 +256,26 @@ func TestMCPList_RunsInMatchesTheRuntimeMerge(t *testing.T) {
 			}
 		}
 	}
+}
+
+// #398 C3: columns line up by display width, so a name with wide
+// characters does not shift the columns after it.
+func TestMCPList_AlignsWideCharacters(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{
+		"plain-name":{"command":"a","enabled":true},
+		"uni-名前-é":{"command":"b","enabled":true}}}`)
+
+	code, out, errOut := runMCPList(t, nil, ws, home)
+	require.Equal(t, 0, code, errOut)
+
+	src := filepath.Join("~", ".celeste", "mcp.json")
+	col := func(name string) int {
+		line := mcpListLine(t, out, name, src)
+		return lipgloss.Width(line[:strings.Index(line, src)])
+	}
+	header := strings.SplitN(out, "\n", 2)[0]
+	want := lipgloss.Width(header[:strings.Index(header, "SOURCE")])
+	assert.Equal(t, want, col("plain-name"))
+	assert.Equal(t, want, col("uni-名前-é"), "SOURCE must start at the same cell on every row:\n%s", out)
 }

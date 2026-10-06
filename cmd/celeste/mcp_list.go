@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"text/tabwriter"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
@@ -129,8 +130,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		return 1
 	}
 
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSOURCE\tTRANSPORT\tENABLED\tTRUSTED\tAPPROVAL\tRUNS IN")
+	rows := [][]string{{"NAME", "SOURCE", "TRANSPORT", "ENABLED", "TRUSTED", "APPROVAL", "RUNS IN"}}
 	for _, e := range entries {
 		trusted := "no"
 		if e.cfg.Trusted {
@@ -149,10 +149,10 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		case wsBad != "" && e.cfg.Enabled && strings.HasPrefix(runs, "all"):
 			runs = "all but chat (" + wsBad + " does not parse)"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			hooks.SafeText(e.name), where(e), hooks.SafeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs)
+		rows = append(rows, []string{
+			hooks.SafeText(e.name), where(e), hooks.SafeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs})
 	}
-	_ = tw.Flush()
+	writeColumns(out, rows)
 	fmt.Fprintln(out, `
 Workspace configs start only in the interactive chat, and each enabled
 server there only once you approve it (the chat asks at launch, or run
@@ -230,4 +230,29 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// writeColumns prints rows as columns two spaces apart, padded by display
+// width: tabwriter counts runes, so a wide character (CJK, emoji) shifted
+// every column after it (#398 C3). The last column is not padded.
+func writeColumns(out io.Writer, rows [][]string) {
+	var widths []int
+	for _, r := range rows {
+		for i, c := range r {
+			if i >= len(widths) {
+				widths = append(widths, 0)
+			}
+			widths[i] = max(widths[i], lipgloss.Width(c))
+		}
+	}
+	for _, r := range rows {
+		var sb strings.Builder
+		for i, c := range r {
+			sb.WriteString(c)
+			if i < len(r)-1 {
+				sb.WriteString(strings.Repeat(" ", widths[i]-lipgloss.Width(c)+2))
+			}
+		}
+		fmt.Fprintln(out, sb.String())
+	}
 }
