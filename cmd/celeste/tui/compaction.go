@@ -399,7 +399,8 @@ func (m AppModel) syncContextBar() AppModel {
 // resetContextForNewSession starts the token tracking over for the session
 // /handoff, /clear or /session new just opened: a fresh tracker bound to it (the old one kept writing
 // the old session's token count and turn counter), a zeroed header, and a
-// context bar that keeps only the window size (V15).
+// context bar that keeps only the window size (V15). The ⚙ tool status row
+// starts empty too (#398 C1).
 func (m AppModel) resetContextForNewSession() AppModel {
 	if m.contextTracker != nil {
 		if s, ok := m.currentSession.(*config.Session); ok && s != nil {
@@ -409,5 +410,6 @@ func (m AppModel) resetContextForNewSession() AppModel {
 		m.header = m.header.SetContextUsage(0, m.contextTracker.MaxTokens)
 	}
 	m.contextBar = m.contextBar.resetUsage()
+	m.skills = m.skills.ResetStatus()
 	return m
 }

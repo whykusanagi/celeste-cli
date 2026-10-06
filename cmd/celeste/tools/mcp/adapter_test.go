@@ -156,3 +156,15 @@ func TestMCPTool_ValidateInput(t *testing.T) {
 	assert.NoError(t, tool.ValidateInput(nil))
 	assert.NoError(t, tool.ValidateInput(map[string]any{"anything": "goes"}))
 }
+
+// #398 T3: an isError result reaches the loop as ToolResult.Error.
+func TestMCPTool_Execute_IsErrorResult(t *testing.T) {
+	client := NewClient(isErrorTransport(), "celeste", "1.7.0")
+	require.NoError(t, client.Initialize(context.Background()))
+	tool := NewMCPTool(MCPToolDef{Name: "fail", InputSchema: json.RawMessage(`{"type":"object"}`)}, client, "stub")
+
+	result, err := tool.Execute(context.Background(), map[string]any{}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Equal(t, "disk full", result.Content)
+}
