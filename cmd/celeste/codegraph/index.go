@@ -1370,20 +1370,21 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 	var results []CodeSmell
 
-	// Cache file reads — many symbols share the same file
-	fileCache := make(map[string][]byte)
+	// Parse each file once: many symbols share a file.
+	rev := &reviewer{}
+	defer rev.close()
+	files := make(map[string]*reviewFile)
 
 	for _, c := range candidates {
 		if !includeTests && isTestFilePath(c.File) {
 			continue
 		}
 
-		// Read source file (cached)
 		absFile := c.File
 		if !filepath.IsAbs(absFile) {
 			absFile = filepath.Join(idx.workspace, absFile)
 		}
-		sourceData, cached := fileCache[absFile]
+		rf, cached := files[absFile]
 		if !cached {
 			data, err := os.ReadFile(absFile)
 			if err != nil {
@@ -1397,15 +1398,25 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 				}
 				continue
 			}
-			sourceData = data
-			fileCache[absFile] = sourceData
+			rf = rev.load(c.File, data)
+			files[absFile] = rf
 		}
 
-		sym := Symbol{Name: c.Name, Line: c.Line}
-		// Use scoped body extraction to prevent bleed into adjacent functions
-		body := findScopedBody(sourceData, sym)
+		// The function's own lines, nested functions left out (#396).
+		span := rf.span(c)
+		fnLines := rf.bodyLines(span)
+		body := joinLines(fnLines)
 		lowerBody := strings.ToLower(body)
-		bodyLines := strings.Split(strings.TrimSpace(body), "\n")
+		// bodyLines drops the definition line unless the whole function is
+		// on it.
+		innerLines := fnLines
+		if len(innerLines) > 1 {
+			innerLines = innerLines[1:]
+		}
+		bodyLines := make([]string, len(innerLines))
+		for i, l := range innerLines {
+			bodyLines[i] = l.text
+		}
 
 		// Count actual calls in body (source-level, independent of graph edges)
 		bodyCalls := countBodyCalls(body, c.Name)
@@ -1429,7 +1440,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 		// --- LAZY REDIRECT detection ---
 		if wantAll || wantKind[SmellLazyRedirect] {
 			if effectiveOut <= 2 && !isExpectedLeaf(c.Name) {
-				if smell, ok := detectLazyRedirect(c, body, lowerBody, sourceData); ok {
+				if smell, ok := detectLazyRedirect(c, body, lowerBody, rf.src); ok {
 					results = append(results, smell)
 				}
 			}
@@ -1444,7 +1455,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- TODO/FIXME detection ---
 		if wantAll || wantKind[SmellTodoFixme] {
-			if smells := detectTodoFixme(c, body, bodyLines); len(smells) > 0 {
+			if smells := detectTodoFixme(c, fnLines); len(smells) > 0 {
 				results = append(results, smells...)
 			}
 		}
@@ -1458,7 +1469,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- HARDCODED detection ---
 		if wantAll || wantKind[SmellHardcoded] {
-			if smells := detectHardcoded(c, body, bodyLines); len(smells) > 0 {
+			if smells := detectHardcoded(c, fnLines); len(smells) > 0 {
 				results = append(results, smells...)
 			}
 		}
@@ -1761,7 +1772,9 @@ func detectPlaceholder(c FunctionEdgeInfo, body, lowerBody string, bodyLines []s
 	}, true
 }
 
-func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []CodeSmell {
+// detectTodoFixme reports each work marker in the function's lines, on the
+// line it is on.
+func detectTodoFixme(c FunctionEdgeInfo, lines []numberedLine) []CodeSmell {
 	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
 		return nil
 	}
@@ -1777,7 +1790,8 @@ func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 	}
 
 	var results []CodeSmell
-	for lineIdx, line := range bodyLines {
+	for _, nl := range lines {
+		line := nl.text
 		for _, marker := range markers {
 			if strings.Contains(line, marker.tag) {
 				// Skip if the marker is inside a string literal (e.g., search patterns)
@@ -1804,7 +1818,7 @@ func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 					Kind:     SmellTodoFixme,
 					Name:     c.Name,
 					File:     c.File,
-					Line:     c.Line + lineIdx,
+					Line:     nl.n,
 					FuncKind: c.Kind,
 					OutEdges: c.OutEdges,
 					InEdges:  c.InEdges,
@@ -1883,7 +1897,9 @@ func detectEmptyHandler(c FunctionEdgeInfo, body, lowerBody string) (CodeSmell, 
 	return CodeSmell{}, false
 }
 
-func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []CodeSmell {
+// detectHardcoded reports each hardcoded address or credential in the
+// function's lines, on the line it is on.
+func detectHardcoded(c FunctionEdgeInfo, lines []numberedLine) []CodeSmell {
 	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
 		return nil
 	}
@@ -1932,7 +1948,8 @@ func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 	}
 
 	var results []CodeSmell
-	for lineIdx, line := range bodyLines {
+	for _, nl := range lines {
+		line := nl.text
 		for _, p := range patterns {
 			if p.check(line) {
 				snippet := strings.TrimSpace(line)
@@ -1944,7 +1961,7 @@ func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 					Kind:     SmellHardcoded,
 					Name:     c.Name,
 					File:     c.File,
-					Line:     c.Line + lineIdx,
+					Line:     nl.n,
 					FuncKind: c.Kind,
 					OutEdges: c.OutEdges,
 					InEdges:  c.InEdges,
@@ -1959,9 +1976,6 @@ func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 	return results
 }
 
-// funcDefPattern matches the start of a function/method definition across languages.
-var funcDefPattern = regexp.MustCompile(`(?m)^(?:\s*(?:func|def|function|fn|pub\s+fn|async\s+function|export\s+function|export\s+default\s+function)\s+\w)`)
-
 // bodyCallPattern matches identifier followed by '(' — a call heuristic.
 var bodyCallPattern = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
 
@@ -1974,43 +1988,6 @@ var bodyCallKeywords = map[string]bool{
 	"elif": true, "except": true, "with": true, "assert": true,
 	"match": true, "case": true, "select": true, "go": true, "defer": true,
 	"var": true, "let": true, "const": true, "range": true,
-}
-
-// findScopedBody extracts the body of a function, stopping at the next
-// function definition rather than reading a fixed 50-line window.
-// This prevents body bleed in Python/JS where functions aren't brace-delimited.
-func findScopedBody(source []byte, sym Symbol) string {
-	lines := strings.Split(string(source), "\n")
-	if sym.Line <= 0 || sym.Line > len(lines) {
-		return ""
-	}
-
-	start := sym.Line // skip the definition line itself (1-based → 0-indexed body start)
-	if start >= len(lines) {
-		return ""
-	}
-
-	maxEnd := start + 50
-	if maxEnd > len(lines) {
-		maxEnd = len(lines)
-	}
-
-	// Scan forward, stop at the next function definition or 50 lines
-	end := maxEnd
-	for i := start; i < maxEnd; i++ {
-		if funcDefPattern.MatchString(lines[i]) {
-			end = i
-			break
-		}
-	}
-
-	if end <= start {
-		if start < len(lines) {
-			return lines[start]
-		}
-		return ""
-	}
-	return strings.Join(lines[start:end], "\n")
 }
 
 // countBodyCalls counts the number of distinct call-like patterns (name() )
