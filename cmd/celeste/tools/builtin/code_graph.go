@@ -42,7 +42,7 @@ func NewCodeGraphTool(indexer *codegraph.Indexer) *CodeGraphTool {
 					},
 					"depth": {
 						"type": "number",
-						"description": "Number of hops to traverse. Default: 1, max: 3."
+						"description": "Number of hops to traverse. Default: 1, max: 3. Entries past the first hop show their hop and the symbol they were reached through."
 					}
 				},
 				"required": ["symbol"]
@@ -67,11 +67,12 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 	if symbolName == "" {
 		return tools.ToolResult{Error: true, Content: "symbol is required"}, nil
 	}
-	if depth > 3 {
-		depth = 3
+	switch direction {
+	case "callers", "callees", "both":
+	default:
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("unknown direction %q; valid directions: callers, callees, both", direction)}, nil
 	}
-	// depth is accepted but only 1-hop traversal is implemented currently
-	_ = depth
+	depth = min(max(depth, 1), maxGraphDepth)
 
 	// Find the symbol by name
 	syms, err := t.indexer.KeywordSearch(symbolName, 5)
@@ -100,27 +101,11 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 
 		// Get edges
 		if direction == "callers" || direction == "both" {
-			edges, err := store.GetEdgesTo(sym.ID)
-			if err == nil && len(edges) > 0 {
-				fmt.Fprintf(&b, "\n  Called by:\n")
-				for _, e := range edges {
-					if caller, err := store.GetSymbol(e.SourceID); err == nil {
-						fmt.Fprintf(&b, "    <- %s (%s) %s:%d\n", codegraph.DisplayName(*caller), e.Kind, caller.File, caller.Line)
-					}
-				}
-			}
+			writeGraphHops(&b, "Called by", "<-", walkGraph(store, sym, depth, true))
 		}
 
 		if direction == "callees" || direction == "both" {
-			edges, err := store.GetEdgesFrom(sym.ID)
-			if err == nil && len(edges) > 0 {
-				fmt.Fprintf(&b, "\n  Calls:\n")
-				for _, e := range edges {
-					if callee, err := store.GetSymbol(e.TargetID); err == nil {
-						fmt.Fprintf(&b, "    -> %s (%s) %s:%d\n", codegraph.DisplayName(*callee), e.Kind, callee.File, callee.Line)
-					}
-				}
-			}
+			writeGraphHops(&b, "Calls", "->", walkGraph(store, sym, depth, false))
 		}
 		b.WriteString("\n")
 	}
@@ -130,4 +115,103 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	return tools.ToolResult{Content: b.String()}, nil
+}
+
+// maxGraphDepth is the most hops code_graph walks from the queried symbol.
+const maxGraphDepth = 3
+
+// maxGraphHops caps the entries one direction lists, so depth 3 from a hub
+// symbol stays a readable answer.
+const maxGraphHops = 200
+
+// graphHop is one related symbol in a code_graph walk: the edge's other end,
+// the edge kind, how many hops from the queried symbol it is, and the
+// symbol it was reached through (beyond the first hop).
+type graphHop struct {
+	sym  codegraph.Symbol
+	kind codegraph.EdgeKind
+	hop  int
+	via  string
+}
+
+// graphWalk is the result of walkGraph; truncated is set when maxGraphHops
+// cut it short.
+type graphWalk struct {
+	hops      []graphHop
+	truncated bool
+}
+
+// walkGraph lists the symbols up to depth hops from root, callers (incoming
+// edges) or callees (outgoing), breadth first (#399). The first hop lists
+// every edge of root, as a one-hop query always has. Later hops list each
+// symbol once, at the hop it is first reached, and never root itself.
+func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers bool) graphWalk {
+	var w graphWalk
+	seen := map[int64]bool{root.ID: true}
+	frontier := []codegraph.Symbol{root}
+	for hop := 1; hop <= depth && len(frontier) > 0; hop++ {
+		var next []codegraph.Symbol
+		listed := map[int64]bool{}
+		for _, from := range frontier {
+			var edges []codegraph.Edge
+			var err error
+			if callers {
+				edges, err = store.GetEdgesTo(from.ID)
+			} else {
+				edges, err = store.GetEdgesFrom(from.ID)
+			}
+			if err != nil {
+				continue
+			}
+			for _, e := range edges {
+				otherID := e.TargetID
+				if callers {
+					otherID = e.SourceID
+				}
+				if hop > 1 && (seen[otherID] || listed[otherID]) {
+					continue
+				}
+				other, err := store.GetSymbol(otherID)
+				if err != nil {
+					continue
+				}
+				if len(w.hops) == maxGraphHops {
+					w.truncated = true
+					return w
+				}
+				h := graphHop{sym: *other, kind: e.Kind, hop: hop}
+				if hop > 1 {
+					h.via = codegraph.DisplayName(from)
+				}
+				w.hops = append(w.hops, h)
+				listed[otherID] = true
+				if !seen[otherID] {
+					seen[otherID] = true
+					next = append(next, *other)
+				}
+			}
+		}
+		frontier = next
+	}
+	return w
+}
+
+// writeGraphHops renders one direction of a walk under heading. First-hop
+// lines keep the one-hop format; later ones add the hop and the symbol they
+// were reached through.
+func writeGraphHops(b *strings.Builder, heading, arrow string, w graphWalk) {
+	if len(w.hops) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n  %s:\n", heading)
+	for _, h := range w.hops {
+		fmt.Fprintf(b, "    %s %s (%s) %s:%d", arrow, codegraph.DisplayName(h.sym), h.kind, h.sym.File, h.sym.Line)
+		if h.hop > 1 {
+			fmt.Fprintf(b, " [hop %d, via %s]", h.hop, h.via)
+		}
+		b.WriteString("\n")
+	}
+	if w.truncated {
+		fmt.Fprintf(b, "    ... (stopped at %d entries; lower depth to see fewer)\n", maxGraphHops)
+	}
 }
