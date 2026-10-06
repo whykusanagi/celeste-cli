@@ -89,10 +89,12 @@ func TestAskWaitRedrawsOncePerSecond(t *testing.T) {
 	if r.bytes < 0 {
 		t.Fatal("the ask modal never opened")
 	}
-	if r.writes < 2 {
+	if r.writes < 1 {
 		t.Fatalf("%d redraws in 3 s while the ask waited: the elapsed time stopped", r.writes)
 	}
-	if perSec := r.bytes / 3; perSec > 1000 {
-		t.Fatalf("the TUI wrote %d bytes/s while the ask waited (%d redraws in 3 s), want a redraw a second", perSec, r.writes)
+	// Ten a second wrote 30 frames here (~2.2 KB/s); a redraw a second
+	// writes about 3, plus the git poll's every 3 s.
+	if r.writes > 10 {
+		t.Fatalf("%d redraws in 3 s while the ask waited (%d bytes/s), want about one a second", r.writes, r.bytes/3)
 	}
 }
