@@ -542,6 +542,16 @@ func (w *multiWalker) identFromExpr(node *tree_sitter.Node) string {
 		}
 	case "scoped_identifier":
 		return w.nodeText(node)
+	case "qualified_identifier":
+		// C++ ns::f, Cls::f, ns::a::b, ::f, ns::f<T>: the name field
+		// holds the last segment (itself a qualified_identifier when
+		// nested). The call resolves to that segment, the name the
+		// declaration is indexed under (#397).
+		//   qualified_identifier  scope: namespace_identifier  name: identifier | qualified_identifier | template_function
+		return w.identFromExpr(node.ChildByFieldName("name"))
+	case "template_function":
+		// C++ f<T>(): template_function  name: identifier  arguments: template_argument_list
+		return w.identFromExpr(node.ChildByFieldName("name"))
 	}
 	return ""
 }
