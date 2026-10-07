@@ -47,7 +47,8 @@ A build from source compiles the parsers with the local C compiler. With `CGO_EN
 still builds and falls back to the regex parsers. So does a build with `CGO_ENABLED` and `CC`
 both unset on a machine whose default C compiler is missing, since Go then turns CGo off by
 itself; an explicit `CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the
-build instead.
+build instead. A cross-compile (`GOOS` or `GOARCH` not the host's) with `CGO_ENABLED` unset
+also builds without CGo.
 
 ## The persona
 

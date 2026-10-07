@@ -5,14 +5,14 @@ import (
 	"testing"
 )
 
-// #381: Go turns CGo off by itself only when CGO_ENABLED and CC are unset
-// and no default C compiler exists; an explicit CGO_ENABLED=1 fails the
-// build instead of falling back. The docs that promise the regex fallback
-// say so.
+// #381: with CGO_ENABLED unset, Go turns CGo off by itself when CC is also
+// unset and no default C compiler exists, or when the build cross-compiles;
+// an explicit CGO_ENABLED=1 fails the build instead of falling back. The
+// docs that promise the regex fallback say so.
 func TestDocsQualifyTheNoCompilerFallback(t *testing.T) {
 	for _, name := range []string{"docs/CODEGRAPH.md", "README.md", "MIGRATING-2.0.md"} {
 		doc := repoDoc(t, name)
-		requireAll(t, name, doc, "`CGO_ENABLED=1`", "`CC`")
+		requireAll(t, name, doc, "`CGO_ENABLED=1`", "`CC`", "cross-compile")
 		requireNone(t, name, doc, "or on a machine without a C compiler", "Without one,\nor with", "or\nwithout a C compiler")
 	}
 	// Release binaries are CGo builds since 2.0; the Go pass analyses the
@@ -68,4 +68,65 @@ func TestComparisonLocalModelsRowCoversLAN(t *testing.T) {
 	}
 	requireNone(t, name+" (Local models row)", row, "server on localhost")
 	requireAll(t, name+" (Local models row)", row, "local network")
+}
+
+// README's provider list says the same as COMPARISON.md: a local server may
+// be on another machine on the LAN.
+func TestReadmeLocalProviderCoversLAN(t *testing.T) {
+	const name = "README.md"
+	line := ""
+	for _, l := range strings.Split(repoDoc(t, name), "\n") {
+		if strings.Contains(l, "**Local** (mlx-vlm") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("%s has no Local provider bullet", name)
+	}
+	requireNone(t, name+" (Local provider)", line, "server on localhost")
+	requireAll(t, name+" (Local provider)", line, "local network")
+}
+
+// docParagraph returns the blank-line-separated paragraph of doc that
+// contains marker, with its line breaks turned into spaces.
+func docParagraph(t *testing.T, name, doc, marker string) string {
+	t.Helper()
+	for _, p := range strings.Split(doc, "\n\n") {
+		if strings.Contains(strings.ReplaceAll(p, "\n", " "), marker) {
+			return strings.ReplaceAll(p, "\n", " ")
+		}
+	}
+	t.Fatalf("%s has no paragraph containing %q", name, marker)
+	return ""
+}
+
+// The LLM provider guide and the changelog describe the same
+// providers.IsLocalHost rule as MIGRATING-2.0.md, so they list every
+// category it takes, `.localhost` names and unspecified addresses included.
+func TestLocalHostListsAreComplete(t *testing.T) {
+	const guide = "docs/LLM_PROVIDERS.md"
+	doc := repoDoc(t, guide)
+	for _, marker := range []string{"detects as the **local** provider", "gets **600 s**"} {
+		p := docParagraph(t, guide, doc, marker)
+		requireAll(t, guide+" ("+marker+")", p,
+			"`localhost`", "`.localhost`", "loopback", "private", "link-local", "unspecified",
+			"single-label", "`.local`", "`.lan`", "`.internal`", "`.home.arpa`")
+	}
+	const cl = "CHANGELOG.md"
+	log := repoDoc(t, cl)
+	for _, marker := range []string{"one rule decides whether a server is local", "left at the 60 s default gets 600 s"} {
+		entry := ""
+		for _, l := range strings.Split(log, "\n") {
+			if strings.Contains(l, marker) {
+				entry = l
+				break
+			}
+		}
+		if entry == "" {
+			t.Fatalf("%s has no entry containing %q", cl, marker)
+		}
+		requireAll(t, cl+" ("+marker+")", entry,
+			"`localhost`", "`.localhost`", "loopback", "private", "link-local", "unspecified",
+			"single-label", "`.local`", "`.lan`", "`.internal`", "`.home.arpa`")
+	}
 }

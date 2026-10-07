@@ -117,7 +117,8 @@ needs a C compiler (Xcode's command line tools, `gcc`, or MinGW-w64 on Windows).
 less accurate call edges. So does a build with `CGO_ENABLED` and `CC` both unset on a machine
 whose default C compiler is missing, since Go then turns CGo off by itself; an explicit
 `CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the build instead.
-Release binaries always include tree-sitter.
+A cross-compile (`GOOS` or `GOARCH` not the host's) with `CGO_ENABLED` unset also builds
+without CGo. Release binaries always include tree-sitter.
 
 A build from a checkout never downloads anything. It runs Celeste's **public persona** (a
 one-line identity, the honesty rule and the voice boundary rule) and says so at startup: the
@@ -341,7 +342,7 @@ celeste uses the model the provider serves now. At startup it reads the provider
 - ⚠️ **Venice.ai** (Venice's own default, currently venice-uncensored-1-2) - NSFW mode, image generation/upscaling. Tool calling depends on the model (checked against the live Venice catalog) • Token tracking ✓
 - ✅ **OpenRouter** (multi-provider) - Parallel function calling support • Token tracking ✓
 - ✅ **Sakana AI** (fugu, fugu-ultra) - **DEFAULT** - 1M context, OpenAI-compatible chat completions, deep reasoning • Token tracking ✓
-- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on localhost, any port; tools supported. No `api_key` needed at all • Cost tracked as $0
+- ✅ **Local** (mlx-vlm, Ollama, LM Studio, llama.cpp) - any OpenAI-compatible server on this machine or the local network, any port; tools supported. No `api_key` needed at all • Cost tracked as $0
 
 Nine chat providers: eight with tool calling, and Venice, whose tool calling depends on the selected model.
 `celeste providers` lists 11: these nine plus DigitalOcean (its tools run in its own
