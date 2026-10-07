@@ -156,3 +156,31 @@ func TestLookupSymbol_CppClassInNamespace(t *testing.T) {
 		assert.Equal(t, "pt.Pt.x", QualifiedName(res.Symbols[0]))
 	}
 }
+
+// Review of the class-method lookup: a method of `impl Trait for Type` is
+// scoped by the type, not the trait, so two trait impls in one file keep
+// their methods apart and Type::method finds the right one.
+func TestLookupSymbol_RustTraitImplScopedByType(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "lib.rs", "struct A;\nstruct B;\nstruct Foo<T>(T);\n"+
+		"impl Display for A {\n    fn fmt(&self) {}\n}\n"+
+		"impl Display for B {\n    fn fmt(&self) {}\n}\n"+
+		"impl<T> T2 for Foo<T> {\n    fn go(&self) {}\n}\n"+
+		"impl fmt::Debug for geo::Pt {\n    fn dbg(&self) {}\n}\n")
+	idx, err := NewIndexer(dir, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+
+	res, err := idx.LookupSymbol("fmt")
+	require.NoError(t, err)
+	require.Len(t, res.Symbols, 2, "each impl's fmt keeps its own row")
+	assert.ElementsMatch(t, []string{"lib.A.fmt", "lib.B.fmt"}, QualifiedNames(res.Symbols))
+	for q, line := range map[string]int{"A::fmt": 5, "B.fmt": 8, "Foo::go": 11, "lib.Foo.go": 11, "Pt::dbg": 14} {
+		res, err := idx.LookupSymbol(q)
+		require.NoError(t, err)
+		assert.Equal(t, MatchQualified, res.Match, q)
+		require.Len(t, res.Symbols, 1, q)
+		assert.Equal(t, line, res.Symbols[0].Line, q)
+	}
+}

@@ -140,6 +140,28 @@ type multiWalker struct {
 	currentScope string
 }
 
+// rustImplType is the type a Rust impl block is for, without its path or
+// type arguments: "Foo" for `impl<T> Tr for Foo<T>`, "Pt" for
+// `impl X for geo::Pt`.
+//
+//	impl_item  trait: … (optional)  type: type_identifier | generic_type | scoped_type_identifier | …
+//	generic_type  type: type_identifier | scoped_type_identifier
+//	scoped_type_identifier  path: …  name: type_identifier
+func (w *multiWalker) rustImplType(node *tree_sitter.Node) string {
+	t := node.ChildByFieldName("type")
+	for t != nil {
+		switch t.Kind() {
+		case "generic_type":
+			t = t.ChildByFieldName("type")
+		case "scoped_type_identifier":
+			t = t.ChildByFieldName("name")
+		default:
+			return w.nodeText(t)
+		}
+	}
+	return ""
+}
+
 // joinScope appends class name to the class chain outer, '.'-separated. A
 // qualified name ("geo::Shape") is split the same way.
 func joinScope(outer, name string) string {
@@ -174,6 +196,11 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 	// Class/struct/enum/trait declarations
 	if w.classSet[kind] {
 		name := w.extractName(node)
+		if kind == "impl_item" {
+			// `impl Trait for Type` names the trait first; its methods
+			// belong to the type.
+			name = w.rustImplType(node)
+		}
 		bases := w.classBaseNames(node)
 		if name != "" {
 			symKind := w.classifyClassKind(kind)
