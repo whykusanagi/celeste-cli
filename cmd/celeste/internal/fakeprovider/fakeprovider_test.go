@@ -2,6 +2,7 @@ package fakeprovider
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,5 +76,29 @@ func TestAnthropicTextToolAndThinking(t *testing.T) {
 	}
 	if srv.Requests()[0].Path != "/v1/messages" {
 		t.Fatalf("path = %q", srv.Requests()[0].Path)
+	}
+}
+
+func TestHoldWhileParksRequestsWithoutConsumingTurns(t *testing.T) {
+	srv := NewOpenAI(t, Turn{Text: "after"})
+	var mu sync.Mutex
+	hold := true
+	srv.HoldWhile(func() bool { mu.Lock(); defer mu.Unlock(); return hold })
+	c := client(srv.BaseURL(), "")
+	msgs := []tui.ChatMessage{{Role: "user", Content: "x"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := c.SendMessageSync(ctx, msgs, nil); err == nil {
+		t.Fatal("a held request answered")
+	}
+	if srv.Remaining() != 1 || len(srv.Requests()) != 1 {
+		t.Fatalf("remaining = %d, requests = %d; want 1, 1", srv.Remaining(), len(srv.Requests()))
+	}
+	mu.Lock()
+	hold = false
+	mu.Unlock()
+	res, err := c.SendMessageSync(context.Background(), msgs, nil)
+	if err != nil || res.Content != "after" {
+		t.Fatalf("after the hold = %+v, %v", res, err)
 	}
 }

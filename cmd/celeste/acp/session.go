@@ -245,14 +245,15 @@ func (s *session) close() {
 }
 
 // cancelPrompt cancels the running prompt, if any, and the prompts that
-// arrived before the cancel but have not started yet.
+// arrived before the cancel but have not started yet. The cancel func is
+// called under s.mu, so a prompt's end either sees its context cancelled
+// or has already uninstalled the func (the turn ended before the cancel).
 func (s *session) cancelPrompt() {
 	s.mu.Lock()
-	cancel := s.cancel
+	defer s.mu.Unlock()
 	s.cancelN = s.arrivedN
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if s.cancel != nil {
+		s.cancel()
 	}
 }
 
@@ -293,6 +294,16 @@ func (s *session) begin(cancel context.CancelFunc) bool {
 	}
 	s.cancel = cancel
 	return true
+}
+
+// end uninstalls a prompt's cancel func; it reports whether a
+// session/cancel reached the prompt before that. A cancel read after end
+// finds no prompt: that turn had already ended.
+func (s *session) end(pctx context.Context) (cancelled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancel = nil
+	return pctx.Err() != nil
 }
 
 // maxToolContent caps the tool result text a tool_call_update carries
@@ -351,7 +362,19 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.history = msgs
 	s.mu.Unlock()
 	s.save(a, msgs)
-	return s.finish(a, st, l.Limits, res, err)
+	out, rerr, notice := s.finish(st, l.Limits, res, err)
+	if notice != "" && pctx.Err() == nil {
+		// A turn a cancel already reached gets no "Stopped: ... send
+		// another message" notice: it answers "cancelled" below.
+		s.update(a, AgentMessageChunk("\n\n"+notice))
+	}
+	if s.end(pctx) {
+		// A session/cancel reached this prompt while it ran, even if only
+		// after the model's reply ended: ACP answers it "cancelled". A
+		// cancel read after end finds no prompt: the answer was decided.
+		return &PromptResult{StopReason: StopCancelled}, nil
+	}
+	return out, rerr
 }
 
 // save writes the session's history to its celeste session (ruling 11),
@@ -524,21 +547,20 @@ func todoPlan(workspace string) []PlanEntry {
 	return entries
 }
 
-// finish maps the run's end to a stop reason (ruling 10). A guard's or a
-// blocking hook's notice is sent first as agent text.
-func (s *session) finish(a *Agent, st *promptState, lim loop.Limits, res loop.Result, err error) (*PromptResult, *RPCError) {
-	notice := ""
+// finish maps the run's end to a stop reason (ruling 10), with the
+// guard's or blocking hook's notice the prompt sends first as agent text.
+func (s *session) finish(st *promptState, lim loop.Limits, res loop.Result, err error) (out *PromptResult, rerr *RPCError, notice string) {
 	switch res.StopReason {
 	case loop.StopError:
 		msg := "the model request failed"
 		if err != nil {
 			msg = err.Error()
 		}
-		return nil, &RPCError{Code: CodeInternal, Message: msg}
+		return nil, &RPCError{Code: CodeInternal, Message: msg}, ""
 	case loop.StopInterrupted:
-		return &PromptResult{StopReason: StopCancelled}, nil
+		return &PromptResult{StopReason: StopCancelled}, nil, ""
 	case loop.StopCap:
-		return &PromptResult{StopReason: StopMaxTurnRequests}, nil
+		return &PromptResult{StopReason: StopMaxTurnRequests}, nil, ""
 	case loop.StopIdentical:
 		notice = fmt.Sprintf("Stopped: the model made the identical tool call %d times in a row (stuck loop). Send another message (or rephrase the goal) to continue.", lim.IdenticalCalls)
 	case loop.StopProgress:
@@ -554,10 +576,7 @@ func (s *session) finish(a *Agent, st *promptState, lim loop.Limits, res loop.Re
 			notice += ": " + reason
 		}
 	}
-	if notice != "" {
-		s.update(a, AgentMessageChunk("\n\n"+notice))
-	}
-	return &PromptResult{StopReason: StopEndTurn}, nil
+	return &PromptResult{StopReason: StopEndTurn}, nil, notice
 }
 
 // shownWait bounds how long a permission ask waits for its call's
