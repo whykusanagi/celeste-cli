@@ -77,7 +77,19 @@ func Decide(store *TrustStore, src Source, approve ApproveFunc) (run bool, why s
 // approves; anything else on the line (Enter included) declines, and the
 // decline is remembered. EOF is no answer (AnswerLater).
 func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
+	return promptApprover(in, out, true)
+}
+
+// PromptApproverNoRemember is PromptApprover for a caller that records
+// only a yes (`celeste hooks trust`): the prompt says a no leaves the
+// stored decision as it was instead of claiming it is remembered.
+func PromptApproverNoRemember(in io.Reader, out io.Writer) ApproveFunc {
+	return promptApprover(in, out, false)
+}
+
+func promptApprover(in io.Reader, out io.Writer, rememberNo bool) ApproveFunc {
 	reader := bufio.NewReader(in)
+	const unchanged = "A no leaves the stored decision unchanged.\n"
 	return func(src Source, status TrustStatus) Answer {
 		what := "are not trusted yet"
 		switch status {
@@ -89,6 +101,9 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 			what = "were declined"
 		}
 		remembered := "A no is remembered; `celeste hooks trust` approves them later.\n"
+		if !rememberNo {
+			remembered = unchanged
+		}
 		switch src.Kind {
 		case KindRepoStreamRules:
 			fmt.Fprintf(out, "\nStream rules in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, streamRulesSuffix)), what)
@@ -111,7 +126,11 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 			}
 			fmt.Fprintf(out, "\nMCP server %s in %s %s:\n", strconv.Quote(MCPServerName(src)), strconv.Quote(SourceFile(src)), what)
 			DescribeSource(out, src)
-			fmt.Fprintf(out, "Starting it runs this command on this machine with your permissions (or connects to this URL).\nA no is remembered; `celeste mcp trust %s` approves it later.\nTrust it? [y/N]: ", SafeText(MCPServerName(src)))
+			mcpRemembered := fmt.Sprintf("A no is remembered; `celeste mcp trust %s` approves it later.\n", SafeText(MCPServerName(src)))
+			if !rememberNo {
+				mcpRemembered = unchanged
+			}
+			fmt.Fprint(out, "Starting it runs this command on this machine with your permissions (or connects to this URL).\n"+mcpRemembered+"Trust it? [y/N]: ")
 		default:
 			fmt.Fprintf(out, "\nHooks in %s (%s) %s:\n", strconv.Quote(src.Path), src.Kind, what)
 			DescribeSource(out, src)

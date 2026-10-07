@@ -161,7 +161,9 @@ func hooksTrust(args []string, c hooksCLI) int {
 			return hooks.AnswerYes
 		}
 	case c.interactive:
-		approve = hooks.PromptApprover(c.in, c.out)
+		// This command records only a yes, so its prompt must not
+		// claim a no is remembered (review m1).
+		approve = hooks.PromptApproverNoRemember(c.in, c.out)
 	default:
 		fmt.Fprintln(c.errOut, "Refusing to trust hooks without confirmation: stdin/stdout is not a terminal. Review `celeste hooks list`, then re-run with --yes.")
 		return 1

@@ -147,4 +147,11 @@ func TestMCPList_ShowsDecisions(t *testing.T) {
 	writeMCPConfig(t, filepath.Join(c.cwd, ".mcp.json"), strings.Replace(repoServerJSON, "repo-cmd", "other-cmd", 1))
 	f = approval()
 	assert.Equal(t, []string{"pending", "(changed", "since", "declined)"}, f[5:9])
+
+	// Review m2: a disabled server that was declined says so in RUNS too.
+	writeMCPConfig(t, filepath.Join(c.cwd, ".mcp.json"), strings.Replace(repoServerJSON, `"enabled":true`, `"enabled":false`, 1))
+	require.NoError(t, hooks.LoadTrust(c.home).Decline(src))
+	f = approval()
+	assert.Equal(t, "declined", f[5])
+	assert.Equal(t, []string{"off", "(declined;", "/mcp", "asks", "to", "approve", "it)"}, f[6:])
 }

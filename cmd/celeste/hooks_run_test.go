@@ -297,3 +297,30 @@ func TestHooksTrustOverridesADecline(t *testing.T) {
 		t.Fatalf("a confirmed yes did not approve the declined hooks (exit %d)", code)
 	}
 }
+
+// Review m1: `celeste hooks trust` never records a no, so its prompt must
+// not claim one is remembered, for hooks or for a workspace MCP server.
+func TestHooksTrustPromptDoesNotClaimANoIsRemembered(t *testing.T) {
+	c, out, _ := hooksCLIFixture(t, "n\nn\n", true)
+	writeFile(t, c.cwd, ".mcp.json", `{"mcpServers":{"repo":{"command":"r","enabled":true}}}`)
+	hooksCommand([]string{"trust"}, c)
+	s := out.String()
+	if !strings.Contains(s, "echo repo") || !strings.Contains(s, `"r"`) {
+		t.Fatalf("trust did not ask about the hooks and the MCP server:\n%s", s)
+	}
+	if strings.Contains(s, "A no is remembered") {
+		t.Errorf("hooks trust claims a no is remembered, but it saves nothing:\n%s", s)
+	}
+	if !strings.Contains(s, "A no leaves the stored decision unchanged.") {
+		t.Errorf("hooks trust does not say what a no does:\n%s", s)
+	}
+	srcs, _, err := hooks.Discover(c.cwd, c.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range srcs {
+		if st := hooks.LoadTrust(c.home).Status(src); !src.Global() && st != hooks.Untrusted {
+			t.Errorf("%s: status after a no = %s, want untrusted", src.Path, st)
+		}
+	}
+}

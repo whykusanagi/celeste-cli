@@ -219,6 +219,9 @@ func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string)
 		return overridden(chatOrigin)
 	case !e.cfg.Enabled && !inChat:
 		return "off (chat uses " + src(chatOrigin) + ")"
+	case !e.cfg.Enabled && !e.global && approval == "declined":
+		// Starting it from /mcp asks for an approval first (review m2).
+		return "off (declined; /mcp asks to approve it)"
 	case !e.cfg.Enabled:
 		// Manager.Start skips it; the chat's /mcp panel can still connect it.
 		return "off (start it from the chat's /mcp)"
