@@ -245,6 +245,9 @@ func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 			}
 		case "r":
 			if row := m.current(); row != nil {
+				if m.needsApproval(row) {
+					return m.askApproval(row), nil
+				}
 				return m, tea.Sequence(m.disconnectCmd(row.Name), m.connectCmd(row.Name))
 			}
 		case " ":

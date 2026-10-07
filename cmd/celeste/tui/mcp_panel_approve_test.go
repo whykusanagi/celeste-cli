@@ -120,3 +120,18 @@ func TestMCPPanel_ApproveFailureReported(t *testing.T) {
 func TestMCPHintsNameApprove(t *testing.T) {
 	assert.Contains(t, hintsFor("chat", true), "a approve")
 }
+
+// Review: r (reconnect) must not start a declined or pending server
+// without the confirmation.
+func TestMCPPanel_ReconnectUnapprovedConfirms(t *testing.T) {
+	for _, st := range []string{"declined", "pending"} {
+		p, fa := approvalPanel(st)
+		p, cmd := p.Update(key('r'))
+		assert.Nil(t, cmd, st)
+		assert.Contains(t, stripANSI(p.View()), "y approve", st)
+		assert.Empty(t, fa.approved)
+	}
+	p, _ := approvalPanel("approved")
+	_, cmd := p.Update(key('r'))
+	assert.NotNil(t, cmd, "an approved server reconnects directly")
+}
