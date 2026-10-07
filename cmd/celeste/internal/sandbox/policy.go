@@ -12,10 +12,11 @@ import (
 )
 
 // DefaultEnabled is whether the sandbox is on when no config says
-// otherwise. Off for 2.0 (opt in with "sandbox": {"enabled": true} in
-// ~/.celeste/config.json), so upgrading never breaks a build that writes
-// outside the workspace.
-const DefaultEnabled = false
+// otherwise. On by default to contain model-controlled commands within the
+// workspace and prevent arbitrary filesystem, process, and network access.
+// Users requiring writes outside the workspace must explicitly configure
+// "sandbox": {"writable": [...]} or disable with "enabled": false.
+const DefaultEnabled = true
 
 // Policy is what one shell command may do.
 type Policy struct {

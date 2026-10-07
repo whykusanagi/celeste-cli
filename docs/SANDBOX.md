@@ -8,11 +8,19 @@ Celeste can run the model's `bash` commands inside the operating system's sandbo
 | Linux | [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), when it is installed and can create user namespaces. |
 | Windows | None. Commands run with the command denylist only. |
 
-The sandbox is **off by default in 2.0**. Turn it on in `~/.celeste/config.json`:
+The sandbox is **on by default** to contain model-controlled commands within the workspace and prevent arbitrary filesystem, process, and network access. To disable it (for example, if a build requires writes outside the workspace that cannot be configured via `writable`), set it explicitly in `~/.celeste/config.json`:
 
 ```json
 {
-  "sandbox": { "enabled": true }
+  "sandbox": { "enabled": false }
+}
+```
+
+To keep it enabled but allow additional writable directories:
+
+```json
+{
+  "sandbox": { "enabled": true, "writable": ["/path/to/cache"] }
 }
 ```
 
