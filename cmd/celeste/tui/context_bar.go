@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,13 +79,20 @@ func (m ContextBarModel) View() string {
 
 	usedStr := ctxmgr.FormatTokenCount(m.usedTokens)
 	maxStr := ctxmgr.FormatTokenCount(m.maxTokens)
-	pctStr := fmt.Sprintf("%.0f%%", m.usagePercent)
-
-	// Progress bar: 10 segments
-	filled := int(m.usagePercent / 10)
-	if filled > 10 {
-		filled = 10
+	// A negative count from a saved session, or a NaN, shows as 0%; an
+	// over-budget usage keeps its real figure in the label.
+	label := m.usagePercent
+	if !(label > 0) { // also catches NaN
+		label = 0
 	}
+	if math.IsInf(label, 1) {
+		label = 100
+	}
+	pctStr := fmt.Sprintf("%.0f%%", label)
+
+	// Progress bar: 10 segments, clamped before converting so strings.Repeat
+	// never sees a negative count.
+	filled := int(min(label, 100) / 10)
 	empty := 10 - filled
 	bar := barStyle.Render(strings.Repeat("▓", filled)) + emptyStyle.Render(strings.Repeat("░", empty))
 

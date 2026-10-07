@@ -204,6 +204,7 @@ func (m *SessionManager) Load(id string) (*Session, error) {
 	if err := json.Unmarshal(data, &session); err != nil {
 		return nil, fmt.Errorf("failed to parse session: %w", err)
 	}
+	sanitiseLoadedSession(&session)
 
 	// Auto-generate name for old sessions that don't have one
 	if session.Name == "" && len(session.Messages) > 0 {
@@ -219,6 +220,15 @@ func (m *SessionManager) Load(id string) (*Session, error) {
 
 	m.currentID = id
 	return &session, nil
+}
+
+// sanitiseLoadedSession drops values a damaged or hand-edited file can carry
+// that the rest of celeste assumes never happen: a negative token_count would
+// make the context bar's usage negative.
+func sanitiseLoadedSession(s *Session) {
+	if s.TokenCount < 0 {
+		s.TokenCount = 0
+	}
 }
 
 // LoadSession is a global helper to load a session by numeric ID
@@ -241,6 +251,7 @@ func LoadSession(sessionID int64) (*Session, error) {
 	if err := json.Unmarshal(data, &session); err != nil {
 		return nil, fmt.Errorf("failed to parse session: %w", err)
 	}
+	sanitiseLoadedSession(&session)
 
 	return &session, nil
 }
@@ -282,6 +293,7 @@ func (m *SessionManager) List() ([]Session, error) {
 		if err := json.Unmarshal(data, &session); err != nil {
 			continue
 		}
+		sanitiseLoadedSession(&session)
 
 		sessions = append(sessions, session)
 	}

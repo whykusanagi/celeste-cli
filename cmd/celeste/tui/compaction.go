@@ -363,7 +363,11 @@ func (m AppModel) applyHandoff(msg HandoffReadyMsg) AppModel {
 		m.chat = m.chat.AddSystemMessage("Handoff discarded: the conversation changed while the notes were being written. Run /handoff again.")
 		return m.releaseHandoffHeld(false)
 	}
-	m.persistSession()
+	if !m.saveBeforeSwitch() {
+		// The session stays; keep the notes in the input so they are not lost.
+		m.input = m.input.SetValue(msg.Text)
+		return m.releaseHandoffHeld(false)
+	}
 	if m.sessionManager != nil {
 		if s, ok := m.sessionManager.NewSession().(Session); ok {
 			m.currentSession = s
