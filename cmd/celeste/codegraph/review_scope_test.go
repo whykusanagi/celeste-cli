@@ -28,6 +28,10 @@ func reviewFixture(t *testing.T, lang string) []CodeSmell {
 		return smells
 	}
 	src := filepath.Join("testdata", "review", lang)
+	if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
+		// The Docker suite runs the compiled tests without testdata.
+		t.Skip("needs the testdata/review fixtures")
+	}
 	ws := t.TempDir()
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
