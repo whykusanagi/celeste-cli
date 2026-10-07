@@ -488,6 +488,13 @@ func (m AppModel) SetMCPManager(manager *mcp.Manager, configs map[string]mcp.Ser
 	return m
 }
 
+// SetMCPApproval wires the trust store into the /mcp panel, so it shows
+// each workspace server's approval and approves one after a confirmation.
+func (m AppModel) SetMCPApproval(a MCPApproval) AppModel {
+	m.mcpPanel.SetApproval(a)
+	return m
+}
+
 // syncStatusLine copies non-git AppModel state (project, model, effort,
 // permission mode) into the status line. Git fields are set separately by the
 // GitStatusMsg handler; plan mode, skills and the session name are read at

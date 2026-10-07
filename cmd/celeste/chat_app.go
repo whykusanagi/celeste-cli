@@ -234,7 +234,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	if merged, _ := mcp.LoadMerged(mcp.DiscoverConfigPaths(cwd, homeDir)); merged != nil {
 		mcpConfigs = merged.Servers
 	}
-	app = app.SetMCPManager(env.MCP, mcpConfigs)
+	app = app.SetMCPManager(env.MCP, mcpConfigs).SetMCPApproval(mcpPanelApproval{home: homeDir})
 
 	return app, &chatDeps{env: env, registry: registry, adapter: tuiClient, hooks: env.Hooks, restoreMigrationWarn: restoreMigrationWarn}, nil
 }

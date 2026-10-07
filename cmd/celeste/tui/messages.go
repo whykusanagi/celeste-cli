@@ -346,6 +346,9 @@ type MCPServerInfo struct {
 	ToolCount int
 	Enabled   bool   // configured enabled flag (may differ from Connected)
 	Origin    string // config file the server was declared in (for enable toggle)
+	// Approval is a workspace server's trust state: "approved", "declined"
+	// or "pending"; "" for one that needs none (a home config).
+	Approval string
 }
 
 // MCPConnectResultMsg reports the outcome of an async connect/disconnect/toggle.

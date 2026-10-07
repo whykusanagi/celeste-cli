@@ -26,7 +26,32 @@ type MCPPanelModel struct {
 
 	manager *mcp.Manager
 	configs map[string]mcp.ServerConfig // discovered server configs, keyed by name
+
+	approval MCPApproval // nil: no server needs approval
+	// confirm is the server whose approval waits for a y (#411); "" when
+	// no confirmation is showing. confirmText describes it.
+	confirm     string
+	confirmText string
 }
+
+// MCPApproval reports and records the approval of a workspace MCP server
+// for the /mcp panel, in the same trust store the chat's launch prompt and
+// `celeste mcp trust` use.
+type MCPApproval interface {
+	// State is "approved", "declined" or "pending" for a workspace
+	// server, "" for one that needs no approval (a home config).
+	State(name string, cfg mcp.ServerConfig) string
+	// Describe is what the person must see before approving: the source
+	// file, command, args and env names (never values), one per line,
+	// already safe to print.
+	Describe(name string, cfg mcp.ServerConfig) string
+	// Approve records the approval.
+	Approve(name string, cfg mcp.ServerConfig) error
+}
+
+// SetApproval injects the approval store, so the panel shows each
+// workspace server's approval and can approve one after a confirmation.
+func (m *MCPPanelModel) SetApproval(a MCPApproval) { m.approval = a }
 
 // NewMCPPanelModel creates a new MCP panel model.
 func NewMCPPanelModel() MCPPanelModel {
@@ -60,6 +85,7 @@ func (m *MCPPanelModel) SetManager(manager *mcp.Manager, configs map[string]mcp.
 func (m *MCPPanelModel) Show() {
 	m.active = true
 	m.cursor = 0
+	m.confirm = ""
 	m.servers = m.rowsFromStatus()
 }
 
@@ -80,6 +106,9 @@ func (m MCPPanelModel) rowsFromStatus() []MCPServerInfo {
 			Transport: cfg.Transport,
 			Enabled:   cfg.Enabled,
 			Origin:    cfg.Origin,
+		}
+		if m.approval != nil {
+			row.Approval = m.approval.State(name, cfg)
 		}
 		if s, ok := connected[name]; ok {
 			row.Connected = true
@@ -147,12 +176,46 @@ func (m MCPPanelModel) toggleEnabledCmd(name string, enabled bool) tea.Cmd {
 	}
 }
 
+// needsApproval reports whether row is a workspace server not approved
+// (declined or pending): it connects only after a confirmation.
+func (m MCPPanelModel) needsApproval(row *MCPServerInfo) bool {
+	return m.approval != nil && (row.Approval == "declined" || row.Approval == "pending")
+}
+
+// askApproval shows the confirmation for row.
+func (m MCPPanelModel) askApproval(row *MCPServerInfo) MCPPanelModel {
+	m.confirm = row.Name
+	m.confirmText = m.approval.Describe(row.Name, m.configs[row.Name])
+	return m
+}
+
+// approveCmd records the approval, then connects the server.
+func (m MCPPanelModel) approveCmd(name string) tea.Cmd {
+	a, cfg, connect := m.approval, m.configs[name], m.connectCmd(name)
+	return func() tea.Msg {
+		if err := a.Approve(name, cfg); err != nil {
+			return MCPConnectResultMsg{Name: name, Err: fmt.Errorf("not approved: %w", err)}
+		}
+		return connect()
+	}
+}
+
 // Update handles messages for the MCP panel.
 func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if !m.active {
 			break
+		}
+		if m.confirm != "" {
+			// Only y approves; any other key (esc included) cancels and
+			// keeps the panel open.
+			name := m.confirm
+			m.confirm, m.confirmText = "", ""
+			if s := msg.String(); s == "y" || s == "Y" {
+				return m, m.approveCmd(name)
+			}
+			return m, nil
 		}
 		switch msg.String() {
 		case "esc", "q":
@@ -165,8 +228,15 @@ func (m MCPPanelModel) Update(msg tea.Msg) (MCPPanelModel, tea.Cmd) {
 			if m.cursor < len(m.servers)-1 {
 				m.cursor++
 			}
+		case "a":
+			if row := m.current(); row != nil && m.needsApproval(row) {
+				return m.askApproval(row), nil
+			}
 		case "c":
 			if row := m.current(); row != nil && !row.Connected {
+				if m.needsApproval(row) {
+					return m.askApproval(row), nil
+				}
 				return m, m.connectCmd(row.Name)
 			}
 		case "d":
@@ -238,6 +308,12 @@ func (m MCPPanelModel) View() string {
 			} else {
 				detail = "disabled"
 			}
+			switch srv.Approval {
+			case "declined":
+				detail += " · declined (a approves)"
+			case "pending":
+				detail += " · not approved (a approves)"
+			}
 		}
 
 		prefix := "  "
@@ -251,6 +327,17 @@ func (m MCPPanelModel) View() string {
 
 	if len(m.servers) == 0 {
 		lines = append(lines, row("  "+infoStyle.Render("No MCP servers configured")))
+	}
+
+	if m.confirm != "" {
+		warnStyle := lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true)
+		lines = append(lines, row(""))
+		lines = append(lines, row(warnStyle.Render(fmt.Sprintf("  Approve MCP server %q?", m.confirm))))
+		for _, l := range strings.Split(m.confirmText, "\n") {
+			lines = append(lines, row("    "+infoStyle.Render(l)))
+		}
+		lines = append(lines, row(infoStyle.Render("  Starting it runs this command with your permissions (or connects to this URL).")))
+		lines = append(lines, row(warnStyle.Render("  y approve and connect · any other key cancels")))
 	}
 
 	lines = append(lines, row(""))
