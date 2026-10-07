@@ -112,9 +112,12 @@ make install
 ```
 
 The code graph's tree-sitter parsers are C, so a source build compiles them with CGo and
-needs a C compiler (Xcode's command line tools, `gcc`, or MinGW-w64 on Windows). Without one,
-or with `CGO_ENABLED=0`, celeste still builds and the code graph falls back to regex parsers,
-with less accurate call edges. Release binaries always include tree-sitter.
+needs a C compiler (Xcode's command line tools, `gcc`, or MinGW-w64 on Windows). With
+`CGO_ENABLED=0`, celeste still builds and the code graph falls back to regex parsers, with
+less accurate call edges. So does a build with `CGO_ENABLED` and `CC` both unset on a machine
+whose default C compiler is missing, since Go then turns CGo off by itself; an explicit
+`CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the build instead.
+Release binaries always include tree-sitter.
 
 A build from a checkout never downloads anything. It runs Celeste's **public persona** (a
 one-line identity, the honesty rule and the voice boundary rule) and says so at startup: the

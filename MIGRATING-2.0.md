@@ -43,8 +43,11 @@ Rebuild an index made by 1.x to get them: `celeste index rebuild`.
 | macOS (Intel, Apple silicon) | Links only the system libraries, as before. Needs macOS 12 or later, which Go 1.26 already required. |
 | Windows (amd64) | Needs no DLL beyond the ones Windows ships. |
 
-A build from source compiles the parsers with the local C compiler. With `CGO_ENABLED=0`, or
-without a C compiler, it still builds and falls back to the regex parsers.
+A build from source compiles the parsers with the local C compiler. With `CGO_ENABLED=0` it
+still builds and falls back to the regex parsers. So does a build with `CGO_ENABLED` and `CC`
+both unset on a machine whose default C compiler is missing, since Go then turns CGo off by
+itself; an explicit `CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the
+build instead.
 
 ## The persona
 

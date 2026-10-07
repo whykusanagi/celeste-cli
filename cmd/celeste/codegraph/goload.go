@@ -115,9 +115,9 @@ func loadGo(ctx context.Context, workspace string, relFiles []string) (*goLoader
 	// system hook is set; setting one keeps the fallback in-process (GOROOT
 	// and vendor lookups only). Module dependencies come from listModule.
 	l.bctx.JoinPath = filepath.Join
-	// Analyse the CGO_ENABLED=0 build, which is what release binaries
-	// are, so results do not depend on whether the host has a C compiler:
-	// cgo-tagged files and files importing "C" fall back to the heuristic.
+	// Analyse the CGO_ENABLED=0 build, so results do not depend on
+	// whether the host has a C compiler: cgo-tagged files and files
+	// importing "C" fall back to the heuristic.
 	l.bctx.CgoEnabled = false
 
 	// Group by slash-separated directory; keep each file's path exactly as
