@@ -293,6 +293,7 @@ func (m *SessionManager) List() ([]Session, error) {
 		if err := json.Unmarshal(data, &session); err != nil {
 			continue
 		}
+		sanitiseLoadedSession(&session)
 
 		sessions = append(sessions, session)
 	}

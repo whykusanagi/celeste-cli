@@ -66,3 +66,29 @@ func TestSessionResumeKeepsSessionWhenSaveFails(t *testing.T) {
 	assert.NotContains(t, text, "message from the other session")
 	assert.Contains(t, text, "disk full")
 }
+
+// failSecondSave saves once, then fails: the old session saves before a
+// merge, the merged one does not.
+type failSecondSave struct {
+	*diskSessions
+	n int
+}
+
+func (f *failSecondSave) Save(s interface{}) error {
+	f.n++
+	if f.n > 1 {
+		return errors.New("disk full")
+	}
+	return f.diskSessions.Save(s)
+}
+
+// A merge whose merged session fails to save says so instead of reporting
+// only success.
+func TestSessionMergeReportsAFailedSave(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	m.sessionManager = &failSecondSave{diskSessions: mgr}
+	m, _ = step(t, m, SendMessageMsg{Content: "/session merge " + other.ID})
+	text := sessChatText(m)
+	assert.Contains(t, text, "Merged sessions")
+	assert.Contains(t, text, "disk full", "the failed save of the merged session must show")
+}

@@ -3503,8 +3503,12 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 					}
 				}
 
-				// Save merged session
-				m.persistSession()
+				// Save merged session; a failed save stays open and saves
+				// with the next turn, but must not pass for done.
+				if err := m.saveSession(); err != nil {
+					m.chat = m.chat.AddSystemMessage(
+						fmt.Sprintf("❌ Failed to save the merged session: %v", err))
+				}
 			}
 		} else {
 			m.chat = m.chat.AddSystemMessage(

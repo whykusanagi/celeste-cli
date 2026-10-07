@@ -37,3 +37,22 @@ func TestContextTrackerIgnoresNegativeSessionTokenCount(t *testing.T) {
 		t.Fatalf("usage percent %v < 0", p)
 	}
 }
+
+// List feeds resume-by-name, which uses the listed session directly.
+func TestListSanitisesNegativeTokenCount(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	m := NewSessionManager()
+	body := `{"id":"neg2","name":"n","token_count":-7}`
+	if err := os.WriteFile(filepath.Join(m.sessionsDir, "neg2.json"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := m.List()
+	if err != nil || len(ss) != 1 {
+		t.Fatalf("List = %v, %v", ss, err)
+	}
+	if ss[0].TokenCount < 0 {
+		t.Fatalf("List kept negative token_count %d", ss[0].TokenCount)
+	}
+}

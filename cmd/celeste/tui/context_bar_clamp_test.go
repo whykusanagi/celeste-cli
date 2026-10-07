@@ -2,7 +2,10 @@ package tui
 
 import (
 	"math"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // A saved session with a negative token_count, or a usage far past the
@@ -36,6 +39,23 @@ func TestContextBarViewNeverPanicsOnOutOfRangeUsage(t *testing.T) {
 					t.Fatalf("%s width %d: empty view", tc.name, width)
 				}
 			}()
+		}
+	}
+}
+
+// The percentage label is clamped below too: a damaged count shows 0%, not
+// -10% or NaN%.
+func TestContextBarLabelNeverNegativeOrNaN(t *testing.T) {
+	for _, p := range []float64{-10, math.NaN(), math.Inf(-1)} {
+		m := NewContextBarModel()
+		m.SetSize(120, 1)
+		m, _ = m.Update(ContextBudgetMsg{UsedTokens: 0, MaxTokens: 128000, UsagePercent: p})
+		v := ansi.Strip(m.View())
+		if strings.Contains(v, "-10%") || strings.Contains(v, "NaN") || strings.Contains(v, "Inf") {
+			t.Fatalf("percent %v renders %q", p, v)
+		}
+		if !strings.Contains(v, "0%") {
+			t.Fatalf("percent %v renders %q, want 0%%", p, v)
 		}
 	}
 }
