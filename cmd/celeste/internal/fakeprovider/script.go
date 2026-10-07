@@ -80,7 +80,10 @@ type Server struct {
 	// reject, when set, vets each scripted request's body before a turn is
 	// served: a non-empty answer is a 400 with that error body, and no turn
 	// is consumed.
-	reject   func(body map[string]any) string
+	reject func(body map[string]any) string
+	// hold, when set and true, parks a scripted request until the client
+	// gives it up (HoldWhile).
+	hold     func() bool
 	mu       sync.Mutex
 	turns    []Turn
 	requests []Request
@@ -117,6 +120,11 @@ func newServer(t testing.TB, prefix string, write func(http.ResponseWriter, Turn
 				_, _ = io.WriteString(w, msg)
 				return
 			}
+		}
+		if s.hold != nil && s.hold() {
+			s.mu.Unlock()
+			<-r.Context().Done()
+			return
 		}
 		if len(s.turns) == 0 {
 			s.mu.Unlock()
@@ -182,4 +190,13 @@ func sse(w http.ResponseWriter, event string, data any) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// HoldWhile holds every scripted request that arrives while hold reports
+// true: it gets no answer until the client gives it up (its context ends),
+// and it consumes no turn. Fixed answers (Handle) are never held.
+func (s *Server) HoldWhile(hold func() bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hold = hold
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,24 +141,40 @@ func TestCancelDuringPermissionPrompt(t *testing.T) {
 }
 
 // A cancel sent right after a prompt, before the prompt's goroutine got to
-// run, still cancels it.
+// run, still cancels it; so does one sent a moment later, while the model
+// request is out. The provider holds every reply until the request is
+// given up, so no turn can end on its own before its cancel is read: the
+// only way a try answers is the cancel (a lost one fails the 30s wait).
 func TestCancelRightAfterPrompt(t *testing.T) {
+	// One turn per try as well as the last prompt's: a try's request the
+	// agent gave up can reach the provider only after the hold is lifted.
 	var turns []fakeprovider.Turn
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 11; i++ {
 		turns = append(turns, fakeprovider.Turn{Text: "reply"})
 	}
 	srv := fakeprovider.NewOpenAI(t, turns...)
+	var hold atomic.Bool
+	hold.Store(true)
+	srv.HoldWhile(hold.Load)
 	c := newTestClient(t, testConfig(srv, 0))
 	sid := c.newSession(t.TempDir())
 	for i := 0; i < 10; i++ {
 		ch := c.callAsync("session/prompt", textPrompt(sid, "hi"))
+		if i%2 == 1 {
+			time.Sleep(20 * time.Millisecond) // the prompt is running by now
+		}
 		c.notify("session/cancel", map[string]any{"sessionId": sid})
-		r := <-ch
-		if r.err != nil || stopReason(t, r.result) != "cancelled" {
-			t.Fatalf("try %d: prompt then cancel = %s %v", i, r.result, r.err)
+		select {
+		case r := <-ch:
+			if r.err != nil || stopReason(t, r.result) != "cancelled" {
+				t.Fatalf("try %d: prompt then cancel = %s %v", i, r.result, r.err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("try %d: the cancel was lost: the prompt never answered", i)
 		}
 	}
 	// A cancel with no prompt in flight does not cancel a later prompt.
+	hold.Store(false)
 	c.notify("session/cancel", map[string]any{"sessionId": sid})
 	time.Sleep(50 * time.Millisecond)
 	if res, err := c.call("session/prompt", textPrompt(sid, "go")); err != nil || stopReason(t, res) != "end_turn" {
