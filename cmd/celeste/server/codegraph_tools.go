@@ -86,12 +86,12 @@ func noIndexError(workspace string) error {
 	return softError("No code graph index for %s; run celeste_index (operation rebuild) or `celeste index` to build one.", workspace)
 }
 
-// indexBuildingError is the soft error the query tools return while an
-// indexer is building the workspace's graph and it is not yet queryable.
 // testHookRebuildEvicted, when set, runs in indexRebuild right after it
 // evicts the cached Indexer and chat Env, before the rebuild starts.
 var testHookRebuildEvicted func()
 
+// indexBuildingError is the soft error the query tools return while an
+// indexer is building the workspace's graph and it is not yet queryable.
 func indexBuildingError(workspace string) error {
 	return softError("The code graph index for %s is being built; try again when the build finishes.", workspace)
 }
