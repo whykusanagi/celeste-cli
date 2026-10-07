@@ -94,8 +94,10 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	// Kernel-level protected-file checks: the move source already exists
 	// (it is read below), so the pre-write check is authoritative for it;
 	// dest may be created by this call, so it is also verified after writing.
+	var sourceGuard *protectedWriteGuard
 	if op == "move" {
-		if _, err := guardProtectedWrite(sourcePath); err != nil {
+		sourceGuard, err = guardProtectedWrite(sourcePath)
+		if err != nil {
 			return errResult(fmt.Sprintf("source path error: %s", err)), nil
 		}
 	}
@@ -198,6 +200,16 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		return errResult(rollback(msg, ckpts...)), nil
 	}
 
+	// Verify ancestors haven't changed before writing (TOCTOU protection)
+	if err := destGuard.verifyAncestors(); err != nil {
+		return fail(fmt.Sprintf("dest path error: %s", err))
+	}
+	if op == "move" && !sameFile && sourceGuard != nil {
+		if err := sourceGuard.verifyAncestors(); err != nil {
+			return fail(fmt.Sprintf("source path error: %s", err))
+		}
+	}
+
 	// Write. For a same-file move, dest already reflects the removal.
 	if err := writeFileFunc(destReal, []byte(newDest), 0644); err != nil {
 		return fail(fmt.Sprintf("write dest: %s", err))
@@ -208,6 +220,11 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	if op == "move" && !sameFile {
 		if err := writeFileFunc(sourceReal, []byte(sourceAfter), 0644); err != nil {
 			return fail(fmt.Sprintf("write source: %s", err))
+		}
+		if sourceGuard != nil {
+			if err := sourceGuard.verify(); err != nil {
+				return fail(fmt.Sprintf("source path error: %s", err))
+			}
 		}
 	}
 

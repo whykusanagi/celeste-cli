@@ -198,8 +198,9 @@ func pathElemEqual(a, b string) bool { return pathEqual(a, b) }
 // This file-tool protection is defence in depth, not the trust boundary:
 // bash can still reach these files until W4's sandbox lands.
 type protectedWriteGuard struct {
-	path    string
-	existed bool
+	path         string
+	existed      bool
+	ancestorInfo []os.FileInfo // identity of ancestor directories at validation time
 	dirGuard
 }
 
@@ -257,9 +258,17 @@ func (g *dirGuard) protectedTargetsChanged() bool {
 }
 
 // guardProtectedWrite runs the pre-write kernel check for path (already
-// passed through resolvePath) and records whether it existed.
+// passed through resolvePath) and records whether it existed. It also
+// captures ancestor directory identities to detect ancestor replacement.
 func guardProtectedWrite(path string) (*protectedWriteGuard, error) {
 	g := &protectedWriteGuard{path: path}
+
+	// Capture ancestor directory identities to detect ancestor replacement.
+	// Walk up from the file's parent to the root, recording each directory's
+	// identity. This prevents TOCTOU attacks where an ancestor is replaced
+	// with a symlink to redirect the write.
+	g.ancestorInfo = captureAncestors(path)
+
 	if _, err := os.Lstat(path); err == nil {
 		g.existed = true
 		if info, err := os.Stat(path); err == nil && sameAsProtectedTarget(info) {
@@ -267,6 +276,56 @@ func guardProtectedWrite(path string) (*protectedWriteGuard, error) {
 		}
 	}
 	return g, nil
+}
+
+// captureAncestors records the identity of each ancestor directory of path,
+// from the immediate parent up to the root (or until an error occurs).
+func captureAncestors(path string) []os.FileInfo {
+	var ancestors []os.FileInfo
+	dir := filepath.Dir(path)
+	for {
+		if info, err := os.Stat(dir); err == nil {
+			ancestors = append(ancestors, info)
+		} else {
+			// Directory doesn't exist yet; will be created by mkdirAll
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached root
+			break
+		}
+		dir = parent
+	}
+	return ancestors
+}
+
+// verifyAncestors checks that all ancestor directories captured at validation
+// time still have the same identity. This prevents TOCTOU attacks where an
+// ancestor directory is replaced with a symlink to redirect writes.
+func (g *protectedWriteGuard) verifyAncestors() error {
+	if len(g.ancestorInfo) == 0 {
+		return nil
+	}
+	dir := filepath.Dir(g.path)
+	for i, expectedInfo := range g.ancestorInfo {
+		nowInfo, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("ancestor directory disappeared: %w", err)
+		}
+		if !os.SameFile(expectedInfo, nowInfo) {
+			return fmt.Errorf("ancestor directory changed between validation and write")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+		if i+1 >= len(g.ancestorInfo) {
+			break
+		}
+	}
+	return nil
 }
 
 // mkdirAll snapshots what each protected target resolves to, records which
@@ -319,11 +378,23 @@ func guardedMkdirAll(dir string) (undo func(), err error) {
 // verify runs the post-write kernel check. If the freshly created file is a
 // protected target, or the directories this write created changed what a
 // protected name resolves to, the file and those directories are removed
-// and the protected error is returned.
+// and the protected error is returned. Ancestor verification is done before
+// the write via verifyAncestors(), so this focuses on post-write checks.
 func (g *protectedWriteGuard) verify() error {
+	// For files that existed at validation time, verify the file identity
+	// hasn't changed (e.g., replaced with a symlink). This is a defense-in-depth
+	// check; the main protection is O_NOFOLLOW during open.
 	if g.existed {
-		return nil // the pre-write check was authoritative for this file
+		if info, err := os.Lstat(g.path); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				g.undo()
+				return fmt.Errorf("file changed to a symlink between validation and write")
+			}
+		}
+		return nil
 	}
+
+	// For newly created files, check if they turned out to be protected targets
 	info, err := os.Stat(g.path)
 	isTarget := err == nil && sameAsProtectedTarget(info)
 	if !isTarget && !g.protectedTargetsChanged() {

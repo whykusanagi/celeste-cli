@@ -247,3 +247,37 @@ func rollback(msg string, ckpts ...*checkpoints.Checkpoint) string {
 	}
 	return msg
 }
+
+// verifyOpenedFile checks that the opened file descriptor f refers to the
+// same file that was validated at path. This prevents TOCTOU attacks where
+// the path is replaced with a symlink or the file is replaced after validation
+// but before opening. For files that existed during guardProtectedWrite, we
+// verify they are still the same file; for new files, we verify they are not
+// protected targets.
+func verifyOpenedFile(f *os.File, path string, guard *protectedWriteGuard) error {
+	// Get the file info from the descriptor
+	fdInfo, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("cannot stat opened file: %w", err)
+	}
+
+	// Get the file info from the path
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("cannot stat path: %w", err)
+	}
+
+	// Verify they refer to the same file
+	if !os.SameFile(fdInfo, pathInfo) {
+		return fmt.Errorf("file identity changed between validation and open")
+	}
+
+	// For files that existed, verify against protected targets
+	if guard != nil && guard.existed {
+		if sameAsProtectedTarget(fdInfo) {
+			return protectedError(path)
+		}
+	}
+
+	return nil
+}

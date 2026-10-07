@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/checkpoints"
@@ -134,12 +133,23 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: rollback(msg, ckpt)}, nil
 	}
 
+	// Verify ancestors haven't changed before writing (TOCTOU protection)
+	if err := guard.verifyAncestors(); err != nil {
+		return fail(fmt.Sprintf("path error: %s", err))
+	}
+
 	var bytesWritten int
 	if appendMode {
 		// Append is not atomic by nature: it keeps O_APPEND (ruling 5).
-		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		// Open with O_NOFOLLOW to prevent TOCTOU symlink attacks.
+		f, err := openAppendNoFollow(targetPath)
 		if err != nil {
 			return fail(err.Error())
+		}
+		// Verify the opened file is the same as what we validated.
+		if err := verifyOpenedFile(f, targetPath, guard); err != nil {
+			f.Close()
+			return fail(fmt.Sprintf("path error: %s", err))
 		}
 		n, err := f.WriteString(content)
 		closeErr := f.Close()

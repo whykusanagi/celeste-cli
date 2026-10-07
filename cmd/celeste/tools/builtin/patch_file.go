@@ -111,7 +111,8 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 	// patch_file only rewrites an existing file, so the pre-write kernel
 	// check is authoritative; a missing file fails at ReadFile below.
-	if _, err := guardProtectedWrite(targetPath); err != nil {
+	guard, err := guardProtectedWrite(targetPath)
+	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
 
@@ -141,8 +142,19 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		ckpt = c
 	}
+
+	// Verify ancestors haven't changed before writing (TOCTOU protection)
+	if err := guard.verifyAncestors(); err != nil {
+		return tools.ToolResult{Error: true, Content: rollback(fmt.Sprintf("path error: %s", err), ckpt)}, nil
+	}
+
 	if err := writeFileFunc(realPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: rollback(err.Error(), ckpt)}, nil
+	}
+
+	// Verify the write didn't violate any protections
+	if err := guard.verify(); err != nil {
+		return tools.ToolResult{Error: true, Content: rollback(fmt.Sprintf("path error: %s", err), ckpt)}, nil
 	}
 
 	// Auto-stamp .grimoire metadata when patching it
