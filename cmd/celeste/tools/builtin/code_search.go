@@ -110,16 +110,22 @@ func (t *CodeSearchTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 
 	case "keyword":
-		syms, err := t.indexer.KeywordSearch(query, limit)
+		// Qualified names are made unique over every match, then the
+		// limit applies: a name printed for one of a limited result must
+		// still pick that one symbol out of all of them.
+		syms, err := t.indexer.KeywordSearch(query, -1)
 		if err != nil {
 			return tools.ToolResult{Error: true, Content: fmt.Sprintf("keyword search error: %s", err)}, nil
+		}
+		names := codegraph.QualifiedNames(syms)
+		if limit >= 0 && len(syms) > limit {
+			syms, names = syms[:limit], names[:limit]
 		}
 		if len(syms) == 0 {
 			resultText = fmt.Sprintf("No symbols found matching '%s'.", query)
 		} else {
 			var b strings.Builder
 			fmt.Fprintf(&b, "Found %d symbols matching '%s':\n\n", len(syms), query)
-			names := codegraph.QualifiedNames(syms)
 			for i, s := range syms {
 				fmt.Fprintf(&b, "%d. %s (%s) — %s:%d\n", i+1, names[i], s.Kind, s.File, s.Line)
 				if s.Signature != "" {
