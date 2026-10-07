@@ -2,7 +2,10 @@
 
 package codegraph
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // #396 fixtures for the tree-sitter languages: exact findings per language.
 var treeSitterReviewCases = []reviewCase{
@@ -129,5 +132,78 @@ func TestReview_CppConstructorNames(t *testing.T) {
 		if got := isCppConstructor(in[0], in[1]); got != want {
 			t.Errorf("isCppConstructor(%q, %q) = %v, want %v", in[0], in[1], got, want)
 		}
+	}
+}
+
+// #405 review: a same-named method in an unrelated class never stands in
+// for a base class or interface. Overriding, implementing and the
+// abstract-declaration rule all need the method's own class to extend or
+// implement the other class (directly or through its bases).
+func TestReview_UnrelatedSameNameClass(t *testing.T) {
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  []string
+	}{
+		{
+			// Unrelated.run only raises "not implemented"; Child overrides
+			// Base.run, not Unrelated.run, so Unrelated.run is still a STUB.
+			// Shape.area is the abstract declaration Circle overrides,
+			// through Mid, which has no methods of its own.
+			name: "python",
+			files: map[string]string{"app.py": `class Base:
+    def run(self):
+        return 1
+
+
+class Child(Base):
+    def run(self):
+        return 2
+
+
+class Unrelated:
+    def run(self):
+        raise NotImplementedError
+
+
+class Shape:
+    def area(self):
+        raise NotImplementedError
+
+
+class Mid(Shape):
+    pass
+
+
+class Circle(Mid):
+    def area(self):
+        return 3
+`},
+			want: []string{"STUB app.py:run:12 dead"},
+		},
+		{
+			// Door extends a class but not Closer: its empty close
+			// implements nothing. Pipe implements Closer.
+			name: "java",
+			files: map[string]string{
+				"Closer.java": "interface Closer {\n    void close();\n}\n",
+				"Door.java":   "class Frame {}\n\nclass Door extends Frame {\n    void close() {}\n}\n",
+				"Pipe.java":   "class Pipe implements Closer {\n    public void close() {}\n}\n",
+			},
+			want: []string{"STUB Door.java:close:4 dead", "STUB Pipe.java:close:2 live"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			idx, _ := buildFixture(t, c.files)
+			smells, err := idx.FindCodeSmells(nil, 1000, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := smellKeys(smells, true, SmellStub)
+			if strings.Join(got, "\n") != strings.Join(sorted(c.want...), "\n") {
+				t.Errorf("STUB rows:\n got %q\nwant %q", got, sorted(c.want...))
+			}
+		})
 	}
 }

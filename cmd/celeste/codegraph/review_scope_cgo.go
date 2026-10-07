@@ -12,28 +12,28 @@ import (
 // treeSitterSpans parses src with the tree-sitter grammar of lang (the
 // grammar name SupportedLanguage gives for the file's extension) and
 // returns the span of every function the indexer's walker records as a
-// symbol.
-func (r *reviewer) treeSitterSpans(lang string, src []byte) ([]funcSpan, bool) {
+// symbol, and the base types of every class it declares.
+func (r *reviewer) treeSitterSpans(lang string, src []byte) ([]funcSpan, map[string][]string, bool) {
 	if lang == "" || lang == "go" || !multiLangGrammars[lang] {
-		return nil, false
+		return nil, nil, false
 	}
 	spec, ok := langSpecs[lang]
 	if !ok || spec.FunctionTypes == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if r.ts == nil {
 		r.ts = NewMultiLangParser()
 	}
 	grammar, ok := r.ts.langs[lang]
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	if err := r.ts.parser.SetLanguage(grammar); err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	tree := r.ts.parser.Parse(src, nil)
 	if tree == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	defer tree.Close()
 
@@ -44,9 +44,16 @@ func (r *reviewer) treeSitterSpans(lang string, src []byte) ([]funcSpan, bool) {
 		classSet: nodeTypeSet(spec.ClassTypes),
 		funcSet:  nodeTypeSet(spec.FunctionTypes),
 	}
-	var spans []funcSpan
-	w.collectSpans(tree.RootNode(), spanCtx{}, &spans)
-	return spans, true
+	out := &spanOut{bases: map[string][]string{}}
+	w.collectSpans(tree.RootNode(), spanCtx{}, out)
+	return out.spans, out.bases, true
+}
+
+// spanOut collects what collectSpans finds: function and member
+// declaration spans, and the base types of each class by class name.
+type spanOut struct {
+	spans []funcSpan
+	bases map[string][]string
 }
 
 // spanCtx is the class a node is declared in.
@@ -72,13 +79,16 @@ var memberDeclTypes = map[string]bool{"method_signature": true, "abstract_method
 // or define (TS interface and abstract signatures, C++ member declarations,
 // Rust trait signatures), which are no symbols but tell code review a
 // method implements one, or what a C++ method defined outside its class is.
-func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]funcSpan) {
+func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *spanOut) {
 	if node == nil {
 		return
 	}
 	kind := node.Kind()
 	if w.classSet[kind] || (interfaceTypes[kind] && w.isJSLike()) {
 		inner := spanCtx{class: w.extractName(node), bases: classHasBases(node), public: w.hasModifier(node, "public")}
+		if inner.class != "" {
+			out.bases[inner.class] = append(out.bases[inner.class], w.classBaseTypes(node)...)
+		}
 		if p := node.Parent(); p != nil && p.Kind() == "export_statement" {
 			inner.exported = true
 		}
@@ -92,7 +102,7 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]f
 	}
 	if w.funcSet[kind] {
 		if name := w.extractName(node); name != "" {
-			*out = append(*out, w.spanOf(node, node, name, ctx))
+			out.spans = append(out.spans, w.spanOf(node, node, name, ctx))
 		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.collectSpans(node.NamedChild(i), spanCtx{}, out)
@@ -101,13 +111,13 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]f
 	}
 	if ctx.class != "" && w.isJSLike() && memberDeclTypes[kind] {
 		if name := w.extractName(node); name != "" {
-			*out = append(*out, w.declSpan(node, name, ctx))
+			out.spans = append(out.spans, w.declSpan(node, name, ctx))
 		}
 		return
 	}
 	if ctx.class != "" && w.lang == "rust" && kind == "function_signature_item" {
 		if name := w.extractName(node); name != "" {
-			*out = append(*out, w.declSpan(node, name, ctx))
+			out.spans = append(out.spans, w.declSpan(node, name, ctx))
 		}
 		return
 	}
@@ -118,7 +128,7 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]f
 				if cppOverrides(node) {
 					s.Annotations = append(s.Annotations, "Override")
 				}
-				*out = append(*out, s)
+				out.spans = append(out.spans, s)
 			}
 			return
 		}
@@ -133,7 +143,7 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *[]f
 			if nameNode != nil && value != nil {
 				switch value.Kind() {
 				case "arrow_function", "function_expression", "function":
-					*out = append(*out, w.spanOf(decl, value, w.nodeText(nameNode), spanCtx{}))
+					out.spans = append(out.spans, w.spanOf(decl, value, w.nodeText(nameNode), spanCtx{}))
 					for j := uint(0); j < value.NamedChildCount(); j++ {
 						w.collectSpans(value.NamedChild(j), spanCtx{}, out)
 					}
@@ -350,6 +360,46 @@ func classHasBases(node *tree_sitter.Node) bool {
 		}
 	}
 	return false
+}
+
+// baseTypeLeaves are the node kinds that name a type in a base list:
+// identifier (Python, JS), type_identifier (TS, Java, C++, Rust),
+// property_identifier (TS `extends ns.Base`), name (PHP), constant (Ruby).
+var baseTypeLeaves = map[string]bool{
+	"identifier": true, "type_identifier": true, "property_identifier": true,
+	"name": true, "constant": true,
+}
+
+// classBaseTypes returns the names of the types a class declaration
+// extends or implements: every name in the nodes classHasBases looks at.
+// A qualified base (`geo::Base`, `abc.ABC`, `pkg.Base`) contributes each of
+// its names, so the last one, the type's own name, is always among them.
+func (w *multiWalker) classBaseTypes(node *tree_sitter.Node) []string {
+	var names []string
+	var collect func(n *tree_sitter.Node)
+	collect = func(n *tree_sitter.Node) {
+		if n == nil {
+			return
+		}
+		if baseTypeLeaves[n.Kind()] {
+			names = append(names, w.nodeText(n))
+			return
+		}
+		for i := uint(0); i < n.NamedChildCount(); i++ {
+			collect(n.NamedChild(i))
+		}
+	}
+	for _, field := range []string{"superclasses", "superclass", "interfaces", "trait"} {
+		collect(node.ChildByFieldName(field))
+	}
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		switch c := node.NamedChild(i); c.Kind() {
+		case "superclass", "super_interfaces", "class_heritage", "base_clause",
+			"class_interface_clause", "base_class_clause":
+			collect(c)
+		}
+	}
+	return names
 }
 
 // isCppConstructor reports whether a C++ function name is a constructor or

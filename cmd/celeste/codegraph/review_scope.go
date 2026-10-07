@@ -67,6 +67,9 @@ type reviewFile struct {
 	src   []byte
 	lines []string
 	spans []funcSpan
+	// classBases maps each class the file declares to the names of the
+	// types it extends or implements (tree-sitter languages only).
+	classBases map[string][]string
 	// Go only: the file has build constraints (a //go:build line or a
 	// GOOS/GOARCH file name suffix), and the file is in package main.
 	constrained bool
@@ -106,8 +109,8 @@ func (r *reviewer) load(relPath string, src []byte) *reviewFile {
 	if tsLang == "c" && strings.EqualFold(path.Ext(relPath), ".h") && cppHeader.Match(src) {
 		tsLang, f.lang = "cpp", "cpp"
 	}
-	if spans, ok := r.treeSitterSpans(tsLang, src); ok {
-		f.spans = spans
+	if spans, bases, ok := r.treeSitterSpans(tsLang, src); ok {
+		f.spans, f.classBases = spans, bases
 	}
 	return f
 }
@@ -482,9 +485,17 @@ type declSite struct {
 }
 
 // declIndex holds every class member of the reviewed files by language and
-// name. Go is left out: its interface implementations are type-checked
+// name, and every class's base types by language and class name. Go is
+// left out: its interface implementations are type-checked
 // (FunctionEdgeInfo.Implements).
-type declIndex map[string][]declSite
+type declIndex struct {
+	members map[string][]declSite
+	bases   map[string][]string
+}
+
+func newDeclIndex() *declIndex {
+	return &declIndex{members: map[string][]declSite{}, bases: map[string][]string{}}
+}
 
 // declKey is the index key of a member name. C and C++ share keys: a .h
 // header holds the declarations of the .cpp files' methods.
@@ -495,20 +506,49 @@ func declKey(lang, name string) string {
 	return lang + "\x00" + name
 }
 
-func (d declIndex) add(file string, f *reviewFile) {
+func (d *declIndex) add(file string, f *reviewFile) {
 	if f == nil || f.lang == "go" {
 		return
+	}
+	for class, bases := range f.classBases {
+		k := declKey(f.lang, class)
+		d.bases[k] = append(d.bases[k], bases...)
 	}
 	for _, s := range f.spans {
 		if s.Class == "" {
 			continue
 		}
 		k := declKey(f.lang, s.Name)
-		d[k] = append(d[k], declSite{
+		d.members[k] = append(d.members[k], declSite{
 			file: file, class: s.Class, hasBody: s.HasBody,
 			classHasBases: s.ClassHasBases, override: hasAnnotation(s, "Override"),
 		})
 	}
+}
+
+// inherits reports whether class extends or implements ancestor in lang,
+// directly or through its bases. Classes are matched by name, so two
+// classes of one name in a language share their bases.
+func (d *declIndex) inherits(lang, class, ancestor string) bool {
+	if class == "" || ancestor == "" || class == ancestor {
+		return false
+	}
+	seen := map[string]bool{class: true}
+	queue := []string{class}
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		for _, b := range d.bases[declKey(lang, c)] {
+			if b == ancestor {
+				return true
+			}
+			if !seen[b] {
+				seen[b] = true
+				queue = append(queue, b)
+			}
+		}
+	}
+	return false
 }
 
 // reach says how a function with no callers is reached anyway. reason is
@@ -530,12 +570,13 @@ type reach struct {
 //     in a test file or with @Test, a method in a Rust `impl Trait for X`, a
 //     function a decorator registers, a method implementing an interface or
 //     abstract method or overriding a base-class method (@Override, a C++
-//     override/virtual specifier, or the same name declared by another class
-//     while its class has bases; a C++ method defined outside its class is
-//     judged by its declaration in the class), an exported JS/TS function, a
+//     override/virtual specifier, or the same name declared by a class its
+//     own class extends or implements, directly or through its bases; a C++
+//     method defined outside its class is judged by its declaration in the
+//     class), an exported JS/TS function, a
 //     public method of an exported JS/TS class, a public method of a public
 //     Java class.
-func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reach {
+func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls *declIndex) reach {
 	if f.lang == "go" {
 		switch {
 		case s.Class == "" && (c.Name == "init" || (c.Name == "main" && f.goMain)):
@@ -577,7 +618,7 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 	outOfClass := false
 	if class == "" && (f.lang == "cpp" || f.lang == "c") {
 		if scope, member, ok := cppSplitMemberName(name); ok {
-			for _, d := range decls[declKey(f.lang, member)] {
+			for _, d := range decls.members[declKey(f.lang, member)] {
 				if d.class == scope {
 					class, name, outOfClass = scope, member, true
 					bases = bases || d.classHasBases
@@ -588,20 +629,24 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 	}
 	if class != "" {
 		implements, overrides, overridden := false, false, false
-		for _, d := range decls[declKey(f.lang, name)] {
+		// Only the classes related to this one count: a base class or
+		// interface it extends or implements, or a subclass that extends
+		// it. A same-named method of an unrelated class says nothing.
+		for _, d := range decls.members[declKey(f.lang, name)] {
 			// Skip the method itself: its own span, or for an
 			// out-of-class definition, its declaration in the class.
 			if d.class == class && (outOfClass || d.file == c.File) {
 				continue
 			}
-			switch {
-			case !d.hasBody:
-				implements = true
-			case d.classHasBases:
-				overridden = true
+			if decls.inherits(f.lang, class, d.class) {
+				if d.hasBody {
+					overrides = true
+				} else {
+					implements = true
+				}
 			}
-			if d.hasBody {
-				overrides = true
+			if d.hasBody && decls.inherits(f.lang, d.class, class) {
+				overridden = true
 			}
 		}
 		if stubBody(s) == stubNotImpl && overridden && !bases {

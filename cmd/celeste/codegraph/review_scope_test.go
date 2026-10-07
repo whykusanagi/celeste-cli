@@ -348,9 +348,10 @@ func TestReview_Reach(t *testing.T) {
 	goTagged := &reviewFile{lang: "go", constrained: true}
 	java := &reviewFile{lang: "java"}
 	ts := &reviewFile{lang: "typescript"}
-	decls := declIndex{
-		declKey("java", "close"): {{file: "Closer.java", class: "Closer"}},
-	}
+	decls := newDeclIndex()
+	decls.members[declKey("java", "close")] = []declSite{{file: "Closer.java", class: "Closer"}}
+	decls.bases[declKey("java", "Pipe")] = []string{"Closer"}
+	decls.bases[declKey("java", "Gate")] = []string{"Frame"}
 	cases := []struct {
 		name string
 		f    *reviewFile
@@ -371,6 +372,8 @@ func TestReview_Reach(t *testing.T) {
 		{"java @Test", java, FunctionEdgeInfo{Name: "checks", File: "src/A.java"}, funcSpan{Class: "A", Annotations: []string{"Test"}}, "test function, run by the test runner"},
 		{"java implements", java, FunctionEdgeInfo{Name: "close", File: "Pipe.java"}, funcSpan{Name: "close", Class: "Pipe", ClassHasBases: true}, "implements an interface or abstract method"},
 		{"java same name, no bases", java, FunctionEdgeInfo{Name: "close", File: "Door.java"}, funcSpan{Name: "close", Class: "Door"}, ""},
+		// Gate extends Frame, not Closer: Closer.close is unrelated (#405 review).
+		{"java same name, unrelated bases", java, FunctionEdgeInfo{Name: "close", File: "Gate.java"}, funcSpan{Name: "close", Class: "Gate", ClassHasBases: true}, ""},
 		{"java @Override", java, FunctionEdgeInfo{Name: "toString", File: "A.java"}, funcSpan{Class: "A", Annotations: []string{"Override"}}, "overrides a base-class method"},
 		{"ts exported", ts, FunctionEdgeInfo{Name: "api", File: "a.ts"}, funcSpan{Exported: true}, "exported API of a library package"},
 		{"ts main", ts, FunctionEdgeInfo{Name: "main", File: "a.ts"}, funcSpan{}, "program entry point"},
@@ -391,14 +394,15 @@ func TestReview_ReachMore(t *testing.T) {
 	cpp := &reviewFile{lang: "cpp"}
 	rs := &reviewFile{lang: "rust"}
 	py := &reviewFile{lang: "python"}
-	decls := declIndex{}
-	decls[declKey("cpp", "f")] = []declSite{
+	decls := newDeclIndex()
+	decls.bases[declKey("cpp", "D")] = []string{"Base"}
+	decls.members[declKey("cpp", "f")] = []declSite{
 		{file: "shape.hpp", class: "Base"},
 		{file: "shape.hpp", class: "D", classHasBases: true, override: true},
 	}
 	// A declaration in a .h header (language "c") shares the C++ key.
-	decls[declKey("c", "g")] = []declSite{{file: "shape.h", class: "D", classHasBases: true}}
-	decls[declKey("c", "paint")] = []declSite{{file: "w.h", class: "Button", classHasBases: true, override: true}}
+	decls.members[declKey("c", "g")] = []declSite{{file: "shape.h", class: "D", classHasBases: true}}
+	decls.members[declKey("c", "paint")] = []declSite{{file: "w.h", class: "Button", classHasBases: true, override: true}}
 	cases := []struct {
 		name string
 		f    *reviewFile

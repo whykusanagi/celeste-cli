@@ -1506,7 +1506,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 	rev := &reviewer{}
 	defer rev.close()
 	files := make(map[string]*reviewFile)
-	decls := declIndex{}
+	decls := newDeclIndex()
 	for _, c := range candidates {
 		if !includeTests && isTestFilePath(c.File) {
 			continue

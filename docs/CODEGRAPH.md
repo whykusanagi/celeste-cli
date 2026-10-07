@@ -339,8 +339,9 @@ method with its edge counts and source body and reports these kinds:
   in a `_test.go` file, `@Test`, a test-named function in a test file), a
   method that implements an interface or abstract method or overrides a
   base-class method (Go's type-checked `implements`, `@Override`, a C++
-  `override` or `virtual` specifier, or the same name declared by another
-  class while its own class extends or implements something; TS interface
+  `override` or `virtual` specifier, or the same name declared by a class
+  or interface its own class extends or implements, directly or through its
+  bases; a same-named method of an unrelated class does not count; TS interface
   and abstract signatures, C++ member declarations in headers and Rust trait
   signatures count as declarations), a C++ method defined outside its class
   (`void D::f() {}`), judged by its declaration in `D` (a `.h` header with
@@ -354,7 +355,7 @@ method with its edge counts and source body and reports these kinds:
   method of a public Java class), and a function in a Go file with build
   constraints (a `//go:build` line or a GOOS/GOARCH file name suffix), whose
   callers are in another platform's build. A base-class method that only
-  raises "not implemented" while subclasses override it is an abstract
+  raises "not implemented" while its own subclasses override it is an abstract
   declaration, not a STUB.
 
   Public methods of PHP, Ruby and C++ classes are not treated as library
