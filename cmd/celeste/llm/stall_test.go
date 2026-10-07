@@ -164,10 +164,12 @@ func TestNoResponseAtAllFailsAfterTimeout(t *testing.T) {
 // period.
 func TestWithRetryStallResetsOnActivity(t *testing.T) {
 	attempts := 0
-	err := withRetry(context.Background(), retryOpts{stall: 30 * time.Millisecond, timeout: time.Minute}, func(ctx context.Context) error {
+	// Windows sleeps in ~15.6 ms ticks, so the gap between touches is kept
+	// far below the stall window: 30 touches over ≥150 ms, each gap ≤ ~32 ms.
+	err := withRetry(context.Background(), retryOpts{stall: 150 * time.Millisecond, timeout: time.Minute}, func(ctx context.Context) error {
 		attempts++
-		for i := 0; i < 10; i++ {
-			time.Sleep(10 * time.Millisecond)
+		for i := 0; i < 30; i++ {
+			time.Sleep(5 * time.Millisecond)
 			touchStall(ctx)
 		}
 		return ctx.Err()
