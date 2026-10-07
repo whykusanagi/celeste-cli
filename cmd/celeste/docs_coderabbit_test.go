@@ -46,9 +46,9 @@ func TestMigratingListsEveryLocalHostCategory(t *testing.T) {
 func TestCodegraphRecoveryPointsAtRebuild(t *testing.T) {
 	store := repoDoc(t, "cmd/celeste/codegraph/store.go")
 	requireNone(t, "codegraph/store.go", store, "the next update re-indexes what is missing")
-	requireAll(t, "codegraph/store.go", store, "`celeste index rebuild`")
+	requireAll(t, "codegraph/store.go", store, "`celeste index rebuild`", "file whose content hash matches its record")
 	cg := repoDoc(t, "docs/CODEGRAPH.md")
-	requireAll(t, "docs/CODEGRAPH.md", cg, "`celeste index rebuild`", "content hash")
+	requireAll(t, "docs/CODEGRAPH.md", cg, "`celeste index rebuild`", "plain `celeste index` only updates", "skips every file whose content")
 	requireNone(t, "docs/CODEGRAPH.md", cg, "(`celeste index` only updates)")
 }
 
