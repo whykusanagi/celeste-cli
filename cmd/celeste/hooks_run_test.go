@@ -260,3 +260,40 @@ func TestHooksTrustApprovesWorkspaceMCPServers(t *testing.T) {
 		t.Errorf("trust did not show the command it approves:\n%s", out.String())
 	}
 }
+
+// #411: hooks declined in the chat are remembered; `celeste hooks trust`
+// lists them as declined and approves them only after a confirmed yes.
+func TestHooksTrustOverridesADecline(t *testing.T) {
+	c, out, _ := hooksCLIFixture(t, "n\n", true)
+	srcs, _, err := hooks.Discover(c.cwd, c.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range srcs {
+		if !s.Global() {
+			if err := hooks.LoadTrust(c.home).Decline(s); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if code := hooksCommand([]string{"list"}, c); code != 0 || !strings.Contains(out.String(), "[repo, declined]") {
+		t.Fatalf("list exit %d:\n%s", code, out.String())
+	}
+
+	out.Reset()
+	hooksCommand([]string{"trust"}, c)
+	if !strings.Contains(out.String(), "echo repo") || !strings.Contains(out.String(), "[y/N]") {
+		t.Fatalf("trust did not show the declined hooks and ask:\n%s", out.String())
+	}
+	if repoLoaded(t, c) {
+		t.Fatal("a no in hooks trust approved the hooks")
+	}
+	c.interactive = false
+	if code := hooksCommand([]string{"trust"}, c); code != 1 || repoLoaded(t, c) {
+		t.Fatalf("trust without a terminal: exit %d", code)
+	}
+	c.interactive, c.in = true, strings.NewReader("y\n")
+	if code := hooksCommand([]string{"trust"}, c); code != 0 || !repoLoaded(t, c) {
+		t.Fatalf("a confirmed yes did not approve the declined hooks (exit %d)", code)
+	}
+}

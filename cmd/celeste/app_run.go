@@ -377,11 +377,19 @@ Lists saved chat sessions, or opens the chat UI on the one given.`,
 	"plan":   planCLIUsage,
 	"revert": revertUsage,
 	"mcp": `Usage: celeste mcp list
+       celeste mcp trust [--yes] <server>
+       celeste mcp untrust <server>
        celeste mcp install [--client <name>] [--dry-run] [--port N]
 
 list shows the MCP servers configured in your home and this directory: each
-one's source, transport, enabled and trusted flags and where it runs
+one's source, transport, enabled and trusted flags, whether a workspace
+server is approved, declined or pending, and where it runs
 (celeste mcp list --help).
+
+trust approves one of this directory's servers (also one you declined)
+after showing its command, args and source file and asking to confirm;
+--yes skips the question (needed without a terminal). untrust forgets the
+approval or decline, so the chat asks again.
 
 install adds celeste to MCP clients' configs.
   --client <name>  all (the default), claude-desktop, claude-code, cursor,

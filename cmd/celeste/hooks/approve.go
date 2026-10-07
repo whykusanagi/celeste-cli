@@ -85,6 +85,8 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 			what = "have changed since you approved them"
 		case DeclinedChanged:
 			what = "have changed since you declined them"
+		case Declined:
+			what = "were declined"
 		}
 		remembered := "A no is remembered; `celeste hooks trust` approves them later.\n"
 		switch src.Kind {
@@ -104,6 +106,8 @@ func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 				what = "has changed since you approved it"
 			case DeclinedChanged:
 				what = "has changed since you declined it"
+			case Declined:
+				what = "was declined"
 			}
 			fmt.Fprintf(out, "\nMCP server %s in %s %s:\n", strconv.Quote(MCPServerName(src)), strconv.Quote(SourceFile(src)), what)
 			DescribeSource(out, src)
