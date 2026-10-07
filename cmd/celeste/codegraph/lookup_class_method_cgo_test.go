@@ -101,3 +101,39 @@ func TestQualifiedNames_NonGoMethodRoundTrip(t *testing.T) {
 		assert.Equal(t, res.Symbols[i].ID, back.Symbols[0].ID, n)
 	}
 }
+
+// Review of the class-method lookup: a C++ member defined outside its class
+// is printed with its file and its "Class::member" name
+// ("a/shape.Shape::area" when two files define it), and LookupSymbol takes
+// that name back to the one definition.
+func TestQualifiedNames_CppOutOfLineMemberRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a/shape.cpp", "int Shape::area() { return 1; }\n")
+	writeFile(t, dir, "b/shape.cpp", "int Shape::area() { return 2; }\n")
+	writeFile(t, dir, "solo.cpp", "int Solo::area() { return 3; }\n")
+	idx, err := NewIndexer(dir, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+	res, err := idx.LookupSymbol("Shape::area")
+	require.NoError(t, err)
+	require.Len(t, res.Symbols, 2)
+	names := QualifiedNames(res.Symbols)
+	assert.ElementsMatch(t, []string{"a/shape.Shape::area", "b/shape.Shape::area"}, names)
+	for i, n := range names {
+		back, err := idx.LookupSymbol(n)
+		require.NoError(t, err)
+		assert.Equal(t, MatchQualified, back.Match, n)
+		require.Len(t, back.Symbols, 1, n)
+		assert.Equal(t, res.Symbols[i].ID, back.Symbols[0].ID, n)
+	}
+	solo, err := idx.LookupSymbol("Solo::area")
+	require.NoError(t, err)
+	require.Len(t, solo.Symbols, 1)
+	name := QualifiedName(solo.Symbols[0])
+	assert.Equal(t, "solo.Solo::area", name)
+	back, err := idx.LookupSymbol(name)
+	require.NoError(t, err)
+	require.Len(t, back.Symbols, 1, name)
+	assert.Equal(t, solo.Symbols[0].ID, back.Symbols[0].ID)
+}

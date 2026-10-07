@@ -92,6 +92,20 @@ func (s *Store) lookupSymbol(q string) (LookupResult, error) {
 	if len(syms) > 0 {
 		return LookupResult{Match: MatchExact, Symbols: rankExact(syms)}, nil
 	}
+	// A C++ member defined out of line prints as its file and its stored
+	// "Class::member" name ("a/shape.Shape::area"): the qualifier is what
+	// comes before the last '.' ahead of the first "::".
+	if i := strings.Index(q, "::"); i > 0 && !strings.HasPrefix(q, "(") {
+		if dot := strings.LastIndex(q[:i], "."); dot > 0 {
+			hits, err := s.qualifiedHits(q[:dot], q[dot+1:])
+			if err != nil {
+				return LookupResult{}, err
+			}
+			if len(hits) > 0 {
+				return LookupResult{Match: MatchQualified, Symbols: rankExact(hits)}, nil
+			}
+		}
+	}
 	qual, name, qualified := splitQualified(q)
 	if qualified {
 		// A C++ member defined out of line is stored under its qualified
@@ -104,20 +118,12 @@ func (s *Store) lookupSymbol(q string) (LookupResult, error) {
 				return LookupResult{Match: MatchQualified, Symbols: rankExact(syms)}, nil
 			}
 		}
-		for _, fold := range []bool{false, true} {
-			cands, err := s.symbolsNamed(name, fold)
-			if err != nil {
-				return LookupResult{}, err
-			}
-			var hits []Symbol
-			for _, c := range cands {
-				if qualifierMatches(c, qual, fold) {
-					hits = append(hits, c)
-				}
-			}
-			if len(hits) > 0 {
-				return LookupResult{Match: MatchQualified, Symbols: rankExact(hits)}, nil
-			}
+		hits, err := s.qualifiedHits(qual, name)
+		if err != nil {
+			return LookupResult{}, err
+		}
+		if len(hits) > 0 {
+			return LookupResult{Match: MatchQualified, Symbols: rankExact(hits)}, nil
 		}
 	}
 	if syms, err = s.symbolsNamed(q, true); err != nil {
@@ -144,6 +150,27 @@ func (s *Store) lookupSymbol(q string) (LookupResult, error) {
 		}
 	}
 	return LookupResult{}, nil
+}
+
+// qualifiedHits returns the symbols named name whose scope qual names,
+// matching case first and ignoring it only when that finds none.
+func (s *Store) qualifiedHits(qual, name string) ([]Symbol, error) {
+	for _, fold := range []bool{false, true} {
+		cands, err := s.symbolsNamed(name, fold)
+		if err != nil {
+			return nil, err
+		}
+		var hits []Symbol
+		for _, c := range cands {
+			if qualifierMatches(c, qual, fold) {
+				hits = append(hits, c)
+			}
+		}
+		if len(hits) > 0 {
+			return hits, nil
+		}
+	}
+	return nil, nil
 }
 
 // RankedSearch is keyword search over symbol names: LookupSymbol's best
