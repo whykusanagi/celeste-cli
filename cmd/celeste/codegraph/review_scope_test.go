@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -186,6 +187,10 @@ func repoReview(t *testing.T, rels ...string) ([]CodeSmell, map[string]string) {
 	files := map[string]string{}
 	for _, rel := range rels {
 		data, err := os.ReadFile(filepath.FromSlash(rel))
+		if errors.Is(err, fs.ErrNotExist) {
+			// The Docker suite runs the compiled tests without the source tree.
+			t.Skip("needs celeste's source tree")
+		}
 		require.NoError(t, err)
 		files[path.Base(rel)] = string(data)
 	}
