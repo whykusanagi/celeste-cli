@@ -316,13 +316,14 @@ func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge, keep []stri
 	return nil
 }
 
-// fileEdge is a stored edge named by both ends' symbol names and files, so
-// it can be stored again after either end's file is re-indexed (its symbol
-// IDs change).
+// fileEdge is a stored edge named by both ends' symbol names, scopes and
+// files, so it can be stored again after either end's file is re-indexed
+// (its symbol IDs change). The scope keeps same-named methods of different
+// classes in one file apart.
 type fileEdge struct {
-	SourceName, SourceFile string
-	TargetName, TargetFile string
-	Kind                   EdgeKind
+	SourceName, SourceScope, SourceFile string
+	TargetName, TargetScope, TargetFile string
+	Kind                                EdgeKind
 }
 
 // incomingNonGoEdges returns the edges into file's symbols from symbols of
@@ -330,7 +331,8 @@ type fileEdge struct {
 // files' own rows do not record again.
 func (s *Store) incomingNonGoEdges(file string) ([]fileEdge, error) {
 	rows, err := s.db.Query(`
-		SELECT src.name, src.file, dst.name, dst.file, e.kind
+		SELECT src.name, COALESCE(src.scope, ''), src.file,
+		       dst.name, COALESCE(dst.scope, ''), dst.file, e.kind
 		FROM edges e
 		JOIN symbols src ON src.id = e.source_id
 		JOIN symbols dst ON dst.id = e.target_id
@@ -343,7 +345,7 @@ func (s *Store) incomingNonGoEdges(file string) ([]fileEdge, error) {
 	var out []fileEdge
 	for rows.Next() {
 		var e fileEdge
-		if err := rows.Scan(&e.SourceName, &e.SourceFile, &e.TargetName, &e.TargetFile, &e.Kind); err != nil {
+		if err := rows.Scan(&e.SourceName, &e.SourceScope, &e.SourceFile, &e.TargetName, &e.TargetScope, &e.TargetFile, &e.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -351,10 +353,11 @@ func (s *Store) incomingNonGoEdges(file string) ([]fileEdge, error) {
 	return out, rows.Err()
 }
 
-// symbolIDInFile is the ID of the first symbol named name in exactly file.
-func (s *Store) symbolIDInFile(name, file string) (int64, bool) {
+// symbolIDInFile is the ID of the first symbol named name in scope (the
+// class chain, "" for a top-level symbol) in exactly file.
+func (s *Store) symbolIDInFile(name, scope, file string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ? AND file = ? ORDER BY line, id LIMIT 1`, name, file).Scan(&id)
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ? AND COALESCE(scope, '') = ? AND file = ? ORDER BY line, id LIMIT 1`, name, scope, file).Scan(&id)
 	if err != nil {
 		return 0, false
 	}

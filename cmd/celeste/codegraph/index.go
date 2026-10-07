@@ -638,8 +638,8 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, rec
 	keepFile := func(path string) {
 		keep = append(keep, path)
 		for _, e := range rec.dropped[path] {
-			src, ok1 := idx.store.symbolIDInFile(e.SourceName, e.SourceFile)
-			dst, ok2 := idx.store.symbolIDInFile(e.TargetName, e.TargetFile)
+			src, ok1 := idx.store.symbolIDInFile(e.SourceName, e.SourceScope, e.SourceFile)
+			dst, ok2 := idx.store.symbolIDInFile(e.TargetName, e.TargetScope, e.TargetFile)
 			if ok1 && ok2 {
 				restored = append(restored, Edge{SourceID: src, TargetID: dst, Kind: e.Kind})
 			}
