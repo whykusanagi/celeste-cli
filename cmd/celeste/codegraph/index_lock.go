@@ -55,6 +55,10 @@ var testHookReresolveParse func(path string)
 // resolves each stride of the non-Go raw edges it collected.
 var testHookReresolveResolve func()
 
+// testHookGoStore, when set, runs before the Go pass stores each file whose
+// symbols it re-stores.
+var testHookGoStore func(rel string)
+
 // testHookReplaceNonGoAfterDelete, when set, runs inside
 // Store.ReplaceNonGoEdges after the delete and before the inserts.
 var testHookReplaceNonGoAfterDelete func()

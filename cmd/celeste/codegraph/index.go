@@ -256,7 +256,10 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 		return fmt.Errorf("walk files: %w", err)
 	}
 	// Mark the build unfinished before the graph is emptied; the mark is
-	// cleared only after the last pass commits (#388).
+	// cleared only after the last pass commits (#388). ResetGraph stamps
+	// the graph version as it empties the graph, so an update that finds
+	// the mark resumes this build rather than dropping its Go rows as an
+	// older index's (#394).
 	if err := idx.store.SetMeta(metaBuildInProgress, []byte(idx.token)); err != nil {
 		return fmt.Errorf("mark build in progress: %w", err)
 	}
@@ -325,9 +328,8 @@ func (idx *Indexer) buildLocked(ctx context.Context) error {
 		return fmt.Errorf("rebuild token stats: %w", err)
 	}
 
-	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
-		return fmt.Errorf("record index version: %w", err)
-	}
+	// ResetGraph stamped the graph version; the build is finished once
+	// the mark is gone.
 	if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
 		return fmt.Errorf("mark build finished: %w", err)
 	}
@@ -370,6 +372,36 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 	// loop below indexes the rest, every non-Go edge is resolved again and
 	// the Go pass is rerun; the mark is cleared only when all of it has
 	// committed.
+	indexedFiles, err := idx.store.GetAllFiles()
+	if err != nil {
+		return fmt.Errorf("get indexed files: %w", err)
+	}
+	if len(indexedFiles) == 0 {
+		// Nothing to keep: an empty index (or a build cancelled before it
+		// stored a file) gets the two-pass Build.
+		return idx.buildLocked(ctx)
+	}
+	// An index written by an older graph version (or never stamped: v1.16)
+	// becomes an unfinished build of this version in one step: its Go rows
+	// are dropped, the other files are marked for parsing again and the
+	// version is stamped with the build_in_progress mark. The recovery
+	// below then finishes it like an interrupted build, so the result is
+	// the graph a fresh build gives (#394 G9), and a run cut short leaves
+	// rows the next one keeps. A full build stamps the version when it
+	// empties the graph (ResetGraph), so its own rows are never taken for
+	// an older index (#394).
+	v, err := idx.store.GetMeta(metaGraphVersion)
+	if err != nil {
+		return err
+	}
+	if string(v) != graphVersion {
+		if err := idx.store.UpgradeGraph(idx.token); err != nil {
+			return err
+		}
+		if indexedFiles, err = idx.store.GetAllFiles(); err != nil {
+			return fmt.Errorf("get indexed files: %w", err)
+		}
+	}
 	mark, err := idx.store.GetMeta(metaBuildInProgress)
 	if err != nil {
 		return err
@@ -387,29 +419,6 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 	goPending, err := idx.store.GetMeta(metaGoPassPending)
 	if err != nil {
 		return err
-	}
-	indexedFiles, err := idx.store.GetAllFiles()
-	if err != nil {
-		return fmt.Errorf("get indexed files: %w", err)
-	}
-	// An index written by an older graph version (or never stamped) had its
-	// Go edges resolved by name. Only the Go rows are dropped; the
-	// incremental pass below then sees every Go file as new and re-runs the
-	// Go pass, while other languages keep their rows. If this is cancelled
-	// the version stays old and the next Update repeats it. An empty index
-	// gets a full two-pass Build instead.
-	if len(indexedFiles) == 0 {
-		// Nothing to keep: an empty index (or a build cancelled before it
-		// stored a file) gets the two-pass Build.
-		return idx.buildLocked(ctx)
-	}
-	if v, err := idx.store.GetMeta(metaGraphVersion); err != nil || string(v) != graphVersion {
-		if err := idx.store.ResetGo(); err != nil {
-			return err
-		}
-		if indexedFiles, err = idx.store.GetAllFiles(); err != nil {
-			return fmt.Errorf("get indexed files: %w", err)
-		}
 	}
 	indexedMap := make(map[string]FileRecord)
 	for _, f := range indexedFiles {
@@ -535,9 +544,9 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		return fmt.Errorf("rebuild token stats: %w", err)
 	}
 
-	if err := idx.store.SetMeta(metaGraphVersion, []byte(graphVersion)); err != nil {
-		return fmt.Errorf("record index version: %w", err)
-	}
+	// The graph version needs no stamp here: UpgradeGraph (above) and
+	// ResetGraph (a full build) stamp it in the transaction that empties
+	// the graph (#394).
 	if recovering {
 		if err := idx.store.DeleteMetaIf(metaBuildInProgress, idx.token); err != nil {
 			return fmt.Errorf("mark build finished: %w", err)

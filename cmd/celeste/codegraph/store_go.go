@@ -14,10 +14,17 @@ import (
 const goSourceFilter = `SELECT id FROM symbols WHERE file LIKE '%.go'`
 
 // ResetGraph deletes every symbol, edge, file record and BM25/LSH row so a
-// full Build starts from an empty graph. Meta (MinHash seeds) and snapshots
-// are kept. Dependent rows are deleted explicitly, children first, so the
+// full Build starts from an empty graph, and stamps the current graph
+// version in the same transaction. Meta (MinHash seeds) and snapshots are
+// kept. Dependent rows are deleted explicitly, children first, so the
 // reset does not depend on ON DELETE CASCADE (which every connection now
 // enforces, #389) and token_stats, which has no foreign key, is cleared too.
+//
+// Every row stored after the reset is written by this version, so the
+// stamp is true from the moment the graph is empty. An update that finds
+// the build unfinished (meta build_in_progress) then resumes it instead of
+// taking the rows for an older index and dropping them (#394). The caller
+// sets build_in_progress before the reset.
 func (s *Store) ResetGraph() error {
 	return s.inTx(func(tx *sql.Tx) error {
 		for _, q := range []string{
@@ -32,14 +39,22 @@ func (s *Store) ResetGraph() error {
 				return fmt.Errorf("reset graph: %w", err)
 			}
 		}
-		return nil
+		return setMetaTx(tx, metaGraphVersion, []byte(graphVersion))
 	})
 }
 
-// ResetGo deletes every Go symbol, file record and the edges and BM25/LSH
-// rows attached to Go symbols, in one transaction. Rows for other languages
-// are kept: an index upgrade only changes how Go is resolved.
-func (s *Store) ResetGo() error {
+// UpgradeGraph turns an index written by an older graph version (or never
+// stamped) into an unfinished build of the current one, in one
+// transaction: it deletes every Go row (Go edges were resolved by name and
+// the Go pass rewrites them all), marks every other file's record stale so
+// the next pass parses it again with today's parsers, sets
+// build_in_progress to token and stamps the current version. The other
+// languages' symbols and edges stay readable until each file is parsed
+// again, and the update that finishes the build resolves every non-Go edge
+// again, as a fresh build's pass 2 does (#394 G9). A run cut short leaves a
+// current-version index with the mark set, which the next update resumes
+// without dropping anything.
+func (s *Store) UpgradeGraph(token string) error {
 	return s.inTx(func(tx *sql.Tx) error {
 		for _, q := range []string{
 			`DELETE FROM edges WHERE source_id IN (` + goSourceFilter + `) OR target_id IN (` + goSourceFilter + `)`,
@@ -47,13 +62,27 @@ func (s *Store) ResetGo() error {
 			`DELETE FROM symbol_tokens WHERE symbol_id IN (` + goSourceFilter + `)`,
 			`DELETE FROM symbols WHERE file LIKE '%.go'`,
 			`DELETE FROM files WHERE language = 'go' OR path LIKE '%.go'`,
+			`UPDATE files SET content_hash = ''`,
 		} {
 			if _, err := tx.Exec(q); err != nil {
-				return fmt.Errorf("reset go rows: %w", err)
+				return fmt.Errorf("upgrade index: %w", err)
 			}
 		}
-		return nil
+		if err := setMetaTx(tx, metaBuildInProgress, []byte(token)); err != nil {
+			return err
+		}
+		return setMetaTx(tx, metaGraphVersion, []byte(graphVersion))
 	})
+}
+
+func setMetaTx(tx *sql.Tx, key string, value []byte) error {
+	if _, err := tx.Exec(
+		"INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, value,
+	); err != nil {
+		return fmt.Errorf("set meta %q: %w", key, err)
+	}
+	return nil
 }
 
 // GoQualIDs maps each qualified Go name to its symbol ID. When two rows
