@@ -141,6 +141,11 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		ckpt = c
 	}
+	// Validate ancestors immediately before write to prevent TOCTOU via
+	// ancestor replacement between resolvePathReal and the write operation.
+	if err := validatePathAncestors(t.workspace, realPath); err != nil {
+		return tools.ToolResult{Error: true, Content: rollback(fmt.Sprintf("path error: %s", err), ckpt)}, nil
+	}
 	if err := writeFileFunc(realPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: rollback(err.Error(), ckpt)}, nil
 	}

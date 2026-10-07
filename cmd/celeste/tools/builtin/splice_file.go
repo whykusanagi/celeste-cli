@@ -199,6 +199,11 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 
 	// Write. For a same-file move, dest already reflects the removal.
+	// Validate ancestors immediately before write to prevent TOCTOU via
+	// ancestor replacement between resolvePathReal and the write operation.
+	if err := validatePathAncestors(t.workspace, destReal); err != nil {
+		return fail(fmt.Sprintf("dest path error: %s", err))
+	}
 	if err := writeFileFunc(destReal, []byte(newDest), 0644); err != nil {
 		return fail(fmt.Sprintf("write dest: %s", err))
 	}
@@ -206,6 +211,10 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		return fail(fmt.Sprintf("dest path error: %s", err))
 	}
 	if op == "move" && !sameFile {
+		// Validate ancestors before writing source in cross-file move
+		if err := validatePathAncestors(t.workspace, sourceReal); err != nil {
+			return fail(fmt.Sprintf("source path error: %s", err))
+		}
 		if err := writeFileFunc(sourceReal, []byte(sourceAfter), 0644); err != nil {
 			return fail(fmt.Sprintf("write source: %s", err))
 		}

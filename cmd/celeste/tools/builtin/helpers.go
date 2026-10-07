@@ -98,6 +98,66 @@ func readFileNoFollow(real string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// validatePathAncestors checks that no ancestor directory of path has been
+// replaced with a symlink that would redirect operations outside workspace.
+// This mitigates TOCTOU attacks where an ancestor is swapped between the
+// initial resolvePathReal validation and subsequent mkdir/write operations.
+// It walks from workspace down to path's parent, verifying each component
+// exists and is not a symlink pointing outside the workspace.
+func validatePathAncestors(workspace, path string) error {
+	workspace = filepath.Clean(workspace)
+	path = filepath.Clean(path)
+
+	if !pathutil.Within(workspace, path) {
+		return fmt.Errorf("path escapes workspace: %s", path)
+	}
+
+	// Resolve workspace to handle symlinked workspace root
+	realWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		realWorkspace = workspace
+	}
+
+	// Walk each ancestor from workspace to path's parent
+	parent := filepath.Dir(path)
+	if parent == path {
+		return nil // path is root
+	}
+
+	// Build list of ancestors from workspace to parent
+	var ancestors []string
+	for p := parent; p != workspace && len(p) >= len(workspace); p = filepath.Dir(p) {
+		ancestors = append([]string{p}, ancestors...)
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+
+	// Check each ancestor exists and doesn't escape via symlink
+	for _, ancestor := range ancestors {
+		if !pathutil.Within(workspace, ancestor) {
+			return fmt.Errorf("ancestor path escapes workspace: %s", ancestor)
+		}
+
+		// Check if this ancestor exists and resolve it
+		if info, err := os.Lstat(ancestor); err == nil {
+			// If it's a symlink, verify it doesn't point outside workspace
+			if info.Mode()&os.ModeSymlink != 0 {
+				resolved, err := filepath.EvalSymlinks(ancestor)
+				if err != nil {
+					return fmt.Errorf("cannot resolve ancestor symlink %s: %w", ancestor, err)
+				}
+				if !pathutil.Within(realWorkspace, resolved) {
+					return fmt.Errorf("ancestor symlink escapes workspace: %s -> %s", ancestor, resolved)
+				}
+			}
+		}
+		// If ancestor doesn't exist yet, that's fine - mkdir will create it
+	}
+
+	return nil
+}
+
 func getStringArg(args map[string]any, key, fallback string) string {
 	if v, ok := args[key]; ok {
 		switch s := v.(type) {

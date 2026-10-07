@@ -251,6 +251,12 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if err != nil {
 			return tools.ToolResult{Content: fmt.Sprintf("Failed to save audio: %v", err), Error: true}, nil
 		}
+		// Validate ancestors immediately before write to prevent TOCTOU via
+		// ancestor replacement between resolveOutput and the write operation.
+		if err := validatePathAncestors(t.workspace, filename); err != nil {
+			undoDirs()
+			return tools.ToolResult{Content: fmt.Sprintf("Failed to save audio: %v", err), Error: true}, nil
+		}
 		if err := os.WriteFile(filename, audioData, 0644); err != nil {
 			undoDirs()
 			return tools.ToolResult{Content: fmt.Sprintf("Failed to save audio: %v", err), Error: true}, nil
@@ -338,7 +344,7 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 		if err != nil {
 			return tools.ToolResult{Content: err.Error(), Error: true}, nil
 		}
-		return downloadHistoryItem(ctx, apiKey, itemID, filename)
+		return downloadHistoryItem(ctx, apiKey, itemID, filename, t.workspace)
 
 	case "sound":
 		if apiKey == "" {
@@ -492,6 +498,15 @@ func executeBatch(ctx context.Context, apiKey, voiceID, filePath, outDir string,
 			continue
 		}
 
+		// Validate ancestors immediately before write to prevent TOCTOU via
+		// ancestor replacement between resolvePath and the write operation.
+		// Note: outDir was already validated by guardedMkdirAll, but we need
+		// to check the full path including the filename component.
+		if err := validatePathAncestors(outDir, outFile); err != nil {
+			sb.WriteString(fmt.Sprintf("  FAIL  %s: path error: %v\n", clip.Name, err))
+			failed++
+			continue
+		}
 		if err := os.WriteFile(outFile, audioData, 0644); err != nil {
 			sb.WriteString(fmt.Sprintf("  FAIL  %s: write error: %v\n", clip.Name, err))
 			failed++
@@ -670,7 +685,7 @@ func fetchHistory(ctx context.Context, apiKey string) (tools.ToolResult, error) 
 }
 
 // downloadHistoryItem downloads a generated audio file from ElevenLabs history.
-func downloadHistoryItem(ctx context.Context, apiKey, itemID, filename string) (tools.ToolResult, error) {
+func downloadHistoryItem(ctx context.Context, apiKey, itemID, filename, workspace string) (tools.ToolResult, error) {
 	url := fmt.Sprintf("https://api.elevenlabs.io/v1/history/%s/audio", itemID)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -696,6 +711,12 @@ func downloadHistoryItem(ctx context.Context, apiKey, itemID, filename string) (
 
 	undoDirs, err := guardedMkdirAll(filepath.Dir(filename))
 	if err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("Write failed: %v", err), Error: true}, nil
+	}
+	// Validate ancestors immediately before write to prevent TOCTOU via
+	// ancestor replacement between resolveOutput and the write operation.
+	if err := validatePathAncestors(workspace, filename); err != nil {
+		undoDirs()
 		return tools.ToolResult{Content: fmt.Sprintf("Write failed: %v", err), Error: true}, nil
 	}
 	if err := os.WriteFile(filename, audioData, 0644); err != nil {

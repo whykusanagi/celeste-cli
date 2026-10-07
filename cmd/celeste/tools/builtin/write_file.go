@@ -110,6 +110,13 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 			guard.undo()
 		}
 	}()
+	// Validate ancestors immediately before mkdir to prevent TOCTOU via
+	// ancestor replacement: a concurrent actor replacing a checked ancestor
+	// with a symlink between resolvePathReal and mkdirAll would redirect
+	// directory creation outside the workspace.
+	if err := validatePathAncestors(t.workspace, targetPath); err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
 	if err := guard.mkdirAll(filepath.Dir(targetPath)); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
@@ -136,6 +143,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	var bytesWritten int
 	if appendMode {
+		// Validate ancestors immediately before append to prevent TOCTOU
+		if err := validatePathAncestors(t.workspace, targetPath); err != nil {
+			return fail(fmt.Sprintf("path error: %s", err))
+		}
 		// Append is not atomic by nature: it keeps O_APPEND (ruling 5).
 		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
@@ -151,6 +162,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		bytesWritten = n
 	} else {
+		// Validate ancestors immediately before overwrite to prevent TOCTOU
+		if err := validatePathAncestors(t.workspace, realPath); err != nil {
+			return fail(fmt.Sprintf("path error: %s", err))
+		}
 		if err := writeFileFunc(realPath, []byte(content), 0644); err != nil {
 			return fail(err.Error())
 		}
