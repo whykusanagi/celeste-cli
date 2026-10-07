@@ -60,3 +60,32 @@ func TestRebuild_ConcurrentQueryNeverGetsOldIndex(t *testing.T) {
 	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 	assert.Contains(t, payloadText(t, payload), "freshlyAdded", "the rebuilt index is served")
 }
+
+// Review of #393, chat path: a celeste chat call that builds its Env while
+// a rebuild runs opens the old database (its Setup does not go through
+// indexerFor). The rebuild retires that Env once the rebuilt index is in
+// place, so the next chat call builds one on the new database instead of
+// reading the deleted one for the Env's whole lifetime.
+func TestRebuild_RetiresChatEnvBuiltDuringRebuild(t *testing.T) {
+	srv, ws := newTestServerWithWorkspace(t)
+	writeTSFile(t, ws, "a.ts", "export function helper() { return 1 }\n")
+	f := newFakeEnvs(t)
+	srv.chatEnvs.close()
+	srv.chatEnvs = f.chatEnvs
+
+	before, _ := f.use(t, ws)
+	var during *chatEnv
+	testHookRebuildEvicted = func() { during, _ = f.use(t, ws) }
+	t.Cleanup(func() { testHookRebuildEvicted = nil })
+	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
+	testHookRebuildEvicted = nil
+	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
+
+	require.NotNil(t, during)
+	assert.True(t, f.isClosed(before), "the Env cached before the rebuild is retired")
+	assert.NotSame(t, before, during, "the call inside the rebuild built its own Env")
+	assert.True(t, f.isClosed(during), "the Env built during the rebuild is retired once it ends")
+	after, _ := f.use(t, ws)
+	assert.NotSame(t, during, after, "the next chat call builds an Env on the rebuilt index")
+	assert.Equal(t, int32(3), f.builds.Load())
+}

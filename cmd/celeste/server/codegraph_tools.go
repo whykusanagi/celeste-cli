@@ -89,7 +89,7 @@ func noIndexError(workspace string) error {
 // indexBuildingError is the soft error the query tools return while an
 // indexer is building the workspace's graph and it is not yet queryable.
 // testHookRebuildEvicted, when set, runs in indexRebuild right after it
-// evicts the cached Indexer, before the rebuild starts.
+// evicts the cached Indexer and chat Env, before the rebuild starts.
 var testHookRebuildEvicted func()
 
 func indexBuildingError(workspace string) error {
@@ -363,16 +363,16 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 			s.indexerMu.Lock()
 			delete(s.rebuilding, workspace)
 			s.indexerMu.Unlock()
+			s.chatEnvs.invalidate(workspace)
 		}
 	}()
-	if testHookRebuildEvicted != nil {
-		testHookRebuildEvicted()
-	}
-
 	// A cached MCP chat Env holds the same codegraph DB open. Retire it so
 	// the delete below succeeds (on Windows an open file can't be removed)
 	// and the next chat call opens the rebuilt index.
 	s.chatEnvs.invalidate(workspace)
+	if testHookRebuildEvicted != nil {
+		testHookRebuildEvicted()
+	}
 
 	// Remove the existing db + WAL files and build afresh. Rebuild holds
 	// the index lock from before the delete until the build ends, so a TUI
@@ -395,6 +395,12 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	delete(s.rebuilding, workspace)
 	cached = true
 	s.indexerMu.Unlock()
+	// A chat call that built its Env while the rebuild ran opened the old
+	// database (loop.Setup does not go through indexerFor), which the
+	// rebuild then deleted. Retire it, as above, so the next chat call
+	// builds an Env on the rebuilt index; a busy one closes on its last
+	// release (review of #393).
+	s.chatEnvs.invalidate(workspace)
 	elapsed := time.Since(start).Round(time.Millisecond)
 	SendProgress(ctx, fmt.Sprintf("rebuild complete in %s", elapsed), 1.0)
 	stats, err := idx.Stats()
