@@ -444,4 +444,4 @@ one node; they never cross languages.
 
 ## Supported Languages (indexable)
 
-Go (go/types, every build). TypeScript/TSX, JavaScript, PHP, Python, Rust, Java, C, C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`) and Ruby (tree-sitter in CGo builds, including release binaries). With `CGO_ENABLED=0` the same files go to the regex parser: Python, JavaScript, TypeScript, Rust and PHP have their own patterns; Java, C, C++ and Ruby get only the generic fallback.
+Go (go/types, every build). TypeScript/TSX, JavaScript, PHP, Python, Rust, Java, C, C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, and a `.h` header that uses C++-only syntax such as a class, namespace, template, access specifier, `virtual` or `::`; other `.h` headers are C) and Ruby (tree-sitter in CGo builds, including release binaries). With `CGO_ENABLED=0` the same files go to the regex parser: Python, JavaScript, TypeScript, Rust and PHP have their own patterns; Java, C, C++ and Ruby get only the generic fallback.

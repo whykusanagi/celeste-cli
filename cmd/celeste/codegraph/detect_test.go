@@ -140,3 +140,28 @@ func TestGitignoreFilter_Nil(t *testing.T) {
 	assert.False(t, filter.ShouldSkip("anything.go", false))
 	assert.False(t, filter.ShouldSkip("node_modules", true))
 }
+
+// Review of #381: a .h header is C++ when it uses C++-only syntax outside
+// comments and literals; other headers, and other extensions, are not.
+func TestIsCppHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      bool
+	}{
+		{"x.h", "namespace geo { int f(); }\n", true},
+		{"x.h", "class Shape {\npublic:\n  int f();\n};\n", true},
+		{"x.h", "template <typename T> T pick();\n", true},
+		{"x.h", "struct S { virtual int f(); };\n", true},
+		{"x.h", "int geo::f();\n", true},
+		{"X.H", "namespace geo {}\n", true},
+		{"x.h", "#ifdef __cplusplus\nextern \"C\" {\n#endif\nint add(int a, int b);\n", false},
+		{"x.h", "/* a class of helpers; see geo::f */\n// namespace note\nint add(int, int);\n", false},
+		{"x.h", "const char *s = \"std::string\";\nint class_count;\n", false},
+		{"x.hpp", "namespace geo {}\n", false},
+		{"x.c", "namespace geo {}\n", false},
+	} {
+		if got := IsCppHeader(tc.name, []byte(tc.src)); got != tc.want {
+			t.Errorf("IsCppHeader(%q, %q) = %v, want %v", tc.name, tc.src, got, tc.want)
+		}
+	}
+}

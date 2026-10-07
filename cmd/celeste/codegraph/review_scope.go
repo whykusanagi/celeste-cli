@@ -106,7 +106,7 @@ func (r *reviewer) load(relPath string, src []byte) *reviewFile {
 	tsLang := SupportedLanguage(strings.ToLower(path.Ext(strings.ReplaceAll(relPath, "\\", "/"))))
 	// A .h header is C to the indexer; one holding C++ (classes,
 	// namespaces) is parsed as C++ so its class declarations count.
-	if tsLang == "c" && strings.EqualFold(path.Ext(relPath), ".h") && cppHeader.Match(src) {
+	if tsLang == "c" && IsCppHeader(relPath, src) {
 		tsLang, f.lang = "cpp", "cpp"
 	}
 	if spans, bases, ok := r.treeSitterSpans(tsLang, src); ok {
@@ -114,9 +114,6 @@ func (r *reviewer) load(relPath string, src []byte) *reviewFile {
 	}
 	return f
 }
-
-// cppHeader matches C++-only syntax in a header.
-var cppHeader = regexp.MustCompile(`(?m)^\s*(?:class|namespace|template)\b|\b(?:public|private|protected)\s*:|\bvirtual\b|::`)
 
 // span returns the span of the function c: the parser's span with c's name
 // that starts on c's line, else the text-scan fallback from c's line.

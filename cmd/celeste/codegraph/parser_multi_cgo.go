@@ -85,6 +85,11 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	// A .h header holding C++ gets the C++ grammar, which has classes,
+	// namespaces and templates; the C grammar would miss them (#381).
+	if lang == "c" && IsCppHeader(path, data) {
+		lang, grammar, spec = "cpp", m.langs["cpp"], langSpecs["cpp"]
+	}
 
 	if err := m.parser.SetLanguage(grammar); err != nil {
 		return nil, fmt.Errorf("set language %s: %w", lang, err)

@@ -3,6 +3,7 @@ package codegraph
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -90,6 +91,26 @@ func DetectLanguage(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
 	return extensionToLanguage[ext]
 }
+
+// IsCppHeader reports whether relPath is a .h header whose content src is
+// C++: it uses C++-only syntax (a class, namespace or template declaration,
+// an access specifier, virtual, or a :: scope) outside comments and
+// literals. Such a header is parsed with the C++ grammar; other .h headers
+// stay C (review of #381). Its language stays "c" in the index: C and C++
+// resolve names as one family (languageFamily).
+func IsCppHeader(relPath string, src []byte) bool {
+	if !strings.EqualFold(filepath.Ext(relPath), ".h") {
+		return false
+	}
+	return cppHeaderSyntax.Match(cppCommentsAndLiterals.ReplaceAll(src, []byte(" ")))
+}
+
+// cppHeaderSyntax matches C++-only syntax in a header.
+var cppHeaderSyntax = regexp.MustCompile(`(?m)^\s*(?:class|namespace|template)\b|\b(?:public|private|protected)\s*:|\bvirtual\b|::`)
+
+// cppCommentsAndLiterals matches C/C++ comments and string and character
+// literals, which IsCppHeader ignores.
+var cppCommentsAndLiterals = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'`)
 
 // DetectProjectLanguage determines the primary language of a project
 // by checking for manifest files in the given directory.
