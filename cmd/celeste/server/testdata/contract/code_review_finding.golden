@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "text": "Found 2 issues across 1 categories:\n\n## STUB (2)\n\n[\n  {\n    \"kind\": \"STUB\",\n    \"name\": \"unused\",\n    \"file\": \"main.go\",\n    \"line\": 5,\n    \"func_kind\": \"function\",\n    \"outgoing_edges\": 0,\n    \"incoming_edges\": 0,\n    \"score\": 5,\n    \"reason\": \"empty body and no callers (likely dead code)\",\n    \"signature\": \"func unused()\"\n  },\n  {\n    \"kind\": \"STUB\",\n    \"name\": \"main\",\n    \"file\": \"main.go\",\n    \"line\": 3,\n    \"func_kind\": \"function\",\n    \"outgoing_edges\": 0,\n    \"incoming_edges\": 0,\n    \"score\": 3,\n    \"reason\": \"empty body and no callers; program entry point, not dead code\",\n    \"signature\": \"func main()\"\n  }\n]\n\nVerify each finding by reading the source before classifying.",
+      "type": "text"
+    }
+  ]
+}

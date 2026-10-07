@@ -62,10 +62,16 @@ succeeds, and such a process keeps using the old, deleted file until it
 reopens the index. The OS releases the
 lock when its process exits or is killed, so a lock file left behind never
 blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
-a reader waits for a writer's SQLite lock instead of failing. An index left
-incomplete by a version without these marks has nothing to repair it: rebuild
-it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
-in the TUI (`celeste index` only updates). Three tables:
+a reader waits for a writer's SQLite lock instead of failing. A file's
+record is stored after its symbols, so a file whose symbols a power loss
+dropped has no record or an old content hash, and the next update re-indexes
+it. An update, finishing a build or not, skips every file whose content
+hash matches its record, so an index whose file records survive
+without their symbols (a symbol write that failed, or an index left
+incomplete by a version without these marks) stays that way. Rebuild it with
+`celeste index rebuild`, the MCP `celeste_index` tool's `rebuild` operation
+or `/index rebuild` in the TUI (plain `celeste index` only updates). Three
+tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,
@@ -124,8 +130,9 @@ the exact function or method:
   test-augmented copy of the package, so test-only imports never create
   import cycles). Files excluded by build constraints for the current
   GOOS/GOARCH are not part of any package. The pass analyses the
-  `CGO_ENABLED=0` build (what release binaries are), so cgo-tagged files and
-  files importing `"C"` take the fallback on every host. The import path comes from
+  `CGO_ENABLED=0` build, so its results do not depend on the host's C
+  compiler: cgo-tagged files and files importing `"C"` take the fallback on
+  every host. The import path comes from
   the nearest `go.mod` (a directory without one gets `_/<dir>`).
 - **Imports.** Workspace packages import each other from source with bodies.
   Everything else (standard library, module dependencies) is type-checked
@@ -184,7 +191,7 @@ Release binaries are built with CGo on each platform's own runner and include al
 
 ### Regex fallback (CGO_ENABLED=0)
 
-A source build with `CGO_ENABLED=0`, or on a machine without a C compiler, compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. It has patterns for Python, JavaScript, TypeScript, Rust and PHP. Java, C, C++ and Ruby files are still indexed in that build, but only a generic `function`/`def`/`class` pattern applies to them, so they yield few symbols and edges. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
+A source build with `CGO_ENABLED=0` compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. So does a build with `CGO_ENABLED` and `CC` both unset on a machine whose default C compiler is missing, since Go then turns CGo off by itself; an explicit `CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the build instead. A cross-compile (`GOOS` or `GOARCH` not the host's) with `CGO_ENABLED` unset also builds without CGo. It has patterns for Python, JavaScript, TypeScript, Rust and PHP. Java, C, C++ and Ruby files are still indexed in that build, but only a generic `function`/`def`/`class` pattern applies to them, so they yield few symbols and edges. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
 
 Python class/method detection uses indentation tracking to distinguish top-level functions from methods inside classes.
 
@@ -314,14 +321,67 @@ approximate file gets a note saying so.
 `FindCodeSmells` (the `code_review` tool) runs one pass over every function and
 method with its edge counts and source body and reports these kinds:
 
-- `STUB`: a function with no outgoing calls (graph edges, or calls counted in
-  its body) that is not a known leaf pattern such as a constructor or getter.
-  This replaces the old `FindStubs` query.
+- `STUB`: a function with no callers whose body is a stub body. A stub body
+  is exactly one of:
+  - empty: no statements and no comments (`{}`, `pass`, `...`, a docstring);
+  - TODO-only: no statements, and a comment with a `TODO`, `FIXME`, `XXX` or
+    `HACK` marker;
+  - not implemented: its only statements raise "not implemented"
+    (`panic("not implemented")`, `raise NotImplementedError`,
+    `throw new Error("not implemented")`, `UnsupportedOperationException`,
+    `unimplemented!()`, `todo!()`).
+
+  Any other statement makes the body real: a one-liner, a function that
+  returns a literal (`true`, `false`, `nil`, `0`, `""`), a call. A function
+  with callers, a declaration without a body (interface or abstract method),
+  a comment-only body without a work marker (a documented no-op), an empty
+  constructor, a Python dunder and a `Protocol`/`ABC`/`@abstractmethod`
+  method are never STUBs.
+
+  The reason says "likely dead code" only when nothing reaches the function
+  implicitly. These are reached without a caller in the graph, and the
+  reason names how instead: a constructor (Java and C++ constructors, Ruby
+  `initialize`, PHP `__construct`, JS/TS `constructor`), Go `init` and a
+  `main`, a test function (Go `TestXxx`/`BenchmarkXxx`/`FuzzXxx`/`ExampleXxx`
+  in a `_test.go` file, `@Test`, a test-named function in a test file), a
+  method that implements an interface or abstract method or overrides a
+  base-class method (Go's type-checked `implements`, `@Override`, a C++
+  `override` or `virtual` specifier, or the same name declared by a class
+  or interface its own class extends or implements, directly or through its
+  bases; a same-named method of an unrelated class does not count; TS interface
+  and abstract signatures, C++ member declarations in headers and Rust trait
+  signatures count as declarations), a C++ method defined outside its class
+  (`void D::f() {}`), judged by its declaration in `D` (a `.h` header with
+  C++ syntax is read as C++), a method in a Rust `impl Trait for X`, a
+  function a decorator registers with a framework (`@app.route`,
+  `@click.command`, `@pytest.fixture`, `@property`; plain wrappers such as
+  `@staticmethod`, `@classmethod` and `@lru_cache` still need a caller), the
+  exported API of a library package (an exported Go function or method
+  outside package `main` and outside any `internal/` directory, an exported
+  JS/TS function, a public method of an exported JS/TS class, a public
+  method of a public Java class), and a function in a Go file with build
+  constraints (a `//go:build` line or a GOOS/GOARCH file name suffix), whose
+  callers are in another platform's build. A base-class method that only
+  raises "not implemented" while its own subclasses override it is an abstract
+  declaration, not a STUB.
+
+  Public methods of PHP, Ruby and C++ classes are not treated as library
+  API: an uncalled one is reported as likely dead code.
 - `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
   which has at most two outgoing calls and redirects instead, for example by
   telling the user to use the CLI.
 - `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
-  checks on the body.
+  checks on the body. `TODO_FIXME` and `HARDCODED` report the line the
+  marker or value is on. A marker outside every function body (at top
+  level, at class level, or in a doc comment above a function) belongs to
+  no function and is not reported.
+
+Each function's body is the span its parser recorded: go/ast for Go
+(functions and methods), tree-sitter for TypeScript, JavaScript, PHP,
+Python, Java, C, C++, Ruby and Rust in cgo builds. A nested function's lines
+belong to the nested function. Without a parser span (a `CGO_ENABLED=0`
+build) the body is found by a text scan from the definition line: braces,
+Python indentation, or Ruby's matching `end`.
 
 The `kinds` argument is a comma-separated, case-insensitive list of these
 kinds, or `ALL` (the default). An unknown kind is an error that lists the

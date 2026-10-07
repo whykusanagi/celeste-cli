@@ -269,6 +269,20 @@ func TestContractCodeGraphTools(t *testing.T) {
 	}
 }
 
+// The shared contract workspace has no findings, so this one-file
+// workspace keeps the JSON shape of a code_review finding under contract.
+func TestContractCodeReviewFinding(t *testing.T) {
+	cfg, _ := contractCfg(t, nil)
+	ws := t.TempDir()
+	os.WriteFile(filepath.Join(ws, "main.go"), []byte("package main\n\nfunc main() {}\n\nfunc unused() {}\n"), 0o644)
+	cfg.Workspace = ws
+	res := call(t, cfg,
+		rpc{1, "tools/call", map[string]any{"name": "celeste_index", "arguments": map[string]any{"operation": "rebuild", "workspace": ws}}},
+		rpc{2, "tools/call", map[string]any{"name": "celeste_code_review", "arguments": map[string]any{"kinds": "ALL", "max_results": 30, "include_tests": false, "workspace": ws}}},
+	)
+	golden(t, "code_review_finding", normalize(res[2], ws))
+}
+
 func TestContractStatusTakesNoArguments(t *testing.T) {
 	// The oracle and rule counters are per process: start this golden
 	// from zero whatever ran before it (2.0 W3).

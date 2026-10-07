@@ -135,7 +135,13 @@ func NewStore(dbPath string) (*Store, error) {
 	// FULL each fsync costs tens of milliseconds on Windows, which made an
 	// index build take seconds to minutes there (#385). The index is
 	// derived data: a power loss can drop the last commits, never corrupt
-	// the database, and the next update re-indexes what is missing.
+	// the database. Commits are lost newest first and a file's record is
+	// stored after its symbols, so a file whose symbols were dropped has
+	// no record or an old content hash, and the next update re-indexes it.
+	// An update does not repair an index whose file records survive
+	// without their symbols (a symbol write that failed, say): it skips a
+	// file whose content hash matches its record. `celeste index rebuild`
+	// does.
 	//
 	// foreign_keys is a per-connection setting too, so it goes in the DSN
 	// for the same reason: run once through db.Exec it reached only one
