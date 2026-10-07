@@ -362,12 +362,14 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.history = msgs
 	s.mu.Unlock()
 	s.save(a, msgs)
+	out, rerr := s.finish(a, st, l.Limits, res, err)
 	if s.end(pctx) {
 		// A session/cancel reached this prompt while it ran, even if only
-		// after the model's reply ended: ACP answers it "cancelled".
+		// after the model's reply ended: ACP answers it "cancelled". A
+		// cancel read after end finds no prompt: the answer was decided.
 		return &PromptResult{StopReason: StopCancelled}, nil
 	}
-	return s.finish(a, st, l.Limits, res, err)
+	return out, rerr
 }
 
 // save writes the session's history to its celeste session (ruling 11),
