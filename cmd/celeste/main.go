@@ -1410,7 +1410,7 @@ func createConfigTemplate(name string) error {
 		return err
 	}
 
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, 0600); err != nil { // holds the API key
 		return err
 	}
 

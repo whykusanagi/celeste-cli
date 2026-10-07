@@ -99,10 +99,12 @@ func TestGlobalAnalyticsSaveIsAtomicAnd0600(t *testing.T) {
 	assertSavedAtomically(t, GetAnalyticsPath(), true, func() error { return NewGlobalAnalytics().Save() })
 }
 
-func TestPersistReconciledIsAtomicAndKeepsMode(t *testing.T) {
+// A profile carries its API key inline: owner-only, also over an older
+// file's 0644 (Aikido 806869312).
+func TestPersistReconciledIsAtomicAnd0600(t *testing.T) {
 	home := stateHome(t)
 	path := filepath.Join(home, ".celeste", "config.work.json")
-	assertSavedAtomically(t, path, false, func() error {
+	assertSavedAtomically(t, path, true, func() error {
 		return persistReconciled(path, &Config{Model: "m"})
 	})
 }
