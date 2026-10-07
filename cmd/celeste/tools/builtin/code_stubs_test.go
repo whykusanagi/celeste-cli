@@ -205,3 +205,25 @@ func TestCodeReviewTool_KindsValidation(t *testing.T) {
 		assert.False(t, result.Error, "kinds %q: %s", kinds, result.Content)
 	}
 }
+
+// A kinds value of the wrong type is an error, not "all kinds"; only an
+// absent (or null) kinds selects the default.
+func TestCodeReviewTool_KindsWrongType(t *testing.T) {
+	dir := t.TempDir()
+	store, err := codegraph.NewStore(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	tool := NewCodeReviewTool(codegraph.NewIndexerWithStore(store, dir))
+
+	for _, kinds := range []any{5, 2.5, true, []any{"stub"}, map[string]any{"k": "stub"}} {
+		result, err := tool.Execute(context.Background(), map[string]any{"kinds": kinds}, nil)
+		require.NoError(t, err)
+		assert.True(t, result.Error, "kinds %#v must be rejected", kinds)
+		assert.Contains(t, result.Content, "kinds must be a string")
+	}
+	for _, input := range []map[string]any{{}, {"kinds": nil}} {
+		result, err := tool.Execute(context.Background(), input, nil)
+		require.NoError(t, err)
+		assert.False(t, result.Error, "input %#v: %s", input, result.Content)
+	}
+}

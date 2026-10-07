@@ -87,7 +87,16 @@ func (t *CodeReviewTool) Execute(ctx context.Context, input map[string]any, prog
 	maxResults := getIntArg(input, "max_results", 30)
 	includeTests := getBoolArg(input, "include_tests", false)
 
-	kindsStr, _ := input["kinds"].(string)
+	// An absent (or null) kinds selects the default; a present value of
+	// another type is an error, not "every kind".
+	kindsStr := ""
+	if raw, ok := input["kinds"]; ok && raw != nil {
+		str, isStr := raw.(string)
+		if !isStr {
+			return tools.ToolResult{Error: true, Content: fmt.Sprintf("kinds must be a string, got %T", raw)}, nil
+		}
+		kindsStr = str
+	}
 	kinds, err := parseSmellKinds(kindsStr)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
