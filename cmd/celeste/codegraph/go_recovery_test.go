@@ -256,7 +256,7 @@ func v1Index(t *testing.T, ws, db string) {
 	for _, f := range files {
 		require.NoError(t, idx.indexFile(f))
 	}
-	_, err = idx.store.UpsertSymbol(Symbol{Name: "v1only", Kind: SymbolFunction, File: "py/a.py", Line: 1})
+	_, err = idx.store.UpsertSymbol(Symbol{Name: "v1only", Kind: SymbolFunction, File: filepath.Join("py", "a.py"), Line: 1}) // the store keeps native paths
 	require.NoError(t, err)
 	_, err = idx.store.db.Exec(`UPDATE symbols SET qual_name = NULL, implements = NULL`)
 	require.NoError(t, err)
