@@ -925,6 +925,13 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 		state = a.state()
 	}
 	overhead := int(a.overhead.Load())
+	if overhead <= 0 && a.client != nil {
+		// No turn has measured the prefix yet (a /compact on a resumed
+		// session): the system prompt and the tool schemas, as the turn's
+		// meter counts them. Estimated before the summary: the kept tail
+		// must leave room for it, and ContextTokens counts the same value.
+		overhead = ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(a.client.GetSkills())
+	}
 	out, res, err := compact.Summarize(ctx, msgs, compact.SummaryOptions{Focus: focus, Window: window, Overhead: overhead, State: state}, hooked)
 	if blocked != "" {
 		return tui.SummaryOutcome{}, fmt.Errorf("compaction blocked by a PreCompact hook: %s", blocked)
@@ -938,12 +945,6 @@ func (a *TUIClientAdapter) SummarizeContext(ctx context.Context, msgs []tui.Chat
 	a.hooks.PostCompact(ctx, trigger, res.Summary)
 	// out is the summary messages followed by the untouched tail.
 	summaryLen := len(out) - (len(msgs) - res.Cut)
-	if overhead <= 0 && a.client != nil {
-		// No turn has measured the prefix yet (a /compact on a resumed
-		// session): the system prompt and the tool schemas, as the turn's
-		// meter counts them.
-		overhead = ctxmgr.EstimateTokens(a.client.SystemPrompt()) + compact.DefinitionTokens(a.client.GetSkills())
-	}
 	return tui.SummaryOutcome{
 		Cut:         res.Cut,
 		Messages:    out[:summaryLen],
