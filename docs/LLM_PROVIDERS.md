@@ -36,9 +36,10 @@ Built with [Celeste CLI](https://github.com/whykusanagi/celeste-cli)
 
 Any OpenAI-compatible server on this machine or the local network detects as
 the **local** provider and is treated as tool-capable, on any port: a host of
-`localhost`, a loopback, private or link-local address (`127.0.0.1`, `[::1]`,
-`0.0.0.0`, `192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`), a single-label name
-(`gpu-box`) or a `.local`, `.lan`, `.internal` or `.home.arpa` name. The host
+`localhost` or a `.localhost` name, a loopback, private, link-local or
+unspecified address (`127.0.0.1`, `[::1]`, `192.168.x.x`, `10.x.x.x`,
+`172.16-31.x.x`, `0.0.0.0`), a single-label name (`gpu-box`) or a `.local`,
+`.lan`, `.internal` or `.home.arpa` name. The host
 decides, not the rest of the URL: `https://proxy.example.com/localhost/v1` is
 not local. The same rule picks the local timeouts, asks the server for its
 window and applies the 8192 fallback below.
@@ -172,7 +173,8 @@ runs longer than 30 minutes, or three times the timeout if that is longer.
 A local server sends nothing while it reads the prompt, and the first turn of
 a chat is long: on a 14B model at a 32K window, ~16K prompt tokens plus
 thinking took more than 300 s before the first byte. So a local endpoint
-(`127.0.0.1`, `localhost`, a private or link-local address, a single-label or
+(`localhost` or a `.localhost` name, a loopback, private, link-local or
+unspecified address such as `127.0.0.1` or `0.0.0.0`, a single-label name, or a
 `.local`/`.lan`/`.internal`/`.home.arpa` host: the same rule as the **local**
 provider) whose timeout is unset or still the 60 s default gets
 **600 s**. `config` shows the value in use:

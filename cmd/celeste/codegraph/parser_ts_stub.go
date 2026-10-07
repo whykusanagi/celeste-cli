@@ -1,9 +1,9 @@
 //go:build !cgo
 
-// CGo-disabled fallback for the TypeScript parser. Compiled when
-// CGO_ENABLED=0 — typically the cross-compile release build when
-// targeting darwin/windows from a Linux host without a C toolchain
-// installed. The real tree-sitter implementation lives in
+// CGo-disabled fallback for the TypeScript parser. Compiled when CGo is
+// off: a CGO_ENABLED=0 source build, or one where Go turned CGo off itself
+// (CGO_ENABLED and CC unset, no default C compiler). Release binaries are
+// CGo builds. The real tree-sitter implementation lives in
 // parser_ts_cgo.go behind a //go:build cgo constraint.
 //
 // The stub implements the same TSParser API as the CGo version but

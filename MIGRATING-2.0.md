@@ -43,8 +43,12 @@ Rebuild an index made by 1.x to get them: `celeste index rebuild`.
 | macOS (Intel, Apple silicon) | Links only the system libraries, as before. Needs macOS 12 or later, which Go 1.26 already required. |
 | Windows (amd64) | Needs no DLL beyond the ones Windows ships. |
 
-A build from source compiles the parsers with the local C compiler. With `CGO_ENABLED=0`, or
-without a C compiler, it still builds and falls back to the regex parsers.
+A build from source compiles the parsers with the local C compiler. With `CGO_ENABLED=0` it
+still builds and falls back to the regex parsers. So does a build with `CGO_ENABLED` and `CC`
+both unset on a machine whose default C compiler is missing, since Go then turns CGo off by
+itself; an explicit `CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the
+build instead. A cross-compile (`GOOS` or `GOARCH` not the host's) with `CGO_ENABLED` unset
+also builds without CGo.
 
 ## The persona
 
@@ -93,7 +97,7 @@ same caps, guards, permissions and hooks. These are intentional changes:
 | 1.x | 2.0 |
 |---|---|
 | `timeout` capped the whole request: a reply still streaming after 60 s failed | `timeout` is a stall timeout: a request fails when nothing arrives for that long. A reply that keeps streaming runs to a cap of 30 minutes (or 3× `timeout`). Hosted providers still fail after 60 s of silence by default. |
-| A local server got the same 60 s, so a cold first turn on a local model failed | A local server (decided by its host: `127.0.0.1`, `localhost`, a private address, a single-label name or a `.local` host, the same rule that makes it the **local** provider with tools and the 8,192 window fallback) whose `timeout` is unset or 60 gets 600 s. Any other value you set is kept. The first byte of a reply from a local server may take 30 minutes (or `timeout`, when longer); the stall timeout applies between chunks. |
+| A local server got the same 60 s, so a cold first turn on a local model failed | A local server (decided by its host: `localhost` or a `.localhost` name; a loopback (`127.0.0.1`, `[::1]`), private (`10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`), link-local or unspecified (`0.0.0.0`) address; a single-label name such as `gpu-box`; or a `.local`, `.lan`, `.internal` or `.home.arpa` name: the same rule that makes it the **local** provider with tools and the 8,192 window fallback) whose `timeout` is unset or 60 gets 600 s. Any other value you set is kept. The first byte of a reply from a local server may take 30 minutes (or `timeout`, when longer); the stall timeout applies between chunks. |
 | No way to set it from the CLI | `celeste config --set-timeout <seconds>` (0 = default); `config` shows the value in use. |
 | A compaction summary or `/handoff` failed after a fixed 3 minutes | Summaries get the same stall timeout and cap as a chat turn, so a cold local model can finish one. |
 | `celeste agent` ignored `timeout` and gave each turn 90 s | It uses `timeout` like the chat. `-request-timeout` still bounds a whole turn; without it the 30-minute cap does. |

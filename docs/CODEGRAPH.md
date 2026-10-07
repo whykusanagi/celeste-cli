@@ -62,10 +62,16 @@ succeeds, and such a process keeps using the old, deleted file until it
 reopens the index. The OS releases the
 lock when its process exits or is killed, so a lock file left behind never
 blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
-a reader waits for a writer's SQLite lock instead of failing. An index left
-incomplete by a version without these marks has nothing to repair it: rebuild
-it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
-in the TUI (`celeste index` only updates). Three tables:
+a reader waits for a writer's SQLite lock instead of failing. A file's
+record is stored after its symbols, so a file whose symbols a power loss
+dropped has no record or an old content hash, and the next update re-indexes
+it. An update, finishing a build or not, skips every file whose content
+hash matches its record, so an index whose file records survive
+without their symbols (a symbol write that failed, or an index left
+incomplete by a version without these marks) stays that way. Rebuild it with
+`celeste index rebuild`, the MCP `celeste_index` tool's `rebuild` operation
+or `/index rebuild` in the TUI (plain `celeste index` only updates). Three
+tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,
@@ -124,8 +130,9 @@ the exact function or method:
   test-augmented copy of the package, so test-only imports never create
   import cycles). Files excluded by build constraints for the current
   GOOS/GOARCH are not part of any package. The pass analyses the
-  `CGO_ENABLED=0` build (what release binaries are), so cgo-tagged files and
-  files importing `"C"` take the fallback on every host. The import path comes from
+  `CGO_ENABLED=0` build, so its results do not depend on the host's C
+  compiler: cgo-tagged files and files importing `"C"` take the fallback on
+  every host. The import path comes from
   the nearest `go.mod` (a directory without one gets `_/<dir>`).
 - **Imports.** Workspace packages import each other from source with bodies.
   Everything else (standard library, module dependencies) is type-checked
@@ -184,7 +191,7 @@ Release binaries are built with CGo on each platform's own runner and include al
 
 ### Regex fallback (CGO_ENABLED=0)
 
-A source build with `CGO_ENABLED=0`, or on a machine without a C compiler, compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. It has patterns for Python, JavaScript, TypeScript, Rust and PHP. Java, C, C++ and Ruby files are still indexed in that build, but only a generic `function`/`def`/`class` pattern applies to them, so they yield few symbols and edges. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
+A source build with `CGO_ENABLED=0` compiles the `parser_*_stub.go` files instead and uses the regex `GenericParser` below. So does a build with `CGO_ENABLED` and `CC` both unset on a machine whose default C compiler is missing, since Go then turns CGo off by itself; an explicit `CGO_ENABLED=1`, or a `CC` naming a compiler that is missing, fails the build instead. A cross-compile (`GOOS` or `GOARCH` not the host's) with `CGO_ENABLED` unset also builds without CGo. It has patterns for Python, JavaScript, TypeScript, Rust and PHP. Java, C, C++ and Ruby files are still indexed in that build, but only a generic `function`/`def`/`class` pattern applies to them, so they yield few symbols and edges. Language-specific regex patterns extract declarations line-by-line (functions, classes, interfaces, imports, types, consts). Call edges use a `\b(\w+)\s*\(` heuristic -- matches any `identifier(` pattern, then filters to only known symbol names in the file. Keywords are excluded via a language-aware stop list.
 
 Python class/method detection uses indentation tracking to distinguish top-level functions from methods inside classes.
 
