@@ -106,14 +106,27 @@ func (s SkillsModel) collapsedView() string {
 		return SkillExecutingStyle.Render(" " + fitRow("⚙ "+s.executingSkill+"…", w-1))
 	case s.lastError != "":
 		// ✗ marks a failed call the way ✓ marks a completed one (#398 T3).
-		return SkillErrorStyle.Render(" " + fitRow("⚙ "+safeLabel(s.lastErrorSkill)+" ✗ "+s.lastError, w-1))
+		return SkillErrorStyle.Render(" " + skillStatusRow(safeLabel(s.lastErrorSkill), "✗", s.lastError, w-1))
 	case s.lastCompleted != "":
-		return SkillCompletedStyle.Render(" " + fitRow("⚙ "+s.lastCompleted+" ✓", w-1))
+		return SkillCompletedStyle.Render(" " + skillStatusRow(s.lastCompleted, "✓", "", w-1))
 	case !s.skillsEnabled && s.disabledReason != "":
 		return SkillErrorStyle.Render(" " + fitRow("⚙ skills off: "+s.disabledReason, w-1))
 	default:
 		return ""
 	}
+}
+
+// skillStatusRow is "⚙ name glyph detail" fitted to w cells. The glyph says
+// whether the call worked, so a name that fills the row is cut to leave room
+// for it; the detail gets what is left.
+func skillStatusRow(name, glyph, detail string, w int) string {
+	head := fitRow("⚙ "+name, w-1-lipgloss.Width(glyph))
+	row := head + " " + glyph
+	room := w - lipgloss.Width(row) - 1
+	if detail == "" || room <= 0 {
+		return row
+	}
+	return row + " " + fitRow(detail, room)
 }
 
 func (s SkillsModel) View() string {

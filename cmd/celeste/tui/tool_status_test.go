@@ -183,7 +183,7 @@ func TestSkillsExecutingAndCompletedRowsFit(t *testing.T) {
 		} {
 			row := strings.TrimRight(v.collapsedView(), " ")
 			assert.LessOrEqual(t, lipgloss.Width(row), w, "%s row %q", label, row)
-			assert.True(t, strings.HasSuffix(row, "…"), "%s row %q must end with …", label, row)
+			assert.Contains(t, row, "…", "%s row %q must show the cut", label, row)
 		}
 	}
 }
