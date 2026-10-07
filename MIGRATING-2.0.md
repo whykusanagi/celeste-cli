@@ -256,12 +256,20 @@ A custom JSON tool's `command` now runs through the same shell runner as `bash`
 
 ## Sandbox for `bash`
 
-The sandbox is new and off by default in 2.0, so nothing changes until you turn it on. See [docs/SANDBOX.md](docs/SANDBOX.md).
+The sandbox is **on by default** to contain model-controlled commands within the workspace and prevent arbitrary filesystem, process, and network access. To disable it (for example, if a build requires writes outside the workspace that cannot be configured via `writable`), set it explicitly in `~/.celeste/config.json`:
+
+```json
+{
+  "sandbox": { "enabled": false }
+}
+```
+
+See [docs/SANDBOX.md](docs/SANDBOX.md) for details.
 
 | 1.x | 2.0 |
 |---|---|
-| `bash` commands could write anywhere you can | Unchanged by default. With `"sandbox": {"enabled": true}` in `~/.celeste/config.json` (it applies with a named profile active too; a profile's own `sandbox` keys win), `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
-| Linux without bubblewrap, Windows | With the sandbox on: one warning (Linux) or log line (Windows), and commands run with the denylist only. |
+| `bash` commands could write anywhere you can | With the sandbox enabled by default, `bash` runs under seatbelt (macOS) or bubblewrap (Linux) and can write only to the workspace, temp and cache directories. To disable: `"sandbox": {"enabled": false}` in `~/.celeste/config.json`. A profile's own `sandbox` keys override the config.json settings. Per workspace, `.celeste/config.json` takes `sandbox.enabled`, `sandbox.writable` and `sandbox.network`. A blocked write's error names the sandbox and the key to change. A repository's loosening (`enabled: false`, `network: true`, `writable`) applies only after `celeste hooks trust`; its tightening applies always. |
+| Linux without bubblewrap, Windows | With the sandbox enabled but unavailable: one warning (Linux) or log line (Windows), and commands run with the denylist only. |
 
 ## Sessions: `/rewind` and `/fork`
 

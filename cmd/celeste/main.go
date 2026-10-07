@@ -30,6 +30,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/sandbox"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
@@ -1508,8 +1509,15 @@ func runSkillExecuteCommand(args []string) {
 	registry := tools.NewRegistry()
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	execCwd, _ := os.Getwd()
-	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil, nil)
 	homeDir, _ := os.UserHomeDir()
+	// Create a default sandbox policy for skill execution
+	policy := sandbox.Policy{
+		Enabled:   sandbox.DefaultEnabled,
+		Workspace: execCwd,
+		Writable:  sandbox.DefaultWritable(homeDir, execCwd),
+		Network:   true,
+	}
+	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil, &policy)
 	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
 	}
@@ -1560,9 +1568,16 @@ func runSkillsCommand(args []string) {
 	cfg, _ := config.LoadNamed(configName)
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	skillsCwd, _ := os.Getwd()
-	registry := tools.NewRegistry()
-	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil, nil)
 	homeDir, _ := os.UserHomeDir()
+	registry := tools.NewRegistry()
+	// Create a default sandbox policy for skill execution
+	policy := sandbox.Policy{
+		Enabled:   sandbox.DefaultEnabled,
+		Workspace: skillsCwd,
+		Writable:  sandbox.DefaultWritable(homeDir, skillsCwd),
+		Network:   true,
+	}
+	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil, &policy)
 	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
 	}

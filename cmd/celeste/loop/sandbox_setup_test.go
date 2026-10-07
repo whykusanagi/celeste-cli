@@ -52,7 +52,10 @@ func TestNoSandboxWarnsOnce(t *testing.T) {
 	}
 }
 
-func TestSandboxOffByDefaultAndNoWarning(t *testing.T) {
+func TestSandboxOnByDefaultWarnsWhenUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows logs a line instead (no sandbox is offered there)")
+	}
 	setupHome(t)
 	t.Cleanup(sandbox.SetAvailableForTest("", false))
 	resetSandboxWarning()
@@ -60,8 +63,9 @@ func TestSandboxOffByDefaultAndNoWarning(t *testing.T) {
 	if env.SandboxPolicy.Enabled != sandbox.DefaultEnabled {
 		t.Fatalf("policy = %+v", env.SandboxPolicy)
 	}
-	if strings.Contains(w.all(), "sandbox") {
-		t.Fatalf("a sandbox that is off warns nothing: %s", w.all())
+	// With sandbox enabled by default but unavailable, a warning should be issued
+	if !strings.Contains(w.all(), "bash runs without a sandbox") {
+		t.Fatalf("expected sandbox unavailable warning, got: %s", w.all())
 	}
 }
 
@@ -155,7 +159,7 @@ func TestRepoSandboxLooseningNeedsTrust(t *testing.T) {
 	home := setupHome(t)
 	ws := t.TempDir()
 	write(t, filepath.Join(ws, ".celeste", "config.json"), `{"sandbox":{"enabled":false,"writable":["/opt/cache"],"network":false}}`)
-	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)}) // 2.0: off by default, so the user turned it on
+	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)}) // user explicitly enabled it
 	env, w := setupWithCfg(t, ModeAgent, cfg, ws)              // non-interactive: no approver
 	p := env.SandboxPolicy
 	if !p.Enabled || slices.Contains(p.Writable, "/opt/cache") {
