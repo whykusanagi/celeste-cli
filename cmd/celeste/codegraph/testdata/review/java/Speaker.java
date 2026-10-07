@@ -1,0 +1,3 @@
+interface Speaker {
+    void speak();
+}

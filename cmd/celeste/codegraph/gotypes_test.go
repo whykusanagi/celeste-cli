@@ -160,6 +160,9 @@ func (Formatted) Format(f fmt.State, verb rune) {
 
 func NeverCalled() {
 }
+
+func neverCalled() {
+}
 `,
 
 	// Fallback: a package that does not type-check, and a file excluded by
@@ -367,7 +370,10 @@ func TestGoTypes_InterfaceMethodsAreNotReportedDead(t *testing.T) {
 		}
 	}
 	// Control: a genuinely uncalled empty function is still reported dead.
-	assert.Contains(t, reasons["NeverCalled"], "likely dead code")
+	assert.Contains(t, reasons["neverCalled"], "likely dead code")
+	// An exported one is the package's API: no caller here, not dead (#396).
+	assert.NotContains(t, reasons["NeverCalled"], "likely dead code")
+	assert.Contains(t, reasons["NeverCalled"], "exported API")
 	// fmt.Formatter's Format is called by fmt, never by the module.
 	require.Contains(t, reasons, "Format", "empty Format body is still a stub")
 	assert.NotContains(t, reasons["Format"], "likely dead code")

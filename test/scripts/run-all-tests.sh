@@ -66,7 +66,11 @@ run_test() {
         echo -e "${RED}✗ FAIL${NC} - $test_name (exit code: $TEST_EXIT_CODE)"
         FAILED_TESTS=$((FAILED_TESTS + 1))
 
-        # Show last 20 lines of failure
+        # Show every failing test (with its output) and any panic, then the
+        # tail: the tail alone hid which test failed.
+        echo ""
+        echo "Failing tests:"
+        grep -n -B1 -A15 -E -- '^(--- FAIL|    --- FAIL|panic:)' "$REPORT_DIR/${test_name}.log" | head -n 200 || true
         echo ""
         echo "Last 20 lines of output:"
         tail -n 20 "$REPORT_DIR/${test_name}.log"
