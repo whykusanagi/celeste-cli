@@ -247,3 +247,13 @@ func rollback(msg string, ckpts ...*checkpoints.Checkpoint) string {
 	}
 	return msg
 }
+
+// positionalFile returns name in a form an external program (ffprobe,
+// afplay, mpg123, ffplay) reads as a file, not an option: a relative name
+// that starts with '-' gets a "./" prefix.
+func positionalFile(name string) string {
+	if strings.HasPrefix(name, "-") {
+		return "./" + name
+	}
+	return name
+}

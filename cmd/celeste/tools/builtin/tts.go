@@ -881,7 +881,7 @@ func mixTracks(tracksRaw []any, output string, resolve func(string) (string, err
 		strings.Join(mixInputs, "") +
 		fmt.Sprintf("amix=inputs=%d:duration=first:normalize=0", len(tracks))
 
-	args = append(args, "-filter_complex", filterGraph, "-y", output)
+	args = append(args, "-filter_complex", filterGraph, "-y", positionalFile(output))
 
 	cmd := exec.Command("ffmpeg", args...)
 	out, err := cmd.CombinedOutput()
@@ -936,7 +936,7 @@ func mixTracks(tracksRaw []any, output string, resolve func(string) (string, err
 // probeDuration uses ffprobe to get the duration of an audio file in seconds.
 // Returns 0 if ffprobe isn't available or fails.
 func probeDuration(filename string) float64 {
-	out, err := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", filename).Output()
+	out, err := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", positionalFile(filename)).Output()
 	if err != nil {
 		return 0
 	}
@@ -996,12 +996,12 @@ func playAudio(filename string) error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("afplay", filename)
+		cmd = exec.Command("afplay", positionalFile(filename))
 	case "linux":
 		if _, err := exec.LookPath("mpg123"); err == nil {
-			cmd = exec.Command("mpg123", filename)
+			cmd = exec.Command("mpg123", positionalFile(filename))
 		} else if _, err := exec.LookPath("ffplay"); err == nil {
-			cmd = exec.Command("ffplay", "-nodisp", "-autoexit", filename)
+			cmd = exec.Command("ffplay", "-nodisp", "-autoexit", positionalFile(filename))
 		} else {
 			return fmt.Errorf("no audio player found (install mpg123 or ffplay)")
 		}

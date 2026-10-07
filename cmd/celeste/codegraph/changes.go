@@ -68,7 +68,13 @@ func ParseGitDiffRanges(workspace string, base string) ([]ChangedRange, error) {
 	if base == "" {
 		base = "HEAD~1"
 	}
-	cmd := exec.Command("git", "diff", "--unified=0", base, "--")
+	// base is a revision from the model or the user: one that starts with
+	// '-' would be read as a git option, so it is refused, and
+	// --end-of-options keeps any later change from reopening that.
+	if strings.HasPrefix(base, "-") {
+		return nil, fmt.Errorf("git diff: base %q is not a revision", base)
+	}
+	cmd := exec.Command("git", "diff", "--unified=0", "--end-of-options", base, "--")
 	cmd.Dir = workspace
 	out, err := cmd.Output()
 	if err != nil {
