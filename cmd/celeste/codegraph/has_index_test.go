@@ -93,3 +93,27 @@ func TestIndexWriterActive_NoLockFile(t *testing.T) {
 	_, err := os.Stat(lockPath(dbPath))
 	assert.True(t, os.IsNotExist(err), "probing must not create the lock file: %v", err)
 }
+
+// Review of #406: a graph that still holds rows while the build mark is set
+// (an upgrade or rescope cut short) is readable: unfinished while no indexer
+// holds the lock, updating while one does, built once an update finishes.
+func TestIndexState_PopulatedWithMark(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	dbPath := filepath.Join(t.TempDir(), "cg.db")
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+
+	require.NoError(t, idx.store.RescopeGraph("dead-run"))
+	assert.Equal(t, IndexUpdateUnfinished, indexState(t, idx))
+
+	lock, err := lockIndex(context.Background(), dbPath, false)
+	require.NoError(t, err)
+	assert.Equal(t, IndexUpdating, indexState(t, idx), "a live indexer holds the lock")
+	lock.unlock()
+
+	require.NoError(t, idx.Update())
+	assert.Equal(t, IndexBuilt, indexState(t, idx))
+}

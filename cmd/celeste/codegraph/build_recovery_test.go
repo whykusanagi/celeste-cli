@@ -368,10 +368,48 @@ func TestStore_ReplaceNonGoEdgesCancelRollsBack(t *testing.T) {
 	require.Greater(t, len(edges), 1024)
 
 	// The first stride inserts, the second finds the context ended.
-	err = idx.store.ReplaceNonGoEdges(&failAfterCtx{Context: context.Background(), n: 1}, edges[1:])
+	err = idx.store.ReplaceNonGoEdges(&failAfterCtx{Context: context.Background(), n: 1}, edges[1:], nil)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, want, edgeKeys(t, idx), "a cancelled replacement changes no edge")
 
-	require.NoError(t, idx.store.ReplaceNonGoEdges(context.Background(), edges[1:]))
+	require.NoError(t, idx.store.ReplaceNonGoEdges(context.Background(), edges[1:], nil))
 	assert.Len(t, edgeKeys(t, idx), len(want)-1)
+}
+
+// Review of #406: a non-Go file that cannot be read again while a recovery
+// re-resolves the non-Go edges keeps its edges. Before, the replacement
+// deleted every non-Go edge, the file contributed none, and the mark was
+// cleared, so its edges stayed missing.
+func TestUpdate_RecoveryKeepsEdgesOfUnreadableFile(t *testing.T) {
+	files := map[string]string{
+		"a_run.py":  "from b_lib import helper\n\ndef run():\n    helper()\n",
+		"b_lib.py":  "def helper():\n    return 1\n",
+		"c_main.py": "from b_lib import helper\n\ndef main():\n    helper()\n",
+	}
+	idx, ws := buildFixture(t, files)
+	want := edgeKeys(t, idx)
+	require.True(t, want["run -calls-> helper"], "fixture: %v", want)
+	require.True(t, want["main -calls-> helper"], "fixture: %v", want)
+	require.NoError(t, idx.store.SetMeta(metaBuildInProgress, []byte("killed-run")))
+
+	// a_run.py disappears between the walk and its second parse.
+	testHookReresolveParse = func(path string) {
+		if filepath.Base(path) == "a_run.py" {
+			require.NoError(t, os.Remove(filepath.Join(ws, path)))
+		}
+	}
+	t.Cleanup(func() { testHookReresolveParse = nil })
+	require.NoError(t, idx.Update())
+	testHookReresolveParse = nil
+
+	got := edgeKeys(t, idx)
+	assert.True(t, got["run -calls-> helper"], "the unreadable file keeps its edges: %v", got)
+	assert.True(t, got["main -calls-> helper"], "the other files' edges are resolved again: %v", got)
+	requireFinished(t, idx)
+
+	// The next update sees the file gone and drops it as usual.
+	require.NoError(t, idx.Update())
+	got = edgeKeys(t, idx)
+	assert.False(t, got["run -calls-> helper"])
+	assert.True(t, got["main -calls-> helper"])
 }

@@ -15,10 +15,11 @@ const goSourceFilter = `SELECT id FROM symbols WHERE file LIKE '%.go'`
 
 // ResetGraph deletes every symbol, edge, file record and BM25/LSH row so a
 // full Build starts from an empty graph, and stamps the current graph
-// version in the same transaction. Meta (MinHash seeds) and snapshots are
-// kept. Dependent rows are deleted explicitly, children first, so the
-// reset does not depend on ON DELETE CASCADE (which every connection now
-// enforces, #389) and token_stats, which has no foreign key, is cleared too.
+// version and edge scope in the same transaction. Meta (MinHash seeds) and
+// snapshots are kept. Dependent rows are deleted explicitly, children
+// first, so the reset does not depend on ON DELETE CASCADE (which every
+// connection now enforces, #389) and token_stats, which has no foreign
+// key, is cleared too.
 //
 // Every row stored after the reset is written by this version, so the
 // stamp is true from the moment the graph is empty. An update that finds
@@ -39,6 +40,9 @@ func (s *Store) ResetGraph() error {
 				return fmt.Errorf("reset graph: %w", err)
 			}
 		}
+		if err := setMetaTx(tx, metaEdgeScope, []byte(edgeScope)); err != nil {
+			return err
+		}
 		return setMetaTx(tx, metaGraphVersion, []byte(graphVersion))
 	})
 }
@@ -48,9 +52,9 @@ func (s *Store) ResetGraph() error {
 // transaction: it deletes every Go row (Go edges were resolved by name and
 // the Go pass rewrites them all), marks every other file's record stale so
 // the next pass parses it again with today's parsers, sets
-// build_in_progress to token and stamps the current version. The other
-// languages' symbols and edges stay readable until each file is parsed
-// again, and the update that finishes the build resolves every non-Go edge
+// build_in_progress to token and stamps the current version and edge
+// scope. The other languages' symbols and edges stay readable until each
+// file is parsed again, and the update that finishes the build resolves every non-Go edge
 // again, as a fresh build's pass 2 does (#394 G9). A run cut short leaves a
 // current-version index with the mark set, which the next update resumes
 // without dropping anything.
@@ -71,7 +75,27 @@ func (s *Store) UpgradeGraph(token string) error {
 		if err := setMetaTx(tx, metaBuildInProgress, []byte(token)); err != nil {
 			return err
 		}
+		if err := setMetaTx(tx, metaEdgeScope, []byte(edgeScope)); err != nil {
+			return err
+		}
 		return setMetaTx(tx, metaGraphVersion, []byte(graphVersion))
+	})
+}
+
+// RescopeGraph turns a current-version index whose name-based edges were
+// resolved under an older edge scope (or none: before #395 G8 a name could
+// resolve to a symbol in another language) into an unfinished build, in
+// one transaction: it sets build_in_progress to token and stamps the
+// current edge scope. No row is deleted, so readers keep the graph; the
+// update that finishes the build resolves every non-Go edge again and
+// reruns the Go pass, and a run cut short leaves the mark for the next
+// update to resume.
+func (s *Store) RescopeGraph(token string) error {
+	return s.inTx(func(tx *sql.Tx) error {
+		if err := setMetaTx(tx, metaBuildInProgress, []byte(token)); err != nil {
+			return err
+		}
+		return setMetaTx(tx, metaEdgeScope, []byte(edgeScope))
 	})
 }
 
@@ -236,7 +260,10 @@ func DisplayName(sym Symbol) string {
 // non-Go edges are resolved again from scratch (#391) while a reader on
 // another connection sees either the old edges or the new ones. ctx is
 // checked every 1024 inserts; a cancel rolls the whole replacement back.
-func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
+//
+// The edges of symbols in the files listed in keep (files the caller could
+// not parse again) are not deleted.
+func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge, keep []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -250,7 +277,16 @@ func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
 		}
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
+	del := `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go'`
+	args := make([]any, 0, len(keep))
+	if len(keep) > 0 {
+		del += ` AND file NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
+		for _, f := range keep {
+			args = append(args, f)
+		}
+	}
+	del += `)`
+	if _, err := tx.ExecContext(ctx, del, args...); err != nil {
 		return fail(fmt.Errorf("clear non-go edges: %w", err))
 	}
 	if testHookReplaceNonGoAfterDelete != nil {

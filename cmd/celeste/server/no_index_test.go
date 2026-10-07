@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -116,4 +117,66 @@ func TestQueryTools_InterruptedRebuild(t *testing.T) {
 			assert.NotContains(t, text, "looks clean")
 		})
 	}
+}
+
+// assertServedWithNote checks that every query tool answers from the graph
+// with note above the answer, and never suggests a rebuild.
+func assertServedWithNote(t *testing.T, srv *Server, note string) {
+	t.Helper()
+	for _, tc := range queryToolCalls {
+		t.Run(tc.tool, func(t *testing.T) {
+			_, payload := callTool(t, srv, tc.tool, tc.args)
+			text := payloadText(t, payload)
+			assert.NotEqual(t, true, payload["isError"], text)
+			assert.True(t, strings.HasPrefix(text, "Note: "), text)
+			assert.Contains(t, text, note)
+			assert.Contains(t, text, "results may be incomplete")
+			assert.NotContains(t, text, "rebuild")
+			assert.NotContains(t, text, "No code graph index")
+		})
+	}
+	_, payload := callTool(t, srv, "celeste_code_graph", map[string]any{"symbol": "helper"})
+	assert.Contains(t, payloadText(t, payload), "## helper", "the answer comes from the graph")
+}
+
+// Review of #406: an upgrade or edge-scope refresh sets build_in_progress
+// on a graph that still holds every row. When the update that set it was
+// cancelled (no indexer holds the lock), the query tools still answer, say
+// the last update did not finish and suggest an update, never a rebuild.
+func TestQueryTools_PopulatedIndexWithUnfinishedUpdate(t *testing.T) {
+	srv, ws := newTestServerWithWorkspace(t)
+	writeTSFile(t, ws, "a.ts", "export function helper() { return 1 }\n")
+	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
+	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
+
+	idx, _, err := srv.indexerFor(ws)
+	require.NoError(t, err)
+	require.NoError(t, idx.Store().RescopeGraph("cancelled-run"))
+
+	assertServedWithNote(t, srv, "did not finish")
+	for _, tc := range queryToolCalls {
+		_, payload := callTool(t, srv, tc.tool, tc.args)
+		assert.Contains(t, payloadText(t, payload), "operation update", tc.tool)
+	}
+
+	// The update finishes it and the note goes away.
+	_, payload = callTool(t, srv, "celeste_index", map[string]any{"operation": "update"})
+	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
+	_, payload = callTool(t, srv, "celeste_code_graph", map[string]any{"symbol": "helper"})
+	assert.NotContains(t, payloadText(t, payload), "Note:")
+}
+
+// The same for main's v1 upgrade cut short (#394): UpgradeGraph keeps the
+// non-Go rows and sets the mark.
+func TestQueryTools_PopulatedIndexWithUnfinishedUpgrade(t *testing.T) {
+	srv, ws := newTestServerWithWorkspace(t)
+	writeTSFile(t, ws, "a.ts", "export function helper() { return 1 }\n")
+	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
+	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
+
+	idx, _, err := srv.indexerFor(ws)
+	require.NoError(t, err)
+	require.NoError(t, idx.Store().UpgradeGraph("cancelled-run"))
+
+	assertServedWithNote(t, srv, "did not finish")
 }

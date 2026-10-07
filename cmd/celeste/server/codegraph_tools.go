@@ -94,10 +94,12 @@ func indexBuildingError(workspace string) error {
 
 // queryIndexer is indexerFor for the read-only query tools: it fails with
 // noIndexError when the workspace has no built index, and says so when the
-// index is being built or its last build did not finish. A workspace with no
-// index database on disk is answered without opening one, so a query never
-// creates the database.
-func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error) {
+// index is being built or its last build did not finish and left the graph
+// empty. A graph that still has rows while an update finishes it (an
+// upgrade, a rescope, a resumed build) is served, with note saying its
+// results may be incomplete. A workspace with no index database on disk is
+// answered without opening one, so a query never creates the database.
+func (s *Server) queryIndexer(workspace string) (idx *codegraph.Indexer, cached bool, note string, err error) {
 	s.indexerMu.Lock()
 	open := s.indexers[workspace] != nil
 	s.indexerMu.Unlock()
@@ -107,28 +109,32 @@ func (s *Server) queryIndexer(workspace string) (*codegraph.Indexer, bool, error
 			// A rebuild deletes the database and holds the lock until
 			// the new one is built.
 			if codegraph.IndexWriterActive(dbPath) {
-				return nil, false, indexBuildingError(workspace)
+				return nil, false, "", indexBuildingError(workspace)
 			}
-			return nil, false, noIndexError(workspace)
+			return nil, false, "", noIndexError(workspace)
 		}
 	}
-	idx, cached, err := s.indexerFor(workspace)
+	idx, cached, err = s.indexerFor(workspace)
 	if err != nil {
-		return nil, false, err
+		return nil, false, "", err
 	}
 	state, err := idx.State()
 	if err != nil {
-		return nil, false, fmt.Errorf("read index: %w", err)
+		return nil, false, "", fmt.Errorf("read index: %w", err)
 	}
 	switch state {
 	case codegraph.IndexBuilt:
-		return idx, cached, nil
+		return idx, cached, "", nil
+	case codegraph.IndexUpdating:
+		return idx, cached, fmt.Sprintf("Note: the code graph index for %s is being updated; results may be incomplete until the update finishes.", workspace), nil
+	case codegraph.IndexUpdateUnfinished:
+		return idx, cached, fmt.Sprintf("Note: the last update of the code graph index for %s did not finish, so results may be incomplete; run celeste_index (operation update) to finish it.", workspace), nil
 	case codegraph.IndexBuilding:
-		return nil, false, indexBuildingError(workspace)
+		return nil, false, "", indexBuildingError(workspace)
 	case codegraph.IndexInterrupted:
-		return nil, false, softError("The code graph index build for %s did not finish; run celeste_index (operation update or rebuild) to finish it.", workspace)
+		return nil, false, "", softError("The code graph index build for %s did not finish; run celeste_index (operation update) to finish it.", workspace)
 	default:
-		return nil, false, noIndexError(workspace)
+		return nil, false, "", noIndexError(workspace)
 	}
 }
 
@@ -149,7 +155,7 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 		// would fail their ValidateInput checks if they ever get one.
 		delete(args, "workspace")
 
-		idx, cached, err := s.queryIndexer(workspace)
+		idx, cached, note, err := s.queryIndexer(workspace)
 		if err != nil {
 			return nil, err
 		}
@@ -182,10 +188,18 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 			// The underlying tool flagged a soft error — surface it
 			// to the MCP client as an isError result. JSON-RPC level
 			// errors are reserved for plumbing faults.
-			return nil, &toolError{msg: result.Content}
+			return nil, &toolError{msg: withNote(note, result.Content)}
 		}
-		return []ContentBlock{{Type: "text", Text: result.Content}}, nil
+		return []ContentBlock{{Type: "text", Text: withNote(note, result.Content)}}, nil
 	}
+}
+
+// withNote puts queryIndexer's note, if any, above a tool's answer.
+func withNote(note, text string) string {
+	if note == "" {
+		return text
+	}
+	return note + "\n\n" + text
 }
 
 // --- celeste_index ---

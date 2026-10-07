@@ -14,6 +14,14 @@ import (
 const (
 	metaGraphVersion = "graph_version"
 	graphVersion     = "2"
+	// metaEdgeScope records the rule name-based edges were resolved under.
+	// edgeScope "language": a name resolves only within the caller's
+	// language (TS and JS together, C and C++ together). An index without
+	// it may hold edges that cross languages (G8 of #395); Update records
+	// the scope with the build_in_progress mark (RescopeGraph) and its
+	// recovery resolves the non-Go edges and reruns the Go pass once.
+	metaEdgeScope = "edge_scope"
+	edgeScope     = "language"
 	// metaGoModules holds goModFingerprint as of the last Go pass.
 	metaGoModules = "go_modules"
 	// metaBuildInProgress is set before a full build empties the graph and

@@ -70,9 +70,9 @@ func assertCallEdge(t *testing.T, dir, caller, callee string) {
 	require.NoError(t, idx.Build())
 
 	store := idx.Store()
-	src, ok := store.GetSymbolIDByName(caller)
+	src, ok := uniqueSymbolID(store, caller)
 	require.Truef(t, ok, "symbol %s not indexed", caller)
-	dst, ok := store.GetSymbolIDByName(callee)
+	dst, ok := uniqueSymbolID(store, callee)
 	require.Truef(t, ok, "symbol %s not indexed", callee)
 	edges, err := store.GetEdgesFrom(src)
 	require.NoError(t, err)

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -468,14 +469,17 @@ func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 	return scanSymbols(rows)
 }
 
-// SearchSymbolsByName returns symbols whose name contains the query (case-insensitive).
+// SearchSymbolsByName returns symbols whose name contains the query
+// (case-insensitive). The query is literal: '%' and '_' match only
+// themselves.
 func (s *Store) SearchSymbolsByName(query string) ([]Symbol, error) {
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
 		        COALESCE(qual_name, ''), COALESCE(implements, '')
-		 FROM symbols WHERE name LIKE ? ORDER BY name`,
-		"%"+query+"%",
+		 FROM symbols WHERE name LIKE ? ESCAPE '\' ORDER BY name`,
+		"%"+esc+"%",
 	)
 	if err != nil {
 		return nil, err
@@ -497,17 +501,6 @@ func scanSymbols(rows *sql.Rows) ([]Symbol, error) {
 	return syms, rows.Err()
 }
 
-// GetSymbolIDByName returns the ID of a symbol by exact name match.
-// If multiple symbols share the same name, returns the first found.
-func (s *Store) GetSymbolIDByName(name string) (int64, bool) {
-	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ? LIMIT 1`, name).Scan(&id)
-	if err != nil {
-		return 0, false
-	}
-	return id, true
-}
-
 // GetCallableIDByName resolves a call target by name. Among symbols with
 // that name it prefers a callable (function, method or class) over any other
 // kind, so a call to get() does not land on an import or a var named get;
@@ -515,12 +508,15 @@ func (s *Store) GetSymbolIDByName(name string) (int64, bool) {
 // with no callable still resolves to whatever has it, which keeps Go type
 // conversions such as Celsius(x) as edges.
 //
-// A name looked up from a non-Go file never resolves to a Go symbol: a full
-// build resolves non-Go edges before the Go pass stores any Go symbol, and
-// an update, which finds them stored, must agree with it.
+// A name resolves only to a symbol in preferFile's language (sameLanguage):
+// a TypeScript call never lands on a Python function (G8 of #395), and a
+// name looked up from a non-Go file never resolves to a Go symbol, which
+// also keeps a full build, whose non-Go edges are resolved before the Go
+// pass stores any Go symbol, and an update, which finds them stored, in
+// agreement.
 func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+nonGoFilter(preferFile)+`
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+sameLanguage(preferFile)+`
 		ORDER BY CASE WHEN kind IN ('function', 'method', 'class') THEN 0 ELSE 1 END,
 			CASE WHEN file = ? THEN 0 ELSE 1 END,
 			id
@@ -533,10 +529,10 @@ func (s *Store) GetCallableIDByName(name, preferFile string) (int64, bool) {
 
 // GetSymbolIDByNameInFile returns the ID of the symbol with this name,
 // preferring one declared in file over one stored first elsewhere. As in
-// GetCallableIDByName, a non-Go file never gets a Go symbol.
+// GetCallableIDByName, only a symbol in file's language matches.
 func (s *Store) GetSymbolIDByNameInFile(name, file string) (int64, bool) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+nonGoFilter(file)+`
+	err := s.db.QueryRow(`SELECT id FROM symbols WHERE name = ?`+sameLanguage(file)+`
 		ORDER BY CASE WHEN file = ? THEN 0 ELSE 1 END, id
 		LIMIT 1`, name, file).Scan(&id)
 	if err != nil {
@@ -545,14 +541,49 @@ func (s *Store) GetSymbolIDByNameInFile(name, file string) (int64, bool) {
 	return id, true
 }
 
-// nonGoFilter is the WHERE clause that leaves out Go symbols for a lookup
-// from a non-Go file, and nothing for one from a Go file.
-func nonGoFilter(fromFile string) string {
-	if DetectLanguage(fromFile) != "go" {
-		return ` AND file NOT LIKE '%.go'`
-	}
-	return ""
+// sameLanguage is the WHERE clause that keeps a name lookup from fromFile
+// within its language family (languageFamily), by file extension. A file
+// of no known language matches any symbol outside Go.
+func sameLanguage(fromFile string) string {
+	return languageClauses[languageFamily(DetectLanguage(fromFile))]
 }
+
+// languageFamily groups languages whose code calls into each other by
+// name: TypeScript and JavaScript, and C and C++ (which share .h headers).
+func languageFamily(lang string) string {
+	switch lang {
+	case "typescript":
+		return "javascript"
+	case "cpp":
+		return "c"
+	}
+	return lang
+}
+
+// languageClauses maps a language family to its sameLanguage clause. The
+// extensions come from extensionToLanguage, never from input.
+var languageClauses = func() map[string]string {
+	exts := map[string][]string{}
+	for ext, lang := range extensionToLanguage {
+		fam := languageFamily(lang)
+		exts[fam] = append(exts[fam], strings.ToLower(ext))
+	}
+	out := make(map[string]string, len(exts))
+	for fam, list := range exts {
+		sort.Strings(list)
+		var parts []string
+		seen := map[string]bool{}
+		for _, ext := range list {
+			if !seen[ext] {
+				seen[ext] = true
+				parts = append(parts, `file LIKE '%`+ext+`'`)
+			}
+		}
+		out[fam] = ` AND (` + strings.Join(parts, ` OR `) + `)`
+	}
+	out[""] = ` AND file NOT LIKE '%.go'`
+	return out
+}()
 
 // UpdateMinHash stores the MinHash signature for a symbol.
 func (s *Store) UpdateMinHash(symbolID int64, sig MinHashSignature) error {
