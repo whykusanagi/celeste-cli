@@ -30,8 +30,8 @@ type Config struct {
 	Port      int
 	BindAddr  string // default "127.0.0.1"
 	Remote    bool   // if true, bind to BindAddr (possibly 0.0.0.0)
-	CertFile  string // TLS certificate for mTLS
-	KeyFile   string // TLS private key for mTLS
+	CertFile  string // TLS certificate (required with Remote)
+	KeyFile   string // TLS private key (required with Remote)
 	TokenFile string // path to bearer token file (default ~/.celeste/server.token)
 	RateLimit int    // requests per minute (default 60)
 

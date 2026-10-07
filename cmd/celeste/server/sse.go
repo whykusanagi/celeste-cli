@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -62,6 +64,14 @@ type sseConnection struct {
 
 // serveSSE starts the HTTP server for SSE transport.
 func (s *Server) serveSSE(ctx context.Context) error {
+	// Decide the address and TLS before anything else, so a remote server
+	// without a certificate refuses to start instead of sending the bearer
+	// token in clear (Aikido 806869827).
+	bindAddr, useTLS, err := s.config.sseListen()
+	if err != nil {
+		return err
+	}
+
 	// Load or generate bearer token
 	token, err := loadOrCreateToken(s.config.TokenFile)
 	if err != nil {
@@ -193,11 +203,6 @@ func (s *Server) serveSSE(ctx context.Context) error {
 		w.WriteHeader(http.StatusAccepted)
 	})
 
-	bindAddr := fmt.Sprintf("%s:%d", s.config.BindAddr, s.config.Port)
-	if s.config.Remote && s.config.BindAddr == "127.0.0.1" {
-		bindAddr = fmt.Sprintf("0.0.0.0:%d", s.config.Port)
-	}
-
 	httpServer := &http.Server{
 		Addr:    bindAddr,
 		Handler: mux,
@@ -216,13 +221,10 @@ func (s *Server) serveSSE(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
 		var listenErr error
-		if s.config.CertFile != "" && s.config.KeyFile != "" {
-			log.Printf("[mcp-server] mTLS enabled (cert=%s, key=%s)", s.config.CertFile, s.config.KeyFile)
+		if useTLS {
+			log.Printf("[mcp-server] TLS enabled")
 			listenErr = httpServer.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
 		} else {
-			if s.config.Remote {
-				log.Printf("[mcp-server] WARNING: remote mode without TLS -- traffic is unencrypted")
-			}
 			listenErr = httpServer.ListenAndServe()
 		}
 		if listenErr != nil && listenErr != http.ErrServerClosed {
@@ -248,5 +250,41 @@ func validateBearerToken(r *http.Request, expected string) bool {
 	if len(auth) < 7 || auth[:7] != "Bearer " {
 		return false
 	}
-	return auth[7:] == expected
+	// Constant time, so the comparison does not leak how much of a guess
+	// matched.
+	return subtle.ConstantTimeCompare([]byte(auth[7:]), []byte(expected)) == 1
+}
+
+// errRemoteNeedsTLS is returned when the SSE server would listen beyond
+// loopback without a TLS certificate and key.
+var errRemoteNeedsTLS = errors.New("celeste serve --remote needs TLS: pass --cert <file> and --key <file>; the bearer token is never sent over plaintext HTTP off loopback")
+
+// sseListen returns the address the SSE server binds and whether it serves
+// TLS. It fails closed: a half-given certificate pair is an error, and so
+// is any address beyond loopback without TLS.
+func (c Config) sseListen() (addr string, useTLS bool, err error) {
+	if (c.CertFile == "") != (c.KeyFile == "") {
+		return "", false, errors.New("TLS needs both --cert and --key")
+	}
+	useTLS = c.CertFile != ""
+	host := c.BindAddr
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if c.Remote && host == "127.0.0.1" {
+		host = "0.0.0.0"
+	}
+	if !useTLS && !isLoopbackHost(host) {
+		return "", false, errRemoteNeedsTLS
+	}
+	return net.JoinHostPort(host, fmt.Sprint(c.Port)), useTLS, nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
