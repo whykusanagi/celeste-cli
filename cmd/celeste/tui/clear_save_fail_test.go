@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
@@ -91,4 +92,38 @@ func TestSessionMergeReportsAFailedSave(t *testing.T) {
 	text := sessChatText(m)
 	assert.Contains(t, text, "Merged sessions")
 	assert.Contains(t, text, "disk full", "the failed save of the merged session must show")
+}
+
+// A handoff whose save of the current session fails must keep that session
+// and its chat, show the error, and leave the notes in the input so they are
+// not lost either.
+func TestHandoffKeepsSessionWhenSaveFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	m, _ := newCompactTestApp(t)
+	mgr := &diskSessions{mgr: config.NewSessionManager()}
+	old := mgr.mgr.NewSession()
+	m = m.SetSessionManager(failingSessions{mgr}, old)
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = sized.(AppModel)
+
+	m = runToolTurn(t, m)
+	m, _ = feed(t, m, TurnDoneMsg{Stop: "done"})
+	beforeMsgs := len(m.chat.GetLLMMessages())
+	require.Positive(t, beforeMsgs)
+	beforeText := sessChatText(m)
+
+	m, cmd := step(t, m, SendMessageMsg{Content: "/handoff"})
+	m = runCmd(t, m, cmd)
+
+	cur, ok := m.currentSession.(*config.Session)
+	require.True(t, ok)
+	assert.Equal(t, old.ID, cur.ID, "/handoff must keep the current session when its save fails")
+	assert.Len(t, m.chat.GetLLMMessages(), beforeMsgs, "/handoff must keep the chat")
+	text := sessChatText(m)
+	assert.Contains(t, text, beforeText)
+	assert.Contains(t, text, "disk full", "the save error must show")
+	assert.NotContains(t, text, "New session started")
+	assert.Equal(t, "handoff notes for go", m.input.Value(), "the notes stay in the input")
 }

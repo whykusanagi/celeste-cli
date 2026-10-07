@@ -3222,7 +3222,7 @@ func (m *AppModel) saveSession() error {
 // its only copy, and a saved one its unsaved turns.
 func (m *AppModel) saveBeforeSwitch() bool {
 	if err := m.saveSession(); err != nil {
-		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Failed to save the current session, so it was kept: %v", err))
+		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Failed to save the current session, so it was kept: %v. Free space or fix permissions, then retry.", err))
 		return false
 	}
 	return true
