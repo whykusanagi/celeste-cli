@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // #381: Go turns CGo off by itself only when CGO_ENABLED and CC are unset
 // and no default C compiler exists; an explicit CGO_ENABLED=1 fails the
@@ -16,4 +19,23 @@ func TestDocsQualifyTheNoCompilerFallback(t *testing.T) {
 	// CGO_ENABLED=0 build for another reason.
 	requireNone(t, "docs/CODEGRAPH.md", repoDoc(t, "docs/CODEGRAPH.md"), "(what release binaries are)")
 	requireNone(t, "codegraph/goload.go", repoDoc(t, "cmd/celeste/codegraph/goload.go"), "which is what release binaries")
+}
+
+// #383: the 600 s local timeout follows providers.IsLocalHost, so the
+// migration guide lists every host it treats as local.
+func TestMigratingListsEveryLocalHostCategory(t *testing.T) {
+	const name = "MIGRATING-2.0.md"
+	doc := repoDoc(t, name)
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "|") && strings.Contains(line, "gets 600 s") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no row for the 600 s local timeout", name)
+	}
+	requireAll(t, name+" (600 s row)", row,
+		"`localhost`", "`.localhost`", "loopback", "private", "link-local", "unspecified",
+		"single-label", "`.local`", "`.lan`", "`.internal`", "`.home.arpa`")
 }
