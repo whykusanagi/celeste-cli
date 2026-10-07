@@ -51,6 +51,14 @@ var testHookAfterPass1 func()
 // a file again for its raw edges.
 var testHookReresolveParse func(path string)
 
+// testHookRecoveryParse, when set, runs before a recovering update parses a
+// new or changed non-Go file to re-index it.
+var testHookRecoveryParse func(path string)
+
+// testHookFileHash, when set, runs before an update hashes a file; an error
+// it returns is the hash's error.
+var testHookFileHash func(path string) error
+
 // testHookReresolveResolve, when set, runs before a recovering update
 // resolves each stride of the non-Go raw edges it collected.
 var testHookReresolveResolve func()

@@ -477,9 +477,18 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 	reindexed := 0
 	// While recovering, the raw edges of the files this run re-indexes are
 	// kept, so the re-resolve below does not parse them a second time.
+	// keptFiles are the non-Go files it could not read or parse: they keep
+	// the rows they have. droppedEdges are the edges from files not yet
+	// re-indexed into the files it re-indexed, which deleting the targets'
+	// rows dropped; those of a kept file are stored again (review of
+	// #402), the rest come back from their file's parse.
 	var recoveredEdges map[string][]RawEdge
+	var keptFiles map[string]bool
+	var droppedEdges map[string][]fileEdge
 	if recovering {
 		recoveredEdges = map[string][]RawEdge{}
+		keptFiles = map[string]bool{}
+		droppedEdges = map[string][]fileEdge{}
 	}
 	for i, path := range currentFiles {
 		if i&1023 == 0 {
@@ -491,8 +500,14 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		if isGo {
 			goFiles = append(goFiles, path)
 		}
-		hash, err := fileContentHash(filepath.Join(idx.workspace, path))
+		hash, err := idx.hashFile(path)
 		if err != nil {
+			// Unreadable now. A recovery keeps the edges it has (review
+			// of #402); its record keeps the old hash, so a later update
+			// re-indexes it once it can be read.
+			if recovering && !isGo {
+				keptFiles[path] = true
+			}
 			continue
 		}
 		if existing, ok := indexedMap[path]; ok && existing.ContentHash == hash {
@@ -510,13 +525,33 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		reindexed++
 		// Re-index this file. While recovering, its edges are resolved
 		// with every other file's below, as a build's pass 2 does.
-		_ = idx.store.DeleteFileSymbols(path)
 		if recovering {
-			if raw, err := idx.indexFileSymbols(path); err == nil {
-				recoveredEdges[path] = raw
+			// Parsed before its rows are dropped: a file that cannot be
+			// parsed now keeps its symbols and edges (review of #402), as
+			// the re-resolve below keeps those of a file it cannot parse.
+			if testHookRecoveryParse != nil {
+				testHookRecoveryParse(path)
 			}
+			res, err := idx.parseFile(path)
+			if err != nil {
+				keptFiles[path] = true
+				continue
+			}
+			incoming, err := idx.store.incomingNonGoEdges(path)
+			if err != nil {
+				return fmt.Errorf("read edges into %s: %w", path, err)
+			}
+			for _, e := range incoming {
+				if _, done := recoveredEdges[e.SourceFile]; !done {
+					droppedEdges[e.SourceFile] = append(droppedEdges[e.SourceFile], e)
+				}
+			}
+			_ = idx.store.DeleteFileSymbols(path)
+			recoveredEdges[path] = idx.storeParsedFile(path, res)
+			delete(droppedEdges, path) // its parse has them
 			continue
 		}
+		_ = idx.store.DeleteFileSymbols(path)
 		if err := idx.indexFile(path); err != nil {
 			continue
 		}
@@ -527,7 +562,7 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 		}
 		// recoveredEdges is nil unless recovering: the files this run
 		// re-indexed stored their edges, and are parsed again here.
-		if err := idx.reresolveNonGoEdges(ctx, currentFiles, recoveredEdges); err != nil {
+		if err := idx.reresolveNonGoEdges(ctx, currentFiles, nonGoRecovery{parsed: recoveredEdges, kept: keptFiles, dropped: droppedEdges}); err != nil {
 			return err
 		}
 	}
@@ -593,17 +628,36 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 //
 // A file that cannot be read or parsed again keeps the edges it has: its
 // sources are left out of the delete, so finishing the build (and clearing
-// the mark) never leaves that file without edges. The next update that can
-// parse it re-indexes it as usual.
-func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, parsed map[string][]RawEdge) error {
+// the mark) never leaves that file without edges. Its edges into files this
+// run re-indexed, which their delete dropped, are stored again from
+// rec.dropped. The next update that can parse it re-indexes it as usual.
+func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, rec nonGoRecovery) error {
 	var raw []RawEdge
 	var keep []string
+	var restored []Edge
+	keepFile := func(path string) {
+		keep = append(keep, path)
+		for _, e := range rec.dropped[path] {
+			src, ok1 := idx.store.symbolIDInFile(e.SourceName, e.SourceFile)
+			dst, ok2 := idx.store.symbolIDInFile(e.TargetName, e.TargetFile)
+			if ok1 && ok2 {
+				restored = append(restored, Edge{SourceID: src, TargetID: dst, Kind: e.Kind})
+			}
+		}
+	}
 	n := 0
 	for _, path := range files {
 		if DetectLanguage(path) == "go" {
 			continue
 		}
-		if edges, ok := parsed[path]; ok {
+		if rec.kept[path] {
+			// This run could not read or parse it already: keep its
+			// edges, and store again the ones re-indexing their targets
+			// dropped (review of #402).
+			keepFile(path)
+			continue
+		}
+		if edges, ok := rec.parsed[path]; ok {
 			raw = append(raw, edges...)
 			continue
 		}
@@ -620,7 +674,7 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, par
 		if err != nil {
 			// Unreadable or unparseable now: its stored edges are the
 			// best there is, so the replacement keeps them.
-			keep = append(keep, path)
+			keepFile(path)
 			continue
 		}
 		if res == nil {
@@ -641,7 +695,17 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, par
 		}
 		edges = append(edges, idx.resolveEdges(raw[start:min(start+1024, len(raw))])...)
 	}
-	return idx.store.ReplaceNonGoEdges(ctx, edges, keep)
+	return idx.store.ReplaceNonGoEdges(ctx, append(edges, restored...), keep)
+}
+
+// nonGoRecovery is what a recovering update's re-index loop hands
+// reresolveNonGoEdges: the raw edges of the files it re-indexed (parsed),
+// the files it could not read or parse and left as they were (kept), and,
+// by source file, the edges re-indexing their targets dropped (dropped).
+type nonGoRecovery struct {
+	parsed  map[string][]RawEdge
+	kept    map[string]bool
+	dropped map[string][]fileEdge
 }
 
 // indexFileSymbols parses a file, stores its symbols (with MinHash / LSH / tokens)
@@ -649,18 +713,27 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, par
 // resolution. Used by Build() in its first pass so all symbols exist in the DB
 // before any edges are inserted (fixing cross-file caller-count issue #47).
 func (idx *Indexer) indexFileSymbols(relPath string) ([]RawEdge, error) {
-	lang := DetectLanguage(relPath)
 	result, err := idx.parseFile(relPath)
 	if err != nil || result == nil {
 		return nil, err
 	}
+	return idx.storeParsedFile(relPath, result), nil
+}
 
+// storeParsedFile is indexFileSymbols after the parse: it stores result's
+// symbols and the file record and returns the raw edges. A nil result (no
+// parser for the language) stores nothing.
+func (idx *Indexer) storeParsedFile(relPath string, result *ParseResult) []RawEdge {
+	if result == nil {
+		return nil
+	}
+	lang := DetectLanguage(relPath)
 	idx.storeFileSymbols(relPath, lang, result.Symbols)
 	idx.storeFileRecord(relPath, lang, "")
 	for i := range result.Edges {
 		result.Edges[i].SourceFile = relPath
 	}
-	return result.Edges, nil
+	return result.Edges
 }
 
 // storeFileSymbols stores a file's symbols with their MinHash signature,
@@ -2178,6 +2251,16 @@ func (idx *Indexer) PackageGraph() ([]PackageInfo, []PackageEdge, error) {
 }
 
 // fileContentHash computes a SHA-256 hash of a file's content.
+// hashFile is fileContentHash of a workspace-relative path.
+func (idx *Indexer) hashFile(relPath string) (string, error) {
+	if testHookFileHash != nil {
+		if err := testHookFileHash(relPath); err != nil {
+			return "", err
+		}
+	}
+	return fileContentHash(filepath.Join(idx.workspace, relPath))
+}
+
 func fileContentHash(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

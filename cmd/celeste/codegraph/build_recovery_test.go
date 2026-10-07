@@ -413,3 +413,85 @@ func TestUpdate_RecoveryKeepsEdgesOfUnreadableFile(t *testing.T) {
 	assert.False(t, got["run -calls-> helper"])
 	assert.True(t, got["main -calls-> helper"])
 }
+
+// Review of #402: an older-index upgrade marks every non-Go file for parsing
+// again. A file that hashes but then cannot be parsed (here: it disappears
+// between the two) keeps its symbols and edges instead of being emptied
+// first; one that cannot even be hashed keeps them too. Both are kept
+// without a second parse, and the next update handles them as usual.
+func TestUpdate_UpgradeKeepsEdgesOfFileThatCannotBeParsed(t *testing.T) {
+	// The file walked before the file it calls, and after it.
+	for _, name := range []string{"a_run.py", "z_run.py"} {
+		t.Run(name, func(t *testing.T) { upgradeKeepsEdgesOfUnparseable(t, name) })
+	}
+}
+
+func upgradeKeepsEdgesOfUnparseable(t *testing.T, name string) {
+	files := map[string]string{
+		name:        "from b_lib import helper\n\ndef run():\n    helper()\n",
+		"b_lib.py":  "def helper():\n    return 1\n",
+		"c_main.py": "from b_lib import helper\n\ndef main():\n    helper()\n",
+	}
+	idx, ws := buildFixture(t, files)
+	want := edgeKeys(t, idx)
+	require.True(t, want["run -calls-> helper"], "fixture: %v", want)
+	require.True(t, want["main -calls-> helper"], "fixture: %v", want)
+	require.NoError(t, idx.store.SetMeta(metaGraphVersion, []byte("1")))
+
+	testHookRecoveryParse = func(path string) {
+		if filepath.Base(path) == name {
+			require.NoError(t, os.Remove(filepath.Join(ws, path)))
+		}
+	}
+	reparsed := map[string]int{}
+	testHookReresolveParse = func(path string) { reparsed[filepath.Base(path)]++ }
+	t.Cleanup(func() { testHookRecoveryParse, testHookReresolveParse = nil, nil })
+	require.NoError(t, idx.Update())
+	testHookRecoveryParse, testHookReresolveParse = nil, nil
+
+	got := edgeKeys(t, idx)
+	assert.True(t, got["run -calls-> helper"], "the file that could not be parsed keeps its edges: %v", got)
+	assert.True(t, got["main -calls-> helper"], "the other files' edges are resolved again: %v", got)
+	assert.Zero(t, reparsed[name], "a file kept as is is not parsed a second time")
+	requireFinished(t, idx)
+
+	require.NoError(t, idx.Update())
+	got = edgeKeys(t, idx)
+	assert.False(t, got["run -calls-> helper"], "the next update drops the removed file")
+	assert.True(t, got["main -calls-> helper"])
+}
+
+func TestUpdate_UpgradeKeepsEdgesOfFileThatCannotBeHashed(t *testing.T) {
+	files := map[string]string{
+		"a_run.py":  "from b_lib import helper\n\ndef run():\n    helper()\n",
+		"b_lib.py":  "def helper():\n    return 1\n",
+		"c_main.py": "from b_lib import helper\n\ndef main():\n    helper()\n",
+	}
+	idx, _ := buildFixture(t, files)
+	require.True(t, edgeKeys(t, idx)["run -calls-> helper"])
+	require.NoError(t, idx.store.SetMeta(metaGraphVersion, []byte("1")))
+
+	// The file is in the walk but cannot be read (the hook fails its hash
+	// the way a permission error would, on every OS).
+	testHookFileHash = func(path string) error {
+		if filepath.Base(path) == "a_run.py" {
+			return os.ErrPermission
+		}
+		return nil
+	}
+	reparsed := map[string]int{}
+	testHookReresolveParse = func(path string) { reparsed[filepath.Base(path)]++ }
+	t.Cleanup(func() { testHookFileHash, testHookReresolveParse = nil, nil })
+	require.NoError(t, idx.Update())
+	testHookFileHash, testHookReresolveParse = nil, nil
+
+	got := edgeKeys(t, idx)
+	assert.True(t, got["run -calls-> helper"], "the unreadable file keeps its edges: %v", got)
+	assert.True(t, got["main -calls-> helper"], got)
+	assert.Zero(t, reparsed["a_run.py"])
+	requireFinished(t, idx)
+
+	// Readable again: the next update re-indexes it (its hash was cleared).
+	require.NoError(t, idx.Update())
+	assert.True(t, edgeKeys(t, idx)["run -calls-> helper"])
+}
