@@ -62,10 +62,16 @@ succeeds, and such a process keeps using the old, deleted file until it
 reopens the index. The OS releases the
 lock when its process exits or is killed, so a lock file left behind never
 blocks the next indexer. Every connection also sets `busy_timeout` (10 s) so
-a reader waits for a writer's SQLite lock instead of failing. An index left
-incomplete by a version without these marks has nothing to repair it: rebuild
-it with the MCP `celeste_index` tool's `rebuild` operation or `/index rebuild`
-in the TUI (`celeste index` only updates). Three tables:
+a reader waits for a writer's SQLite lock instead of failing. A file's
+record is stored after its symbols, so a file whose symbols a power loss
+dropped has no record or an old content hash, and the next update re-indexes
+it. An update, finishing a build or not, skips every file whose content
+hash matches its record, so an index whose file records survive
+without their symbols (a symbol write that failed, or an index left
+incomplete by a version without these marks) stays that way. Rebuild it with
+`celeste index rebuild`, the MCP `celeste_index` tool's `rebuild` operation
+or `/index rebuild` in the TUI (plain `celeste index` only updates). Three
+tables:
 
 ```sql
 symbols (id, name, kind, package, file, line, signature, decorators, base_classes,

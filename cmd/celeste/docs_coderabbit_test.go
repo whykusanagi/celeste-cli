@@ -39,3 +39,15 @@ func TestMigratingListsEveryLocalHostCategory(t *testing.T) {
 		"`localhost`", "`.localhost`", "loopback", "private", "link-local", "unspecified",
 		"single-label", "`.local`", "`.lan`", "`.internal`", "`.home.arpa`")
 }
+
+// #387: Update skips a file whose content hash matches its record, so an
+// index whose file records survive without their symbols is repaired only
+// by a rebuild. The store comment and CODEGRAPH.md send users there.
+func TestCodegraphRecoveryPointsAtRebuild(t *testing.T) {
+	store := repoDoc(t, "cmd/celeste/codegraph/store.go")
+	requireNone(t, "codegraph/store.go", store, "the next update re-indexes what is missing")
+	requireAll(t, "codegraph/store.go", store, "`celeste index rebuild`")
+	cg := repoDoc(t, "docs/CODEGRAPH.md")
+	requireAll(t, "docs/CODEGRAPH.md", cg, "`celeste index rebuild`", "content hash")
+	requireNone(t, "docs/CODEGRAPH.md", cg, "(`celeste index` only updates)")
+}
