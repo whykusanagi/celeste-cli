@@ -155,10 +155,10 @@ func hooksTrust(args []string, c hooksCLI) int {
 	var approve hooks.ApproveFunc
 	switch {
 	case yes:
-		approve = func(src hooks.Source, st hooks.TrustStatus) bool {
+		approve = func(src hooks.Source, st hooks.TrustStatus) hooks.Answer {
 			fmt.Fprintf(c.out, "Trusting %s (%s, was %s):\n", strconv.Quote(src.Path), src.Kind, st)
 			hooks.DescribeSource(c.out, src)
-			return true
+			return hooks.AnswerYes
 		}
 	case c.interactive:
 		approve = hooks.PromptApprover(c.in, c.out)
@@ -169,7 +169,9 @@ func hooksTrust(args []string, c hooksCLI) int {
 
 	code := 0
 	for _, s := range pending {
-		if !approve(s, store.Status(s)) {
+		// A no here leaves the stored decision as it was: this command
+		// only ever adds trust.
+		if approve(s, store.Status(s)) != hooks.AnswerYes {
 			fmt.Fprintf(c.out, "Skipped %s\n", strconv.Quote(s.Path))
 			continue
 		}

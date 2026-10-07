@@ -170,7 +170,7 @@ func TestSetupApproverIsUsedOnlyInChatMode(t *testing.T) {
 			asked := false
 			env, err := Setup(tc.mode, testCfg(), ws, SetupOptions{
 				Warn:    func(string) {},
-				Approve: func(hooks.Source, hooks.TrustStatus) bool { asked = true; return true },
+				Approve: func(hooks.Source, hooks.TrustStatus) hooks.Answer { asked = true; return hooks.AnswerYes },
 			})
 			if err != nil {
 				t.Fatal(err)

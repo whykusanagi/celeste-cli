@@ -15,19 +15,19 @@ func TestPromptApprover(t *testing.T) {
 	}}
 	var out bytes.Buffer
 	approve := PromptApprover(strings.NewReader("y\n"), &out)
-	assert.True(t, approve(src, Untrusted))
+	assert.Equal(t, AnswerYes, approve(src, Untrusted))
 	assert.Contains(t, out.String(), `"./scripts/guard.sh"`)
 	assert.Contains(t, out.String(), `"/r/.celeste/hooks.json"`)
 	assert.Contains(t, out.String(), "[y/N]")
 
 	out.Reset()
 	approve = PromptApprover(strings.NewReader("n\nYES\n"), &out)
-	assert.False(t, approve(src, Changed))
+	assert.Equal(t, AnswerNo, approve(src, Changed))
 	assert.Contains(t, out.String(), "changed since you approved")
-	assert.True(t, approve(src, Untrusted), "one reader serves several prompts")
+	assert.Equal(t, AnswerYes, approve(src, Untrusted), "one reader serves several prompts")
 
-	assert.False(t, PromptApprover(strings.NewReader("\n"), &out)(src, Untrusted), "Enter means no")
-	assert.False(t, PromptApprover(strings.NewReader(""), &out)(src, Untrusted), "EOF means no")
+	assert.Equal(t, AnswerNo, PromptApprover(strings.NewReader("\n"), &out)(src, Untrusted), "Enter means no")
+	assert.Equal(t, AnswerLater, PromptApprover(strings.NewReader(""), &out)(src, Untrusted), "EOF is no answer")
 }
 
 func TestIsTerminalRejectsDevNullAndPipe(t *testing.T) {
