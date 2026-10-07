@@ -79,6 +79,13 @@ type Symbol struct {
 	// e.g. "error,fmt.Stringer"). A method listed here is reached through
 	// the interface even when no edge points at it.
 	Implements string
+	// Scope is the class (struct, trait, module, impl) a non-Go symbol is
+	// declared in, outer classes first and '.'-separated ("Geo.Qux" for a
+	// Ruby method of class Qux in module Geo). Empty for Go, for top-level
+	// symbols and for functions nested in other functions. Lookups accept
+	// it as a qualifier ("Qux.add", "Geo::Qux::add"), and it keeps
+	// same-named methods of different classes in one file apart.
+	Scope string
 }
 
 // Edge represents a relationship between two symbols.
@@ -237,6 +244,7 @@ func (s *Store) createSchema() error {
 		"ALTER TABLE symbols ADD COLUMN qual_name TEXT",
 		"ALTER TABLE symbols ADD COLUMN implements TEXT",
 		"ALTER TABLE files ADD COLUMN resolution TEXT",
+		"ALTER TABLE symbols ADD COLUMN scope TEXT",
 	} {
 		if _, err := s.db.Exec(col); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate schema: %w", err)
@@ -322,8 +330,8 @@ func (s *Store) UpsertSymbol(sym Symbol) (int64, error) {
 	var existingID int64
 	err := s.db.QueryRow(
 		`SELECT id FROM symbols WHERE name = ? AND kind = ? AND package = ? AND file = ?
-		 AND COALESCE(qual_name, '') = ?`,
-		sym.Name, sym.Kind, sym.Package, sym.File, sym.QualName,
+		 AND COALESCE(qual_name, '') = ? AND COALESCE(scope, '') = ?`,
+		sym.Name, sym.Kind, sym.Package, sym.File, sym.QualName, sym.Scope,
 	).Scan(&existingID)
 
 	if err == nil {
@@ -337,10 +345,10 @@ func (s *Store) UpsertSymbol(sym Symbol) (int64, error) {
 
 	// Insert new row.
 	result, err := s.db.Exec(
-		`INSERT INTO symbols (name, kind, package, file, line, signature, decorators, base_classes, qual_name, implements)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO symbols (name, kind, package, file, line, signature, decorators, base_classes, qual_name, implements, scope)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sym.Name, sym.Kind, sym.Package, sym.File, sym.Line, sym.Signature, sym.Decorators, sym.BaseClasses,
-		sym.QualName, sym.Implements,
+		sym.QualName, sym.Implements, sym.Scope,
 	)
 	if err != nil {
 		return 0, err
@@ -354,10 +362,10 @@ func (s *Store) GetSymbol(id int64) (*Symbol, error) {
 	err := s.db.QueryRow(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
-		        COALESCE(qual_name, ''), COALESCE(implements, '')
+		        COALESCE(qual_name, ''), COALESCE(implements, ''), COALESCE(scope, '')
 		 FROM symbols WHERE id = ?`, id,
 	).Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature,
-		&sym.Decorators, &sym.BaseClasses, &sym.QualName, &sym.Implements)
+		&sym.Decorators, &sym.BaseClasses, &sym.QualName, &sym.Implements, &sym.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +458,7 @@ func (s *Store) GetSymbolsByFile(file string) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
-		        COALESCE(qual_name, ''), COALESCE(implements, '')
+		        COALESCE(qual_name, ''), COALESCE(implements, ''), COALESCE(scope, '')
 		 FROM symbols WHERE file = ? ORDER BY line`, file,
 	)
 	if err != nil {
@@ -465,7 +473,7 @@ func (s *Store) GetSymbolsByPackage(pkg string) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
-		        COALESCE(qual_name, ''), COALESCE(implements, '')
+		        COALESCE(qual_name, ''), COALESCE(implements, ''), COALESCE(scope, '')
 		 FROM symbols WHERE package = ? ORDER BY file, line`, pkg,
 	)
 	if err != nil {
@@ -483,7 +491,7 @@ func (s *Store) SearchSymbolsByName(query string) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
-		        COALESCE(qual_name, ''), COALESCE(implements, '')
+		        COALESCE(qual_name, ''), COALESCE(implements, ''), COALESCE(scope, '')
 		 FROM symbols WHERE name LIKE ? ESCAPE '\' ORDER BY name`,
 		"%"+esc+"%",
 	)
@@ -499,7 +507,7 @@ func scanSymbols(rows *sql.Rows) ([]Symbol, error) {
 	for rows.Next() {
 		var sym Symbol
 		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.Package, &sym.File, &sym.Line, &sym.Signature,
-			&sym.Decorators, &sym.BaseClasses, &sym.QualName, &sym.Implements); err != nil {
+			&sym.Decorators, &sym.BaseClasses, &sym.QualName, &sym.Implements, &sym.Scope); err != nil {
 			return nil, err
 		}
 		syms = append(syms, sym)

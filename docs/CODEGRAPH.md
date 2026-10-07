@@ -283,8 +283,12 @@ The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, dir
    the exact name; a qualified name, in any form the tools print or a Go
    programmer writes (`(tui.AppModel).update`, `(*acp.session).update`,
    `AppModel.update`, `commands.Execute`, a full import path, and for other
-   languages the file stem or path, `core.add`); the name ignoring case; a
-   name that starts with or contains the query.
+   languages the file stem or path for a top-level symbol, `core.add`, and
+   the class for a member of one, `Foo.add`, `Foo::add`, `core.Foo.add` or
+   `Geo::Qux::add` for a class nested in a module or namespace, which is
+   also how the tools print it); the name ignoring case; a name that starts
+   with or contains the query. A C++ member defined outside its class is
+   found as `Shape::make` or `Shape.make`.
 2. Every symbol of that tier is kept, non-test files first. Up to 8 are shown
    with their edges: incoming (`GetEdgesTo`) for callers, outgoing
    (`GetEdgesFrom`) for callees, walked breadth first up to `depth` hops:

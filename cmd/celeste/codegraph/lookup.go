@@ -94,6 +94,16 @@ func (s *Store) lookupSymbol(q string) (LookupResult, error) {
 	}
 	qual, name, qualified := splitQualified(q)
 	if qualified {
+		// A C++ member defined out of line is stored under its qualified
+		// name ("Shape::make"); "Shape.make" names it too.
+		if !strings.Contains(q, "::") && !strings.HasPrefix(q, "(") {
+			if syms, err = s.symbolsNamed(strings.ReplaceAll(qual, ".", "::")+"::"+name, false); err != nil {
+				return LookupResult{}, err
+			}
+			if len(syms) > 0 {
+				return LookupResult{Match: MatchQualified, Symbols: rankExact(syms)}, nil
+			}
+		}
 		for _, fold := range []bool{false, true} {
 			cands, err := s.symbolsNamed(name, fold)
 			if err != nil {
@@ -169,13 +179,17 @@ func (s *Store) RankedSearch(query string, limit int) ([]Symbol, error) {
 // QualifiedName is a name for sym that LookupSymbol accepts and that tells
 // same-named symbols apart: "(tui.AppModel).update" for a Go method,
 // "commands.Execute" for another Go symbol, "core.add" (file stem) for a
-// symbol of another language.
+// symbol of another language, "core.Foo.add" for its method of class Foo.
 func QualifiedName(sym Symbol) string {
 	if sym.QualName == "" && DetectLanguage(sym.File) != "go" {
-		if stem := fileStem(slashFile(sym.File)); stem != "" && stem != "." {
-			return stem + "." + sym.Name
+		name := sym.Name
+		if sym.Scope != "" {
+			name = sym.Scope + "." + name
 		}
-		return sym.Name
+		if stem := fileStem(slashFile(sym.File)); stem != "" && stem != "." {
+			return stem + "." + name
+		}
+		return name
 	}
 	if sym.Kind == SymbolMethod || sym.Kind == SymbolInterfaceMethod {
 		if d := DisplayName(sym); d != sym.Name {
@@ -235,7 +249,11 @@ func longQualifiedName(sym Symbol) string {
 		return q
 	}
 	file := slashFile(sym.File)
-	return strings.TrimSuffix(file, path.Ext(file)) + "." + sym.Name
+	name := sym.Name
+	if sym.Scope != "" && DetectLanguage(sym.File) != "go" {
+		name = sym.Scope + "." + name
+	}
+	return strings.TrimSuffix(file, path.Ext(file)) + "." + name
 }
 
 // slashFile is an indexed path with '/' separators. The index stores
@@ -255,7 +273,7 @@ func (s *Store) symbolsNamed(name string, fold bool) ([]Symbol, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, kind, package, file, line, COALESCE(signature, ''),
 		        COALESCE(decorators, ''), COALESCE(base_classes, ''),
-		        COALESCE(qual_name, ''), COALESCE(implements, '')
+		        COALESCE(qual_name, ''), COALESCE(implements, ''), COALESCE(scope, '')
 		 FROM symbols WHERE `+where+` ORDER BY file, line, id`, name,
 	)
 	if err != nil {
@@ -269,6 +287,11 @@ func (s *Store) symbolsNamed(name string, fold bool) ([]Symbol, error) {
 // into its qualifier and the name after the last dot. ok is false for a
 // plain name.
 func splitQualified(q string) (qual, name string, ok bool) {
+	// A C++/PHP/Ruby scope ("Geo::Qux::add", "Baz::add") reads as dots:
+	// the qualifier is the class chain before the last "::".
+	if i := strings.LastIndex(q, "::"); i >= 0 && !strings.HasPrefix(q, "(") {
+		q = strings.ReplaceAll(q[:i], "::", ".") + "." + q[i+2:]
+	}
 	if strings.HasPrefix(q, "(") {
 		end := strings.LastIndex(q, ").")
 		if end < 0 {
@@ -314,6 +337,15 @@ func symbolScopes(sym Symbol) []string {
 	}
 	file := slashFile(sym.File)
 	noExt := strings.TrimSuffix(file, path.Ext(file))
+	if DetectLanguage(sym.File) != "go" && sym.Scope != "" {
+		// A member of a class is qualified by the class, alone or after
+		// its file ("Foo.add", "core.Foo.add", "pkg/core.Foo.add"); the
+		// file alone names the file's top-level symbols.
+		add(sym.Scope)
+		add(noExt + "." + sym.Scope)
+		add(strings.ReplaceAll(noExt, "/", ".") + "." + sym.Scope)
+		return scopes
+	}
 	add(noExt)
 	add(strings.ReplaceAll(noExt, "/", "."))
 	if DetectLanguage(sym.File) != "go" {

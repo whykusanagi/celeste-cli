@@ -11,9 +11,10 @@ import (
 // meaning; Update rebuilds an index stamped with any other value.
 //
 //	"2": type-checked Go edges, qualified names, interface methods (#375).
+//	"3": non-Go symbols record the class they are declared in (Scope).
 const (
 	metaGraphVersion = "graph_version"
-	graphVersion     = "2"
+	graphVersion     = "3"
 	// metaEdgeScope records the rule name-based edges were resolved under.
 	// edgeScope "language": a name resolves only within the caller's
 	// language (TS and JS together, C and C++ together). An index without

@@ -134,6 +134,20 @@ type multiWalker struct {
 	callSet           map[string]bool
 	decoratorSet      map[string]bool
 	currentClassBases string // base-class names for the innermost class being walked
+	// currentScope is the class chain the walk is directly inside
+	// ("Geo.Qux"), Symbol.Scope of what it declares there. A function body
+	// resets it: a function nested in a method has no class.
+	currentScope string
+}
+
+// joinScope appends class name to the class chain outer, '.'-separated. A
+// qualified name ("geo::Shape") is split the same way.
+func joinScope(outer, name string) string {
+	name = strings.ReplaceAll(name, "::", ".")
+	if outer == "" {
+		return name
+	}
+	return outer + "." + name
 }
 
 func (w *multiWalker) nodeText(n *tree_sitter.Node) string {
@@ -169,16 +183,21 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				File:        w.path,
 				Line:        int(node.StartPosition().Row) + 1,
 				BaseClasses: bases,
+				Scope:       w.currentScope,
 			})
 		}
-		// Save and restore currentClassBases so nested classes don't leak.
-		prevBases := w.currentClassBases
+		// Save and restore currentClassBases and currentScope so nested
+		// classes don't leak.
+		prevBases, prevScope := w.currentClassBases, w.currentScope
 		w.currentClassBases = bases
+		if name != "" {
+			w.currentScope = joinScope(w.currentScope, name)
+		}
 		// Recurse into class body for methods
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), currentFn)
 		}
-		w.currentClassBases = prevBases
+		w.currentClassBases, w.currentScope = prevBases, prevScope
 		return
 	}
 
@@ -230,15 +249,19 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				Signature:   sig,
 				Decorators:  strings.Join(decNames, ","),
 				BaseClasses: w.currentClassBases,
+				Scope:       w.currentScope,
 			})
 		}
 		fnName := name
 		if fnName == "" {
 			fnName = currentFn
 		}
+		prevScope := w.currentScope
+		w.currentScope = ""
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), fnName)
 		}
+		w.currentScope = prevScope
 		return
 	}
 
