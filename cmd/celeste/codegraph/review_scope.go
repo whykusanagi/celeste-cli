@@ -576,7 +576,7 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 	// and whether the method is marked override or virtual.
 	outOfClass := false
 	if class == "" && (f.lang == "cpp" || f.lang == "c") {
-		if scope, member, ok := cppQualifiedName(name); ok {
+		if scope, member, ok := cppSplitMemberName(name); ok {
 			for _, d := range decls[declKey(f.lang, member)] {
 				if d.class == scope {
 					class, name, outOfClass = scope, member, true
@@ -620,10 +620,12 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls declIndex) reac
 	return reach{}
 }
 
-// cppQualifiedName splits a qualified C++ name (`D::f`, `geo::D::f`,
-// `Box<T>::f`) into its class, without namespaces or template arguments,
-// and the member name.
-func cppQualifiedName(name string) (string, string, bool) {
+// cppSplitMemberName splits the stored name of an out-of-line C++
+// definition (`D::f`, `geo::D::f`, `Box<T>::f`) into its class, without
+// namespaces or template arguments, and the member name. The parser's
+// cppQualifiedName produces these names from the syntax tree (#403);
+// this works on the indexed string, so it needs no cgo.
+func cppSplitMemberName(name string) (string, string, bool) {
 	i := strings.LastIndex(name, "::")
 	if i <= 0 {
 		return "", "", false

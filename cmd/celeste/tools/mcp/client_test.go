@@ -578,3 +578,41 @@ func TestClient_WaitingCallHonoursContext(t *testing.T) {
 	tr.replies <- textReply(awaitSent(t, tr).ID, "next answer")
 	awaitCall(t, next, "next answer")
 }
+
+// isErrorTransport answers initialize, then a tools/call result the server
+// marked isError (#398 T3).
+func isErrorTransport() *mockTransport {
+	return &mockTransport{
+		responses: []*Response{
+			{
+				JSONRPC: "2.0",
+				ID:      json.Number("1"),
+				Result:  json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"test"}}`),
+			},
+			{
+				JSONRPC: "2.0",
+				ID:      json.Number("2"),
+				Result:  json.RawMessage(`{"content":[{"type":"text","text":"disk full"}],"isError":true}`),
+			},
+		},
+	}
+}
+
+// #398 T3: a result with isError:true is a failed call, not a success.
+func TestClient_CallTool_IsErrorResult(t *testing.T) {
+	client := NewClient(isErrorTransport(), "celeste", "1.7.0")
+	require.NoError(t, client.Initialize(context.Background()))
+
+	_, err := client.CallTool(context.Background(), "fail", nil)
+	require.Error(t, err)
+	var te *ToolError
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, "disk full", te.Text)
+	assert.Equal(t, "disk full", err.Error(), "the model gets the server's own text")
+}
+
+func TestToolCallResult_DecodesIsError(t *testing.T) {
+	var r ToolCallResult
+	require.NoError(t, json.Unmarshal([]byte(`{"content":[],"isError":true}`), &r))
+	assert.True(t, r.IsError)
+}

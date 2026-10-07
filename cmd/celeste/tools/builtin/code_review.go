@@ -87,17 +87,10 @@ func (t *CodeReviewTool) Execute(ctx context.Context, input map[string]any, prog
 	maxResults := getIntArg(input, "max_results", 30)
 	includeTests := getBoolArg(input, "include_tests", false)
 
-	// Parse requested kinds
-	kindsStr := "ALL"
-	if k, ok := input["kinds"].(string); ok && k != "" {
-		kindsStr = strings.ToUpper(k)
-	}
-
-	var kinds []codegraph.CodeSmellKind
-	if kindsStr != "ALL" {
-		for _, k := range strings.Split(kindsStr, ",") {
-			kinds = append(kinds, codegraph.CodeSmellKind(strings.TrimSpace(k)))
-		}
+	kindsStr, _ := input["kinds"].(string)
+	kinds, err := parseSmellKinds(kindsStr)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 
 	results, err := t.indexer.FindCodeSmells(kinds, maxResults, includeTests)
@@ -142,4 +135,54 @@ func (t *CodeReviewTool) Execute(ctx context.Context, input map[string]any, prog
 	b.WriteString("Verify each finding by reading the source before classifying.")
 
 	return tools.ToolResult{Content: b.String()}, nil
+}
+
+// validSmellKinds lists the kinds code_review accepts, in the order its
+// schema documents them.
+var validSmellKinds = []codegraph.CodeSmellKind{
+	"ALL",
+	codegraph.SmellLazyRedirect,
+	codegraph.SmellStub,
+	codegraph.SmellPlaceholder,
+	codegraph.SmellTodoFixme,
+	codegraph.SmellEmptyHandler,
+	codegraph.SmellHardcoded,
+}
+
+// parseSmellKinds reads code_review's comma-separated kinds argument. Kinds
+// are case-insensitive; an empty argument or one naming ALL selects every
+// kind (nil). An unknown kind is an error naming the valid ones, so a typo
+// is not reported as a clean codebase (#399).
+func parseSmellKinds(arg string) ([]codegraph.CodeSmellKind, error) {
+	var kinds []codegraph.CodeSmellKind
+	all := false
+	for _, k := range strings.Split(strings.ToUpper(arg), ",") {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		known := false
+		for _, v := range validSmellKinds {
+			if codegraph.CodeSmellKind(k) == v {
+				known = true
+				break
+			}
+		}
+		if !known {
+			names := make([]string, len(validSmellKinds))
+			for i, v := range validSmellKinds {
+				names[i] = string(v)
+			}
+			return nil, fmt.Errorf("unknown kind %q; valid kinds: %s", k, strings.Join(names, ", "))
+		}
+		if k == "ALL" {
+			all = true
+			continue
+		}
+		kinds = append(kinds, codegraph.CodeSmellKind(k))
+	}
+	if all {
+		return nil, nil
+	}
+	return kinds, nil
 }

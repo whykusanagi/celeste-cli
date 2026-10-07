@@ -65,11 +65,12 @@ jobs:
 
     # CGo on (the race detector needs it anyway), so the //go:build cgo
     # tree-sitter parsers and their tests are what runs here (#376).
+    # codegraph alone takes about 20 minutes under -race (#394).
     - name: Run tests
       shell: bash
       env:
         CGO_ENABLED: "1"
-      run: go test -v -race -timeout 20m -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
+      run: go test -v -race -timeout 40m -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/test/')
 
     # A runner without a C compiler would quietly drop to the regex
     # fallback and skip every cgo-tagged test. Fail instead.

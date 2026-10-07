@@ -48,7 +48,8 @@ func writeOpenAI(w http.ResponseWriter, turn Turn) {
 	chunk(map[string]any{}, finish)
 	sse(w, "", map[string]any{
 		"id": "chatcmpl-fake", "object": "chat.completion.chunk", "created": 0, "model": "fake-model",
-		"choices": []any{}, "usage": map[string]any{"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
+		"choices": []any{}, "usage": map[string]any{"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
+			"prompt_tokens_details": map[string]any{"cached_tokens": 40}},
 	})
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 }

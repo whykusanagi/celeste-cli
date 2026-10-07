@@ -187,10 +187,33 @@ func (m *AppModel) tick(d time.Duration) tea.Cmd {
 	if m.tickPending {
 		return nil
 	}
+	if m.waitingOnModal() {
+		d = max(d, modalWaitTickInterval)
+	}
+	m.tickEvery = d
 	m.tickPending = true
 	m.tickGen++
 	gen := m.tickGen
 	return tea.Tick(d, func(t time.Time) tea.Msg { return TickMsg{Time: t, gen: gen} })
+}
+
+// waitingOnModal reports whether the screen only waits on the user: the
+// ask or permission modal is open and no reply streams or types (#401).
+func (m AppModel) waitingOnModal() bool {
+	return (m.askPrompt.Active() || m.permissionPrompt.Active()) && !m.streaming && m.typingContent == ""
+}
+
+// resumeTickAfterModal brings the fast chain back once a key closed the
+// last open modal, so the spinner does not wait out the slow tick the
+// modal had (#401).
+func (m *AppModel) resumeTickAfterModal() tea.Cmd {
+	if m.askPrompt.Active() || m.permissionPrompt.Active() || m.tickEvery < modalWaitTickInterval {
+		return nil
+	}
+	if !m.tickPending && !m.streaming && m.typingContent == "" && !m.toolProgress.HasActive() {
+		return nil // nothing animates: the chain has ended
+	}
+	return m.restartTick(typingTickInterval * 2)
 }
 
 // restartTick starts a new tick chain, superseding a pending one: its tick
@@ -402,11 +425,12 @@ func (m AppModel) onToolResult(msg ToolResultMsg) AppModel {
 		}
 	}
 	m.toolProgress, _ = m.toolProgress.Update(prog)
-	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, card)
 	if msg.IsError {
+		m.chat = m.chat.FailFunctionResult(msg.ID, msg.Name, card)
 		m.skills = m.skills.SetError(msg.Name, err)
 		return m
 	}
+	m.chat = m.chat.UpdateFunctionResult(msg.ID, msg.Name, card)
 	m.skills = m.skills.SetCompleted(msg.Name)
 	if msg.Name == "nsfw_mode" {
 		// Takes effect from the next turn: TurnRequest.Tools is fixed.

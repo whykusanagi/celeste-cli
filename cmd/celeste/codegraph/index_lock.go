@@ -55,6 +55,10 @@ var testHookReresolveParse func(path string)
 // resolves each stride of the non-Go raw edges it collected.
 var testHookReresolveResolve func()
 
+// testHookGoStore, when set, runs before the Go pass stores each file whose
+// symbols it re-stores.
+var testHookGoStore func(rel string)
+
 // testHookReplaceNonGoAfterDelete, when set, runs inside
 // Store.ReplaceNonGoEdges after the delete and before the inserts.
 var testHookReplaceNonGoAfterDelete func()
@@ -94,6 +98,32 @@ func tryLockIndex(path string) (*indexLock, error) {
 	default:
 		_ = f.Close()
 		return nil, fmt.Errorf("lock index: %w", err)
+	}
+}
+
+// IndexWriterActive reports whether an indexer (in this process or
+// another) holds the lock of the index database at dbPath. It never
+// creates the lock file, and reports false for an in-memory store ("") or
+// where the lock cannot be probed. The probe takes the lock for an
+// instant, so an Update starting in that instant skips as busy; its
+// caller's next refresh catches up.
+func IndexWriterActive(dbPath string) bool {
+	if dbPath == "" {
+		return false
+	}
+	f, err := os.OpenFile(lockPath(dbPath), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	switch err := lockFile(f); {
+	case err == nil:
+		_ = unlockFile(f)
+		return false
+	case errors.Is(err, errLocked):
+		return true
+	default:
+		return false
 	}
 }
 

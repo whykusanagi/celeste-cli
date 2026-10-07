@@ -202,12 +202,7 @@ func execAgent(ctx context.Context, cfg *config.Config, goal, workspace string) 
 	}
 
 	if tally := costFrom(ctx); tally != nil {
-		model := opts.Model
-		opts.OnTurnStats = func(st agent.TurnStats) {
-			if st.InputTokens+st.OutputTokens > 0 {
-				tally.record(model, &llm.TokenUsage{PromptTokens: st.InputTokens, CompletionTokens: st.OutputTokens})
-			}
-		}
+		opts.OnTurnStats = agentTurnRecorder(tally, opts.Model)
 	}
 
 	runner, err := agent.NewRunner(cfg, opts, &outBuf, &errBuf)
@@ -498,9 +493,9 @@ func registerCelesteStatusTool(s *Server) {
 			}
 			run, found := s.lookupRun(rawID)
 			if !found {
-				return []ContentBlock{{Type: "text", Text: fmt.Sprintf(
+				return nil, softError(
 					"unknown run %q. Background runs are held in memory by this MCP server, so a client restart ends them — the run is gone rather than lost. Checkpoints remain on disk; `celeste agent -list-runs` shows them.",
-					rawID)}}, nil
+					rawID)
 			}
 
 			out := map[string]any{
@@ -623,4 +618,20 @@ func (s *Server) projectStatus(workspace string) map[string]any {
 	out["total_symbols"] = stats.TotalSymbols
 	out["total_edges"] = stats.TotalEdges
 	return out
+}
+
+// agentTurnRecorder adds each agent turn to the session cost, with its
+// cache reads and writes so they price at their own rates (#312).
+func agentTurnRecorder(tally *sessionCost, model string) func(agent.TurnStats) {
+	return func(st agent.TurnStats) {
+		if st.InputTokens+st.OutputTokens > 0 {
+			tally.record(model, &llm.TokenUsage{
+				PromptTokens:       st.InputTokens,
+				CompletionTokens:   st.OutputTokens,
+				CacheReadTokens:    st.CacheReadTokens,
+				CacheWriteTokens:   st.CacheWriteTokens,
+				CacheWrite1hTokens: st.CacheWrite1hTokens,
+			})
+		}
+	}
 }

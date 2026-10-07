@@ -915,17 +915,15 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 		r.reportCompaction(state, ev.Text)
 	case loop.EventRuleInterrupt:
 		if r.options.OnTurnStats != nil && ev.Usage != nil {
-			r.options.OnTurnStats(TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: ev.Elapsed,
-				InputTokens: ev.Usage.PromptTokens, OutputTokens: ev.Usage.CompletionTokens, Dropped: true})
+			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: ev.Elapsed, Dropped: true}
+			stats.setUsage(ev.Usage)
+			r.options.OnTurnStats(stats)
 		}
 	case loop.EventAssistant:
 		text := strings.TrimSpace(ev.Text)
 		if r.options.OnTurnStats != nil {
 			stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: ev.Elapsed, Response: text, ToolCalls: ev.ToolNames}
-			if ev.Usage != nil {
-				stats.InputTokens = ev.Usage.PromptTokens
-				stats.OutputTokens = ev.Usage.CompletionTokens
-			}
+			stats.setUsage(ev.Usage)
 			r.options.OnTurnStats(stats)
 		}
 		state.LastAssistantResponse = text
@@ -1038,10 +1036,7 @@ func (r *Runner) runPlanningPhase(ctx context.Context, state *RunState) error {
 
 	if r.options.OnTurnStats != nil {
 		stats := TurnStats{Turn: state.Turn, MaxTurns: state.Options.MaxTurns, Elapsed: time.Since(planTurnStart)}
-		if result.Usage != nil {
-			stats.InputTokens = result.Usage.PromptTokens
-			stats.OutputTokens = result.Usage.CompletionTokens
-		}
+		stats.setUsage(result.Usage)
 		r.options.OnTurnStats(stats)
 	}
 

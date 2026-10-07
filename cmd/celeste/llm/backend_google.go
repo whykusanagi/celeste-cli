@@ -171,6 +171,7 @@ func (b *GoogleBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 			content.WriteString(ev.ContentDelta)
 		case EventMessageDone:
 			result.FinishReason = ev.FinishReason
+			result.Usage = ev.Usage
 		}
 	})
 	if err != nil {
@@ -202,7 +203,7 @@ func (b *GoogleBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 				IsFinal:      true,
 				FinishReason: ev.FinishReason,
 				ToolCalls:    acc.CompletedCalls(),
-				Usage:        nil, // Google GenAI SDK doesn't provide token usage in streaming yet
+				Usage:        ev.Usage,
 			})
 		}
 	})
@@ -228,11 +229,15 @@ func (b *GoogleBackend) SendMessageStreamEvents(ctx context.Context, messages []
 func (b *GoogleBackend) streamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, callback StreamEventCallback) error {
 	contents, genConfig := b.request(messages, tools)
 	var lastFinishReason string
+	var usage *TokenUsage
 	for chunk, err := range b.client.Models.GenerateContentStream(ctx, b.config.Model, contents, genConfig) {
 		if err != nil {
 			return err
 		}
 		touchStall(ctx)
+		if m := chunk.UsageMetadata; m != nil {
+			usage = googleUsage(m) // each chunk's counts are cumulative
+		}
 
 		for _, candidate := range chunk.Candidates {
 			if candidate.Content != nil {
@@ -290,7 +295,7 @@ func (b *GoogleBackend) streamEvents(ctx context.Context, messages []tui.ChatMes
 	}
 	callback(StreamEvent{
 		Type:         EventMessageDone,
-		Usage:        nil, // Google GenAI SDK doesn't provide token usage in streaming yet
+		Usage:        usage,
 		FinishReason: lastFinishReason,
 	})
 
@@ -586,4 +591,20 @@ func extractThoughts(content *genai.Content) string {
 	}
 
 	return text.String()
+}
+
+// googleUsage converts Gemini's usage metadata. The prompt count includes
+// the cached content (#312); thoughts are billed as output.
+func googleUsage(m *genai.GenerateContentResponseUsageMetadata) *TokenUsage {
+	completion := int(m.CandidatesTokenCount + m.ThoughtsTokenCount)
+	u := &TokenUsage{
+		PromptTokens:     int(m.PromptTokenCount),
+		CompletionTokens: completion,
+		TotalTokens:      int(m.TotalTokenCount),
+		CacheReadTokens:  int(m.CachedContentTokenCount),
+	}
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + completion
+	}
+	return u
 }

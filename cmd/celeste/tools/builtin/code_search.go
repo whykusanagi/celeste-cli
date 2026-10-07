@@ -119,8 +119,9 @@ func (t *CodeSearchTool) Execute(ctx context.Context, input map[string]any, prog
 		} else {
 			var b strings.Builder
 			fmt.Fprintf(&b, "Found %d symbols matching '%s':\n\n", len(syms), query)
+			names := codegraph.QualifiedNames(syms)
 			for i, s := range syms {
-				fmt.Fprintf(&b, "%d. %s (%s) — %s:%d\n", i+1, s.Name, s.Kind, s.File, s.Line)
+				fmt.Fprintf(&b, "%d. %s (%s) — %s:%d\n", i+1, names[i], s.Kind, s.File, s.Line)
 				if s.Signature != "" {
 					fmt.Fprintf(&b, "   %s\n", s.Signature)
 				}

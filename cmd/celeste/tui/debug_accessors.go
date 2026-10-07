@@ -23,3 +23,6 @@ func (m AppModel) DebugLLMMessages() []ChatMessage { return m.chat.GetLLMMessage
 
 // DebugInput returns the text in the input box.
 func (m AppModel) DebugInput() string { return m.input.Value() }
+
+// DebugAskPromptActive reports whether the ask modal is open.
+func (m AppModel) DebugAskPromptActive() bool { return m.askPrompt.Active() }

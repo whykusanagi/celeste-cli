@@ -263,9 +263,9 @@ func TestStore_GetCallableIDByName(t *testing.T) {
 	localID, err := s.UpsertSymbol(Symbol{Name: "get", Kind: SymbolFunction, File: "b.py", Line: 3})
 	require.NoError(t, err)
 
-	plain, ok := s.GetSymbolIDByName("get")
+	plain, ok := s.GetSymbolIDByNameInFile("get", "c.py")
 	require.True(t, ok)
-	assert.Equal(t, importID, plain, "plain lookup keeps its first-stored behaviour")
+	assert.Equal(t, importID, plain, "a lookup of any kind keeps its first-stored behaviour")
 
 	id, ok := s.GetCallableIDByName("get", "b.py")
 	require.True(t, ok)

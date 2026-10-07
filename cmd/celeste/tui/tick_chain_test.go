@@ -144,3 +144,40 @@ func TestSupersededTickIsDropped(t *testing.T) {
 	assert.Equal(t, frame, c.m.animFrame, "a superseded tick animated")
 	assert.Len(t, c.pending, 1, "a superseded tick scheduled another")
 }
+
+// #401: while the only thing on screen that moves is a tool waiting for
+// the user's answer (the ask or the permission modal, nothing streaming or
+// typing), the chain redraws once a second instead of ten times. The smoke
+// TUI wrote ~2.2 KB/s for 17 minutes while an ask waited; a terminal that
+// stops reading for half a minute fills and blocks the program.
+func TestModalWaitSlowsTheTickChain(t *testing.T) {
+	for _, modal := range []string{"ask", "permission"} {
+		t.Run(modal, func(t *testing.T) {
+			m, _ := newQueueTestApp()
+			c := &tickClock{t: t, m: m}
+			c.send(SendMessageMsg{Content: "go"})
+			c.feed(TurnStartMsg{Turn: 1})
+			c.feed(ToolTurnMsg{})
+			c.feed(ToolStartMsg{ID: "call_1", Name: modal})
+			if modal == "ask" {
+				c.send(AskRequestMsg{Question: "which?", Options: []AskOption{{Label: "x"}, {Label: "y"}}, Response: make(chan AskResponseMsg, 1)})
+			} else {
+				c.send(PermissionRequestMsg{ToolName: "bash", InputSummary: "ls", Response: make(chan PermissionResponse, 1)})
+			}
+			require.Len(t, c.pending, 1, "the chain runs while the tool waits")
+			c.tick()
+			assert.Empty(t, c.pending, "the next tick was due within 300ms")
+			require.True(t, c.m.tickPending, "the chain stopped")
+			assert.Equal(t, modalWaitTickInterval, c.m.tickEvery)
+
+			// Answering brings the fast chain back at once.
+			if modal == "ask" {
+				c.send(tea.KeyMsg{Type: tea.KeyEnter})
+			} else {
+				c.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+			}
+			require.Len(t, c.pending, 1, "the answer did not restart the fast chain")
+			assert.Equal(t, typingTickInterval*2, c.m.tickEvery)
+		})
+	}
+}

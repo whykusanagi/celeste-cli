@@ -150,7 +150,8 @@ of the workstream plan named.
 
 - [ ] OpenAI `previous_response_id` server-side state (the 2.0 design).
 - [ ] Gemini `ThoughtSignature` folded into provider blocks (the 2.0 design).
-- [ ] Anthropic cache tokens shown in `/costs` and the logs ([#312](https://github.com/whykusanagi/celeste-cli/issues/312)).
+- [x] Anthropic cache tokens shown in `/costs` and the logs, and priced at their
+      own rates in the session cost ([#312](https://github.com/whykusanagi/celeste-cli/issues/312)).
 
 ### Cleanup
 

@@ -48,3 +48,10 @@ func TestSkillsModel_CollapsedShowsDisabledReason(t *testing.T) {
 		View()
 	assert.Contains(t, view, "NSFW Mode - Venice doesn't support tools")
 }
+
+// A failure with no message still shows as a failure, not an older ✓.
+func TestSkillsModel_ErrorWithoutMessageShowsFailure(t *testing.T) {
+	view := NewSkillsModel().SetSize(80, 10).SetCompleted("read_file").SetError("bash", errors.New("")).View()
+	assert.Contains(t, view, "bash ✗")
+	assert.NotContains(t, view, "✓")
+}

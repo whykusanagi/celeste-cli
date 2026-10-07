@@ -183,3 +183,25 @@ func TestCodeReviewTool_AllCategories(t *testing.T) {
 	assert.Contains(t, result.Content, "ProcessOrder")
 	assert.Contains(t, result.Content, "STUB")
 }
+
+// #399: an unknown kind is an error naming the valid kinds; known kinds are
+// case-insensitive and may carry spaces.
+func TestCodeReviewTool_KindsValidation(t *testing.T) {
+	dir := t.TempDir()
+	store, err := codegraph.NewStore(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	tool := NewCodeReviewTool(codegraph.NewIndexerWithStore(store, dir))
+
+	result, err := tool.Execute(context.Background(), map[string]any{"kinds": "stub, bogus"}, nil)
+	require.NoError(t, err)
+	assert.True(t, result.Error)
+	assert.Contains(t, result.Content, `"BOGUS"`)
+	assert.Contains(t, result.Content, "ALL, LAZY_REDIRECT, STUB, PLACEHOLDER, TODO_FIXME, EMPTY_HANDLER, HARDCODED")
+
+	for _, kinds := range []string{"stub, todo_fixme", "ALL", "all", " "} {
+		result, err = tool.Execute(context.Background(), map[string]any{"kinds": kinds}, nil)
+		require.NoError(t, err)
+		assert.False(t, result.Error, "kinds %q: %s", kinds, result.Content)
+	}
+}
