@@ -233,3 +233,49 @@ func TestPermissionWithoutCallIDIsUnique(t *testing.T) {
 		t.Fatalf("toolCallIds = %v, want two distinct", ids)
 	}
 }
+
+// A cancel that reaches a prompt after the model's reply finished streaming,
+// but before the prompt answered, still cancels it: the editor sent it while
+// the turn ran, and ACP answers such a turn "cancelled". The test holds the
+// session store so the prompt is parked in its save, past the loop's last
+// check of its context.
+func TestCancelAfterTheReplyStillCancels(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "reply"}, fakeprovider.Turn{Text: "next"})
+	c := newTestClient(t, testConfig(srv, 0))
+	sid := c.newSession(t.TempDir())
+	c.agent.storeMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			c.agent.storeMu.Unlock()
+		}
+	}()
+	ch := c.callAsync("session/prompt", textPrompt(sid, "hi"))
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(c.agentText(), "reply") {
+		if time.Now().After(deadline) {
+			t.Fatal("the reply never streamed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c.notify("session/cancel", map[string]any{"sessionId": sid})
+	// Notifications run on the agent's read loop before it reads the next
+	// line, so once a request sent after the cancel answers, the cancel
+	// was applied. initialize does not touch the held store.
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	c.agent.storeMu.Unlock()
+	locked = false
+	select {
+	case r := <-ch:
+		if r.err != nil || stopReason(t, r.result) != "cancelled" {
+			t.Fatalf("prompt cancelled after its reply = %s %v", r.result, r.err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the prompt never answered")
+	}
+	if res, err := c.call("session/prompt", textPrompt(sid, "again")); err != nil || stopReason(t, res) != "end_turn" {
+		t.Fatalf("next prompt = %s %v", res, err)
+	}
+}

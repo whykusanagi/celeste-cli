@@ -245,14 +245,15 @@ func (s *session) close() {
 }
 
 // cancelPrompt cancels the running prompt, if any, and the prompts that
-// arrived before the cancel but have not started yet.
+// arrived before the cancel but have not started yet. The cancel func is
+// called under s.mu, so a prompt's end either sees its context cancelled
+// or has already uninstalled the func (the turn ended before the cancel).
 func (s *session) cancelPrompt() {
 	s.mu.Lock()
-	cancel := s.cancel
+	defer s.mu.Unlock()
 	s.cancelN = s.arrivedN
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if s.cancel != nil {
+		s.cancel()
 	}
 }
 
@@ -293,6 +294,16 @@ func (s *session) begin(cancel context.CancelFunc) bool {
 	}
 	s.cancel = cancel
 	return true
+}
+
+// end uninstalls a prompt's cancel func; it reports whether a
+// session/cancel reached the prompt before that. A cancel read after end
+// finds no prompt: that turn had already ended.
+func (s *session) end(pctx context.Context) (cancelled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancel = nil
+	return pctx.Err() != nil
 }
 
 // maxToolContent caps the tool result text a tool_call_update carries
@@ -351,6 +362,11 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.history = msgs
 	s.mu.Unlock()
 	s.save(a, msgs)
+	if s.end(pctx) {
+		// A session/cancel reached this prompt while it ran, even if only
+		// after the model's reply ended: ACP answers it "cancelled".
+		return &PromptResult{StopReason: StopCancelled}, nil
+	}
 	return s.finish(a, st, l.Limits, res, err)
 }
 
