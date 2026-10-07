@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func TestMCPPanelApproval(t *testing.T) {
 
 	d := a.Describe("repo", cfg)
 	assert.Contains(t, d, `"repo-cmd"`)
-	assert.Contains(t, d, filepath.Join(c.cwd, ".mcp.json"))
+	assert.Contains(t, d, strconv.Quote(filepath.Join(c.cwd, ".mcp.json")), "the source is shown quoted")
 	assert.NotContains(t, d, "ENV-SECRET-VALUE")
 
 	require.NoError(t, a.Approve("repo", cfg))
