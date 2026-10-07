@@ -137,3 +137,22 @@ func TestQualifiedNames_CppOutOfLineMemberRoundTrip(t *testing.T) {
 	require.Len(t, back.Symbols, 1, name)
 	assert.Equal(t, solo.Symbols[0].ID, back.Symbols[0].ID)
 }
+
+// A C++ namespace is not part of a member's scope (docs/CODEGRAPH.md): a
+// member of geo::Pt is found by its class, alone or after its file.
+func TestLookupSymbol_CppClassInNamespace(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "pt.cpp", "namespace geo {\nclass Pt {\npublic:\n  int x() { return 1; }\n};\n}\n")
+	idx, err := NewIndexer(dir, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+	for _, q := range []string{"Pt::x", "Pt.x", "pt.Pt.x"} {
+		res, err := idx.LookupSymbol(q)
+		require.NoError(t, err)
+		assert.Equal(t, MatchQualified, res.Match, q)
+		require.Len(t, res.Symbols, 1, q)
+		assert.Equal(t, 4, res.Symbols[0].Line, q)
+		assert.Equal(t, "pt.Pt.x", QualifiedName(res.Symbols[0]))
+	}
+}

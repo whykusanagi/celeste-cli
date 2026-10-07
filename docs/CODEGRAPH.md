@@ -285,10 +285,13 @@ The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, dir
    `AppModel.update`, `commands.Execute`, a full import path, and for other
    languages the file stem or path for a top-level symbol, `core.add`, and
    the class for a member of one, `Foo.add`, `Foo::add`, `core.Foo.add` or
-   `Geo::Qux::add` for a class nested in a module or namespace, which is
-   also how the tools print it); the name ignoring case; a name that starts
-   with or contains the query. A C++ member defined outside its class is
-   found as `Shape::make` or `Shape.make`.
+   `Geo::Qux::add` for a class nested in a Ruby module or another class
+   (the tools print it as `core.Geo.Qux.add`); the name ignoring case; a
+   name that starts with or contains the query. A C++ namespace is not part
+   of the scope: a member of `geo::Pt` is found as `Pt::x`, `Pt.x` or
+   `file.Pt.x`, not `geo::Pt::x`. A C++ member defined outside its class is
+   found as `Shape::make` or `Shape.make`, and as the tools print it,
+   `shape.Shape::make`.
 2. Every symbol of that tier is kept, non-test files first. Up to 8 are shown
    with their edges: incoming (`GetEdgesTo`) for callers, outgoing
    (`GetEdgesFrom`) for callees, walked breadth first up to `depth` hops:
