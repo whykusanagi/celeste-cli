@@ -362,7 +362,12 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.history = msgs
 	s.mu.Unlock()
 	s.save(a, msgs)
-	out, rerr := s.finish(a, st, l.Limits, res, err)
+	out, rerr, notice := s.finish(st, l.Limits, res, err)
+	if notice != "" && pctx.Err() == nil {
+		// A turn a cancel already reached gets no "Stopped: ... send
+		// another message" notice: it answers "cancelled" below.
+		s.update(a, AgentMessageChunk("\n\n"+notice))
+	}
 	if s.end(pctx) {
 		// A session/cancel reached this prompt while it ran, even if only
 		// after the model's reply ended: ACP answers it "cancelled". A
@@ -542,21 +547,20 @@ func todoPlan(workspace string) []PlanEntry {
 	return entries
 }
 
-// finish maps the run's end to a stop reason (ruling 10). A guard's or a
-// blocking hook's notice is sent first as agent text.
-func (s *session) finish(a *Agent, st *promptState, lim loop.Limits, res loop.Result, err error) (*PromptResult, *RPCError) {
-	notice := ""
+// finish maps the run's end to a stop reason (ruling 10), with the
+// guard's or blocking hook's notice the prompt sends first as agent text.
+func (s *session) finish(st *promptState, lim loop.Limits, res loop.Result, err error) (out *PromptResult, rerr *RPCError, notice string) {
 	switch res.StopReason {
 	case loop.StopError:
 		msg := "the model request failed"
 		if err != nil {
 			msg = err.Error()
 		}
-		return nil, &RPCError{Code: CodeInternal, Message: msg}
+		return nil, &RPCError{Code: CodeInternal, Message: msg}, ""
 	case loop.StopInterrupted:
-		return &PromptResult{StopReason: StopCancelled}, nil
+		return &PromptResult{StopReason: StopCancelled}, nil, ""
 	case loop.StopCap:
-		return &PromptResult{StopReason: StopMaxTurnRequests}, nil
+		return &PromptResult{StopReason: StopMaxTurnRequests}, nil, ""
 	case loop.StopIdentical:
 		notice = fmt.Sprintf("Stopped: the model made the identical tool call %d times in a row (stuck loop). Send another message (or rephrase the goal) to continue.", lim.IdenticalCalls)
 	case loop.StopProgress:
@@ -572,10 +576,7 @@ func (s *session) finish(a *Agent, st *promptState, lim loop.Limits, res loop.Re
 			notice += ": " + reason
 		}
 	}
-	if notice != "" {
-		s.update(a, AgentMessageChunk("\n\n"+notice))
-	}
-	return &PromptResult{StopReason: StopEndTurn}, nil
+	return &PromptResult{StopReason: StopEndTurn}, nil, notice
 }
 
 // shownWait bounds how long a permission ask waits for its call's

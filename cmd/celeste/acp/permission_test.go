@@ -159,9 +159,21 @@ func TestCancelRightAfterPrompt(t *testing.T) {
 	c := newTestClient(t, testConfig(srv, 0))
 	sid := c.newSession(t.TempDir())
 	for i := 0; i < 10; i++ {
+		sent := len(srv.Requests())
 		ch := c.callAsync("session/prompt", textPrompt(sid, "hi"))
 		if i%2 == 1 {
-			time.Sleep(20 * time.Millisecond) // the prompt is running by now
+			// Odd tries cancel once the model request is out (it is
+			// recorded before it is held). This only picks which path the
+			// try covers: both answer "cancelled". A request a cancelled
+			// try gave up can still reach the provider late and end the
+			// wait early; that try then covers the other path.
+			deadline := time.Now().Add(30 * time.Second)
+			for len(srv.Requests()) == sent {
+				if time.Now().After(deadline) {
+					t.Fatalf("try %d: the model request never reached the provider", i)
+				}
+				time.Sleep(time.Millisecond)
+			}
 		}
 		c.notify("session/cancel", map[string]any{"sessionId": sid})
 		select {
@@ -294,5 +306,58 @@ func TestCancelAfterTheReplyStillCancels(t *testing.T) {
 	}
 	if res, err := c.call("session/prompt", textPrompt(sid, "again")); err != nil || stopReason(t, res) != "end_turn" {
 		t.Fatalf("next prompt = %s %v", res, err)
+	}
+}
+
+// A cancel that reaches a prompt after a guard stopped its loop, but before
+// the prompt answered, answers it "cancelled" without the guard's notice:
+// the editor is never told both "Stopped: ... send another message" and
+// that the turn was cancelled. The store is held so the prompt parks in its
+// save, after the loop returned and before the stop reason is mapped.
+func TestCancelAfterAGuardStopSendsNoNotice(t *testing.T) {
+	call := fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "l", Name: "list_files", Args: `{}`}}}
+	srv := fakeprovider.NewOpenAI(t, call, call, call, call, fakeprovider.Turn{Text: "next"})
+	c := newTestClient(t, testConfig(srv, 0))
+	sid := c.newSession(t.TempDir())
+	s := c.agent.session(sid)
+	c.agent.storeMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			c.agent.storeMu.Unlock()
+		}
+	}()
+	ch := c.callAsync("session/prompt", textPrompt(sid, "loop"))
+	// The prompt sets its history just before it saves it: once that is
+	// seen, the loop has returned.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		s.mu.Lock()
+		n := len(s.history)
+		s.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the loop never returned")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c.notify("session/cancel", map[string]any{"sessionId": sid})
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	c.agent.storeMu.Unlock()
+	locked = false
+	select {
+	case r := <-ch:
+		if r.err != nil || stopReason(t, r.result) != "cancelled" {
+			t.Fatalf("prompt cancelled after its guard stop = %s %v", r.result, r.err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the prompt never answered")
+	}
+	if strings.Contains(c.agentText(), "identical tool call") {
+		t.Fatalf("a cancelled turn sent the guard's notice: %q", c.agentText())
 	}
 }
