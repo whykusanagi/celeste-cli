@@ -46,7 +46,7 @@ func NewContextTracker(session *Session, model string, contextLimitOverride ...i
 
 	// Use session's TokenCount if it's higher (from API tracking)
 	currentTokens := session.TokenCount
-	if currentTokens == 0 {
+	if currentTokens <= 0 { // a negative count from a damaged file is unknown too
 		currentTokens = totalTokens
 	}
 

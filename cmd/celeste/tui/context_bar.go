@@ -80,11 +80,16 @@ func (m ContextBarModel) View() string {
 	maxStr := ctxmgr.FormatTokenCount(m.maxTokens)
 	pctStr := fmt.Sprintf("%.0f%%", m.usagePercent)
 
-	// Progress bar: 10 segments
-	filled := int(m.usagePercent / 10)
-	if filled > 10 {
-		filled = 10
+	// Progress bar: 10 segments. Clamp before converting: a negative count
+	// from a saved session, or a NaN, must not reach strings.Repeat.
+	pct := m.usagePercent
+	if !(pct > 0) { // also catches NaN
+		pct = 0
 	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 10)
 	empty := 10 - filled
 	bar := barStyle.Render(strings.Repeat("▓", filled)) + emptyStyle.Render(strings.Repeat("░", empty))
 
