@@ -1260,10 +1260,11 @@ const (
 	// indexer holds the lock to finish it. The graph is empty; an update
 	// finishes it.
 	IndexInterrupted
-	// IndexUpdating: the build_in_progress mark is set on a graph that
-	// still holds rows (an upgrade, a rescope, or a build resumed part-way)
-	// and an indexer holds the lock. The graph is queryable; results may
-	// be incomplete until that indexer finishes.
+	// IndexUpdating: an indexer holds the lock on a graph that still
+	// holds rows: a normal update of a built index, or, with the
+	// build_in_progress mark set, an upgrade, a rescope, or a build resumed
+	// part-way. The graph is queryable; results may be incomplete until
+	// that indexer finishes.
 	IndexUpdating
 	// IndexUpdateUnfinished: as IndexUpdating, but no indexer holds the
 	// lock. The graph is queryable and may be incomplete; an update
@@ -1303,17 +1304,23 @@ func (idx *Indexer) State() (IndexState, error) {
 	if err != nil {
 		return IndexMissing, err
 	}
-	if len(v) > 0 {
+	built := len(v) > 0
+	if !built {
+		stats, err := idx.store.Stats()
+		if err != nil {
+			return IndexMissing, err
+		}
+		built = stats.TotalFiles > 0 || stats.TotalSymbols > 0
+	}
+	// A normal update changes the rows of a built index under the writer
+	// lock without setting the build mark; until it releases the lock the
+	// graph is readable but may be incomplete (review of #407).
+	switch active := IndexWriterActive(idx.store.path); {
+	case built && active:
+		return IndexUpdating, nil
+	case built:
 		return IndexBuilt, nil
-	}
-	stats, err := idx.store.Stats()
-	if err != nil {
-		return IndexMissing, err
-	}
-	if stats.TotalFiles > 0 || stats.TotalSymbols > 0 {
-		return IndexBuilt, nil
-	}
-	if IndexWriterActive(idx.store.path) {
+	case active:
 		return IndexBuilding, nil
 	}
 	return IndexMissing, nil
