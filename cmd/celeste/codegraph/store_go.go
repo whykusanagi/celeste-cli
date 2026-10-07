@@ -260,7 +260,10 @@ func DisplayName(sym Symbol) string {
 // non-Go edges are resolved again from scratch (#391) while a reader on
 // another connection sees either the old edges or the new ones. ctx is
 // checked every 1024 inserts; a cancel rolls the whole replacement back.
-func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
+//
+// The edges of symbols in the files listed in keep (files the caller could
+// not parse again) are not deleted.
+func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge, keep []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -274,7 +277,16 @@ func (s *Store) ReplaceNonGoEdges(ctx context.Context, edges []Edge) error {
 		}
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go')`); err != nil {
+	del := `DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file NOT LIKE '%.go'`
+	args := make([]any, 0, len(keep))
+	if len(keep) > 0 {
+		del += ` AND file NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
+		for _, f := range keep {
+			args = append(args, f)
+		}
+	}
+	del += `)`
+	if _, err := tx.ExecContext(ctx, del, args...); err != nil {
 		return fail(fmt.Errorf("clear non-go edges: %w", err))
 	}
 	if testHookReplaceNonGoAfterDelete != nil {

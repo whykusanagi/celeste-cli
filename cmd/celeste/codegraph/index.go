@@ -590,8 +590,14 @@ func (idx *Indexer) updateLocked(ctx context.Context) error {
 // 1024 inserted edges, so a cancelled run (Env.Close) returns promptly. A
 // cancel in this step changes no edge (the transaction rolls back), and the
 // build_in_progress mark, still set, makes the next run do this again.
+//
+// A file that cannot be read or parsed again keeps the edges it has: its
+// sources are left out of the delete, so finishing the build (and clearing
+// the mark) never leaves that file without edges. The next update that can
+// parse it re-indexes it as usual.
 func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, parsed map[string][]RawEdge) error {
 	var raw []RawEdge
+	var keep []string
 	n := 0
 	for _, path := range files {
 		if DetectLanguage(path) == "go" {
@@ -611,7 +617,13 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, par
 			testHookReresolveParse(path)
 		}
 		res, err := idx.parseFile(path)
-		if err != nil || res == nil {
+		if err != nil {
+			// Unreadable or unparseable now: its stored edges are the
+			// best there is, so the replacement keeps them.
+			keep = append(keep, path)
+			continue
+		}
+		if res == nil {
 			continue
 		}
 		for i := range res.Edges {
@@ -629,7 +641,7 @@ func (idx *Indexer) reresolveNonGoEdges(ctx context.Context, files []string, par
 		}
 		edges = append(edges, idx.resolveEdges(raw[start:min(start+1024, len(raw))])...)
 	}
-	return idx.store.ReplaceNonGoEdges(ctx, edges)
+	return idx.store.ReplaceNonGoEdges(ctx, edges, keep)
 }
 
 // indexFileSymbols parses a file, stores its symbols (with MinHash / LSH / tokens)
@@ -1245,21 +1257,44 @@ const (
 	// not (yet) built, or while a full build is in progress.
 	IndexBuilding
 	// IndexInterrupted: a full build started and never finished, and no
-	// indexer holds the lock to finish it. The graph may be empty or
-	// partial; an update or rebuild finishes it.
+	// indexer holds the lock to finish it. The graph is empty; an update
+	// finishes it.
 	IndexInterrupted
+	// IndexUpdating: the build_in_progress mark is set on a graph that
+	// still holds rows (an upgrade, a rescope, or a build resumed part-way)
+	// and an indexer holds the lock. The graph is queryable; results may
+	// be incomplete until that indexer finishes.
+	IndexUpdating
+	// IndexUpdateUnfinished: as IndexUpdating, but no indexer holds the
+	// lock. The graph is queryable and may be incomplete; an update
+	// finishes it without dropping rows.
+	IndexUpdateUnfinished
 )
 
 // State reports whether this index has been built (#399). A full build
 // that was interrupted is not built even though the graph version of an
-// earlier build is still recorded: the build emptied the graph first.
+// earlier build is still recorded: the build emptied the graph first. A
+// graph that still holds rows while the build_in_progress mark is set (an
+// upgrade or rescope in progress, or a build resumed part-way) is
+// IndexUpdating or IndexUpdateUnfinished: it can be read, and an update
+// finishes it.
 func (idx *Indexer) State() (IndexState, error) {
 	mark, err := idx.store.GetMeta(metaBuildInProgress)
 	if err != nil {
 		return IndexMissing, err
 	}
 	if mark != nil {
-		if IndexWriterActive(idx.store.path) {
+		stats, err := idx.store.Stats()
+		if err != nil {
+			return IndexMissing, err
+		}
+		populated := stats.TotalFiles > 0 || stats.TotalSymbols > 0
+		switch active := IndexWriterActive(idx.store.path); {
+		case populated && active:
+			return IndexUpdating, nil
+		case populated:
+			return IndexUpdateUnfinished, nil
+		case active:
 			return IndexBuilding, nil
 		}
 		return IndexInterrupted, nil

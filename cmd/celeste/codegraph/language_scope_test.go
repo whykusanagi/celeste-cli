@@ -107,6 +107,24 @@ func TestIndexer_UpdateDropsCrossLanguageEdgesOnce(t *testing.T) {
 	scope, err = store.GetMeta(metaEdgeScope)
 	require.NoError(t, err)
 	assert.Equal(t, edgeScope, string(scope))
+	requireFinished(t, idx)
+	requireSecondUpdateIdle(t, idx)
+}
+
+// requireSecondUpdateIdle runs another Update and asserts it re-resolves
+// nothing, changes no edge and leaves the index finished: the one-time
+// refresh is not repeated.
+func requireSecondUpdateIdle(t *testing.T, idx *Indexer) {
+	t.Helper()
+	before := fileEdgeKeys(t, idx)
+	reresolved := 0
+	testHookReresolveParse = func(string) { reresolved++ }
+	testHookReresolveResolve = func() { reresolved++ }
+	defer func() { testHookReresolveParse, testHookReresolveResolve = nil, nil }()
+	require.NoError(t, idx.Update())
+	assert.Zero(t, reresolved, "a second Update re-resolves nothing")
+	assert.Equal(t, before, fileEdgeKeys(t, idx), "a second Update changes no edge")
+	requireFinished(t, idx)
 }
 
 func symbolIn(t *testing.T, s *Store, name, file string) int64 {
@@ -151,6 +169,8 @@ func TestIndexer_UpdateDropsCrossLanguageGoEdgesOnce(t *testing.T) {
 	scope, err := store.GetMeta(metaEdgeScope)
 	require.NoError(t, err)
 	assert.Equal(t, edgeScope, string(scope))
+	requireFinished(t, idx)
+	requireSecondUpdateIdle(t, idx)
 }
 
 // A file of no known language never resolves to a Go symbol, as the old
@@ -225,14 +245,8 @@ func TestUpdate_OldEdgeScopeRescopedOnceAndCancelSafe(t *testing.T) {
 	requireFinished(t, idx)
 
 	// And it is done once: a later update re-resolves nothing.
-	reresolved := 0
-	testHookReresolveParse = func(string) { reresolved++ }
-	testHookReresolveResolve = func() { reresolved++ }
-	require.NoError(t, idx.Update())
-	testHookReresolveParse, testHookReresolveResolve = nil, nil
-	assert.Zero(t, reresolved, "a rescoped index is not rescoped again")
+	requireSecondUpdateIdle(t, idx)
 	assert.Equal(t, want, fileEdgeKeys(t, idx))
-	requireFinished(t, idx)
 }
 
 // fileEdgeKeys is edgeKeys with each end's file, so same-named symbols in
