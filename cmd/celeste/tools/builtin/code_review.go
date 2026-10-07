@@ -31,8 +31,11 @@ func NewCodeReviewTool(indexer *codegraph.Indexer) *CodeReviewTool {
 				"- LAZY_REDIRECT: Functions whose names imply action (handle, execute, process) " +
 				"but have minimal call edges and redirect language in body — they tell the user " +
 				"to 'run X' instead of doing the work.\n\n" +
-				"- STUB: Functions with zero outgoing call edges that aren't expected leaf patterns " +
-				"(constructors, getters, interface impls). Likely unfinished implementations.\n\n" +
+				"- STUB: Functions with no callers whose body is empty, holds only a TODO/FIXME " +
+				"comment, or only raises \"not implemented\". A body with any real statement " +
+				"(a one-liner, a literal return) is not a stub. The reason says \"likely dead code\" " +
+				"only when nothing reaches it implicitly (constructors, init/main, tests, interface " +
+				"implementations, exported library API and build-tag variants are named instead).\n\n" +
 				"- PLACEHOLDER: Functions with zero edges, short bodies, and placeholder language " +
 				"like 'not implemented'.\n\n" +
 				"- TODO_FIXME: Unfinished work markers, scored by impact — a TODO in a function " +

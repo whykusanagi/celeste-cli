@@ -1,7 +1,7 @@
 {
   "content": [
     {
-      "text": "Found 1 issues across 1 categories:\n\n## STUB (1)\n\n[\n  {\n    \"kind\": \"STUB\",\n    \"name\": \"helper\",\n    \"file\": \"main.go\",\n    \"line\": 5,\n    \"func_kind\": \"function\",\n    \"outgoing_edges\": 0,\n    \"incoming_edges\": 1,\n    \"score\": 3,\n    \"reason\": \"zero outgoing calls and zero body calls\",\n    \"signature\": \"func helper()\"\n  }\n]\n\nVerify each finding by reading the source before classifying.",
+      "text": "No issues detected. Codebase looks clean.",
       "type": "text"
     }
   ]

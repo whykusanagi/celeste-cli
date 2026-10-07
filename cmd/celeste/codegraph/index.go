@@ -1500,42 +1500,86 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 	var results []CodeSmell
 
-	// Cache file reads — many symbols share the same file
-	fileCache := make(map[string][]byte)
+	// Parse each file once: many symbols share a file. All files are
+	// loaded first, so a method can be matched against the interface and
+	// base-class declarations of other files (#396 G6).
+	rev := &reviewer{}
+	defer rev.close()
+	files := make(map[string]*reviewFile)
+	decls := newDeclIndex()
+	for _, c := range candidates {
+		if !includeTests && isTestFilePath(c.File) {
+			continue
+		}
+		absFile := c.File
+		if !filepath.IsAbs(absFile) {
+			absFile = filepath.Join(idx.workspace, absFile)
+		}
+		if _, seen := files[absFile]; seen {
+			continue
+		}
+		data, err := os.ReadFile(absFile)
+		if err != nil {
+			// No source, no body: nothing to judge.
+			files[absFile] = nil
+			continue
+		}
+		rf := rev.load(c.File, data)
+		files[absFile] = rf
+		decls.add(c.File, rf)
+	}
+	// Files without a function body (a C++ header, a TS interface file)
+	// still declare the methods other files implement.
+	if all, err := idx.store.GetAllFiles(); err == nil {
+		for _, fr := range all {
+			if !declLanguage(fr.Path) || (!includeTests && isTestFilePath(fr.Path)) {
+				continue
+			}
+			absFile := fr.Path
+			if !filepath.IsAbs(absFile) {
+				absFile = filepath.Join(idx.workspace, absFile)
+			}
+			if _, seen := files[absFile]; seen {
+				continue
+			}
+			data, err := os.ReadFile(absFile)
+			if err != nil {
+				continue
+			}
+			rf := rev.load(fr.Path, data)
+			files[absFile] = rf
+			decls.add(fr.Path, rf)
+		}
+	}
 
 	for _, c := range candidates {
 		if !includeTests && isTestFilePath(c.File) {
 			continue
 		}
-
-		// Read source file (cached)
 		absFile := c.File
 		if !filepath.IsAbs(absFile) {
 			absFile = filepath.Join(idx.workspace, absFile)
 		}
-		sourceData, cached := fileCache[absFile]
-		if !cached {
-			data, err := os.ReadFile(absFile)
-			if err != nil {
-				// STUB detection still works without source (graph-only)
-				if wantAll || wantKind[SmellStub] {
-					if c.OutEdges == 0 && !isExpectedLeaf(c.Name) {
-						if smell, ok := detectStub(c, 0, nil); ok {
-							results = append(results, smell)
-						}
-					}
-				}
-				continue
-			}
-			sourceData = data
-			fileCache[absFile] = sourceData
+		rf := files[absFile]
+		if rf == nil {
+			continue
 		}
 
-		sym := Symbol{Name: c.Name, Line: c.Line}
-		// Use scoped body extraction to prevent bleed into adjacent functions
-		body := findScopedBody(sourceData, sym)
+		// The function's own lines, nested functions left out (#396).
+		span := rf.span(c)
+		fnLines := rf.bodyLines(span)
+		body := joinLines(fnLines)
 		lowerBody := strings.ToLower(body)
-		bodyLines := strings.Split(strings.TrimSpace(body), "\n")
+		// bodyLines drops the definition line unless the whole function is
+		// on it.
+		innerLines := fnLines
+		if len(innerLines) > 1 {
+			innerLines = innerLines[1:]
+		}
+		bodyLines := make([]string, len(innerLines))
+		for i, l := range innerLines {
+			bodyLines[i] = l.text
+		}
 
 		// Count actual calls in body (source-level, independent of graph edges)
 		bodyCalls := countBodyCalls(body, c.Name)
@@ -1549,17 +1593,15 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- STUB detection ---
 		if wantAll || wantKind[SmellStub] {
-			if effectiveOut == 0 && !isExpectedLeaf(c.Name) {
-				if smell, ok := detectStub(c, bodyCalls, bodyLines); ok {
-					results = append(results, smell)
-				}
+			if smell, ok := detectStub(c, span, rf.reach(c, span, decls)); ok {
+				results = append(results, smell)
 			}
 		}
 
 		// --- LAZY REDIRECT detection ---
 		if wantAll || wantKind[SmellLazyRedirect] {
 			if effectiveOut <= 2 && !isExpectedLeaf(c.Name) {
-				if smell, ok := detectLazyRedirect(c, body, lowerBody, sourceData); ok {
+				if smell, ok := detectLazyRedirect(c, body, lowerBody, rf.src); ok {
 					results = append(results, smell)
 				}
 			}
@@ -1574,7 +1616,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- TODO/FIXME detection ---
 		if wantAll || wantKind[SmellTodoFixme] {
-			if smells := detectTodoFixme(c, body, bodyLines); len(smells) > 0 {
+			if smells := detectTodoFixme(c, fnLines); len(smells) > 0 {
 				results = append(results, smells...)
 			}
 		}
@@ -1588,7 +1630,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 
 		// --- HARDCODED detection ---
 		if wantAll || wantKind[SmellHardcoded] {
-			if smells := detectHardcoded(c, body, bodyLines); len(smells) > 0 {
+			if smells := detectHardcoded(c, fnLines); len(smells) > 0 {
 				results = append(results, smells...)
 			}
 		}
@@ -1718,9 +1760,18 @@ func detectLazyRedirect(c FunctionEdgeInfo, body, lowerBody string, sourceData [
 	}, true
 }
 
-func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmell, bool) {
+// detectStub reports a STUB: a function with no callers whose body is a
+// stub body (see stubBody). It never reports a declaration without a body
+// (an interface or abstract method), a body with any real statement
+// (a one-liner, a literal return), a function that has callers, an empty
+// constructor, a Python dunder, or a Protocol/ABC/@abstractmethod method.
+func detectStub(c FunctionEdgeInfo, s funcSpan, r reach) (CodeSmell, bool) {
 	// Skip code analysis files
 	if isCodeAnalysisFile(c.File) {
+		return CodeSmell{}, false
+	}
+	// A function with callers is in use, whatever its body (#396).
+	if c.InEdges > 0 {
 		return CodeSmell{}, false
 	}
 
@@ -1749,58 +1800,33 @@ func detectStub(c FunctionEdgeInfo, bodyCalls int, bodyLines []string) (CodeSmel
 		}
 	}
 
-	// If body has calls but graph missed them, not a stub
-	if bodyCalls > 0 {
+	// A base-class method that only raises "not implemented" for its
+	// subclasses to override is an abstract declaration.
+	if r.declaration {
+		return CodeSmell{}, false
+	}
+	kind := stubBody(s)
+	if kind == "" {
+		return CodeSmell{}, false
+	}
+	// An empty constructor is idiomatic (TS parameter properties, C++
+	// initializer lists, a Java no-arg constructor), not unfinished work.
+	if s.Constructor && kind == stubEmpty {
 		return CodeSmell{}, false
 	}
 
-	// Skip very short utility names (min, max, abs, etc.)
-	if len(c.Name) <= 3 {
-		return CodeSmell{}, false
-	}
-
-	// Check if the body has a return statement with a non-trivial value.
-	// Functions that return struct literals, computed values, or formatted strings
-	// are simple value functions, not stubs.
-	meaningfulLines := 0
-	hasReturn := false
-	for _, line := range bodyLines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || trimmed == "{" || trimmed == "}" ||
-			strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		meaningfulLines++
-		if strings.HasPrefix(trimmed, "return ") || strings.HasPrefix(trimmed, "return\t") {
-			// Check if it returns something meaningful (not just nil/false/0)
-			returnVal := strings.TrimPrefix(trimmed, "return ")
-			returnVal = strings.TrimPrefix(returnVal, "return\t")
-			returnVal = strings.TrimSpace(returnVal)
-			if returnVal != "" && returnVal != "nil" && returnVal != "false" &&
-				returnVal != "0" && returnVal != "\"\"" && returnVal != "None" &&
-				returnVal != "null" && returnVal != "true" {
-				hasReturn = true
-			}
-		}
-	}
-
-	// If function has a meaningful return value, it's a simple function, not a stub
-	if hasReturn {
-		return CodeSmell{}, false
-	}
-
-	// Score: zero-caller stubs are more likely dead code — unless the
-	// method implements an interface, in which case it is called through
-	// the interface (often by code outside the module, like fmt or sort)
-	// and has no direct caller by design.
+	// Score: a stub nobody calls is likely dead code, unless something
+	// reaches it implicitly: the runtime (a constructor, init, main), a
+	// test runner, an interface or base class it implements, another
+	// platform's build, or a caller outside the module (an exported API,
+	// an interface from the standard library).
 	score := 3.0
-	reason := "zero outgoing calls and zero body calls"
-	switch {
-	case c.InEdges == 0 && c.Implements != "":
-		reason = "zero outgoing calls; reached through " + c.Implements + ", not dead code"
-	case c.InEdges == 0:
+	reason := kind + " and no callers"
+	if r.reason != "" {
+		reason += "; " + r.reason + ", not dead code"
+	} else {
 		score += 2.0
-		reason = "zero outgoing AND incoming edges (likely dead code)"
+		reason += " (likely dead code)"
 	}
 	if c.Resolution == GoResolutionApproximate {
 		reason += " (approximate: file did not type-check, edges may be missing)"
@@ -1891,7 +1917,9 @@ func detectPlaceholder(c FunctionEdgeInfo, body, lowerBody string, bodyLines []s
 	}, true
 }
 
-func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []CodeSmell {
+// detectTodoFixme reports each work marker in the function's lines, on the
+// line it is on.
+func detectTodoFixme(c FunctionEdgeInfo, lines []numberedLine) []CodeSmell {
 	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
 		return nil
 	}
@@ -1907,7 +1935,8 @@ func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 	}
 
 	var results []CodeSmell
-	for lineIdx, line := range bodyLines {
+	for _, nl := range lines {
+		line := nl.text
 		for _, marker := range markers {
 			if strings.Contains(line, marker.tag) {
 				// Skip if the marker is inside a string literal (e.g., search patterns)
@@ -1934,7 +1963,7 @@ func detectTodoFixme(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 					Kind:     SmellTodoFixme,
 					Name:     c.Name,
 					File:     c.File,
-					Line:     c.Line + lineIdx,
+					Line:     nl.n,
 					FuncKind: c.Kind,
 					OutEdges: c.OutEdges,
 					InEdges:  c.InEdges,
@@ -2013,7 +2042,9 @@ func detectEmptyHandler(c FunctionEdgeInfo, body, lowerBody string) (CodeSmell, 
 	return CodeSmell{}, false
 }
 
-func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []CodeSmell {
+// detectHardcoded reports each hardcoded address or credential in the
+// function's lines, on the line it is on.
+func detectHardcoded(c FunctionEdgeInfo, lines []numberedLine) []CodeSmell {
 	if isCodeAnalysisFile(c.File) || strings.HasPrefix(c.Name, "detect") || strings.HasPrefix(c.Name, "NewCode") {
 		return nil
 	}
@@ -2062,7 +2093,8 @@ func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 	}
 
 	var results []CodeSmell
-	for lineIdx, line := range bodyLines {
+	for _, nl := range lines {
+		line := nl.text
 		for _, p := range patterns {
 			if p.check(line) {
 				snippet := strings.TrimSpace(line)
@@ -2074,7 +2106,7 @@ func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 					Kind:     SmellHardcoded,
 					Name:     c.Name,
 					File:     c.File,
-					Line:     c.Line + lineIdx,
+					Line:     nl.n,
 					FuncKind: c.Kind,
 					OutEdges: c.OutEdges,
 					InEdges:  c.InEdges,
@@ -2089,9 +2121,6 @@ func detectHardcoded(c FunctionEdgeInfo, body string, bodyLines []string) []Code
 	return results
 }
 
-// funcDefPattern matches the start of a function/method definition across languages.
-var funcDefPattern = regexp.MustCompile(`(?m)^(?:\s*(?:func|def|function|fn|pub\s+fn|async\s+function|export\s+function|export\s+default\s+function)\s+\w)`)
-
 // bodyCallPattern matches identifier followed by '(' — a call heuristic.
 var bodyCallPattern = regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*\(`)
 
@@ -2104,43 +2133,6 @@ var bodyCallKeywords = map[string]bool{
 	"elif": true, "except": true, "with": true, "assert": true,
 	"match": true, "case": true, "select": true, "go": true, "defer": true,
 	"var": true, "let": true, "const": true, "range": true,
-}
-
-// findScopedBody extracts the body of a function, stopping at the next
-// function definition rather than reading a fixed 50-line window.
-// This prevents body bleed in Python/JS where functions aren't brace-delimited.
-func findScopedBody(source []byte, sym Symbol) string {
-	lines := strings.Split(string(source), "\n")
-	if sym.Line <= 0 || sym.Line > len(lines) {
-		return ""
-	}
-
-	start := sym.Line // skip the definition line itself (1-based → 0-indexed body start)
-	if start >= len(lines) {
-		return ""
-	}
-
-	maxEnd := start + 50
-	if maxEnd > len(lines) {
-		maxEnd = len(lines)
-	}
-
-	// Scan forward, stop at the next function definition or 50 lines
-	end := maxEnd
-	for i := start; i < maxEnd; i++ {
-		if funcDefPattern.MatchString(lines[i]) {
-			end = i
-			break
-		}
-	}
-
-	if end <= start {
-		if start < len(lines) {
-			return lines[start]
-		}
-		return ""
-	}
-	return strings.Join(lines[start:end], "\n")
 }
 
 // countBodyCalls counts the number of distinct call-like patterns (name() )
