@@ -477,9 +477,9 @@ func (c *failAfterCtx) Err() error {
 	return nil
 }
 
-// An upgrade from an older graph version only redoes the Go rows: other
-// languages keep their symbols and edges even when the upgrade is cancelled,
-// and the next Update finishes it.
+// An upgrade from an older graph version drops the Go rows and parses the
+// other languages again; they keep their symbols and edges while the
+// upgrade is cut short, and the next Update finishes it.
 func TestGoTypes_CancelledUpgradeKeepsOtherLanguages(t *testing.T) {
 	files := map[string]string{}
 	for k, v := range goFixture {
@@ -498,15 +498,17 @@ func TestGoTypes_CancelledUpgradeKeepsOtherLanguages(t *testing.T) {
 	syms, err := idx.store.SearchSymbolsByName("callee")
 	require.NoError(t, err)
 	assert.NotEmpty(t, syms, "a cancelled upgrade must not drop other languages' symbols")
-	v, err := idx.store.GetMeta(metaGraphVersion)
+	// The upgrade turned the index into an unfinished build of this
+	// version (#394): the mark, not the version, says it is not done.
+	mark, err := idx.store.GetMeta(metaBuildInProgress)
 	require.NoError(t, err)
-	assert.Equal(t, "1", string(v), "the version is stamped only once the upgrade completes")
+	assert.NotNil(t, mark, "a cut-short upgrade leaves the build marked unfinished")
 
 	require.NoError(t, idx.Update())
 	got := edgeKeys(t, idx)
 	requireEdges(t, got, "caller -calls-> callee", fx+"b.UseT -calls-> ("+fx+"a.T).Update")
 	assert.Equal(t, len(before), len(got))
-	v, err = idx.store.GetMeta(metaGraphVersion)
+	v, err := idx.store.GetMeta(metaGraphVersion)
 	require.NoError(t, err)
 	assert.Equal(t, graphVersion, string(v))
 }

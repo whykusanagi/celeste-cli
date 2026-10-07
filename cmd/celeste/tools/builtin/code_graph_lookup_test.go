@@ -165,3 +165,35 @@ func TestCodeSearchTool_KeywordRanksExactFirst(t *testing.T) {
 	assert.Contains(t, res.Content, "3. (tui.AppModel).Update (method)")
 	assert.NotContains(t, res.Content, "TestUpdate")
 }
+
+// Lookup and depth together (#395 with #399): each same-named symbol an
+// exact name details, and the one symbol a qualified name picks, is walked
+// to the requested depth.
+func TestCodeGraphTool_LookupWalksDepth(t *testing.T) {
+	tool := NewCodeGraphTool(buildLookupIndex(t))
+	query := func(symbol string) string {
+		t.Helper()
+		res, err := tool.Execute(context.Background(), map[string]any{"symbol": symbol, "direction": "callers", "depth": 2}, nil)
+		require.NoError(t, err)
+		require.False(t, res.Error, res.Content)
+		return res.Content
+	}
+
+	out := query("update")
+	assert.Contains(t, out, "2 symbols are named 'update'")
+	assert.Contains(t, out, "## (tui.AppModel).update (method)")
+	assert.Contains(t, out, "<- (tui.AppModel).Update (calls)")
+	assert.Contains(t, out, "[hop 2, via (tui.AppModel).Update]")
+	assert.Contains(t, out, "## (*acp.session).update (method)")
+	assert.Contains(t, out, "<- (*acp.session).finish (calls)")
+
+	out = query("(tui.AppModel).update")
+	assert.NotContains(t, out, "acp.session")
+	assert.Contains(t, out, "<- TestUpdate0 (calls)")
+	assert.Contains(t, out, "[hop 2, via (tui.AppModel).Update]")
+
+	out = query("handleHelp")
+	assert.Contains(t, out, "<- Execute (calls)")
+	assert.Contains(t, out, "<- main (calls)")
+	assert.Contains(t, out, "[hop 2, via Execute]")
+}

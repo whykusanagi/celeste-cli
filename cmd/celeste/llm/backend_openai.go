@@ -115,11 +115,7 @@ func (b *OpenAIBackend) SendMessageSync(ctx context.Context, messages []tui.Chat
 
 		// Capture usage from the final usage-only chunk (sent by OpenAI when IncludeUsage is true).
 		if response.Usage != nil {
-			result.Usage = &TokenUsage{
-				PromptTokens:     response.Usage.PromptTokens,
-				CompletionTokens: response.Usage.CompletionTokens,
-				TotalTokens:      response.Usage.TotalTokens,
-			}
+			result.Usage = chatUsage(response.Usage)
 		}
 
 		for _, choice := range response.Choices {
@@ -227,11 +223,7 @@ func (b *OpenAIBackend) SendMessageStream(ctx context.Context, messages []tui.Ch
 
 		// Capture usage data from response (only in final chunk with StreamOptions)
 		if response.Usage != nil {
-			usage = &TokenUsage{
-				PromptTokens:     response.Usage.PromptTokens,
-				CompletionTokens: response.Usage.CompletionTokens,
-				TotalTokens:      response.Usage.TotalTokens,
-			}
+			usage = chatUsage(response.Usage)
 		}
 
 		for _, choice := range response.Choices {
@@ -362,11 +354,7 @@ func (b *OpenAIBackend) SendMessageStreamEvents(ctx context.Context, messages []
 
 		// Capture usage from the final usage-only chunk
 		if response.Usage != nil {
-			usage = &TokenUsage{
-				PromptTokens:     response.Usage.PromptTokens,
-				CompletionTokens: response.Usage.CompletionTokens,
-				TotalTokens:      response.Usage.TotalTokens,
-			}
+			usage = chatUsage(response.Usage)
 		}
 
 		for i, choice := range response.Choices {
@@ -661,4 +649,14 @@ func convertToolCalls(toolCalls []openai.ToolCall) []ToolCallResult {
 		})
 	}
 	return result
+}
+
+// chatUsage converts a Chat Completions usage, its cached prompt tokens
+// (prompt_tokens_details.cached_tokens) included (#312).
+func chatUsage(u *openai.Usage) *TokenUsage {
+	out := &TokenUsage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	if d := u.PromptTokensDetails; d != nil {
+		out.CacheReadTokens = d.CachedTokens
+	}
+	return out
 }

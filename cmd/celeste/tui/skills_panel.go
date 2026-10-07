@@ -53,8 +53,13 @@ func (s SkillsModel) SetExecuting(name string) SkillsModel {
 func (s SkillsModel) SetError(name string, err error) SkillsModel {
 	s.executingSkill = ""
 	s.lastErrorSkill = name
+	s.lastError = ""
 	if err != nil {
-		s.lastError = err.Error()
+		s.lastError = strings.TrimSpace(err.Error())
+	}
+	if s.lastError == "" {
+		// An empty message must still show the failure, not an older ✓.
+		s.lastError = "failed"
 	}
 	return s
 }
@@ -62,6 +67,16 @@ func (s SkillsModel) SetError(name string, err error) SkillsModel {
 func (s SkillsModel) SetCompleted(name string) SkillsModel {
 	s.executingSkill = ""
 	s.lastCompleted = name
+	s.lastError = ""
+	s.lastErrorSkill = ""
+	return s
+}
+
+// ResetStatus drops the last call's ⚙ row: a new session starts without
+// the old one's tool status (#398 C1).
+func (s SkillsModel) ResetStatus() SkillsModel {
+	s.executingSkill = ""
+	s.lastCompleted = ""
 	s.lastError = ""
 	s.lastErrorSkill = ""
 	return s
@@ -79,16 +94,23 @@ func (s SkillsModel) SetConfig(endpoint, model string, enabled bool, nsfw bool, 
 
 // collapsedView renders only meaningful transient signal — a running/failed/
 // completed skill — and nothing when idle, so the chat area reclaims the space.
+// Rows with free text are fitted, prefix included, to the terminal width and
+// end with … when cut (#398 C2).
 func (s SkillsModel) collapsedView() string {
+	w := s.width
+	if w <= 0 {
+		w = 80
+	}
 	switch {
 	case s.executingSkill != "":
-		return SkillExecutingStyle.Render(" ⚙ " + s.executingSkill + "…")
+		return SkillExecutingStyle.Render(" " + fitRow("⚙ "+s.executingSkill+"…", w-1))
 	case s.lastError != "":
-		return SkillErrorStyle.Render(" ⚙ " + safeLabel(s.lastErrorSkill) + ": " + fitRow(s.lastError, 80))
+		// ✗ marks a failed call the way ✓ marks a completed one (#398 T3).
+		return SkillErrorStyle.Render(" " + fitRow("⚙ "+safeLabel(s.lastErrorSkill)+" ✗ "+s.lastError, w-1))
 	case s.lastCompleted != "":
-		return SkillCompletedStyle.Render(" ⚙ " + s.lastCompleted + " ✓")
+		return SkillCompletedStyle.Render(" " + fitRow("⚙ "+s.lastCompleted+" ✓", w-1))
 	case !s.skillsEnabled && s.disabledReason != "":
-		return SkillErrorStyle.Render(" ⚙ skills off: " + fitRow(s.disabledReason, 90))
+		return SkillErrorStyle.Render(" " + fitRow("⚙ skills off: "+s.disabledReason, w-1))
 	default:
 		return ""
 	}

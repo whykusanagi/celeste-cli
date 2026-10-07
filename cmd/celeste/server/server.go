@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -152,6 +153,20 @@ func (s *Server) indexerFor(workspace string) (*codegraph.Indexer, bool, error) 
 	return idx, false, nil
 }
 
+// toolError is a soft tool failure: the call reached the tool, but the
+// tool could not answer it (missing or invalid arguments, no index, an
+// unknown run). handleCallTool returns its message verbatim in a result
+// with isError set, so the client can tell it from a successful answer
+// (#399). JSON-RPC errors stay reserved for protocol faults.
+type toolError struct{ msg string }
+
+func (e *toolError) Error() string { return e.msg }
+
+// softError builds a toolError from a format string.
+func softError(format string, args ...any) error {
+	return &toolError{msg: fmt.Sprintf(format, args...)}
+}
+
 // RegisterTool adds a tool definition and its handler to the server.
 func (s *Server) RegisterTool(def mcp.MCPToolDef, handler ToolHandler) {
 	s.mu.Lock()
@@ -241,8 +256,15 @@ func (s *Server) handleCallTool(ctx context.Context, req *mcp.Request) (*mcp.Res
 
 	content, err := handler(ctx, params.Arguments)
 	if err != nil {
-		// Tool execution error -- return as tool result with isError, not JSON-RPC error
-		errContent := []ContentBlock{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
+		// Tool execution error -- return as tool result with isError, not
+		// JSON-RPC error. A toolError carries a message meant for the
+		// caller as is; anything else is prefixed "Error: ".
+		text := fmt.Sprintf("Error: %v", err)
+		var te *toolError
+		if errors.As(err, &te) {
+			text = te.msg
+		}
+		errContent := []ContentBlock{{Type: "text", Text: text}}
 		result := map[string]any{
 			"content": errContent,
 			"isError": true,

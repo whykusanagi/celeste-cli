@@ -17,8 +17,9 @@ const (
 	// metaEdgeScope records the rule name-based edges were resolved under.
 	// edgeScope "language": a name resolves only within the caller's
 	// language (TS and JS together, C and C++ together). An index without
-	// it may hold edges that cross languages (G8 of #395); Update resolves
-	// its non-Go edges and reruns the Go pass once, then records it.
+	// it may hold edges that cross languages (G8 of #395); Update records
+	// the scope with the build_in_progress mark (RescopeGraph) and its
+	// recovery resolves the non-Go edges and reruns the Go pass once.
 	metaEdgeScope = "edge_scope"
 	edgeScope     = "language"
 	// metaGoModules holds goModFingerprint as of the last Go pass.
@@ -61,6 +62,15 @@ func (idx *Indexer) indexGo(ctx context.Context, goFiles []string, changed map[s
 		restore := changed == nil || changed[fr.rel] || !idx.sameSymbols(fr)
 		if !restore {
 			continue
+		}
+		// A cancelled run (Env.Close) stops between files; the files
+		// stored so far keep their rows and records, and the Go-pass
+		// mark makes the next run carry on from them.
+		if testHookGoStore != nil {
+			testHookGoStore(fr.rel)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if changed != nil {
 			_ = idx.store.DeleteFileSymbols(fr.rel)

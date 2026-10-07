@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -163,4 +164,92 @@ func TestStore_UnknownLanguageNeverResolvesToGo(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = s.GetSymbolIDByNameInFile("Celsius", "notes.unknownext")
 	assert.False(t, ok)
+}
+
+// A v2 index whose edges were resolved under an older edge scope is
+// rescoped through the interrupted-build path: Update stamps the scope with
+// the build_in_progress mark in one step, so an Update cancelled midway
+// keeps every row and the old edges, and the next one finishes the rescope.
+// Once finished it is not repeated, and the graph is the one a fresh build
+// gives.
+func TestUpdate_OldEdgeScopeRescopedOnceAndCancelSafe(t *testing.T) {
+	requireGoToolchain(t)
+	files := map[string]string{
+		"go.mod":    "module example.com/m\n\ngo 1.21\n",
+		"a_core.py": "def add(a, b):\n    return a + b\n",
+		"b_run.rb":  "def run_ruby\n  add(1, 2)\nend\n",
+		"c_math.rb": "def add(a, b)\n  a + b\nend\n",
+		"main.go":   "package m\n\nfunc Run() { helper() }\n\nfunc helper() {}\n",
+	}
+	ref, _ := buildFixture(t, files)
+	want, wantSyms := fileEdgeKeys(t, ref), symbolKeys(t, ref)
+
+	idx, _ := buildFixture(t, files)
+	store := idx.Store()
+	// Make it a v2 index from before the language rule: the Ruby call went
+	// to Python and the scope is an older one.
+	run := symbolIn(t, store, "run_ruby", "b_run.rb")
+	pyAdd := symbolIn(t, store, "add", "a_core.py")
+	_, err := store.db.Exec(`DELETE FROM edges WHERE source_id = ?`, run)
+	require.NoError(t, err)
+	require.NoError(t, store.AddEdge(run, pyAdd, EdgeCalls))
+	require.NoError(t, store.SetMeta(metaEdgeScope, []byte("global")))
+	stale := fileEdgeKeys(t, idx)
+	require.NotEqual(t, want, stale)
+
+	// Cancelled while the non-Go edges are resolved again.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	testHookReresolveParse = func(string) { cancel() }
+	testHookReresolveResolve = func() { cancel() }
+	t.Cleanup(func() { testHookReresolveParse = nil; testHookReresolveResolve = nil })
+	require.ErrorIs(t, idx.UpdateWithContext(ctx), context.Canceled)
+	testHookReresolveParse, testHookReresolveResolve = nil, nil
+
+	assert.Equal(t, stale, fileEdgeKeys(t, idx), "a cancelled rescope changes no edge")
+	assert.Equal(t, wantSyms, symbolKeys(t, idx), "a cancelled rescope drops no symbol")
+	mark, err := store.GetMeta(metaBuildInProgress)
+	require.NoError(t, err)
+	assert.NotNil(t, mark, "a cancelled rescope leaves the mark for the next update")
+	scope, err := store.GetMeta(metaEdgeScope)
+	require.NoError(t, err)
+	assert.Equal(t, edgeScope, string(scope), "the scope is stamped with the mark")
+	v, err := store.GetMeta(metaGraphVersion)
+	require.NoError(t, err)
+	assert.Equal(t, graphVersion, string(v))
+
+	// The next update finishes it.
+	require.NoError(t, idx.Update())
+	assert.Equal(t, want, fileEdgeKeys(t, idx))
+	assert.Equal(t, wantSyms, symbolKeys(t, idx))
+	requireFinished(t, idx)
+
+	// And it is done once: a later update re-resolves nothing.
+	reresolved := 0
+	testHookReresolveParse = func(string) { reresolved++ }
+	testHookReresolveResolve = func() { reresolved++ }
+	require.NoError(t, idx.Update())
+	testHookReresolveParse, testHookReresolveResolve = nil, nil
+	assert.Zero(t, reresolved, "a rescoped index is not rescoped again")
+	assert.Equal(t, want, fileEdgeKeys(t, idx))
+	requireFinished(t, idx)
+}
+
+// fileEdgeKeys is edgeKeys with each end's file, so same-named symbols in
+// different languages stay apart.
+func fileEdgeKeys(t *testing.T, idx *Indexer) map[string]bool {
+	t.Helper()
+	rows, err := idx.store.db.Query(`
+		SELECT COALESCE(NULLIF(s.qual_name, ''), s.name), s.file, e.kind, COALESCE(NULLIF(d.qual_name, ''), d.name), d.file
+		FROM edges e JOIN symbols s ON s.id = e.source_id JOIN symbols d ON d.id = e.target_id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var src, srcFile, kind, dst, dstFile string
+		require.NoError(t, rows.Scan(&src, &srcFile, &kind, &dst, &dstFile))
+		out[src+"@"+filepath.ToSlash(srcFile)+" -"+kind+"-> "+dst+"@"+filepath.ToSlash(dstFile)] = true
+	}
+	require.NoError(t, rows.Err())
+	return out
 }

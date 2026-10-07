@@ -67,9 +67,24 @@ type toolsListResult struct {
 	Tools []MCPToolDef `json:"tools"`
 }
 
-// ToolCallResult is the server's response to tools/call.
+// ToolCallResult is the server's response to tools/call. IsError marks a
+// call the tool itself reported as failed (MCP's isError).
 type ToolCallResult struct {
 	Content []ContentBlock `json:"content"`
+	IsError bool           `json:"isError,omitempty"`
+}
+
+// ToolError is CallTool's error for a result the server marked isError.
+// Text is the result's own text, which the model gets as the failure.
+type ToolError struct {
+	Text string
+}
+
+func (e *ToolError) Error() string {
+	if e.Text == "" {
+		return "the tool reported an error without a message"
+	}
+	return e.Text
 }
 
 // ContentBlock is a single content item in a tool call response.
@@ -336,7 +351,8 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPToolDef, error) {
 }
 
 // CallTool executes a tool on the MCP server and returns the text result.
-// Multiple text content blocks are joined with newlines.
+// Multiple text content blocks are joined with newlines. A result the server
+// marked isError comes back as a *ToolError carrying that text.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (string, error) {
 	if err := c.acquire(ctx); err != nil {
 		return "", fmt.Errorf("tools/call: %w", err)
@@ -383,7 +399,11 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 		}
 	}
 
-	return strings.Join(texts, "\n"), nil
+	text := strings.Join(texts, "\n")
+	if result.IsError {
+		return "", &ToolError{Text: text}
+	}
+	return text, nil
 }
 
 // Close shuts down the client and its transport.

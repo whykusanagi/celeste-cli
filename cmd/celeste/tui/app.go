@@ -33,6 +33,11 @@ import (
 // default 60 chars/sec = 3 per tick) sets how many characters each tick shows.
 const typingTickInterval = 50 * time.Millisecond // 20fps
 
+// modalWaitTickInterval is the chain's interval while only a tool waiting
+// on the ask or permission modal moves on screen (#401): the elapsed time
+// still counts, a redraw a second instead of ten.
+const modalWaitTickInterval = time.Second
+
 // AppModel is the root model for the Celeste TUI application.
 type AppModel struct {
 	// Sub-components
@@ -82,6 +87,7 @@ type AppModel struct {
 	// scheduled and not yet handled: at most one chain runs (2.0 F2e).
 	tickPending bool
 	tickGen     uint64
+	tickEvery   time.Duration // the interval the chain's last tick was scheduled with
 
 	// streamDone is true once StreamDoneMsg has been received for the
 	// currently-rendering assistant message. It coordinates the typing
@@ -264,7 +270,11 @@ type SummaryOutcome struct {
 	Cut         int
 	Messages    []ChatMessage
 	Line        string
-	TokensAfter int
+	TokensAfter int // the summarized history alone (summary and kept messages)
+	// ContextTokens is what the next request sends after the summary: the
+	// system prompt, the tool schemas, the summary and the kept messages
+	// (#400). 0: unknown, and TokensAfter is shown.
+	ContextTokens int
 }
 
 // AgentCommandRunner is an optional extension for handling /agent from TUI.
@@ -506,8 +516,47 @@ func (m AppModel) costsSummary() string {
 	if limit == 0 {
 		tokens = fmt.Sprintf("%d used (limit known after the first reply)", used)
 	}
-	return fmt.Sprintf("Session Costs:\n  Tokens: %s\n  Turns: %d\n\nFor detailed cost breakdown: `celeste costs`",
-		tokens, m.contextBar.turnCount)
+	out := fmt.Sprintf("Session Costs:\n  Tokens: %s\n  Turns: %d", tokens, m.contextBar.turnCount)
+	if c, ok := m.llmClient.(SessionCoster); ok {
+		out += sessionCostText(c.SessionCost())
+	}
+	return out
+}
+
+// SessionCoster is implemented by clients that price the session's usage
+// (the chat adapter's cost tracker), for /costs.
+type SessionCoster interface {
+	SessionCost() SessionCost
+}
+
+// SessionCost is the session's usage and its price: Input is every prompt
+// token, CacheRead and CacheWrite the parts of it read from and written to
+// the prompt cache, priced at their own rates (#312).
+type SessionCost struct {
+	Input, Output         int
+	CacheRead, CacheWrite int
+	USD                   float64
+	Requests              int
+	// Unpriced counts requests on models without pricing: their tokens are
+	// counted, their cost is not.
+	Unpriced int
+}
+
+// sessionCostText is /costs' usage and cost lines.
+func sessionCostText(c SessionCost) string {
+	if c.Requests == 0 {
+		return "\n  Cost: nothing billed yet"
+	}
+	input := config.FormatNumber(c.Input) + " tokens"
+	if c.CacheRead > 0 || c.CacheWrite > 0 {
+		input += fmt.Sprintf(" (cache read %s · cache write %s)", config.FormatNumber(c.CacheRead), config.FormatNumber(c.CacheWrite))
+	}
+	out := fmt.Sprintf("\n  Input: %s\n  Output: %s tokens\n  Cost: %s (%d requests)",
+		input, config.FormatNumber(c.Output), config.FormatCost(c.USD), c.Requests)
+	if c.Unpriced > 0 {
+		out += fmt.Sprintf("\n  %d of %d requests ran on a model without pricing; the cost leaves them out.", c.Unpriced, c.Requests)
+	}
+	return out
 }
 
 // statusSessionName is the session segment: the current session's name, or
@@ -816,14 +865,18 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.permissionPrompt.Active() {
 			var cmd tea.Cmd
 			m.permissionPrompt, cmd = m.permissionPrompt.Update(msg)
-			return m, cmd
+			// Resume before the return copies m: the call changes its tick state.
+			resume := m.resumeTickAfterModal()
+			return m, tea.Batch(cmd, resume)
 		}
 
 		// If ask prompt is active, route keys to it before normal handling
 		if m.askPrompt.Active() {
 			var cmd tea.Cmd
 			m.askPrompt, cmd = m.askPrompt.Update(msg)
-			return m, cmd
+			// Resume before the return copies m: the call changes its tick state.
+			resume := m.resumeTickAfterModal()
+			return m, tea.Batch(cmd, resume)
 		}
 
 		// The MCP panel and the selector act on single keys too (#320).
@@ -1764,8 +1817,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Persist session state
 					m.persistSession()
 				}
-				if result.StateChange.ClearHistory {
+				// With NewSession, the "new" action saves the old session's
+				// transcript and then clears the chat itself; clearing first
+				// would save it empty (#398). /session clear does the same.
+				// Without a session manager there is nothing to save, and the
+				// chat is cleared here.
+				sessionClears := result.StateChange.NewSession ||
+					(result.StateChange.SessionAction != nil && result.StateChange.SessionAction.Action == "clear")
+				if result.StateChange.ClearHistory && (!sessionClears || m.sessionManager == nil) {
 					m.chat = m.chat.Clear()
+					m.skills = m.skills.ResetStatus()
 					m.untrackPlan()
 				}
 				if result.StateChange.NewSession {
@@ -3244,8 +3305,9 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				m.claimWorkspace(s)
 				m.currentSession = s
 
-				// Clear current chat
+				// Clear current chat, and the old session's ⚙ tool status
 				m.chat = m.chat.Clear()
+				m.skills = m.skills.ResetStatus()
 				m.untrackPlan()
 
 				// Restore messages
@@ -3378,12 +3440,16 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		}
 
 	case "clear":
+		// Save the old session first: one never saved has no file yet (#398)
+		m.persistSession()
+
 		// Create new session automatically
 		newSession := m.sessionManager.NewSession()
 		if s, ok := newSession.(Session); ok {
 			m.currentSession = s
 			m = m.resetContextForNewSession()
 		}
+		m.chat = m.chat.Clear()
 		// Refresh system prompt so /user and /confirm changes take effect
 		if refresher, ok := m.llmClient.(PromptRefresher); ok {
 			refresher.RefreshSystemPrompt()

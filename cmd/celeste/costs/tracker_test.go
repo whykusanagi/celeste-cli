@@ -11,7 +11,7 @@ import (
 
 func TestSessionTracker_RecordUsage(t *testing.T) {
 	tracker := NewSessionTracker()
-	tracker.RecordUsage("grok-4-1-fast", 1000, 500)
+	tracker.RecordUsage("grok-4-1-fast", Usage{Input: 1000, Output: 500})
 
 	s := tracker.GetSummary()
 	assert.Equal(t, "grok-4-1-fast", s.Model)
@@ -23,8 +23,8 @@ func TestSessionTracker_RecordUsage(t *testing.T) {
 
 func TestSessionTracker_MultipleTurns(t *testing.T) {
 	tracker := NewSessionTracker()
-	tracker.RecordUsage("grok-4-1-fast", 1000, 500)
-	tracker.RecordUsage("grok-4-1-fast", 2000, 1000)
+	tracker.RecordUsage("grok-4-1-fast", Usage{Input: 1000, Output: 500})
+	tracker.RecordUsage("grok-4-1-fast", Usage{Input: 2000, Output: 1000})
 
 	s := tracker.GetSummary()
 	assert.Equal(t, 3000, s.TotalInput)
@@ -34,7 +34,7 @@ func TestSessionTracker_MultipleTurns(t *testing.T) {
 
 func TestSessionTracker_SaveLoad(t *testing.T) {
 	tracker := NewSessionTracker()
-	tracker.RecordUsage("claude-sonnet-4", 5000, 2000)
+	tracker.RecordUsage("claude-sonnet-4", Usage{Input: 5000, Output: 2000})
 
 	path := filepath.Join(t.TempDir(), "cost.json")
 	require.NoError(t, tracker.Save(path))

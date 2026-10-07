@@ -351,6 +351,16 @@ func (m ChatModel) AddFunctionCall(call FunctionCall) ChatModel {
 // tool call ID, so parallel calls to the same tool never swap results. An
 // empty id falls back to the latest executing call with this name.
 func (m ChatModel) UpdateFunctionResult(id, name, result string) ChatModel {
+	return m.finishFunctionCall(id, name, result, "completed")
+}
+
+// FailFunctionResult is UpdateFunctionResult for a call that failed: the
+// Ctrl+K log shows it with ✗ (#398).
+func (m ChatModel) FailFunctionResult(id, name, result string) ChatModel {
+	return m.finishFunctionCall(id, name, result, "error")
+}
+
+func (m ChatModel) finishFunctionCall(id, name, result, status string) ChatModel {
 	for i := len(m.functionCalls) - 1; i >= 0; i-- {
 		c := m.functionCalls[i]
 		if c.Status != "executing" {
@@ -358,7 +368,7 @@ func (m ChatModel) UpdateFunctionResult(id, name, result string) ChatModel {
 		}
 		if (id != "" && c.ID == id) || (id == "" && c.Name == name) {
 			m.functionCalls[i].Result = result
-			m.functionCalls[i].Status = "completed"
+			m.functionCalls[i].Status = status
 			break
 		}
 	}

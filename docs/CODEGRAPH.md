@@ -22,7 +22,9 @@ flush per write (each one costs tens of milliseconds on Windows). The index is
 derived data: a power loss can drop the last commits but cannot corrupt the
 database, and commits are lost newest first. A full build sets
 `meta.build_in_progress` before it empties the graph and clears it only after
-its last pass commits, and the Go pass does the same with
+its last pass commits; it stamps `meta.graph_version` and `meta.edge_scope`
+in the transaction that empties the graph, so the rows of an unfinished build are never taken for an
+older index's. The Go pass does the same with
 `meta.go_pass_pending`. An `Update` that finds the first mark finishes the
 build without resetting the graph: it keeps the files already indexed,
 indexes the missing or changed ones, rewrites every non-Go edge (it
@@ -70,8 +72,8 @@ symbols (id, name, kind, package, file, line, signature, decorators, base_classe
          qual_name, implements, minhash BLOB)
 edges   (source_id, target_id, kind)  -- directional, unique on (src, dst, kind)
 files   (path, language, size, content_hash, indexed_at, resolution)
-meta    (key, value)                  -- minhash_seeds, graph_version, go_modules,
-                                      -- build_in_progress, go_pass_pending
+meta    (key, value)                  -- minhash_seeds, graph_version, edge_scope,
+                                      -- go_modules, build_in_progress, go_pass_pending
 ```
 
 Indexed on `symbols.name`, `symbols.file`, `symbols.package`, `symbols.qual_name`, `edges.source_id`, `edges.target_id`.
@@ -83,12 +85,22 @@ prints it: `pkg/path.Func`, `(*pkg/path.T).Method`, `(pkg/path.Iface).Method`.
 
 `meta.graph_version` records the edge format. Version 2 is the type-checked
 Go graph (#375). When an existing index has another version (or none),
-`Update` deletes only the Go rows (symbols, files, BM25/LSH rows and every
-edge touching a Go symbol) in one transaction and re-runs the Go pass; other
-languages keep their rows, because version 2 does not change them. The
-version is stamped only when that update completes, so an update cancelled
-part-way (a session closed during indexing) is redone by the next one. An
-empty index gets a full build. Go `init` functions are stored under
+`Update` turns it into an unfinished build of version 2 in one transaction:
+it deletes the Go rows (symbols, files, BM25/LSH rows and every edge touching
+a Go symbol), marks every other file for parsing again, sets
+`meta.build_in_progress` and stamps the version and edge scope. It then finishes the build
+as it finishes an interrupted one, so the other languages keep their rows
+until each file is parsed again, every non-Go edge is resolved again, and the
+result is the graph a fresh build gives (an index from v1.16 resolved each
+file's calls before the later files were stored, so it lacks edges a build
+has). Until the upgrade finishes, a re-parsed file's non-Go edges (into and
+out of it) are missing: they return when the non-Go edges are resolved again
+in one transaction. An update cut short part-way (a session closed during
+indexing) keeps what it stored, and the next one carries on. Each run
+type-checks the whole module before it stores any Go file, so a run must
+outlast that type-check (and the non-Go re-resolve) to add Go rows; runs
+shorter than that never finish the Go pass. An empty index gets a full
+build. Go `init` functions are stored under
 `pkg/path.init#<file>`, one per file, since every `init` in a package shares
 the name `pkg/path.init`.
 
@@ -215,11 +227,14 @@ resolve at insert time:
 
 `meta.edge_scope` records that rule. An index built before it may hold edges
 that cross languages, so the next `Update` resolves every non-Go edge again
-and reruns the Go pass, once. On a large repository that first `Update` takes
-about as long as a full build. If it is cancelled (for example by a tool
-deadline), `edge_scope` is not recorded and the next `Update` repeats the
-work; nothing is lost in between. Running `celeste index` once after
-upgrading does it up front.
+and reruns the Go pass, once. It does so through the interrupted-build path:
+in one transaction it sets `meta.build_in_progress` and stamps `edge_scope`
+(no rows are deleted), then finishes the build as above and clears the mark.
+On a large repository that first `Update` takes about as long as a full
+build. If it is cancelled (for example by a tool deadline), the mark stays
+set and the next `Update` finishes the work; nothing is lost in between, and
+the old edges stay readable until the new ones replace them in one
+transaction. Running `celeste index` once after upgrading does it up front.
 
 ## Similarity Search: MinHash + Jaccard
 
@@ -255,7 +270,7 @@ No API calls, no vector database, runs entirely offline. Not as good at pure sem
 
 ## Graph Queries
 
-The `code_graph` tool accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, currently only 1-hop implemented).
+The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, direction (`callers`/`callees`/`both`), and depth (1-3, default 1; larger values are capped at 3). Direction is matched case-insensitively; an unknown one is an error.
 
 1. Find the symbol (`LookupSymbol`), taking the first of these that matches:
    the exact name; a qualified name, in any form the tools print or a Go
@@ -265,13 +280,29 @@ The `code_graph` tool accepts a symbol name, direction (`callers`/`callees`/`bot
    name that starts with or contains the query.
 2. Every symbol of that tier is kept, non-test files first. Up to 8 are shown
    with their edges: incoming (`GetEdgesTo`) for callers, outgoing
-   (`GetEdgesFrom`) for callees. More than 8 same-named symbols, or several
-   partial matches, are listed by qualified name, kind and `file:line` so the
-   caller can query one of them.
+   (`GetEdgesFrom`) for callees, walked breadth first up to `depth` hops:
+   depth 2 adds callers of callers (or callees of callees), depth 3 one hop
+   more. More than 8 same-named symbols, or several partial matches, are
+   listed by qualified name, kind and `file:line` so the caller can query one
+   of them.
 3. Returns formatted listing with symbol kind, file, line, signature, and relationships
 
 `code_search` in keyword mode uses the same ranking (exact and qualified
 names first, then prefix and substring matches) and prints qualified names.
+
+The first hop lists every edge of the queried symbol, in the same format a
+one-hop query has always used. Later hops list each symbol once, at the hop
+where it is first reached, never the queried symbol itself, and mark it with
+the hop and the symbol it was reached through:
+
+```
+  Called by:
+    <- middle (calls) main.go:5
+    <- main (calls) main.go:3 [hop 2, via middle]
+```
+
+The first hop always lists every edge. Past the first hop, a direction stops
+after 200 entries and says so.
 
 Go methods and interface methods are shown with their receiver,
 `(*codegraph.Indexer).Build`, so same-named methods stay apart; a method
@@ -291,6 +322,25 @@ method with its edge counts and source body and reports these kinds:
   telling the user to use the CLI.
 - `PLACEHOLDER`, `TODO_FIXME`, `EMPTY_HANDLER`, `HARDCODED`: text and shape
   checks on the body.
+
+The `kinds` argument is a comma-separated, case-insensitive list of these
+kinds, or `ALL` (the default). An unknown kind is an error that lists the
+valid ones, so a typo is never reported as a clean codebase.
+
+## Queries Without an Index
+
+The MCP query tools (`celeste_code_review`, `celeste_code_graph`,
+`celeste_code_search`, `celeste_code_symbols`) never build an index. On a
+workspace whose index was never built they return an error result
+(`isError: true`) saying there is no code graph index and to run
+`celeste_index` with `operation: "rebuild"` or `celeste index`, instead of an
+empty answer that reads as "no findings" or "symbol not found". A query does
+not create the index database either. While another indexer is building the
+index they say it is being built, and when a full build was interrupted (killed
+after it emptied the graph) they say the build did not finish and to run
+`celeste_index` with `operation: "update"` or `"rebuild"`. Every soft tool error (a missing or
+invalid argument, no index, an unknown background run) is an `isError`
+result with the tool's message; JSON-RPC errors are kept for protocol faults.
 
 ## LSH Banding (planned)
 
