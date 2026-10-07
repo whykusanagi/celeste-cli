@@ -363,14 +363,20 @@ method with its edge counts and source body and reports these kinds:
   exported API of a library package (an exported Go function or method
   outside package `main` and outside any `internal/` directory, an exported
   JS/TS function, a public method of an exported JS/TS class, a public
-  method of a public Java class), and a function in a Go file with build
+  method of a public Java class, a public method of a PHP class (`public`
+  or no visibility modifier) or of a Ruby class or module (not after a bare
+  `private`/`protected`, not `private def x`, not named by `private :x`;
+  for `def self.x`, not named by `private_class_method`), and a public
+  member of a C++ class or struct declared in a header, defined in the
+  class or outside it as `void C::f() {}`), and a function in a Go file with build
   constraints (a `//go:build` line or a GOOS/GOARCH file name suffix), whose
   callers are in another platform's build. A base-class method that only
   raises "not implemented" while its own subclasses override it is an abstract
   declaration, not a STUB.
 
-  Public methods of PHP, Ruby and C++ classes are not treated as library
-  API: an uncalled one is reported as likely dead code.
+  Private and protected methods are still checked, and so are the members
+  of a C++ class defined only in a `.cpp` file, which no other translation
+  unit can call.
 - `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
   which has at most two outgoing calls and redirects instead, for example by
   telling the user to use the CLI.

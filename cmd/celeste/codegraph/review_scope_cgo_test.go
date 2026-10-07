@@ -26,9 +26,15 @@ var treeSitterReviewCases = []reviewCase{
 		lang:   "php",
 		scoped: []string{"TODO_FIXME app.php:checkout:26", "TODO_FIXME canvas.php:draw:7"},
 		stubs: []string{
-			"STUB app.php:checkout:24 dead",
+			// Public methods (explicit or by default) of a class are
+			// library API; private and protected ones are checked.
+			"STUB app.php:checkout:24 live",
 			"STUB app.php:deadFunction:30 dead",
 			"STUB canvas.php:draw:5 live",
+			"STUB lib.php:find:5 live",
+			"STUB lib.php:save:9 live",
+			"STUB lib.php:cache:13 dead",
+			"STUB lib.php:hook:17 dead",
 		},
 	},
 	{
@@ -71,7 +77,18 @@ var treeSitterReviewCases = []reviewCase{
 			"STUB shapes.cpp:sides:21 live",
 			// Methods defined outside their class (.hpp/.h + .cpp).
 			"STUB shape.cpp:D::f:3 live",
-			"STUB shape.cpp:D::g:5 dead",
+			// Public members of a class declared in a header are library
+			// API, defined in the class or outside it; private ones, the
+			// default members of a class, and a class local to a .cpp are
+			// checked.
+			"STUB shape.cpp:D::g:5 live",
+			"STUB store.cpp:Store::put:3 live",
+			"STUB store.cpp:Store::evict:5 dead",
+			"STUB store.h:inlinePub:4 live",
+			"STUB store.h:inlinePriv:7 dead",
+			"STUB store.h:open:11 live",
+			"STUB store.h:defaultPriv:15 dead",
+			"STUB local.cpp:unusedLocal:3 dead",
 			"STUB widget.cpp:Button::draw:3 live",
 			"STUB widget.cpp:Button::paintEvent:5 live",
 		},
@@ -92,9 +109,19 @@ var treeSitterReviewCases = []reviewCase{
 			"TODO_FIXME null.rb:initialize:3",
 		},
 		stubs: []string{
-			"STUB bank.rb:withdraw:19 dead",
+			// Public methods of a class are library API; the ones private
+			// or protected (a bare private, private def, private :name)
+			// are checked.
+			"STUB bank.rb:withdraw:19 live",
 			"STUB bank.rb:dead_rb:24 dead",
 			"STUB null.rb:initialize:2 live",
+			"STUB lib.rb:fetch:2 live",
+			"STUB lib.rb:secret:7 dead",
+			"STUB lib.rb:put:12 live",
+			"STUB lib.rb:hidden:15 dead",
+			"STUB lib.rb:later:18 dead",
+			"STUB lib.rb:build:22 live",
+			"STUB lib.rb:guarded:27 dead",
 		},
 	},
 }

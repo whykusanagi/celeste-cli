@@ -4,6 +4,7 @@ package codegraph
 
 import (
 	"path"
+	"slices"
 	"strings"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -13,7 +14,7 @@ import (
 // grammar name SupportedLanguage gives for the file's extension) and
 // returns the span of every function the indexer's walker records as a
 // symbol, and the base types of every class it declares.
-func (r *reviewer) treeSitterSpans(lang string, src []byte) ([]funcSpan, map[string][]string, bool) {
+func (r *reviewer) treeSitterSpans(lang, relPath string, src []byte) ([]funcSpan, map[string][]string, bool) {
 	if lang == "" || lang == "go" || !multiLangGrammars[lang] {
 		return nil, nil, false
 	}
@@ -39,6 +40,7 @@ func (r *reviewer) treeSitterSpans(lang string, src []byte) ([]funcSpan, map[str
 
 	w := &multiWalker{
 		src:      src,
+		path:     relPath,
 		lang:     lang,
 		spec:     &spec,
 		classSet: nodeTypeSet(spec.ClassTypes),
@@ -63,6 +65,9 @@ type spanCtx struct {
 	public   bool   // Java: the class is public
 	exported bool   // JS/TS: the class is exported
 	trait    string // Rust: the trait of an `impl Trait for X`
+	// hidden: C++, the members here are not public (a class's default
+	// access, or after private: or protected:).
+	hidden bool
 }
 
 // interfaceTypes are the interface containers the walker does not treat as
@@ -85,7 +90,8 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *spa
 	}
 	kind := node.Kind()
 	if w.classSet[kind] || (interfaceTypes[kind] && w.isJSLike()) {
-		inner := spanCtx{class: w.extractName(node), bases: classHasBases(node), public: w.hasModifier(node, "public")}
+		inner := spanCtx{class: w.extractName(node), bases: classHasBases(node), public: w.hasModifier(node, "public"),
+			hidden: w.lang == "cpp" && kind == "class_specifier"}
 		if inner.class != "" {
 			out.bases[inner.class] = append(out.bases[inner.class], w.classBaseTypes(node)...)
 		}
@@ -121,6 +127,19 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *spa
 		}
 		return
 	}
+	if ctx.class != "" && w.lang == "cpp" && kind == "field_declaration_list" {
+		// An access specifier sets the access of the members after it.
+		inner := ctx
+		for i := uint(0); i < node.NamedChildCount(); i++ {
+			child := node.NamedChild(i)
+			if child != nil && child.Kind() == "access_specifier" {
+				inner.hidden = strings.TrimSpace(w.nodeText(child)) != "public"
+				continue
+			}
+			w.collectSpans(child, inner, out)
+		}
+		return
+	}
 	if ctx.class != "" && w.lang == "cpp" && kind == "field_declaration" {
 		if d := node.ChildByFieldName("declarator"); d != nil && d.Kind() == "function_declarator" {
 			if name := extractCIdentifier(w.nodeText(d)); name != "" {
@@ -128,6 +147,7 @@ func (w *multiWalker) collectSpans(node *tree_sitter.Node, ctx spanCtx, out *spa
 				if cppOverrides(node) {
 					s.Annotations = append(s.Annotations, "Override")
 				}
+				s.Exported = w.cppAPI(ctx)
 				out.spans = append(out.spans, s)
 			}
 			return
@@ -266,6 +286,15 @@ func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name string, ctx spanC
 	if w.isJSLike() && ctx.exported && kind == "method_definition" && w.publicMethod(fn) {
 		s.Exported = true
 	}
+	// PHP and Ruby: the public methods of a class (every class is visible
+	// to the code that loads its file). C++: the public members of a class
+	// declared in a header, which other translation units include.
+	switch {
+	case w.lang == "php" && ctx.class != "" && kind == "method_declaration" && w.phpPublic(fn),
+		w.lang == "ruby" && ctx.class != "" && w.rubyPublic(fn, name),
+		w.lang == "cpp" && ctx.class != "" && w.cppAPI(ctx):
+		s.Exported = true
+	}
 	s.Trait = ctx.trait
 	if w.lang == "cpp" && cppOverrides(fn) {
 		s.Annotations = append(s.Annotations, "Override")
@@ -286,6 +315,104 @@ func (w *multiWalker) spanOf(outer, fn *tree_sitter.Node, name string, ctx spanC
 		}
 	}
 	return s
+}
+
+// phpPublic reports whether a PHP method is public: a public visibility
+// modifier, or none (PHP's default).
+func (w *multiWalker) phpPublic(fn *tree_sitter.Node) bool {
+	for i := uint(0); i < fn.NamedChildCount(); i++ {
+		child := fn.NamedChild(i)
+		if child != nil && child.Kind() == "visibility_modifier" {
+			return strings.TrimSpace(w.nodeText(child)) == "public"
+		}
+	}
+	return true
+}
+
+// rubyPublic reports whether a Ruby method is public. An instance method is
+// private or protected when its def is the argument of private or protected
+// (`private def x`), when its name is (`private :x`), or when the nearest
+// bare private, protected or public before it in the class body is not
+// public. A singleton method (`def self.x`) is private only through
+// private_class_method.
+func (w *multiWalker) rubyPublic(fn *tree_sitter.Node, name string) bool {
+	singleton := fn.Kind() == "singleton_method"
+	stmt := fn
+	if p := fn.Parent(); p != nil && p.Kind() == "argument_list" {
+		if call := p.Parent(); call != nil && call.Kind() == "call" {
+			switch w.rubyCallName(call) {
+			case "private", "protected":
+				if !singleton {
+					return false
+				}
+			case "private_class_method":
+				return false
+			}
+			stmt = call
+		}
+	}
+	body := stmt.Parent()
+	if body == nil {
+		return true
+	}
+	hidden := []string{"private", "protected"}
+	if singleton {
+		hidden = []string{"private_class_method"}
+	}
+	for i := uint(0); i < body.NamedChildCount(); i++ {
+		call := body.NamedChild(i)
+		if call == nil || call.Kind() != "call" || !slices.Contains(hidden, w.rubyCallName(call)) {
+			continue
+		}
+		if args := call.ChildByFieldName("arguments"); args != nil {
+			for j := uint(0); j < args.NamedChildCount(); j++ {
+				arg := args.NamedChild(j)
+				if arg != nil && strings.TrimPrefix(strings.Trim(w.nodeText(arg), `"'`), ":") == name {
+					return false
+				}
+			}
+		}
+	}
+	if singleton {
+		return true
+	}
+	for prev := stmt.PrevNamedSibling(); prev != nil; prev = prev.PrevNamedSibling() {
+		if prev.Kind() != "identifier" {
+			continue
+		}
+		switch w.nodeText(prev) {
+		case "private", "protected":
+			return false
+		case "public":
+			return true
+		}
+	}
+	return true
+}
+
+// rubyCallName is the method a receiverless Ruby call calls ("private" for
+// `private :x`), or "" for a call with a receiver.
+func (w *multiWalker) rubyCallName(call *tree_sitter.Node) string {
+	if call.ChildByFieldName("receiver") != nil {
+		return ""
+	}
+	if m := call.ChildByFieldName("method"); m != nil {
+		return w.nodeText(m)
+	}
+	return ""
+}
+
+// cppAPI reports whether a C++ member in ctx is library API: public, in a
+// class declared in a header.
+func (w *multiWalker) cppAPI(ctx spanCtx) bool {
+	if ctx.hidden {
+		return false
+	}
+	switch strings.ToLower(path.Ext(strings.ReplaceAll(w.path, "\\", "/"))) {
+	case ".h", ".hh", ".hpp", ".hxx", ".h++":
+		return true
+	}
+	return false
 }
 
 // publicMethod reports whether a JS/TS method is public: no private or
