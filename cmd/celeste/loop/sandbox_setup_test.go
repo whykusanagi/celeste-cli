@@ -93,10 +93,16 @@ func TestUserSandboxSettingsApply(t *testing.T) {
 
 // A child in another workspace resolves its own policy: the user's
 // settings, then that workspace's file, whose loosening needs its own
-// trust (a parent's trusted loosening never carries over).
+// trust (a parent's trusted loosening never carries over). This test
+// now expects an error since workspaces outside the parent are rejected.
 func TestNestedInAnotherWorkspaceResolvesItsOwnPolicy(t *testing.T) {
 	home := setupHome(t)
-	ws, other := t.TempDir(), t.TempDir()
+	ws := t.TempDir()
+	// Create a subdirectory within the parent workspace
+	other := filepath.Join(ws, "subdir")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
 	write(t, filepath.Join(ws, ".celeste", "config.json"), `{"sandbox":{"enabled":false}}`)
 	write(t, filepath.Join(other, ".celeste", "config.json"), `{"sandbox":{"enabled":false,"network":false}}`)
 	absWS, _ := filepath.Abs(ws)
@@ -126,7 +132,12 @@ func TestNestedInAnotherWorkspaceResolvesItsOwnPolicy(t *testing.T) {
 // settings with its own workspace writable instead of the parent's.
 func TestNestedInheritsTheSandboxPolicy(t *testing.T) {
 	setupHome(t)
-	ws, other := t.TempDir(), t.TempDir()
+	ws := t.TempDir()
+	// Create a subdirectory within the parent workspace (like a real worktree)
+	other := filepath.Join(ws, ".celeste", "worktrees", "test")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
 	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true), Network: boolPtr(false)})
 	env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
 	child, err := env.Nested(NestedOptions{Workspace: other})
@@ -326,15 +337,14 @@ func TestNestedLaneReusesTheParentsSandboxTrust(t *testing.T) {
 		t.Fatalf("a different object needs its own trust: %+v\n%s", child2.SandboxPolicy, w2.all())
 	}
 
+	// A workspace outside the parent's is now rejected for security
 	outside := t.TempDir()
 	write(t, filepath.Join(outside, ".celeste", "config.json"), file)
-	w3 := &warnings{}
-	child3, err := env.Nested(NestedOptions{Workspace: outside, Warn: w3.add})
-	if err != nil {
-		t.Fatal(err)
+	_, err = env.Nested(NestedOptions{Workspace: outside})
+	if err == nil {
+		t.Fatal("Nested accepted a workspace outside the parent; want an error")
 	}
-	defer child3.Close()
-	if child3.SandboxPolicy.Network {
-		t.Fatalf("a workspace outside the parent's needs its own trust: %+v", child3.SandboxPolicy)
+	if !strings.Contains(err.Error(), "outside parent workspace") {
+		t.Fatalf("error = %q, want 'outside parent workspace'", err)
 	}
 }

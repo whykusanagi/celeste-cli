@@ -100,8 +100,15 @@ func TestNestedSharesParentParts(t *testing.T) {
 // parent's code graph open.
 func TestNestedOwnWorkspaceRebuildsBoundParts(t *testing.T) {
 	setupHome(t)
-	parent, _ := mustSetup(t, ModeAgent, goWorkspace(t))
-	other := goWorkspace(t)
+	ws := goWorkspace(t)
+	parent, _ := mustSetup(t, ModeAgent, ws)
+	// Create a subdirectory within the parent workspace (like a real worktree)
+	other := filepath.Join(ws, ".celeste", "worktrees", "test-lane")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(other, "go.mod"), "module nestedprobe\n\ngo 1.26\n")
+	write(t, filepath.Join(other, "main.go"), "package main\n\nfunc main() {}\n")
 
 	child, err := parent.Nested(NestedOptions{Workspace: other})
 	if err != nil {
@@ -284,11 +291,12 @@ func stubMCPConfig(t *testing.T) string {
 
 // MCP servers start once for a parent and all its children: each child's
 // registry holds the parent's own *MCPTool (one client), in the same
-// workspace and in another one.
+// workspace and in a subdirectory.
 func TestNestedSharesMCPClients(t *testing.T) {
 	home := setupHome(t)
 	write(t, filepath.Join(home, ".celeste", "mcp.json"), stubMCPConfig(t))
-	parent, w := mustSetup(t, ModeAgent, t.TempDir())
+	ws := t.TempDir()
+	parent, w := mustSetup(t, ModeAgent, ws)
 	name := mcp.ToolName("probe", "echo")
 	want, ok := parent.Registry.Get(name)
 	if !ok {
@@ -297,10 +305,15 @@ func TestNestedSharesMCPClients(t *testing.T) {
 	if _, isMCP := want.(*mcp.MCPTool); !isMCP {
 		t.Fatalf("%s is a %T, want *mcp.MCPTool", name, want)
 	}
-	for _, ws := range []string{"", t.TempDir()} {
-		got, ok := mustNested(t, parent, NestedOptions{Workspace: ws}).Registry.Get(name)
+	// Test with same workspace and a subdirectory within the parent
+	subdir := filepath.Join(ws, "subdir")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, testWs := range []string{"", subdir} {
+		got, ok := mustNested(t, parent, NestedOptions{Workspace: testWs}).Registry.Get(name)
 		if !ok || got != want {
-			t.Fatalf("workspace %q: child has %v (ok=%v), want the parent's own MCP tool", ws, got, ok)
+			t.Fatalf("workspace %q: child has %v (ok=%v), want the parent's own MCP tool", testWs, got, ok)
 		}
 	}
 }
@@ -384,8 +397,13 @@ func TestNestedRefreshIndexSerializesUpdates(t *testing.T) {
 // This must fail if that setupHooks call is replaced with `c.Hooks = e.Hooks`.
 func TestNestedOtherWorkspaceRebuildsHooksAndWarnsTheChild(t *testing.T) {
 	setupHome(t)
-	parent, parentWarns := mustSetup(t, ModeAgent, goWorkspace(t))
-	other := goWorkspace(t)
+	ws := goWorkspace(t)
+	parent, parentWarns := mustSetup(t, ModeAgent, ws)
+	// Create a subdirectory within the parent workspace (like a real worktree)
+	other := filepath.Join(ws, ".celeste", "worktrees", "test-hooks")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
 	untrustedRepoHooks(t, other)
 
 	childWarns := &warnings{}
@@ -534,5 +552,41 @@ func TestNestedUnderTheChatDropsRepoMCPServers(t *testing.T) {
 	}
 	if _, ok := child.Registry.Get("spawn_agent"); ok {
 		t.Fatal("a child of the chat was given spawn_agent")
+	}
+}
+
+// Security: a nested workspace outside the parent's workspace boundary is
+// rejected to prevent model-controlled path traversal attacks. A child with
+// AutoApproveTools bypasses approval prompts, so containment must be enforced
+// at construction time.
+func TestNestedRejectsWorkspaceOutsideParent(t *testing.T) {
+	setupHome(t)
+	parent, _ := mustSetup(t, ModeAgent, t.TempDir())
+	outside := t.TempDir()
+
+	_, err := parent.Nested(NestedOptions{Workspace: outside})
+	if err == nil {
+		t.Fatal("Nested accepted a workspace outside the parent; want an error")
+	}
+	if !strings.Contains(err.Error(), "outside parent workspace") {
+		t.Fatalf("error = %q, want 'outside parent workspace'", err)
+	}
+
+	// Absolute paths like /home/user or /etc should also be rejected
+	_, err = parent.Nested(NestedOptions{Workspace: "/tmp/attacker-controlled"})
+	if err == nil {
+		t.Fatal("Nested accepted an absolute path outside the parent; want an error")
+	}
+	if !strings.Contains(err.Error(), "outside parent workspace") {
+		t.Fatalf("error = %q, want 'outside parent workspace'", err)
+	}
+
+	// Path traversal attempts should be rejected
+	_, err = parent.Nested(NestedOptions{Workspace: filepath.Join(parent.Workspace, "..", "..", "etc")})
+	if err == nil {
+		t.Fatal("Nested accepted a path-traversal attempt; want an error")
+	}
+	if !strings.Contains(err.Error(), "outside parent workspace") {
+		t.Fatalf("error = %q, want 'outside parent workspace'", err)
 	}
 }

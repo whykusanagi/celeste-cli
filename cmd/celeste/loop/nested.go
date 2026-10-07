@@ -64,6 +64,13 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 			return nil, fmt.Errorf("resolve workspace path: %w", err)
 		}
 		ws = filepath.Clean(abs)
+		// Enforce that the nested workspace is within the parent's workspace
+		// boundary to prevent model-controlled path traversal attacks. A child
+		// agent with AutoApproveTools bypasses approval prompts, so containment
+		// must be enforced at construction time.
+		if !within(e.Workspace, ws) {
+			return nil, fmt.Errorf("nested workspace %q is outside parent workspace %q", ws, e.Workspace)
+		}
 	}
 	e.lifeMu.Lock()
 	if e.closed {

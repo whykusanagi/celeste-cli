@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -88,15 +89,22 @@ func TestSetupDefaultSessionIsModePidAndStart(t *testing.T) {
 }
 
 // A nested Env (a subagent, /agent) files into its parent's session, in any
-// workspace, so the chat's /undo, /diff and files list include its changes.
+// workspace within the parent boundary, so the chat's /undo, /diff and files
+// list include its changes.
 func TestNestedSharesTheParentsCheckpoints(t *testing.T) {
 	setupHome(t)
-	parent, _ := mustSetup(t, ModeAgent, goWorkspace(t))
-	other := mustNested(t, parent, NestedOptions{Workspace: goWorkspace(t)})
-	if other.Snapshots != parent.Snapshots {
+	ws := goWorkspace(t)
+	parent, _ := mustSetup(t, ModeAgent, ws)
+	// Create a subdirectory within the parent workspace
+	other := filepath.Join(ws, "subdir")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
+	child := mustNested(t, parent, NestedOptions{Workspace: other})
+	if child.Snapshots != parent.Snapshots {
 		t.Fatal("a nested Env must use its parent's checkpoint store")
 	}
-	tool, _ := other.Registry.Get("write_file")
+	tool, _ := child.Registry.Get("write_file")
 	res, err := tool.Execute(tools.WithCallID(context.Background(), "call_sub"), map[string]any{"path": "sub.txt", "content": "x"}, nil)
 	if err != nil || res.Error {
 		t.Fatalf("write_file: %v %s", err, res.Content)
