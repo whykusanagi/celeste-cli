@@ -51,3 +51,21 @@ func TestCodegraphRecoveryPointsAtRebuild(t *testing.T) {
 	requireAll(t, "docs/CODEGRAPH.md", cg, "`celeste index rebuild`", "content hash")
 	requireNone(t, "docs/CODEGRAPH.md", cg, "(`celeste index` only updates)")
 }
+
+// The local provider is decided by the host (providers.IsLocalHost), which
+// takes LAN servers too, so COMPARISON.md's local-models row does not stop
+// at localhost.
+func TestComparisonLocalModelsRowCoversLAN(t *testing.T) {
+	const name = "docs/COMPARISON.md"
+	row := ""
+	for _, line := range strings.Split(repoDoc(t, name), "\n") {
+		if strings.HasPrefix(line, "| **Local models**") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no Local models row", name)
+	}
+	requireNone(t, name+" (Local models row)", row, "server on localhost")
+	requireAll(t, name+" (Local models row)", row, "local network")
+}
