@@ -137,7 +137,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	var bytesWritten int
 	if appendMode {
 		// Append is not atomic by nature: it keeps O_APPEND (ruling 5).
-		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		// Use openAppendSecure to prevent TOCTOU on ancestor directories.
+		f, err := openAppendSecure(targetPath, 0644)
 		if err != nil {
 			return fail(err.Error())
 		}

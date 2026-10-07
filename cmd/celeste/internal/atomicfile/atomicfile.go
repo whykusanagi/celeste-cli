@@ -4,6 +4,7 @@
 package atomicfile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,10 +16,7 @@ import (
 // ponytail: fixed ~1s of retries, a real lock if saves ever contend longer.
 const renameAttempts = 20
 
-var (
-	retryDelay = 50 * time.Millisecond
-	rename     = os.Rename // test seam
-)
+var retryDelay = 50 * time.Millisecond
 
 // Write replaces path with data and gives the file mode perm, exactly: the
 // umask does not apply, unlike os.WriteFile on a new file. It writes a
@@ -39,17 +37,39 @@ func Write(path string, data []byte, perm os.FileMode) error {
 
 // replace writes data to a temp file next to target, syncs, closes and
 // renames it over target. A symlink at target is replaced, not followed.
+// The parent directory is opened first and held throughout to prevent TOCTOU
+// attacks where an ancestor is replaced with a symlink after validation.
 func replace(target string, data []byte, perm os.FileMode) (err error) {
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
+	// Open the parent directory and hold it throughout the operation.
+	// This binds to the directory's inode, preventing an attacker from
+	// replacing an ancestor with a symlink between validation and use.
+	dirHandle, err := openParentDir(target)
 	if err != nil {
 		return &TempError{Err: err}
 	}
-	tmpName := tmp.Name()
+	defer dirHandle.close()
+
+	basename := filepath.Base(target)
+
+	// Create temp file using the directory handle (openat on Unix)
+	tmpFd, tmpPath, err := dirHandle.createTemp(basename)
+	if err != nil {
+		return &TempError{Err: err}
+	}
+	tmpBasename := filepath.Base(tmpPath)
+
+	// Convert fd to *os.File for easier operations
+	tmp := os.NewFile(uintptr(tmpFd), tmpPath)
+	if tmp == nil {
+		return &TempError{Err: fmt.Errorf("failed to create file object")}
+	}
+
 	defer func() {
 		if err != nil {
-			_ = os.Remove(tmpName)
+			_ = dirHandle.unlinkAt(tmpBasename)
 		}
 	}()
+
 	if _, err = tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err
@@ -66,8 +86,10 @@ func replace(target string, data []byte, perm os.FileMode) (err error) {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
+
+	// Rename using the directory handle (renameat on Unix)
 	for i := 0; i < renameAttempts; i++ {
-		if err = rename(tmpName, target); err == nil {
+		if err = dirHandle.renameTo(tmpBasename, basename); err == nil {
 			return nil
 		}
 		if i < renameAttempts-1 {

@@ -178,8 +178,9 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	if errors.Is(lerr, os.ErrNotExist) {
 		// Create a new file first, so its mode is perm under the umask as
 		// with os.WriteFile; the replace below then keeps that mode. A
-		// failed replace removes it again.
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		// failed replace removes it again. Use openCreateSecure to prevent
+		// TOCTOU on ancestor directories.
+		f, err := openCreateSecure(path, perm)
 		if err != nil {
 			return err
 		}

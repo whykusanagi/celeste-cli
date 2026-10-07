@@ -3,21 +3,13 @@
 package builtin
 
 import (
-	"fmt"
 	"os"
 )
 
 // openNoFollow opens real, the symlink-resolved path resolvePathReal
 // checked, refusing a symlink or other reparse point there (ruling 4).
-// Windows has no O_NOFOLLOW, so Lstat then Open leaves a narrower window
-// than unix; a directory swapped higher up remains a residual race too.
+// Uses a directory handle to verify the parent hasn't changed, mitigating
+// TOCTOU attacks where an ancestor is replaced with a symlink.
 func openNoFollow(real string) (*os.File, error) {
-	fi, err := os.Lstat(real)
-	if err != nil {
-		return nil, err
-	}
-	if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		return nil, fmt.Errorf("%s is a symlink or reparse point; not followed", real)
-	}
-	return os.Open(real)
+	return openNoFollowSecure(real)
 }

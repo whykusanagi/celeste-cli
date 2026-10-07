@@ -15,7 +15,8 @@ func hardLinked(_ string, fi os.FileInfo) bool {
 }
 
 // openInPlace opens path for an in-place rewrite without following a
-// symlink swapped in at it.
+// symlink swapped in at it. Uses openat relative to a validated parent
+// directory to prevent TOCTOU attacks on ancestor directories.
 func openInPlace(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0)
+	return openInPlaceSecure(path)
 }
