@@ -3185,10 +3185,16 @@ func (m AppModel) WithCommandHistory(history []string) AppModel {
 	return m
 }
 
-// persistSession saves the current session state.
+// persistSession saves the current session state. A failed save is left for
+// the next one; a caller about to drop the session uses saveSession instead.
 func (m *AppModel) persistSession() {
+	_ = m.saveSession()
+}
+
+// saveSession saves the current session state and returns the save error.
+func (m *AppModel) saveSession() error {
 	if m.sessionManager == nil || m.currentSession == nil {
-		return
+		return nil
 	}
 
 	m.claimWorkspace(m.currentSession)
@@ -3207,7 +3213,19 @@ func (m *AppModel) persistSession() {
 
 	// Save synchronously: Save mutates and marshals the session, and Update
 	// keeps mutating it, so a goroutine here races.
-	_ = m.sessionManager.Save(m.currentSession)
+	return m.sessionManager.Save(m.currentSession)
+}
+
+// saveBeforeSwitch saves the current session before an action replaces it
+// or clears its chat. When the save fails it reports the error and returns
+// false: the action must stop, or a session never saved before would lose
+// its only copy, and a saved one its unsaved turns.
+func (m *AppModel) saveBeforeSwitch() bool {
+	if err := m.saveSession(); err != nil {
+		m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Failed to save the current session, so it was kept: %v", err))
+		return false
+	}
+	return true
 }
 
 // claimWorkspace records the chat's workspace on a session that has none:
@@ -3251,7 +3269,9 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 	switch action.Action {
 	case "new":
 		// Save current session first
-		m.persistSession()
+		if !m.saveBeforeSwitch() {
+			return m
+		}
 
 		// Create new session
 		newSession := m.sessionManager.NewSession()
@@ -3275,7 +3295,9 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 
 	case "resume":
 		// Save current session first
-		m.persistSession()
+		if !m.saveBeforeSwitch() {
+			return m
+		}
 
 		// Try to load by ID first
 		loaded, err := m.sessionManager.Load(action.SessionID)
@@ -3440,8 +3462,11 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		}
 
 	case "clear":
-		// Save the old session first: one never saved has no file yet (#398)
-		m.persistSession()
+		// Save the old session first: one never saved has no file yet (#398).
+		// A failed save keeps it and the chat.
+		if !m.saveBeforeSwitch() {
+			return m
+		}
 
 		// Create new session automatically
 		newSession := m.sessionManager.NewSession()
@@ -3458,7 +3483,10 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 		m.chat = m.chat.AddSystemMessage("🗑️  Session cleared, new session started")
 
 	case "merge":
-		m.persistSession() // the merge reads the current session's saved messages
+		// The merge reads the current session's saved messages.
+		if !m.saveBeforeSwitch() {
+			return m
+		}
 		if toMerge, err := m.sessionManager.Load(action.SessionID); err == nil {
 			merged := m.sessionManager.MergeSessions(m.currentSession, toMerge)
 			if s, ok := merged.(Session); ok {
