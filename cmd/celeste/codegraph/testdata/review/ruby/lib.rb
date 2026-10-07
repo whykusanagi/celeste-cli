@@ -26,4 +26,14 @@ class Store
 
   def guarded
   end
+
+  public()
+
+  def shown
+  end
+
+  private()
+
+  def tucked
+  end
 end

@@ -122,6 +122,8 @@ var treeSitterReviewCases = []reviewCase{
 			"STUB lib.rb:later:18 dead",
 			"STUB lib.rb:build:22 live",
 			"STUB lib.rb:guarded:27 dead",
+			"STUB lib.rb:shown:32 live",
+			"STUB lib.rb:tucked:37 dead",
 		},
 	},
 }

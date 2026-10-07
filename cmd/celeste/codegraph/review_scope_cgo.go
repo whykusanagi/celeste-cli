@@ -377,10 +377,18 @@ func (w *multiWalker) rubyPublic(fn *tree_sitter.Node, name string) bool {
 		return true
 	}
 	for prev := stmt.PrevNamedSibling(); prev != nil; prev = prev.PrevNamedSibling() {
-		if prev.Kind() != "identifier" {
-			continue
+		// A bare `private` is an identifier; written `private()` it is
+		// a call without arguments.
+		mode := ""
+		switch prev.Kind() {
+		case "identifier":
+			mode = w.nodeText(prev)
+		case "call":
+			if args := prev.ChildByFieldName("arguments"); args == nil || args.NamedChildCount() == 0 {
+				mode = w.rubyCallName(prev)
+			}
 		}
-		switch w.nodeText(prev) {
+		switch mode {
 		case "private", "protected":
 			return false
 		case "public":
