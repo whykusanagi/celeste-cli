@@ -105,11 +105,26 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	// Undo created directories (and a partial new file) on every return
 	// below unless the write fully succeeded and verify passed (fix round 6).
 	written := false
+	afterPathCheck(targetPath)
+
+	// Directories, the append and the cleanup of a failed new file go
+	// through the workspace root, as whole-file writes do (atomicWrite):
+	// an ancestor swapped for a symlink after the check above cannot take
+	// them outside the workspace.
+	root, rel, err := workspaceRoot(t.workspace, realPath)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
+	// One defer for both, so the undo runs before the root closes (defers
+	// run last-in first-out: a separate root.Close registered later would
+	// close it first, and undo through a closed root removes nothing).
 	defer func() {
 		if !written {
 			guard.undo()
 		}
+		root.Close()
 	}()
+	guard.inRoot(root, rel)
 	if err := guard.mkdirAll(filepath.Dir(targetPath)); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
@@ -124,7 +139,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	// that fails puts the file back and records nothing.
 	var ckpt *checkpoints.Checkpoint
 	if t.snapMgr != nil {
-		c, err := t.snapMgr.Checkpoint(targetPath, tools.CallIDFromContext(ctx))
+		c, err := t.snapMgr.CheckpointIn(t.workspace, targetPath, tools.CallIDFromContext(ctx))
 		if err != nil {
 			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
 		}
@@ -137,7 +152,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	var bytesWritten int
 	if appendMode {
 		// Append is not atomic by nature: it keeps O_APPEND (ruling 5).
-		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_APPEND|oNoFollow, 0644)
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -151,7 +166,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		bytesWritten = n
 	} else {
-		if err := writeFileFunc(realPath, []byte(content), 0644); err != nil {
+		if err := writeFileFunc(t.workspace, realPath, []byte(content), 0644); err != nil {
 			return fail(err.Error())
 		}
 		bytesWritten = len(content)
@@ -163,7 +178,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	// Auto-stamp .grimoire metadata when writing to it
 	if filepath.Base(targetPath) == ".grimoire" {
-		stampGrimoireMetadata(targetPath, realPath)
+		stampGrimoireMetadata(t.workspace, targetPath, realPath)
 	}
 	commit(ckpt) // after the stamp: the file as this call leaves it
 
@@ -187,3 +202,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		Metadata: result,
 	}, nil
 }
+
+// afterPathCheck runs once write_file's path checks passed, before any
+// I/O: a test seam for a path changed in between. Only serial tests may set
+// it, restoring it with t.Cleanup.
+var afterPathCheck = func(string) {}

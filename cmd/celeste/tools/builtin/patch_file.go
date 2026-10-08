@@ -120,7 +120,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: msg}, nil
 	}
 
-	data, err := readFileNoFollow(realPath)
+	data, err := readFileNoFollow(realPath, maxEditBytes)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
@@ -135,19 +135,19 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	// immediately before the write (2.0 F4).
 	var ckpt *checkpoints.Checkpoint
 	if t.snapMgr != nil {
-		c, err := t.snapMgr.Checkpoint(targetPath, tools.CallIDFromContext(ctx))
+		c, err := t.snapMgr.CheckpointIn(t.workspace, targetPath, tools.CallIDFromContext(ctx))
 		if err != nil {
 			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
 		}
 		ckpt = c
 	}
-	if err := writeFileFunc(realPath, []byte(patched), 0644); err != nil {
+	if err := writeFileFunc(t.workspace, realPath, []byte(patched), 0644); err != nil {
 		return tools.ToolResult{Error: true, Content: rollback(err.Error(), ckpt)}, nil
 	}
 
 	// Auto-stamp .grimoire metadata when patching it
 	if filepath.Base(targetPath) == ".grimoire" {
-		stampGrimoireMetadata(targetPath, realPath)
+		stampGrimoireMetadata(t.workspace, targetPath, realPath)
 	}
 	commit(ckpt) // after the stamp: the file as this call leaves it
 

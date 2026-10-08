@@ -17,8 +17,8 @@ import (
 // targetPath is the path as the workspace names it (the project the index
 // belongs to); realPath is the checked path the edit wrote, and the stamp
 // reads and writes that one through writeFileFunc, as the edit did.
-func stampGrimoireMetadata(targetPath, realPath string) {
-	data, err := os.ReadFile(realPath)
+func stampGrimoireMetadata(workspace, targetPath, realPath string) {
+	data, err := readFileNoFollow(realPath, maxEditBytes)
 	if err != nil {
 		return
 	}
@@ -45,7 +45,7 @@ func stampGrimoireMetadata(targetPath, realPath string) {
 		content = meta + "\n" + content
 	}
 
-	_ = writeFileFunc(realPath, []byte(content), 0644)
+	_ = writeFileFunc(workspace, realPath, []byte(content), 0644)
 }
 
 // getIndexInfo returns code graph database info for the given project directory.

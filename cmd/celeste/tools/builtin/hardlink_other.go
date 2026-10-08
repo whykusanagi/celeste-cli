@@ -8,6 +8,6 @@ import "os"
 // replaced by a rename.
 func hardLinked(string, os.FileInfo) bool { return false }
 
-func openInPlace(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-}
+// oNoFollow: not available here; os.Root still keeps opens inside the
+// workspace.
+const oNoFollow = 0
