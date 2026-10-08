@@ -30,6 +30,17 @@ func TestPromptApprover(t *testing.T) {
 	assert.Equal(t, AnswerLater, PromptApprover(strings.NewReader(""), &out)(src, Untrusted), "EOF is no answer")
 }
 
+// A partial line cut off by EOF is no answer either: it must not store a
+// decline (CodeRabbit review of #413). A complete y still approves.
+func TestPromptApproverPartialLineAtEOFIsNoAnswer(t *testing.T) {
+	src := Source{Path: "/r/.celeste/hooks.json", Kind: KindRepo}
+	var out bytes.Buffer
+	for _, in := range []string{"n", "no", "x", " "} {
+		assert.Equal(t, AnswerLater, PromptApprover(strings.NewReader(in), &out)(src, Untrusted), "%q then EOF", in)
+	}
+	assert.Equal(t, AnswerYes, PromptApprover(strings.NewReader("y"), &out)(src, Untrusted))
+}
+
 func TestIsTerminalRejectsDevNullAndPipe(t *testing.T) {
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {

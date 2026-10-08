@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,6 +78,38 @@ func TestTrustApproveKeepsOtherProcessesApprovals(t *testing.T) {
 	require.NoError(t, b.Approve(y))
 	fresh := LoadTrust(home)
 	assert.Equal(t, Trusted, fresh.Status(x))
+	assert.Equal(t, Trusted, fresh.Status(y))
+}
+
+// A decision another process writes while this one is between reading and
+// writing the store is not overwritten by this one's stale read: a forget
+// that finished first stays forgotten (Aikido review of #413).
+func TestTrustForgetIsNotUndoneByAConcurrentDecision(t *testing.T) {
+	if !trustLockWorks {
+		t.Skip("no file lock on this platform")
+	}
+	home := testHome(t)
+	x := repoSource("/x/.celeste/hooks.json", "x")
+	y := repoSource("/y/.celeste/hooks.json", "y")
+	require.NoError(t, LoadTrust(home).Approve(x))
+
+	a, b := LoadTrust(home), LoadTrust(home) // two celeste processes
+	forgot := make(chan error, 1)
+	testHookTrustRead = func() {
+		testHookTrustRead = nil
+		// b runs `celeste mcp untrust` while a is deciding about y.
+		go func() {
+			_, err := b.Forget(x.Path)
+			forgot <- err
+		}()
+		time.Sleep(200 * time.Millisecond) // time to finish, unless a lock holds it
+	}
+	t.Cleanup(func() { testHookTrustRead = nil })
+	require.NoError(t, a.Approve(y))
+	require.NoError(t, <-forgot)
+
+	fresh := LoadTrust(home)
+	assert.Equal(t, Untrusted, fresh.Status(x), "a stale write brought back a forgotten approval")
 	assert.Equal(t, Trusted, fresh.Status(y))
 }
 

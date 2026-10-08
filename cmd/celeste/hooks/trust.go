@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/filelock"
 )
 
 // TrustStatus is whether a source may run without asking.
@@ -142,9 +143,8 @@ func (s *TrustStore) Status(src Source) TrustStatus {
 
 // Approve records src's current hash, replacing any decline. It re-reads
 // the file first so another process's decisions survive, then replaces the
-// file atomically. There is deliberately no lock file: two processes
-// deciding at the same instant can lose one decision, which only means that
-// source is asked about again. It can never produce a spurious trust.
+// file atomically, all under a lock file shared with other processes
+// (trusted.json.lock), so no decision another process stored is lost.
 func (s *TrustStore) Approve(src Source) error {
 	if src.Global() {
 		return nil
@@ -185,6 +185,17 @@ func (s *TrustStore) Forget(key string) (forgot bool, err error) {
 	return forgot, err
 }
 
+// testHookTrustRead, when set, runs in update between reading the store
+// and writing it back. Tests only.
+var testHookTrustRead func()
+
+// trustLockWait bounds the wait for another process's update.
+const trustLockWait = 5 * time.Second
+
+// trustLockWorks reports whether update's lock excludes other processes
+// on this platform.
+const trustLockWorks = filelock.Supported
+
 // update applies change to a fresh read of the file and writes it back
 // when change reports a modification. what names the decision in errors.
 func (s *TrustStore) update(what string, change func(*trustFile) bool) error {
@@ -193,9 +204,24 @@ func (s *TrustStore) update(what string, change func(*trustFile) bool) error {
 	if s.err != nil {
 		return fmt.Errorf("not saving %s: %w", what, s.err)
 	}
+	// The read and the write happen under a lock shared with every other
+	// celeste process, so a decision one of them stored meanwhile (a
+	// forget from `celeste mcp untrust`) is never overwritten by this
+	// process's stale read (Aikido review of #413).
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	unlock, err := filelock.Lock(s.path+".lock", trustLockWait)
+	if err != nil {
+		return fmt.Errorf("not saving %s: %w", what, err)
+	}
+	defer unlock()
 	fresh, err := readTrustFile(s.path)
 	if err != nil {
 		return fmt.Errorf("not saving %s: %w", what, err)
+	}
+	if testHookTrustRead != nil {
+		testHookTrustRead()
 	}
 	if !change(&fresh) {
 		s.data = fresh
@@ -204,9 +230,6 @@ func (s *TrustStore) update(what string, change func(*trustFile) bool) error {
 	fresh.Version = 1
 	data, err := json.MarshalIndent(fresh, "", "  ")
 	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	if err := atomicfile.Write(s.path, append(data, '\n'), 0o600); err != nil {

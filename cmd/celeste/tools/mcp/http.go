@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -90,7 +91,9 @@ func (t *HTTPTransport) post(ctx context.Context, body []byte) error {
 func (t *HTTPTransport) drainSSE(body io.Reader) error {
 	lr := &io.LimitedReader{R: body, N: int64(maxResponseBytes) + 1}
 	sc := bufio.NewScanner(lr)
-	sc.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), min(1024*1024, maxResponseBytes))
+	// One line may take the whole response limit, as a JSON body may
+	// (CodeRabbit review of #424).
+	sc.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), maxResponseBytes)
 	for sc.Scan() {
 		if lr.N <= 0 {
 			return errResponseTooLarge()
@@ -111,10 +114,11 @@ func (t *HTTPTransport) drainSSE(body io.Reader) error {
 			return err
 		}
 	}
-	if lr.N <= 0 {
+	err := sc.Err()
+	if lr.N <= 0 || errors.Is(err, bufio.ErrTooLong) {
 		return errResponseTooLarge()
 	}
-	return sc.Err()
+	return err
 }
 
 // enqueue queues r (size bytes encoded), failing once maxQueuedResponses

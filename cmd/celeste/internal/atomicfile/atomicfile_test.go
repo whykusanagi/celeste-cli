@@ -277,3 +277,32 @@ func TestReplaceKeepModeKeepsMode(t *testing.T) {
 		t.Fatalf("mode = %v", fi.Mode().Perm())
 	}
 }
+
+func TestReplaceDoesNotFollowSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Replace(link, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, victim); got != "keep" {
+		t.Fatalf("victim = %q, written through the symlink", got)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 || readString(t, link) != "new" {
+		t.Fatalf("link is %v, want a regular 0600 file with the new content", fi.Mode())
+	}
+	assertNoTemps(t, dir)
+}
