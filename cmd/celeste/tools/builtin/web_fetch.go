@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,14 +32,14 @@ const maxFetchBytes = 32 * 1024
 // docs servers.
 type WebFetchTool struct {
 	BaseTool
-	// allowPrivate reports the opt-in; nil reads the environment and config.
+	// allowPrivate reports the opt-in; nil is config.WebFetchPrivateAllowed.
 	allowPrivate func() bool
 	// dialAllowed decides one dial; nil is dialAllowedDefault. Tests swap it.
 	dialAllowed func(ap netip.AddrPort, allowPrivate bool) bool
 }
 
 // webFetchAllowPrivateEnv set to 1 lets web_fetch reach non-public addresses.
-const webFetchAllowPrivateEnv = "CELESTE_WEB_FETCH_ALLOW_PRIVATE"
+const webFetchAllowPrivateEnv = config.WebFetchAllowPrivateEnv
 
 // webFetchMaxRedirects bounds the redirect chain.
 const webFetchMaxRedirects = 10
@@ -95,18 +94,8 @@ func dialAllowedDefault(ap netip.AddrPort, allowPrivate bool) bool {
 	return allowPrivate || isPublicAddr(ap.Addr())
 }
 
-// webFetchPrivateAllowed reads the opt-in: the environment first, then the
-// default config profile.
-func webFetchPrivateAllowed() bool {
-	if os.Getenv(webFetchAllowPrivateEnv) == "1" {
-		return true
-	}
-	cfg, err := config.LoadNamed("")
-	return err == nil && cfg != nil && cfg.WebFetchAllowPrivate
-}
-
 // client builds a per-call HTTP client whose dialer refuses non-public
-// addresses. The opt-in is read once, and only when a dial needs it. No
+// addresses. The opt-in is read once per call, when a dial needs it. No
 // proxy is used: through a proxy the dialed address would be the proxy's.
 func (t *WebFetchTool) client() *http.Client {
 	allowedFn := t.dialAllowed
@@ -115,7 +104,7 @@ func (t *WebFetchTool) client() *http.Client {
 	}
 	optIn := t.allowPrivate
 	if optIn == nil {
-		optIn = webFetchPrivateAllowed
+		optIn = config.WebFetchPrivateAllowed
 	}
 	optInOnce := sync.OnceValue(optIn)
 

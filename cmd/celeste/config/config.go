@@ -467,6 +467,7 @@ func LoadNamedWithEnv(name string) (*Config, error) {
 		return nil, err
 	}
 	ApplyEnvOverrides(cfg)
+	sessionWebFetchAllowPrivate.Store(cfg.WebFetchAllowPrivate)
 	return cfg, nil
 }
 
