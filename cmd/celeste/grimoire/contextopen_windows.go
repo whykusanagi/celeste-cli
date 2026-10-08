@@ -29,3 +29,25 @@ func openRegular(path string) (*os.File, os.FileInfo, error) {
 	}
 	return f, info, nil
 }
+
+// openRegularIn is openRegular for rel inside root: no component may lead
+// out of root, and the handle must be a regular file (checkOpened).
+func openRegularIn(root *os.Root, rel string) (*os.File, error) {
+	before, err := root.Lstat(rel)
+	if err != nil {
+		return nil, err
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil {
+		err = checkOpened(rel, before, info)
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}

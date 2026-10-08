@@ -139,6 +139,7 @@ func LoadAll(startDir string) (*Grimoire, error) {
 	repo := repoScope(startDir)
 	owned := userOwnedDirs(startDir)
 	st := newIncludeState()
+	defer st.close()
 	for _, src := range sources {
 		userOwned := src.dir == "" || owned(src.dir)
 		data, err := readSource(src, userOwned)

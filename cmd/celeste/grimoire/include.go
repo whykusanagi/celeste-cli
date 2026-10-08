@@ -50,15 +50,44 @@ func repoScope(dir string) includeScope {
 	return includeScope{root: real}
 }
 
+// testHookIncludeChecked, when set, runs after an include passed its
+// containment check and before it is opened.
+var testHookIncludeChecked func(realPath string)
+
 // includeState is shared by every include of one load: cycle detection and
 // the MaxSize budget.
 type includeState struct {
 	visited   map[string]bool
 	totalSize int
+	// roots holds each repository root opened once for the whole load:
+	// a repository include is read through it, so no directory swapped
+	// after the containment check can lead the read out of the repository.
+	roots map[string]*os.Root
 }
 
 func newIncludeState() *includeState {
-	return &includeState{visited: make(map[string]bool)}
+	return &includeState{visited: make(map[string]bool), roots: make(map[string]*os.Root)}
+}
+
+// root is dir opened as an os.Root, opened on first use.
+func (st *includeState) root(dir string) (*os.Root, error) {
+	if r, ok := st.roots[dir]; ok {
+		return r, nil
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	st.roots[dir] = r
+	return r, nil
+}
+
+// close closes the roots the load opened.
+func (st *includeState) close() {
+	for _, r := range st.roots {
+		_ = r.Close()
+	}
+	st.roots = nil
 }
 
 // ResolveIncludes expands @./path references in the Incantations section,
@@ -66,7 +95,9 @@ func newIncludeState() *includeState {
 // It never returns an error for individual file failures; instead, it records
 // errors on the individual IncludeRef entries.
 func ResolveIncludes(g *Grimoire, baseDir string) error {
-	resolveIncludesIn(g, baseDir, repoScope(baseDir), newIncludeState())
+	st := newIncludeState()
+	defer st.close()
+	resolveIncludesIn(g, baseDir, repoScope(baseDir), st)
 	return nil
 }
 
@@ -102,6 +133,10 @@ func resolveRef(ref *IncludeRef, baseDir string, scope includeScope, st *include
 		return
 	}
 
+	if testHookIncludeChecked != nil {
+		testHookIncludeChecked(realPath)
+	}
+
 	// Cycle detection
 	if st.visited[realPath] {
 		ref.Error = "cycle detected: already included"
@@ -117,8 +152,15 @@ func resolveRef(ref *IncludeRef, baseDir string, scope includeScope, st *include
 	}
 
 	// Read the file: a regular file only (no FIFO or device, no symlink
-	// swapped in after the checks above), never past the size budget.
-	f, _, err := openRegular(realPath)
+	// swapped in after the checks above), never past the size budget. A
+	// repository include is opened through the repository root, so it
+	// stays inside it even if a directory on its path is swapped now.
+	var f *os.File
+	if scope.global {
+		f, _, err = openRegular(realPath)
+	} else {
+		f, err = openInRepo(st, scope.root, realPath)
+	}
 	if err != nil {
 		ref.Error = fmt.Sprintf("cannot read: %s", err.Error())
 		return
@@ -152,6 +194,20 @@ func resolveRef(ref *IncludeRef, baseDir string, scope includeScope, st *include
 
 	// Recursively resolve nested @includes found in the content
 	resolveNestedIncludes(ref, filepath.Dir(absPath), scope, st, depth)
+}
+
+// openInRepo opens realPath, a path inside root, through root as a regular
+// file (openRegularIn).
+func openInRepo(st *includeState, root, realPath string) (*os.File, error) {
+	rel, err := filepath.Rel(root, realPath)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is outside the repository", realPath)
+	}
+	r, err := st.root(root)
+	if err != nil {
+		return nil, err
+	}
+	return openRegularIn(r, rel)
 }
 
 // resolveNestedIncludes scans content for @./path and @~/path lines
