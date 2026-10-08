@@ -477,7 +477,7 @@ func (c chatLLM) SendMessageStreamEvents(ctx context.Context, msgs []tui.ChatMes
 
 func (c chatLLM) GetSkills() []tui.SkillDefinition {
 	if !c.tools {
-		return nil
+		return []tui.SkillDefinition{} // none offered, so none run (loop.LLM)
 	}
 	return c.client.GetSkills()
 }

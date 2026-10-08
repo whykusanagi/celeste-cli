@@ -19,6 +19,14 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
+// refusal is Refuse's reason for name, "" without a Refuse.
+func (l *Loop) refusal(name string) string {
+	if l.Refuse == nil {
+		return ""
+	}
+	return l.Refuse(name)
+}
+
 // callKeys numbers tool invocations for ToolCall.Key.
 var callKeys atomic.Uint64
 
@@ -67,12 +75,14 @@ func (l *Loop) runCalls(ctx context.Context, calls []llm.ToolCallResult, lim Lim
 				break
 			}
 			p.call.Input = input
+			// Refuse first: its reason (plan mode) says more than "not
+			// offered" for a tool it also filtered out of the offer.
 			if _, ok := l.Tools.Get(c.Name); !ok {
 				p.settle(errorEnvelope(c.Name, fmt.Sprintf("tool '%s' not found", c.Name)))
-			} else if l.Refuse != nil {
-				if why := l.Refuse(c.Name); why != "" {
-					p.settle(errorEnvelope(c.Name, why))
-				}
+			} else if why := l.refusal(c.Name); why != "" {
+				p.settle(errorEnvelope(c.Name, why))
+			} else if l.offered != nil && !l.offered[c.Name] {
+				p.settle(errorEnvelope(c.Name, fmt.Sprintf("tool '%s' is not available in this context: it was not offered this turn", c.Name)))
 			}
 		}
 		l.emit(Event{Kind: EventToolStart, Call: p.call, At: clock.Now()})
