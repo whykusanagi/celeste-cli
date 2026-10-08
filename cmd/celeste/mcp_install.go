@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // mcpServerName is the key celeste registers itself under in client configs.
@@ -191,7 +194,9 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 			return "", err
 		}
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	// A new file is owner-only: MCP configs can hold server env values. An
+	// existing one keeps its mode.
+	if err := os.WriteFile(path, out, privfs.FilePerm); err != nil {
 		return "", err
 	}
 	if existed {
@@ -200,13 +205,19 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 	return "created", nil
 }
 
-// backupFile copies path to path+".bak".
+// backupFile copies path to path+".bak", owner-only (the original's owner
+// bits, at most): the copy is never more readable than an owner-only
+// original, also over an older .bak.
 func backupFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path+".bak", data, 0o644)
+	perm := privfs.FilePerm
+	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o700 != 0 {
+		perm = fi.Mode().Perm() & 0o700
+	}
+	return atomicfile.Write(path+".bak", data, perm)
 }
 
 // printCodexBlock prints the TOML block to paste into ~/.codex/config.toml.
