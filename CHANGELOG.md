@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **tui:** the tool-approval and question prompts show the tool name, its input, the question and each option with control characters escaped, so the text approved is the text shown (Aikido 806869890).
 * **tui:** chat replies, user input, system lines and the Ctrl+K tool log show workspace, tool and model text with control characters escaped; celeste's own colors are kept, and every frame keeps only color and weight sequences (Aikido 806869437).
-* **mcp:** `celeste mcp list` prints configuration errors with control characters escaped (Aikido 806869793).
+* **mcp:** `celeste mcp list`, `celeste mcp trust` and `celeste hooks list` print configuration errors with control characters escaped (Aikido 806869793).
 * **tui:** the `/mcp` panel shows server names and transports from workspace configs escaped (Aikido 806869738).
 * **tui:** the model selector shows model names, badges and descriptions from a provider's model list escaped (Aikido 806869747).
 * **cli:** `celeste agent` escapes the final reply, the error and eval and benchmark case names and reasons; setup warnings on stderr, context-file warnings, `celeste grimoire`, `celeste memories` and, on a terminal, `celeste message` replies are escaped too (Aikido 806869282).
