@@ -744,18 +744,14 @@ func (idx *Indexer) storeParsedFile(relPath string, result *ParseResult) []RawEd
 }
 
 // storeFileSymbols stores a file's symbols with their MinHash signature,
-// BM25 tokens and LSH bands, and returns name -> ID for the stored rows.
-func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) map[string]int64 {
+// BM25 tokens and LSH bands.
+func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) {
 	source, _ := os.ReadFile(filepath.Join(idx.workspace, relPath))
-	ids := make(map[string]int64, len(syms))
 	for _, sym := range syms {
 		sym.File = relPath
 		id, err := idx.store.UpsertSymbol(sym)
 		if err != nil {
 			continue
-		}
-		if _, ok := ids[sym.Name]; !ok {
-			ids[sym.Name] = id
 		}
 		if sym.Kind != SymbolImport {
 			shingles := ShinglesForSymbol(sym, source, lang)
@@ -773,7 +769,6 @@ func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) map[st
 			_ = idx.store.UpsertLSHBands(id, bands)
 		}
 	}
-	return ids
 }
 
 // storeFileRecord records a file's size and content hash (and, for Go, its
@@ -809,8 +804,16 @@ func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
 func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 	var out []Edge
 	for _, edge := range edges {
-		sourceID, ok1 := idx.store.GetSymbolIDByNameInFile(edge.SourceName, edge.SourceFile)
-		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
+		sourceID, ok1 := idx.resolveSource(edge)
+		var targetID int64
+		ok2 := false
+		// self.m() / this.m() inside a method calls m of the same class.
+		if tail, ok := selfCallee(edge.TargetName); ok && edge.SourceScope != "" {
+			targetID, ok2 = idx.store.symbolIDInFile(tail, edge.SourceScope, edge.SourceFile)
+		}
+		if !ok2 {
+			targetID, ok2 = idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
+		}
 		// Try unqualified name: "pkg.Func" -> "Func"
 		if !ok2 {
 			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
@@ -833,6 +836,28 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 	return out
 }
 
+// resolveSource looks up an edge's source in its file. Outside Go a class
+// method is found by its scope too, so a method of the same name in
+// another class does not take its edges (Aikido review of #414).
+func (idx *Indexer) resolveSource(e RawEdge) (int64, bool) {
+	if DetectLanguage(e.SourceFile) != "go" {
+		if id, ok := idx.store.symbolIDInFile(e.SourceName, e.SourceScope, e.SourceFile); ok {
+			return id, true
+		}
+	}
+	return idx.store.GetSymbolIDByNameInFile(e.SourceName, e.SourceFile)
+}
+
+// selfCallee is m for a callee written self.m or this.m.
+func selfCallee(target string) (string, bool) {
+	for _, p := range []string{"self.", "this."} {
+		if rest, ok := strings.CutPrefix(target, p); ok && rest != "" && !strings.Contains(rest, ".") {
+			return rest, true
+		}
+	}
+	return "", false
+}
+
 // resolveTarget looks up an edge's target by name. A call resolves to a
 // callable first and to one in the caller's file next, so a call to a
 // common name such as get() does not land on an import or a type that
@@ -853,42 +878,14 @@ func (idx *Indexer) indexFile(relPath string) error {
 		return err
 	}
 
-	symbolIDs := idx.storeFileSymbols(relPath, lang, result.Symbols)
+	idx.storeFileSymbols(relPath, lang, result.Symbols)
 
-	// Store edges (resolve names to IDs)
-	// First try local file symbols, then fall back to global store lookup
-	// for cross-file edges (e.g., calling functions from other packages).
-	// For qualified names like "pkg.Func" or "obj.Method", also try the
-	// unqualified suffix (just "Func" or "Method") since symbols are stored
-	// without receiver/package prefixes.
-	for _, edge := range result.Edges {
-		sourceID, ok1 := symbolIDs[edge.SourceName]
-		if !ok1 {
-			sourceID, ok1 = idx.store.GetSymbolIDByNameInFile(edge.SourceName, relPath)
-		}
-		// The target goes through the store rather than symbolIDs: this
-		// file's symbols are already stored, and resolveTarget prefers
-		// them, but it also prefers a callable over a same-named import.
-		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, relPath)
-		// Try unqualified name: "pkg.Func" -> "Func"
-		if !ok2 {
-			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
-				unqualified := edge.TargetName[dotIdx+1:]
-				targetID, ok2 = idx.resolveTarget(unqualified, edge.Kind, relPath)
-			}
-		}
-		// C++ ns::f / Cls::f: a qualified callee resolves exactly to an
-		// out-of-line definition ("Shape::make") and otherwise to its last
-		// segment, a function defined inside a namespace block.
-		if !ok2 {
-			if i := strings.LastIndex(edge.TargetName, "::"); i >= 0 {
-				targetID, ok2 = idx.resolveTarget(edge.TargetName[i+2:], edge.Kind, relPath)
-			}
-		}
-		if ok1 && ok2 {
-			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
-		}
+	// Edges resolve as a build's pass 2 does: this file's symbols are
+	// stored, and every lookup prefers them over a same-named one elsewhere.
+	for i := range result.Edges {
+		result.Edges[i].SourceFile = relPath
 	}
+	idx.resolveAndStoreEdges(result.Edges)
 
 	idx.storeFileRecord(relPath, lang, "")
 

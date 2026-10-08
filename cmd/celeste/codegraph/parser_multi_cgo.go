@@ -138,6 +138,9 @@ type multiWalker struct {
 	// ("Geo.Qux"), Symbol.Scope of what it declares there. A function body
 	// resets it: a function nested in a method has no class.
 	currentScope string
+	// fnScope is the Symbol.Scope of the function the walk is inside
+	// (currentFn), the scope its outgoing edges start from.
+	fnScope string
 }
 
 // rustImplType is the type a Rust impl block is for, without its path or
@@ -258,9 +261,10 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 							if target := w.decoratorTarget(dec); target != "" {
 								decNames = append(decNames, target)
 								w.result.Edges = append(w.result.Edges, RawEdge{
-									SourceName: name,
-									TargetName: target,
-									Kind:       EdgeCalls,
+									SourceName:  name,
+									SourceScope: w.currentScope,
+									TargetName:  target,
+									Kind:        EdgeCalls,
 								})
 							}
 						}
@@ -283,12 +287,15 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 		if fnName == "" {
 			fnName = currentFn
 		}
-		prevScope := w.currentScope
+		prevScope, prevFnScope := w.currentScope, w.fnScope
+		if name != "" {
+			w.fnScope = w.currentScope
+		}
 		w.currentScope = ""
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), fnName)
 		}
-		w.currentScope = prevScope
+		w.currentScope, w.fnScope = prevScope, prevFnScope
 		return
 	}
 
@@ -313,9 +320,10 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 		target := w.extractCallTarget(node)
 		if target != "" {
 			w.result.Edges = append(w.result.Edges, RawEdge{
-				SourceName: currentFn,
-				TargetName: target,
-				Kind:       EdgeCalls,
+				SourceName:  currentFn,
+				SourceScope: w.fnScope,
+				TargetName:  target,
+				Kind:        EdgeCalls,
 			})
 		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -351,9 +359,10 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 			if attr := left.ChildByFieldName("attribute"); attr != nil {
 				if name := w.nodeText(attr); name != "" {
 					w.result.Edges = append(w.result.Edges, RawEdge{
-						SourceName: currentFn,
-						TargetName: name,
-						Kind:       EdgeCalls,
+						SourceName:  currentFn,
+						SourceScope: w.fnScope,
+						TargetName:  name,
+						Kind:        EdgeCalls,
 					})
 				}
 			}
@@ -700,9 +709,12 @@ func (w *multiWalker) handleVarDeclarator(decl *tree_sitter.Node, currentFn stri
 			Line:      int(decl.StartPosition().Row) + 1,
 			Signature: w.buildSignature(value, name),
 		})
+		prevFnScope := w.fnScope
+		w.fnScope = "" // stored without a scope, above
 		for i := uint(0); i < value.NamedChildCount(); i++ {
 			w.walk(value.NamedChild(i), name)
 		}
+		w.fnScope = prevFnScope
 		return
 	}
 	for i := uint(0); i < decl.NamedChildCount(); i++ {

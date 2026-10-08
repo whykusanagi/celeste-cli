@@ -33,6 +33,6 @@ func TestMultiLangParser_RubyCallsAndRequires(t *testing.T) {
 	assert.Equal(t, SymbolClass, kinds["Runner"])
 	assert.Contains(t, kinds, "run")
 	assert.Contains(t, kinds, "prepare")
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "run", TargetName: "prepare", Kind: EdgeCalls})
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "run", TargetName: "save", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "run", TargetName: "prepare", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "run", TargetName: "save", Kind: EdgeCalls})
 }

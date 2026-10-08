@@ -19,8 +19,12 @@ type ParseResult struct {
 // Resolved to Edge (with IDs) when inserted into the store.
 type RawEdge struct {
 	SourceName string
-	TargetName string
-	Kind       EdgeKind
+	// SourceScope is the class chain the source is declared in
+	// (Symbol.Scope), so same-named methods of different classes keep
+	// their own edges. Empty for a function outside any class and for Go.
+	SourceScope string
+	TargetName  string
+	Kind        EdgeKind
 	// SourceFile is the workspace-relative file the edge was parsed from.
 	// Parsers leave it empty; the indexer sets it so both ends resolve
 	// against that file's symbols before any same-named symbol elsewhere.
