@@ -136,6 +136,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `celeste agent` runs on `agent_model` when one is set, as subagents and
   MCP agent mode already did.
 
+### Security
+
+* **release:** the release workflow now checks the pushed tag before any
+  job that holds a secret runs. The tag must be annotated, signed by the
+  release key (primary or its signing subkey, with the key read from
+  `main`), and on `main`; otherwise nothing is built, signed or published.
+  The workflow grants no token permissions by default, and only the publish
+  job can write (Aikido 806869730).
+* **ci:** every GitHub Action in the workflows is pinned to a full commit
+  SHA, and no checkout keeps the job token in the clone (Aikido 806869782,
+  806780680, 806780676).
+* **deps:** the indirect `github.com/libp2p/go-libp2p` requirement moves to
+  v0.27.8 (Aikido 806780137).
+* **build:** `make import-key` imports the repository's `whykusanagi.asc`
+  instead of fetching a key from Keybase, and fails unless the file holds
+  the release key and its signing subkey (Aikido 806869823).
+
 ## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
 
 
