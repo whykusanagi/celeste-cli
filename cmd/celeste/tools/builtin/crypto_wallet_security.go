@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // WalletSecurityConfig holds wallet security configuration
@@ -99,8 +101,8 @@ type AssetTransfer struct {
 }
 
 // maxAssetTransferPages bounds the alchemy_getAssetTransfers continuation
-// pages read per direction in one scan. A scan that needs more fails, so the
-// checkpoint stays put and the range is scanned again.
+// pages read per direction in one scan. A range that needs more is scanned
+// up to the last complete block, and the next scan continues from there.
 const maxAssetTransferPages = 50
 
 // walletSecurityClient is the HTTP client a scan uses; tests swap it.
@@ -446,6 +448,7 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 	allAlerts := []SecurityAlert{}
 	failed := []map[string]any{}
 	currentBlocks := map[string]string{}
+	partial := map[string]string{} // network -> block scanned to, short of current
 
 	for _, network := range networks {
 		wallets := byNetwork[network]
@@ -466,9 +469,12 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		}
 
 		networkOK := true
+		// The checkpoint moves to the last block every wallet on the
+		// network was fully scanned to: currentBlock, or less for a wallet
+		// with more transfers than one scan reads.
+		checkpoint, _ := parseHexBlock(currentBlock)
 		for _, wallet := range wallets {
-			// The range ends at currentBlock, where the checkpoint moves to.
-			alerts, err := checkWalletForThreats(ctx, client, alchemyConfig, wallet, fromBlock, currentBlock)
+			alerts, scannedTo, err := checkWalletForThreats(ctx, client, alchemyConfig, wallet, fromBlock, currentBlock)
 			if err != nil {
 				// Keep checking the other wallets, but the range is not done.
 				failed = append(failed, map[string]any{"wallet": wallet.Address, "network": network, "error": err.Error()})
@@ -476,9 +482,15 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 				continue
 			}
 			allAlerts = append(allAlerts, alerts...)
+			if b, ok := parseHexBlock(scannedTo); ok && b.Cmp(checkpoint) < 0 {
+				checkpoint = b
+			}
 		}
 		if networkOK {
-			wsConfig.LastCheckedBlocks[network] = currentBlock
+			wsConfig.LastCheckedBlocks[network] = fmt.Sprintf("0x%x", checkpoint)
+			if hex := fmt.Sprintf("0x%x", checkpoint); hex != currentBlocks[network] {
+				partial[network] = hex
+			}
 		}
 	}
 
@@ -530,15 +542,23 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		}, nil
 	}
 
-	return map[string]any{
+	message := fmt.Sprintf("Checked %d wallet(s), found %d alert(s)", len(wsConfig.MonitoredWallets), len(allAlerts))
+	if len(partial) > 0 {
+		message += "; some networks had more transfers than one scan reads and were scanned part of the way, the next scan continues from there"
+	}
+	out := map[string]any{
 		"success":         true,
 		"wallets_checked": len(wsConfig.MonitoredWallets),
 		"alerts_found":    len(allAlerts),
 		"alerts":          allAlerts,
 		"current_block":   currentBlocks[firstNetwork],
 		"current_blocks":  currentBlocks,
-		"message":         fmt.Sprintf("Checked %d wallet(s), found %d alert(s)", len(wsConfig.MonitoredWallets), len(allAlerts)),
-	}, nil
+		"message":         message,
+	}
+	if len(partial) > 0 {
+		out["scanned_to"] = partial
+	}
+	return out, nil
 }
 
 // currentBlockNumber returns a network's latest block as a 0x-hex string.
@@ -567,34 +587,75 @@ func lookBackBlocks(block string, n int64) string {
 	return fmt.Sprintf("0x%x", from)
 }
 
-// checkWalletForThreats analyzes a wallet for security threats
+// checkWalletForThreats analyzes a wallet for security threats in the
+// blocks fromBlock..toBlock (0x-hex, inclusive). It returns the alerts and
+// the last block it fully scanned: toBlock, or earlier when the range holds
+// more transfers than maxAssetTransferPages pages, in which case the rest
+// is left for the next scan.
 func checkWalletForThreats(ctx context.Context, client *http.Client, config AlchemyConfig,
-	wallet MonitoredWallet, fromBlock, toBlock string) ([]SecurityAlert, error) {
+	wallet MonitoredWallet, fromBlock, toBlock string) ([]SecurityAlert, string, error) {
+	from, okFrom := parseHexBlock(fromBlock)
+	to, okTo := parseHexBlock(toBlock)
+	if !okFrom || !okTo {
+		return nil, "", fmt.Errorf("invalid block range %q..%q", fromBlock, toBlock)
+	}
 
-	// Fetch asset transfers (both incoming and outgoing)
+	// Fetch asset transfers (both incoming and outgoing), oldest first
 	params := map[string]any{
 		"fromBlock": fromBlock,
 		"toBlock":   toBlock,
+		"order":     "asc",
 		"category":  []string{"external", "internal", "erc20", "erc721", "erc1155"},
 	}
 
 	// Both directions, every continuation page of each.
-	outgoing, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "fromAddress", wallet.Address)
+	outgoing, outDone, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "fromAddress", wallet.Address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get outgoing transfers: %w", err)
+		return nil, "", fmt.Errorf("failed to get outgoing transfers: %w", err)
 	}
-	incoming, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "toAddress", wallet.Address)
+	incoming, inDone, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "toAddress", wallet.Address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get incoming transfers: %w", err)
+		return nil, "", fmt.Errorf("failed to get incoming transfers: %w", err)
 	}
-	allTransfers := append(outgoing, incoming...)
+
+	// A direction cut off at the page cap was read up to some block; the
+	// block before the last one seen is complete. The scan ends there.
+	scannedTo := new(big.Int).Set(to)
+	for _, cut := range []struct {
+		done bool
+		list []any
+	}{{outDone, outgoing}, {inDone, incoming}} {
+		if cut.done {
+			continue
+		}
+		last, ok := lastTransferBlock(cut.list)
+		if !ok {
+			return nil, "", fmt.Errorf("more than %d pages of transfers without block numbers", maxAssetTransferPages)
+		}
+		if bound := new(big.Int).Sub(last, big.NewInt(1)); bound.Cmp(scannedTo) < 0 {
+			scannedTo = bound
+		}
+	}
+	if scannedTo.Cmp(from) < 0 {
+		return nil, "", fmt.Errorf("more than %d pages of transfers in block %s", maxAssetTransferPages, fromBlock)
+	}
+	allTransfers := make([]any, 0, len(outgoing)+len(incoming))
+	for _, t := range append(outgoing, incoming...) {
+		if m, ok := t.(map[string]any); ok {
+			if b, ok := parseHexBlock(stringField(m, "blockNum")); ok && b.Cmp(scannedTo) > 0 {
+				continue // past the scanned range: read again next scan
+			}
+		}
+		allTransfers = append(allTransfers, t)
+	}
+	toBlock = fmt.Sprintf("0x%x", scannedTo)
 
 	// Get current balance for large transfer detection
 	// (it decides large-transfer detection, so a failure fails the scan).
 	balanceResult, err := alchemyRequest(ctx, client, config, wallet.Network,
 		"eth_getBalance", []any{wallet.Address, "latest"})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get balance: %w", err)
+		return nil, "", fmt.Errorf("failed to get balance: %w", err)
 	}
 	resultData, _ := balanceResult["result"].(string)
 	weiBalance, ok := new(big.Int), len(resultData) > 2 && resultData[:2] == "0x"
@@ -602,7 +663,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 		_, ok = weiBalance.SetString(resultData[2:], 16)
 	}
 	if !ok {
-		return nil, fmt.Errorf("unexpected eth_getBalance result %q", resultData)
+		return nil, "", fmt.Errorf("unexpected eth_getBalance result %q", resultData)
 	}
 	balanceETH, _ := strconv.ParseFloat(WeiToEther(weiBalance), 64)
 
@@ -656,18 +717,47 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	// Fetch and analyze token approvals
 	approvalAlerts, err := checkTokenApprovals(ctx, client, config, wallet, fromBlock, toBlock)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check token approvals: %w", err)
+		return nil, "", fmt.Errorf("failed to check token approvals: %w", err)
 	}
 	alerts = append(alerts, approvalAlerts...)
 
-	return alerts, nil
+	return alerts, toBlock, nil
 }
 
-// fetchAssetTransfers reads every page of alchemy_getAssetTransfers for one
+// parseHexBlock parses a 0x-hex block number.
+func parseHexBlock(s string) (*big.Int, bool) {
+	if len(s) < 3 || (s[:2] != "0x" && s[:2] != "0X") {
+		return nil, false
+	}
+	n, ok := new(big.Int).SetString(s[2:], 16)
+	return n, ok && n.Sign() >= 0
+}
+
+func stringField(m map[string]any, k string) string {
+	v, _ := m[k].(string)
+	return v
+}
+
+// lastTransferBlock is the highest blockNum among transfers.
+func lastTransferBlock(transfers []any) (*big.Int, bool) {
+	var last *big.Int
+	for _, t := range transfers {
+		m, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		if b, ok := parseHexBlock(stringField(m, "blockNum")); ok && (last == nil || b.Cmp(last) > 0) {
+			last = b
+		}
+	}
+	return last, last != nil
+}
+
+// fetchAssetTransfers reads the pages of alchemy_getAssetTransfers for one
 // direction (addrField is "fromAddress" or "toAddress"), following pageKey
-// up to maxAssetTransferPages. Pagination that does not finish is an error.
+// up to maxAssetTransferPages. complete is false when pages remain.
 func fetchAssetTransfers(ctx context.Context, client *http.Client, config AlchemyConfig,
-	network string, base map[string]any, addrField, address string) ([]any, error) {
+	network string, base map[string]any, addrField, address string) (transfers []any, complete bool, err error) {
 	var all []any
 	pageKey := ""
 	for page := 0; page < maxAssetTransferPages; page++ {
@@ -681,25 +771,25 @@ func fetchAssetTransfers(ctx context.Context, client *http.Client, config Alchem
 		}
 		result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []any{p})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		data, ok := result["result"].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("unexpected alchemy_getAssetTransfers response")
+			return nil, false, fmt.Errorf("unexpected alchemy_getAssetTransfers response")
 		}
-		if transfers, ok := data["transfers"].([]any); ok {
-			all = append(all, transfers...)
+		if page, ok := data["transfers"].([]any); ok {
+			all = append(all, page...)
 		}
 		next, _ := data["pageKey"].(string)
 		if next == "" {
-			return all, nil
+			return all, true, nil
 		}
 		if next == pageKey {
-			return nil, fmt.Errorf("alchemy_getAssetTransfers repeated page key")
+			return nil, false, fmt.Errorf("alchemy_getAssetTransfers repeated page key")
 		}
 		pageKey = next
 	}
-	return nil, fmt.Errorf("more than %d pages of transfers in one scan", maxAssetTransferPages)
+	return all, false, nil
 }
 
 // checkTokenApprovals fetches and analyzes ERC20 token approvals
@@ -1112,7 +1202,7 @@ func saveWalletSecurityConfig(config *WalletSecurityConfig) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return atomicfile.Write(path, data, 0o600)
 }
 
 func loadAlertsLog() (*AlertsLog, error) {
@@ -1144,7 +1234,7 @@ func saveAlertsLog(log *AlertsLog) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return atomicfile.Write(path, data, 0o600)
 }
 
 // appendAlerts stores the alerts whose event is not stored yet and returns

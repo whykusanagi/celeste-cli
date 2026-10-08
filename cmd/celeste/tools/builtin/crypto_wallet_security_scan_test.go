@@ -114,25 +114,57 @@ func TestWalletScanFollowsTransferPages(t *testing.T) {
 		return nil, ""
 	}}
 	wallet := MonitoredWallet{Address: testWallet, Network: "eth-mainnet"}
-	alerts, err := checkWalletForThreats(context.Background(), f.client(), AlchemyConfig{APIKey: "k"}, wallet, "0x100", "0x200")
+	alerts, scannedTo, err := checkWalletForThreats(context.Background(), f.client(), AlchemyConfig{APIKey: "k"}, wallet, "0x100", "0x200")
 	require.NoError(t, err)
+	assert.Equal(t, "0x200", scannedTo)
 	require.Len(t, alerts, 1)
 	assert.Equal(t, "dust_attack", alerts[0].AlertType)
 	assert.Equal(t, "0xccc", alerts[0].TxHash)
 }
 
-// A scan whose pagination never finishes is a failed scan, not a short one.
-func TestWalletScanFailsOnEndlessPages(t *testing.T) {
+// More pages than one scan reads, all in the first block: the scan fails
+// rather than skipping any of them.
+func TestWalletScanFailsWhenOneBlockExceedsPages(t *testing.T) {
 	n := 0
 	f := &fakeAlchemy{transfers: func(dir, key string) ([]any, string) {
 		n++
-		return []any{benignTransfer("0xddd")}, fmt.Sprintf("more-%d", n)
+		tr := benignTransfer(fmt.Sprintf("0x%x", n))
+		tr["blockNum"] = "0x100"
+		return []any{tr}, fmt.Sprintf("more-%d", n)
 	}}
 	wallet := MonitoredWallet{Address: testWallet, Network: "eth-mainnet"}
-	_, err := checkWalletForThreats(context.Background(), f.client(), AlchemyConfig{APIKey: "k"}, wallet, "0x100", "0x200")
+	_, _, err := checkWalletForThreats(context.Background(), f.client(), AlchemyConfig{APIKey: "k"}, wallet, "0x100", "0x200")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pages")
-	assert.Equal(t, maxAssetTransferPages, n)
+	assert.Equal(t, 2*maxAssetTransferPages, n) // both directions, capped
+}
+
+// More pages than one scan reads across many blocks: the scan covers the
+// blocks it read completely, transfers past them are left for the next
+// scan, and the checkpoint moves only that far.
+func TestWalletScanCutAtPageCapResumes(t *testing.T) {
+	f := &fakeAlchemy{transfers: func(dir, key string) ([]any, string) {
+		if dir != "to" {
+			return nil, ""
+		}
+		var i int
+		_, _ = fmt.Sscanf(key, "p%d", &i)
+		tr := dustTransfer(fmt.Sprintf("0x%x", 0x1000+i))
+		tr["blockNum"] = fmt.Sprintf("0x%x", 0x100+i) // one block per page
+		return []any{tr}, fmt.Sprintf("p%d", i+1)
+	}}
+	useFakeAlchemy(t, f)
+
+	res, err := handleCheckWalletSecurity(context.Background(), walletTestLoader{})
+	require.NoError(t, err)
+	m := res.(map[string]any)
+	assert.Equal(t, true, m["success"], m)
+	// Pages 0..49 cover blocks 0x100..0x131; the last one may be partial.
+	want := fmt.Sprintf("0x%x", 0x100+maxAssetTransferPages-2)
+	assert.Equal(t, maxAssetTransferPages-1, m["alerts_found"])
+	cfg, err := loadWalletSecurityConfig()
+	require.NoError(t, err)
+	assert.Equal(t, want, cfg.LastCheckedBlocks["eth-mainnet"])
 }
 
 // Alchemy reports addresses in lower case; a checksummed monitored address
