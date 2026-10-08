@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 )
 
@@ -34,8 +36,10 @@ func writeArtifactBundle(state *RunState) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Owner-only: the bundle holds the run's transcript, verification
+	// output and the workspace diff.
 	bundleDir := filepath.Join(baseDir, state.RunID)
-	if err := os.MkdirAll(bundleDir, 0755); err != nil {
+	if err := privfs.MkdirAll(bundleDir); err != nil {
 		return "", fmt.Errorf("create artifact bundle dir: %w", err)
 	}
 
@@ -54,23 +58,24 @@ func writeArtifactBundle(state *RunState) (string, error) {
 	}
 
 	summary := renderArtifactSummary(state)
-	if err := os.WriteFile(filepath.Join(bundleDir, "summary.md"), []byte(summary), 0644); err != nil {
+	if err := atomicfile.Write(filepath.Join(bundleDir, "summary.md"), []byte(summary), privfs.FilePerm); err != nil {
 		return "", fmt.Errorf("write summary: %w", err)
 	}
 
 	gitStatus, gitDiff := captureGitWorkspaceArtifacts(state.Options.Workspace, state.Options.VerifyTimeout)
 	if strings.TrimSpace(gitStatus) != "" {
-		_ = os.WriteFile(filepath.Join(bundleDir, "git_status.txt"), []byte(gitStatus), 0644)
+		_ = atomicfile.Write(filepath.Join(bundleDir, "git_status.txt"), []byte(gitStatus), privfs.FilePerm)
 	}
 	if strings.TrimSpace(gitDiff) != "" {
-		_ = os.WriteFile(filepath.Join(bundleDir, "git_diff.patch"), []byte(gitDiff), 0644)
+		_ = atomicfile.Write(filepath.Join(bundleDir, "git_diff.patch"), []byte(gitDiff), privfs.FilePerm)
 	}
 
 	return bundleDir, nil
 }
 
 func resolveArtifactBaseDir(artifactDir string) (string, error) {
-	if strings.TrimSpace(artifactDir) == "" {
+	isDefault := strings.TrimSpace(artifactDir) == ""
+	if isDefault {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("resolve home dir: %w", err)
@@ -82,7 +87,13 @@ func resolveArtifactBaseDir(artifactDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve artifact dir: %w", err)
 	}
-	if err := os.MkdirAll(abs, 0755); err != nil {
+	// A new directory is owner-only; an existing --artifact-dir the user
+	// chose keeps its mode, the default one under ~/.celeste is tightened.
+	mkdir := func(dir string) error { return os.MkdirAll(dir, privfs.DirPerm) }
+	if isDefault {
+		mkdir = privfs.MkdirAll
+	}
+	if err := mkdir(abs); err != nil {
 		return "", fmt.Errorf("create artifact dir: %w", err)
 	}
 	return abs, nil
@@ -93,7 +104,7 @@ func writeJSON(path string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshal json for %s: %w", filepath.Base(path), err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := atomicfile.Write(path, data, privfs.FilePerm); err != nil {
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
 	return nil

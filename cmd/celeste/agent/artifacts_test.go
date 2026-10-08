@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,4 +33,28 @@ func TestWriteArtifactBundle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(summaryData), "Agent Run Summary")
 	assert.Contains(t, string(summaryData), "TASK_COMPLETE")
+}
+
+// Aikido 806869790: a bundle holds the run's transcript and diff:
+// owner-only directory and files.
+func TestWriteArtifactBundleIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits")
+	}
+	state := NewRunState("test goal", DefaultOptions())
+	state.Options.EmitArtifacts = true
+	state.Options.ArtifactDir = t.TempDir()
+	bundlePath, err := writeArtifactBundle(state)
+	require.NoError(t, err)
+	fi, err := os.Stat(bundlePath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), "bundle dir")
+	entries, err := os.ReadDir(bundlePath)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	for _, e := range entries {
+		fi, err := os.Stat(filepath.Join(bundlePath, e.Name()))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), e.Name())
+	}
 }
