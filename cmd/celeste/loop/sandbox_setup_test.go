@@ -366,3 +366,23 @@ func TestGitDirsNeverMakeAnAncestorOfTheWorkspaceWritable(t *testing.T) {
 		}
 	}
 }
+
+// Aikido 806869318: the policy keeps every git dir's config and hooks
+// read-only, the workspace's own .git included.
+func TestSandboxKeepsGitConfigAndHooksReadOnly(t *testing.T) {
+	setupHome(t)
+	repo := t.TempDir()
+	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
+	admin := fakeWorktree(t, filepath.Join(repo, ".git"), lane)
+	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
+	for ws, dirs := range map[string][]string{repo: {filepath.Join(repo, ".git")}, lane: {filepath.Join(repo, ".git"), admin}} {
+		env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
+		for _, d := range dirs {
+			for _, name := range []string{"config", "hooks"} {
+				if want := sandbox.Resolve(filepath.Join(d, name)); !slices.Contains(env.SandboxPolicy.ReadOnly, want) {
+					t.Errorf("workspace %s: ReadOnly lacks %s: %v", ws, want, env.SandboxPolicy.ReadOnly)
+				}
+			}
+		}
+	}
+}

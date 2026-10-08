@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 )
 
 // StatusLineModel renders a single-line segmented status bar. All fields are
@@ -207,7 +208,7 @@ func parseAheadBehind(out string) (ahead, behind int) {
 // gitAheadBehind runs git to count commits ahead/behind the upstream.
 // Returns (0,0) when there is no upstream or git fails.
 func gitAheadBehind(workDir string) (ahead, behind int) {
-	cmd := exec.Command("git", "rev-list", "--left-right", "--count", "@{u}...HEAD")
+	cmd := exec.Command("git", gitsafe.Args("rev-list", "--left-right", "--count", "@{u}...HEAD")...)
 	cmd.Dir = workDir
 	out, err := cmd.Output()
 	if err != nil {

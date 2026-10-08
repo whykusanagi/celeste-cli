@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 )
 
 // ProjectInfo holds detected project metadata.
@@ -159,7 +161,7 @@ func GrimoireMeta(dir string) string {
 
 // gitCommand runs a git command and returns trimmed stdout, or "" on error.
 func gitCommand(dir string, args ...string) string {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", gitsafe.Args(args...)...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

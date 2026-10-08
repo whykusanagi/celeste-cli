@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 )
 
 // ChangedRange represents a modified line range in a file.
@@ -68,7 +70,7 @@ func ParseGitDiffRanges(workspace string, base string) ([]ChangedRange, error) {
 	if base == "" {
 		base = "HEAD~1"
 	}
-	cmd := exec.Command("git", "diff", "--unified=0", base, "--")
+	cmd := exec.Command("git", gitsafe.Args("diff", "--no-ext-diff", "--unified=0", base, "--")...)
 	cmd.Dir = workspace
 	out, err := cmd.Output()
 	if err != nil {

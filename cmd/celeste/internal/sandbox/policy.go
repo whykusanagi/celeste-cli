@@ -22,7 +22,10 @@ type Policy struct {
 	Enabled   bool
 	Workspace string   // resolved
 	Writable  []string // resolved, de-duplicated, sorted; includes the defaults
-	Network   bool
+	// ReadOnly stays read-only even inside a writable directory: each git
+	// dir's config and hooks (GitProtected). Resolved.
+	ReadOnly []string
+	Network  bool
 }
 
 // buildCaches are the per-user build caches that are writable when they

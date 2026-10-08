@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 )
 
@@ -175,7 +176,7 @@ var gitMaxOutput = 64 << 20
 // Output over gitMaxOutput ends with a trailer saying it was cut, so a cut
 // patch is never taken for a whole one.
 func runGit(workdir string, timeout time.Duration, args ...string) (string, error) {
-	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, args...), Timeout: timeout, MaxOutput: gitMaxOutput})
+	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, gitsafe.Args(args...)...), Timeout: timeout, MaxOutput: gitMaxOutput})
 	if res.Truncated {
 		res.Output += fmt.Sprintf("\n# celeste: output truncated at %d bytes\n", gitMaxOutput)
 	}

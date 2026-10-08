@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -41,6 +42,23 @@ func GitDirs(workspace string) []string {
 			return nil
 		}
 	}
+}
+
+// GitProtected returns the paths in each of gitDirs that git outside the
+// sandbox would run programs from, and that therefore stay read-only to
+// sandboxed commands: config and config.worktree (core.fsmonitor, merge
+// and filter drivers, core.hooksPath) and hooks. A symlinked one is
+// listed as the link and as its target, so neither can be replaced.
+func GitProtected(gitDirs []string) []string {
+	var out []string
+	for _, d := range gitDirs {
+		for _, name := range []string{"config", "config.worktree", "hooks"} {
+			p := filepath.Join(d, name)
+			out = append(out, p, Resolve(p))
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // gitFileDirs returns the git dirs a ".git" file in dir names, nil

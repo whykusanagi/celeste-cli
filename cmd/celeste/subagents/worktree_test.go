@@ -63,3 +63,52 @@ func TestMergeWorktree(t *testing.T) {
 	}
 	_ = RemoveWorktree(repo, wt)
 }
+
+// Aikido 806869318: the parent's merge of a lane runs none of the
+// programs the repository's git config or hooks name. A lane shares the
+// repository's config and hooks, so a sandboxed command in it could plant
+// them for the unsandboxed merge. Configured merge drivers are replaced by
+// git's own text merge, so the merge still succeeds.
+func TestMergeWorktreeRunsNoRepositoryPrograms(t *testing.T) {
+	repo := initRepo(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	write := func(path, body string, mode os.FileMode) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(repo, "f.txt"), "one\ntwo\nthree\nfour\nfive\n", 0o644)
+	write(filepath.Join(repo, ".gitattributes"), "*.txt merge=custom\n", 0o644)
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-m", "base")
+	wt, err := AddWorktree(repo, "earth")
+	if err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	defer func() { _ = RemoveWorktree(repo, wt) }()
+	write(filepath.Join(wt.Path, "f.txt"), "one\ntwo\nthree\nfour\nFIVE\n", 0o644)
+	gittest.Run(t, wt.Path, "commit", "-am", "lane")
+	write(filepath.Join(repo, "f.txt"), "ONE\ntwo\nthree\nfour\nfive\n", 0o644)
+	gittest.Run(t, repo, "commit", "-am", "main")
+
+	script := "#!/bin/sh\necho x >> '" + marker + "'\n"
+	gittest.Run(t, repo, "config", "merge.custom.driver", "echo x >> '"+marker+"'; false")
+	gittest.Run(t, repo, "config", "core.fsmonitor", "echo x >> '"+marker+"'; false")
+	for _, hook := range []string{"pre-merge-commit", "prepare-commit-msg", "commit-msg", "post-merge"} {
+		write(filepath.Join(repo, ".git", "hooks", hook), script, 0o755)
+	}
+	if err := MergeWorktree(repo, wt); err != nil {
+		t.Fatalf("MergeWorktree: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the merge ran a program from the repository's config or hooks")
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "f.txt"))
+	if err != nil || string(got) != "ONE\ntwo\nthree\nfour\nFIVE\n" {
+		t.Fatalf("merged f.txt = %q, %v", got, err)
+	}
+}

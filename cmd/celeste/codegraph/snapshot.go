@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 )
 
 // Snapshot captures the graph state at a point in time.
@@ -155,7 +157,7 @@ func (idx *Indexer) LatestSnapshot() (*Snapshot, error) {
 }
 
 func detectGitCommit(workspace string) string {
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	cmd := exec.Command("git", gitsafe.Args("rev-parse", "--short", "HEAD")...)
 	cmd.Dir = workspace
 	out, err := cmd.Output()
 	if err != nil {

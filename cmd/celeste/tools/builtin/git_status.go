@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -40,7 +41,7 @@ func (t *GitStatusTool) Execute(ctx context.Context, input map[string]any, progr
 	defer cancel()
 
 	runGit := func(args ...string) string {
-		cmd := exec.CommandContext(timeout, "git", args...)
+		cmd := exec.CommandContext(timeout, "git", gitsafe.Args(args...)...)
 		cmd.Dir = t.workspace
 		out, err := cmd.Output()
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
@@ -50,7 +51,7 @@ func CaptureGitSnapshot(workDir string) *GitSnapshot {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+			cmd := exec.CommandContext(ctx, args[0], gitsafe.Args(args[1:]...)...)
 			cmd.Dir = workDir
 			out, err := cmd.Output()
 			if err != nil {

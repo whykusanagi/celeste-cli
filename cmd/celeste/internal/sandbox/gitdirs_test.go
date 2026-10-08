@@ -207,3 +207,96 @@ func TestGitCommitInALinkedWorktreeUnderTheSandbox(t *testing.T) {
 		t.Fatalf("the lane's commit is missing: %q %v", out, err)
 	}
 }
+
+// Aikido 806869318: each git dir's config and hooks stay read-only inside
+// the sandbox, the workspace's own .git included, so a sandboxed command
+// cannot plant a program that git outside the sandbox later runs. Commits
+// still work.
+func TestGitConfigAndHooksAreReadOnlyUnderTheSandbox(t *testing.T) {
+	ws := Resolve(t.TempDir())
+	gitDir := filepath.Join(ws, ".git")
+	for _, d := range []string{filepath.Join(gitDir, "hooks"), filepath.Join(gitDir, "objects")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(gitDir, "config"), "[core]\n")
+	ro := GitProtected([]string{gitDir})
+	for _, want := range []string{filepath.Join(gitDir, "config"), filepath.Join(gitDir, "hooks")} {
+		if !slices.Contains(ro, want) {
+			t.Fatalf("GitProtected = %v, lacks %s", ro, want)
+		}
+	}
+	p := Policy{Enabled: true, Workspace: ws, Writable: []string{ws, gitDir}, ReadOnly: ro}
+
+	prof := Profile(p)
+	allow := strings.Index(prof, "(allow file-write*")
+	deny := strings.LastIndex(prof, "(deny file-write*")
+	if allow < 0 || deny < allow || !strings.Contains(prof[deny:], sbplQuote(filepath.Join(gitDir, "config"))) ||
+		!strings.Contains(prof[deny:], sbplQuote(filepath.Join(gitDir, "hooks"))) {
+		t.Fatalf("the profile does not deny writes to config and hooks after the allow block:\n%s", prof)
+	}
+
+	args := BwrapArgs(p, "true")
+	lastRW, firstRO := -1, -1
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == "--bind" {
+			lastRW = i
+		}
+		if args[i] == "--ro-bind" && args[i+1] == filepath.Join(gitDir, "config") && firstRO < 0 {
+			firstRO = i
+		}
+	}
+	if firstRO < 0 || firstRO < lastRW || !slices.Contains(args, filepath.Join(gitDir, "hooks")) {
+		t.Fatalf("bwrap does not bind config and hooks read-only after the writable binds: %v", args)
+	}
+
+	if _, ok := Available(); !ok {
+		return
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		return
+	}
+	home := Resolve(t.TempDir())
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") && !strings.HasPrefix(kv, "HOME=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+	repo := Resolve(t.TempDir())
+	cmd := exec.Command(gitBin, "init", "-q", "-b", "main", repo)
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	dirs := GitDirs(repo)
+	p = Policy{Enabled: true, Workspace: repo, Network: true,
+		Writable: Normalize(append([]string{repo}, dirs...)), ReadOnly: GitProtected(dirs)}
+	run := func(command string) error {
+		argv, _ := Wrap(p, command)
+		c := exec.Command(argv[0], argv[1:]...)
+		c.Dir, c.Env = repo, env
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Logf("%s: %v\n%s", command, err, out)
+		}
+		return err
+	}
+	if run("git config core.fsmonitor true") == nil {
+		t.Error("a sandboxed command changed .git/config")
+	}
+	if run("echo '#!/bin/sh' > .git/hooks/pre-commit") == nil {
+		t.Error("a sandboxed command wrote a hook")
+	}
+	if run("mv .git .git-moved") == nil {
+		t.Error("a sandboxed command moved the git dir aside")
+	}
+	if err := run("echo hi > f.txt && git add f.txt && git commit -q -m sandboxed"); err != nil {
+		t.Errorf("git commit under the sandbox: %v", err)
+	}
+}

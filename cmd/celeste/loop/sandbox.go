@@ -2,6 +2,7 @@ package loop
 
 import (
 	"log"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -24,7 +25,8 @@ var sandboxWarnOnce = new(sync.Once)
 // loosening ("enabled": false, "network": true, "writable") only once
 // that file's settings are trusted, or the interactive chat approves them
 // now. Non-interactive runs skip an untrusted loosening with a warning.
-// The workspace's git dirs are always writable (sandbox.GitDirs).
+// The workspace's git dirs are writable (sandbox.GitDirs), but never their
+// config and hooks (sandbox.GitProtected).
 func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	p := sandbox.Policy{Enabled: sandbox.DefaultEnabled, Network: true}
 	var extra []string
@@ -65,7 +67,8 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	// the repository's metadata got there (GitDirs refuses what does not
 	// point back; this is the backstop).
 	home := sandbox.Resolve(e.home)
-	for _, dir := range sandbox.GitDirs(p.Workspace) {
+	gitDirs := sandbox.GitDirs(p.Workspace)
+	for _, dir := range gitDirs {
 		if filepath.Dir(dir) == dir || within(dir, p.Workspace) || (e.home != "" && within(dir, home)) {
 			e.warn("sandbox: not making %s writable: it contains the workspace or the home directory", strconv.Quote(dir))
 			continue
@@ -73,6 +76,15 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 		extra = append(extra, dir)
 	}
 	p.Writable = sandbox.Normalize(append(sandbox.DefaultWritable(e.home, p.Workspace), e.writablePaths(extra)...))
+	// Their config and hooks stay read-only: celeste and you run git
+	// outside the sandbox, and it would run what they name.
+	p.ReadOnly = sandbox.GitProtected(gitDirs)
+	if p.Enabled && runtime.GOOS == "linux" {
+		// bwrap can only bind over a path that exists; git init makes it.
+		for _, dir := range gitDirs {
+			_ = os.Mkdir(filepath.Join(dir, "hooks"), 0o755)
+		}
+	}
 	e.warnMissingSandbox(p)
 	return p
 }

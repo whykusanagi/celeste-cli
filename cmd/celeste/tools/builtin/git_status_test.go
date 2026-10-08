@@ -58,3 +58,19 @@ func TestGitStatusToolExecute_EmptyInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.Error)
 }
+
+// Aikido 806869318: git_status is read-only and auto-allowed, so it must
+// not run a program the repository's config names (core.fsmonitor), which
+// a sandboxed command could have planted.
+func TestGitStatusRunsNoRepositoryPrograms(t *testing.T) {
+	dir := initGitRepo(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	gittest.Run(t, dir, "config", "core.fsmonitor", "echo x >> '"+marker+"'; false")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("changed\n"), 0o644))
+	if _, err := NewGitStatusTool(dir).Execute(context.Background(), map[string]any{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("git_status ran the repository's core.fsmonitor")
+	}
+}
