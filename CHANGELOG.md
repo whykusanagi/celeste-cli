@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **permissions:** deny and ask rules written with an absolute path inside the workspace match again once the workspace is known, for the path given absolute (as given or with symlinks resolved) or relative (Aikido, #425 review).
+* **subagents:** a subagent's workspace is checked against the parent's again when the run starts or resumes, so a directory replaced by a symlink out of the parent after `spawn_agent` checked it ends the run (Aikido, #425 review).
+* **subagents:** once an isolated run's worktree merge is decided, a kill of that run is refused, so a run reported killed is never merged (Aikido, #425 review).
+* **loop:** without a home directory, project memories and the code graph are skipped instead of read or created under the current directory's `.celeste` (Aikido, #425 review).
+* **config:** profile names are plain file names (no separators, colons or dot segments), so a resumed session's endpoint cannot load or write a config outside `~/.celeste` (Aikido, #427 review).
 * **serve:** a workspace named in an MCP tool call is checked with the platform's path separator, so on Windows a workspace under the home folder is accepted and the protected folders under home (`.ssh`, `.aws` and the rest) are refused, as on macOS and Linux.
 * **git:** celeste's own git commands (`git_status`, `git_log`, a subagent's isolated worktree, the lane merge, the status line, code graph diffs) refuse a repository whose `.git` celeste does not trust (a symlink, or a `gitdir:` file that is not a linked worktree's or a submodule's) with a clear error, instead of letting git follow that pointer to another repository. The error says why: a linked worktree that was moved is told to run `git worktree repair` there, and a `git init --separate-git-dir` layout is named as not supported (Aikido review of [#422](https://github.com/whykusanagi/celeste-cli/pull/422)).
 * **checkpoints:** a checkpoint from an index written before the workspace was recorded, whose file is a symlink leading out of its directory, is never read through: undo refuses to read it instead of reading the file the link points to (CodeRabbit review of [#421](https://github.com/whykusanagi/celeste-cli/pull/421)).
@@ -32,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **server:** a stdio `celeste serve` that is shut down while a request is running no longer starts the next request it had already read (Aikido review of #424).
 * **mcp:** `/mcp` enable/disable and `celeste mcp install` leave a rewritten MCP config readable only by you (0600), also when it was readable by others before, as its `env` values can be credentials (CodeRabbit review of #427). The rewrite is a new file renamed into place, so a symlink put at the config path after it was read is replaced, never written through; a config that was a symlink when read is still rewritten at its target.
 * **server:** a `celeste_index` rebuild also waits for an evicted code graph index that is still closing, so it never deletes the database under that close (Aikido review of #424).
+
+### Bug Fixes
+
+* **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
+* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 
 ### Breaking Changes
 

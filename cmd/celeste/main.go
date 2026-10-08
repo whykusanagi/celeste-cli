@@ -1354,6 +1354,9 @@ func runConfigCommand(args []string) {
 // come from the provider registry (single source of truth) unless a template
 // overrides them; only behavioural knobs that vary per provider live here.
 func createConfigTemplate(name string) error {
+	if err := config.ValidateProfileName(name); err != nil {
+		return err
+	}
 	// override carries the per-template behavioural knobs plus any deviation from
 	// the registry. provider names the registry entry to inherit BaseURL+model from;
 	// baseURL/model, when set, win over the registry (for non-registry templates or

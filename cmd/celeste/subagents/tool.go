@@ -193,6 +193,18 @@ func scopeWorkspace(parent, ws string) (string, error) {
 	return realCand, nil
 }
 
+// recheckWorkspace checks a subagent's workspace against the parent's
+// again right before the subagent is built, and returns it resolved anew.
+// scopeWorkspace's answer is only a path: a directory on it replaced by a
+// symlink out of the parent since would otherwise lead the subagent's
+// tools outside. The parent's own workspace (or none) needs no check.
+func recheckWorkspace(parent, ws string) (string, error) {
+	if parent == "" || ws == "" || filepath.Clean(ws) == filepath.Clean(parent) {
+		return ws, nil
+	}
+	return scopeWorkspace(parent, ws)
+}
+
 func isEmptyMap(v any) bool {
 	m, ok := v.(map[string]any)
 	return ok && len(m) == 0

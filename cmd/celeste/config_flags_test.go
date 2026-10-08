@@ -96,3 +96,18 @@ func TestSkipPersonaErrorPointsToMigrationGuide(t *testing.T) {
 	assert.Contains(t, err.Error(), "--skip-persona was removed in celeste 2.0")
 	assert.Contains(t, err.Error(), "MIGRATING-2.0.md")
 }
+
+// config --init checks the profile name the same way LoadNamed does, before
+// the template lookup, so a name with a separator or a dot segment gets the
+// same "invalid profile name" error everywhere.
+func TestCreateConfigTemplateRejectsInvalidProfileName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".celeste"), 0o700))
+	for _, name := range []string{"../x", "a/b", `a\b`, ".."} {
+		err := createConfigTemplate(name)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "invalid profile name", name)
+	}
+}
