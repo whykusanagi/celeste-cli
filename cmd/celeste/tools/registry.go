@@ -815,7 +815,9 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 		output += fmt.Sprintf("\n[output truncated at %d bytes]", shellrun.DefaultMaxOutput)
 	}
 	if failure != "" {
-		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %s\nOutput:\n%s", c.command, failure, output), Error: true}, nil
+		// The command is not echoed: it is the user's config and may hold a
+		// credential, and this result goes to the model.
+		return ToolResult{Content: fmt.Sprintf("Custom tool %q failed: %s\nOutput:\n%s", c.name, failure, output), Error: true}, nil
 	}
 	return ToolResult{Content: output}, nil
 }
