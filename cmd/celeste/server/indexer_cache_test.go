@@ -25,11 +25,7 @@ func TestIndexRebuildWaitsForInFlightQuery(t *testing.T) {
 	old := srv.indexers[dir]
 	srv.indexerMu.Unlock()
 
-	done := make(chan map[string]any, 1)
-	go func() {
-		_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
-		done <- payload
-	}()
+	done := callToolAsync(srv, "celeste_index", map[string]any{"operation": "rebuild"})
 
 	// Wait until the rebuild has taken the old Indexer out of the cache.
 	deadline := time.Now().Add(10 * time.Second)
@@ -59,7 +55,8 @@ func TestIndexRebuildWaitsForInFlightQuery(t *testing.T) {
 	require.NoError(t, statsErr, "the rebuild closed an Indexer still in use")
 
 	select {
-	case payload := <-done:
+	case r := <-done:
+		payload := toolCallPayload(t, r)
 		require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 	case <-time.After(60 * time.Second):
 		t.Fatal("rebuild did not finish after the call released its Indexer")
@@ -146,11 +143,7 @@ func TestIndexRebuildWaitsForEvictedBusyIndexer(t *testing.T) {
 	}
 	require.False(t, srv.indexerCached(dir), "the busy Indexer was not evicted")
 
-	done := make(chan map[string]any, 1)
-	go func() {
-		_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
-		done <- payload
-	}()
+	done := callToolAsync(srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	select {
 	case <-done:
 		t.Fatal("rebuild finished while a call still held the evicted Indexer")
@@ -162,9 +155,76 @@ func TestIndexRebuildWaitsForEvictedBusyIndexer(t *testing.T) {
 	released = true
 
 	select {
-	case payload := <-done:
+	case r := <-done:
+		payload := toolCallPayload(t, r)
 		require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 	case <-time.After(60 * time.Second):
 		t.Fatal("rebuild did not finish after the call released its Indexer")
 	}
+}
+
+// TestRetiredIndexerStaysWaitedOnWhileClosing: an Indexer taken out of the
+// cache stays among the entries a rebuild of its workspace waits for until
+// its Close has returned, both when its last call releases it and when an
+// eviction closes it idle; otherwise a rebuild could delete the database
+// under a Close still running (Aikido review of #424).
+func TestRetiredIndexerStaysWaitedOnWhileClosing(t *testing.T) {
+	srv, dir := newTestServerWithWorkspace(t)
+	home := os.Getenv("HOME")
+	waitedOn := func(e *indexerEntry) bool {
+		srv.indexerMu.Lock()
+		defer srv.indexerMu.Unlock()
+		for _, r := range srv.retiredBusy[e.path] {
+			if r == e {
+				return true
+			}
+		}
+		return false
+	}
+	closing := map[*indexerEntry]bool{}
+	testHookIndexerClosing = func(e *indexerEntry) { closing[e] = waitedOn(e) }
+	t.Cleanup(func() { testHookIndexerClosing = nil })
+
+	// Busy when evicted: closes on its last release.
+	_, release, _, err := srv.indexerFor(dir)
+	require.NoError(t, err)
+	srv.indexerMu.Lock()
+	busy := srv.indexers[dir]
+	srv.indexerMu.Unlock()
+	var idle *indexerEntry
+	var holds []func()
+	for i := 0; i < maxIndexers; i++ { // all busy: dir's, the oldest, goes
+		d := filepath.Join(home, "ws"+strconv.Itoa(i))
+		require.NoError(t, os.MkdirAll(d, 0o755))
+		_, r, _, err := srv.indexerFor(d)
+		require.NoError(t, err)
+		if i == 0 {
+			srv.indexerMu.Lock()
+			idle = srv.indexers[d]
+			srv.indexerMu.Unlock()
+		}
+		holds = append(holds, r)
+	}
+	require.False(t, srv.indexerCached(dir), "the busy Indexer was not evicted")
+	release()
+	for _, r := range holds {
+		r()
+	}
+	require.Contains(t, closing, busy, "the evicted busy Indexer never closed")
+	assert.True(t, closing[busy], "a released Indexer was not waited on while it closed")
+
+	// Idle when evicted: closed by the eviction.
+	for i := maxIndexers; i < 2*maxIndexers; i++ {
+		d := filepath.Join(home, "ws"+strconv.Itoa(i))
+		require.NoError(t, os.MkdirAll(d, 0o755))
+		_, r, _, err := srv.indexerFor(d)
+		require.NoError(t, err)
+		r()
+	}
+	require.Contains(t, closing, idle, "the idle Indexer was never evicted")
+	assert.True(t, closing[idle], "an evicted idle Indexer was not waited on while it closed")
+
+	srv.indexerMu.Lock()
+	defer srv.indexerMu.Unlock()
+	assert.Empty(t, srv.retiredBusy[busy.path], "a closed Indexer stayed in the wait list")
 }

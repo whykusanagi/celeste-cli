@@ -81,10 +81,11 @@ type Server struct {
 	// is left on the database the rebuild deletes (review of #393).
 	rebuilding map[string]bool
 	// retiredBusy holds, per workspace, the entries taken out of the cache
-	// (by eviction, a rebuild or Close) while calls still use them, until
-	// they close (guarded by indexerMu). A rebuild waits for these as well
-	// as the cached entry, so it never deletes a database a call evicted
-	// from the cache is still reading (Aikido 806869451).
+	// (by eviction, a rebuild or Close) until their Close has returned,
+	// whether calls still use them or not (guarded by indexerMu). A
+	// rebuild waits for these as well as the cached entry, so it never
+	// deletes a database a call evicted from the cache is still reading,
+	// or one still closing (Aikido 806869451, Aikido review of #424).
 	retiredBusy map[string][]*indexerEntry
 
 	// runs tracks MCP agent runs that outlived the inline threshold, so a client
@@ -152,7 +153,7 @@ func (s *Server) Close() error {
 		}
 	}
 	s.indexerMu.Unlock()
-	closeIndexerEntries(idle)
+	s.closeIndexerEntries(idle)
 	return nil
 }
 
@@ -168,14 +169,14 @@ func (s *Server) retireIndexerLocked(path string, e *indexerEntry) bool {
 	}
 	e.retired = true
 	e.path = path
-	if e.inUse > 0 {
-		s.retiredBusy[path] = append(s.retiredBusy[path], e)
-		return false
-	}
-	return true
+	// Listed until its Close has returned, idle or not: a rebuild waits
+	// for every listed entry, so it never deletes the database under a
+	// Close still running (Aikido review of #424).
+	s.retiredBusy[path] = append(s.retiredBusy[path], e)
+	return e.inUse == 0
 }
 
-// dropRetiredBusyLocked forgets e once its last call released it.
+// dropRetiredBusyLocked forgets e once it has closed.
 func (s *Server) dropRetiredBusyLocked(e *indexerEntry) {
 	list := s.retiredBusy[e.path]
 	for i, r := range list {
@@ -191,12 +192,24 @@ func (s *Server) dropRetiredBusyLocked(e *indexerEntry) {
 	}
 }
 
-func closeIndexerEntries(entries []*indexerEntry) {
+// testHookIndexerClosing, when set, runs as a retired entry is about to
+// close. Tests only.
+var testHookIndexerClosing func(e *indexerEntry)
+
+// closeIndexerEntries closes retired entries, then takes them off the
+// list a rebuild waits for. indexerMu must not be held.
+func (s *Server) closeIndexerEntries(entries []*indexerEntry) {
 	for _, e := range entries {
+		if testHookIndexerClosing != nil {
+			testHookIndexerClosing(e)
+		}
 		if e.idx != nil {
 			_ = e.idx.Close()
 		}
 		close(e.idle)
+		s.indexerMu.Lock()
+		s.dropRetiredBusyLocked(e)
+		s.indexerMu.Unlock()
 	}
 }
 
@@ -205,12 +218,9 @@ func (s *Server) releaseIndexer(e *indexerEntry) {
 	s.indexerMu.Lock()
 	e.inUse--
 	closeNow := e.retired && e.inUse == 0
-	if closeNow {
-		s.dropRetiredBusyLocked(e)
-	}
 	s.indexerMu.Unlock()
 	if closeNow {
-		closeIndexerEntries([]*indexerEntry{e})
+		s.closeIndexerEntries([]*indexerEntry{e})
 	}
 }
 
@@ -296,7 +306,7 @@ func (s *Server) indexerFor(workspace string) (idx *codegraph.Indexer, release f
 	s.indexers[workspace] = e
 	release = s.acquireIndexerLocked(e)
 	s.indexerMu.Unlock()
-	closeIndexerEntries(idle)
+	s.closeIndexerEntries(idle)
 	return opened, release, false, nil
 }
 
