@@ -243,11 +243,19 @@ func (e *Env) applyPermissions(pc *permissions.PermissionConfig) {
 		pc.Mode = permissions.ModeTrust
 	}
 	e.permConfig = *pc
-	e.Checker = permissions.NewChecker(*pc)
+	e.Checker = e.newChecker()
 	if e.Mode == ModeChat {
 		e.PersistRules() // "always allow" from the modal persists
 	}
 	e.Registry.SetPermissionChecker(e.Checker)
+}
+
+// newChecker is a checker for e.permConfig that knows e's workspace, so a
+// path rule also matches an absolute or symlinked path inside it.
+func (e *Env) newChecker() *permissions.Checker {
+	c := permissions.NewChecker(e.permConfig)
+	c.SetWorkspace(e.Workspace)
+	return c
 }
 
 // setupHooks loads the session's hooks (F0). Only an interactive TUI whose
@@ -340,7 +348,7 @@ func (e *Env) PersistRules() {
 // subagents).
 func (e *Env) Trust() {
 	e.permConfig.Mode = permissions.ModeTrust
-	e.Checker = permissions.NewChecker(e.permConfig)
+	e.Checker = e.newChecker()
 	e.Registry.SetPermissionChecker(e.Checker)
 }
 

@@ -3,7 +3,6 @@ package permissions
 
 import (
 	"encoding/json"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -21,7 +20,7 @@ import (
 //     filepath.Match.
 //  5. All applicable patterns must match for the rule to match.
 func MatchRule(rule Rule, toolName string, input map[string]any) bool {
-	return matchRule(rule, toolName, argLegacy, input, false)
+	return matchRule(rule, toolName, argLegacy, input, false, nil)
 }
 
 // argLegacy as matchRule's primary means the tool names no primary
@@ -50,9 +49,10 @@ func primaryArgOf(tool ToolInfo) string {
 // has no primary field ("") or the call lacks it, a restricting rule
 // (restricting: a deny or ask) still matches and a permitting one does
 // not. With primary argLegacy, the argument is ExtractFirstStringArg's.
-// argMatches decides the glob itself: paths are cleaned first and command
-// lines are matched command by command.
-func matchRule(rule Rule, toolName, primary string, input map[string]any, restricting bool) bool {
+// argMatches decides the glob itself: paths are cleaned first (and, with a
+// workspace ws, also matched relative to it) and command lines are matched
+// command by command.
+func matchRule(rule Rule, toolName, primary string, input map[string]any, restricting bool, ws *workspace) bool {
 	// Step 1: Parse tool pattern
 	patternTool, argGlob := ParseToolPattern(rule.ToolPattern)
 
@@ -76,7 +76,7 @@ func matchRule(rule Rule, toolName, primary string, input map[string]any, restri
 			if !restricting || primary == argLegacy {
 				return false
 			}
-		} else if !argMatches(argGlob, key, arg, restricting) {
+		} else if !argMatches(argGlob, key, arg, restricting, ws) {
 			return false
 		}
 	}
@@ -155,18 +155,30 @@ var pathArgs = map[string]bool{"path": true, "file_path": true, "dir": true, "di
 // argMatches matches an argument glob against the value of input field
 // key. A path is cleaned first, so ".." can neither take an allowed path
 // out of the rule's directory nor a denied one past it; a cleaned path that
-// still climbs out ("../x") is never permitted. A command line is matched
-// one command at a time: a permitting rule never matches a line that
-// chains, pipes, substitutes or redirects (shellOperator), and a
-// restricting rule matches when any one command in it matches.
-func argMatches(glob, key, arg string, restricting bool) bool {
+// still climbs out ("../x") is never permitted. With the workspace known,
+// a path is also matched as the workspace-relative path it names, lexically
+// and with symlinks resolved (pathForms): a restricting rule matches when
+// any spelling does, a permitting one only when every one does. A command
+// line is matched one command at a time: a permitting rule never matches a
+// line that chains, pipes, substitutes or redirects (shellOperator), and a
+// restricting rule matches when any one command in it matches, also with
+// leading shell keywords, wrappers and assignments taken off
+// (commandWord). That is best-effort: a shell can spell a command in ways
+// no glob sees, so the sandbox and hooks are the boundary, not deny rules.
+func argMatches(glob, key, arg string, restricting bool, ws *workspace) bool {
 	switch {
 	case pathArgs[key]:
-		p := path.Clean(filepath.ToSlash(arg))
-		if !restricting && (p == ".." || strings.HasPrefix(p, "../")) {
-			return false
+		for _, p := range pathForms(arg, ws, restricting) {
+			climbs := p == ".." || strings.HasPrefix(p, "../")
+			hit := globMatch(glob, p)
+			if restricting && hit {
+				return true
+			}
+			if !restricting && (climbs || !hit) {
+				return false
+			}
 		}
-		return globMatch(glob, p)
+		return !restricting
 	case key == "command":
 		if !restricting {
 			return !shellOperator.MatchString(arg) && globMatch(glob, strings.TrimSpace(arg))
@@ -175,13 +187,56 @@ func argMatches(glob, key, arg string, restricting bool) bool {
 			return true
 		}
 		for _, seg := range shellOperator.Split(arg, -1) {
-			if seg = strings.TrimSpace(seg); seg != "" && globMatch(glob, seg) {
+			if seg = strings.TrimSpace(seg); seg == "" {
+				continue
+			}
+			if globMatch(glob, seg) || globMatch(glob, commandWord(seg)) {
 				return true
 			}
 		}
 		return false
 	}
 	return globMatch(glob, arg)
+}
+
+// shellPrefixes are words that run the command after them: shell keywords
+// that start a command list, and wrappers that run their arguments.
+var shellPrefixes = map[string]bool{
+	"{": true, "}": true, "!": true, "if": true, "then": true, "elif": true, "else": true,
+	"do": true, "while": true, "until": true, "command": true, "builtin": true,
+	"exec": true, "env": true, "nohup": true, "time": true,
+}
+
+// assignment is a leading VAR=value word.
+var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// commandWord is the command seg runs, best-effort: leading shell keywords,
+// wrappers (and their -options), VAR=value assignments, a backslash and
+// quotes around the command name are taken off ("x=1 command \rm y" is
+// "rm y").
+func commandWord(seg string) string {
+	wrapped := false
+	for {
+		seg = strings.TrimLeft(seg, " \t")
+		end := strings.IndexAny(seg, " \t")
+		if end < 0 {
+			end = len(seg)
+		}
+		w := seg[:end]
+		switch {
+		case w == "":
+			return seg
+		case shellPrefixes[w]:
+			wrapped = true
+		case assignment.MatchString(w):
+		case wrapped && strings.HasPrefix(w, "-"):
+		default:
+			name := strings.TrimLeft(w, "\\")
+			name = strings.NewReplacer(`'`, "", `"`, "").Replace(name)
+			return name + seg[end:]
+		}
+		seg = seg[end:]
+	}
 }
 
 // shellOperator finds what makes one command line run more than one
