@@ -1,8 +1,10 @@
 package builtin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -57,6 +59,31 @@ func TestAtomicWriteThroughPinnedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(p); string(b) != "x" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+// A workspace under a directory that can be entered but not listed (a
+// parent owned by another account with mode 0711) is still written, as it
+// was before the root was opened one component at a time.
+func TestWriteFileUnderSearchOnlyParent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a non-root Unix user")
+	}
+	parent := filepath.Join(realTempDir(t), "p")
+	ws := filepath.Join(parent, "ws")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+	res, err := NewWriteFileTool(ws).Execute(context.Background(), map[string]any{"path": "f.txt", "content": "x"}, nil)
+	if err != nil || res.Error {
+		t.Fatalf("write_file under a search-only parent: %v %s", err, res.Content)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "f.txt")); string(b) != "x" {
 		t.Fatalf("got %q", b)
 	}
 }

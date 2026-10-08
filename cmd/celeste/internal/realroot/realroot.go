@@ -3,7 +3,9 @@
 package realroot
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,15 @@ import (
 // directory Lstat saw. A directory on the path replaced by a symlink
 // between a caller's check of dir and this open is refused instead of
 // followed, which os.OpenRoot(dir) alone would do.
+//
+// Opening a directory needs read permission on it, but walking a path
+// needs only search permission. A directory on the path that can be
+// entered but not read (a parent owned by another account with mode 0711,
+// say) is therefore checked by its absolute path instead: Lstat refuses
+// it unless it is a directory, and the components after it are checked
+// the same way until one can be opened, which is then compared with its
+// Lstat before the walk goes on through descriptors. Only directories the
+// process cannot read get the path check, and those are not its own.
 func Open(dir string) (*os.Root, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -24,20 +35,44 @@ func Open(dir string) (*os.Root, error) {
 	}
 	vol := filepath.VolumeName(dir)
 	sep := string(filepath.Separator)
-	root, err := os.OpenRoot(vol + sep)
+	prefix := vol + sep
+	root, err := os.OpenRoot(prefix)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, fs.ErrPermission) {
+			return nil, err
+		}
+		root = nil
 	}
 	for _, c := range strings.Split(dir[len(vol):], sep) {
 		if c == "" {
 			continue
 		}
-		next, err := openChild(root, c)
-		_ = root.Close()
-		if err != nil {
+		path := filepath.Join(prefix, c)
+		prefix = path
+		if root != nil {
+			next, err := openChild(root, c)
+			_ = root.Close()
+			root = nil
+			if err == nil {
+				root = next
+				continue
+			}
+			if !errors.Is(err, fs.ErrPermission) {
+				return nil, fmt.Errorf("%s: %w", dir, err)
+			}
+		}
+		next, err := openPath(path)
+		switch {
+		case err == nil:
+			root = next
+		case errors.Is(err, fs.ErrPermission):
+			// Searchable but not readable: go on by path.
+		default:
 			return nil, fmt.Errorf("%s: %w", dir, err)
 		}
-		root = next
+	}
+	if root == nil {
+		return nil, fmt.Errorf("%s: %w", dir, fs.ErrPermission)
 	}
 	return root, nil
 }
@@ -56,10 +91,34 @@ func openChild(parent *os.Root, name string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	after, err := child.Stat(".")
+	return sameAs(child, before, name)
+}
+
+// openPath opens the directory at the absolute path, refusing a symlink
+// or a directory swapped in after its Lstat. A directory that is a
+// directory but cannot be read returns an fs.ErrPermission error.
+func openPath(path string) (*os.Root, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", filepath.Base(path))
+	}
+	r, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	return sameAs(r, before, filepath.Base(path))
+}
+
+// sameAs returns r when it is the directory before describes, and closes
+// it otherwise.
+func sameAs(r *os.Root, before fs.FileInfo, name string) (*os.Root, error) {
+	after, err := r.Stat(".")
 	if err != nil || !os.SameFile(before, after) {
-		_ = child.Close()
+		_ = r.Close()
 		return nil, fmt.Errorf("%s changed while it was being opened", name)
 	}
-	return child, nil
+	return r, nil
 }
