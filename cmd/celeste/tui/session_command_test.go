@@ -333,3 +333,27 @@ func TestSessionResumeExplicitModelChoiceIsRecorded(t *testing.T) {
 	assert.Equal(t, "openai", saved.GetEndpoint())
 	assert.True(t, saved.GetModelPinned(), "the --force pin was not recorded")
 }
+
+// A model picked from the model picker on a session resumed from another
+// endpoint is an explicit choice too, and is recorded like /set-model: the
+// save keeps the picked model, the endpoint it was picked on and no pin.
+func TestSessionResumePickerChoiceIsRecorded(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	other.SetModel("venice-model")
+	require.NoError(t, mgr.mgr.Save(other))
+	m = m.WithEndpoint("openai")
+	m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+	require.Equal(t, "openai", m.endpoint)
+
+	m.llmClient = &endpointClient{ep: ActiveEndpoint{Provider: "openai"}}
+	m.selectorActive = true
+	m, _ = step(t, m, SelectorResultMsg{Selected: &SelectorItem{ID: "picked-model"}})
+	require.Equal(t, "picked-model", m.model)
+	m.persistSession()
+	saved, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "picked-model", saved.GetModel(), "a picked model was not recorded")
+	assert.Equal(t, "openai", saved.GetEndpoint())
+	assert.False(t, saved.GetModelPinned())
+}
