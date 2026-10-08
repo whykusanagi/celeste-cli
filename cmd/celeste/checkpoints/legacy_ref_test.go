@@ -50,3 +50,30 @@ func TestLegacyEntryLinkOutOfDirIsNotFollowed(t *testing.T) {
 	assert.Equal(t, "OUTSIDE", read(t, outside))
 	assert.Equal(t, "restored", read(t, link))
 }
+
+// A legacy entry whose final component is a symlink out of its directory
+// is never read through: its state and contents are refused and its stat
+// is the link's own (CodeRabbit review of #421).
+func TestLegacyEntryLinkOutOfDirIsNotRead(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "ws")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	outside := filepath.Join(base, "outside.txt")
+	write(t, outside, "OUTSIDE")
+	link := filepath.Join(dir, "f.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	ref, err := openRef(Entry{Path: link})
+	require.NoError(t, err)
+	defer ref.close()
+	require.Nil(t, ref.root, "a link out of its directory gets no root")
+
+	data, err := ref.readFile()
+	assert.Error(t, err, "read through the link: %q", data)
+	_, err = entryState(Entry{Path: link})
+	assert.Error(t, err)
+	fi, err := ref.stat()
+	require.NoError(t, err)
+	assert.NotZero(t, fi.Mode()&os.ModeSymlink, "stat followed the link")
+}

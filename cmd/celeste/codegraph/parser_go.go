@@ -19,8 +19,17 @@ type ParseResult struct {
 // Resolved to Edge (with IDs) when inserted into the store.
 type RawEdge struct {
 	SourceName string
-	TargetName string
-	Kind       EdgeKind
+	// SourceScope is the class chain the source is declared in
+	// (Symbol.Scope), so same-named methods of different classes keep
+	// their own edges. Empty for a function outside any class and for Go.
+	SourceScope string
+	TargetName  string
+	Kind        EdgeKind
+	// SelfCall marks a call on the caller's own object written without
+	// the receiver in TargetName ($this->m() in PHP, an unqualified call
+	// in a Java, Ruby or C++ method): it resolves to the method of
+	// SourceScope first, like a self.m / this.m target.
+	SelfCall bool
 	// SourceFile is the workspace-relative file the edge was parsed from.
 	// Parsers leave it empty; the indexer sets it so both ends resolve
 	// against that file's symbols before any same-named symbol elsewhere.
@@ -37,8 +46,18 @@ func NewGoParser() *GoParser {
 
 // ParseFile parses a single Go source file and extracts symbols and edges.
 func (p *GoParser) ParseFile(path string) (*ParseResult, error) {
+	return p.ParseSource(path, nil)
+}
+
+// ParseSource is ParseFile of content already read; path only names it.
+// A nil src reads path.
+func (p *GoParser) ParseSource(path string, src []byte) (*ParseResult, error) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	var source any
+	if src != nil {
+		source = src
+	}
+	file, err := parser.ParseFile(fset, path, source, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}

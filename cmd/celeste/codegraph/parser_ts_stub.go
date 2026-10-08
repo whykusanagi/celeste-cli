@@ -40,3 +40,8 @@ func (p *TSParser) Close() {}
 func (p *TSParser) ParseFile(path string) (*ParseResult, error) {
 	return NewGenericParser("typescript").ParseFile(path)
 }
+
+// ParseSource is ParseFile of content already read.
+func (p *TSParser) ParseSource(path string, data []byte) (*ParseResult, error) {
+	return NewGenericParser("typescript").ParseSource(path, data)
+}
