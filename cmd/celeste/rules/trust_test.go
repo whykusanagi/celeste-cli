@@ -85,13 +85,13 @@ func TestRepoStreamRulesApprover(t *testing.T) {
 	sec := Section{Source: filepath.Join(t.TempDir(), ".grimoire"), Body: repoRuleBody}
 	touch(t, sec.Source)
 	calls := 0
-	no := func(hooks.Source, hooks.TrustStatus) bool { calls++; return false }
+	no := func(hooks.Source, hooks.TrustStatus) hooks.Answer { calls++; return hooks.AnswerLater }
 	var warns []string
 	if got := Trusted(home, []Section{sec}, no, func(s string) { warns = append(warns, s) }); len(got) != 0 || calls != 1 || len(warns) != 1 {
 		t.Fatalf("declined: got=%v calls=%d warns=%v", got, calls, warns)
 	}
 	var asked hooks.Source
-	yes := func(src hooks.Source, _ hooks.TrustStatus) bool { calls++; asked = src; return true }
+	yes := func(src hooks.Source, _ hooks.TrustStatus) hooks.Answer { calls++; asked = src; return hooks.AnswerYes }
 	if got := Trusted(home, []Section{sec}, yes, nil); len(got) != 1 || calls != 2 {
 		t.Fatalf("approved: got=%v calls=%d", got, calls)
 	}
@@ -131,7 +131,7 @@ func TestSymlinkedRepoGrimoireIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	asked := 0
-	yes := func(hooks.Source, hooks.TrustStatus) bool { asked++; return true }
+	yes := func(hooks.Source, hooks.TrustStatus) hooks.Answer { asked++; return hooks.AnswerYes }
 	var warns []string
 	got := Trusted(home, []Section{{Source: link, Body: repoRuleBody}}, yes, func(s string) { warns = append(warns, s) })
 	if len(got) != 0 || asked != 0 {

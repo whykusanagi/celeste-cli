@@ -55,8 +55,10 @@ func runMCPCommand(args []string) {
 			os.Exit(1)
 		}
 		os.Exit(mcpListCommand(args[1:], cwd, home, os.Stdout, os.Stderr))
+	case "trust", "untrust":
+		runMCPTrust(args)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown mcp subcommand %q. Try: celeste mcp list, celeste mcp install\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown mcp subcommand %q. Try: celeste mcp list, celeste mcp trust, celeste mcp untrust, celeste mcp install\n", args[0])
 		os.Exit(1)
 	}
 }

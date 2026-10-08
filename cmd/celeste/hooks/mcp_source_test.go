@@ -21,7 +21,7 @@ func TestMCPSourceKeyAndPrompt(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if PromptApprover(strings.NewReader("y\n"), &out)(src, Changed) != true {
+	if PromptApprover(strings.NewReader("y\n"), &out)(src, Changed) != AnswerYes {
 		t.Fatal("y did not approve")
 	}
 	got := out.String()

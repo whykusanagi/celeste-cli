@@ -375,28 +375,30 @@ func (e *Env) admitMCP(paths []string, home string) func(string, mcp.ServerConfi
 
 // trustMCP reports whether a workspace MCP server may start: approved in
 // the store with this definition, or approved now through the chat's
-// approver (and stored).
+// approver (and stored). A declined one is skipped without asking until
+// its definition changes (#411).
 func (e *Env) trustMCP(store *hooks.TrustStore, src hooks.Source) bool {
-	status := store.Status(src)
-	if status == hooks.Trusted {
-		return true
+	var approve hooks.ApproveFunc
+	if store.Err() == nil {
+		approve = e.approver()
 	}
-	if approve := e.approver(); approve != nil && store.Err() == nil && approve(src, status) {
-		if err := store.Approve(src); err != nil {
-			e.warn("MCP: server %s approved for this session only: %v", strconv.Quote(hooks.MCPServerName(src)), err)
-		}
-		return true
+	run, why, err := hooks.Decide(store, src, approve)
+	if err != nil {
+		e.warn("MCP: server %s: %v", strconv.Quote(hooks.MCPServerName(src)), err)
 	}
-	if status == hooks.Changed {
-		e.warnMCPSkipped(src, "changed since you approved it")
-	} else {
-		e.warnMCPSkipped(src, "not approved")
+	if !run {
+		e.warnMCPSkipped(src, why)
 	}
-	return false
+	return run
 }
 
 func (e *Env) warnMCPSkipped(src hooks.Source, why string) {
-	e.warn("MCP: not starting server %s from %s (%s): a repository's MCP servers start only once approved; run `celeste hooks trust` to approve it, or connect it from /mcp", strconv.Quote(hooks.MCPServerName(src)), strconv.Quote(hooks.SourceFile(src)), why)
+	name := hooks.MCPServerName(src)
+	if why == "declined" {
+		e.warn("MCP: not starting server %s from %s (declined): run `celeste mcp trust %s` to approve it", strconv.Quote(name), strconv.Quote(hooks.SourceFile(src)), hooks.SafeText(name))
+		return
+	}
+	e.warn("MCP: not starting server %s from %s (%s): a repository's MCP servers start only once approved; run `celeste mcp trust %s` to approve it, or connect it from /mcp", strconv.Quote(name), strconv.Quote(hooks.SourceFile(src)), why, hooks.SafeText(name))
 }
 
 // globalMCPConfigs keeps the home-level configs in paths and warns once about

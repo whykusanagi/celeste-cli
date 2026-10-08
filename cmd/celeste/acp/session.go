@@ -187,18 +187,20 @@ func hasSource(list []hooks.Source, src hooks.Source) bool {
 
 // recordHook is the Env's hook approver: it never blocks. A source the
 // editor's user trusted in this session runs; any other is recorded for
-// the first prompt to ask about and answered no, so Setup skips it (F0,
-// ruling 9).
-func (s *session) recordHook(src hooks.Source, _ hooks.TrustStatus) bool {
+// the first prompt to ask about and left unanswered, so Setup skips it
+// without recording a decline (F0, ruling 9).
+func (s *session) recordHook(src hooks.Source, _ hooks.TrustStatus) hooks.Answer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if hasSource(s.trusted, src) {
-		return true
+		return hooks.AnswerYes
 	}
 	if !hasSource(s.skipped, src) && !hasSource(s.pendingHooks, src) {
 		s.pendingHooks = append(s.pendingHooks, src)
 	}
-	return false
+	// Not a decline: the editor's user has not been asked yet, and a
+	// "Skip" there holds for this session only.
+	return hooks.AnswerLater
 }
 
 // connectMCP connects the client's stdio MCP servers (ruling 4), started

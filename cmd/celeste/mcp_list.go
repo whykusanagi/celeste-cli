@@ -18,8 +18,9 @@ const mcpListUsage = `Usage: celeste mcp list
 Lists the MCP servers celeste reads from your home configs (~/.celeste,
 ~/.claude and ~/.cursor mcp.json) and this directory's .mcp.json and
 .celeste/mcp.json: each server's source, transport, whether it is enabled
-and trusted, whether a workspace server is approved to start, and where it
-runs. Commands, arguments, URLs and env values are never shown.`
+and trusted, whether a workspace server is approved, declined or pending,
+and where it runs. Commands, arguments, URLs and env values are never
+shown.`
 
 // mcpListEntry is one server as one config file defines it.
 type mcpListEntry struct {
@@ -108,8 +109,12 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		switch store.Status(hooks.MCPSource(e.path, e.name, e.cfg.TrustSummary(), e.cfg.TrustHash())) {
 		case hooks.Trusted:
 			return "approved"
+		case hooks.Declined:
+			return "declined"
 		case hooks.Changed:
 			return "pending (changed)"
+		case hooks.DeclinedChanged:
+			return "pending (changed since declined)"
 		}
 		return "pending"
 	}
@@ -140,7 +145,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 			}
 		}
 		ap := approval(e)
-		runs := mcpRunsIn(e, chat.Servers[e.name].Origin, other.Servers[e.name].Origin, func(p string) string { return show(p, mcp.IsGlobalConfig(home, p)) }, ap == "approved")
+		runs := mcpRunsIn(e, chat.Servers[e.name].Origin, other.Servers[e.name].Origin, func(p string) string { return show(p, mcp.IsGlobalConfig(home, p)) }, ap)
 		switch {
 		case homeBad != "":
 			runs = "none (" + homeBad + " does not parse)"
@@ -156,8 +161,10 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	fmt.Fprintln(out, `
 Workspace configs start only in the interactive chat, and each enabled
 server there only once you approve it (the chat asks at launch, or run
-celeste hooks trust); agent runs, celeste acp and MCP chat use the home
-configs. "trusted" counts only in a home config.`)
+celeste mcp trust <server>). A server you declined is not asked about
+again until its definition changes; celeste mcp trust <server> approves
+it. Agent runs, celeste acp and MCP chat use the home configs. "trusted"
+counts only in a home config.`)
 	return code
 }
 
@@ -186,8 +193,8 @@ func lastOccurrences(paths []string) []string {
 // runtime's merges: chatOrigin is the file whose definition of e.name the
 // chat starts, otherOrigin the one every other mode starts ("" for none).
 // Only an enabled server starts on its own, and a workspace one only once
-// approved.
-func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string) string, approved bool) string {
+// approved (approval is its APPROVAL column).
+func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string) string, approval string) string {
 	same := func(p string) bool { return p != "" && filepath.Clean(p) == filepath.Clean(e.path) }
 	inChat, inOther := same(chatOrigin), e.global && same(otherOrigin)
 	// An empty origin means the server left its file between the two
@@ -212,11 +219,16 @@ func mcpRunsIn(e mcpListEntry, chatOrigin, otherOrigin string, show func(string)
 		return overridden(chatOrigin)
 	case !e.cfg.Enabled && !inChat:
 		return "off (chat uses " + src(chatOrigin) + ")"
+	case !e.cfg.Enabled && !e.global && approval == "declined":
+		// Starting it from /mcp asks for an approval first (review m2).
+		return "off (declined; /mcp asks to approve it)"
 	case !e.cfg.Enabled:
 		// Manager.Start skips it; the chat's /mcp panel can still connect it.
 		return "off (start it from the chat's /mcp)"
-	case !e.global && approved:
+	case !e.global && approval == "approved":
 		return "chat only"
+	case !e.global && approval == "declined":
+		return "never (declined)"
 	case !e.global:
 		return "chat once approved"
 	case !inChat:

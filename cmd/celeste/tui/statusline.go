@@ -259,7 +259,7 @@ const turnHints = "↵ steer · ⇥ follow-up · esc interrupt · ⇧↑↓ scro
 
 func hintsFor(mode string, mcpActive bool) string {
 	if mcpActive {
-		return "↑↓ move · space toggle · c connect · d disconnect · r reconnect · esc close"
+		return "space toggle · a approve · c connect · d disconnect · r reconnect · esc close"
 	}
 	switch mode {
 	case "skills", "sessions", "graph", "memories", "collections", "menu", "persona":

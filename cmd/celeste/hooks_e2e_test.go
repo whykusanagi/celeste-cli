@@ -185,7 +185,7 @@ func TestTUIUntrustedRepoHooksAreSkipped(t *testing.T) {
 
 func TestTUIApprovedRepoHooksRun(t *testing.T) {
 	calls := 0
-	chatHookApprover = func(hooks.Source, hooks.TrustStatus) bool { calls++; return true }
+	chatHookApprover = func(hooks.Source, hooks.TrustStatus) hooks.Answer { calls++; return hooks.AnswerYes }
 	t.Cleanup(func() { chatHookApprover = nil })
 	srv := fakeprovider.NewOpenAI(t,
 		fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "r", Name: "read_file", Args: `{"path":"a.txt"}`}}},
