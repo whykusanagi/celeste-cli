@@ -22,6 +22,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
@@ -2598,11 +2599,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// always padded to a fixed width so the viewport never reflows.
 			// Glamour is skipped for this message (typingActive flag) so the
 			// ANSI styling in the buffer doesn't break markdown rendering.
-			displayed := m.typingContent[:m.typingPos]
+			// The buffer is passed apart from the text: the reply is escaped
+			// for the terminal, the buffer's styling is celeste's own.
+			displayed := textutil.CutBytes(m.typingContent, m.typingPos)
+			cursor := ""
 			if m.typingPos < len(m.typingContent) {
-				displayed += " " + GetFixedWidthCorruption(16)
+				cursor = " " + GetFixedWidthCorruption(16)
 			}
-			m.chat = m.chat.SetLastAssistantContent(displayed)
+			m.chat = m.chat.SetLastAssistantTyping(displayed, cursor)
 
 			// Show corruption phrases in the status bar instead of in the content
 			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
@@ -2705,8 +2709,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View implements tea.Model.
+// View implements tea.Model. Every frame goes through termsafe.Styled: the
+// panels escape untrusted text before styling it, and this pass keeps any
+// path that does not from reaching the terminal with a live control
+// (only the SGR colors lipgloss and glamour add pass through).
 func (m AppModel) View() string {
+	return termsafe.Styled(m.frame())
+}
+
+// frame renders the screen View shows.
+func (m AppModel) frame() string {
 	if !m.ready {
 		return "\n  Initializing..."
 	}

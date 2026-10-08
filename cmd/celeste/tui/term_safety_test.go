@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // hostile carries the controls a terminal acts on: CR, an erase-line CSI,
@@ -41,4 +43,50 @@ func TestAskPromptEscapesControls(t *testing.T) {
 		{Label: "yes" + hostile, Description: "d" + hostile}, {Label: "no"},
 	}})
 	assertInert(t, "ask prompt", m.View())
+}
+
+// Aikido 806869437: workspace, tool and model text in the chat (replies
+// through markdown or not, user and system lines, the Ctrl+K tool log)
+// keeps no live control; celeste's own colors survive.
+func TestChatRenderEscapesControls(t *testing.T) {
+	osc52 := "\x1b]52;c;Zm9v\x07"
+	c := NewChatModel().SetSize(120, 60)
+	c = c.AddUserMessage("pasted " + hostile)
+	c = c.AddAssistantMessage("# Title\n\nsome **markdown** reply " + osc52 + hostile)
+	c = c.AddAssistantMessage("plain reply " + osc52)
+	styled := "\x1b[38;2;255;0;128mstyled by celeste\x1b[0m"
+	c = c.AddSystemMessage(styled + " path " + osc52 + hostile)
+	c = c.AddPlainSystemMessage("plain " + osc52 + hostile)
+	c = c.AddFunctionCall(FunctionCall{Name: "read_file" + osc52, Arguments: map[string]any{"path": "a" + osc52}, Status: "executing"})
+	c = c.UpdateFunctionResult("", "read_file"+osc52, "x"+osc52+"y")
+	c = c.ToggleSkillCalls()
+	v := c.View()
+	assertInert(t, "chat", v)
+	if strings.Contains(v, `\x1b[38;2`) {
+		t.Errorf("celeste's own SGR styling was escaped: %q", v)
+	}
+}
+
+// The typing cursor's corruption glyphs are celeste's own styling and stay
+// styled while the reply text before them is escaped.
+func TestChatTypingCursorKeepsStyling(t *testing.T) {
+	c := NewChatModel().SetSize(120, 40).AddAssistantMessage("")
+	c = c.SetTypingActive(true)
+	cursor := " \x1b[35mglyphs\x1b[0m"
+	c = c.SetLastAssistantTyping("typed "+hostile, cursor)
+	v := c.View()
+	assertInert(t, "typing", v)
+	if strings.Contains(v, `\x1b[35m`) {
+		t.Errorf("typing cursor styling escaped: %q", v)
+	}
+}
+
+// Every TUI frame is terminal-safe, whatever panel a string reaches: a
+// directory or branch name in the status line, for one.
+func TestAppViewIsTerminalSafe(t *testing.T) {
+	m := NewApp(nil)
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = mm.(AppModel)
+	m.statusLine = m.statusLine.SetProject("repo\x1b]52;c;Zm9v\x07" + hostile)
+	assertInert(t, "app view", m.View())
 }
