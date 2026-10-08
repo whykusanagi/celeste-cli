@@ -261,10 +261,11 @@ func Rebuild(ctx context.Context, workspace, dbPath string) (idx *Indexer, remov
 		return nil, removed, err
 	}
 	idx.buildMu.Lock()
-	defer idx.buildMu.Unlock()
 	idx.token = newOwnerToken()
-	if err := idx.buildLocked(ctx); err != nil {
-		_ = idx.Close()
+	err = idx.buildLocked(ctx)
+	idx.buildMu.Unlock()
+	if err != nil {
+		_ = idx.Close() // Close takes buildMu
 		return nil, removed, err
 	}
 	return idx, removed, nil
