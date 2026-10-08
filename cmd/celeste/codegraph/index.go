@@ -1089,6 +1089,9 @@ func (idx *Indexer) openPass() (func(), error) {
 		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 	idx.passRoot = r
+	if testHookPassOpened != nil {
+		testHookPassOpened()
+	}
 	return func() {
 		idx.passRoot = nil
 		_ = r.Close()
@@ -1124,17 +1127,28 @@ func readIn(root *os.Root, rel string) ([]byte, error) {
 }
 
 // walkSourceFiles returns relative paths of all indexable source files.
+// During a Build or Update the files are listed through the root the pass
+// opened, the one its reads go through, so a workspace directory replaced
+// after the open decides neither what is indexed nor what is dropped.
 func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	var files []string
 
 	gitignore := LoadGitignore(idx.workspace)
 
-	err := filepath.WalkDir(idx.workspace, func(path string, d fs.DirEntry, err error) error {
+	walk := func(fn fs.WalkDirFunc) error { return filepath.WalkDir(idx.workspace, fn) }
+	relOf := func(path string) (string, error) { return filepath.Rel(idx.workspace, path) }
+	if idx.passRoot != nil {
+		fsys := idx.passRoot.FS()
+		walk = func(fn fs.WalkDirFunc) error { return fs.WalkDir(fsys, ".", fn) }
+		relOf = func(path string) (string, error) { return filepath.FromSlash(path), nil }
+	}
+
+	err := walk(func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip errored entries
 		}
 
-		rel, err := filepath.Rel(idx.workspace, path)
+		rel, err := relOf(path)
 		if err != nil {
 			return nil
 		}
@@ -2483,3 +2497,7 @@ func contentHash(data []byte) string {
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash[:8]) // first 8 bytes is enough
 }
+
+// testHookPassOpened, when set, runs right after openPass opens the
+// workspace root. Tests only.
+var testHookPassOpened func()
