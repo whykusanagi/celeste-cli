@@ -149,5 +149,10 @@ func SetServerEnabled(path, name string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal MCP config: %w", err)
 	}
-	return os.WriteFile(path, data, 0o600) // existing file: its mode is kept
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	// WriteFile keeps an existing file's mode: tighten it, as env values
+	// can be credentials (CodeRabbit review of #427).
+	return os.Chmod(path, 0o600)
 }

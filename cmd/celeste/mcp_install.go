@@ -194,9 +194,13 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 			return "", err
 		}
 	}
-	// 0600 for a file this creates: client configs can hold API keys in
-	// env (Aikido 806869435). An existing file keeps its mode.
+	// 0600: client configs can hold API keys in env (Aikido 806869435).
+	// WriteFile keeps an existing file's mode, so it is tightened too
+	// (CodeRabbit review of #427).
 	if err := os.WriteFile(path, out, privfs.FilePerm); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, privfs.FilePerm); err != nil {
 		return "", err
 	}
 	if existed {
