@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -69,6 +70,11 @@ type AssetTransfer struct {
 		Value   string
 	}
 }
+
+// maxAssetTransferPages bounds the alchemy_getAssetTransfers continuation
+// pages read per direction in one scan. A scan that needs more fails, so the
+// checkpoint stays put and the range is scanned again.
+const maxAssetTransferPages = 50
 
 // Storage path helpers
 func getWalletSecurityPath() string {
@@ -475,45 +481,16 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 		"category":  []string{"external", "internal", "erc20", "erc721", "erc1155"},
 	}
 
-	// We need both directions, so we'll make two calls
-	// First: outgoing transfers
-	paramsOutgoing := make(map[string]any)
-	for k, v := range params {
-		paramsOutgoing[k] = v
-	}
-	paramsOutgoing["fromAddress"] = wallet.Address
-
-	resultOutgoing, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"alchemy_getAssetTransfers", []any{paramsOutgoing})
+	// Both directions, every continuation page of each.
+	outgoing, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "fromAddress", wallet.Address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get outgoing transfers: %w", err)
 	}
-
-	// Second: incoming transfers
-	paramsIncoming := make(map[string]any)
-	for k, v := range params {
-		paramsIncoming[k] = v
-	}
-	paramsIncoming["toAddress"] = wallet.Address
-
-	resultIncoming, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"alchemy_getAssetTransfers", []any{paramsIncoming})
+	incoming, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "toAddress", wallet.Address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get incoming transfers: %w", err)
 	}
-
-	// Combine transfers
-	allTransfers := []any{}
-	if outgoingData, ok := resultOutgoing["result"].(map[string]any); ok {
-		if transfers, ok := outgoingData["transfers"].([]any); ok {
-			allTransfers = append(allTransfers, transfers...)
-		}
-	}
-	if incomingData, ok := resultIncoming["result"].(map[string]any); ok {
-		if transfers, ok := incomingData["transfers"].([]any); ok {
-			allTransfers = append(allTransfers, transfers...)
-		}
-	}
+	allTransfers := append(outgoing, incoming...)
 
 	// Get current balance for large transfer detection
 	balanceResult, _ := alchemyRequest(ctx, client, config, wallet.Network,
@@ -532,7 +509,11 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	alerts := []SecurityAlert{}
 
 	for _, t := range allTransfers {
-		transfer := parseAssetTransfer(t.(map[string]any))
+		data, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		transfer := parseAssetTransfer(data)
 
 		// Run detection algorithms
 		if alert := detectDustAttack(transfer, wallet.Address); alert != nil {
@@ -573,6 +554,45 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	}
 
 	return alerts, nil
+}
+
+// fetchAssetTransfers reads every page of alchemy_getAssetTransfers for one
+// direction (addrField is "fromAddress" or "toAddress"), following pageKey
+// up to maxAssetTransferPages. Pagination that does not finish is an error.
+func fetchAssetTransfers(ctx context.Context, client *http.Client, config AlchemyConfig,
+	network string, base map[string]any, addrField, address string) ([]any, error) {
+	var all []any
+	pageKey := ""
+	for page := 0; page < maxAssetTransferPages; page++ {
+		p := make(map[string]any, len(base)+2)
+		for k, v := range base {
+			p[k] = v
+		}
+		p[addrField] = address
+		if pageKey != "" {
+			p["pageKey"] = pageKey
+		}
+		result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []any{p})
+		if err != nil {
+			return nil, err
+		}
+		data, ok := result["result"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("unexpected alchemy_getAssetTransfers response")
+		}
+		if transfers, ok := data["transfers"].([]any); ok {
+			all = append(all, transfers...)
+		}
+		next, _ := data["pageKey"].(string)
+		if next == "" {
+			return all, nil
+		}
+		if next == pageKey {
+			return nil, fmt.Errorf("alchemy_getAssetTransfers repeated page key")
+		}
+		pageKey = next
+	}
+	return nil, fmt.Errorf("more than %d pages of transfers in one scan", maxAssetTransferPages)
 }
 
 // checkTokenApprovals fetches and analyzes ERC20 token approvals
@@ -722,7 +742,7 @@ func detectDangerousApproval(approval ApprovalEvent) *SecurityAlert {
 // detectDustAttack detects tiny value transfers (potential address poisoning)
 func detectDustAttack(transfer AssetTransfer, monitoredAddr string) *SecurityAlert {
 	// Dust attack: incoming transfer with very small value
-	if transfer.To != monitoredAddr {
+	if !strings.EqualFold(transfer.To, monitoredAddr) {
 		return nil // Not incoming
 	}
 
@@ -761,7 +781,7 @@ func detectDustAttack(transfer AssetTransfer, monitoredAddr string) *SecurityAle
 // detectNFTScam detects unsolicited NFT transfers
 func detectNFTScam(transfer AssetTransfer, monitoredAddr string) *SecurityAlert {
 	// NFT scam: incoming NFT from unknown address
-	if transfer.To != monitoredAddr {
+	if !strings.EqualFold(transfer.To, monitoredAddr) {
 		return nil
 	}
 
@@ -788,7 +808,7 @@ func detectNFTScam(transfer AssetTransfer, monitoredAddr string) *SecurityAlert 
 // detectLargeTransfer detects significant outgoing transfers
 func detectLargeTransfer(transfer AssetTransfer, monitoredAddr string, balanceETH float64) *SecurityAlert {
 	// Large transfer: outgoing transfer exceeding threshold
-	if transfer.From != monitoredAddr {
+	if !strings.EqualFold(transfer.From, monitoredAddr) {
 		return nil
 	}
 
