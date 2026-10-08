@@ -33,11 +33,11 @@ type Manager struct {
 	clients     map[string]*Client
 	toolCounts  map[string]int
 	transports  map[string]string
-	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
-	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
-	home        string              // the user's home: its configs alone may set "trusted"
-	connecting  map[string]bool     // servers with a connectClient in flight
-	skipped     []error             // workspace configs the last load skipped (they did not parse)
+	toolNames   map[string][]string        // per-server registered tool names, for exact Disconnect
+	origins     map[string]string          // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
+	home        string                     // the user's home: its configs alone may set "trusted"
+	connecting  map[string]*connectAttempt // servers with a connectClient in flight
+	skipped     []error                    // workspace configs the last load skipped (they did not parse)
 	admit       func(name string, cfg ServerConfig) bool
 	mu          sync.Mutex
 }
@@ -55,7 +55,7 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		toolNames:  make(map[string][]string),
 		origins:    make(map[string]string),
 		home:       userHome(),
-		connecting: make(map[string]bool),
+		connecting: make(map[string]*connectAttempt),
 	}
 }
 
@@ -185,6 +185,24 @@ func (m *Manager) loadConfig() (*MCPConfig, error) {
 	return cfg, nil
 }
 
+// connectAttempt is one connectClient in flight. Disconnect and Stop revoke
+// it: its context is cancelled, and when it finishes it installs nothing
+// (Aikido 806869778).
+type connectAttempt struct {
+	cancel  context.CancelFunc
+	revoked bool // guarded by Manager.mu
+}
+
+// revokeLocked revokes name's connect in flight, if any. m.mu must be held.
+func (m *Manager) revokeLocked(name string) {
+	if a := m.connecting[name]; a != nil {
+		a.revoked = true
+		if a.cancel != nil {
+			a.cancel()
+		}
+	}
+}
+
 // connectClient initializes an already-built client, discovers + registers its
 // tools, and records bookkeeping. The caller holds no lock; connectClient locks
 // only while mutating manager maps. trusted honours the tools' readOnlyHint.
@@ -194,16 +212,21 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 	// its client, leaving tools Disconnect never removes.
 	m.mu.Lock()
 	_, live := m.clients[name]
-	if live || m.connecting[name] {
+	if live || m.connecting[name] != nil {
 		m.mu.Unlock()
 		client.Close()
 		return fmt.Errorf("connect %q: already connected or connecting", name)
 	}
-	m.connecting[name] = true
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	attempt := &connectAttempt{cancel: cancel}
+	m.connecting[name] = attempt
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		delete(m.connecting, name)
+		if m.connecting[name] == attempt {
+			delete(m.connecting, name)
+		}
 		m.mu.Unlock()
 	}()
 
@@ -218,6 +241,16 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 	}
 
 	m.mu.Lock()
+	if attempt.revoked {
+		// Disconnect or Stop ran while this connect was in flight: it
+		// wins, so drop the tools this connect registered and its client.
+		m.mu.Unlock()
+		for _, tn := range names {
+			m.registry.Unregister(tn)
+		}
+		client.Close()
+		return fmt.Errorf("connect %q: disconnected while connecting", name)
+	}
 	defer m.mu.Unlock()
 	m.clients[name] = client
 	m.toolCounts[name] = len(names)
@@ -274,6 +307,9 @@ func (m *Manager) Disconnect(name string) error {
 	client, ok := m.clients[name]
 	names := m.toolNames[name]
 	if !ok {
+		// Not connected yet: a connect in flight must not finish after this
+		// (Aikido 806869778).
+		m.revokeLocked(name)
 		m.mu.Unlock()
 		return nil
 	}
@@ -377,6 +413,11 @@ func (m *Manager) createTransport(cfg ServerConfig) (Transport, error) {
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Connects still in flight install nothing (Aikido 806869778).
+	for name := range m.connecting {
+		m.revokeLocked(name)
+	}
 
 	for name, client := range m.clients {
 		if err := client.Close(); err != nil {

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **server:** `celeste serve` keeps at most 8 code graph indexes open, closing the least recently used idle one, and the code graph tools refuse a workspace that is not an existing directory instead of creating an index for it (Aikido 806869934).
 * **mcp:** an MCP config file is read only when it is a regular file of at most 1 MiB; a workspace `.mcp.json` that is a FIFO, a device or a link to one is skipped before any trust check (Aikido 806869859).
 * **mcp:** a workspace MCP config that does not parse is skipped with a warning instead of stopping every MCP server in the chat; the home configs' servers still start, and `celeste mcp list` says so. A home config that does not parse still stops them (Aikido 806869709).
+* **mcp:** disconnecting an MCP server (or stopping them all) while it is still connecting now wins: the connect is cancelled, and one that finishes anyway closes its client and removes the tools it registered (Aikido 806869778).
 
 ### Features
 
