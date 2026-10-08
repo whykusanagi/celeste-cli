@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tools:** `write_file`, `patch_file` and `splice_file` create directories, write, append and clean up through a handle on the workspace directory, so a directory replaced by a symlink after the path check cannot move the write outside the workspace (Aikido 806869649, 806869673, 806869722).
 * **checkpoints:** `/undo`, `/rewind`, `celeste revert` and a failed write's rollback reach the file only through the workspace directory recorded with the change, so they cannot write or delete a file outside the workspace after a directory on the way was replaced by a symlink (Aikido 806869815).
 * **codegraph:** the index skips symlinked files, and code review reads only regular files that resolve inside the workspace, so a symlink in a repository cannot bring outside source into the index or into review snippets (Aikido 806869369).
+* **sandbox:** a workspace `.celeste/config.json` is read only when it is a regular file; a symlink, FIFO or device there is reported and ignored instead of blocking startup (Aikido 806869299).
 
 ### Features
 
