@@ -80,8 +80,8 @@ func resolveWorkspace(requested, serverWorkspace string) (string, error) {
 	if absRequested == serverAbs {
 		return serverAbs, nil
 	}
-	real := realPath(absRequested)
-	if serverAbs != "" && real == realPath(serverAbs) {
+	real := diskCase(realPath(absRequested))
+	if serverAbs != "" && real == diskCase(realPath(serverAbs)) {
 		return serverAbs, nil
 	}
 
@@ -151,6 +151,54 @@ func realPath(p string) string {
 			return filepath.Join(r, rest)
 		}
 	}
+}
+
+// diskCase is p with each existing component spelled as it is on disk, on
+// a case-insensitive filesystem (workspaceCaseInsensitive), so ~/Proj and
+// ~/proj, one directory there, are one key. A component is respelled only
+// when the filesystem itself finds it under the typed spelling and exactly
+// one entry of its directory matches it ignoring case; on a case-sensitive
+// volume, or for a part of p that does not exist yet, the typed spelling
+// stays. Elsewhere p comes back unchanged.
+func diskCase(p string) string {
+	if !workspaceCaseInsensitive || !filepath.IsAbs(p) {
+		return p
+	}
+	vol := filepath.VolumeName(p)
+	parts := strings.Split(strings.TrimPrefix(p[len(vol):], string(filepath.Separator)), string(filepath.Separator))
+	cur := vol + string(filepath.Separator)
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		next := filepath.Join(cur, part)
+		if _, err := os.Lstat(next); err != nil {
+			return filepath.Join(append([]string{cur}, parts[i:]...)...)
+		}
+		des, err := os.ReadDir(cur)
+		if err == nil {
+			match := ""
+			exact := false
+			for _, d := range des {
+				if d.Name() == part {
+					exact = true
+					break
+				}
+				if strings.EqualFold(d.Name(), part) {
+					if match != "" {
+						match = ""
+						break
+					}
+					match = d.Name()
+				}
+			}
+			if !exact && match != "" {
+				next = filepath.Join(cur, match)
+			}
+		}
+		cur = next
+	}
+	return cur
 }
 
 // RegisterHandlers registers all MCP tool handlers on the server.

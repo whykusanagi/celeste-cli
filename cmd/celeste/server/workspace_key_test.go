@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,4 +113,34 @@ func TestWorkspaceFromArgs_SymlinkAliases(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join(home, ".ssh"), keys))
 	_, err = srv.workspaceFromArgs(map[string]any{"workspace": keys})
 	require.Error(t, err)
+}
+
+// On a case-insensitive filesystem ~/Proj and ~/proj are one directory, so
+// they are one key (one index, rebuild gate and chat cache), and a case
+// variant of the server's own workspace keys the server's entry. Where the
+// filesystem tells the two spellings apart the test has nothing to check.
+func TestWorkspaceFromArgs_CaseVariantsShareAKey(t *testing.T) {
+	srv, ws := newTestServerWithWorkspace(t)
+	home := filepath.Dir(ws)
+	proj := filepath.Join(home, "proj")
+	require.NoError(t, os.Mkdir(proj, 0o755))
+	if _, err := os.Lstat(filepath.Join(home, "PROJ")); err != nil {
+		t.Skip("the filesystem is case-sensitive")
+	}
+	prev := workspaceCaseInsensitive
+	workspaceCaseInsensitive = true
+	t.Cleanup(func() { workspaceCaseInsensitive = prev })
+
+	a, err := srv.workspaceFromArgs(map[string]any{"workspace": proj})
+	require.NoError(t, err)
+	for _, variant := range []string{filepath.Join(home, "Proj"), filepath.Join(home, "PROJ")} {
+		b, err := srv.workspaceFromArgs(map[string]any{"workspace": variant})
+		require.NoError(t, err)
+		assert.Equal(t, a, b, variant)
+	}
+
+	upper := filepath.Join(filepath.Dir(ws), strings.ToUpper(filepath.Base(ws)))
+	c, err := srv.workspaceFromArgs(map[string]any{"workspace": upper})
+	require.NoError(t, err)
+	assert.Equal(t, ws, c)
 }
