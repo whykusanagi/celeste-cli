@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
@@ -100,32 +101,64 @@ func riskLevel(tool Tool, name string, input map[string]any) string {
 	return classifyRiskLevel(name)
 }
 
-// inputSummary produces a short (<80 char) human-readable summary of the tool input.
-func inputSummary(input map[string]any) string {
+// maxSummaryValue caps one value in a permission prompt's summary. A
+// longer value is cut with an explicit "[N more chars]" marker, never
+// silently: what the user approves is what the tool gets.
+const maxSummaryValue = 4096
+
+// capSummary cuts s to maxSummaryValue bytes on a rune boundary, saying how
+// much it left out.
+func capSummary(s string) string {
+	if len(s) <= maxSummaryValue {
+		return s
+	}
+	cut := maxSummaryValue
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf("... [%d more chars]", len(s)-cut)
+}
+
+// inputSummary is what a permission prompt shows for a call: the tool's
+// primary argument (PrimaryArg) in full, then every other field as
+// "key: value". Nothing is cut short except a very large value, which
+// says so (capSummary), so the user approves the exact command or path.
+func inputSummary(tool Tool, input map[string]any) string {
 	if len(input) == 0 {
 		return "(no args)"
 	}
-	// Try priority keys first
-	for _, key := range []string{"command", "path", "content", "pattern", "query"} {
-		if v, ok := input[key]; ok {
-			if s, ok := v.(string); ok {
-				if len(s) > 60 {
-					s = s[:57] + "..."
-				}
-				return s
+	primary := ""
+	if tool != nil {
+		primary = PrimaryArg(tool)
+	}
+	var sb strings.Builder
+	if v, ok := input[primary].(string); ok && primary != "" {
+		sb.WriteString(capSummary(v))
+	}
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		if sb.Len() > 0 && k == primary {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v, ok := input[k].(string)
+		if !ok {
+			b, err := json.Marshal(input[k])
+			if err != nil {
+				v = "(unprintable)"
+			} else {
+				v = string(b)
 			}
 		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(k + ": " + capSummary(v))
 	}
-	// Fallback: JSON-encode with truncation
-	b, err := json.Marshal(input)
-	if err != nil {
-		return "(args)"
-	}
-	s := string(b)
-	if len(s) > 60 {
-		s = s[:57] + "..."
-	}
-	return s
+	return sb.String()
 }
 
 // toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
@@ -624,7 +657,7 @@ func (r *Registry) checkPermission(tool Tool, name string, input map[string]any,
 			Error:   true,
 		}, true
 	}
-	summary := inputSummary(input)
+	summary := inputSummary(tool, input)
 	if advice != "" {
 		summary = "[" + advice + "] " + summary
 	}
