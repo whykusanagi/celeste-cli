@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **mcp:** without a home directory the `/mcp` panel shows a workspace MCP server as pending and refuses to approve it (there is no trust store to record it in), instead of connecting it without approval (Aikido review of #413).
 * **mcp:** disconnecting an MCP server while celeste is still starting its process or opening its connection now wins too: the connect is cancelled before the server's tools are installed (Aikido review of #424).
 * **mcp:** `celeste mcp install` writes the `.bak` of a client config as a new file renamed into place, so a symlink put there after the check is replaced, never written through (Aikido review of #424).
-* **context:** two tool results spilled at the same moment can no longer both pass the session's 256 MiB spill quota (Aikido review of #424).
+* **context:** two tool results spilled at the same moment, in one celeste process or in two, can no longer both pass the session's 256 MiB spill quota or the 1 GiB total (Aikido review of #424).
+* **server:** a stdio `celeste serve` that is shut down while a request is running no longer starts the next request it had already read (Aikido review of #424).
+* **mcp:** `/mcp` enable/disable and `celeste mcp install` leave a rewritten MCP config readable only by you (0600), also when it was readable by others before, as its `env` values can be credentials (CodeRabbit review of #427).
 * **server:** a `celeste_index` rebuild also waits for an evicted code graph index that is still closing, so it never deletes the database under that close (Aikido review of #424).
 
 ### Breaking Changes
