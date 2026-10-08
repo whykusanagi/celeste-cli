@@ -194,9 +194,9 @@ func TestMCPList_BadHomeConfigStopsEveryMode(t *testing.T) {
 	assert.Contains(t, errOut, "starts no MCP servers in any mode until "+bad)
 }
 
-// A workspace config that does not parse stops every server in the chat;
-// the other modes still start the home servers.
-func TestMCPList_BadWorkspaceConfigStopsTheChat(t *testing.T) {
+// A workspace config that does not parse is skipped; the chat still starts
+// the home servers and the other workspace config's (Aikido 806869709).
+func TestMCPList_BadWorkspaceConfigIsSkipped(t *testing.T) {
 	home, ws := t.TempDir(), t.TempDir()
 	writeMCPConfig(t, filepath.Join(home, ".celeste", "mcp.json"), `{"mcpServers":{"mine":{"command":"m","enabled":true}}}`)
 	writeMCPConfig(t, filepath.Join(ws, ".mcp.json"), `{"mcpServers":{"repo":{"command":"r","enabled":true}}}`)
@@ -204,9 +204,9 @@ func TestMCPList_BadWorkspaceConfigStopsTheChat(t *testing.T) {
 	code, out, errOut := runMCPList(t, nil, ws, home)
 	assert.Equal(t, 1, code)
 	bad := filepath.Join(".", ".celeste", "mcp.json")
-	assert.Contains(t, mcpListLine(t, out, "mine", filepath.Join("~", ".celeste", "mcp.json")), "all but chat ("+bad+" does not parse)")
-	assert.Contains(t, mcpListLine(t, out, "repo", filepath.Join(".", ".mcp.json")), "none ("+bad+" does not parse)")
-	assert.Contains(t, errOut, "the chat starts no MCP servers until "+bad)
+	assert.Contains(t, mcpListLine(t, out, "mine", filepath.Join("~", ".celeste", "mcp.json")), "all modes")
+	assert.NotContains(t, mcpListLine(t, out, "repo", filepath.Join(".", ".mcp.json")), "does not parse")
+	assert.Contains(t, errOut, "the chat skips the servers in "+bad)
 }
 
 // celeste mcp list says where each server runs from the runtime's own

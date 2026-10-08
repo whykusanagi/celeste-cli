@@ -231,7 +231,7 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 	// The /mcp panel shows configured-but-disconnected servers too; a load
 	// error was already reported by Setup.
 	var mcpConfigs map[string]mcp.ServerConfig
-	if merged, _ := mcp.LoadMerged(mcp.DiscoverConfigPaths(cwd, homeDir)); merged != nil {
+	if merged, _, _ := mcp.LoadMergedLenient(mcp.DiscoverConfigPaths(cwd, homeDir), homeDir); merged != nil {
 		mcpConfigs = merged.Servers
 	}
 	app = app.SetMCPManager(env.MCP, mcpConfigs).SetMCPApproval(mcpPanelApproval{home: homeDir})

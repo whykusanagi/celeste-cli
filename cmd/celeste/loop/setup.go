@@ -345,7 +345,9 @@ func (e *Env) admitMCP(paths []string, home string) func(string, mcp.ServerConfi
 		h, ok := approved[name]
 		return ok && h == sc.TrustHash()
 	}
-	cfg, err := mcp.LoadMerged(paths)
+	// A workspace config that does not parse is skipped, as Start skips
+	// it (Aikido 806869709).
+	cfg, _, err := mcp.LoadMergedLenient(paths, home)
 	if err != nil {
 		return admit // Start reports the error and starts nothing
 	}

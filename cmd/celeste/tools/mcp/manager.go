@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -36,6 +37,7 @@ type Manager struct {
 	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
 	home        string              // the user's home: its configs alone may set "trusted"
 	connecting  map[string]bool     // servers with a connectClient in flight
+	skipped     []error             // workspace configs the last load skipped (they did not parse)
 	admit       func(name string, cfg ServerConfig) bool
 	mu          sync.Mutex
 }
@@ -109,10 +111,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		return fmt.Errorf("load MCP config: %w", err)
 	}
 
-	if len(cfg.Servers) == 0 {
-		return nil
-	}
-
 	totalTools := 0
 	connectedServers := 0
 
@@ -134,6 +132,14 @@ func (m *Manager) Start(ctx context.Context) error {
 		log.Printf("[mcp] connected to %d server(s), %d tool(s) discovered", connectedServers, totalTools)
 	}
 
+	// The other configs' servers started; say which workspace configs were
+	// skipped.
+	m.mu.Lock()
+	skipped := m.skipped
+	m.mu.Unlock()
+	if len(skipped) > 0 {
+		return fmt.Errorf("skipped a workspace MCP config that did not load (its servers did not start): %w", errors.Join(skipped...))
+	}
 	return nil
 }
 
@@ -157,7 +163,14 @@ func startOrder(servers map[string]ServerConfig) []string {
 // RegisterGlobalInto know where it came from).
 func (m *Manager) loadConfig() (*MCPConfig, error) {
 	if len(m.configPaths) > 0 {
-		return LoadMerged(m.configPaths)
+		cfg, skipped, err := LoadMergedLenient(m.configPaths, m.home)
+		if err != nil {
+			return nil, err
+		}
+		m.mu.Lock()
+		m.skipped = skipped
+		m.mu.Unlock()
+		return cfg, nil
 	}
 	cfg, err := LoadConfig(m.configPath)
 	if err != nil {
