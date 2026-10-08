@@ -355,7 +355,8 @@ func TestDisabledWarning(t *testing.T) {
 // Aikido 806869439: a deny or ask reason can echo model text; it is shown
 // in the chat, so it comes back terminal-safe like a failure message.
 func TestRunnerReasonIsTerminalSafe(t *testing.T) {
-	raw := "blocked: x\x1b]0;t\x07\ry"
+	// No \r: Windows drops it from the hook's command-line argument.
+	raw := "blocked: x\x1b]0;t\x07y"
 	for _, decision := range []string{"deny", "ask"} {
 		r, _ := testRunner(t, v2(t, EventPreToolUse, decision, raw))
 		out := r.PreToolUse(context.Background(), "bash", nil)
