@@ -984,9 +984,10 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 		if ShouldSkipPath(rel) {
 			return nil
 		}
-		// A symlink (to a file, or to a directory WalkDir does not enter)
-		// may lead out of the workspace: never index what it points to.
-		if d.Type()&fs.ModeSymlink != 0 {
+		// Only regular files: a symlink (to a file, or to a directory
+		// WalkDir does not enter) may lead out of the workspace, and a
+		// FIFO or device would block the parser's read.
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		if gitignore.ShouldSkip(rel, false) {
