@@ -364,7 +364,21 @@ func (g *protectedWriteGuard) undo() {
 			_ = os.Remove(g.path)
 		}
 	}
-	g.removeCreatedDirs()
+	if g.root == nil {
+		g.removeCreatedDirs()
+		return
+	}
+	// Through the root too: the created directories are the deepest
+	// len(createdDirs) ancestors of rel (a missing directory cannot be a
+	// symlink, so they match the resolved path rel names).
+	dir := filepath.Dir(g.rel)
+	for range g.createdDirs {
+		if !filepath.IsLocal(dir) {
+			break
+		}
+		_ = g.root.Remove(dir) // only succeeds while empty
+		dir = filepath.Dir(dir)
+	}
 }
 
 // sameAsProtectedTarget reports whether info is, per the kernel, the same

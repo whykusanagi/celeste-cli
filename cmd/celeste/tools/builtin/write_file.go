@@ -105,11 +105,6 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	// Undo created directories (and a partial new file) on every return
 	// below unless the write fully succeeded and verify passed (fix round 6).
 	written := false
-	defer func() {
-		if !written {
-			guard.undo()
-		}
-	}()
 	afterPathCheck(targetPath)
 
 	// Directories, the append and the cleanup of a failed new file go
@@ -120,7 +115,15 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
 	}
-	defer root.Close()
+	// One defer for both, so the undo runs before the root closes (defers
+	// run last-in first-out: a separate root.Close registered later would
+	// close it first, and undo through a closed root removes nothing).
+	defer func() {
+		if !written {
+			guard.undo()
+		}
+		root.Close()
+	}()
 	guard.inRoot(root, rel)
 	if err := guard.mkdirAll(filepath.Dir(targetPath)); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
