@@ -1010,8 +1010,9 @@ func (m *Manager) clearCancel(run *SubagentRun) {
 // (e.g. "mizu" or "water") — users refer to agents by the name on screen, not the
 // internal id (#d15ac448). Returns true if a cancellable run was found. The run's
 // context is cancelled (which the runtime honors — task 349f1f14) and its status
-// is marked failed so ListRuns reflects the kill immediately. A run that has
-// already finished is left untouched and returns false.
+// is marked failed so ListRuns reflects the kill immediately. A run whose
+// cancel is gone (it finished and was merged or discarded) is left
+// untouched and returns false.
 func (m *Manager) Kill(selector string) bool {
 	m.mu.Lock()
 	cancel := m.cancels[selector]
@@ -1033,10 +1034,15 @@ func (m *Manager) Kill(selector string) bool {
 		m.mu.Unlock()
 		return false
 	}
-	if run != nil && (run.Status == "running" || run.Status == "background" || run.Status == "waiting") {
-		run.Status = "failed"
-		run.Error = "killed by user"
-		run.EndedAt = time.Now()
+	// The cancel is registered until the run's merge has run, so a kill is
+	// honoured even after finishRun recorded "completed": Kill reports the
+	// kill, so the run must end failed and its worktree unmerged (mergeable).
+	if run != nil {
+		if run.Status != "failed" {
+			run.Status = "failed"
+			run.Error = "killed by user"
+			run.EndedAt = time.Now()
+		}
 		run.killed = true
 	}
 	m.mu.Unlock()
