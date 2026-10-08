@@ -12,9 +12,11 @@ import (
 //
 //	"2": type-checked Go edges, qualified names, interface methods (#375).
 //	"3": non-Go symbols record the class they are declared in (Scope).
+//	"4": non-Go edges start at the method of their own class, and a
+//	    self/this call ends at one (Aikido review of #414).
 const (
 	metaGraphVersion = "graph_version"
-	graphVersion     = "3"
+	graphVersion     = "4"
 	// metaEdgeScope records the rule name-based edges were resolved under.
 	// edgeScope "language": a name resolves only within the caller's
 	// language (TS and JS together, C and C++ together). An index without

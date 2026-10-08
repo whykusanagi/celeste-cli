@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 )
 
 // confine names path inside a real directory for Entry.Root and Entry.Rel:
@@ -56,11 +57,15 @@ type fileRef struct {
 	rel  string
 }
 
+// testHookBeforeRootOpen runs between the root check and the open; tests
+// replace the root there.
+var testHookBeforeRootOpen func()
+
 // openRef opens e's file for undo; close it when done.
 func openRef(e Entry) (fileRef, error) {
 	if e.Root == "" {
 		if dir, rel, ok := confine("", e.Path); ok {
-			if root, err := os.OpenRoot(dir); err == nil {
+			if root, err := realroot.Open(dir); err == nil {
 				return fileRef{path: e.Path, root: root, rel: rel}, nil
 			}
 		}
@@ -70,11 +75,16 @@ func openRef(e Entry) (fileRef, error) {
 		return fileRef{}, fmt.Errorf("invalid checkpoint location for %s", e.Path)
 	}
 	// The root itself must still be the directory it was: one of its
-	// ancestors replaced by a symlink is refused here, before it is opened.
+	// ancestors replaced by a symlink is refused here, and realroot.Open
+	// refuses one replaced between this check and the open (Aikido review
+	// of #421).
 	if real, err := filepath.EvalSymlinks(e.Root); err != nil || real != e.Root {
 		return fileRef{}, fmt.Errorf("%s: its directory moved or was replaced since the change; not restored", e.Path)
 	}
-	root, err := os.OpenRoot(e.Root)
+	if testHookBeforeRootOpen != nil {
+		testHookBeforeRootOpen()
+	}
+	root, err := realroot.Open(e.Root)
 	if err != nil {
 		return fileRef{}, err
 	}
@@ -96,14 +106,23 @@ func (f fileRef) open(flag int) (*os.File, error) {
 
 // openRead opens the file for reading without waiting on a FIFO or
 // device, and refuses anything but a regular file (one swapped for a FIFO
-// since the change must not hang undo).
+// since the change must not hang undo). Without a root the final
+// component is never followed (CodeRabbit review of #421).
 func (f fileRef) openRead() (*os.File, error) {
 	var fh *os.File
 	var err error
+	var before os.FileInfo
 	if f.root != nil {
 		fh, err = f.root.OpenFile(f.rel, os.O_RDONLY|oNonblock, 0)
 	} else {
-		fh, err = os.OpenFile(f.path, os.O_RDONLY|oNonblock, 0)
+		// Lstat first and compare after the open: oNoFollow is 0 where
+		// there is no O_NOFOLLOW.
+		if before, err = os.Lstat(f.path); err == nil && !before.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular file", f.path)
+		}
+		if err == nil {
+			fh, err = os.OpenFile(f.path, os.O_RDONLY|oNonblock|oNoFollow, 0)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -113,7 +132,7 @@ func (f fileRef) openRead() (*os.File, error) {
 		_ = fh.Close()
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() || (before != nil && !os.SameFile(before, info)) {
 		_ = fh.Close()
 		return nil, fmt.Errorf("%s is not a regular file", f.path)
 	}
@@ -129,11 +148,12 @@ func (f fileRef) readFile() ([]byte, error) {
 	return io.ReadAll(fh)
 }
 
+// stat is the file's FileInfo; without a root, a symlink's own.
 func (f fileRef) stat() (os.FileInfo, error) {
 	if f.root != nil {
 		return f.root.Stat(f.rel)
 	}
-	return os.Stat(f.path)
+	return os.Lstat(f.path)
 }
 
 func (f fileRef) remove() error {

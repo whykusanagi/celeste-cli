@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 )
 
 // SearchResult pairs a symbol with its similarity score and a set of
@@ -68,8 +69,15 @@ type SearchResult struct {
 // Indexer manages the code graph lifecycle: build, update, and query.
 type Indexer struct {
 	workspace string
-	store     *Store
-	hasher    *MinHasher
+	// realWorkspace is workspace resolved when the indexer was made.
+	// Source is read through it (readConfined), so the workspace or a
+	// directory above it replaced by a symlink later is refused.
+	realWorkspace string
+	// passRoot is realWorkspace opened once for a Build or Update (under
+	// buildMu); readSource reads through it during the pass.
+	passRoot *os.Root
+	store    *Store
+	hasher   *MinHasher
 	// tsParser is lazily initialized on the first .ts/.tsx file seen
 	// during indexFile. Holding one long-lived parser and reusing it
 	// across files avoids the native-allocation cost of a per-file
@@ -128,9 +136,10 @@ func NewIndexer(workspace, dbPath string) (*Indexer, error) {
 	}
 
 	return &Indexer{
-		workspace: workspace,
-		store:     store,
-		hasher:    hasher,
+		workspace:     workspace,
+		realWorkspace: resolveWorkspace(workspace),
+		store:         store,
+		hasher:        hasher,
 	}, nil
 }
 
@@ -145,9 +154,10 @@ func NewIndexerWithStore(store *Store, workspace string) *Indexer {
 		hasher = NewMinHasher(DefaultNumHashes)
 	}
 	return &Indexer{
-		workspace: workspace,
-		store:     store,
-		hasher:    hasher,
+		workspace:     workspace,
+		realWorkspace: resolveWorkspace(workspace),
+		store:         store,
+		hasher:        hasher,
 	}
 }
 
@@ -258,6 +268,7 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 // partial graph until it finishes; Update never empties the index, and
 // finishes a build that was interrupted (metaBuildInProgress) in place.
 func (idx *Indexer) buildLocked(ctx context.Context) error {
+	defer idx.openPass()()
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
@@ -371,6 +382,7 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 
 // updateLocked is UpdateWithContext with buildMu and the index lock held.
 func (idx *Indexer) updateLocked(ctx context.Context) error {
+	defer idx.openPass()()
 	// A full build that never finished left file records whose hashes
 	// match while edges are missing (#388). The graph is not emptied and
 	// rebuilt: on a repo whose build outlasts each run (an Env closed
@@ -744,18 +756,14 @@ func (idx *Indexer) storeParsedFile(relPath string, result *ParseResult) []RawEd
 }
 
 // storeFileSymbols stores a file's symbols with their MinHash signature,
-// BM25 tokens and LSH bands, and returns name -> ID for the stored rows.
-func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) map[string]int64 {
-	source, _ := os.ReadFile(filepath.Join(idx.workspace, relPath))
-	ids := make(map[string]int64, len(syms))
+// BM25 tokens and LSH bands.
+func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) {
+	source, _ := idx.readSource(relPath)
 	for _, sym := range syms {
 		sym.File = relPath
 		id, err := idx.store.UpsertSymbol(sym)
 		if err != nil {
 			continue
-		}
-		if _, ok := ids[sym.Name]; !ok {
-			ids[sym.Name] = id
 		}
 		if sym.Kind != SymbolImport {
 			shingles := ShinglesForSymbol(sym, source, lang)
@@ -773,18 +781,15 @@ func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) map[st
 			_ = idx.store.UpsertLSHBands(id, bands)
 		}
 	}
-	return ids
 }
 
 // storeFileRecord records a file's size and content hash (and, for Go, its
 // call-graph resolution) for incremental updates.
 func (idx *Indexer) storeFileRecord(relPath, lang, resolution string) {
-	absPath := filepath.Join(idx.workspace, relPath)
-	info, _ := os.Stat(absPath)
-	hash, _ := fileContentHash(absPath)
 	var size int64
-	if info != nil {
-		size = info.Size()
+	var hash string
+	if data, err := idx.readSource(relPath); err == nil {
+		size, hash = int64(len(data)), contentHash(data)
 	}
 	_ = idx.store.UpsertFile(FileRecord{
 		Path:        relPath,
@@ -809,8 +814,18 @@ func (idx *Indexer) resolveAndStoreEdges(edges []RawEdge) {
 func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 	var out []Edge
 	for _, edge := range edges {
-		sourceID, ok1 := idx.store.GetSymbolIDByNameInFile(edge.SourceName, edge.SourceFile)
-		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
+		sourceID, ok1 := idx.resolveSource(edge)
+		var targetID int64
+		ok2 := false
+		// self.m() / this.m() inside a method calls m of the same class.
+		if tail, ok := selfCallee(edge.TargetName); ok && edge.SourceScope != "" {
+			targetID, ok2 = idx.store.symbolIDInFile(tail, edge.SourceScope, edge.SourceFile)
+		} else if edge.SelfCall && edge.SourceScope != "" {
+			targetID, ok2 = idx.store.symbolIDInFile(edge.TargetName, edge.SourceScope, edge.SourceFile)
+		}
+		if !ok2 {
+			targetID, ok2 = idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
+		}
 		// Try unqualified name: "pkg.Func" -> "Func"
 		if !ok2 {
 			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
@@ -833,6 +848,28 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 	return out
 }
 
+// resolveSource looks up an edge's source in its file. Outside Go a class
+// method is found by its scope too, so a method of the same name in
+// another class does not take its edges (Aikido review of #414).
+func (idx *Indexer) resolveSource(e RawEdge) (int64, bool) {
+	if DetectLanguage(e.SourceFile) != "go" {
+		if id, ok := idx.store.symbolIDInFile(e.SourceName, e.SourceScope, e.SourceFile); ok {
+			return id, true
+		}
+	}
+	return idx.store.GetSymbolIDByNameInFile(e.SourceName, e.SourceFile)
+}
+
+// selfCallee is m for a callee written self.m or this.m.
+func selfCallee(target string) (string, bool) {
+	for _, p := range []string{"self.", "this."} {
+		if rest, ok := strings.CutPrefix(target, p); ok && rest != "" && !strings.Contains(rest, ".") {
+			return rest, true
+		}
+	}
+	return "", false
+}
+
 // resolveTarget looks up an edge's target by name. A call resolves to a
 // callable first and to one in the caller's file next, so a call to a
 // common name such as get() does not land on an import or a type that
@@ -853,42 +890,14 @@ func (idx *Indexer) indexFile(relPath string) error {
 		return err
 	}
 
-	symbolIDs := idx.storeFileSymbols(relPath, lang, result.Symbols)
+	idx.storeFileSymbols(relPath, lang, result.Symbols)
 
-	// Store edges (resolve names to IDs)
-	// First try local file symbols, then fall back to global store lookup
-	// for cross-file edges (e.g., calling functions from other packages).
-	// For qualified names like "pkg.Func" or "obj.Method", also try the
-	// unqualified suffix (just "Func" or "Method") since symbols are stored
-	// without receiver/package prefixes.
-	for _, edge := range result.Edges {
-		sourceID, ok1 := symbolIDs[edge.SourceName]
-		if !ok1 {
-			sourceID, ok1 = idx.store.GetSymbolIDByNameInFile(edge.SourceName, relPath)
-		}
-		// The target goes through the store rather than symbolIDs: this
-		// file's symbols are already stored, and resolveTarget prefers
-		// them, but it also prefers a callable over a same-named import.
-		targetID, ok2 := idx.resolveTarget(edge.TargetName, edge.Kind, relPath)
-		// Try unqualified name: "pkg.Func" -> "Func"
-		if !ok2 {
-			if dotIdx := strings.LastIndex(edge.TargetName, "."); dotIdx >= 0 {
-				unqualified := edge.TargetName[dotIdx+1:]
-				targetID, ok2 = idx.resolveTarget(unqualified, edge.Kind, relPath)
-			}
-		}
-		// C++ ns::f / Cls::f: a qualified callee resolves exactly to an
-		// out-of-line definition ("Shape::make") and otherwise to its last
-		// segment, a function defined inside a namespace block.
-		if !ok2 {
-			if i := strings.LastIndex(edge.TargetName, "::"); i >= 0 {
-				targetID, ok2 = idx.resolveTarget(edge.TargetName[i+2:], edge.Kind, relPath)
-			}
-		}
-		if ok1 && ok2 {
-			_ = idx.store.AddEdge(sourceID, targetID, edge.Kind)
-		}
+	// Edges resolve as a build's pass 2 does: this file's symbols are
+	// stored, and every lookup prefers them over a same-named one elsewhere.
+	for i := range result.Edges {
+		result.Edges[i].SourceFile = relPath
 	}
+	idx.resolveAndStoreEdges(result.Edges)
 
 	idx.storeFileRecord(relPath, lang, "")
 
@@ -896,55 +905,122 @@ func (idx *Indexer) indexFile(relPath string) error {
 }
 
 // parseFile parses one workspace file with the parser for its language. It
-// returns a nil result for a language without a parser.
+// returns a nil result for a language without a parser. The file is read
+// through readConfined, so one replaced by a symlink or a FIFO since the
+// walk listed it is refused, and the parser gets the bytes read.
 func (idx *Indexer) parseFile(relPath string) (*ParseResult, error) {
 	absPath := filepath.Join(idx.workspace, relPath)
 	lang := DetectLanguage(relPath)
+	multi := idx.tryMultiParser(absPath)
+	if lang != "go" && !multi && lang != "typescript" && !indexableLanguages[lang] {
+		return nil, nil // no parser for this language
+	}
+	data, err := idx.readSource(relPath)
+	if err != nil {
+		return nil, err
+	}
 
 	switch {
 	case lang == "go":
 		// Go uses its own AST parser (go/parser, not tree-sitter)
-		return NewGoParser().ParseFile(absPath)
-	case idx.tryMultiParser(absPath):
+		return NewGoParser().ParseSource(absPath, data)
+	case multi:
 		// Multi-language tree-sitter parser (Python, Rust, Java, C, C++, etc.)
 		if idx.multiParser == nil {
 			idx.multiParser = NewMultiLangParser()
 		}
-		return idx.multiParser.ParseFile(absPath)
+		return idx.multiParser.ParseSource(absPath, data)
 	case lang == "typescript":
 		// Dedicated TS parser (preserves existing behavior for TS-only builds)
 		if idx.tsParser == nil {
 			idx.tsParser = NewTSParser()
 		}
-		return idx.tsParser.ParseFile(absPath)
-	case indexableLanguages[lang]:
-		return NewGenericParser(lang).ParseFile(absPath)
+		return idx.tsParser.ParseSource(absPath, data)
+	default:
+		return NewGenericParser(lang).ParseSource(absPath, data)
 	}
-	return nil, nil // no parser for this language
 }
 
-// readWorkspaceFile reads an indexed file for review: a regular file, not
-// a symlink, inside the workspace. It is opened through an os.Root on the
-// workspace (no symlink or ".." out of it, at any component) without
-// blocking, and checked on the open descriptor, so a file replaced by a
-// symlink or a FIFO since it was indexed is refused and review never
-// quotes source from outside the workspace.
+// readWorkspaceFile reads an indexed file for review (see readConfined),
+// so review never quotes source from outside the workspace.
 func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
 	rel, err := filepath.Rel(idx.workspace, absFile)
 	if err != nil || !filepath.IsLocal(rel) {
 		return nil, fmt.Errorf("%s is outside the workspace", absFile)
 	}
-	root, err := os.OpenRoot(idx.workspace)
+	return readConfined(idx.realWorkspace, rel)
+}
+
+// resolveWorkspace is workspace made absolute with its symlinks resolved
+// (as given when it cannot be resolved), the path readConfined opens.
+func resolveWorkspace(workspace string) string {
+	if abs, err := filepath.Abs(workspace); err == nil {
+		workspace = abs
+	}
+	if real, err := filepath.EvalSymlinks(workspace); err == nil {
+		return real
+	}
+	return workspace
+}
+
+// readConfined reads the workspace-relative file rel: a regular file, not
+// a symlink, inside realWorkspace (a resolved path, see resolveWorkspace).
+// The workspace is opened by realroot.Open, so it or a directory above it
+// replaced by a symlink is refused, and the file through that os.Root (no
+// symlink or ".." out of it, at any component) without blocking, checked
+// on the open descriptor, so a file replaced by a symlink or a FIFO since
+// the walk listed it is refused. Indexing, hashing and review all read
+// source through it (Aikido review of #421).
+func readConfined(realWorkspace, rel string) ([]byte, error) {
+	if !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is outside the workspace", rel)
+	}
+	root, err := realroot.Open(realWorkspace)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
+	return readIn(root, rel)
+}
+
+// readSource is readConfined of a workspace file, through the root a
+// Build or Update opened for its pass when one is open.
+func (idx *Indexer) readSource(rel string) ([]byte, error) {
+	if idx.passRoot != nil {
+		return readIn(idx.passRoot, rel)
+	}
+	return readConfined(idx.realWorkspace, rel)
+}
+
+// openPass opens the workspace root for a Build or Update (called under
+// buildMu); the returned func closes it.
+func (idx *Indexer) openPass() func() {
+	if idx.passRoot != nil {
+		return func() {} // an update that runs a full build
+	}
+	r, err := realroot.Open(idx.realWorkspace)
+	if err != nil {
+		return func() {}
+	}
+	idx.passRoot = r
+	return func() {
+		idx.passRoot = nil
+		_ = r.Close()
+	}
+}
+
+// readIn reads rel from root: a regular file, not a symlink, opened
+// without blocking and checked on the open descriptor.
+func readIn(root *os.Root, rel string) ([]byte, error) {
+	if !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is outside the workspace", rel)
+	}
 	before, err := root.Lstat(rel)
 	if err != nil {
 		return nil, err
 	}
 	if !before.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", absFile)
+		return nil, fmt.Errorf("%s is not a regular file", rel)
 	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|oNonblock, 0)
 	if err != nil {
@@ -956,7 +1032,7 @@ func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
-		return nil, fmt.Errorf("%s changed while it was being opened", absFile)
+		return nil, fmt.Errorf("%s changed while it was being opened", rel)
 	}
 	return io.ReadAll(f)
 }
@@ -2301,22 +2377,23 @@ func (idx *Indexer) PackageGraph() ([]PackageInfo, []PackageEdge, error) {
 	return idx.store.GetPackageGraph()
 }
 
-// fileContentHash computes a SHA-256 hash of a file's content.
-// hashFile is fileContentHash of a workspace-relative path.
+// hashFile is the content hash of a workspace-relative file, read through
+// readConfined.
 func (idx *Indexer) hashFile(relPath string) (string, error) {
 	if testHookFileHash != nil {
 		if err := testHookFileHash(relPath); err != nil {
 			return "", err
 		}
 	}
-	return fileContentHash(filepath.Join(idx.workspace, relPath))
-}
-
-func fileContentHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := idx.readSource(relPath)
 	if err != nil {
 		return "", err
 	}
+	return contentHash(data), nil
+}
+
+// contentHash is the stored hash of a file's content.
+func contentHash(data []byte) string {
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf("%x", hash[:8]), nil // first 8 bytes is enough
+	return fmt.Sprintf("%x", hash[:8]) // first 8 bytes is enough
 }

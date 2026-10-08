@@ -30,6 +30,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
@@ -76,6 +77,7 @@ func (s *Server) workspaceFromArgs(args map[string]any) (string, error) {
 	if err := validateWorkspace(workspace, s.config.Workspace); err != nil {
 		return "", fmt.Errorf("workspace rejected: %w", err)
 	}
+	workspace = canonicalWorkspace(workspace)
 	// Only an existing directory: an index is opened (and its directory
 	// created) per workspace, so a made-up path must not get one
 	// (Aikido 806869934).
@@ -85,6 +87,20 @@ func (s *Server) workspaceFromArgs(args map[string]any) (string, error) {
 		}
 	}
 	return workspace, nil
+}
+
+// canonicalWorkspace is workspace absolute and clean: the one spelling of a
+// directory that keys its index, its rebuild gate and its chat cache, so
+// "/w/" and "/w" are not two entries for one workspace (CodeRabbit review
+// of #414). "" stays "".
+func canonicalWorkspace(workspace string) string {
+	if workspace == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(workspace); err == nil {
+		return abs
+	}
+	return filepath.Clean(workspace)
 }
 
 // noIndexError is the soft error the query tools return for a workspace
@@ -387,7 +403,7 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 		}
 	}()
 	if closeOld {
-		closeIndexerEntries([]*indexerEntry{old})
+		s.closeIndexerEntries([]*indexerEntry{old})
 	}
 	for _, e := range waits {
 		select {
@@ -429,7 +445,7 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	cached = true
 	s.indexerMu.Unlock()
 	defer release()
-	closeIndexerEntries(stale)
+	s.closeIndexerEntries(stale)
 	// A chat call that built its Env while the rebuild ran opened the old
 	// database (loop.Setup does not go through indexerFor), which the
 	// rebuild then deleted. Retire it, as above, so the next chat call

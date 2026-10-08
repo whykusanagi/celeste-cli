@@ -74,6 +74,11 @@ func (p *TSParser) ParseFile(path string) (*ParseResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return p.ParseSource(path, data)
+}
+
+// ParseSource is ParseFile of content already read; path only names it.
+func (p *TSParser) ParseSource(path string, data []byte) (*ParseResult, error) {
 
 	lang := p.tsLang
 	if strings.ToLower(filepath.Ext(path)) == ".tsx" {

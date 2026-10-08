@@ -283,3 +283,29 @@ func TestOriginChecksNormaliseDefaultPorts(t *testing.T) {
 	assert.False(t, redirectAllowed(u("http://h/sse"), u("https://other/sse")))
 	assert.False(t, redirectAllowed(u("http://h:8080/sse"), u("https://h:8443/sse")))
 }
+
+// TestHTTPTransportSSELineLimitIsTheResponseLimit: an event-stream line is
+// held to the same limit as a JSON body: one under it is accepted, even
+// over 1 MiB, and one over it fails as too large (CodeRabbit review of
+// #424).
+func TestHTTPTransportSSELineLimitIsTheResponseLimit(t *testing.T) {
+	withResponseLimit(t, 4<<20)
+	var size atomic.Int64
+	size.Store(2 << 20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n", bigResult(int(size.Load())))
+	}))
+	defer srv.Close()
+	tr, err := NewHTTPTransport(srv.URL)
+	require.NoError(t, err)
+	require.NoError(t, tr.Send(&Request{JSONRPC: "2.0", ID: 1, Method: "tools/list"}), "a 2 MiB event under the 4 MiB limit")
+	resp, err := tr.Receive()
+	require.NoError(t, err)
+	assert.Len(t, string(resp.Result), 2<<20+2)
+
+	size.Store(5 << 20)
+	err = tr.Send(&Request{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}

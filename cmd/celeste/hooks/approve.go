@@ -75,7 +75,8 @@ func Decide(store *TrustStore, src Source, approve ApproveFunc) (run bool, why s
 
 // PromptApprover asks on out and reads a y/N answer from in. y or yes
 // approves; anything else on the line (Enter included) declines, and the
-// decline is remembered. EOF is no answer (AnswerLater).
+// decline is remembered. EOF is no answer (AnswerLater), also after a
+// partial line other than y or yes.
 func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
 	return promptApprover(in, out, true)
 }
@@ -143,6 +144,12 @@ func promptApprover(in io.Reader, out io.Writer, rememberNo bool) ApproveFunc {
 		}
 		if answer := strings.ToLower(strings.TrimSpace(line)); answer == "y" || answer == "yes" {
 			return AnswerYes
+		}
+		if err != nil {
+			// EOF cut the line off: no answer, so no decline is stored
+			// (CodeRabbit review of #413).
+			fmt.Fprintln(out)
+			return AnswerLater
 		}
 		return AnswerNo
 	}

@@ -139,6 +139,7 @@ func LoadAll(startDir string) (*Grimoire, error) {
 	repo := repoScope(startDir)
 	owned := userOwnedDirs(startDir)
 	st := newIncludeState()
+	defer st.close()
 	for _, src := range sources {
 		userOwned := src.dir == "" || owned(src.dir)
 		data, err := readSource(src, userOwned)
@@ -174,10 +175,11 @@ func LoadAll(startDir string) (*Grimoire, error) {
 
 // userOwnedDirs reports which directories of the upward walk from
 // startDir hold the user's own grimoires rather than repository content:
-// the home directory and its ancestors, and, inside a git repository,
-// every directory above its root (~/Development/.grimoire, say). Outside
-// a repository only home and its ancestors are the user's: a parent of
-// the workspace may be an extracted archive.
+// the home directory and its ancestors, and, inside a git repository, a
+// directory above its root that sits right under home
+// (~/Development/.grimoire, say). Any other directory may be an extracted
+// archive, a nested .git inside it included (CodeRabbit review of #421);
+// outside a repository only home and its ancestors are the user's.
 func userOwnedDirs(startDir string) func(dir string) bool {
 	resolve := func(p string) string {
 		if r, err := filepath.EvalSymlinks(p); err == nil {
@@ -200,7 +202,8 @@ func userOwnedDirs(startDir string) func(dir string) bool {
 		if home != "" && pathutil.Within(d, home) {
 			return true // home itself or one of its ancestors
 		}
-		return gitRoot != "" && !pathutil.Within(gitRoot, d)
+		return home != "" && gitRoot != "" && !pathutil.Within(gitRoot, d) &&
+			filepath.Dir(d) == home
 	}
 }
 

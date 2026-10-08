@@ -198,6 +198,9 @@ type connectAttempt struct {
 // up its in-flight slot. Tests only.
 var testHookConnectEnding func()
 
+// testHookNewTransport, when set, replaces createTransport. Tests only.
+var testHookNewTransport func(cfg ServerConfig) (Transport, error)
+
 // revokeLocked revokes name's connect in flight, if any. m.mu must be held.
 func (m *Manager) revokeLocked(name string) {
 	if a := m.connecting[name]; a != nil {
@@ -212,21 +215,34 @@ func (m *Manager) revokeLocked(name string) {
 // tools, and records bookkeeping. The caller holds no lock; connectClient locks
 // only while mutating manager maps. trusted honours the tools' readOnlyHint.
 func (m *Manager) connectClient(ctx context.Context, name string, client *Client, transport string, trusted bool) error {
-	// One connect per server at a time: a second one racing it would
-	// register nothing (Add refuses the names the first holds) yet replace
-	// its client, leaving tools Disconnect never removes.
-	//
-	// A connect that Disconnect or Stop revoked is ending: wait for it
-	// (it has dropped its tools by then) instead of refusing, so a server
-	// switched off and straight back on reconnects.
+	attempt, ctx, err := m.reserveConnect(ctx, name)
+	if err != nil {
+		client.Close()
+		return err
+	}
+	defer m.endConnect(name, attempt)
+	return m.installClient(ctx, attempt, name, client, transport, trusted, "")
+}
+
+// reserveConnect takes name's in-flight connect slot, which Disconnect and
+// Stop revoke, and returns the attempt with its cancellable context. The
+// caller must endConnect it.
+//
+// One connect per server at a time: a second one racing it would register
+// nothing (Add refuses the names the first holds) yet replace its client,
+// leaving tools Disconnect never removes.
+//
+// A connect that Disconnect or Stop revoked is ending: wait for it (it has
+// dropped its tools by then) instead of refusing, so a server switched off
+// and straight back on reconnects.
+func (m *Manager) reserveConnect(ctx context.Context, name string) (*connectAttempt, context.Context, error) {
 	m.mu.Lock()
 	for {
 		_, live := m.clients[name]
 		prev := m.connecting[name]
 		if live || (prev != nil && !prev.revoked) {
 			m.mu.Unlock()
-			client.Close()
-			return fmt.Errorf("connect %q: already connected or connecting", name)
+			return nil, nil, fmt.Errorf("connect %q: already connected or connecting", name)
 		}
 		if prev == nil {
 			break
@@ -235,28 +251,35 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 		select {
 		case <-prev.done:
 		case <-ctx.Done():
-			client.Close()
-			return fmt.Errorf("connect %q: %w", name, ctx.Err())
+			return nil, nil, fmt.Errorf("connect %q: %w", name, ctx.Err())
 		}
 		m.mu.Lock()
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	attempt := &connectAttempt{cancel: cancel, done: make(chan struct{})}
 	m.connecting[name] = attempt
 	m.mu.Unlock()
-	defer func() {
-		if testHookConnectEnding != nil {
-			testHookConnectEnding()
-		}
-		m.mu.Lock()
-		if m.connecting[name] == attempt {
-			delete(m.connecting, name)
-		}
-		m.mu.Unlock()
-		close(attempt.done)
-	}()
+	return attempt, ctx, nil
+}
 
+// endConnect gives up the slot reserveConnect took.
+func (m *Manager) endConnect(name string, attempt *connectAttempt) {
+	attempt.cancel()
+	if testHookConnectEnding != nil {
+		testHookConnectEnding()
+	}
+	m.mu.Lock()
+	if m.connecting[name] == attempt {
+		delete(m.connecting, name)
+	}
+	m.mu.Unlock()
+	close(attempt.done)
+}
+
+// installClient initializes client, registers its tools and installs it,
+// unless attempt was revoked meanwhile: then it closes the client and
+// removes the tools it registered. origin is the config file, if known.
+func (m *Manager) installClient(ctx context.Context, attempt *connectAttempt, name string, client *Client, transport string, trusted bool, origin string) error {
 	if err := client.Initialize(ctx); err != nil {
 		client.Close()
 		return fmt.Errorf("initialize %q: %w", name, err)
@@ -283,12 +306,17 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 	m.toolCounts[name] = len(names)
 	m.transports[name] = transport
 	m.toolNames[name] = names
+	if origin != "" {
+		m.origins[name] = origin
+	}
 	return nil
 }
 
 // Connect builds a transport from cfg, connects, and registers the server's
 // tools at runtime. Safe to call after Start (lazy connect). A server that is
-// already connected is a no-op.
+// already connected is a no-op. The connect is in flight, and a Disconnect
+// or Stop revokes it, from before the transport is built (Aikido review of
+// #424).
 func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) error {
 	m.mu.Lock()
 	_, already := m.clients[name]
@@ -296,17 +324,24 @@ func (m *Manager) Connect(ctx context.Context, name string, cfg ServerConfig) er
 	if already {
 		return nil
 	}
+	attempt, ctx, err := m.reserveConnect(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer m.endConnect(name, attempt)
 	transport, err := m.createTransport(cfg)
 	if err != nil {
 		return fmt.Errorf("create transport for %q: %w", name, err)
 	}
-	if err := m.connectClient(ctx, name, NewClient(transport, "celeste", "1.0"), cfg.Transport, m.trusts(cfg)); err != nil {
-		return err
-	}
+	client := NewClient(transport, "celeste", "1.0")
 	m.mu.Lock()
-	m.origins[name] = cfg.Origin
+	revoked := attempt.revoked
 	m.mu.Unlock()
-	return nil
+	if revoked {
+		client.Close()
+		return fmt.Errorf("connect %q: disconnected while connecting", name)
+	}
+	return m.installClient(ctx, attempt, name, client, cfg.Transport, m.trusts(cfg), cfg.Origin)
 }
 
 // liveClient is the server's current client, if it is connected. A tool
@@ -410,6 +445,9 @@ func (m *Manager) registerInto(dst *tools.Registry, keep func(server string) boo
 
 // createTransport creates the appropriate Transport based on server configuration.
 func (m *Manager) createTransport(cfg ServerConfig) (Transport, error) {
+	if testHookNewTransport != nil {
+		return testHookNewTransport(cfg)
+	}
 	switch cfg.Transport {
 	case "sse":
 		if cfg.URL == "" {

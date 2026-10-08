@@ -38,7 +38,11 @@ func (p *GenericParser) ParseFile(path string) (*ParseResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return p.ParseSource(path, data)
+}
 
+// ParseSource is ParseFile of content already read; path only names it.
+func (p *GenericParser) ParseSource(path string, data []byte) (*ParseResult, error) {
 	source := string(data)
 	lines := strings.Split(source, "\n")
 	result := &ParseResult{Source: data}

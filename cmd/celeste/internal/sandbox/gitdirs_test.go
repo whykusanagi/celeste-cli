@@ -469,3 +469,51 @@ func TestGitPointersAreReadOnlyUnderTheSandbox(t *testing.T) {
 		t.Error("git commit in the lane failed under the sandbox")
 	}
 }
+
+// A refused .git says why; an accepted one has no Refusal.
+func TestFindRepoSaysWhyItRefused(t *testing.T) {
+	outside := Resolve(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(outside, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(outside, "HEAD"), "ref: refs/heads/main\n")
+
+	repo := Resolve(t.TempDir())
+	common := fakeRepo(t, repo)
+	moved := Resolve(t.TempDir())
+	admin := fakeLane(t, common, filepath.Join(repo, "old"), "old")
+	writeFile(t, filepath.Join(moved, ".git"), "gitdir: "+admin+"\n")
+
+	cases := map[string]struct {
+		ws   string
+		want string
+	}{
+		"gitdir names a non-worktree git dir": {func() string {
+			ws := Resolve(t.TempDir())
+			writeFile(t, filepath.Join(ws, ".git"), "gitdir: "+outside+"\n")
+			return ws
+		}(), "--separate-git-dir"},
+		"gitdir names nothing": {func() string {
+			ws := Resolve(t.TempDir())
+			writeFile(t, filepath.Join(ws, ".git"), "nothing\n")
+			return ws
+		}(), "names no git dir"},
+		"moved linked worktree": {moved, "git worktree repair"},
+	}
+	ws := Resolve(t.TempDir())
+	if err := os.Symlink(outside, filepath.Join(ws, ".git")); err == nil {
+		cases["symlinked .git"] = struct {
+			ws   string
+			want string
+		}{ws, "symlink"}
+	}
+	for name, c := range cases {
+		r, found := FindRepo(c.ws)
+		if !found || r.GitDir != "" || !strings.Contains(r.Refusal, c.want) {
+			t.Errorf("%s: FindRepo = %+v, %v; want refused with %q", name, r, found, c.want)
+		}
+	}
+	if r, _ := FindRepo(repo); r.GitDir == "" || r.Refusal != "" {
+		t.Errorf("plain repository: FindRepo = %+v", r)
+	}
+}

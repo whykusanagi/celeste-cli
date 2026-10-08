@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/filelock"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
@@ -33,13 +34,32 @@ var (
 	// maxSessionSpillBytes caps one session's spill files; past it a
 	// result is cut in memory and not spilled.
 	maxSessionSpillBytes int64 = 256 << 20
-	// maxTotalSpillBytes caps every session's spill files together; the
-	// startup prune removes the oldest sessions past it.
+	// maxTotalSpillBytes caps every session's spill files together: a
+	// spill that would pass it first removes the oldest other sessions
+	// idle for spillActiveAge, and is cut in memory if that is not enough.
 	maxTotalSpillBytes int64 = 1 << 30
 )
 
+// spillActiveAge is how long after its last spill a session may still be
+// running in another celeste process: a prune for the total limit leaves
+// such a session alone, so its recall_tool_result ids keep working.
+const spillActiveAge = 15 * time.Minute
+
+// testHookSpillChecked, when set, runs in CapToolResult after the quota
+// checks pass, before the spill is written. Tests only.
+var testHookSpillChecked func()
+
 // prunedSpillBases records the spill bases pruned in this process.
 var prunedSpillBases sync.Map
+
+// spillMu serializes the quota checks and the write of each spill in this
+// process; spillLockPath, a lock file beside the spill base, does the same
+// across celeste processes.
+var spillMu sync.Mutex
+
+// spillLockPath is the lock file of the spill base baseDir. It sits beside
+// the base, not in it, so the base holds only session directories.
+func spillLockPath(baseDir string) string { return filepath.Clean(baseDir) + ".lock" }
 
 // ToolResultsBaseDir returns the base directory for spilled tool results.
 // Default: ~/.celeste/tool-results
@@ -82,6 +102,25 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		}
 	}
 
+	// The spill base itself is never pruned, so it is made before the lock,
+	// whose file sits beside it.
+	if err := os.MkdirAll(baseDir, 0700); err != nil {
+		return result, false, fmt.Errorf("create tool-results dir: %w", err)
+	}
+
+	// Everything from the prune to the write happens under spillMu, and
+	// across celeste processes under the lock file beside the base: two
+	// spills at once cannot both pass a quota check only one of them fits
+	// (Aikido review of #424), and another process's prune cannot remove
+	// this session's directory between its creation and the write.
+	spillMu.Lock()
+	defer spillMu.Unlock()
+	unlock, err := filelock.Lock(spillLockPath(baseDir), 10*time.Second)
+	if err != nil {
+		return result, false, fmt.Errorf("lock tool-results dir: %w", err)
+	}
+	defer unlock()
+
 	// Once per process and base, before the first spill: drop old
 	// sessions' spill files, so they do not pile up across sessions.
 	if _, done := prunedSpillBases.LoadOrStore(baseDir, true); !done {
@@ -102,20 +141,34 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	}
 
 	// A result over the per-file limit spills only its first part, and a
-	// session past its quota spills no more.
+	// session past its quota spills no more. The file this write replaces
+	// (the same toolCallID spilled before) does not count toward the
+	// quotas.
 	saved := result
 	if int64(len(saved)) > maxSpillFileBytes {
 		saved = textutil.CutBytes(saved, int(maxSpillFileBytes))
 	}
-	// The file this write replaces (the same toolCallID spilled before)
-	// does not count toward the quota.
 	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
-	used := dirBytes(sessionDir)
+	var replaced int64
 	if fi, err := os.Lstat(spillPath); err == nil && fi.Mode().IsRegular() {
-		used -= fi.Size()
+		replaced = fi.Size()
 	}
-	if used+int64(len(saved)) > maxSessionSpillBytes {
+	size := int64(len(saved))
+	if dirBytes(sessionDir)-replaced+size > maxSessionSpillBytes {
 		return result, false, fmt.Errorf("this session's spilled tool results reached %d bytes", maxSessionSpillBytes)
+	}
+	// Every spill keeps all sessions' spills within maxTotalSpillBytes,
+	// not only the first of a run: past it, the oldest other sessions idle
+	// for spillActiveAge go first (CodeRabbit review of #424), and if that
+	// is not enough the result is cut in memory.
+	if totalSpillBytes(baseDir)-replaced+size > maxTotalSpillBytes {
+		_ = pruneToolResults(baseDir, sessionID, time.Now(), maxTotalSpillBytes-size+replaced)
+		if totalSpillBytes(baseDir)-replaced+size > maxTotalSpillBytes {
+			return result, false, fmt.Errorf("spilled tool results reached %d bytes in all", maxTotalSpillBytes)
+		}
+	}
+	if testHookSpillChecked != nil {
+		testHookSpillChecked()
 	}
 
 	if err := os.WriteFile(spillPath, []byte(saved), 0600); err != nil {
@@ -240,10 +293,18 @@ func dirBytes(dir string) int64 {
 
 // PruneToolResults deletes spilled tool results under baseDir ("" is
 // ToolResultsBaseDir): every session directory last changed more than
-// SpillKeepAge ago, then the oldest others while all of them together are
-// over maxTotalSpillBytes. keep (the session running now) always survives.
+// SpillKeepAge ago, then the oldest others idle for spillActiveAge while all
+// of them together are over maxTotalSpillBytes. keep (the session running
+// now) always survives, and so does any session that spilled within
+// spillActiveAge, as another celeste process may still be using it.
 // A missing baseDir is nothing to prune (Aikido 806869375).
 func PruneToolResults(baseDir, keep string, now time.Time) error {
+	return pruneToolResults(baseDir, keep, now, maxTotalSpillBytes)
+}
+
+// pruneToolResults is PruneToolResults removing the oldest sessions while
+// all of them together are over limit.
+func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 	if baseDir == "" {
 		var err error
 		if baseDir, err = ToolResultsBaseDir(); err != nil {
@@ -283,7 +344,7 @@ func PruneToolResults(baseDir, keep string, now time.Time) error {
 	total += dirBytes(filepath.Join(baseDir, keep))
 	sort.Slice(live, func(i, j int) bool { return live[i].changed.Before(live[j].changed) })
 	for _, s := range live {
-		if total <= maxTotalSpillBytes {
+		if total <= limit || now.Sub(s.changed) < spillActiveAge {
 			break
 		}
 		if err := os.RemoveAll(s.path); err != nil {
@@ -293,6 +354,21 @@ func PruneToolResults(baseDir, keep string, now time.Time) error {
 		total -= s.size
 	}
 	return errors.Join(errs...)
+}
+
+// totalSpillBytes is the size of every session's spill files under baseDir.
+func totalSpillBytes(baseDir string) int64 {
+	des, err := os.ReadDir(baseDir)
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, d := range des {
+		if d.IsDir() {
+			n += dirBytes(filepath.Join(baseDir, d.Name()))
+		}
+	}
+	return n
 }
 
 // lastSpill is when a session directory last changed: its newest file's

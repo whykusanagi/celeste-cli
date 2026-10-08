@@ -65,6 +65,15 @@ func (m *MultiLangParser) Close() {
 // ParseFile reads a source file and returns extracted symbols and edges
 // using the tree-sitter AST and language-specific node type mappings.
 func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return m.ParseSource(path, data)
+}
+
+// ParseSource is ParseFile of content already read; path only names it.
+func (m *MultiLangParser) ParseSource(path string, data []byte) (*ParseResult, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	lang := SupportedLanguage(ext)
 	if lang == "" {
@@ -81,10 +90,6 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 		return nil, fmt.Errorf("no lang spec for %s", lang)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
 	// A .h header holding C++ gets the C++ grammar, which has classes,
 	// namespaces and templates; the C grammar would miss them (#381).
 	if lang == "c" && IsCppHeader(path, data) {
@@ -138,6 +143,9 @@ type multiWalker struct {
 	// ("Geo.Qux"), Symbol.Scope of what it declares there. A function body
 	// resets it: a function nested in a method has no class.
 	currentScope string
+	// fnScope is the Symbol.Scope of the function the walk is inside
+	// (currentFn), the scope its outgoing edges start from.
+	fnScope string
 }
 
 // rustImplType is the type a Rust impl block is for, without its path or
@@ -258,9 +266,10 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 							if target := w.decoratorTarget(dec); target != "" {
 								decNames = append(decNames, target)
 								w.result.Edges = append(w.result.Edges, RawEdge{
-									SourceName: name,
-									TargetName: target,
-									Kind:       EdgeCalls,
+									SourceName:  name,
+									SourceScope: w.currentScope,
+									TargetName:  target,
+									Kind:        EdgeCalls,
 								})
 							}
 						}
@@ -283,12 +292,15 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 		if fnName == "" {
 			fnName = currentFn
 		}
-		prevScope := w.currentScope
+		prevScope, prevFnScope := w.currentScope, w.fnScope
+		if name != "" {
+			w.fnScope = w.currentScope
+		}
 		w.currentScope = ""
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), fnName)
 		}
-		w.currentScope = prevScope
+		w.currentScope, w.fnScope = prevScope, prevFnScope
 		return
 	}
 
@@ -313,9 +325,11 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 		target := w.extractCallTarget(node)
 		if target != "" {
 			w.result.Edges = append(w.result.Edges, RawEdge{
-				SourceName: currentFn,
-				TargetName: target,
-				Kind:       EdgeCalls,
+				SourceName:  currentFn,
+				SourceScope: w.fnScope,
+				TargetName:  target,
+				Kind:        EdgeCalls,
+				SelfCall:    w.fnScope != "" && w.isSelfCall(node),
 			})
 		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -351,9 +365,10 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 			if attr := left.ChildByFieldName("attribute"); attr != nil {
 				if name := w.nodeText(attr); name != "" {
 					w.result.Edges = append(w.result.Edges, RawEdge{
-						SourceName: currentFn,
-						TargetName: name,
-						Kind:       EdgeCalls,
+						SourceName:  currentFn,
+						SourceScope: w.fnScope,
+						TargetName:  name,
+						Kind:        EdgeCalls,
 					})
 				}
 			}
@@ -468,6 +483,53 @@ func (w *multiWalker) extractCallTarget(node *tree_sitter.Node) string {
 		return w.identFromExpr(node.NamedChild(0))
 	}
 	return ""
+}
+
+// isSelfCall reports whether a call node calls a method of the caller's
+// own class: $this->m(), self::m() and static::m() in PHP; this.m() and a
+// call with no receiver in Java; self.m and a receiverless call in Ruby;
+// this->m() and an unqualified call in C++ (Aikido review of #414).
+// Python and JS/TS spell the receiver out (self.m, this.m), which
+// selfCallee reads from the target name instead.
+func (w *multiWalker) isSelfCall(node *tree_sitter.Node) bool {
+	switch w.lang {
+	case "php":
+		switch node.Kind() {
+		case "member_call_expression", "nullsafe_member_call_expression":
+			obj := node.ChildByFieldName("object")
+			return obj != nil && w.nodeText(obj) == "$this"
+		case "scoped_call_expression":
+			scope := node.ChildByFieldName("scope")
+			if scope == nil {
+				return false
+			}
+			s := strings.ToLower(w.nodeText(scope))
+			return s == "self" || s == "static"
+		}
+	case "java":
+		if node.Kind() == "method_invocation" {
+			obj := node.ChildByFieldName("object")
+			return obj == nil || obj.Kind() == "this"
+		}
+	case "ruby":
+		if node.Kind() == "call" {
+			recv := node.ChildByFieldName("receiver")
+			return recv == nil || recv.Kind() == "self"
+		}
+	case "cpp":
+		fn := node.ChildByFieldName("function")
+		if fn == nil {
+			return false
+		}
+		switch fn.Kind() {
+		case "identifier":
+			return true
+		case "field_expression":
+			arg := fn.ChildByFieldName("argument")
+			return arg != nil && arg.Kind() == "this"
+		}
+	}
+	return false
 }
 
 // phpCallTarget returns the callee name of a PHP call node. PHP names are
@@ -700,9 +762,12 @@ func (w *multiWalker) handleVarDeclarator(decl *tree_sitter.Node, currentFn stri
 			Line:      int(decl.StartPosition().Row) + 1,
 			Signature: w.buildSignature(value, name),
 		})
+		prevFnScope := w.fnScope
+		w.fnScope = "" // stored without a scope, above
 		for i := uint(0); i < value.NamedChildCount(); i++ {
 			w.walk(value.NamedChild(i), name)
 		}
+		w.fnScope = prevFnScope
 		return
 	}
 	for i := uint(0); i < decl.NamedChildCount(); i++ {

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,13 +30,7 @@ func TestRebuild_ConcurrentQueryNeverGetsOldIndex(t *testing.T) {
 	}
 	t.Cleanup(func() { testHookRebuildEvicted = nil })
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
-		assert.NotEqual(t, true, payload["isError"], payloadText(t, payload))
-	}()
+	rebuilt := callToolAsync(srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	<-evicted
 
 	// Mid-rebuild: every way in to the index is refused, not opened.
@@ -53,7 +46,8 @@ func TestRebuild_ConcurrentQueryNeverGetsOldIndex(t *testing.T) {
 	assert.Equal(t, true, payload["isError"], "a second rebuild of the same workspace waits for none: it is refused")
 
 	close(release)
-	wg.Wait()
+	payload = toolCallPayload(t, <-rebuilt)
+	assert.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 	testHookRebuildEvicted = nil
 
 	_, payload = callTool(t, srv, "celeste_code_search", map[string]any{"query": "freshlyAdded", "mode": "keyword"})
