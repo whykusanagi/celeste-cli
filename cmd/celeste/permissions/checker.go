@@ -16,14 +16,17 @@ type ToolInfo interface {
 }
 
 // Checker evaluates whether a tool execution should be allowed, denied, or
-// requires user approval. It implements a 6-step evaluation chain:
+// requires user approval. It implements a 5-step evaluation chain:
 //
 //  0. protected hook/trust files — best-effort Deny for shell commands
 //  1. alwaysDeny rules — if any match, return Deny immediately
 //  2. alwaysAllow rules — if any match, return Allow immediately
-//  3. IsReadOnly check — in default mode, read-only tools are auto-allowed
 //  4. patternRules — if any match, return the rule's decision
-//  5. Mode fallthrough — default asks for writes, strict asks for all, trust allows all
+//  5. Mode fallthrough — default allows read-only tools and asks for the
+//     rest, strict asks for all, trust allows all
+//
+// (Step 3, an early read-only allow, is gone: it ran before the pattern
+// rules, so a pattern deny never applied to a read-only tool.)
 type Checker struct {
 	mu           sync.RWMutex
 	alwaysDeny   []Rule
@@ -196,13 +199,9 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 		}
 	}
 
-	// Step 3: IsReadOnly check (only in default mode)
-	if c.mode == ModeDefault && readOnly {
-		return CheckResult{
-			Decision: Allow,
-			Reason:   fmt.Sprintf("read-only tool %q auto-allowed in default mode", toolName),
-		}
-	}
+	// Step 3 (read-only auto-allow in default mode) is part of the mode
+	// fallthrough below, after the pattern rules, so a pattern deny or ask
+	// applies to a read-only tool too.
 
 	// Step 4: Pattern rules
 	for i := range c.patternRules {
