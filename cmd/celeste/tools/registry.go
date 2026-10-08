@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
@@ -106,9 +107,45 @@ func riskLevel(tool Tool, name string, input map[string]any) string {
 // silently: what the user approves is what the tool gets.
 const maxSummaryValue = 4096
 
-// capSummary cuts s to maxSummaryValue bytes on a rune boundary, saying how
-// much it left out.
+// maxSummaryLines caps the lines (one per argument) of a permission
+// prompt's summary; the rest are counted in a final marker line.
+const maxSummaryLines = 24
+
+// visible makes every character of s that a terminal would act on rather
+// than print visible: a line break inside a value is ⏎ (so it can't push the
+// command out of view), a carriage return, tab or other C0/C1 control, DEL
+// or invisible format character (bidi overrides) is a \xNN or \uNNNN
+// escape (so an escape sequence can't hide part of the command), and so is
+// a byte that is not UTF-8.
+func visible(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&sb, `\x%02x`, s[i])
+		case r == '\n':
+			sb.WriteString("⏎")
+		case r == ' ' || unicode.IsGraphic(r):
+			sb.WriteRune(r)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case r < 0x100:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		}
+		i += size
+	}
+	return sb.String()
+}
+
+// capSummary makes s visible, then cuts it to maxSummaryValue bytes on a
+// rune boundary, saying how much it left out.
 func capSummary(s string) string {
+	s = visible(s)
 	if len(s) <= maxSummaryValue {
 		return s
 	}
@@ -121,8 +158,10 @@ func capSummary(s string) string {
 
 // inputSummary is what a permission prompt shows for a call: the tool's
 // primary argument (PrimaryArg) in full, then every other field as
-// "key: value". Nothing is cut short except a very large value, which
-// says so (capSummary), so the user approves the exact command or path.
+// "key: value", one per line. Nothing is cut short except a very large
+// value or very many arguments, which say so (capSummary,
+// maxSummaryLines), so the user approves the exact command or path; every
+// character a terminal would act on is shown escaped (visible).
 func inputSummary(tool Tool, input map[string]any) string {
 	if len(input) == 0 {
 		return "(no args)"
@@ -143,7 +182,16 @@ func inputSummary(tool Tool, input map[string]any) string {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	for _, k := range keys {
+	lines := 0
+	if sb.Len() > 0 {
+		lines = 1
+	}
+	for i, k := range keys {
+		if lines == maxSummaryLines {
+			fmt.Fprintf(&sb, "\n... [%d more arguments not shown]", len(keys)-i)
+			break
+		}
+		lines++
 		v, ok := input[k].(string)
 		if !ok {
 			b, err := json.Marshal(input[k])
@@ -156,7 +204,7 @@ func inputSummary(tool Tool, input map[string]any) string {
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString(k + ": " + capSummary(v))
+		sb.WriteString(capSummary(k) + ": " + capSummary(v))
 	}
 	return sb.String()
 }
