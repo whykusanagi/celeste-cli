@@ -221,3 +221,20 @@ func TestChatDisabledWorkspaceMCPIsNotAsked(t *testing.T) {
 		return hooks.AnswerLater
 	})
 }
+
+// A workspace MCP config that does not load is reported as skipped, with its
+// path, not as an MCP failure: the home servers still started.
+func TestChatSkippedWorkspaceMCPConfigIsAWarning(t *testing.T) {
+	setupHome(t)
+	ws := t.TempDir()
+	cfgPath := filepath.Join(ws, ".mcp.json")
+	write(t, cfgPath, "{not json")
+
+	got := chatSetup(t, ws, nil).all()
+	if !strings.Contains(got, "skipped workspace MCP config") || !strings.Contains(got, cfgPath) {
+		t.Errorf("warning does not name the skipped config:\n%s", got)
+	}
+	if strings.Contains(got, "MCP initialization failed") {
+		t.Errorf("a skipped workspace config was reported as a failure:\n%s", got)
+	}
+}

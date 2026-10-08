@@ -138,7 +138,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	skipped := m.skipped
 	m.mu.Unlock()
 	if len(skipped) > 0 {
-		return fmt.Errorf("skipped a workspace MCP config that did not load (its servers did not start): %w", errors.Join(skipped...))
+		return errors.Join(skipped...)
 	}
 	return nil
 }

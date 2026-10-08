@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DiscoverConfigPaths returns the MCP config files that exist on disk, ordered
@@ -88,7 +90,7 @@ func LoadMergedLenient(paths []string, home string) (cfg *MCPConfig, skipped []e
 			if IsGlobalConfig(home, p) {
 				return nil, skipped, err
 			}
-			skipped = append(skipped, err)
+			skipped = append(skipped, &SkippedConfigError{Path: p, Err: err})
 			continue
 		}
 		for name, sc := range c.Servers {
@@ -97,4 +99,53 @@ func LoadMergedLenient(paths []string, home string) (cfg *MCPConfig, skipped []e
 		}
 	}
 	return merged, skipped, nil
+}
+
+// ErrWorkspaceConfigSkipped matches (errors.Is) the error of a workspace
+// MCP config that did not load and was skipped: a warning, not a failure,
+// since the other configs' servers still start.
+var ErrWorkspaceConfigSkipped = errors.New("skipped workspace MCP config")
+
+// SkippedConfigError is one workspace MCP config LoadMergedLenient skipped.
+type SkippedConfigError struct {
+	Path string
+	Err  error // names Path too (LoadConfig's errors do)
+}
+
+func (e *SkippedConfigError) Error() string {
+	msg := e.Err.Error()
+	if !strings.Contains(msg, e.Path) {
+		msg = e.Path + ": " + msg
+	}
+	return "skipped workspace MCP config (its servers did not start): " + msg
+}
+
+func (e *SkippedConfigError) Unwrap() error { return e.Err }
+
+// Is makes every SkippedConfigError match ErrWorkspaceConfigSkipped.
+func (e *SkippedConfigError) Is(target error) bool { return target == ErrWorkspaceConfigSkipped }
+
+// SkippedConfigs returns the skipped configs err carries (Start's error).
+func SkippedConfigs(err error) []*SkippedConfigError {
+	var out []*SkippedConfigError
+	var walk func(error)
+	walk = func(err error) {
+		if err == nil {
+			return
+		}
+		if sk, ok := err.(*SkippedConfigError); ok {
+			out = append(out, sk)
+			return
+		}
+		switch u := err.(type) {
+		case interface{ Unwrap() []error }:
+			for _, e := range u.Unwrap() {
+				walk(e)
+			}
+		case interface{ Unwrap() error }:
+			walk(u.Unwrap())
+		}
+	}
+	walk(err)
+	return out
 }

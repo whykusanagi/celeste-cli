@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,4 +69,30 @@ func TestLoadMergedLenientKeepsGlobalOnWorkspaceParseError(t *testing.T) {
 	require.NoError(t, os.WriteFile(global, []byte(`{nope`), 0o600))
 	_, _, err = LoadMergedLenient(DiscoverConfigPaths(ws, home), home)
 	require.Error(t, err)
+}
+
+// TestSkippedWorkspaceConfigsNamePathAndAreTyped: a workspace config skipped
+// for any reason (not a regular file, too large, malformed) names its path,
+// and Start's error is recognisable as a skip, not a failure.
+func TestSkippedWorkspaceConfigsNamePathAndAreTyped(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	dirCfg := filepath.Join(ws, "dir.json")
+	require.NoError(t, os.Mkdir(dirCfg, 0o755))
+	bigCfg := filepath.Join(ws, "big.json")
+	require.NoError(t, os.WriteFile(bigCfg, []byte(`{"mcpServers":{}}`+strings.Repeat(" ", maxConfigBytes)), 0o600))
+
+	_, skipped, err := LoadMergedLenient([]string{dirCfg, bigCfg}, home)
+	require.NoError(t, err)
+	require.Len(t, skipped, 2)
+	assert.Contains(t, skipped[0].Error(), dirCfg)
+	assert.Contains(t, skipped[1].Error(), bigCfg)
+
+	m := NewManagerMulti([]string{dirCfg}, tools.NewRegistry())
+	m.home = home
+	err = m.Start(t.Context())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrWorkspaceConfigSkipped), "Start's skip error is not typed: %v", err)
+	sk := SkippedConfigs(err)
+	require.Len(t, sk, 1)
+	assert.Equal(t, dirCfg, sk[0].Path)
 }

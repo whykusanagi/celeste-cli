@@ -325,7 +325,16 @@ func (e *Env) setupMCP(ws, home string) {
 	e.MCP.SetAdmit(e.admitMCP(paths, home))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := e.MCP.Start(ctx); err != nil {
+	err := e.MCP.Start(ctx)
+	if errors.Is(err, mcp.ErrWorkspaceConfigSkipped) {
+		// The other configs' servers started: a skipped workspace config
+		// is a warning, not a failure.
+		for _, sk := range mcp.SkippedConfigs(err) {
+			e.warn("MCP: %v", sk)
+		}
+		return
+	}
+	if err != nil {
 		e.warn("MCP initialization failed: %v", err)
 	}
 }
