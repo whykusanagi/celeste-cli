@@ -2,7 +2,6 @@ package loop
 
 import (
 	"log"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -68,22 +67,23 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	// point back; this is the backstop).
 	home := sandbox.Resolve(e.home)
 	gitDirs := sandbox.GitDirs(p.Workspace)
+	var accepted []string
 	for _, dir := range gitDirs {
 		if filepath.Dir(dir) == dir || within(dir, p.Workspace) || (e.home != "" && within(dir, home)) {
 			e.warn("sandbox: not making %s writable: it contains the workspace or the home directory", strconv.Quote(dir))
 			continue
 		}
-		extra = append(extra, dir)
+		accepted = append(accepted, dir)
 	}
+	extra = append(extra, accepted...)
 	p.Writable = sandbox.Normalize(append(sandbox.DefaultWritable(e.home, p.Workspace), e.writablePaths(extra)...))
 	// Their config and hooks stay read-only: celeste and you run git
 	// outside the sandbox, and it would run what they name.
 	p.ReadOnly = sandbox.GitProtected(gitDirs)
 	if p.Enabled && runtime.GOOS == "linux" {
-		// bwrap can only bind over a path that exists; git init makes it.
-		for _, dir := range gitDirs {
-			_ = os.Mkdir(filepath.Join(dir, "hooks"), 0o755)
-		}
+		// bwrap can only bind over a path that exists. Only in the git dirs
+		// made writable: celeste writes nowhere it just refused.
+		sandbox.MakeGitProtected(accepted)
 	}
 	e.warnMissingSandbox(p)
 	return p

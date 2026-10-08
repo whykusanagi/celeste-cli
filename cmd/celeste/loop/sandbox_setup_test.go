@@ -364,6 +364,10 @@ func TestGitDirsNeverMakeAnAncestorOfTheWorkspaceWritable(t *testing.T) {
 		if slices.Contains(env.SandboxPolicy.Writable, sandbox.Resolve(common)) {
 			t.Errorf("Writable holds %s, an ancestor of the workspace or home: %v", common, env.SandboxPolicy.Writable)
 		}
+		// Nor does celeste create anything there itself (Linux binds).
+		if _, err := os.Stat(filepath.Join(common, "hooks")); err == nil {
+			t.Errorf("celeste created hooks in %s, which it refused to make writable", common)
+		}
 	}
 }
 

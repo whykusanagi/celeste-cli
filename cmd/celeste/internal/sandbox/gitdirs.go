@@ -61,6 +61,24 @@ func GitProtected(gitDirs []string) []string {
 	return slices.Compact(out)
 }
 
+// MakeGitProtected creates the GitProtected paths missing in each of
+// gitDirs, as git would: an empty hooks directory and an empty
+// config.worktree (read only when extensions.worktreeConfig is on), so
+// bubblewrap, which can bind only over a path that exists, keeps them
+// read-only too. config itself is never created. Errors are ignored: a
+// path that cannot be created cannot be planted either.
+func MakeGitProtected(gitDirs []string) {
+	for _, d := range gitDirs {
+		if info, err := os.Lstat(d); err != nil || !info.IsDir() {
+			continue
+		}
+		_ = os.Mkdir(filepath.Join(d, "hooks"), 0o755)
+		if f, err := os.OpenFile(filepath.Join(d, "config.worktree"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644); err == nil {
+			_ = f.Close()
+		}
+	}
+}
+
 // gitFileDirs returns the git dirs a ".git" file in dir names, nil
 // unless they check out (GitDirs).
 func gitFileDirs(dir, dotGit string) []string {

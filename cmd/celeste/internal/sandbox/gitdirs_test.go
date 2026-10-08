@@ -300,3 +300,32 @@ func TestGitConfigAndHooksAreReadOnlyUnderTheSandbox(t *testing.T) {
 		t.Errorf("git commit under the sandbox: %v", err)
 	}
 }
+
+// bubblewrap binds only over paths that exist, so the protected paths a
+// git dir lacks are created first (empty), and then bound read-only;
+// config itself is never created.
+func TestMakeGitProtectedCreatesWhatBwrapBinds(t *testing.T) {
+	gitDir := Resolve(t.TempDir())
+	MakeGitProtected([]string{gitDir, filepath.Join(gitDir, "missing")})
+	if info, err := os.Stat(filepath.Join(gitDir, "hooks")); err != nil || !info.IsDir() {
+		t.Fatalf("hooks not created: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(gitDir, "config.worktree")); err != nil || len(b) != 0 {
+		t.Fatalf("config.worktree = %q, %v; want an empty file", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "config")); err == nil {
+		t.Fatal("config was created")
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "missing")); err == nil {
+		t.Fatal("a missing git dir was created")
+	}
+	writeFile(t, filepath.Join(gitDir, "config.worktree"), "[core]\n")
+	MakeGitProtected([]string{gitDir})
+	if b, _ := os.ReadFile(filepath.Join(gitDir, "config.worktree")); string(b) != "[core]\n" {
+		t.Fatalf("an existing config.worktree was changed: %q", b)
+	}
+	args := BwrapArgs(Policy{Writable: []string{gitDir}, ReadOnly: GitProtected([]string{gitDir})}, "true")
+	if !slices.Contains(args, filepath.Join(gitDir, "config.worktree")) {
+		t.Fatalf("config.worktree is not bound read-only: %v", args)
+	}
+}
