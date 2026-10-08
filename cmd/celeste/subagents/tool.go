@@ -188,7 +188,9 @@ func scopeWorkspace(parent, ws string) (string, error) {
 	if !pathutil.Within(realParent, realCand) {
 		return "", fmt.Errorf("workspace %q is outside the current workspace; a subagent can only work inside it", ws)
 	}
-	return cand, nil
+	// The resolved path is the one checked: returning cand would let a
+	// symlink swapped in after the check redirect the subagent.
+	return realCand, nil
 }
 
 func isEmptyMap(v any) bool {

@@ -67,7 +67,35 @@ func TestSpawnAgentWorkspaceStaysInsideParent(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("runs = %v, want 3", got)
 	}
-	if got[1] != sub && got[1] != filepath.Join(parent, "pkg") {
+	realSub, err := filepath.EvalSymlinks(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[1] != realSub {
 		t.Errorf("relative workspace resolved to %q, want %q", got[1], sub)
+	}
+}
+
+// scopeWorkspace returns the path it checked (symlinks resolved), so a link
+// swapped in after the check cannot redirect the subagent.
+func TestScopeWorkspaceReturnsCheckedPath(t *testing.T) {
+	parent := t.TempDir()
+	sub := filepath.Join(parent, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sub, filepath.Join(parent, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := scopeWorkspace(parent, "alias")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("scopeWorkspace = %q, want the resolved path %q", got, want)
 	}
 }
