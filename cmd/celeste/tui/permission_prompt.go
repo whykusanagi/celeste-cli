@@ -162,6 +162,10 @@ func (m PermissionPromptModel) buildPattern() string {
 	return m.toolName
 }
 
+// maxPromptSummaryRows caps the rows the call's summary takes in the
+// prompt; the rest are counted in a marker row.
+const maxPromptSummaryRows = 16
+
 // View renders the permission prompt dialog: a closed box exactly as wide
 // as the terminal (44 columns at least), long lines wrapped inside it.
 func (m PermissionPromptModel) View() string {
@@ -204,9 +208,20 @@ func (m PermissionPromptModel) View() string {
 	topFill := max(inner-1-lipgloss.Width(title), 0)
 	lines = append(lines, borderStyle.Render("╭─")+titleStyle.Render(title)+borderStyle.Render(strings.Repeat("─", topFill)+"╮"))
 
-	// The tool name and input come from the model: shown escaped, so no
-	// control in them can rewrite or hide what is being approved.
-	row(textStyle.Render(fmt.Sprintf("%s wants to run: %s", termsafe.Line(m.toolName), termsafe.Line(m.inputSummary))))
+	// The call's name and summary come from the model: every control in
+	// them is shown escaped (line breaks kept in the summary), and the
+	// summary's rows are capped, so the modal can't hide part of the
+	// command or grow past the terminal (which shows only its bottom).
+	summary := strings.Split(lipgloss.NewStyle().Width(textW).Render(
+		fmt.Sprintf("%s wants to run: %s", termsafe.Line(m.toolName), termsafe.Text(m.inputSummary))), "\n")
+	if len(summary) > maxPromptSummaryRows {
+		hidden := len(summary) - (maxPromptSummaryRows - 1)
+		summary = append(summary[:maxPromptSummaryRows-1],
+			fmt.Sprintf("... [%d more rows not shown; deny if unsure]", hidden))
+	}
+	for _, l := range summary {
+		row(textStyle.Render(l))
+	}
 	row(textStyle.Render("Risk: ") + riskStyle.Render(termsafe.Line(m.riskLevel)))
 	lines = append(lines, side+strings.Repeat(" ", inner)+side)
 

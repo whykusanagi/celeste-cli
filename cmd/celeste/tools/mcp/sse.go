@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -19,11 +21,21 @@ type SSETransport struct {
 	baseURL    string
 	postURL    string // discovered from SSE endpoint event
 	client     *http.Client
-	responseCh chan *Response
+	responseCh chan queuedResponse
 	mu         sync.Mutex
-	closed     bool
-	done       chan struct{}
-	cancel     context.CancelFunc // ends the GET stream started by connectSSE
+	// queuedBytes is the size of the responses in responseCh, capped at
+	// maxResponseBytes in all (Aikido 806869944).
+	queuedBytes int
+	closed      bool
+	done        chan struct{}
+	cancel      context.CancelFunc // ends the GET stream started by connectSSE
+	// endpointErr is set when the server announced a POST endpoint on
+	// another origin; Send then fails rather than POST there.
+	endpointErr error
+	// streamEnded is closed when the event stream ends (closed by the
+	// server, failed, or a line over maxResponseBytes); streamErr says why.
+	streamEnded chan struct{}
+	streamErr   error
 }
 
 // NewSSETransport connects to an MCP server's SSE endpoint.
@@ -31,11 +43,12 @@ type SSETransport struct {
 func NewSSETransport(url string) (*SSETransport, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &SSETransport{
-		baseURL:    url,
-		client:     &http.Client{},
-		responseCh: make(chan *Response, 100),
-		done:       make(chan struct{}),
-		cancel:     cancel,
+		baseURL:     url,
+		client:      newMCPHTTPClient(),
+		responseCh:  make(chan queuedResponse, 100),
+		done:        make(chan struct{}),
+		streamEnded: make(chan struct{}),
+		cancel:      cancel,
 	}
 
 	// Connect to the SSE stream in a goroutine
@@ -45,18 +58,40 @@ func NewSSETransport(url string) (*SSETransport, error) {
 }
 
 // connectSSE establishes the SSE connection and reads events.
+//
+// When it returns, Receive stops waiting: streamEnded is closed, with the
+// reason in streamErr.
 func (t *SSETransport) connectSSE(ctx context.Context) {
+	streamErr := errors.New("MCP SSE stream ended")
+	defer func() {
+		t.mu.Lock()
+		t.streamErr = streamErr
+		t.mu.Unlock()
+		close(t.streamEnded)
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.baseURL, nil)
 	if err != nil {
+		streamErr = err
 		return
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
+		streamErr = fmt.Errorf("MCP SSE stream: %w", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
+	// The max token size is the larger of the two, so the initial buffer
+	// must not exceed the cap (Aikido 806869944).
+	scanner.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), maxResponseBytes)
+	defer func() {
+		if err := scanner.Err(); errors.Is(err, bufio.ErrTooLong) {
+			streamErr = errResponseTooLarge()
+		} else if err != nil {
+			streamErr = fmt.Errorf("MCP SSE stream: %w", err)
+		}
+	}()
 	var eventType string
 
 	for scanner.Scan() {
@@ -79,29 +114,22 @@ func (t *SSETransport) connectSSE(ctx context.Context) {
 			switch eventType {
 			case "endpoint":
 				// The server tells us where to POST requests
+				// The server tells us where to POST. Only an endpoint on
+				// the base URL's own origin is used (Aikido 806869691).
+				postURL, err := resolveEndpoint(t.baseURL, data)
 				t.mu.Lock()
-				if strings.HasPrefix(data, "/") {
-					// Relative path -- combine with base URL
-					// Extract scheme+host from baseURL
-					parts := strings.SplitN(t.baseURL, "://", 2)
-					if len(parts) == 2 {
-						hostEnd := strings.Index(parts[1], "/")
-						if hostEnd == -1 {
-							t.postURL = t.baseURL + data
-						} else {
-							t.postURL = parts[0] + "://" + parts[1][:hostEnd] + data
-						}
-					}
-				} else {
-					t.postURL = data
-				}
+				t.postURL, t.endpointErr = postURL, err
 				t.mu.Unlock()
 
 			case "message":
 				var rpcResp Response
 				if err := json.Unmarshal([]byte(data), &rpcResp); err == nil {
+					if !t.reserve(len(data)) {
+						streamErr = errTooManyUnread()
+						return
+					}
 					select {
-					case t.responseCh <- &rpcResp:
+					case t.responseCh <- queuedResponse{resp: &rpcResp, size: len(data)}:
 					case <-t.done:
 						return
 					}
@@ -126,8 +154,11 @@ func (t *SSETransport) SendContext(ctx context.Context, req *Request) error {
 		t.mu.Unlock()
 		return fmt.Errorf("transport is closed")
 	}
-	postURL := t.postURL
+	postURL, endpointErr := t.postURL, t.endpointErr
 	t.mu.Unlock()
+	if endpointErr != nil {
+		return endpointErr
+	}
 
 	if postURL == "" {
 		// If we have not yet received the endpoint event, POST to base URL
@@ -164,8 +195,11 @@ func (t *SSETransport) SendNotificationContext(ctx context.Context, notif *Notif
 		t.mu.Unlock()
 		return fmt.Errorf("transport is closed")
 	}
-	postURL := t.postURL
+	postURL, endpointErr := t.postURL, t.endpointErr
 	t.mu.Unlock()
+	if endpointErr != nil {
+		return endpointErr
+	}
 
 	if postURL == "" {
 		postURL = t.baseURL
@@ -197,16 +231,48 @@ func (t *SSETransport) post(ctx context.Context, url string, data []byte) (*http
 // Receive reads the next JSON-RPC response from the SSE event stream.
 // It also returns once the transport is closed, so a Receive the client left
 // running for a cancelled call doesn't outlive Close.
+// It returns the stream's error once the stream has ended and every
+// response it delivered has been read.
 func (t *SSETransport) Receive() (*Response, error) {
 	select {
-	case resp, ok := <-t.responseCh:
+	case q, ok := <-t.responseCh:
 		if !ok {
 			return nil, fmt.Errorf("transport closed")
 		}
-		return resp, nil
+		return t.release(q), nil
 	case <-t.done:
 		return nil, fmt.Errorf("transport closed")
+	case <-t.streamEnded:
+		select {
+		case q := <-t.responseCh:
+			return t.release(q), nil
+		default:
+		}
+		t.mu.Lock()
+		err := t.streamErr
+		t.mu.Unlock()
+		return nil, err
 	}
+}
+
+// reserve counts n more queued bytes, failing when that would pass
+// maxResponseBytes.
+func (t *SSETransport) reserve(n int) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.queuedBytes+n > maxResponseBytes {
+		return false
+	}
+	t.queuedBytes += n
+	return true
+}
+
+// release uncounts a response Receive took off the queue.
+func (t *SSETransport) release(q queuedResponse) *Response {
+	t.mu.Lock()
+	t.queuedBytes -= q.size
+	t.mu.Unlock()
+	return q.resp
 }
 
 // Close shuts down the SSE connection.
@@ -221,4 +287,22 @@ func (t *SSETransport) Close() error {
 	close(t.done)
 	t.cancel()
 	return nil
+}
+
+// resolveEndpoint resolves the endpoint event's data against base and
+// returns it only when it is on base's origin (scheme and host).
+func resolveEndpoint(base, endpoint string) (string, error) {
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse MCP SSE URL: %w", err)
+	}
+	e, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return "", fmt.Errorf("MCP SSE server sent an invalid endpoint: %w", err)
+	}
+	r := b.ResolveReference(e)
+	if !sameOrigin(b, r) {
+		return "", fmt.Errorf("refusing the MCP SSE server's POST endpoint on another origin (%s)", r.Host)
+	}
+	return r.String(), nil
 }

@@ -102,8 +102,9 @@ func TestQueryTools_InterruptedRebuild(t *testing.T) {
 	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 
-	idx, _, err := srv.indexerFor(ws)
+	idx, release, _, err := srv.indexerFor(ws)
 	require.NoError(t, err)
+	release() // idx stays open while it is cached
 	require.NoError(t, idx.Store().SetMeta("build_in_progress", []byte("dead-run")))
 	require.NoError(t, idx.Store().ResetGraph())
 
@@ -149,8 +150,9 @@ func TestQueryTools_PopulatedIndexWithUnfinishedUpdate(t *testing.T) {
 	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 
-	idx, _, err := srv.indexerFor(ws)
+	idx, release, _, err := srv.indexerFor(ws)
 	require.NoError(t, err)
+	release() // idx stays open while it is cached
 	require.NoError(t, idx.Store().RescopeGraph("cancelled-run"))
 
 	assertServedWithNote(t, srv, "did not finish")
@@ -174,8 +176,9 @@ func TestQueryTools_PopulatedIndexWithUnfinishedUpgrade(t *testing.T) {
 	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 
-	idx, _, err := srv.indexerFor(ws)
+	idx, release, _, err := srv.indexerFor(ws)
 	require.NoError(t, err)
+	release() // idx stays open while it is cached
 	require.NoError(t, idx.Store().UpgradeGraph("cancelled-run"))
 
 	assertServedWithNote(t, srv, "did not finish")

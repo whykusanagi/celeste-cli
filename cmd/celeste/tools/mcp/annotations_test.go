@@ -180,7 +180,7 @@ func TestRegisterIntoNeverReplaces(t *testing.T) {
 func TestConnectClientRefusesAConnectInFlight(t *testing.T) {
 	registry := tools.NewRegistry()
 	mgr := NewManager("", registry)
-	mgr.connecting["srv"] = true
+	mgr.connecting["srv"] = &connectAttempt{}
 	mt := &mockTransport{responses: []*Response{makeInitResponse(), makeToolsListResponse("t")}}
 	if err := mgr.connectClient(context.Background(), "srv", NewClient(mt, "celeste", "1.0"), "stdio", false); err == nil {
 		t.Fatal("a connect while one is in flight must fail")

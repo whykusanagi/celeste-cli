@@ -55,9 +55,9 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	code := 0
 	var entries []mcpListEntry
 	var good []string // the files that parse, in precedence order
-	// The first file that does not parse: the runtime then starts no server
-	// at all where it is loaded (LoadMerged fails as a whole), so a home
-	// file stops every mode and a workspace file stops the chat.
+	// The first file that does not parse. A home file stops every mode (the
+	// load fails as a whole); a workspace file is skipped by the chat, which
+	// starts the other files' servers (LoadMergedLenient).
 	var homeBad, wsBad string
 	// DiscoverConfigPaths is lowest precedence first: a later file defining
 	// the same name replaces the earlier definition.
@@ -89,7 +89,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	case homeBad != "":
 		fmt.Fprintf(errOut, "celeste starts no MCP servers in any mode until %s is fixed.\n", homeBad)
 	case wsBad != "":
-		fmt.Fprintf(errOut, "In this directory the chat starts no MCP servers until %s is fixed.\n", wsBad)
+		fmt.Fprintf(errOut, "In this directory the chat skips the servers in %s until it is fixed; the other configs' servers start.\n", wsBad)
 	}
 	if len(entries) == 0 {
 		if code == 0 {
@@ -146,13 +146,10 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		}
 		ap := approval(e)
 		runs := mcpRunsIn(e, chat.Servers[e.name].Origin, other.Servers[e.name].Origin, func(p string) string { return show(p, mcp.IsGlobalConfig(home, p)) }, ap)
-		switch {
-		case homeBad != "":
+		// A workspace file that does not parse is left out of good, as the
+		// chat leaves it out, so only a bad home file needs saying here.
+		if homeBad != "" {
 			runs = "none (" + homeBad + " does not parse)"
-		case wsBad != "" && !e.global:
-			runs = "none (" + wsBad + " does not parse)"
-		case wsBad != "" && e.cfg.Enabled && strings.HasPrefix(runs, "all"):
-			runs = "all but chat (" + wsBad + " does not parse)"
 		}
 		rows = append(rows, []string{
 			hooks.SafeText(e.name), where(e), hooks.SafeText(e.cfg.Transport), yesNo(e.cfg.Enabled), trusted, ap, runs})

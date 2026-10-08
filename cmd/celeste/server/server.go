@@ -30,8 +30,8 @@ type Config struct {
 	Port      int
 	BindAddr  string // default "127.0.0.1"
 	Remote    bool   // if true, bind to BindAddr (possibly 0.0.0.0)
-	CertFile  string // TLS certificate for mTLS
-	KeyFile   string // TLS private key for mTLS
+	CertFile  string // TLS certificate (required with Remote)
+	KeyFile   string // TLS private key (required with Remote)
 	TokenFile string // path to bearer token file (default ~/.celeste/server.token)
 	RateLimit int    // requests per minute (default 60)
 
@@ -68,14 +68,24 @@ type Server struct {
 	// indexers caches one *codegraph.Indexer per workspace path so
 	// direct-query MCP tools (celeste_code_search, celeste_code_review,
 	// ...) don't re-open the SQLite store on every call. Lazily
-	// populated on first use via indexerFor. Released on Close.
-	indexerMu sync.Mutex
-	indexers  map[string]*codegraph.Indexer
+	// populated on first use via indexerFor, capped at maxIndexers with
+	// least-recently-used eviction, and released on Close. Each call holds
+	// its entry between indexerFor and release, and an entry taken out of
+	// the cache closes only when its last call releases it.
+	indexerMu  sync.Mutex
+	indexers   map[string]*indexerEntry
+	indexerSeq uint64 // use counter for LRU order (guarded by indexerMu)
 	// rebuilding marks the workspaces a celeste_index rebuild is
 	// rebuilding (guarded by indexerMu). indexerFor refuses to open their
 	// index until the rebuild has cached the rebuilt Indexer, so no call
 	// is left on the database the rebuild deletes (review of #393).
 	rebuilding map[string]bool
+	// retiredBusy holds, per workspace, the entries taken out of the cache
+	// (by eviction, a rebuild or Close) while calls still use them, until
+	// they close (guarded by indexerMu). A rebuild waits for these as well
+	// as the cached entry, so it never deletes a database a call evicted
+	// from the cache is still reading (Aikido 806869451).
+	retiredBusy map[string][]*indexerEntry
 
 	// runs tracks MCP agent runs that outlived the inline threshold, so a client
 	// can poll for a result instead of holding an HTTP call open for minutes.
@@ -99,34 +109,147 @@ type Server struct {
 // New creates a new MCP server with the given configuration.
 func New(cfg Config) *Server {
 	s := &Server{
-		config:     cfg,
-		handlers:   make(map[string]ToolHandler),
-		done:       make(chan struct{}),
-		indexers:   make(map[string]*codegraph.Indexer),
-		rebuilding: make(map[string]bool),
-		runs:       make(map[string]*BackgroundRun),
-		chatEnvs:   newChatEnvs(),
+		config:      cfg,
+		handlers:    make(map[string]ToolHandler),
+		done:        make(chan struct{}),
+		indexers:    make(map[string]*indexerEntry),
+		rebuilding:  make(map[string]bool),
+		retiredBusy: make(map[string][]*indexerEntry),
+		runs:        make(map[string]*BackgroundRun),
+		chatEnvs:    newChatEnvs(),
 	}
 	return s
+}
+
+// maxIndexers bounds the indexer cache: the workspace argument can vary
+// per call, and each entry holds a SQLite store open (Aikido 806869934).
+const maxIndexers = 8
+
+// indexerEntry is one cached Indexer and the calls using it.
+type indexerEntry struct {
+	idx     *codegraph.Indexer
+	path    string // the workspace it is cached under
+	inUse   int
+	lastUse uint64
+	retired bool          // out of the cache: closed when the last call releases it
+	idle    chan struct{} // closed once a retired entry's Indexer is closed
 }
 
 // Close releases resources held by the server. Must be called on
 // shutdown — the indexer cache holds SQLite connections that won't
 // flush otherwise. Safe to call multiple times; second and subsequent
-// calls are no-ops.
+// calls are no-ops. An Indexer a call is still using closes when that
+// call releases it.
 func (s *Server) Close() error {
 	if s.chatEnvs != nil {
 		s.chatEnvs.close()
 	}
 	s.indexerMu.Lock()
-	defer s.indexerMu.Unlock()
-	for path, idx := range s.indexers {
-		if idx != nil {
-			_ = idx.Close()
+	var idle []*indexerEntry
+	for path, e := range s.indexers {
+		if s.retireIndexerLocked(path, e) {
+			idle = append(idle, e)
 		}
+	}
+	s.indexerMu.Unlock()
+	closeIndexerEntries(idle)
+	return nil
+}
+
+// retireIndexerLocked takes e out of the cache. It reports whether e is
+// idle, in which case the caller must close it (closeIndexerEntries) after
+// releasing indexerMu; a busy entry closes on its last release.
+func (s *Server) retireIndexerLocked(path string, e *indexerEntry) bool {
+	if s.indexers[path] == e {
 		delete(s.indexers, path)
 	}
-	return nil
+	if e.retired {
+		return false
+	}
+	e.retired = true
+	e.path = path
+	if e.inUse > 0 {
+		s.retiredBusy[path] = append(s.retiredBusy[path], e)
+		return false
+	}
+	return true
+}
+
+// dropRetiredBusyLocked forgets e once its last call released it.
+func (s *Server) dropRetiredBusyLocked(e *indexerEntry) {
+	list := s.retiredBusy[e.path]
+	for i, r := range list {
+		if r == e {
+			list = append(list[:i:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(list) == 0 {
+		delete(s.retiredBusy, e.path)
+	} else {
+		s.retiredBusy[e.path] = list
+	}
+}
+
+func closeIndexerEntries(entries []*indexerEntry) {
+	for _, e := range entries {
+		if e.idx != nil {
+			_ = e.idx.Close()
+		}
+		close(e.idle)
+	}
+}
+
+// releaseIndexer ends one call's use of e.
+func (s *Server) releaseIndexer(e *indexerEntry) {
+	s.indexerMu.Lock()
+	e.inUse--
+	closeNow := e.retired && e.inUse == 0
+	if closeNow {
+		s.dropRetiredBusyLocked(e)
+	}
+	s.indexerMu.Unlock()
+	if closeNow {
+		closeIndexerEntries([]*indexerEntry{e})
+	}
+}
+
+// acquireIndexerLocked marks one more call on e and returns its release.
+func (s *Server) acquireIndexerLocked(e *indexerEntry) func() {
+	e.inUse++
+	s.indexerSeq++
+	e.lastUse = s.indexerSeq
+	var once sync.Once
+	return func() { once.Do(func() { s.releaseIndexer(e) }) }
+}
+
+// evictIndexersLocked makes room for one more entry, retiring the least
+// recently used ones (idle ones first). It returns the idle entries the
+// caller must close after releasing indexerMu.
+func (s *Server) evictIndexersLocked() []*indexerEntry {
+	var idle []*indexerEntry
+	for len(s.indexers) >= maxIndexers {
+		var victimPath string
+		var victim *indexerEntry
+		for path, e := range s.indexers {
+			if victim == nil || evictBefore(e, victim) {
+				victimPath, victim = path, e
+			}
+		}
+		if s.retireIndexerLocked(victimPath, victim) {
+			idle = append(idle, victim)
+		}
+	}
+	return idle
+}
+
+// evictBefore orders eviction: idle entries before busy ones, then the
+// least recently used first.
+func evictBefore(a, b *indexerEntry) bool {
+	if (a.inUse == 0) != (b.inUse == 0) {
+		return a.inUse == 0
+	}
+	return a.lastUse < b.lastUse
 }
 
 // indexerFor returns the cached *codegraph.Indexer for the given
@@ -141,28 +264,48 @@ func (s *Server) Close() error {
 // While a celeste_index rebuild of the workspace runs it fails with
 // indexBuildingError instead of opening the database the rebuild deletes.
 //
+// The caller must call release once it is done with the Indexer: until
+// then a rebuild or an eviction does not close it under the call
+// (Aikido 806869451).
+//
 // The bool return is true when the indexer already existed in the
 // cache (cache hit) and false when we just opened it (cache miss).
 // Tests use the flag; callers normally ignore it.
-func (s *Server) indexerFor(workspace string) (*codegraph.Indexer, bool, error) {
+func (s *Server) indexerFor(workspace string) (idx *codegraph.Indexer, release func(), cached bool, err error) {
 	if workspace == "" {
 		workspace = s.config.Workspace
 	}
 	s.indexerMu.Lock()
-	defer s.indexerMu.Unlock()
 	if s.rebuilding[workspace] {
-		return nil, false, indexBuildingError(workspace)
+		s.indexerMu.Unlock()
+		return nil, nil, false, indexBuildingError(workspace)
 	}
-	if idx, ok := s.indexers[workspace]; ok && idx != nil {
-		return idx, true, nil
+	if e, ok := s.indexers[workspace]; ok {
+		release = s.acquireIndexerLocked(e)
+		s.indexerMu.Unlock()
+		return e.idx, release, true, nil
 	}
 	dbPath := codegraph.DefaultIndexPath(workspace)
-	idx, err := codegraph.NewIndexer(workspace, dbPath)
+	opened, err := codegraph.NewIndexer(workspace, dbPath)
 	if err != nil {
-		return nil, false, fmt.Errorf("open indexer for %s: %w", workspace, err)
+		s.indexerMu.Unlock()
+		return nil, nil, false, fmt.Errorf("open indexer for %s: %w", workspace, err)
 	}
-	s.indexers[workspace] = idx
-	return idx, false, nil
+	idle := s.evictIndexersLocked()
+	e := &indexerEntry{idx: opened, idle: make(chan struct{})}
+	s.indexers[workspace] = e
+	release = s.acquireIndexerLocked(e)
+	s.indexerMu.Unlock()
+	closeIndexerEntries(idle)
+	return opened, release, false, nil
+}
+
+// indexerCached reports whether workspace has an Indexer in the cache.
+func (s *Server) indexerCached(workspace string) bool {
+	s.indexerMu.Lock()
+	defer s.indexerMu.Unlock()
+	_, ok := s.indexers[workspace]
+	return ok
 }
 
 // toolError is a soft tool failure: the call reached the tool, but the

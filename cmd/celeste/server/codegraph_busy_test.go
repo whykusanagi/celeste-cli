@@ -46,8 +46,9 @@ func TestQueryTools_PopulatedIndexWhileUpdating(t *testing.T) {
 	_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
 	require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
 
-	idx, _, err := srv.indexerFor(ws)
+	idx, release, _, err := srv.indexerFor(ws)
 	require.NoError(t, err)
+	release() // idx stays open while it is cached
 	require.NoError(t, idx.Store().RescopeGraph("live-run"))
 
 	lockFile := codegraph.DefaultIndexPath(ws) + ".lock"

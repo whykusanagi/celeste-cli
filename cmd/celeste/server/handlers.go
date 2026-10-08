@@ -592,19 +592,17 @@ func (s *Server) projectStatus(workspace string) map[string]any {
 	if workspace == "" {
 		return out
 	}
-	s.indexerMu.Lock()
-	idx := s.indexers[workspace]
-	s.indexerMu.Unlock()
-	if idx == nil {
+	if !s.indexerCached(workspace) {
 		if _, err := os.Stat(codegraph.IndexPath(workspace)); err != nil {
 			return out
 		}
-		var err error
-		if idx, _, err = s.indexerFor(workspace); err != nil {
-			out["error"] = err.Error()
-			return out
-		}
 	}
+	idx, release, _, err := s.indexerFor(workspace)
+	if err != nil {
+		out["error"] = err.Error()
+		return out
+	}
+	defer release()
 	stats, err := idx.Stats()
 	if err != nil {
 		out["error"] = err.Error()

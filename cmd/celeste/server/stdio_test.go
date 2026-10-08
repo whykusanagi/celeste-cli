@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -148,16 +149,16 @@ func TestStdioEOF(t *testing.T) {
 
 func TestStdioContextCancel(t *testing.T) {
 	srv := New(DefaultConfig())
-
-	// Use a reader that blocks forever
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// The cancel comes only once the server is parked in a Read that never
+	// returns, the way an idle stdin is: shutdown must not wait for input.
+	reading := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		// blockingReader never returns
-		done <- srv.serveStdioStreams(ctx, &blockingReader{}, &bytes.Buffer{})
+		done <- srv.serveStdioStreams(ctx, &blockingReader{reading: reading}, &bytes.Buffer{})
 	}()
-
+	<-reading
 	cancel()
 
 	select {
@@ -165,17 +166,19 @@ func TestStdioContextCancel(t *testing.T) {
 		if err != context.Canceled {
 			t.Fatalf("expected context.Canceled, got: %v", err)
 		}
-	case <-time.After(30 * time.Second): // headroom: a loaded CI box has timed out at 3s
-		t.Fatal("timeout waiting for shutdown")
+	case <-time.After(10 * time.Second):
+		t.Fatal("a cancel while stdin is idle did not stop the server")
 	}
 }
 
-// blockingReader blocks on Read until context is presumably cancelled.
-// The server checks ctx.Done() before calling Scan(), so this works
-// because after cancel the select hits ctx.Done().
-type blockingReader struct{}
+// blockingReader signals its first Read, then blocks forever like an idle
+// stdin; the goroutine is abandoned when the test ends.
+type blockingReader struct {
+	reading chan struct{}
+	once    sync.Once
+}
 
 func (r *blockingReader) Read(p []byte) (int, error) {
-	// Block indefinitely; the goroutine will be abandoned when test ends.
+	r.once.Do(func() { close(r.reading) })
 	select {}
 }

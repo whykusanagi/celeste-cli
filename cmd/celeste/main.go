@@ -2113,9 +2113,9 @@ func runServeCommand(args []string) {
 	serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
 	sseMode := serveFlags.Bool("sse", false, "Use SSE transport instead of stdio")
 	port := serveFlags.Int("port", 8420, "Port for SSE transport")
-	remote := serveFlags.Bool("remote", false, "Bind to 0.0.0.0 for network access")
-	certFile := serveFlags.String("cert", "", "TLS certificate file for mTLS")
-	keyFile := serveFlags.String("key", "", "TLS private key file for mTLS")
+	remote := serveFlags.Bool("remote", false, "Bind to 0.0.0.0 for network access (needs --cert and --key)")
+	certFile := serveFlags.String("cert", "", "TLS certificate file")
+	keyFile := serveFlags.String("key", "", "TLS private key file")
 	_ = serveFlags.Parse(args)
 
 	// A go install build upgrades in the background for the next launch;

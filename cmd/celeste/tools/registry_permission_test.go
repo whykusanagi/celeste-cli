@@ -195,7 +195,7 @@ func TestPermissionGate_InputSummary(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := inputSummary(tc.input)
+			got := inputSummary(nil, tc.input)
 			assert.Contains(t, got, tc.contains)
 		})
 	}

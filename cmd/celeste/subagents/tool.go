@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -56,7 +58,7 @@ func (t *SpawnAgentTool) Parameters() json.RawMessage {
 			},
 			"workspace": {
 				"type": "string",
-				"description": "Working directory for the subagent (defaults to current workspace)"
+				"description": "Working directory for the subagent: the current workspace or a directory inside it (defaults to the current workspace)"
 			},
 			"task_id": {
 				"type": "string",
@@ -150,6 +152,47 @@ func spawnType(input map[string]any) (Type, error) {
 	return typ, nil
 }
 
+// scopeWorkspace resolves the model's workspace argument against the
+// parent's workspace and refuses one outside it, symlinks resolved on both
+// sides: a subagent's file tools, sandbox write root and auto-approval
+// never reach past what the parent was given. An empty argument keeps the
+// parent's workspace.
+func scopeWorkspace(parent, ws string) (string, error) {
+	if ws == "" {
+		return "", nil
+	}
+	if parent == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("workspace %q: the parent workspace is unknown", ws)
+		}
+		parent = wd
+	}
+	parent, err := filepath.Abs(parent)
+	if err != nil {
+		return "", fmt.Errorf("workspace %q: %w", ws, err)
+	}
+	cand := ws
+	if !filepath.IsAbs(cand) {
+		cand = filepath.Join(parent, cand)
+	}
+	cand = filepath.Clean(cand)
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		realParent = parent
+	}
+	realCand, err := filepath.EvalSymlinks(cand)
+	if err != nil {
+		return "", fmt.Errorf("workspace %q: %w", ws, err)
+	}
+	if !pathutil.Within(realParent, realCand) {
+		return "", fmt.Errorf("workspace %q is outside the current workspace; a subagent can only work inside it", ws)
+	}
+	// The resolved path is the one checked: returning cand would let a
+	// symlink swapped in after the check redirect the subagent.
+	return realCand, nil
+}
+
 func isEmptyMap(v any) bool {
 	m, ok := v.(map[string]any)
 	return ok && len(m) == 0
@@ -160,6 +203,9 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, input map[string]any, prog
 	workspace, _ := input["workspace"].(string)
 	typ, err := spawnType(input)
 	if err != nil {
+		return tools.ToolResult{Content: err.Error(), Error: true}, nil
+	}
+	if workspace, err = scopeWorkspace(t.manager.workspace, workspace); err != nil {
 		return tools.ToolResult{Content: err.Error(), Error: true}, nil
 	}
 
