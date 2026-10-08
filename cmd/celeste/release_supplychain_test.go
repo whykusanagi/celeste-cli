@@ -130,3 +130,23 @@ func TestReleaseWorkflowLeastPrivilege(t *testing.T) {
 		}
 	}
 }
+
+// verify-tag requires main's key file to hold exactly the release primary,
+// as `make import-key` does, not merely to mention it somewhere.
+func TestReleaseWorkflowKeyFileHoldsExactlyThePrimary(t *testing.T) {
+	_, wf := readWorkflow(t, "release.yml")
+	var run strings.Builder
+	for _, s := range wf.Jobs["verify-tag"].Steps {
+		run.WriteString(s.Run)
+	}
+	script := run.String()
+	if !strings.Contains(script, `$1 == "pub" {p = 1; next} p && $1 == "fpr" {print $10; p = 0}`) {
+		t.Error("verify-tag does not read the primary fingerprint of each key in main's key file")
+	}
+	if !strings.Contains(script, `[ "$primaries" != "$PRIMARY" ]`) {
+		t.Error("verify-tag does not require main's key file to hold exactly the release primary")
+	}
+	if strings.Contains(script, `*"$PRIMARY"*`) {
+		t.Error("verify-tag still accepts a key file that merely mentions the primary")
+	}
+}

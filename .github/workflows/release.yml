@@ -71,11 +71,13 @@ jobs:
         export GNUPGHOME
         chmod 700 "$GNUPGHOME"
         git show origin/main:whykusanagi.asc > "$RUNNER_TEMP/release-key.asc"
-        fprs="$(gpg --batch --with-colons --import-options show-only --import "$RUNNER_TEMP/release-key.asc" | awk -F: '$1 == "fpr" {print $10}')"
-        case "$fprs" in
-          *"$PRIMARY"*) ;;
-          *) echo "::error::main's whykusanagi.asc is not the release key"; exit 1 ;;
-        esac
+        # The primary fingerprint of each key in the file (the first fpr
+        # after each pub): there must be exactly one, the release key.
+        primaries="$(gpg --batch --with-colons --import-options show-only --import "$RUNNER_TEMP/release-key.asc" | awk -F: '$1 == "pub" {p = 1; next} p && $1 == "fpr" {print $10; p = 0}')"
+        if [ "$primaries" != "$PRIMARY" ]; then
+          echo "::error::main's whykusanagi.asc holds key(s) ${primaries:-none}, want exactly $PRIMARY"
+          exit 1
+        fi
         gpg --batch --import "$RUNNER_TEMP/release-key.asc"
         # --raw prints gpg's machine-readable status lines on stderr. The
         # first VALIDSIG field is the key that made the signature.
