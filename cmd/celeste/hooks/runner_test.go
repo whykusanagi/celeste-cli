@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -357,8 +358,12 @@ func TestDisabledWarning(t *testing.T) {
 // only what shows it on a terminal escapes it (the TUI, the agent's
 // warnings), as Aikido 806869439 asked.
 func TestRunnerReasonReachesTheModelAsWritten(t *testing.T) {
-	// No \r: Windows drops it from the hook's command-line argument.
+	// No \r: Windows drops it from the hook's command-line argument, and
+	// a newline ends the argument there, so Windows checks one line.
 	raw := "blocked: line one\nline two\x1b]0;t\x07y"
+	if runtime.GOOS == "windows" {
+		raw = "blocked: line one\x1b]0;t\x07y"
+	}
 	for _, decision := range []string{"deny", "ask"} {
 		r, _ := testRunner(t, v2(t, EventPreToolUse, decision, raw))
 		out := r.PreToolUse(context.Background(), "bash", nil)
