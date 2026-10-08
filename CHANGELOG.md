@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **codegraph:** a build or update whose workspace cannot be opened (gone, unreadable, or a directory on its path replaced by a symlink) fails before the index is changed, instead of reporting success with an empty or partial graph (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
 * **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
 * **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 

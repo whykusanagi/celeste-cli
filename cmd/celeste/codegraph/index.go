@@ -268,7 +268,11 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 // partial graph until it finishes; Update never empties the index, and
 // finishes a build that was interrupted (metaBuildInProgress) in place.
 func (idx *Indexer) buildLocked(ctx context.Context) error {
-	defer idx.openPass()()
+	closePass, err := idx.openPass()
+	if err != nil {
+		return err
+	}
+	defer closePass()
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
@@ -382,7 +386,11 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 
 // updateLocked is UpdateWithContext with buildMu and the index lock held.
 func (idx *Indexer) updateLocked(ctx context.Context) error {
-	defer idx.openPass()()
+	closePass, err := idx.openPass()
+	if err != nil {
+		return err
+	}
+	defer closePass()
 	// A full build that never finished left file records whose hashes
 	// match while edges are missing (#388). The graph is not emptied and
 	// rebuilt: on a repo whose build outlasts each run (an Env closed
@@ -993,20 +1001,23 @@ func (idx *Indexer) readSource(rel string) ([]byte, error) {
 }
 
 // openPass opens the workspace root for a Build or Update (called under
-// buildMu); the returned func closes it.
-func (idx *Indexer) openPass() func() {
+// buildMu); the returned func closes it. A workspace that cannot be opened
+// (gone, unreadable, or a directory on its path replaced by a symlink)
+// fails the pass before it changes the store, so it never commits an
+// empty or partial index.
+func (idx *Indexer) openPass() (func(), error) {
 	if idx.passRoot != nil {
-		return func() {} // an update that runs a full build
+		return func() {}, nil // an update that runs a full build
 	}
 	r, err := realroot.Open(idx.realWorkspace)
 	if err != nil {
-		return func() {}
+		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 	idx.passRoot = r
 	return func() {
 		idx.passRoot = nil
 		_ = r.Close()
-	}
+	}, nil
 }
 
 // readIn reads rel from root: a regular file, not a symlink, opened
