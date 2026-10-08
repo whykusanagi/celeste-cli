@@ -75,7 +75,7 @@ func hooksCommand(args []string, c hooksCLI) int {
 func hooksList(c hooksCLI) int {
 	srcs, warnings, err := hooks.Discover(c.cwd, c.home)
 	if err != nil {
-		fmt.Fprintf(c.errOut, "Error: %v\n", err)
+		fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	sbx, sbxWarns := sandboxSources(c.cwd)
@@ -90,7 +90,7 @@ func hooksList(c hooksCLI) int {
 	}
 	store := hooks.LoadTrust(c.home)
 	if err := store.Err(); err != nil {
-		fmt.Fprintf(c.errOut, "Warning: %v\n", err)
+		fmt.Fprintf(c.errOut, "Warning: %s\n", hooks.SafeText(err.Error()))
 	}
 	for _, s := range srcs {
 		fmt.Fprintf(c.out, "%s  [%s, %s]\n", strconv.Quote(s.Path), s.Kind, store.Status(s))
@@ -129,12 +129,12 @@ func hooksTrust(args []string, c hooksCLI) int {
 		fmt.Fprintln(c.errOut, w)
 	}
 	if err != nil {
-		fmt.Fprintf(c.errOut, "Error: %v\n", err)
+		fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	store := hooks.LoadTrust(c.home)
 	if err := store.Err(); err != nil {
-		fmt.Fprintf(c.errOut, "Error: %v\n", err)
+		fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	var pending []hooks.Source
@@ -178,7 +178,7 @@ func hooksTrust(args []string, c hooksCLI) int {
 			continue
 		}
 		if err := store.Approve(s); err != nil {
-			fmt.Fprintf(c.errOut, "Error: %v\n", err)
+			fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 			code = 1
 			continue
 		}
@@ -231,13 +231,13 @@ func trustSources(target, home string) ([]hooks.Source, []string, error) {
 func sandboxSources(workspace string) ([]hooks.Source, []string) {
 	s, path, body, err := config.LoadWorkspaceSandbox(workspace)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %v", strconv.Quote(path), err)}
+		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %s", strconv.Quote(path), hooks.SafeText(err.Error()))}
 	}
 	if !s.Loosens() {
 		return nil, nil
 	}
 	if err := hooks.CheckRepoSandbox(path); err != nil {
-		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %v", strconv.Quote(path), err)}
+		return nil, []string{fmt.Sprintf("sandbox: skipping %s: %s", strconv.Quote(path), hooks.SafeText(err.Error()))}
 	}
 	return []hooks.Source{hooks.SandboxSource(path, body)}, nil
 }
@@ -262,7 +262,7 @@ func mcpSources(workspace, home, file string) ([]hooks.Source, []string) {
 		}
 		cfg, err := mcp.LoadConfig(p)
 		if err != nil {
-			warns = append(warns, fmt.Sprintf("mcp: skipping %s: %v", strconv.Quote(p), err))
+			warns = append(warns, fmt.Sprintf("mcp: skipping %s: %s", strconv.Quote(p), hooks.SafeText(err.Error())))
 			continue
 		}
 		for _, name := range slices.Sorted(maps.Keys(cfg.Servers)) {

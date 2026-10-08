@@ -65,7 +65,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 		isGlobal := mcp.IsGlobalConfig(home, p)
 		cfg, err := mcp.LoadConfig(p)
 		if err != nil {
-			fmt.Fprintf(errOut, "Error: %v\n", err)
+			fmt.Fprintf(errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 			code = 1
 			switch {
 			case isGlobal && homeBad == "":
@@ -100,7 +100,7 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 
 	store := hooks.LoadTrust(home)
 	if err := store.Err(); err != nil {
-		fmt.Fprintf(errOut, "Warning: %v; repository servers show as pending until it is fixed\n", err)
+		fmt.Fprintf(errOut, "Warning: %s; repository servers show as pending until it is fixed\n", hooks.SafeText(err.Error()))
 	}
 	approval := func(e mcpListEntry) string {
 		if e.global {
@@ -125,13 +125,13 @@ func mcpListCommand(args []string, cwd, home string, out, errOut io.Writer) int 
 	// but one edited since can fail now: report it rather than guess.
 	chat, err := mcp.LoadMerged(good)
 	if err != nil {
-		fmt.Fprintf(errOut, "Error: %v\n", err)
+		fmt.Fprintf(errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	homeOnly, _ := mcp.SplitGlobal(good, home)
 	other, err := mcp.LoadMerged(homeOnly)
 	if err != nil {
-		fmt.Fprintf(errOut, "Error: %v\n", err)
+		fmt.Fprintf(errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 

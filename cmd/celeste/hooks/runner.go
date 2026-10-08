@@ -232,11 +232,11 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 			payload["tool_input"] = res.updated
 		}
 		if res.decision == Deny && ev.decides() {
-			out.Decision, out.Reason = Deny, res.reason
+			out.Decision, out.Reason = Deny, SafeText(res.reason)
 			break
 		}
 		if res.decision == Ask && ev.decides() && out.Decision == Allow {
-			out.Decision, out.Reason = Ask, res.reason
+			out.Decision, out.Reason = Ask, SafeText(res.reason)
 		}
 	}
 	out.AdditionalContext = truncate(strings.Join(contexts, "\n"), maxContext)

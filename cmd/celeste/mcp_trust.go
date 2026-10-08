@@ -103,7 +103,7 @@ func mcpTrust(name string, yes bool, c hooksCLI) int {
 		}
 		cfg, err := mcp.LoadConfig(p)
 		if err != nil {
-			fmt.Fprintf(c.errOut, "Error: %v\n", err)
+			fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 			return 1
 		}
 		if sc, ok := cfg.Servers[name]; ok {
@@ -125,7 +125,7 @@ func mcpTrust(name string, yes bool, c hooksCLI) int {
 
 	store := hooks.LoadTrust(c.home)
 	if err := store.Err(); err != nil {
-		fmt.Fprintf(c.errOut, "Error: %v\n", err)
+		fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	status := store.Status(src)
@@ -154,7 +154,7 @@ func mcpTrust(name string, yes bool, c hooksCLI) int {
 		return 1
 	}
 	if err := store.Approve(src); err != nil {
-		fmt.Fprintf(c.errOut, "Error: %v\n", err)
+		fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	fmt.Fprintf(c.out, "Approved %s; the chat starts it at its next launch while it is enabled.\n", strconv.Quote(name))
@@ -164,7 +164,7 @@ func mcpTrust(name string, yes bool, c hooksCLI) int {
 func mcpUntrust(name string, c hooksCLI) int {
 	store := hooks.LoadTrust(c.home)
 	if err := store.Err(); err != nil {
-		fmt.Fprintf(c.errOut, "Error: %v\n", err)
+		fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 		return 1
 	}
 	// Both files' keys, whether or not the server (or the file) is still
@@ -173,7 +173,7 @@ func mcpUntrust(name string, c hooksCLI) int {
 	for _, p := range workspaceMCPFiles(c.cwd) {
 		ok, err := store.Forget(hooks.MCPSource(p, name, "", "").Path)
 		if err != nil {
-			fmt.Fprintf(c.errOut, "Error: %v\n", err)
+			fmt.Fprintf(c.errOut, "Error: %s\n", hooks.SafeText(err.Error()))
 			return 1
 		}
 		if ok {

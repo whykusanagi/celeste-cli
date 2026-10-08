@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
@@ -302,7 +303,7 @@ func (m MCPPanelModel) View() string {
 		var detail string
 		if srv.Connected {
 			dot = connectedStyle.Render("●")
-			detail = fmt.Sprintf("%d tools    %s", srv.ToolCount, srv.Transport)
+			detail = fmt.Sprintf("%d tools    %s", srv.ToolCount, termsafe.Line(srv.Transport))
 			totalTools += srv.ToolCount
 		} else {
 			dot = disconnectedStyle.Render("○")
@@ -320,10 +321,10 @@ func (m MCPPanelModel) View() string {
 		}
 
 		prefix := "  "
-		srvName := nameStyle.Render(srv.Name)
+		srvName := nameStyle.Render(termsafe.Line(srv.Name)) // workspace file content: escaped
 		if i == m.cursor {
 			prefix = cursorStyle.Render("> ")
-			srvName = cursorStyle.Render(srv.Name)
+			srvName = cursorStyle.Render(termsafe.Line(srv.Name))
 		}
 		lines = append(lines, row(fmt.Sprintf("%s %s  %s  %s", prefix, dot, srvName, infoStyle.Render(detail))))
 	}

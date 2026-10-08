@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // SelectorItem represents an item in the selector.
@@ -206,12 +207,14 @@ func (m SelectorModel) View() string {
 		}
 
 		// Format: [cursor] [name] [badge] [description]
-		line := fmt.Sprintf("%s%s", cursor, item.DisplayName)
+		// Names, badges and descriptions can come from a provider's model
+		// list: escaped before they are styled.
+		line := fmt.Sprintf("%s%s", cursor, termsafe.Line(item.DisplayName))
 		if item.Badge != "" {
-			line += " " + badgeStyle.Render(item.Badge)
+			line += " " + badgeStyle.Render(termsafe.Line(item.Badge))
 		}
 		if item.Description != "" {
-			line += " " + descStyle.Render("- "+item.Description)
+			line += " " + descStyle.Render("- "+termsafe.Line(item.Description))
 		}
 
 		if i == m.selected {

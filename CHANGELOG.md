@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **tui:** the tool-approval and question prompts show the tool name, its input, the question and each option with control characters escaped, so the text approved is the text shown (Aikido 806869890).
+* **tui:** chat replies, user input, system lines and the Ctrl+K tool log show workspace, tool and model text with control characters escaped; celeste's own colors are kept, and every frame keeps only color and weight sequences, never one that hides text (Aikido 806869437).
+* **mcp:** `celeste mcp list`, `celeste mcp trust` and `celeste hooks list` print configuration errors with control characters escaped (Aikido 806869793).
+* **tui:** the `/mcp` panel shows server names and transports from workspace configs escaped (Aikido 806869738).
+* **tui:** the model selector shows model names, badges and descriptions from a provider's model list escaped (Aikido 806869747).
+* **cli:** `celeste agent` escapes each turn's reply, tool names, notices and warnings as they print (with `--verbose`, the default), the final reply, the error, the artifact path, stored run goals in `--list-runs` and eval and benchmark case names and reasons; setup warnings on stderr, context-file warnings, `celeste memories` and the `celeste session` list are escaped too, and on a terminal so are `celeste message` replies, `celeste skill` results and `celeste grimoire` (a pipe or file gets those byte for byte) (Aikido 806869282).
+* **tui:** `/diff`, `/undo`, `/agents`, `/agent` results and provider error lines escape workspace, model and provider text before it is styled, so not even a color sequence from that text reaches the screen (Aikido 806869437).
+* **hooks:** deny and ask reasons from hooks are escaped like hook errors before they are shown (Aikido 806869439).
 * **server:** `celeste serve --sse --remote` refuses to start without `--cert` and `--key`, so the bearer token is never served over plaintext HTTP beyond loopback; a certificate without its key (or the reverse) is refused too. The token check is constant-time, and the log and help say TLS, not mTLS (Aikido 806869827).
 * **server:** the SSE transport no longer lets a stalled or closed event stream hold a `POST /message` forever, and drops a stream whose reader stops reading; a `POST /message` body over 1 MiB is refused instead of cut short (Aikido 806869667).
 * **server:** the SSE transport holds at most 16 event streams at once, and its request rate limit applies across all of them as well as per stream; a request the server-wide limit refuses does not use up its stream's allowance (Aikido 806869493).

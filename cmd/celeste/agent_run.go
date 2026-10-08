@@ -14,6 +14,8 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
 type stringSliceFlag []string
@@ -78,15 +80,7 @@ func runAgentCommand(args []string) {
 			return
 		}
 
-		fmt.Printf("Recent Agent Runs (%d):\n", len(runs))
-		for _, r := range runs {
-			goalPreview := strings.TrimSpace(r.Goal)
-			if len(goalPreview) > 60 {
-				goalPreview = goalPreview[:60] + "..."
-			}
-			fmt.Printf("- %s [%s] turns=%d tools=%d updated=%s\n  goal: %s\n",
-				r.RunID, r.Status, r.Turn, r.ToolCalls, r.UpdatedAt.Format("2006-01-02 15:04:05"), goalPreview)
-		}
+		printRunList(os.Stdout, runs)
 		return
 	}
 
@@ -187,16 +181,7 @@ func runAgentCommand(args []string) {
 			os.Exit(1)
 		}
 
-		passed := 0
-		for _, result := range results {
-			status := "FAIL"
-			if result.Passed {
-				status = "PASS"
-				passed++
-			}
-			fmt.Printf("[%s] %s (%s) - %s\n", status, result.CaseName, result.Status, result.Reason)
-		}
-		fmt.Printf("\nEval Summary: %d/%d passed\n", passed, len(results))
+		passed := printEvalResults(os.Stdout, results)
 		if passed != len(results) {
 			os.Exit(1)
 		}
@@ -215,10 +200,10 @@ func runAgentCommand(args []string) {
 			os.Exit(1)
 		}
 
-		fmt.Printf("Benchmark: %s\n", report.SuiteName)
+		fmt.Printf("Benchmark: %s\n", termsafe.Line(report.SuiteName))
 		for _, result := range report.Results {
 			fmt.Printf("- %s pass=%d/%d (%.2f%%) avg_turns=%.2f avg_tools=%.2f avg_ms=%.2f\n",
-				result.CaseName,
+				termsafe.Line(result.CaseName),
 				result.PassedIterations,
 				result.Iterations,
 				result.PassRate*100.0,
@@ -226,7 +211,7 @@ func runAgentCommand(args []string) {
 				result.AverageToolCalls,
 				result.AverageDurationMS)
 			if len(result.FailureReasons) > 0 {
-				fmt.Printf("  failures: %s\n", strings.Join(result.FailureReasons, "; "))
+				fmt.Printf("  failures: %s\n", termsafe.Text(strings.Join(result.FailureReasons, "; ")))
 			}
 		}
 		fmt.Printf("\nBenchmark Summary: cases passed %d/%d\n", report.PassedCases, report.TotalCases)
@@ -253,10 +238,10 @@ func runAgentCommand(args []string) {
 	if *resume != "" {
 		state, err := runner.Resume(ctx, *resume)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Resume failed: %v\n", err)
+			printAgentFailure(os.Stderr, "Resume failed", err)
 			os.Exit(1)
 		}
-		printRunSummary(state)
+		printRunSummary(os.Stdout, state)
 		if state.Status != agent.StatusCompleted {
 			os.Exit(1)
 		}
@@ -290,35 +275,71 @@ func runAgentCommand(args []string) {
 
 	state, err := runner.RunGoal(ctx, finalGoal)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Agent failed: %v\n", err)
+		printAgentFailure(os.Stderr, "Agent failed", err)
 		if state != nil {
-			printRunSummary(state)
+			printRunSummary(os.Stdout, state)
 		}
 		os.Exit(1)
 	}
 
-	printRunSummary(state)
+	printRunSummary(os.Stdout, state)
 	if state.Status != agent.StatusCompleted {
 		os.Exit(1)
 	}
 }
 
-func printRunSummary(state *agent.RunState) {
+// printAgentFailure writes "what: err". The error carries provider and
+// model text, so it is shown escaped.
+func printAgentFailure(w io.Writer, what string, err error) {
+	fmt.Fprintf(w, "%s: %s\n", what, termsafe.Text(err.Error()))
+}
+
+// printRunList lists stored runs. Goals come from the user or a goal file
+// and are shown escaped.
+func printRunList(w io.Writer, runs []agent.RunSummary) {
+	fmt.Fprintf(w, "Recent Agent Runs (%d):\n", len(runs))
+	for _, r := range runs {
+		goalPreview := strings.TrimSpace(r.Goal)
+		if len(goalPreview) > 60 {
+			goalPreview = textutil.CutBytes(goalPreview, 60) + "..."
+		}
+		fmt.Fprintf(w, "- %s [%s] turns=%d tools=%d updated=%s\n  goal: %s\n",
+			termsafe.Line(r.RunID), termsafe.Line(r.Status), r.Turn, r.ToolCalls, r.UpdatedAt.Format("2006-01-02 15:04:05"), termsafe.Line(goalPreview))
+	}
+}
+
+// printEvalResults writes one line per eval case and the summary, and
+// returns how many passed.
+func printEvalResults(w io.Writer, results []agent.EvalResult) int {
+	passed := 0
+	for _, result := range results {
+		status := "FAIL"
+		if result.Passed {
+			status = "PASS"
+			passed++
+		}
+		fmt.Fprintf(w, "[%s] %s (%s) - %s\n", status, termsafe.Line(result.CaseName), termsafe.Line(result.Status), termsafe.Line(result.Reason))
+	}
+	fmt.Fprintf(w, "\nEval Summary: %d/%d passed\n", passed, len(results))
+	return passed
+}
+
+func printRunSummary(w io.Writer, state *agent.RunState) {
 	if state == nil {
 		return
 	}
-	fmt.Printf("\nRun ID: %s\n", state.RunID)
-	fmt.Printf("Status: %s\n", state.Status)
-	fmt.Printf("Turns: %d\n", state.Turn)
-	fmt.Printf("Tool Calls: %d\n", state.ToolCallCount)
+	fmt.Fprintf(w, "\nRun ID: %s\n", termsafe.Line(state.RunID))
+	fmt.Fprintf(w, "Status: %s\n", termsafe.Line(state.Status))
+	fmt.Fprintf(w, "Turns: %d\n", state.Turn)
+	fmt.Fprintf(w, "Tool Calls: %d\n", state.ToolCallCount)
 	if strings.TrimSpace(state.ArtifactBundlePath) != "" {
-		fmt.Printf("Artifacts: %s\n", state.ArtifactBundlePath)
+		fmt.Fprintf(w, "Artifacts: %s\n", termsafe.Line(state.ArtifactBundlePath))
 	}
 	if state.LastAssistantResponse != "" {
-		fmt.Printf("\nFinal Response:\n%s\n", state.LastAssistantResponse)
+		fmt.Fprintf(w, "\nFinal Response:\n%s\n", termsafe.Text(state.LastAssistantResponse))
 	}
 	if state.Error != "" {
-		fmt.Printf("\nError: %s\n", state.Error)
+		fmt.Fprintf(w, "\nError: %s\n", termsafe.Text(state.Error))
 	}
 }
 
