@@ -56,7 +56,7 @@ help:
 	@echo "Security Commands"
 	@echo "================="
 	@echo "  make verify FILE=<file>  - Verify downloaded release (requires FILE=)"
-	@echo "  make import-key          - Import GPG signing key from Keybase"
+	@echo "  make import-key          - Import the release key from whykusanagi.asc (fingerprint-checked)"
 
 # Build the binary
 build:
@@ -159,18 +159,30 @@ sync-theme:
 	@cp ../corrupted-theme/src/data/colors.json cmd/celeste/tui/theme/colors.json
 	@echo "✅ Theme colors synced. Run 'go build' and 'go test ./cmd/celeste/tui/theme/'."
 
-# Import GPG signing key from Keybase
+# Import the release signing key from the repository's own whykusanagi.asc.
+# Releases are signed by its signing subkey, which the Keybase copy omits.
+# The file must hold exactly the release key (primary plus signing subkey)
+# before anything is imported.
+RELEASE_KEY_FPR := 940490EF09DA31322BF7FD83875849AB1D541C55
+RELEASE_SUBKEY_FPR := F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB
 import-key:
-	@echo "🔑 Importing GPG signing key from Keybase..."
-	@if ! command -v gpg &> /dev/null; then \
+	@echo "🔑 Importing the release signing key from whykusanagi.asc..."
+	@if ! command -v gpg >/dev/null 2>&1; then \
 		echo "❌ GPG not found. Install with: brew install gnupg"; \
 		exit 1; \
 	fi
-	@curl -s https://keybase.io/whykusanagi/pgp_keys.asc | gpg --import
+	@info="$$(gpg --batch --with-colons --import-options show-only --import whykusanagi.asc 2>/dev/null)" || { echo "❌ whykusanagi.asc is not a readable key"; exit 1; }; \
+	primaries="$$(printf '%s\n' "$$info" | awk -F: '$$1 == "pub" {p = 1; next} p && $$1 == "fpr" {print $$10; p = 0}')"; \
+	fprs="$$(printf '%s\n' "$$info" | awk -F: '$$1 == "fpr" {print $$10}')"; \
+	if [ "$$primaries" != "$(RELEASE_KEY_FPR)" ]; then \
+		echo "❌ whykusanagi.asc holds key(s) $$primaries, want exactly $(RELEASE_KEY_FPR)"; \
+		exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$fprs" | grep -qx "$(RELEASE_SUBKEY_FPR)"; then \
+		echo "❌ whykusanagi.asc lacks the release signing subkey $(RELEASE_SUBKEY_FPR)"; \
+		exit 1; \
+	fi
+	@gpg --batch --import whykusanagi.asc
 	@echo ""
-	@echo "✅ Key imported successfully"
-	@echo ""
-	@echo "Verify fingerprint matches:"
-	@echo "  9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55"
-	@echo ""
-	@gpg --fingerprint 940490EF09DA31322BF7FD83875849AB1D541C55
+	@echo "✅ Release key $(RELEASE_KEY_FPR) imported (signing subkey $(RELEASE_SUBKEY_FPR))"
+	@gpg --fingerprint $(RELEASE_KEY_FPR)
