@@ -50,10 +50,15 @@ func (s *session) askHooks(ctx context.Context, a *Agent) {
 	if len(approved) == 0 {
 		return
 	}
-	store := hooks.LoadTrust(a.deps.Home)
-	for _, src := range approved {
-		if err := store.Approve(src); err != nil {
-			a.logf("acp: session %s: storing trust for %s: %v (trusted for this session only)", s.id, src.Path, err)
+	if a.deps.Home == "" {
+		// No home for the trust store: never a workspace-relative one.
+		a.logf("acp: session %s: no home directory; the approved hooks are trusted for this session only", s.id)
+	} else {
+		store := hooks.LoadTrust(a.deps.Home)
+		for _, src := range approved {
+			if err := store.Approve(src); err != nil {
+				a.logf("acp: session %s: storing trust for %s: %v (trusted for this session only)", s.id, src.Path, err)
+			}
 		}
 	}
 	if rerr := s.rebuildEnv(context.WithoutCancel(ctx), a); rerr != nil {

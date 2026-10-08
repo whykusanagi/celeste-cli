@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -161,6 +163,32 @@ func (m PermissionPromptModel) buildPattern() string {
 	return m.toolName
 }
 
+// maxPromptSummaryRows caps the rows the call's summary takes in the
+// prompt; the rest are counted in a marker row.
+const maxPromptSummaryRows = 16
+
+// terminalSafe shows every control character in s except a line break
+// (which separates the summary's arguments) as a \xNN or \uNNNN escape, as
+// does any invisible format character and any byte that is not UTF-8.
+func terminalSafe(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&sb, `\x%02x`, s[i])
+		case r == '\n' || r == ' ' || unicode.IsGraphic(r):
+			sb.WriteRune(r)
+		case r < 0x100:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		}
+		i += size
+	}
+	return sb.String()
+}
+
 // View renders the permission prompt dialog: a closed box exactly as wide
 // as the terminal (44 columns at least), long lines wrapped inside it.
 func (m PermissionPromptModel) View() string {
@@ -203,7 +231,19 @@ func (m PermissionPromptModel) View() string {
 	topFill := max(inner-1-lipgloss.Width(title), 0)
 	lines = append(lines, borderStyle.Render("╭─")+titleStyle.Render(title)+borderStyle.Render(strings.Repeat("─", topFill)+"╮"))
 
-	row(textStyle.Render(fmt.Sprintf("%s wants to run: %s", m.toolName, m.inputSummary)))
+	// The call's summary is model-written: its control characters are shown
+	// escaped and its rows capped, so the modal can't hide part of the
+	// command or grow past the terminal (which shows only its bottom).
+	summary := strings.Split(lipgloss.NewStyle().Width(textW).Render(
+		fmt.Sprintf("%s wants to run: %s", terminalSafe(m.toolName), terminalSafe(m.inputSummary))), "\n")
+	if len(summary) > maxPromptSummaryRows {
+		hidden := len(summary) - (maxPromptSummaryRows - 1)
+		summary = append(summary[:maxPromptSummaryRows-1],
+			fmt.Sprintf("... [%d more rows not shown; deny if unsure]", hidden))
+	}
+	for _, l := range summary {
+		row(textStyle.Render(l))
+	}
 	row(textStyle.Render("Risk: ") + riskStyle.Render(m.riskLevel))
 	lines = append(lines, side+strings.Repeat(" ", inner)+side)
 

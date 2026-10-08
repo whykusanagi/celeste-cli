@@ -16,14 +16,19 @@ type ToolInfo interface {
 }
 
 // Checker evaluates whether a tool execution should be allowed, denied, or
-// requires user approval. It implements a 6-step evaluation chain:
+// requires user approval. It implements a 5-step evaluation chain:
 //
 //  0. protected hook/trust files — best-effort Deny for shell commands
 //  1. alwaysDeny rules — if any match, return Deny immediately
-//  2. alwaysAllow rules — if any match, return Allow immediately
-//  3. IsReadOnly check — in default mode, read-only tools are auto-allowed
+//  2. alwaysAllow rules — if any match, return Allow immediately, unless
+//     the rule is a bare tool name and an argument-scoped pattern deny or
+//     ask matches the call (the more specific rule wins)
 //  4. patternRules — if any match, return the rule's decision
-//  5. Mode fallthrough — default asks for writes, strict asks for all, trust allows all
+//  5. Mode fallthrough — default allows read-only tools and asks for the
+//     rest, strict asks for all, trust allows all
+//
+// (Step 3, an early read-only allow, is gone: it ran before the pattern
+// rules, so a pattern deny never applied to a read-only tool.)
 type Checker struct {
 	mu           sync.RWMutex
 	alwaysDeny   []Rule
@@ -33,6 +38,17 @@ type Checker struct {
 	configPath   string      // path to persist rule additions; empty = no persistence
 	persistWarn  func(error) // told when a rule could not be saved; nil = ignore
 	protected    []string    // spellings of hook/trust files tools may not modify (protected.go)
+	ws           *workspace  // the run's workspace, for path rules (SetWorkspace); nil = unknown
+}
+
+// SetWorkspace sets the workspace a call's paths are relative to, so a
+// path rule also matches a path spelled absolutely or through a symlink
+// inside it (argMatches). Empty clears it.
+func (c *Checker) SetWorkspace(dir string) {
+	w := newWorkspace(dir)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ws = w
 }
 
 // NewChecker creates a Checker from a PermissionConfig.
@@ -147,9 +163,11 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	toolName := ""
 	readOnly := false
+	primary := ""
 	if tool != nil {
 		toolName = tool.ToolName()
 		readOnly = tool.IsReadOnly()
+		primary = primaryArgOf(tool)
 	}
 
 	// Step 0: best-effort defence in depth. A model-authored shell command
@@ -174,7 +192,7 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	// Step 1: alwaysDeny rules (highest priority)
 	for i := range c.alwaysDeny {
-		if MatchRule(c.alwaysDeny[i], toolName, input) {
+		if matchRule(c.alwaysDeny[i], toolName, primary, input, true, c.ws) {
 			return CheckResult{
 				Decision:    Deny,
 				MatchedRule: &c.alwaysDeny[i],
@@ -185,7 +203,16 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	// Step 2: alwaysAllow rules
 	for i := range c.alwaysAllow {
-		if MatchRule(c.alwaysAllow[i], toolName, input) {
+		if matchRule(c.alwaysAllow[i], toolName, primary, input, false, c.ws) {
+			if !scoped(c.alwaysAllow[i]) {
+				if r := c.scopedRestriction(toolName, primary, input); r != nil {
+					return CheckResult{
+						Decision:    r.Decision,
+						MatchedRule: r,
+						Reason:      fmt.Sprintf("matched pattern rule: %s (more specific than always-allow %s)", r.ToolPattern, c.alwaysAllow[i].ToolPattern),
+					}
+				}
+			}
 			return CheckResult{
 				Decision:    Allow,
 				MatchedRule: &c.alwaysAllow[i],
@@ -194,17 +221,13 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 		}
 	}
 
-	// Step 3: IsReadOnly check (only in default mode)
-	if c.mode == ModeDefault && readOnly {
-		return CheckResult{
-			Decision: Allow,
-			Reason:   fmt.Sprintf("read-only tool %q auto-allowed in default mode", toolName),
-		}
-	}
+	// Step 3 (read-only auto-allow in default mode) is part of the mode
+	// fallthrough below, after the pattern rules, so a pattern deny or ask
+	// applies to a read-only tool too.
 
 	// Step 4: Pattern rules
 	for i := range c.patternRules {
-		if MatchRule(c.patternRules[i], toolName, input) {
+		if matchRule(c.patternRules[i], toolName, primary, input, c.patternRules[i].Decision != Allow, c.ws) {
 			return CheckResult{
 				Decision:    c.patternRules[i].Decision,
 				MatchedRule: &c.patternRules[i],
@@ -237,6 +260,31 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 			Reason:   fmt.Sprintf("default mode: asking for non-read-only tool %q", toolName),
 		}
 	}
+}
+
+// scoped reports whether r looks at the call's arguments (an argument glob
+// or an input pattern), not only at the tool's name.
+func scoped(r Rule) bool {
+	_, glob := ParseToolPattern(r.ToolPattern)
+	return glob != "" || r.InputPattern != ""
+}
+
+// scopedRestriction is the pattern rule that decides the call among the
+// argument-scoped ones, when it is a deny or an ask: such a rule is more
+// specific than a bare-name always-allow ("read_file" allowed, but
+// "read_file(*.env)" denied). The caller holds c.mu.
+func (c *Checker) scopedRestriction(toolName, primary string, input map[string]any) *Rule {
+	for i := range c.patternRules {
+		r := &c.patternRules[i]
+		if !scoped(*r) || !matchRule(*r, toolName, primary, input, r.Decision != Allow, c.ws) {
+			continue
+		}
+		if r.Decision == Allow {
+			return nil
+		}
+		return r
+	}
+	return nil
 }
 
 // Mode returns the current permission mode.
