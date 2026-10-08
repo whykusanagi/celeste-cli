@@ -254,3 +254,39 @@ func TestCapToolResultKeepsRecentlyActiveSessions(t *testing.T) {
 	_, err = os.Stat(filepath.Join(base, "sess", "b.txt"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+// Aikido review of #430: the compaction recall store (tool-results/pruned)
+// and any directory that is not a spill session are never pruned, by age
+// or for the total limit, and do not count toward the total.
+func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
+	withSpillLimits(t, 1<<20, 1<<20)
+	oldT := maxTotalSpillBytes
+	maxTotalSpillBytes = 10000
+	t.Cleanup(func() { maxTotalSpillBytes = oldT })
+	base := t.TempDir()
+	longAgo := time.Now().Add(-2 * SpillKeepAge)
+	var kept []string
+	for _, name := range []string{"pruned", ".hidden", "notes.d"} {
+		dir := filepath.Join(base, name)
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		p := filepath.Join(dir, "call_1.txt")
+		require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("p", 8000)), 0o600))
+		require.NoError(t, os.Chtimes(p, longAgo, longAgo))
+		require.NoError(t, os.Chtimes(dir, longAgo, longAgo))
+		kept = append(kept, p)
+	}
+
+	require.NoError(t, PruneToolResults(base, "sess", time.Now()))
+	_, _, err := CapToolResult(strings.Repeat("x", 4000), 1024, "sess", "a", base)
+	require.NoError(t, err, "the compaction store counted toward the spill total")
+	for _, p := range kept {
+		_, err := os.Stat(p)
+		assert.NoError(t, err, "%s was pruned", p)
+	}
+
+	// A session named like the store spills beside it, not into it.
+	_, _, err = CapToolResult(strings.Repeat("y", 2000), 1024, "pruned", "b", base)
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(base, "pruned", "b.txt"))
+	assert.True(t, os.IsNotExist(err), "a session spilled into the compaction store")
+}
