@@ -45,7 +45,7 @@ func TestWalletCheckpointHeldOnFailedScan(t *testing.T) {
 
 			cfg, err := loadWalletSecurityConfig()
 			require.NoError(t, err)
-			assert.Equal(t, "0x100", cfg.LastCheckedBlock)
+			assert.Equal(t, "0x100", cfg.LastCheckedBlocks["eth-mainnet"])
 		})
 	}
 }
@@ -61,7 +61,7 @@ func TestWalletCheckpointAdvancesOnCleanScan(t *testing.T) {
 
 	cfg, err := loadWalletSecurityConfig()
 	require.NoError(t, err)
-	assert.Equal(t, "0x200", cfg.LastCheckedBlock)
+	assert.Equal(t, "0x200", cfg.LastCheckedBlocks["eth-mainnet"])
 }
 
 // Checkpoints are per network: a failure on one network holds only its own.
@@ -85,5 +85,4 @@ func TestWalletCheckpointPerNetwork(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "0x200", cfg.LastCheckedBlocks["eth-mainnet"])
 	assert.Equal(t, "0x150", cfg.LastCheckedBlocks["polygon-mainnet"])
-	assert.Equal(t, "0x200", cfg.LastCheckedBlock)
 }

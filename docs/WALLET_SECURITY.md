@@ -304,7 +304,7 @@ Stores monitored wallets configuration:
       "added_at": "2025-12-18T10:30:00Z"
     }
   ],
-  "last_checked_block": "0x16edc05",
+  "last_checked_blocks": { "eth-mainnet": "0x16edc05" },
   "poll_interval_seconds": 300
 }
 ```

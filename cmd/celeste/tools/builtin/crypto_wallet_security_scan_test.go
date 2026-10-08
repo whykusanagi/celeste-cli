@@ -23,6 +23,11 @@ type fakeAlchemy struct {
 	mu sync.Mutex
 	// transfers returns one page for a direction ("from"/"to") and pageKey.
 	transfers func(direction, pageKey string) (page []any, next string)
+	// transfersAt, when set, is used instead of transfers and also gets
+	// the request's fromBlock.
+	transfersAt func(direction, fromBlock, pageKey string) (page []any, next string)
+	// fromBlocks records the fromBlock of each first-page transfer request.
+	fromBlocks []string
 	// fail makes the named method return a transport error.
 	fail map[string]bool
 	// failNetwork makes every call to that network fail.
@@ -63,8 +68,17 @@ func (f *fakeAlchemy) RoundTrip(req *http.Request) (*http.Response, error) {
 			dir = "from"
 		}
 		key, _ := p["pageKey"].(string)
+		fromBlock, _ := p["fromBlock"].(string)
+		if key == "" {
+			f.mu.Lock()
+			f.fromBlocks = append(f.fromBlocks, fromBlock)
+			f.mu.Unlock()
+		}
 		page, next := []any{}, ""
-		if f.transfers != nil {
+		switch {
+		case f.transfersAt != nil:
+			page, next = f.transfersAt(dir, fromBlock, key)
+		case f.transfers != nil:
 			page, next = f.transfers(dir, key)
 		}
 		r := map[string]any{"transfers": page}
@@ -150,7 +164,7 @@ func TestWalletScanCutAtPageCapResumes(t *testing.T) {
 		var i int
 		_, _ = fmt.Sscanf(key, "p%d", &i)
 		tr := dustTransfer(fmt.Sprintf("0x%x", 0x1000+i))
-		tr["blockNum"] = fmt.Sprintf("0x%x", 0x100+i) // one block per page
+		tr["blockNum"] = fmt.Sprintf("0x%x", 0x101+i) // one block per page, from checkpoint+1
 		return []any{tr}, fmt.Sprintf("p%d", i+1)
 	}}
 	useFakeAlchemy(t, f)
@@ -159,8 +173,8 @@ func TestWalletScanCutAtPageCapResumes(t *testing.T) {
 	require.NoError(t, err)
 	m := res.(map[string]any)
 	assert.Equal(t, true, m["success"], m)
-	// Pages 0..49 cover blocks 0x100..0x131; the last one may be partial.
-	want := fmt.Sprintf("0x%x", 0x100+maxAssetTransferPages-2)
+	// Pages 0..49 cover blocks 0x101..0x132; the last one may be partial.
+	want := fmt.Sprintf("0x%x", 0x101+maxAssetTransferPages-2)
 	assert.Equal(t, maxAssetTransferPages-1, m["alerts_found"])
 	cfg, err := loadWalletSecurityConfig()
 	require.NoError(t, err)

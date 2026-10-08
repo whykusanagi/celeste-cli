@@ -23,9 +23,11 @@ import (
 // WalletSecurityConfig holds wallet security configuration
 type WalletSecurityConfig struct {
 	MonitoredWallets []MonitoredWallet `json:"monitored_wallets"`
-	LastCheckedBlock string            `json:"last_checked_block"`
-	// LastCheckedBlocks is the scan checkpoint per network (the last block
-	// fully scanned for every wallet on it).
+	// LastCheckedBlock is the single checkpoint of the old file format. It
+	// is read only from a file without LastCheckedBlocks and never written.
+	LastCheckedBlock string `json:"last_checked_block,omitempty"`
+	// LastCheckedBlocks is the scan checkpoint per network: the last block
+	// fully scanned for every wallet on it. The next scan starts after it.
 	LastCheckedBlocks   map[string]string `json:"last_checked_blocks,omitempty"`
 	PollIntervalSeconds int               `json:"poll_interval_seconds"`
 }
@@ -434,16 +436,17 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		}
 		byNetwork[w.Network] = append(byNetwork[w.Network], w)
 	}
+	firstNetwork := wsConfig.MonitoredWallets[0].Network
+	if len(wsConfig.LastCheckedBlocks) == 0 && wsConfig.LastCheckedBlock != "" {
+		// An old-format file: its single checkpoint was taken on the first
+		// wallet's network. Only such a file is migrated, so a network that
+		// has never completed a scan cannot inherit another chain's height.
+		wsConfig.LastCheckedBlocks = map[string]string{firstNetwork: wsConfig.LastCheckedBlock}
+	}
 	if wsConfig.LastCheckedBlocks == nil {
 		wsConfig.LastCheckedBlocks = map[string]string{}
 	}
-	firstNetwork := wsConfig.MonitoredWallets[0].Network
-	if wsConfig.LastCheckedBlock != "" {
-		// The legacy single checkpoint was taken on the first wallet's network.
-		if _, ok := wsConfig.LastCheckedBlocks[firstNetwork]; !ok {
-			wsConfig.LastCheckedBlocks[firstNetwork] = wsConfig.LastCheckedBlock
-		}
-	}
+	wsConfig.LastCheckedBlock = ""
 
 	allAlerts := []SecurityAlert{}
 	failed := []map[string]any{}
@@ -462,8 +465,15 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		}
 		currentBlocks[network] = currentBlock
 
-		fromBlock := wsConfig.LastCheckedBlocks[network]
-		if fromBlock == "" {
+		// The checkpoint was scanned through, so the scan starts after it.
+		var fromBlock string
+		if cp, ok := parseHexBlock(wsConfig.LastCheckedBlocks[network]); ok {
+			from := new(big.Int).Add(cp, big.NewInt(1))
+			if cur, _ := parseHexBlock(currentBlock); from.Cmp(cur) > 0 {
+				continue // no new blocks since the last scan
+			}
+			fromBlock = fmt.Sprintf("0x%x", from)
+		} else {
 			// First check: look back 100 blocks (~20 minutes on mainnet).
 			fromBlock = lookBackBlocks(currentBlock, 100)
 		}
@@ -511,9 +521,7 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		allAlerts = added
 	}
 
-	// Save the checkpoints that moved. The legacy field mirrors the first
-	// network's checkpoint.
-	wsConfig.LastCheckedBlock = wsConfig.LastCheckedBlocks[firstNetwork]
+	// Save the checkpoints that moved.
 	if err := saveWalletSecurityConfig(wsConfig); err != nil {
 		return formatErrorResponse(
 			"api_error",
@@ -637,6 +645,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 		}
 	}
 	if scannedTo.Cmp(from) < 0 {
+		// Not even the first block was read completely: no progress.
 		return nil, "", fmt.Errorf("more than %d pages of transfers in block %s", maxAssetTransferPages, fromBlock)
 	}
 	allTransfers := make([]any, 0, len(outgoing)+len(incoming))
