@@ -49,7 +49,9 @@ var errNonPublicAddress = errors.New("destination is not a public address")
 
 // nonPublicPrefixes are the ranges netip's predicates do not cover:
 // "this network", CGNAT, IETF protocol assignments, benchmarking, the
-// reserved 240/4 block (broadcast included) and deprecated site-local IPv6.
+// reserved 240/4 block (broadcast included), deprecated site-local IPv6,
+// and two IPv6 forms that carry an IPv4 address: the deprecated
+// IPv4-compatible ::/96 (:: and ::1 are caught before) and Teredo.
 var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -57,6 +59,8 @@ var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("fec0::/10"),
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("2001::/32"),
 }
 
 var (

@@ -9,7 +9,7 @@ Celeste CLI packs **48 dev-crushing tools**, code graphs that expose every secre
 - **Code Intel** (6): `code_graph`, `code_review`, `code_search`, `code_symbols` — graph queries, stub detection, lazy redirects, MinHash + BM25 fused ranking, tree-sitter parsers for TypeScript, PHP, Python, Rust, Java, C/C++ and Ruby (release binaries and CGo source builds; `CGO_ENABLED=0` falls back to regex), structural rerank
 - **AI/Collections** (4): `collections_search`, MCP client, memories, todos
 - **Web/Productivity** (8): `web_search`, `web_fetch`, `currency`, `units`, `timezone`
-  - `web_fetch` reaches public addresses only (redirects included); set `"web_fetch_allow_private": true` or `CELESTE_WEB_FETCH_ALLOW_PRIVATE=1` for a local docs server.
+  - `web_fetch` reaches public addresses only (redirects included); set `"web_fetch_allow_private": true` or `CELESTE_WEB_FETCH_ALLOW_PRIVATE=1` for a local docs server. The setting is read from the config profile the session starts with; switching endpoints mid-session does not change it.
 - **Crypto/Media** (7): `hash`, `qrcode`, `encoding`, Alchemy/IPFS/wallet
 
 **Direct Codegraph MCP Tools** (v1.9.0+, no chat-LLM round-trip):
