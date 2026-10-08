@@ -3,7 +3,6 @@ package grimoire
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +36,7 @@ func CaptureGitSnapshot(workDir string) *GitSnapshot {
 	}{
 		{"branch", []string{"git", "rev-parse", "--abbrev-ref", "HEAD"}},
 		{"main", []string{"git", "symbolic-ref", "refs/remotes/origin/HEAD"}},
-		{"status", []string{"git", "status", "--short"}},
+		{"status", []string{"git", "status", "--short", "--ignore-submodules=dirty"}},
 		{"log", []string{"git", "log", "--oneline", "-n", "5"}},
 		{"user", []string{"git", "config", "user.name"}},
 	}
@@ -51,8 +50,11 @@ func CaptureGitSnapshot(workDir string) *GitSnapshot {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, args[0], gitsafe.Args(args[1:]...)...)
-			cmd.Dir = workDir
+			cmd, err := gitsafe.Command(ctx, workDir, args[1:]...)
+			if err != nil {
+				results[idx] = kv{key, ""}
+				return
+			}
 			out, err := cmd.Output()
 			if err != nil {
 				results[idx] = kv{key, ""}

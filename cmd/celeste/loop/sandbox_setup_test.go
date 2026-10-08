@@ -371,8 +371,8 @@ func TestGitDirsNeverMakeAnAncestorOfTheWorkspaceWritable(t *testing.T) {
 	}
 }
 
-// Aikido 806869318: the policy keeps every git dir's config and hooks
-// read-only, the workspace's own .git included.
+// Aikido 806869318: the policy keeps every git dir's config, hooks and
+// commondir read-only, the workspace's own .git included.
 func TestSandboxKeepsGitConfigAndHooksReadOnly(t *testing.T) {
 	setupHome(t)
 	repo := t.TempDir()
@@ -382,11 +382,22 @@ func TestSandboxKeepsGitConfigAndHooksReadOnly(t *testing.T) {
 	for ws, dirs := range map[string][]string{repo: {filepath.Join(repo, ".git")}, lane: {filepath.Join(repo, ".git"), admin}} {
 		env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
 		for _, d := range dirs {
-			for _, name := range []string{"config", "hooks"} {
+			for _, name := range []string{"config", "hooks", "commondir", "gitdir"} {
 				if want := sandbox.Resolve(filepath.Join(d, name)); !slices.Contains(env.SandboxPolicy.ReadOnly, want) {
 					t.Errorf("workspace %s: ReadOnly lacks %s: %v", ws, want, env.SandboxPolicy.ReadOnly)
 				}
 			}
+			// commondir is what bubblewrap cannot bind while it is missing.
+			if want := sandbox.Resolve(filepath.Join(d, "commondir")); !slices.Contains(env.SandboxPolicy.Watch, want) {
+				t.Errorf("workspace %s: Watch lacks %s: %v", ws, want, env.SandboxPolicy.Watch)
+			}
 		}
+	}
+	// Review Important 1: a lane's .git file names its git dir; it stays
+	// read-only and watched too.
+	env, _ := setupWithCfg(t, ModeAgent, cfg, lane)
+	dotGit := sandbox.Resolve(filepath.Join(lane, ".git"))
+	if !slices.Contains(env.SandboxPolicy.ReadOnly, dotGit) || !slices.Contains(env.SandboxPolicy.Watch, dotGit) {
+		t.Errorf("the lane's .git file is not protected: ReadOnly %v, Watch %v", env.SandboxPolicy.ReadOnly, env.SandboxPolicy.Watch)
 	}
 }

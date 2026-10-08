@@ -74,3 +74,20 @@ func TestGitStatusRunsNoRepositoryPrograms(t *testing.T) {
 		t.Fatal("git_status ran the repository's core.fsmonitor")
 	}
 }
+
+// Review Important 1: nor a filter driver the repository's config names
+// (a repository a sandboxed command made itself, or one whose commondir
+// it planted), which git status runs on a modified file.
+func TestGitStatusRunsNoRepositoryFilter(t *testing.T) {
+	dir := initGitRepo(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	gittest.Run(t, dir, "config", "filter.x.clean", "touch '"+marker+"'; cat")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.txt filter=x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("changed and longer\n"), 0o644))
+	if _, err := NewGitStatusTool(dir).Execute(context.Background(), map[string]any{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("git_status ran the repository's filter")
+	}
+}

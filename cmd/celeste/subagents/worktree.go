@@ -19,7 +19,10 @@ type Worktree struct {
 // (gitsafe): a lane shares the repository's config and hooks, which its
 // sandboxed commands can write.
 func runGit(dir string, args ...string) (string, error) {
-	cmd := gitsafe.Command(context.Background(), dir, args...)
+	cmd, err := gitsafe.Command(context.Background(), dir, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))

@@ -6,8 +6,8 @@
 package codegraph
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -70,8 +70,10 @@ func ParseGitDiffRanges(workspace string, base string) ([]ChangedRange, error) {
 	if base == "" {
 		base = "HEAD~1"
 	}
-	cmd := exec.Command("git", gitsafe.Args("diff", "--no-ext-diff", "--unified=0", base, "--")...)
-	cmd.Dir = workspace
+	cmd, err := gitsafe.Command(context.Background(), workspace, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--unified=0", base, "--")
+	if err != nil {
+		return nil, fmt.Errorf("git diff: %w", err)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff: %w", err)

@@ -7,9 +7,9 @@
 package codegraph
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -157,8 +157,10 @@ func (idx *Indexer) LatestSnapshot() (*Snapshot, error) {
 }
 
 func detectGitCommit(workspace string) string {
-	cmd := exec.Command("git", gitsafe.Args("rev-parse", "--short", "HEAD")...)
-	cmd.Dir = workspace
+	cmd, err := gitsafe.Command(context.Background(), workspace, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "unknown"
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"

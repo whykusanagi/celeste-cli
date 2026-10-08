@@ -3,7 +3,6 @@ package builtin
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -41,8 +40,10 @@ func (t *GitStatusTool) Execute(ctx context.Context, input map[string]any, progr
 	defer cancel()
 
 	runGit := func(args ...string) string {
-		cmd := exec.CommandContext(timeout, "git", gitsafe.Args(args...)...)
-		cmd.Dir = t.workspace
+		cmd, err := gitsafe.Command(timeout, t.workspace, args...)
+		if err != nil {
+			return ""
+		}
 		out, err := cmd.Output()
 		if err != nil {
 			return ""
@@ -51,8 +52,8 @@ func (t *GitStatusTool) Execute(ctx context.Context, input map[string]any, progr
 	}
 
 	branch := runGit("rev-parse", "--abbrev-ref", "HEAD")
-	status := runGit("status", "--short")
-	diffStat := runGit("diff", "--stat")
+	status := runGit("status", "--short", "--ignore-submodules=dirty")
+	diffStat := runGit("diff", "--stat", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty")
 
 	result := map[string]any{
 		"branch":    branch,

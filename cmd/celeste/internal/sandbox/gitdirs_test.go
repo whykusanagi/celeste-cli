@@ -329,3 +329,143 @@ func TestMakeGitProtectedCreatesWhatBwrapBinds(t *testing.T) {
 		t.Fatalf("config.worktree is not bound read-only: %v", args)
 	}
 }
+
+// Review Important 1: git takes its config from the dir a commondir names,
+// in any git dir, and follows a .git file to its git dir, so those
+// pointers stay read-only too, and are watched where bubblewrap cannot
+// bind them (missing).
+func TestGitPointersAreProtected(t *testing.T) {
+	repo := Resolve(t.TempDir())
+	common := fakeRepo(t, repo)
+	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
+	admin := fakeLane(t, common, lane, "fire")
+
+	ro := GitProtected([]string{common})
+	for _, name := range []string{"commondir", "gitdir"} {
+		if !slices.Contains(ro, filepath.Join(common, name)) {
+			t.Errorf("GitProtected = %v, lacks %s", ro, name)
+		}
+	}
+
+	want := map[string][]string{
+		repo: {filepath.Join(common, "commondir"), filepath.Join(common, "gitdir")},
+		lane: {filepath.Join(common, "commondir"), filepath.Join(common, "gitdir"),
+			filepath.Join(admin, "commondir"), filepath.Join(admin, "gitdir"), filepath.Join(lane, ".git")},
+		// A workspace below the repository's root: a .git planted in it
+		// would be found first.
+		filepath.Join(repo, "sub"): {filepath.Join(common, "commondir"), filepath.Join(common, "gitdir"),
+			filepath.Join(repo, "sub", ".git")},
+	}
+	for ws, w := range want {
+		slices.Sort(w)
+		if got := GitPointers(ws); !slices.Equal(got, w) {
+			t.Errorf("GitPointers(%s) = %v, want %v", ws, got, w)
+		}
+	}
+	if got := GitPointers(t.TempDir()); got != nil {
+		t.Errorf("GitPointers(no repo) = %v", got)
+	}
+
+	// bubblewrap binds the ones that exist read-only after the writable
+	// binds: the lane's .git file and its admin dir's commondir and gitdir.
+	p := Policy{Writable: []string{lane, admin, common}, ReadOnly: Normalize(append(GitProtected([]string{admin, common}), GitPointers(lane)...))}
+	args := BwrapArgs(p, "true")
+	lastRW := -1
+	ro2 := map[string]int{}
+	for i := 0; i+2 < len(args); i++ {
+		switch args[i] {
+		case "--bind":
+			lastRW = i
+		case "--ro-bind":
+			ro2[args[i+1]] = i
+		}
+	}
+	for _, path := range []string{filepath.Join(lane, ".git"), filepath.Join(admin, "commondir"), filepath.Join(admin, "gitdir")} {
+		if i, ok := ro2[path]; !ok || i < lastRW {
+			t.Errorf("bwrap does not bind %s read-only after the writable binds: %v", path, args)
+		}
+	}
+	// The profile denies them, missing or not.
+	prof := Profile(p)
+	deny := strings.LastIndex(prof, "(deny file-write*")
+	for _, path := range []string{filepath.Join(lane, ".git"), filepath.Join(admin, "commondir"), filepath.Join(common, "commondir")} {
+		if !strings.Contains(prof[deny:], sbplQuote(path)) {
+			t.Errorf("the profile does not deny %s:\n%s", path, prof)
+		}
+	}
+}
+
+// Review Important 1, probed: under the sandbox a command can neither
+// point the workspace's git dir at a planted one (.git/commondir) nor
+// repoint a linked worktree's .git file or its admin dir. bubblewrap
+// cannot bind a missing commondir; the runner puts it back afterwards
+// (shellrun), so only seatbelt is held to refusing that write here.
+func TestGitPointersAreReadOnlyUnderTheSandbox(t *testing.T) {
+	kind, ok := Available()
+	if !ok {
+		t.Skip("no OS sandbox here")
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	home := Resolve(t.TempDir())
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") && !strings.HasPrefix(kv, "HOME=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitBin, args...)
+		cmd.Dir, cmd.Env = dir, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	repo := Resolve(t.TempDir())
+	git(repo, "init", "-q", "-b", "main")
+	git(repo, "commit", "-q", "--allow-empty", "-m", "root")
+	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
+	git(repo, "worktree", "add", "-q", "-b", "fire", lane)
+
+	policy := func(ws string) Policy {
+		dirs := GitDirs(ws)
+		ptrs := GitPointers(ws)
+		return Policy{Enabled: true, Workspace: ws, Network: true,
+			Writable: Normalize(append([]string{ws}, dirs...)),
+			ReadOnly: Normalize(append(GitProtected(dirs), ptrs...)), Watch: ptrs}
+	}
+	run := func(ws, command string) error {
+		argv, _ := Wrap(policy(ws), command)
+		c := exec.Command(argv[0], argv[1:]...)
+		c.Dir, c.Env = ws, env
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Logf("%s: %v\n%s", command, err, out)
+		}
+		return err
+	}
+	if kind == KindSeatbelt {
+		if run(repo, "mkdir .fake && echo ../.fake > .git/commondir") == nil {
+			t.Error("a sandboxed command wrote .git/commondir")
+		}
+		if _, err := os.Lstat(filepath.Join(repo, ".git", "commondir")); err == nil {
+			t.Error(".git/commondir exists")
+		}
+	}
+	if run(lane, "echo 'gitdir: ../../../.fake' > .git") == nil {
+		t.Error("a sandboxed command rewrote the lane's .git file")
+	}
+	admin := filepath.Join(repo, ".git", "worktrees", "fire")
+	if run(lane, "echo ../../../.fake > "+admin+"/commondir") == nil {
+		t.Error("a sandboxed command rewrote the admin dir's commondir")
+	}
+	if run(lane, "echo hi > f.txt && git add f.txt && git commit -q -m lane") != nil {
+		t.Error("git commit in the lane failed under the sandbox")
+	}
+}

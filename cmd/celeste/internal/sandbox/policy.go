@@ -23,9 +23,14 @@ type Policy struct {
 	Workspace string   // resolved
 	Writable  []string // resolved, de-duplicated, sorted; includes the defaults
 	// ReadOnly stays read-only even inside a writable directory: each git
-	// dir's config and hooks (GitProtected). Resolved.
+	// dir's config, hooks and commondir (GitProtected) and the paths that
+	// lead git to them (GitPointers). Resolved.
 	ReadOnly []string
-	Network  bool
+	// Watch are the paths the runner puts back after each sandboxed
+	// command (SnapshotPaths, RestorePaths): GitPointers, which bubblewrap
+	// cannot bind read-only while they do not exist.
+	Watch   []string
+	Network bool
 }
 
 // buildCaches are the per-user build caches that are writable when they

@@ -25,7 +25,8 @@ var sandboxWarnOnce = new(sync.Once)
 // that file's settings are trusted, or the interactive chat approves them
 // now. Non-interactive runs skip an untrusted loosening with a warning.
 // The workspace's git dirs are writable (sandbox.GitDirs), but never their
-// config and hooks (sandbox.GitProtected).
+// config and hooks (sandbox.GitProtected) or what points git at them
+// (sandbox.GitPointers).
 func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	p := sandbox.Policy{Enabled: sandbox.DefaultEnabled, Network: true}
 	var extra []string
@@ -78,8 +79,14 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	extra = append(extra, accepted...)
 	p.Writable = sandbox.Normalize(append(sandbox.DefaultWritable(e.home, p.Workspace), e.writablePaths(extra)...))
 	// Their config and hooks stay read-only: celeste and you run git
-	// outside the sandbox, and it would run what they name.
-	p.ReadOnly = sandbox.GitProtected(gitDirs)
+	// outside the sandbox, and it would run what they name. So do the
+	// pointers that lead git to a git dir (a .git file, commondir), or
+	// git would take its config from one a command planted; bubblewrap
+	// cannot bind a missing one, so the runner also puts them back after
+	// each command.
+	pointers := sandbox.GitPointers(p.Workspace)
+	p.ReadOnly = sandbox.Normalize(append(sandbox.GitProtected(gitDirs), pointers...))
+	p.Watch = pointers
 	if p.Enabled && runtime.GOOS == "linux" {
 		// bwrap can only bind over a path that exists. Only in the git dirs
 		// made writable: celeste writes nowhere it just refused.
