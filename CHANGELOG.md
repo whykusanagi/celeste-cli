@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Bug Fixes
 
 * **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
-* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed, so a later resume still uses the session's profile (CodeRabbit, #427 review).
+* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 
 ### Breaking Changes
 

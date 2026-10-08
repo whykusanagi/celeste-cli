@@ -278,6 +278,24 @@ func TestSessionResumeKeepsTheSessionsEndpointOnPassiveSaves(t *testing.T) {
 	assert.Equal(t, "gpt-model", saved.GetModel())
 }
 
+// A turn sent on the endpoint in use makes it the session's: the resumed
+// conversation continues there, so its saves record that endpoint and model
+// (review follow-up).
+func TestSessionResumeContinuedOnTheEndpointInUseRecordsIt(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	other.SetModel("venice-model")
+	require.NoError(t, mgr.mgr.Save(other))
+	m = m.WithEndpoint("openai")
+	m.model = "gpt-model"
+	m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+	m, _ = step(t, m, SendMessageMsg{Content: "carry on"})
+	saved, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", saved.GetEndpoint())
+	assert.Equal(t, "gpt-model", saved.GetModel())
+}
+
 // The same at startup: a session whose profile could not be loaded stays
 // on the startup endpoint without losing its own.
 func TestStartupResumeFallbackKeepsTheSessionsEndpoint(t *testing.T) {

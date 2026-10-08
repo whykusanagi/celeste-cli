@@ -155,8 +155,8 @@ type AppModel struct {
 	currentSession Session
 	// heldSession is a session loaded on another endpoint than its own
 	// without switching to it (heldOn, the endpoint in use then): until the
-	// endpoint changes, saves keep its endpoint and model, so a later
-	// startup resume still goes to its profile.
+	// endpoint changes or a turn is sent, saves keep its endpoint and
+	// model, so a later startup resume still goes to its profile.
 	heldSession Session
 	heldOn      string
 
@@ -1994,6 +1994,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// A turn on the endpoint in use makes it the session's: a session
+		// resumed from another endpoint stops keeping that one (heldSession).
+		m.heldSession, m.heldOn = nil, ""
 		// Persist user message immediately (in case of crash before response)
 		m.persistSession()
 
@@ -3226,7 +3229,8 @@ func (m *AppModel) saveSession() error {
 	m.claimWorkspace(m.currentSession)
 	if m.heldSession == nil || m.heldSession != m.currentSession || m.heldOn != m.endpoint {
 		// The endpoint in use is the session's: a session loaded on
-		// another endpoint keeps its own until the endpoint changes.
+		// another endpoint keeps its own until the endpoint changes or a
+		// turn is sent.
 		m.heldSession, m.heldOn = nil, ""
 		m.currentSession.SetEndpoint(m.endpoint)
 		m.currentSession.SetModel(m.model)
@@ -3249,7 +3253,8 @@ func (m *AppModel) saveSession() error {
 
 // holdEndpoint records whether s, just loaded, uses another endpoint than
 // the one in use: the client is not switched to it, and saves keep s's
-// endpoint and model until the endpoint changes (heldSession).
+// endpoint and model until the endpoint changes or a turn is sent
+// (heldSession).
 func (m *AppModel) holdEndpoint(s Session) {
 	m.heldSession, m.heldOn = nil, ""
 	if s == nil {
