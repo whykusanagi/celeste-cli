@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **permissions:** deny and ask rules written with an absolute path inside the workspace match again once the workspace is known, for the path given absolute (as given or with symlinks resolved) or relative (Aikido, #425 review).
+* **subagents:** a subagent's workspace is checked against the parent's again when the run starts or resumes, so a directory replaced by a symlink out of the parent after `spawn_agent` checked it ends the run (Aikido, #425 review).
+* **subagents:** once an isolated run's worktree merge is decided, a kill of that run is refused, so a run reported killed is never merged (Aikido, #425 review).
+* **loop:** without a home directory, project memories and the code graph are skipped instead of read or created under the current directory's `.celeste` (Aikido, #425 review).
+* **config:** profile names are plain file names (no separators, colons or dot segments), so a resumed session's endpoint cannot load or write a config outside `~/.celeste` (Aikido, #427 review).
 * **config:** `config.json`, named profiles, `secrets.json`, `skills.json` and `~/.celeste` are owner-only (0600 files, 0700 directory). Files and a directory an older version created with a looser mode are tightened when celeste loads them (every named profile, also one that is never opened), with a note in the log, and every save keeps them owner-only. `slider.json`, the analytics directory, the code index directories under `~/.celeste/projects`, a workspace's `.celeste/tasks.json`, and a directory created for a permissions file are owner-only too (Aikido 806869312).
 * **chat:** resuming a session that used another configured profile switches the chat to that profile, not only the header; when the profile cannot be loaded, the startup provider stays, the header shows it, and the chat says the session's provider was not used. `/session resume` keeps the endpoint in use and says when the session used another (`/endpoint <name>` switches) (Aikido 806869764).
 * **tui:** `/config set-key` and `/voice set-key` are kept in the input history as `set-key ***`, in any letter case, so the key is never saved with the session or in its exports; older sessions are redacted when loaded or exported. Exports are written owner-only, also over a leftover file of the same name (Aikido 806869355).
@@ -17,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tools:** notes, reminders, QR codes, wallet-monitor state, memories, cost records, the user identity file and agent run checkpoints under `~/.celeste` are owner-only; `celeste mcp install` creates a new MCP client config, and every backup it makes, owner-only (Aikido 806869849).
 * **agent:** resuming a run started with `--no-artifacts` keeps artifacts off; `--no-artifacts` on the resume still turns them off (Aikido 806869324).
 * **config:** celeste refuses to start without a home directory (`HOME`, or `USERPROFILE` on Windows, unset, empty or relative) instead of resolving `~/.celeste` against the current directory, and custom skills load only from an absolute directory (Aikido 806869780).
+
+### Bug Fixes
+
+* **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
+* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 
 ### Breaking Changes
 
