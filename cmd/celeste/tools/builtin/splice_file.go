@@ -199,14 +199,14 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 
 	// Write. For a same-file move, dest already reflects the removal.
-	if err := writeFileFunc(destReal, []byte(newDest), 0644); err != nil {
+	if err := writeFileFunc(t.workspace, destReal, []byte(newDest), 0644); err != nil {
 		return fail(fmt.Sprintf("write dest: %s", err))
 	}
 	if err := destGuard.verify(); err != nil {
 		return fail(fmt.Sprintf("dest path error: %s", err))
 	}
 	if op == "move" && !sameFile {
-		if err := writeFileFunc(sourceReal, []byte(sourceAfter), 0644); err != nil {
+		if err := writeFileFunc(t.workspace, sourceReal, []byte(sourceAfter), 0644); err != nil {
 			return fail(fmt.Sprintf("write source: %s", err))
 		}
 	}

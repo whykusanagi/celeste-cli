@@ -201,6 +201,18 @@ type protectedWriteGuard struct {
 	path    string
 	existed bool
 	dirGuard
+	// root and rel, when set (inRoot), are where mkdirAll creates the
+	// directories and undo removes the new file: through the workspace
+	// root, never by re-walking a path name.
+	root *os.Root
+	rel  string
+}
+
+// inRoot makes the guard create directories and remove the new file
+// through root, where rel names the file.
+func (g *protectedWriteGuard) inRoot(root *os.Root, rel string) {
+	g.root, g.rel = root, rel
+	g.mkdir = func(string) error { return root.MkdirAll(filepath.Dir(rel), 0o755) }
 }
 
 // dirGuard is the directory-creation half of the guard (fix round 5),
@@ -212,6 +224,8 @@ type dirGuard struct {
 	// before holds os.Stat of each protected target taken right before
 	// MkdirAll (nil entry = did not resolve); nil slice = no snapshot.
 	before []os.FileInfo
+	// mkdir creates the directories; nil is os.MkdirAll(dir, 0755).
+	mkdir func(dir string) error
 }
 
 var protectedHomeNames = []string{"hooks.json", "grimoire.md", "trusted.json"}
@@ -286,6 +300,9 @@ func (g *dirGuard) mkdirAll(dir string) error {
 			break
 		}
 	}
+	if g.mkdir != nil {
+		return g.mkdir(dir)
+	}
 	return os.MkdirAll(dir, 0755)
 }
 
@@ -341,7 +358,11 @@ func (g *protectedWriteGuard) verify() error {
 // that change what a protected name resolves to.
 func (g *protectedWriteGuard) undo() {
 	if !g.existed {
-		_ = os.Remove(g.path)
+		if g.root != nil {
+			_ = g.root.Remove(g.rel)
+		} else {
+			_ = os.Remove(g.path)
+		}
 	}
 	g.removeCreatedDirs()
 }

@@ -110,6 +110,18 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 			guard.undo()
 		}
 	}()
+	afterPathCheck(targetPath)
+
+	// Directories, the append and the cleanup of a failed new file go
+	// through the workspace root, as whole-file writes do (atomicWrite):
+	// an ancestor swapped for a symlink after the check above cannot take
+	// them outside the workspace.
+	root, rel, err := workspaceRoot(t.workspace, realPath)
+	if err != nil {
+		return tools.ToolResult{Error: true, Content: fmt.Sprintf("path error: %s", err)}, nil
+	}
+	defer root.Close()
+	guard.inRoot(root, rel)
 	if err := guard.mkdirAll(filepath.Dir(targetPath)); err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
@@ -137,7 +149,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 	var bytesWritten int
 	if appendMode {
 		// Append is not atomic by nature: it keeps O_APPEND (ruling 5).
-		f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_APPEND|oNoFollow, 0644)
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -151,7 +163,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		}
 		bytesWritten = n
 	} else {
-		if err := writeFileFunc(realPath, []byte(content), 0644); err != nil {
+		if err := writeFileFunc(t.workspace, realPath, []byte(content), 0644); err != nil {
 			return fail(err.Error())
 		}
 		bytesWritten = len(content)
@@ -163,7 +175,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 
 	// Auto-stamp .grimoire metadata when writing to it
 	if filepath.Base(targetPath) == ".grimoire" {
-		stampGrimoireMetadata(targetPath, realPath)
+		stampGrimoireMetadata(t.workspace, targetPath, realPath)
 	}
 	commit(ckpt) // after the stamp: the file as this call leaves it
 
@@ -187,3 +199,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any, progr
 		Metadata: result,
 	}, nil
 }
+
+// afterPathCheck runs once write_file's path checks passed, before any
+// I/O: a test seam for a path changed in between. Only serial tests may set
+// it, restoring it with t.Cleanup.
+var afterPathCheck = func(string) {}
