@@ -42,10 +42,19 @@ func WorkspaceConfigPath(workspace string) string {
 // approvals hash. The file's other keys are ignored.
 func LoadWorkspaceSandbox(workspace string) (s *Sandbox, path, body string, err error) {
 	path = WorkspaceConfigPath(workspace)
-	fh, err := os.Open(path)
+	// Repository content: only a regular file, never a symlink (to a
+	// terminal, a FIFO, a file elsewhere) and nothing that blocks the read.
+	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, path, "", nil
 	}
+	if err != nil {
+		return nil, path, "", err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, path, "", fmt.Errorf("%s is not a regular file (a symlink, FIFO or device); not read", path)
+	}
+	fh, err := openRegularNoFollow(path)
 	if err != nil {
 		return nil, path, "", err
 	}

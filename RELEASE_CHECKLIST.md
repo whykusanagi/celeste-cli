@@ -85,6 +85,7 @@ git diff main...HEAD | grep -iE 'api[_-]?key|secret|token|password|PRIVATE KEY' 
   git tag -v vX.Y.Z          # Good signature, primary 9404 90EF 09DA 3132 2BF7  FD83 8758 49AB 1D54 1C55
   git push origin vX.Y.Z     # runs release.yml: build + smoke on each runner, persona verify, sign, publish
   ```
+  release.yml's first job (`Verify the release tag`) stops the run before any secret is used unless the tag is annotated, signed by the release key (as `whykusanagi.asc` on `main` holds it) and on `main`. A lightweight tag or a tag from a branch publishes nothing.
 - [ ] **[owner]** Relabel the merged Release PR, or release-please refuses to open the next one:
   `gh pr edit <n> --remove-label "autorelease: pending" --add-label "autorelease: tagged"`
 - [ ] If release.yml fails (say at `Verify the persona`), nothing was published: fix the cause and re-run the workflow on the same tag (`gh run rerun`). Never move a pushed tag.

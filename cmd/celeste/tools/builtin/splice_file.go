@@ -125,7 +125,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	srcData, err := readFileNoFollow(sourceReal)
+	srcData, err := readFileNoFollow(sourceReal, maxEditBytes)
 	if err != nil {
 		return errResult(fmt.Sprintf("read source: %s", err)), nil
 	}
@@ -151,7 +151,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	if sameFile {
 		dest = sourceAfter
 	} else {
-		if b, rerr := readFileNoFollow(destReal); rerr == nil {
+		if b, rerr := readFileNoFollow(destReal, maxEditBytes); rerr == nil {
 			dest = string(b)
 		} else if !os.IsNotExist(rerr) {
 			return errResult(fmt.Sprintf("read dest: %s", rerr)), nil
@@ -187,7 +187,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 		callID := tools.CallIDFromContext(ctx)
 		for _, p := range targets {
-			c, err := t.snapMgr.Checkpoint(p, callID)
+			c, err := t.snapMgr.CheckpointIn(t.workspace, p, callID)
 			if err != nil {
 				return errResult(rollback(fmt.Sprintf("snapshot %s: %s", p, err), ckpts...)), nil
 			}
@@ -199,14 +199,14 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	}
 
 	// Write. For a same-file move, dest already reflects the removal.
-	if err := writeFileFunc(destReal, []byte(newDest), 0644); err != nil {
+	if err := writeFileFunc(t.workspace, destReal, []byte(newDest), 0644); err != nil {
 		return fail(fmt.Sprintf("write dest: %s", err))
 	}
 	if err := destGuard.verify(); err != nil {
 		return fail(fmt.Sprintf("dest path error: %s", err))
 	}
 	if op == "move" && !sameFile {
-		if err := writeFileFunc(sourceReal, []byte(sourceAfter), 0644); err != nil {
+		if err := writeFileFunc(t.workspace, sourceReal, []byte(sourceAfter), 0644); err != nil {
 			return fail(fmt.Sprintf("write source: %s", err))
 		}
 	}

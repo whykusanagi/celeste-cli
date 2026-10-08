@@ -14,8 +14,8 @@ import (
 func TestAtomicWriteNewFileHonoursUmask(t *testing.T) {
 	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
-	p := filepath.Join(t.TempDir(), "secret.env")
-	if err := atomicWrite(p, []byte("k=v\n"), 0o644); err != nil {
+	p := filepath.Join(realTempDir(t), "secret.env")
+	if err := atomicWrite(filepath.Dir(p), p, []byte("k=v\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(p)

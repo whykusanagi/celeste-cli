@@ -87,15 +87,59 @@ func resolveExisting(path string) (string, error) {
 	}
 }
 
-// readFileNoFollow reads the whole file at real (resolvePathReal's second
-// result) through openNoFollow.
-func readFileNoFollow(real string) ([]byte, error) {
+// maxEditBytes caps the file patch_file and splice_file (and the
+// .grimoire stamp) read into memory.
+const maxEditBytes = 16 << 20
+
+// openRegularFile opens real (resolvePathReal's second result) through
+// openNoFollow and refuses anything but a regular file: a FIFO or device
+// in the workspace is never read, so it cannot block a tool.
+func openRegularFile(real string) (*os.File, error) {
 	f, err := openNoFollow(real)
 	if err != nil {
 		return nil, err
 	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Base(real))
+	}
+	return f, nil
+}
+
+// readFilePrefix reads at most n bytes of the regular file at real, and
+// reports its size (at least the bytes read).
+func readFilePrefix(real string, n int64) (data []byte, size int64, err error) {
+	f, err := openRegularFile(real)
+	if err != nil {
+		return nil, 0, err
+	}
 	defer f.Close()
-	return io.ReadAll(f)
+	if info, err := f.Stat(); err == nil {
+		size = info.Size()
+	}
+	data, err = io.ReadAll(io.LimitReader(f, n))
+	if err != nil {
+		return nil, 0, err
+	}
+	return data, max(size, int64(len(data))), nil
+}
+
+// readFileNoFollow reads the whole regular file at real, refusing one over
+// limit bytes before reading it into memory.
+func readFileNoFollow(real string, limit int64) ([]byte, error) {
+	data, size, err := readFilePrefix(real, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	if size > limit {
+		return nil, fmt.Errorf("file is too large: %d bytes (max %d)", size, limit)
+	}
+	return data, nil
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {
@@ -155,17 +199,45 @@ func fileSize(info os.FileInfo) int64 {
 	return info.Size()
 }
 
-// atomicWrite replaces path through a temp file in its directory and a
-// rename (2.0 W4 ruling 5): a reader never sees a half-written file, an
-// existing file keeps its mode, a new one gets perm under the umask. path
-// is the symlink-resolved path resolvePathReal checked; a symlink found
-// there now is replaced, not followed. A file with several hard links is
-// rewritten in place instead, as editors do: a rename would leave its
+// workspaceRoot opens the real workspace as an os.Root and names real
+// (resolvePathReal's second result) inside it. The write tools do their
+// I/O through it: os.Root refuses, at every component and without a race,
+// a symlink or ".." leading out of the workspace, so a directory swapped
+// for a symlink after resolvePathReal's check cannot take a write outside
+// (Aikido 806869649).
+func workspaceRoot(workspace, real string) (*os.Root, string, error) {
+	ws := filepath.Clean(workspace)
+	if r, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = r
+	}
+	rel, err := filepath.Rel(ws, real)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, "", fmt.Errorf("%s is outside the workspace", real)
+	}
+	root, err := os.OpenRoot(ws)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, rel, nil
+}
+
+// atomicWrite replaces real, a path inside workspace, through a temp file
+// in its directory and a rename (2.0 W4 ruling 5): a reader never sees a
+// half-written file, an existing file keeps its mode, a new one gets perm
+// under the umask. real is the symlink-resolved path resolvePathReal
+// checked; a symlink found there now is replaced, not followed, and the
+// whole write goes through workspaceRoot. A file with several hard links
+// is rewritten in place instead, as editors do: a rename would leave its
 // other names holding the old content.
-func atomicWrite(path string, data []byte, perm os.FileMode) error {
-	fi, lerr := os.Lstat(path)
-	if lerr == nil && hardLinked(path, fi) {
-		f, err := openInPlace(path)
+func atomicWrite(workspace, real string, data []byte, perm os.FileMode) error {
+	root, rel, err := workspaceRoot(workspace, real)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	fi, lerr := root.Lstat(rel)
+	if lerr == nil && hardLinked(real, fi) {
+		f, err := root.OpenFile(rel, os.O_WRONLY|os.O_TRUNC|oNoFollow, 0)
 		if err != nil {
 			return err
 		}
@@ -179,21 +251,21 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		// Create a new file first, so its mode is perm under the umask as
 		// with os.WriteFile; the replace below then keeps that mode. A
 		// failed replace removes it again.
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		f, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 		if err != nil {
 			return err
 		}
 		if err := f.Close(); err != nil {
-			_ = os.Remove(path)
+			_ = root.Remove(rel)
 			return err
 		}
-		if err := atomicfile.ReplaceKeepMode(path, data, perm); err != nil {
-			_ = os.Remove(path)
+		if err := atomicfile.ReplaceIn(root, rel, data, perm); err != nil {
+			_ = root.Remove(rel)
 			return err
 		}
 		return nil
 	}
-	return atomicfile.ReplaceKeepMode(path, data, perm)
+	return atomicfile.ReplaceIn(root, rel, data, perm)
 }
 
 // writeFileFunc writes a whole file for write_file, patch_file and
