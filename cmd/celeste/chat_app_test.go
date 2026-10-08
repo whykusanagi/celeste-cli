@@ -270,7 +270,7 @@ func TestRestoreEndpointResolvesAgentModels(t *testing.T) {
 	cleanupChatDeps(t, deps)
 	s := &config.Session{}
 	s.SetEndpoint("venice")
-	restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
+	_, _ = restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
 	if got := deps.adapter.baseConfig.AgentModel; got != "venice-uncensored-1-2" {
 		t.Errorf("agent model = %q", got)
 	}
@@ -368,9 +368,34 @@ func TestRestoreEndpointSwitchesTheLiveClient(t *testing.T) {
 	cleanupChatDeps(t, deps)
 	s := &config.Session{}
 	s.SetEndpoint("venice")
-	restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
+	_, _ = restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
 	live := deps.adapter.client.GetConfig()
 	if live.BaseURL != "https://api.venice.ai/api/v1" || live.APIKey != "venice-k" {
 		t.Errorf("live client = %s (key %t), want the session's venice profile", live.BaseURL, live.APIKey == "venice-k")
+	}
+}
+
+// Aikido 806869764 (review): when the session's profile cannot be loaded,
+// the client stays on the startup provider, and so must the header, after
+// SetSessionManager too; the chat says the session's provider was not used.
+func TestRestoreEndpointFallbackKeepsTheHeaderOnTheStartupProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cfg := &config.Config{APIKey: "startup-k", BaseURL: "https://api.openai.com/v1", Model: "gpt-x", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	s := &config.Session{}
+	s.SetEndpoint("venice") // no config.venice.json
+	app, note := restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
+	app = app.SetSessionManager(&SessionManagerAdapter{manager: config.NewSessionManager()}, s)
+	if state, header := app.DebugEndpoint(); state != "openai" || header != "openai" {
+		t.Errorf("endpoint = %q, header = %q; want the startup provider openai", state, header)
+	}
+	if !strings.Contains(note, "venice") || !strings.Contains(note, "openai") {
+		t.Errorf("note = %q; want it to name the session's endpoint and the one in use", note)
 	}
 }

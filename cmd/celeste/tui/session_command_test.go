@@ -232,3 +232,18 @@ func TestSessionListFooterRendersPlaceholders(t *testing.T) {
 	// One command per line, indented as written.
 	assert.Contains(t, out, "\n  /session delete <id>")
 }
+
+// Aikido 806869764 (review): /session resume does not switch the client, so
+// the header keeps the endpoint in use and the chat says the session's
+// endpoint was not taken.
+func TestSessionResumeKeepsTheEndpointInUse(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	require.NoError(t, mgr.mgr.Save(other))
+	m = m.WithEndpoint("openai")
+	m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+	assert.Equal(t, "openai", m.endpoint)
+	assert.Equal(t, "openai", m.header.endpoint)
+	assert.Contains(t, sessChatText(m), "venice")
+	assert.Contains(t, sessChatText(m), "/endpoint venice")
+}

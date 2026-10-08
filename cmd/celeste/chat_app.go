@@ -203,7 +203,10 @@ func newChatApp(cfg *config.Config, cwd, homeDir string) (tui.AppModel, *chatDep
 		app = app.WithSystemMessage(initHint)
 	}
 
-	app = restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)
+	app, endpointNote := restoreEndpoint(app, cfg, tuiClient, sessionManager, currentSession)
+	if endpointNote != "" {
+		app = app.WithSystemMessage("⚠ " + endpointNote)
+	}
 	// A window too small for the full persona says so once (W5 ruling 7),
 	// after a restored endpoint has recomposed the prompt.
 	if n := tuiClient.takePersonaNotice(); n != "" {
@@ -287,13 +290,17 @@ func scanCollections(cfg *config.Config) {
 
 // restoreEndpoint restores the endpoint/provider from the session, or
 // detects it from the config's base URL.
-func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, sm *config.SessionManager, s *config.Session) tui.AppModel {
+//
+// When the session's profile cannot be loaded, the startup provider stays
+// and the returned note says so, for the chat to show.
+func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, sm *config.SessionManager, s *config.Session) (tui.AppModel, string) {
 	// Restore endpoint/provider from session, or detect from config
 	sessionEndpoint := s.GetEndpoint()
 	tui.LogInfo(fmt.Sprintf("Session endpoint from file: '%s'", sessionEndpoint))
 	tui.LogInfo(fmt.Sprintf("Config BaseURL: '%s'", providers.CleanBaseURL(cfg.BaseURL)))
 
 	restored := false
+	unloaded := false
 	if sessionEndpoint != "" && sessionEndpoint != "default" {
 		// The live client was built from the startup config: switch it, not
 		// just the header, to the session's profile, or the resumed
@@ -315,24 +322,31 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 			tui.LogInfo(fmt.Sprintf("✓ Using endpoint from session: %s", sessionEndpoint))
 		} else {
 			tui.LogInfo(fmt.Sprintf("⚠ Could not load named config for %s, keeping the startup endpoint: %v", sessionEndpoint, loadErr))
+			unloaded = true
 		}
 	}
 	if restored {
-		return app
+		return app, ""
 	}
 	// Detect provider from base URL in config
 	detectedProvider := providers.DetectProvider(cfg.BaseURL)
 	tui.LogInfo(fmt.Sprintf("DetectProvider() returned: '%s'", detectedProvider))
+	note := func(current string) string {
+		if !unloaded {
+			return ""
+		}
+		return fmt.Sprintf("session used %s, which could not be loaded; continuing on %s", sessionEndpoint, current)
+	}
 	if detectedProvider == "unknown" {
 		tui.LogInfo("⚠ Could not detect provider from BaseURL")
-		return app
+		return app, note("the startup endpoint")
 	}
 	tui.LogInfo(fmt.Sprintf("✓ Setting endpoint to detected provider: %s", detectedProvider))
 	app = app.WithEndpoint(detectedProvider)
 	if sessionEndpoint != "" && sessionEndpoint != "default" {
 		// The session keeps the profile it was using, for a later resume
 		// once that profile loads again.
-		return app
+		return app, note(detectedProvider)
 	}
 	// Also update the session with the detected endpoint
 	s.SetEndpoint(detectedProvider)
@@ -341,7 +355,7 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 	} else {
 		tui.LogInfo(fmt.Sprintf("✓ Saved session with endpoint: %s", detectedProvider))
 	}
-	return app
+	return app, ""
 }
 
 // registerChatOnlyTools adds the config-backed skills and collections search
