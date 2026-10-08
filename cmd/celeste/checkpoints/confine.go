@@ -106,14 +106,23 @@ func (f fileRef) open(flag int) (*os.File, error) {
 
 // openRead opens the file for reading without waiting on a FIFO or
 // device, and refuses anything but a regular file (one swapped for a FIFO
-// since the change must not hang undo).
+// since the change must not hang undo). Without a root the final
+// component is never followed (CodeRabbit review of #421).
 func (f fileRef) openRead() (*os.File, error) {
 	var fh *os.File
 	var err error
+	var before os.FileInfo
 	if f.root != nil {
 		fh, err = f.root.OpenFile(f.rel, os.O_RDONLY|oNonblock, 0)
 	} else {
-		fh, err = os.OpenFile(f.path, os.O_RDONLY|oNonblock, 0)
+		// Lstat first and compare after the open: oNoFollow is 0 where
+		// there is no O_NOFOLLOW.
+		if before, err = os.Lstat(f.path); err == nil && !before.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular file", f.path)
+		}
+		if err == nil {
+			fh, err = os.OpenFile(f.path, os.O_RDONLY|oNonblock|oNoFollow, 0)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -123,7 +132,7 @@ func (f fileRef) openRead() (*os.File, error) {
 		_ = fh.Close()
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() || (before != nil && !os.SameFile(before, info)) {
 		_ = fh.Close()
 		return nil, fmt.Errorf("%s is not a regular file", f.path)
 	}
@@ -139,11 +148,12 @@ func (f fileRef) readFile() ([]byte, error) {
 	return io.ReadAll(fh)
 }
 
+// stat is the file's FileInfo; without a root, a symlink's own.
 func (f fileRef) stat() (os.FileInfo, error) {
 	if f.root != nil {
 		return f.root.Stat(f.rel)
 	}
-	return os.Stat(f.path)
+	return os.Lstat(f.path)
 }
 
 func (f fileRef) remove() error {

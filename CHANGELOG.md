@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **checkpoints:** a checkpoint from an index written before the workspace was recorded, whose file is a symlink leading out of its directory, is never read through: undo refuses to read it instead of reading the file the link points to (CodeRabbit review of [#421](https://github.com/whykusanagi/celeste-cli/pull/421)).
 * **tools:** `write_file`, `patch_file`, `splice_file` and checkpoint undo open the workspace (or the change's recorded directory) one path component at a time without following a symlink, so the workspace or a directory above it replaced by a symlink after the path check is refused instead of followed (Aikido review of [#421](https://github.com/whykusanagi/celeste-cli/pull/421)).
 * **codegraph:** indexing, file hashing and the type-checked Go pass read every source file through the workspace root, as review does: a file replaced by a symlink, a FIFO or a device after the walk listed it is skipped, never parsed, so indexing cannot take in source from outside the workspace or hang on a pipe (Aikido review of [#421](https://github.com/whykusanagi/celeste-cli/pull/421)).
 * **grimoire:** a repository grimoire's `@./` includes, nested ones too, are opened through the repository root, held open for the whole load, so a directory on an include's path replaced by a link after the containment check cannot lead the read outside the repository (Aikido review of [#421](https://github.com/whykusanagi/celeste-cli/pull/421)).
