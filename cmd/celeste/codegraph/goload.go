@@ -208,7 +208,13 @@ func (l *goLoader) loadDir(absDir, importPath string, rels []string) {
 	names := map[string]int{}
 	for _, rel := range rels {
 		abs := filepath.Join(l.workspace, rel)
-		f, err := parser.ParseFile(l.fset, abs, nil, parser.ParseComments|parser.SkipObjectResolution)
+		// Read through the workspace root: a file replaced by a symlink
+		// or a FIFO since the walk is skipped (Aikido review of #421).
+		src, err := readConfined(l.workspace, rel)
+		if err != nil {
+			continue
+		}
+		f, err := parser.ParseFile(l.fset, abs, src, parser.ParseComments|parser.SkipObjectResolution)
 		if err != nil || f == nil {
 			continue
 		}

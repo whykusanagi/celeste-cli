@@ -746,7 +746,7 @@ func (idx *Indexer) storeParsedFile(relPath string, result *ParseResult) []RawEd
 // storeFileSymbols stores a file's symbols with their MinHash signature,
 // BM25 tokens and LSH bands.
 func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) {
-	source, _ := os.ReadFile(filepath.Join(idx.workspace, relPath))
+	source, _ := readConfined(idx.workspace, relPath)
 	for _, sym := range syms {
 		sym.File = relPath
 		id, err := idx.store.UpsertSymbol(sym)
@@ -774,12 +774,10 @@ func (idx *Indexer) storeFileSymbols(relPath, lang string, syms []Symbol) {
 // storeFileRecord records a file's size and content hash (and, for Go, its
 // call-graph resolution) for incremental updates.
 func (idx *Indexer) storeFileRecord(relPath, lang, resolution string) {
-	absPath := filepath.Join(idx.workspace, relPath)
-	info, _ := os.Stat(absPath)
-	hash, _ := fileContentHash(absPath)
 	var size int64
-	if info != nil {
-		size = info.Size()
+	var hash string
+	if data, err := readConfined(idx.workspace, relPath); err == nil {
+		size, hash = int64(len(data)), contentHash(data)
 	}
 	_ = idx.store.UpsertFile(FileRecord{
 		Path:        relPath,
@@ -893,45 +891,63 @@ func (idx *Indexer) indexFile(relPath string) error {
 }
 
 // parseFile parses one workspace file with the parser for its language. It
-// returns a nil result for a language without a parser.
+// returns a nil result for a language without a parser. The file is read
+// through readConfined, so one replaced by a symlink or a FIFO since the
+// walk listed it is refused, and the parser gets the bytes read.
 func (idx *Indexer) parseFile(relPath string) (*ParseResult, error) {
 	absPath := filepath.Join(idx.workspace, relPath)
 	lang := DetectLanguage(relPath)
+	multi := idx.tryMultiParser(absPath)
+	if lang != "go" && !multi && lang != "typescript" && !indexableLanguages[lang] {
+		return nil, nil // no parser for this language
+	}
+	data, err := readConfined(idx.workspace, relPath)
+	if err != nil {
+		return nil, err
+	}
 
 	switch {
 	case lang == "go":
 		// Go uses its own AST parser (go/parser, not tree-sitter)
-		return NewGoParser().ParseFile(absPath)
-	case idx.tryMultiParser(absPath):
+		return NewGoParser().ParseSource(absPath, data)
+	case multi:
 		// Multi-language tree-sitter parser (Python, Rust, Java, C, C++, etc.)
 		if idx.multiParser == nil {
 			idx.multiParser = NewMultiLangParser()
 		}
-		return idx.multiParser.ParseFile(absPath)
+		return idx.multiParser.ParseSource(absPath, data)
 	case lang == "typescript":
 		// Dedicated TS parser (preserves existing behavior for TS-only builds)
 		if idx.tsParser == nil {
 			idx.tsParser = NewTSParser()
 		}
-		return idx.tsParser.ParseFile(absPath)
-	case indexableLanguages[lang]:
-		return NewGenericParser(lang).ParseFile(absPath)
+		return idx.tsParser.ParseSource(absPath, data)
+	default:
+		return NewGenericParser(lang).ParseSource(absPath, data)
 	}
-	return nil, nil // no parser for this language
 }
 
-// readWorkspaceFile reads an indexed file for review: a regular file, not
-// a symlink, inside the workspace. It is opened through an os.Root on the
-// workspace (no symlink or ".." out of it, at any component) without
-// blocking, and checked on the open descriptor, so a file replaced by a
-// symlink or a FIFO since it was indexed is refused and review never
-// quotes source from outside the workspace.
+// readWorkspaceFile reads an indexed file for review (see readConfined),
+// so review never quotes source from outside the workspace.
 func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
 	rel, err := filepath.Rel(idx.workspace, absFile)
 	if err != nil || !filepath.IsLocal(rel) {
 		return nil, fmt.Errorf("%s is outside the workspace", absFile)
 	}
-	root, err := os.OpenRoot(idx.workspace)
+	return readConfined(idx.workspace, rel)
+}
+
+// readConfined reads the workspace-relative file rel: a regular file, not
+// a symlink, inside workspace. It is opened through an os.Root on the
+// workspace (no symlink or ".." out of it, at any component) without
+// blocking, and checked on the open descriptor, so a file replaced by a
+// symlink or a FIFO since the walk listed it is refused. Indexing, hashing
+// and review all read source through it (Aikido review of #421).
+func readConfined(workspace, rel string) ([]byte, error) {
+	if !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is outside the workspace", rel)
+	}
+	root, err := os.OpenRoot(workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -941,7 +957,7 @@ func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
 		return nil, err
 	}
 	if !before.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", absFile)
+		return nil, fmt.Errorf("%s is not a regular file", rel)
 	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|oNonblock, 0)
 	if err != nil {
@@ -953,7 +969,7 @@ func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
-		return nil, fmt.Errorf("%s changed while it was being opened", absFile)
+		return nil, fmt.Errorf("%s changed while it was being opened", rel)
 	}
 	return io.ReadAll(f)
 }
@@ -2298,22 +2314,23 @@ func (idx *Indexer) PackageGraph() ([]PackageInfo, []PackageEdge, error) {
 	return idx.store.GetPackageGraph()
 }
 
-// fileContentHash computes a SHA-256 hash of a file's content.
-// hashFile is fileContentHash of a workspace-relative path.
+// hashFile is the content hash of a workspace-relative file, read through
+// readConfined.
 func (idx *Indexer) hashFile(relPath string) (string, error) {
 	if testHookFileHash != nil {
 		if err := testHookFileHash(relPath); err != nil {
 			return "", err
 		}
 	}
-	return fileContentHash(filepath.Join(idx.workspace, relPath))
-}
-
-func fileContentHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfined(idx.workspace, relPath)
 	if err != nil {
 		return "", err
 	}
+	return contentHash(data), nil
+}
+
+// contentHash is the stored hash of a file's content.
+func contentHash(data []byte) string {
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf("%x", hash[:8]), nil // first 8 bytes is enough
+	return fmt.Sprintf("%x", hash[:8]) // first 8 bytes is enough
 }

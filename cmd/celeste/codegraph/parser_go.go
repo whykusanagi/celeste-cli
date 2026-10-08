@@ -41,8 +41,18 @@ func NewGoParser() *GoParser {
 
 // ParseFile parses a single Go source file and extracts symbols and edges.
 func (p *GoParser) ParseFile(path string) (*ParseResult, error) {
+	return p.ParseSource(path, nil)
+}
+
+// ParseSource is ParseFile of content already read; path only names it.
+// A nil src reads path.
+func (p *GoParser) ParseSource(path string, src []byte) (*ParseResult, error) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	var source any
+	if src != nil {
+		source = src
+	}
+	file, err := parser.ParseFile(fset, path, source, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}

@@ -65,6 +65,15 @@ func (m *MultiLangParser) Close() {
 // ParseFile reads a source file and returns extracted symbols and edges
 // using the tree-sitter AST and language-specific node type mappings.
 func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return m.ParseSource(path, data)
+}
+
+// ParseSource is ParseFile of content already read; path only names it.
+func (m *MultiLangParser) ParseSource(path string, data []byte) (*ParseResult, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	lang := SupportedLanguage(ext)
 	if lang == "" {
@@ -81,10 +90,6 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 		return nil, fmt.Errorf("no lang spec for %s", lang)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
 	// A .h header holding C++ gets the C++ grammar, which has classes,
 	// namespaces and templates; the C grammar would miss them (#381).
 	if lang == "c" && IsCppHeader(path, data) {
