@@ -46,16 +46,19 @@ func Args(args ...string) []string {
 // in as sandbox.FindRepo verifies it (a linked worktree's .git file and
 // admin dir must point back; a commondir in a plain .git is ignored), so
 // git never takes its config from a git dir a planted commondir or .git
-// names. Unchanged when the environment names a git dir already, and when
-// FindRepo finds no git dir it believes: git then finds the repository
-// itself, as it would.
+// names. Unchanged when the environment names a git dir already, and
+// outside a repository: git then finds none itself either. A .git FindRepo
+// refuses (a symlink, or a gitdir pointer that is not a linked worktree's
+// or a submodule's) gets GIT_DIR set to the null device, so git does not
+// rediscover it and follow the pointer to a repository the sandbox does
+// not protect: it reports no repository instead (Aikido review of #422).
 func Env(dir string) []string {
 	env := os.Environ()
 	if os.Getenv("GIT_DIR") != "" {
 		return env
 	}
-	r, _ := sandbox.FindRepo(dir)
-	if r.GitDir == "" {
+	r, found := sandbox.FindRepo(dir)
+	if !found {
 		return env
 	}
 	out := make([]string, 0, len(env)+3)
@@ -64,7 +67,21 @@ func Env(dir string) []string {
 			out = append(out, kv)
 		}
 	}
+	if r.GitDir == "" {
+		return append(out, "GIT_DIR="+os.DevNull)
+	}
 	return append(out, "GIT_DIR="+r.GitDir, "GIT_COMMON_DIR="+r.CommonDir, "GIT_WORK_TREE="+r.WorkTree)
+}
+
+// refused is the error for git in dir when FindRepo refuses its .git.
+func refused(dir string) error {
+	if os.Getenv("GIT_DIR") != "" {
+		return nil
+	}
+	if r, found := sandbox.FindRepo(dir); found && r.GitDir == "" {
+		return fmt.Errorf("%s is not a git repository celeste runs git in: its .git is a symlink or points to a git dir that does not point back to it", r.WorkTree)
+	}
+	return nil
 }
 
 // Prepare returns git's argument list and environment for args run in dir:
@@ -74,6 +91,9 @@ func Env(dir string) []string {
 // your global and system config, which no sandboxed command can write,
 // stay (git-lfs's, typically).
 func Prepare(ctx context.Context, dir string, args ...string) (argv, env []string, err error) {
+	if err := refused(dir); err != nil {
+		return nil, nil, err
+	}
 	env = Env(dir)
 	keys, err := configKeys(ctx, dir, env, `^filter\..+\.(clean|smudge|process|required)$`)
 	if err != nil {
@@ -119,6 +139,9 @@ const textMerge = "git merge-file -L ours -L base -L theirs --marker-size=%L %A 
 // defines (merge.<name>.driver) with git's text merge, so the merge runs
 // no program the configuration names. nil when there are none.
 func MergeOptions(ctx context.Context, dir string) ([]string, error) {
+	if err := refused(dir); err != nil {
+		return nil, err
+	}
 	keys, err := configKeys(ctx, dir, Env(dir), `^merge\..+\.driver$`)
 	if err != nil {
 		return nil, err
