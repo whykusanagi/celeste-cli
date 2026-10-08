@@ -37,3 +37,17 @@ func TestUpsertJSONConfig_OwnerOnlyModes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "new config mode")
 }
+
+// TestUpsertJSONConfig_TightensExistingConfig: rewriting an existing
+// world-readable client config leaves it readable only by the owner, as
+// its env values can be credentials (CodeRabbit review of #427).
+func TestUpsertJSONConfig_TightensExistingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "client.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"x":{"env":{"T":"v"}}}}`), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
+	_, err := upsertJSONConfig(path, "celeste", map[string]any{"command": "x"}, false)
+	require.NoError(t, err)
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "rewritten config mode")
+}

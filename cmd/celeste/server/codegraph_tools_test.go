@@ -50,6 +50,39 @@ func writeTSFile(t *testing.T, dir, name, body string) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0644))
 }
 
+// toolCallResult is one handleCallTool outcome, from callToolAsync.
+type toolCallResult struct {
+	resp *mcp.Response
+	err  error
+}
+
+// callToolAsync makes a tool call on its own goroutine. It calls no
+// testing helper there (FailNow must run on the test's goroutine); check
+// the result with toolCallPayload.
+func callToolAsync(srv *Server, name string, args map[string]any) <-chan toolCallResult {
+	done := make(chan toolCallResult, 1)
+	go func() {
+		params, err := json.Marshal(map[string]any{"name": name, "arguments": args})
+		if err != nil {
+			done <- toolCallResult{err: err}
+			return
+		}
+		req := &mcp.Request{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: params}
+		resp, err := srv.handleCallTool(context.Background(), req)
+		done <- toolCallResult{resp: resp, err: err}
+	}()
+	return done
+}
+
+// toolCallPayload is callTool's payload for a callToolAsync result.
+func toolCallPayload(t *testing.T, r toolCallResult) map[string]any {
+	t.Helper()
+	require.NoError(t, r.err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(r.resp.Result, &payload))
+	return payload
+}
+
 func callTool(t *testing.T, srv *Server, name string, args map[string]any) (*mcp.Response, map[string]any) {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{

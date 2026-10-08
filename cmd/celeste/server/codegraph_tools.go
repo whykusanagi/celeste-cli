@@ -403,7 +403,7 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 		}
 	}()
 	if closeOld {
-		closeIndexerEntries([]*indexerEntry{old})
+		s.closeIndexerEntries([]*indexerEntry{old})
 	}
 	for _, e := range waits {
 		select {
@@ -445,7 +445,7 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	cached = true
 	s.indexerMu.Unlock()
 	defer release()
-	closeIndexerEntries(stale)
+	s.closeIndexerEntries(stale)
 	// A chat call that built its Env while the rebuild ran opened the old
 	// database (loop.Setup does not go through indexerFor), which the
 	// rebuild then deleted. Retire it, as above, so the next chat call

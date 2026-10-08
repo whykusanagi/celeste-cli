@@ -100,6 +100,14 @@ func WriteKeepMode(path string, data []byte, defaultPerm os.FileMode) error {
 	return Write(path, data, perm)
 }
 
+// Replace is Write without following symlinks: the temp file is renamed
+// over path itself, so a symlink there, even one swapped in after the
+// caller checked, is replaced by a regular file with mode perm instead of
+// written through.
+func Replace(path string, data []byte, perm os.FileMode) error {
+	return replace(path, data, perm)
+}
+
 // ReplaceKeepMode is WriteKeepMode without following symlinks: the rename
 // lands on path itself, so a symlink there is replaced by a regular file
 // instead of written through. Callers pass a path they already resolved
