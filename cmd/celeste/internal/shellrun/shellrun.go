@@ -35,6 +35,7 @@ type Options struct {
 	Command   string        // run with sh -c
 	Args      []string      // non-empty: run Args[0] with Args[1:] directly, no shell; Command is ignored
 	Stdin     []byte        // nil: no stdin
+	Env       []string      // nil: this process's environment
 	Timeout   time.Duration // <= 0: DefaultTimeout
 	MaxOutput int           // <= 0: DefaultMaxOutput
 	// Policy, when enabled and an OS sandbox is available, runs Command
@@ -83,7 +84,7 @@ func Run(ctx context.Context, o Options) Result {
 	} else {
 		cmd = exec.CommandContext(cctx, "sh", "-c", o.Command)
 	}
-	cmd.Dir = o.Dir
+	cmd.Dir, cmd.Env = o.Dir, o.Env
 	if o.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(o.Stdin)
 	}
@@ -99,7 +100,9 @@ func Run(ctx context.Context, o Options) Result {
 	defer r.Close()
 	cmd.Stdout, cmd.Stderr = w, w
 	cmd.WaitDelay = WaitDelay // bounds the stdin copy goroutine
+	var watched []sandbox.PathState
 	if kind != "" {
+		watched = sandbox.SnapshotPaths(o.Policy.Watch)
 		// Sandboxed: also out of celeste's terminal session (no /dev/tty).
 		err = proctree.StartSession(cmd)
 	} else {
@@ -150,6 +153,10 @@ func Run(ctx context.Context, o Options) Result {
 	case err == nil, errors.As(err, &exitErr):
 	default:
 		res.Err = err
+	}
+	// Put back what the sandbox could not keep read-only (Policy.Watch).
+	if rerr := sandbox.RestorePaths(watched); rerr != nil {
+		res.Err = errors.Join(res.Err, rerr)
 	}
 	return res
 }

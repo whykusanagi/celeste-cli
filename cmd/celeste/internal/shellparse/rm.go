@@ -150,6 +150,19 @@ func systemOrHomePath(t string) bool {
 	default:
 		return false
 	}
-	rest = strings.TrimSuffix(rest, "*")
-	return path.Clean("/"+rest) == "/"
+	// Walk rest from home: path.Clean would drop a leading "..", taking
+	// ~/../user for /user when the shell reaches home itself.
+	depth := 0
+	for _, c := range strings.Split(strings.TrimSuffix(rest, "*"), "/") {
+		switch c {
+		case "", ".":
+		case "..":
+			if depth--; depth < 0 {
+				return true // above home: outside it, or home through a sibling
+			}
+		default:
+			depth++
+		}
+	}
+	return depth == 0
 }

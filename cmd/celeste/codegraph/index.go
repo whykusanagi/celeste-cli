@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -916,6 +917,44 @@ func (idx *Indexer) parseFile(relPath string) (*ParseResult, error) {
 	return nil, nil // no parser for this language
 }
 
+// readWorkspaceFile reads an indexed file for review: a regular file, not
+// a symlink, inside the workspace. It is opened through an os.Root on the
+// workspace (no symlink or ".." out of it, at any component) without
+// blocking, and checked on the open descriptor, so a file replaced by a
+// symlink or a FIFO since it was indexed is refused and review never
+// quotes source from outside the workspace.
+func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
+	rel, err := filepath.Rel(idx.workspace, absFile)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is outside the workspace", absFile)
+	}
+	root, err := os.OpenRoot(idx.workspace)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	before, err := root.Lstat(rel)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", absFile)
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|oNonblock, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return nil, fmt.Errorf("%s changed while it was being opened", absFile)
+	}
+	return io.ReadAll(f)
+}
+
 // walkSourceFiles returns relative paths of all indexable source files.
 func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	var files []string
@@ -943,6 +982,12 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 		}
 
 		if ShouldSkipPath(rel) {
+			return nil
+		}
+		// Only regular files: a symlink (to a file, or to a directory
+		// WalkDir does not enter) may lead out of the workspace, and a
+		// FIFO or device would block the parser's read.
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		if gitignore.ShouldSkip(rel, false) {
@@ -1598,7 +1643,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 		if _, seen := files[absFile]; seen {
 			continue
 		}
-		data, err := os.ReadFile(absFile)
+		data, err := idx.readWorkspaceFile(absFile)
 		if err != nil {
 			// No source, no body: nothing to judge.
 			files[absFile] = nil
@@ -1622,7 +1667,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 			if _, seen := files[absFile]; seen {
 				continue
 			}
-			data, err := os.ReadFile(absFile)
+			data, err := idx.readWorkspaceFile(absFile)
 			if err != nil {
 				continue
 			}

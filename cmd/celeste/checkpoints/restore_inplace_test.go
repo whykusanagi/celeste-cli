@@ -23,7 +23,7 @@ func TestRestoreInPlaceFailureKeepsTheFile(t *testing.T) {
 	write(t, f, "after, with the user's work")
 
 	oldAtomic, oldWrite := atomicWrite, inPlaceWrite
-	atomicWrite = func(string, []byte, os.FileMode) error {
+	atomicWrite = func(fileRef, []byte, os.FileMode) error {
 		return &atomicfile.TempError{Err: os.ErrPermission}
 	}
 	boom := errors.New("disk full")
@@ -62,7 +62,7 @@ func TestRestoreInPlaceNeedsTheCurrentContents(t *testing.T) {
 	}
 
 	old := atomicWrite
-	atomicWrite = func(string, []byte, os.FileMode) error {
+	atomicWrite = func(fileRef, []byte, os.FileMode) error {
 		return &atomicfile.TempError{Err: os.ErrPermission}
 	}
 	t.Cleanup(func() { atomicWrite = old })

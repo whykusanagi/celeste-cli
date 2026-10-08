@@ -37,7 +37,7 @@ func TestOpenNoFollowRefusesASwappedSymlink(t *testing.T) {
 	if err := os.Symlink(secret, a); err != nil {
 		t.Fatal(err)
 	}
-	data, err := readFileNoFollow(real)
+	data, err := readFileNoFollow(real, maxEditBytes)
 	if err == nil || len(data) != 0 {
 		t.Fatalf("read through a swapped symlink: data=%q err=%v", data, err)
 	}

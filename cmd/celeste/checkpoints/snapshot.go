@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +43,13 @@ type Entry struct {
 	// write succeeded (Commit); nil until then, or when it could not be
 	// read. Undoing the change compares the file with it (Changed).
 	After *FileState `json:"after,omitempty"`
+	// Root is the real directory undoing the change must stay inside (the
+	// workspace, see CheckpointIn), and Rel the file's path inside it at
+	// the time of the change. Undo reaches the file only through Root, so
+	// a directory replaced by a symlink since cannot redirect it. Empty in
+	// an index written before they existed.
+	Root string `json:"root,omitempty"`
+	Rel  string `json:"rel,omitempty"`
 }
 
 // FileState identifies a file's contents: its size and SHA-256.
@@ -52,19 +58,10 @@ type FileState struct {
 	SHA256 string `json:"sha256"`
 }
 
-// StateOf reads path's FileState.
+// StateOf reads path's FileState (a regular file only; a FIFO or device
+// is refused, never waited on).
 func StateOf(path string) (FileState, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return FileState{}, err
-	}
-	defer f.Close()
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return FileState{}, err
-	}
-	return FileState{Size: n, SHA256: hex.EncodeToString(h.Sum(nil))}, nil
+	return fileRef{path: path}.state()
 }
 
 // Changed reports whether e's file is no longer as e's change left it:
@@ -75,7 +72,7 @@ func StateOf(path string) (FileState, error) {
 // counts as changed: celeste cannot tell. now is the file's state (zero
 // when it is gone or unreadable).
 func Changed(e Entry) (now FileState, changed bool, err error) {
-	now, err = StateOf(e.Path)
+	now, err = entryState(e)
 	if errors.Is(err, os.ErrNotExist) {
 		return FileState{}, false, nil
 	}
@@ -180,7 +177,23 @@ func (c *Checkpoint) Entry() Entry { return c.entry }
 // copy, read into memory, with no size limit: a session holds at most
 // defaultMaxEntries of them, which bounds the count but not the bytes (a
 // session that rewrites a large file keeps up to that many copies of it).
+//
+// Undoing the change stays inside path's own directory; the write tools use
+// CheckpointIn to keep it inside the workspace.
 func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, error) {
+	return sm.CheckpointIn("", path, messageID)
+}
+
+// CheckpointIn is Checkpoint for a path inside workspace: undoing the
+// change (undo, rewind, celeste revert, Rollback) reaches the file only
+// through workspace, so it cannot write or delete anything outside it, even
+// after a directory on the way was replaced by a symlink. path's directory
+// must exist and resolve inside workspace.
+func (sm *SnapshotManager) CheckpointIn(workspace, path, messageID string) (*Checkpoint, error) {
+	root, rel, ok := confine(workspace, path)
+	if !ok && workspace != "" {
+		return nil, fmt.Errorf("cannot snapshot %s: it is not inside the workspace", path)
+	}
 	if sm.dir == "" {
 		// Checkpoints are off (no home directory): the write goes ahead
 		// unrecorded, and rolling it back does nothing.
@@ -193,7 +206,7 @@ func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, erro
 	if err != nil {
 		return nil, err
 	}
-	c, err := sm.checkpointLocked(path, messageID)
+	c, err := sm.checkpointLocked(path, messageID, root, rel)
 	unlock()
 	if err != nil && errors.Is(dirErr, os.ErrNotExist) {
 		_ = os.Remove(sm.dir) // created for the lock only: leave nothing behind
@@ -208,11 +221,19 @@ func (sm *SnapshotManager) Checkpoint(path, messageID string) (*Checkpoint, erro
 }
 
 // checkpointLocked is Checkpoint under sm.mu and the session lock.
-func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint, error) {
+func (sm *SnapshotManager) checkpointLocked(path, messageID, root, rel string) (*Checkpoint, error) {
 	sm.reloadLocked()
 
-	e := Entry{MessageID: messageID, Path: path, Version: sm.nextVersionLocked(path), Time: time.Now().UTC()}
-	info, err := os.Stat(path)
+	e := Entry{MessageID: messageID, Path: path, Version: sm.nextVersionLocked(path), Time: time.Now().UTC(), Root: root, Rel: rel}
+	// Read the file the way undo will reach it (through Root when set), so
+	// a directory swapped after confine cannot put another file's contents
+	// in the backup.
+	ref, err := openRef(e)
+	if err != nil {
+		return nil, fmt.Errorf("cannot snapshot %s: %w", path, err)
+	}
+	defer ref.close()
+	info, err := ref.stat()
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// A new file: undoing the change deletes it.
@@ -230,7 +251,7 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID string) (*Checkpoint
 				return nil, fmt.Errorf("cannot snapshot %s: backup %s is in use by another checkpoint", path, e.Backup)
 			}
 		}
-		if err := backUp(path, filepath.Join(sm.dir, e.Backup), info); err != nil {
+		if err := backUp(ref, filepath.Join(sm.dir, e.Backup), info); err != nil {
 			return nil, err
 		}
 	}
@@ -266,7 +287,7 @@ func (c *Checkpoint) Commit() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	delete(sm.open, c)
-	st, err := StateOf(c.entry.Path)
+	st, err := entryState(c.entry)
 	if err != nil {
 		return fmt.Errorf("cannot record the state of %s: %w", c.entry.Path, err)
 	}
@@ -668,8 +689,13 @@ func (sm *SnapshotManager) undoLocked(i int) error {
 }
 
 func (sm *SnapshotManager) restore(e Entry) error {
+	ref, err := openRef(e)
+	if err != nil {
+		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
+	}
+	defer ref.close()
 	if e.Backup == "" {
-		if err := os.Remove(e.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := ref.remove(); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("cannot remove %s: %w", e.Path, err)
 		}
 		return nil
@@ -682,7 +708,7 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	if err != nil {
 		return fmt.Errorf("cannot restore %s: %w", e.Path, err)
 	}
-	cur, curErr := os.ReadFile(e.Path)
+	cur, curErr := ref.readFile()
 	if curErr == nil && bytes.Equal(cur, data) {
 		// Already as checkpointed (a write that failed before changing a
 		// byte, e.g. on a read-only file): nothing to restore.
@@ -696,8 +722,9 @@ func (sm *SnapshotManager) restore(e Entry) error {
 	// truncated. The file keeps its current mode; a deleted one gets the
 	// backup's. Being a new file renamed into place, it does not keep the
 	// old file's other hard links, owner (when another user owned it),
-	// extended attributes or ACLs.
-	err = atomicWrite(e.Path, data, perm)
+	// extended attributes or ACLs. A symlink in its place is replaced, not
+	// written through.
+	err = atomicWrite(ref, data, perm)
 	var noTemp *atomicfile.TempError
 	if errors.As(err, &noTemp) && errors.Is(noTemp.Err, os.ErrPermission) {
 		// The directory is not writable but the file may be (the write
@@ -705,8 +732,8 @@ func (sm *SnapshotManager) restore(e Entry) error {
 		// only when the current contents could be read: a write that fails
 		// halfway puts them back. Any other reason (a full disk) is
 		// reported as it is.
-		if _, serr := os.Stat(e.Path); serr == nil && curErr == nil {
-			err = writeInPlace(e.Path, data, cur)
+		if _, serr := ref.stat(); serr == nil && curErr == nil {
+			err = writeInPlace(ref, data, cur)
 		}
 	}
 	if err != nil {
@@ -716,30 +743,30 @@ func (sm *SnapshotManager) restore(e Entry) error {
 }
 
 // atomicWrite is restore's atomic write (a test seam).
-var atomicWrite = atomicfile.WriteKeepMode
+var atomicWrite = func(f fileRef, data []byte, perm os.FileMode) error { return f.replace(data, perm) }
 
-// writeInPlace overwrites the existing file at path with data, keeping
-// the file itself (its mode, owner, links and attributes). prev is what the
-// file holds now: when the write fails, it is written back (best effort),
-// so a failed restore does not leave the file truncated.
-func writeInPlace(path string, data, prev []byte) error {
-	err := overwrite(path, data)
+// writeInPlace overwrites the existing file f with data, keeping the file
+// itself (its mode, owner, links and attributes). prev is what the file
+// holds now: when the write fails, it is written back (best effort), so a
+// failed restore does not leave the file truncated.
+func writeInPlace(f fileRef, data, prev []byte) error {
+	err := overwrite(f, data)
 	if err != nil {
-		if rerr := overwrite(path, prev); rerr != nil {
+		if rerr := overwrite(f, prev); rerr != nil {
 			return fmt.Errorf("%w (and putting back its previous contents failed: %v)", err, rerr)
 		}
 	}
 	return err
 }
 
-// overwrite truncates the file at path and writes data to it.
-func overwrite(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+// overwrite truncates the file f and writes data to it.
+func overwrite(f fileRef, data []byte) error {
+	fh, err := f.open(os.O_WRONLY | os.O_TRUNC)
 	if err != nil {
 		return err
 	}
-	_, err = inPlaceWrite(f, data)
-	if cerr := f.Close(); err == nil {
+	_, err = inPlaceWrite(fh, data)
+	if cerr := fh.Close(); err == nil {
 		err = cerr
 	}
 	return err
@@ -820,13 +847,13 @@ func writeIndex(dir string, entries []Entry) error {
 // written atomically with src's mode plus owner write (so it can always be
 // replaced and removed, also on Windows); a leftover file or symlink under
 // its name is removed first, never written through.
-func backUp(src, dst string, before os.FileInfo) error {
-	data, err := os.ReadFile(src)
+func backUp(src fileRef, dst string, before os.FileInfo) error {
+	data, err := src.readFile()
 	if err != nil {
 		return fmt.Errorf("snapshot copy failed: %w", err)
 	}
-	if info, err := os.Stat(src); err == nil && !info.ModTime().Equal(before.ModTime()) {
-		if data, err = os.ReadFile(src); err != nil {
+	if info, err := src.stat(); err == nil && !info.ModTime().Equal(before.ModTime()) {
+		if data, err = src.readFile(); err != nil {
 			return fmt.Errorf("snapshot retry copy failed: %w", err)
 		}
 	}

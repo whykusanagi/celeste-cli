@@ -82,3 +82,26 @@ func FuzzRmRefusedMatchesRmFlags(f *testing.F) {
 		}
 	})
 }
+
+// Aikido 806869510: a home-relative path that climbs to or above the home
+// directory names it (or something outside it), however it is spelled;
+// one that stays below it does not.
+func TestDestructiveRmHomeTraversal(t *testing.T) {
+	for cmd, want := range map[string]Result{
+		"rm -rf ~/../someuser":        Found,
+		"rm -rf $HOME/../someuser":    Found,
+		"rm -rf ${HOME}/../someuser":  Found,
+		"rm -rf ~/../../tmp/x":        Found,
+		"rm -rf ~/a/../..":            Found,
+		"rm -rf ~/a/..":               Found,
+		"rm -rf ~/./../x/*":           Found,
+		"rm -rf ~other/../x":          Found,
+		"rm -rf ~/project/build":      None,
+		"rm -rf ~/a/../b":             None,
+		"rm -rf $HOME/project/../tmp": None,
+	} {
+		if got := DestructiveRm(cmd); got != want {
+			t.Errorf("DestructiveRm(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}

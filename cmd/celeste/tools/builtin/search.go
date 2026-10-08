@@ -104,7 +104,7 @@ func (t *SearchTool) Execute(ctx context.Context, input map[string]any, progress
 		if p == targetPath {
 			name = realPath
 		}
-		file, err := openNoFollow(name)
+		file, err := openRegularFile(name)
 		if err != nil {
 			return nil
 		}

@@ -25,13 +25,19 @@ Every `bash` command runs in its own process group, and a timeout or cancel kill
 ## What is writable
 
 - the workspace;
-- the git directories of the repository the workspace is in, when they are outside it: a linked worktree's (`git worktree add`, which is also how isolated subagents run) git dir and the repository's shared `.git`, or the `.git` above a workspace that is a subdirectory of a repository. Without them `git add` and `git commit` fail. Like the workspace's own `.git`, this includes `.git/hooks` and `.git/config`;
+- the git directories of the repository the workspace is in, when they are outside it: a linked worktree's (`git worktree add`, which is also how isolated subagents run) git dir and the repository's shared `.git`, a submodule's git dir, or the `.git` above a workspace that is a subdirectory of a repository. Without them `git add` and `git commit` fail. Celeste reads them from `.git` itself and believes only what git would have laid out: a symlinked `.git` is ignored, and a `.git` file counts only when it names a linked worktree's admin directory (whose `gitdir` file points back to this `.git` and whose `commondir` is the repository's `.git`) or a submodule's git dir (whose `core.worktree` points back). A git directory that is `/` or contains the workspace or your home directory is never made writable;
 - the temp directories: `$TMPDIR` (or the system default), `/tmp` and, on macOS, `/private/tmp`;
 - your user cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux), which holds Go's build cache;
 - these build caches, when they exist: `~/go/pkg` (for each `$GOPATH` entry when it is set: its `pkg`; plus `$GOMODCACHE` when set), `~/.cargo` (or `$CARGO_HOME`), `~/.gradle` (or `$GRADLE_USER_HOME`), `~/.npm` and `~/.m2/repository`. The Cargo and Gradle homes are writable whole, since Cargo takes its lock there and the Gradle wrapper and daemon live beside the caches; that includes `~/.cargo/bin` and Gradle's init scripts. These locations are read from celeste's environment, not from `go env`'s config file;
 - on macOS, `/dev/null`, `/dev/tty` and `/dev/fd/*`. On Linux the sandbox has its own `/dev`, and `/run` is an empty temporary directory (the directory `/etc/resolv.conf` points into there, systemd's, NetworkManager's or resolvconf's, stays visible read-only, so DNS keeps working).
 
 Everything else is read-only to the command. Paths are compared after resolving symlinks.
+
+### Git config and hooks stay read-only
+
+Inside those writable directories, each git directory's `config`, `config.worktree` and `hooks` stay read-only, the workspace's own `.git` included (on macOS a deny rule after the allow rules; on Linux a read-only bind over the writable ones, and celeste creates a missing `hooks` directory and an empty `config.worktree`, as git would, so they can be bound). So do the files that tell git where a git directory is: each git directory's `commondir` (git takes its config from the directory a `commondir` names, in any git directory, a plain `.git` included) and `gitdir`, a linked worktree's or submodule's `.git` file, and, for a workspace below the repository's root, a `.git` in the workspace (git would find it first). On macOS the deny rule covers them whether or not they exist. bubblewrap can bind only over a path that exists, so on Linux celeste also checks them after every sandboxed command, outside the sandbox: one that appeared is removed, one that changed is restored, and the command's result reports it. The git directories that exist and the directories above them cannot be renamed aside either. Git run outside the sandbox, by you or by celeste, would otherwise run what a sandboxed command wrote there or pointed it at: a hook, `core.fsmonitor`, a merge or filter driver. So under the sandbox `git commit`, `git add` and `git merge` work, but commands that change the repository's config (`git config`, `git remote add`, `git push -u`, `git branch --set-upstream-to`) fail; run those yourself.
+
+Celeste's own git commands (`git_status`, `git_log`, `git_diff`, the status line, the project snapshot and the merge of a subagent's lane) also run with `core.fsmonitor` off and hooks pointed at the null device, sandbox or not, and the lane merge replaces every merge driver the config defines with git's own text merge. They name the git directory celeste verified (`GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`, unless your environment sets `GIT_DIR`), so they never follow a planted `commondir`; they turn off every filter driver the repository's own config defines (a sandboxed command can make a repository of its own in the workspace; filters from your global and system config, such as git-lfs's, still run), do not check signatures, do not look inside submodules, and show diffs without textconv or an external diff.
 
 ## Settings
 
@@ -104,7 +110,7 @@ celeste hooks trust --yes .celeste/config.json  # just the sandbox settings, wit
 
 An isolated subagent's worktree lane sits under the workspace and has its own copy of `.celeste/config.json`. When its `sandbox` object is the same as the one the parent run trusted, the lane reuses that trust; when it differs (the lane's branch changed it), it needs its own and is skipped with a warning like any other. A workspace outside the parent's never inherits trust.
 
-A `.celeste/config.json` that is a symlink, or sits in a symlinked `.celeste` directory, is never trusted. Your own `~/.celeste/config.json` needs no trust.
+A `.celeste/config.json` that is a symlink (or a FIFO or device) is not read at all: celeste warns that it is ignoring the workspace's sandbox settings, so none of them apply, the tightening ones included. One in a symlinked `.celeste` directory is read, so its tightening settings apply, but it is never trusted. Your own `~/.celeste/config.json` needs no trust.
 
 ## When no sandbox is available
 

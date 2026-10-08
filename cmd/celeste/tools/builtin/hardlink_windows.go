@@ -33,8 +33,6 @@ func hardLinked(path string, fi os.FileInfo) bool {
 	return info.NumberOfLinks > 1
 }
 
-// openInPlace opens path for an in-place rewrite. Lstat just found a
-// regular file there; Windows has no O_NOFOLLOW.
-func openInPlace(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-}
+// oNoFollow: Windows has no O_NOFOLLOW; os.Root still keeps opens inside
+// the workspace.
+const oNoFollow = 0

@@ -203,7 +203,7 @@ func pngHeader(w, h uint32) []byte {
 	return binary.BigEndian.AppendUint32(data, crc32.ChecksumIEEE(ihdr))
 }
 
-func TestFitRefusesMoreThan50MegapixelsBeforeDecoding(t *testing.T) {
+func TestFitRefusesTooManyPixelsBeforeDecoding(t *testing.T) {
 	// 7500×7000 is under the 8000 px edge but 52.5 MP; resizing it for a
 	// 2000 px cap would decode about 210 MB.
 	_, err := Fit(pngHeader(7500, 7000), "png", Anthropic.WithMaxDim(2000))
