@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"path"
 	"regexp"
 	"strings"
 
@@ -71,6 +72,19 @@ var systemMods = []struct {
 	{regexp.MustCompile(`\b(?:useradd|userdel|usermod|groupadd|adduser|deluser|chpasswd|passwd)\b`), "user management is not permitted"},
 }
 
+// privilegeCommands run a command as another user.
+var privilegeCommands = map[string]bool{"sudo": true, "su": true, "doas": true, "pkexec": true}
+
+const privilegeReason = "privilege escalation (sudo/su/doas) is not permitted"
+
+// privilegeWord reports a word (quotes removed) that runs one of
+// privilegeCommands: the bare name, \-escaped or not, or an absolute path
+// to it (/usr/bin/sudo). A relative path (feature/su) is an argument.
+func privilegeWord(w string) bool {
+	w = strings.TrimLeft(w, `\`)
+	return privilegeCommands[w] || strings.HasPrefix(w, "/") && privilegeCommands[path.Base(w)]
+}
+
 // forkLoopPattern: a fork in an endless loop.
 var forkLoopPattern = regexp.MustCompile(`\bfork\b.*\bwhile\b.*\btrue\b`)
 
@@ -84,12 +98,25 @@ func checkDangerousCommand(command string) string {
 	}
 
 	// === PRIVILEGE ESCALATION ===
-	// Block sudo/su anywhere in the command, not just as first word.
-	// Catches: sudo X, bash -c "sudo X", command sudo X, env sudo X
+	// Block sudo/su anywhere in the command, not just as first word:
+	// sudo X, command sudo X, env sudo X, and, read as a shell reads it
+	// (quotes and escapes removed, nested sh -c, eval and $( ) walked),
+	// bash -c "sudo X" or sud''o X. The plain word check stays as a
+	// backstop.
 	for _, f := range fields {
-		if f == "sudo" || f == "su" || f == "doas" || f == "pkexec" {
-			return "privilege escalation (sudo/su/doas) is not permitted"
+		if privilegeCommands[f] {
+			return privilegeReason
 		}
+	}
+	if shellparse.Walk(command, func(words []string) bool {
+		for _, w := range words {
+			if privilegeWord(w) {
+				return true
+			}
+		}
+		return false
+	}) == shellparse.Found {
+		return privilegeReason
 	}
 
 	// === DESTRUCTIVE FILESYSTEM ===

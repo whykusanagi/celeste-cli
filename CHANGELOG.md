@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **sandbox:** the git directories made writable for a workspace are taken from its `.git` only when they check out: a symlinked `.git` is ignored, and a `.git` file must name a linked worktree's or a submodule's git dir that points back to the workspace. A git directory that is the root or contains the workspace or the home directory is never made writable (Aikido 806869303).
 * **sandbox:** each git directory's `config`, `config.worktree` and `hooks` stay read-only to sandboxed commands, the workspace's own `.git` included (a read-only bind on Linux, a deny rule on macOS). Celeste's own git commands run with `core.fsmonitor` off and no hooks, and the merge of a subagent's lane uses git's text merge in place of configured merge drivers. Under the sandbox, commands that change the repository's git config now fail (Aikido 806869318).
 * **bash:** the recursive-`rm` refusal now also covers a home-relative path (`~`, `$HOME`, `${HOME}`) that climbs to or above the home directory with `..` (Aikido 806869510).
+* **bash:** the privilege-escalation refusal (`sudo`, `su`, `doas`, `pkexec`) reads the command as a shell does, so quoting or escaping the command word, an absolute path to it, or nesting it in `sh -c` or `eval` is refused too (Aikido 806869897).
 
 ### Features
 

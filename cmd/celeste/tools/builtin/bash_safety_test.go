@@ -99,3 +99,23 @@ func TestCheckDangerousCommand_HomeTraversal(t *testing.T) {
 		}
 	}
 }
+
+// Aikido 806869897: the privilege-escalation refusal reads the command as
+// a shell does, so quoting or escaping the command word, or nesting it in
+// sh -c, does not slip past.
+func TestCheckDangerousCommand_PrivilegeEscalationQuoted(t *testing.T) {
+	for _, cmd := range []string{
+		`sud''o id`, `s\udo id`, `"sudo" id`, `bash -c 'sud""o id'`,
+		`\su -`, `'doas' id`, `sh -c "pk'exec' id"`, `eval 'su""do id'`,
+		`env "/usr/bin/sudo" id`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("checkDangerousCommand(%q) allowed it", cmd)
+		}
+	}
+	for _, cmd := range []string{"echo pseudo sudoku", "git checkout feature/su", "ls ./su"} {
+		if r := checkDangerousCommand(cmd); r != "" {
+			t.Errorf("checkDangerousCommand(%q) refused a harmless line: %s", cmd, r)
+		}
+	}
+}
