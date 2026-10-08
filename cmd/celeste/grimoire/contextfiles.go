@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 const (
@@ -111,14 +112,14 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 			continue
 		}
 		if !pathutil.Within(realRoot, real) {
-			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links outside the repository)", p))
+			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links outside the repository)", termsafe.Line(p)))
 			continue
 		}
 		// Inside the repository a link may only reach another context
 		// file, never .git: AGENTS.md -> .env or CLAUDE.md -> .git/config
 		// would send the cloner's local secrets to the model.
 		if !isContextFileName(filepath.Base(real)) || pathutil.Within(filepath.Join(realRoot, ".git"), real) {
-			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links to a file that is not AGENTS.md or CLAUDE.md)", p))
+			warns = append(warns, fmt.Sprintf("context files: %s skipped (it links to a file that is not AGENTS.md or CLAUDE.md)", termsafe.Line(p)))
 			continue
 		}
 		if seen[real] {
@@ -134,13 +135,13 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 		budget := min(contextFileCap, contextTotalCap-total)
 		if budget <= 0 {
 			f.Close()
-			warns = append(warns, fmt.Sprintf("context files: %s skipped (the %d KiB total is used)", p, contextTotalCap>>10))
+			warns = append(warns, fmt.Sprintf("context files: %s skipped (the %d KiB total is used)", termsafe.Line(p), contextTotalCap>>10))
 			continue
 		}
 		text, cut, ok := readCapped(f, budget, info.Size())
 		f.Close()
 		if !ok {
-			warns = append(warns, fmt.Sprintf("context files: %s skipped (not UTF-8 text)", p))
+			warns = append(warns, fmt.Sprintf("context files: %s skipped (not UTF-8 text)", termsafe.Line(p)))
 			continue
 		}
 		if strings.TrimSpace(text) == "" {
@@ -153,7 +154,7 @@ func ContextFiles(workspace string) ([]ContextFile, []string) {
 		out = append(out, ContextFile{Path: p, Rel: rel, Content: text, Truncated: cut})
 		total += len(text)
 		if cut > 0 {
-			warns = append(warns, fmt.Sprintf("context files: %s cut to %d KiB", p, len(text)>>10))
+			warns = append(warns, fmt.Sprintf("context files: %s cut to %d KiB", termsafe.Line(p), len(text)>>10))
 		}
 	}
 	return out, warns

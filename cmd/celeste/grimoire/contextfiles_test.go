@@ -244,3 +244,26 @@ func TestContextFilesSkipBlankFiles(t *testing.T) {
 		t.Fatalf("blank files were rendered: %q", RenderContextFiles(files))
 	}
 }
+
+// Aikido 806869282: a context-file warning names a repository path, which
+// is shown escaped.
+func TestContextFilesWarningPathIsTerminalSafe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("control characters are not allowed in Windows file names")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(root, "d\x1b]0;t\x07\r")
+	mk(t, filepath.Join(ws, "AGENTS.md"), "bad \xff utf-8")
+	_, warns := ContextFiles(ws)
+	if len(warns) == 0 {
+		t.Fatal("no warning for a file that is not UTF-8")
+	}
+	for _, w := range warns {
+		if strings.ContainsAny(w, "\x1b\x07\r") {
+			t.Errorf("warning keeps a control: %q", w)
+		}
+	}
+}

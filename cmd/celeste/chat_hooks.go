@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
@@ -29,6 +31,7 @@ type chatWarnSink struct {
 	mu       sync.Mutex
 	loading  bool
 	warnings []string
+	stderr   io.Writer // where setup warnings print; nil is os.Stderr
 }
 
 func newChatWarnSink() *chatWarnSink { return &chatWarnSink{loading: true} }
@@ -39,7 +42,11 @@ func (s *chatWarnSink) warn(msg string) {
 	if s.loading {
 		s.warnings = append(s.warnings, msg)
 		s.mu.Unlock()
-		fmt.Fprintln(os.Stderr, msg)
+		w := s.stderr
+		if w == nil {
+			w = os.Stderr
+		}
+		fmt.Fprintln(w, termsafe.Text(msg)) // warnings can name workspace paths
 		return
 	}
 	s.mu.Unlock()

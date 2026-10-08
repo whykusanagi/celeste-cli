@@ -16,10 +16,10 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // Event names a point in a session where hooks run.
@@ -108,7 +108,7 @@ func (d Definition) normalize() (Definition, error) {
 	if d.Command == "" {
 		return d, errors.New("empty command")
 	}
-	if r := unsafeRune(d.Command); r >= 0 {
+	if r := termsafe.UnsafeRune(d.Command); r >= 0 {
 		return d, fmt.Errorf("command contains control or bidi character %U", r)
 	}
 	switch d.Protocol {
@@ -122,7 +122,7 @@ func (d Definition) normalize() (Definition, error) {
 		return d, fmt.Errorf("protocol v1 supports only PreToolUse and PostToolUse, not %s", d.Event)
 	}
 	d.Matcher = strings.TrimSpace(d.Matcher)
-	if r := unsafeRune(d.Matcher); r >= 0 {
+	if r := termsafe.UnsafeRune(d.Matcher); r >= 0 {
 		return d, fmt.Errorf("matcher contains control or bidi character %U", r)
 	}
 	if d.Matcher == "" {
@@ -140,30 +140,11 @@ func (d Definition) normalize() (Definition, error) {
 	return d, nil
 }
 
-// unsafeRune returns the first rune that could hide or forge text on a
-// terminal (C0/C1 controls, DEL, bidi embeddings, overrides and isolates),
-// or -1. The approval prompt must show a person exactly what will run.
-func unsafeRune(s string) rune {
-	for _, r := range s {
-		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) ||
-			unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
-			return r
-		}
-	}
-	return -1
-}
-
 // SafeText returns s, or s Go-quoted when showing it could act on or hide
-// text on a terminal: invalid UTF-8 (it decodes as a printable U+FFFD), a
-// rune unsafeRune rejects, or any other non-printable rune. It is the one
-// rule for untrusted text celeste shows: hook errors, the approval prompt
-// and `celeste mcp list`.
-func SafeText(s string) string {
-	if !utf8.ValidString(s) || unsafeRune(s) >= 0 || strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
-		return strconv.Quote(s)
-	}
-	return s
-}
+// text on a terminal. It is termsafe.Line, the one rule for one-line
+// untrusted text celeste shows: hook errors and reasons, the approval
+// prompt and `celeste mcp list`.
+func SafeText(s string) string { return termsafe.Line(s) }
 
 // matches reports whether d runs for event ev on tool.
 func (d Definition) matches(ev Event, tool string) bool {

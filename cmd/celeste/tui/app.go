@@ -22,6 +22,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
@@ -1273,7 +1274,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					text = "Diff: " + err.Error()
 				}
-				m.chat = m.chat.AddSystemMessage(text)
+				m.chat = m.chat.AddSystemMessage(termsafe.Text(text)) // workspace paths: escaped before styling
 				return m, nil
 
 			case "undo":
@@ -1286,7 +1287,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					text = "Undo: " + err.Error()
 				}
-				m.chat = m.chat.AddSystemMessage(text)
+				m.chat = m.chat.AddSystemMessage(termsafe.Text(text))
 				return m, nil
 
 			case "rewind":
@@ -1622,7 +1623,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.chat = m.chat.AddSystemMessage("Subagent resume not available.")
 						return m, nil
 					}
-					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Resuming subagent from checkpoint %s...", checkpointID))
+					m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Resuming subagent from checkpoint %s...", termsafe.Line(checkpointID)))
 					return m, func() tea.Msg {
 						result, err := resumer.ResumeSubagent(context.Background(), checkpointID)
 						if err != nil {
@@ -1641,7 +1642,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					if killer.KillSubagent(id) {
-						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Killed subagent %s.", id))
+						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("Killed subagent %s.", termsafe.Line(id)))
 					} else {
 						m.chat = m.chat.AddSystemMessage(fmt.Sprintf("No in-flight subagent matching %q (already finished or unknown id).", id))
 					}
@@ -1672,21 +1673,23 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case "waiting":
 						icon = "◇"
 					}
+					// Names, IDs and summaries come from the model: escaped
+					// before the line is styled.
 					line := fmt.Sprintf("  %s 〔%s〕 %s  %d turns  %s",
-						icon, a.Name, a.Status, a.Turns,
+						icon, termsafe.Line(a.Name), termsafe.Line(a.Status), a.Turns,
 						a.Elapsed.Round(time.Millisecond))
 					if a.ID != "" {
-						line += fmt.Sprintf("  id:%s", a.ID)
+						line += fmt.Sprintf("  id:%s", termsafe.Line(a.ID))
 					}
 					if a.TaskID != "" {
-						line += fmt.Sprintf("  (task: %s)", a.TaskID)
+						line += fmt.Sprintf("  (task: %s)", termsafe.Line(a.TaskID))
 					}
 					if a.Type != "" {
-						line += "  [" + a.Type + "]"
+						line += "  [" + termsafe.Line(a.Type) + "]"
 					}
 					sb.WriteString(line + "\n")
 					if a.Summary != "" {
-						sb.WriteString("      " + agentSummaryLine(a.Summary) + "\n")
+						sb.WriteString("      " + termsafe.Line(agentSummaryLine(a.Summary)) + "\n")
 					}
 				}
 				sb.WriteString("\nCancel one with: /agents kill <id|name>  (e.g. the 〔name〕 shown above)\n")
@@ -2237,7 +2240,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case MCPConnectResultMsg:
 		if msg.Err != nil {
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("MCP %s: %v", msg.Name, msg.Err))
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("MCP %s: %s", termsafe.Line(msg.Name), termsafe.Line(msg.Err.Error())))
 		}
 		m.mcpPanel = m.mcpPanel.RefreshServers()
 		return m, nil
@@ -2345,9 +2348,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelFunc = nil
 			m.streaming = false
 			m.status = m.status.SetStreaming(false)
-			m.status = m.status.SetText(fmt.Sprintf("Agent error: %s", msg.Text))
+			m.status = m.status.SetText(fmt.Sprintf("Agent error: %s", termsafe.Line(msg.Text)))
 			if strings.TrimSpace(msg.Text) != "" {
-				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %s", msg.Text))
+				m.chat = m.chat.AddSystemMessage(fmt.Sprintf("❌ Agent error: %s", termsafe.Text(msg.Text)))
 			}
 			m.persistSession()
 		}
@@ -2511,7 +2514,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.status.SetStreaming(false)
 
 		if strings.TrimSpace(msg.Output) != "" {
-			m.chat = m.chat.AddSystemMessage(msg.Output)
+			m.chat = m.chat.AddSystemMessage(termsafe.Text(msg.Output)) // the run's output: escaped before styling
 		}
 
 		if msg.Err != nil {
@@ -2598,11 +2601,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// always padded to a fixed width so the viewport never reflows.
 			// Glamour is skipped for this message (typingActive flag) so the
 			// ANSI styling in the buffer doesn't break markdown rendering.
-			displayed := m.typingContent[:m.typingPos]
+			// The buffer is passed apart from the text: the reply is escaped
+			// for the terminal, the buffer's styling is celeste's own.
+			displayed := textutil.CutBytes(m.typingContent, m.typingPos)
+			cursor := ""
 			if m.typingPos < len(m.typingContent) {
-				displayed += " " + GetFixedWidthCorruption(16)
+				cursor = " " + GetFixedWidthCorruption(16)
 			}
-			m.chat = m.chat.SetLastAssistantContent(displayed)
+			m.chat = m.chat.SetLastAssistantTyping(displayed, cursor)
 
 			// Show corruption phrases in the status bar instead of in the content
 			m.status = m.status.SetText(StreamingSpinner(m.animFrame) + " " + ThinkingAnimation(m.animFrame))
@@ -2705,8 +2711,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View implements tea.Model.
+// View implements tea.Model. Every frame goes through termsafe.Styled: the
+// panels escape untrusted text before styling it, and this pass keeps any
+// path that does not from reaching the terminal with a live control
+// (only the SGR colors lipgloss and glamour add pass through).
 func (m AppModel) View() string {
+	return termsafe.Styled(m.frame())
+}
+
+// frame renders the screen View shows.
+func (m AppModel) frame() string {
 	if !m.ready {
 		return "\n  Initializing..."
 	}
@@ -3889,12 +3903,14 @@ func errorText(err error) string {
 }
 
 // cleanErrorText is errorText for an error already turned into text (an
-// orchestrator error event carries only its message).
+// orchestrator error event carries only its message). Error text comes
+// from providers and tools, so it is escaped for the terminal here, before
+// any line styles it.
 func cleanErrorText(msg string) string {
 	if len(msg) > 7 && strings.EqualFold(msg[:7], "error, ") {
 		msg = msg[7:]
 	}
-	return strings.ReplaceAll(msg, ": error, status code: ", ": status code: ")
+	return termsafe.Text(strings.ReplaceAll(msg, ": error, status code: ", ": status code: "))
 }
 
 // getWarningStyle returns the appropriate style for the warning level.

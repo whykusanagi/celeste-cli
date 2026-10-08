@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
 // ChatModel represents the chat panel with scrollable messages.
@@ -24,6 +26,10 @@ type ChatModel struct {
 	userScrolled   bool // Track if user has scrolled manually
 	showSkillCalls bool // Toggle to show/hide skill call logs
 	typingActive   bool // Skip Glamour for the last assistant message during typing
+	// typingCursor is the styled corruption buffer shown after the reply
+	// being typed out. It is celeste's own styling, kept apart from the
+	// reply text so only the text is escaped (renderMessageOpt).
+	typingCursor string
 }
 
 // NewChatModel creates a new chat model.
@@ -323,8 +329,16 @@ func (m ChatModel) SetTypingActive(active bool) ChatModel {
 	return m
 }
 
-// SetLastAssistantContent sets the content of the last assistant message.
+// SetLastAssistantContent sets the content of the last assistant message
+// and drops the typing cursor.
 func (m ChatModel) SetLastAssistantContent(content string) ChatModel {
+	return m.SetLastAssistantTyping(content, "")
+}
+
+// SetLastAssistantTyping sets the content of the last assistant message and
+// the styled cursor shown after it while it is typed out.
+func (m ChatModel) SetLastAssistantTyping(content, cursor string) ChatModel {
+	m.typingCursor = cursor
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		if m.messages[i].Role == "assistant" {
 			m.messages[i].Content = content
@@ -598,6 +612,19 @@ func (m ChatModel) renderMessageOpt(msg ChatMessage, width int, skipMarkdown boo
 	// Header line
 	header := fmt.Sprintf("%s %s", roleLabel, timestamp)
 
+	// Replies, user input and the workspace or tool text in them reach the
+	// terminal with every control escaped, before any styling is added.
+	// System lines are composed by celeste and may carry its own colors
+	// around such text: only their SGR sequences are kept.
+	if msg.Role == "system" {
+		msg.Content = termsafe.Styled(msg.Content)
+	} else {
+		msg.Content = termsafe.Text(msg.Content)
+	}
+	if skipMarkdown && m.typingCursor != "" {
+		msg.Content += m.typingCursor
+	}
+
 	// Try markdown rendering for assistant messages
 	var styledContent string
 	if msg.plain {
@@ -639,23 +666,25 @@ func (m ChatModel) renderFunctionCall(call FunctionCall, width int) string {
 	}
 
 	// Function name
-	name := FunctionNameStyle.Render(call.Name)
+	// The name, arguments and result come from the model and from what the
+	// tool read (files, web pages): escaped before they are styled.
+	name := FunctionNameStyle.Render(termsafe.Text(call.Name))
 
 	// Arguments (truncated)
 	argsStr := formatArgs(call.Arguments)
 	if len(argsStr) > 50 {
-		argsStr = argsStr[:47] + "..."
+		argsStr = textutil.CutBytes(argsStr, 47) + "..."
 	}
-	args := FunctionArgsStyle.Render(argsStr)
+	args := FunctionArgsStyle.Render(termsafe.Text(argsStr))
 
 	// Result (if any)
 	var result string
 	if call.Result != "" {
 		resultStr := call.Result
 		if len(resultStr) > 100 {
-			resultStr = resultStr[:97] + "..."
+			resultStr = textutil.CutBytes(resultStr, 97) + "..."
 		}
-		result = FunctionResultStyle.Render("→ " + resultStr)
+		result = FunctionResultStyle.Render("→ " + termsafe.Text(resultStr))
 	}
 
 	header := fmt.Sprintf("%s %s %s", statusIndicator, name, args)

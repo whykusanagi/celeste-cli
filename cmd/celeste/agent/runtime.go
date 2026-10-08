@@ -22,6 +22,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/decide"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
@@ -99,7 +100,7 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 	// Shadow reports inline: errOut may be a caller's bytes.Buffer, and the
 	// run must not outlive its output.
 	opts, report := compact.WithJev(ctx, r.jev, r.jevMode, msgs, compact.Options{Window: r.budget.ModelLimit, Used: used, Overhead: overhead, Unseen: meter.Unseen(msgs), Force: force}, func(line string) {
-		fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+		fmt.Fprintf(r.errOut, "[agent] %s\n", termsafe.Text(line))
 	}, false)
 	pruned, res := compact.Prune(msgs, opts, r.pruned)
 	report(res)
@@ -187,7 +188,7 @@ func SmallModelSummarizer(base *llm.Config, model string) compact.SummarizeFunc 
 
 func (r *Runner) reportCompaction(state *RunState, msg string) {
 	if state.Options.Verbose {
-		fmt.Fprintf(r.out, "[agent] %s\n", msg)
+		fmt.Fprintf(r.out, "[agent] %s\n", termsafe.Text(msg))
 	}
 	r.emitProgress(ProgressStepDone, msg, state.Turn, state.Options.MaxTurns)
 }
@@ -367,7 +368,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	gate := &callbackGate{}
 	warn := options.Warn
 	if warn == nil {
-		warn = func(s string) { fmt.Fprintf(errOut, "Warning: %s\n", s) }
+		warn = func(s string) { fmt.Fprintf(errOut, "Warning: %s\n", termsafe.Text(s)) }
 	}
 	userWarn := warn
 	warn = func(s string) { gate.do(func() { userWarn(s) }) }
@@ -473,7 +474,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		Window:   contextLimit,
 	})
 	if sp.Notice != "" {
-		fmt.Fprintln(errOut, prompts.NoticePrefix+sp.Notice)
+		fmt.Fprintln(errOut, prompts.NoticePrefix+termsafe.Text(sp.Notice))
 	}
 	systemPrompt := sp.String()
 	client.SetSystemPromptParts(sp.Static, sp.Dynamic)
@@ -494,14 +495,14 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 	systemPromptTokens := ctxmgr.EstimateTokens(systemPrompt)
 	if !known {
 		if notice := config.UnknownContextNotice(model, contextLimit); notice != "" {
-			fmt.Fprintln(errOut, notice)
+			fmt.Fprintln(errOut, termsafe.Text(notice))
 		}
 	}
 	// The tool schemas the run offers count too (#234 item 1).
 	// On a small window they are a fitted core set, said once (#310).
 	budget := ctxmgr.NewTokenBudget(contextLimit, systemPromptTokens, compact.DefinitionTokens(client.GetSkills()))
 	if n := client.TakeToolNotice(); n != "" {
-		fmt.Fprintln(errOut, prompts.NoticePrefix+n)
+		fmt.Fprintln(errOut, prompts.NoticePrefix+termsafe.Text(n))
 	}
 
 	return &Runner{
@@ -530,7 +531,7 @@ func NewRunner(cfg *config.Config, options Options, out io.Writer, errOut io.Wri
 		gateMode:       cfg.CompletionGateMode(),
 		jevGate:        cfg.JevGateMode(),
 		oracle: WatchdogOracle(cfg, options.Workspace, func(line string) {
-			fmt.Fprintf(errOut, "[agent] %s\n", line)
+			fmt.Fprintf(errOut, "[agent] %s\n", termsafe.Text(line))
 		}),
 	}, nil
 }
@@ -657,7 +658,7 @@ func (r *Runner) runState(ctx context.Context, state *RunState) (*RunState, erro
 		}
 		if !state.Options.DisableCheckpoints {
 			if err := r.store.Save(state); err != nil {
-				fmt.Fprintf(r.errOut, "Warning: failed to save checkpoint: %v\n", err)
+				fmt.Fprintf(r.errOut, "Warning: failed to save checkpoint: %s\n", termsafe.Text(err.Error()))
 			}
 		}
 	}
@@ -826,7 +827,7 @@ func (r *Runner) newLoop(state *RunState, sess *steer.Session) *loop.Loop {
 		SessionID: "agent-" + state.RunID,
 		Steering:  sess.Steering(),
 		Advisor: steer.NewToolGate(r.jevGate, r.options.Workspace, func() string { return state.Goal }, func(line string) {
-			fmt.Fprintf(r.errOut, "[agent] %s\n", line)
+			fmt.Fprintf(r.errOut, "[agent] %s\n", termsafe.Text(line))
 		}),
 	}
 }
@@ -851,7 +852,7 @@ func (r *Runner) newSteering(ctx context.Context, state *RunState) *steer.Sessio
 		Context:         ctx,
 		// The completion gate asks its own ballot at a final reply.
 		FinalRepliesToGate: true,
-		Logf:               func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", line) },
+		Logf:               func(line string) { fmt.Fprintf(r.errOut, "[agent] %s\n", termsafe.Text(line)) },
 	})
 }
 
@@ -929,13 +930,13 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 		state.LastAssistantResponse = text
 		state.Steps = append(state.Steps, Step{Turn: state.Turn, Type: "assistant", Content: text, Timestamp: time.Now()})
 		if state.Options.Verbose && text != "" {
-			fmt.Fprintf(r.out, "[assistant]\n%s\n", text)
+			fmt.Fprintf(r.out, "[assistant]\n%s\n", termsafe.Text(text)) // model output: escaped
 		}
 		updatePlanProgressFromAssistant(state, text, len(ev.ToolNames) > 0)
 	case loop.EventToolStart:
 		r.emitProgress(ProgressToolCall, ev.Call.Name, state.Turn, state.Options.MaxTurns)
 		if state.Options.Verbose {
-			fmt.Fprintf(r.out, "[tool] %s\n", ev.Call.Name)
+			fmt.Fprintf(r.out, "[tool] %s\n", termsafe.Line(ev.Call.Name))
 		}
 	case loop.EventToolResult:
 		state.ToolCallCount++
@@ -945,7 +946,7 @@ func (r *Runner) onEvent(state *RunState, base int, ev loop.Event) {
 		})
 	case loop.EventNotice:
 		if state.Options.Verbose {
-			fmt.Fprintf(r.out, "[agent] warning: %s\n", ev.Text)
+			fmt.Fprintf(r.out, "[agent] warning: %s\n", termsafe.Text(ev.Text))
 		}
 	case loop.EventTurnEnd:
 		// A consistent history (every call paired): checkpoint per turn, as
