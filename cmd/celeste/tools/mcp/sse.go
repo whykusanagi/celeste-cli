@@ -21,11 +21,14 @@ type SSETransport struct {
 	baseURL    string
 	postURL    string // discovered from SSE endpoint event
 	client     *http.Client
-	responseCh chan *Response
+	responseCh chan queuedResponse
 	mu         sync.Mutex
-	closed     bool
-	done       chan struct{}
-	cancel     context.CancelFunc // ends the GET stream started by connectSSE
+	// queuedBytes is the size of the responses in responseCh, capped at
+	// maxResponseBytes in all (Aikido 806869944).
+	queuedBytes int
+	closed      bool
+	done        chan struct{}
+	cancel      context.CancelFunc // ends the GET stream started by connectSSE
 	// endpointErr is set when the server announced a POST endpoint on
 	// another origin; Send then fails rather than POST there.
 	endpointErr error
@@ -42,7 +45,7 @@ func NewSSETransport(url string) (*SSETransport, error) {
 	t := &SSETransport{
 		baseURL:     url,
 		client:      newMCPHTTPClient(),
-		responseCh:  make(chan *Response, 100),
+		responseCh:  make(chan queuedResponse, 100),
 		done:        make(chan struct{}),
 		streamEnded: make(chan struct{}),
 		cancel:      cancel,
@@ -121,8 +124,12 @@ func (t *SSETransport) connectSSE(ctx context.Context) {
 			case "message":
 				var rpcResp Response
 				if err := json.Unmarshal([]byte(data), &rpcResp); err == nil {
+					if !t.reserve(len(data)) {
+						streamErr = errTooManyUnread()
+						return
+					}
 					select {
-					case t.responseCh <- &rpcResp:
+					case t.responseCh <- queuedResponse{resp: &rpcResp, size: len(data)}:
 					case <-t.done:
 						return
 					}
@@ -228,17 +235,17 @@ func (t *SSETransport) post(ctx context.Context, url string, data []byte) (*http
 // response it delivered has been read.
 func (t *SSETransport) Receive() (*Response, error) {
 	select {
-	case resp, ok := <-t.responseCh:
+	case q, ok := <-t.responseCh:
 		if !ok {
 			return nil, fmt.Errorf("transport closed")
 		}
-		return resp, nil
+		return t.release(q), nil
 	case <-t.done:
 		return nil, fmt.Errorf("transport closed")
 	case <-t.streamEnded:
 		select {
-		case resp := <-t.responseCh:
-			return resp, nil
+		case q := <-t.responseCh:
+			return t.release(q), nil
 		default:
 		}
 		t.mu.Lock()
@@ -246,6 +253,26 @@ func (t *SSETransport) Receive() (*Response, error) {
 		t.mu.Unlock()
 		return nil, err
 	}
+}
+
+// reserve counts n more queued bytes, failing when that would pass
+// maxResponseBytes.
+func (t *SSETransport) reserve(n int) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.queuedBytes+n > maxResponseBytes {
+		return false
+	}
+	t.queuedBytes += n
+	return true
+}
+
+// release uncounts a response Receive took off the queue.
+func (t *SSETransport) release(q queuedResponse) *Response {
+	t.mu.Lock()
+	t.queuedBytes -= q.size
+	t.mu.Unlock()
+	return q.resp
 }
 
 // Close shuts down the SSE connection.

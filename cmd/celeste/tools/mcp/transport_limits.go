@@ -17,6 +17,20 @@ var maxResponseBytes = 16 << 20
 // maxQueuedResponses caps the responses one HTTP POST may queue.
 const maxQueuedResponses = 256
 
+// queuedResponse is a decoded response waiting for Receive, with the size
+// of its encoding: the bytes queued unread are capped at maxResponseBytes in
+// all, not only per response (Aikido 806869944).
+type queuedResponse struct {
+	resp *Response
+	size int
+}
+
+// errTooManyUnread reports a server that sent more unread responses than
+// the queue holds.
+func errTooManyUnread() error {
+	return fmt.Errorf("MCP server sent more than %d bytes of unread responses", maxResponseBytes)
+}
+
 // errResponseTooLarge reports a response over maxResponseBytes.
 func errResponseTooLarge() error {
 	return fmt.Errorf("MCP response too large (over %d bytes)", maxResponseBytes)

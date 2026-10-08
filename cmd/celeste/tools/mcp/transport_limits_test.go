@@ -191,3 +191,68 @@ func TestSSETransportOversizedEventFailsReceive(t *testing.T) {
 		t.Fatal("Receive blocked after the stream ended on an oversized event")
 	}
 }
+
+// TestSSETransportBoundsQueuedBytes: responses no call has read yet are
+// capped at maxResponseBytes in all, not only per response; a server that
+// pushes more ends the stream (Aikido 806869944).
+func TestSSETransportBoundsQueuedBytes(t *testing.T) {
+	withResponseLimit(t, 4096)
+	event := bigResult(1000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+		for i := 0; i < 150; i++ {
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", event)
+		}
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	tr, err := NewSSETransport(srv.URL + "/sse")
+	require.NoError(t, err)
+	defer tr.Close()
+	select {
+	case <-tr.streamEnded:
+	case <-time.After(2 * time.Second):
+	}
+	assert.LessOrEqual(t, len(tr.responseCh)*len(event), maxResponseBytes,
+		"unread responses exceed the byte cap")
+	// Every queued response is still delivered, then the stream's error.
+	for {
+		_, err := tr.Receive()
+		if err != nil {
+			assert.Contains(t, err.Error(), "unread")
+			break
+		}
+	}
+}
+
+// TestHTTPTransportBoundsQueuedBytes: responses left unread across POSTs are
+// capped at maxResponseBytes in all (Aikido 806869944).
+func TestHTTPTransportBoundsQueuedBytes(t *testing.T) {
+	withResponseLimit(t, 4096)
+	body := bigResult(1000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+	tr, err := NewHTTPTransport(srv.URL)
+	require.NoError(t, err)
+	var sendErr error
+	for i := 0; i < 10 && sendErr == nil; i++ {
+		sendErr = tr.Send(&Request{JSONRPC: "2.0", ID: 1, Method: "tools/list"})
+	}
+	require.Error(t, sendErr, "unread responses were queued without a byte cap")
+	tr.mu.Lock()
+	n := len(tr.queue)
+	tr.mu.Unlock()
+	assert.LessOrEqual(t, n*len(body), maxResponseBytes)
+	// Reading frees the room again.
+	for {
+		if _, err := tr.Receive(); err != nil {
+			break
+		}
+	}
+	require.NoError(t, tr.Send(&Request{JSONRPC: "2.0", ID: 1, Method: "tools/list"}))
+}

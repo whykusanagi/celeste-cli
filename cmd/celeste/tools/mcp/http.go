@@ -20,7 +20,10 @@ type HTTPTransport struct {
 	client   *http.Client
 	protoVer string
 	mu       sync.Mutex
-	queue    []*Response
+	queue    []queuedResponse
+	// queuedBytes is the size of the responses in queue, capped at
+	// maxResponseBytes in all (Aikido 806869944).
+	queuedBytes int
 }
 
 // NewHTTPTransport creates a Streamable-HTTP transport for the given endpoint.
@@ -76,7 +79,7 @@ func (t *HTTPTransport) post(ctx context.Context, body []byte) error {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return fmt.Errorf("decode http response: %w", err)
 	}
-	return t.enqueue(&r)
+	return t.enqueue(&r, len(data))
 }
 
 // drainSSE reads an SSE stream, queuing each JSON-RPC response carried on a
@@ -104,7 +107,7 @@ func (t *HTTPTransport) drainSSE(body io.Reader) error {
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
 			continue
 		}
-		if err := t.enqueue(&r); err != nil {
+		if err := t.enqueue(&r, len(payload)); err != nil {
 			return err
 		}
 	}
@@ -114,14 +117,19 @@ func (t *HTTPTransport) drainSSE(body io.Reader) error {
 	return sc.Err()
 }
 
-// enqueue queues r, failing once maxQueuedResponses are waiting.
-func (t *HTTPTransport) enqueue(r *Response) error {
+// enqueue queues r (size bytes encoded), failing once maxQueuedResponses
+// are waiting or the unread responses would pass maxResponseBytes in all.
+func (t *HTTPTransport) enqueue(r *Response, size int) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.queue) >= maxQueuedResponses {
 		return fmt.Errorf("MCP server sent more than %d unread responses", maxQueuedResponses)
 	}
-	t.queue = append(t.queue, r)
+	if t.queuedBytes+size > maxResponseBytes {
+		return errTooManyUnread()
+	}
+	t.queue = append(t.queue, queuedResponse{resp: r, size: size})
+	t.queuedBytes += size
 	return nil
 }
 
@@ -169,9 +177,11 @@ func (t *HTTPTransport) Receive() (*Response, error) {
 	if len(t.queue) == 0 {
 		return nil, fmt.Errorf("no queued response")
 	}
-	r := t.queue[0]
+	q := t.queue[0]
+	t.queue[0] = queuedResponse{}
 	t.queue = t.queue[1:]
-	return r, nil
+	t.queuedBytes -= q.size
+	return q.resp, nil
 }
 
 // Close is a no-op for the stateless HTTP transport.
