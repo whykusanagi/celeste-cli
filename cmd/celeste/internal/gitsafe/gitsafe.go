@@ -79,7 +79,7 @@ func refused(dir string) error {
 		return nil
 	}
 	if r, found := sandbox.FindRepo(dir); found && r.GitDir == "" {
-		return fmt.Errorf("%s is not a git repository celeste runs git in: its .git is a symlink or points to a git dir that does not point back to it", r.WorkTree)
+		return fmt.Errorf("%s is not a git repository celeste runs git in: %s", r.WorkTree, r.Refusal)
 	}
 	return nil
 }
