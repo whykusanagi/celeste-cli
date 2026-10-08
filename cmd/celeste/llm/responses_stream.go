@@ -117,7 +117,16 @@ func readResponses(stream responsesEvents, emit func(StreamEvent)) (responsesTur
 			}
 			return turn, e
 		case openai.ResponseStreamEventError:
-			return turn, &responsesStreamError{code: ev.Code, msg: ev.Message}
+			// OpenAI sends code and message nested under "error"; the
+			// documented form has them at the top level.
+			e := &responsesStreamError{code: ev.Code, msg: ev.Message}
+			if e.msg == "" && ev.Error != nil {
+				e = &responsesStreamError{code: ev.Error.Code, msg: ev.Error.Message}
+			}
+			if e.msg == "" {
+				e.msg = "stream error"
+			}
+			return turn, e
 		}
 	}
 }

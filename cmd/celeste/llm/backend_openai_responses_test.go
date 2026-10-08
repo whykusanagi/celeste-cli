@@ -359,6 +359,12 @@ func TestReadResponsesErrorEventAndDoneOnlyCall(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate_limit_exceeded: slow down")
 
+	// OpenAI's live stream nests code and message under "error".
+	nested := scriptedEvents{`{"type":"error","error":{"type":"insufficient_quota","code":"credit_balance_exhausted","message":"no credits"},"sequence_number":2}`}
+	_, err = readResponses(&nested, func(StreamEvent) {})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "credit_balance_exhausted: no credits")
+
 	var evs []StreamEvent
 	done := scriptedEvents{
 		`{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_9","type":"function_call","call_id":"call_z","name":"read_file","arguments":"{}"}}`,

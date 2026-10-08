@@ -133,6 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **providers:** an error the OpenAI Responses stream reports (no credits left, a rate limit, an unknown model) is shown with its code and message; OpenAI nests them under `error`, and celeste printed an empty `openai responses: ` instead.
 * **server:** a `workspace` argument names one directory however it is spelled: `/w/`, `/w/.` and `/w` share one code graph index, one rebuild gate and one chat cache entry, so a query spelled differently from a running rebuild waits for it instead of using a stale index (CodeRabbit review of [#414](https://github.com/whykusanagi/celeste-cli/pull/414)).
 * **codegraph:** outside Go, call edges keep the class of the method they start from: same-named methods of different classes in one file each get their own outgoing edges instead of all going to the first one, and a call on the caller's own object goes to `m` of the caller's own class: `self.m()` / `this.m()`, PHP `$this->m()`, `self::m()` and `static::m()`, and in Java, Ruby and C++ also a call with no receiver (Aikido review of [#414](https://github.com/whykusanagi/celeste-cli/pull/414)). The graph version is bumped, so the next update of an existing index resolves its edges again.
 * **mcp:** an event-stream line from a Streamable HTTP MCP server may be as long as the 16 MiB response limit (it was cut at 1 MiB), and a longer one fails the call as too large (CodeRabbit review of #424).
