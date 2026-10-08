@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -443,12 +444,35 @@ func (s *Session) GetProvider() string {
 	return s.Provider
 }
 
-// SetCommandHistory stores the input command history in session metadata.
+// secretCommand matches a TUI command that carries a key: /config set-key
+// and /voice set-key, with the key after them.
+var secretCommand = regexp.MustCompile(`(?s)^(\s*/(?:config|voice)\s+set-key)\s+\S.*$`)
+
+// RedactSecretCommand returns line with the key of a set-key command
+// replaced by ***, and any other line unchanged. Input history, which is
+// saved with the session and its exports, keeps only the redacted form.
+func RedactSecretCommand(line string) string {
+	if m := secretCommand.FindStringSubmatch(line); m != nil {
+		return m[1] + " ***"
+	}
+	return line
+}
+
+func redactHistory(history []string) []string {
+	out := make([]string, len(history))
+	for i, h := range history {
+		out[i] = RedactSecretCommand(h)
+	}
+	return out
+}
+
+// SetCommandHistory stores the input command history in session metadata,
+// with set-key commands' keys redacted.
 func (s *Session) SetCommandHistory(history []string) {
 	if s.Metadata == nil {
 		s.Metadata = make(map[string]any)
 	}
-	s.Metadata["command_history"] = history
+	s.Metadata["command_history"] = redactHistory(history)
 }
 
 // GetCommandHistory retrieves the input command history from session metadata.
@@ -460,15 +484,16 @@ func (s *Session) GetCommandHistory() []string {
 	if !ok {
 		return nil
 	}
-	// JSON round-trip stores []string as []interface{}
+	// JSON round-trip stores []string as []interface{}. A session saved
+	// by an older version can hold a set-key line as typed: redact it.
 	switch v := raw.(type) {
 	case []string:
-		return v
+		return redactHistory(v)
 	case []interface{}:
 		out := make([]string, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok {
-				out = append(out, s)
+				out = append(out, RedactSecretCommand(s))
 			}
 		}
 		return out

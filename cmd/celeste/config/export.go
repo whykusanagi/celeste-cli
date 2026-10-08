@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // Exporter handles session export to various formats
@@ -102,7 +104,17 @@ func (e *Exporter) ToJSON() (string, error) {
 		return "", fmt.Errorf("session is nil")
 	}
 
-	data, err := json.MarshalIndent(e.session, "", "  ")
+	// A shallow copy whose command history is redacted: a session saved
+	// by an older version can hold a set-key line as typed.
+	session := *e.session
+	if hist := session.GetCommandHistory(); hist != nil {
+		session.Metadata = make(map[string]any, len(e.session.Metadata))
+		for k, v := range e.session.Metadata {
+			session.Metadata[k] = v
+		}
+		session.Metadata["command_history"] = hist
+	}
+	data, err := json.MarshalIndent(&session, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal session: %w", err)
 	}
@@ -180,8 +192,8 @@ func (e *Exporter) SaveToFile(content string, format string) (string, error) {
 	// Get export directory
 	exportDir := GetExportDir()
 
-	// Ensure directory exists
-	if err := os.MkdirAll(exportDir, 0755); err != nil {
+	// Ensure directory exists, owner-only: exports hold whole conversations.
+	if err := privfs.MkdirAll(exportDir); err != nil {
 		return "", fmt.Errorf("failed to create export directory: %w", err)
 	}
 
@@ -191,7 +203,7 @@ func (e *Exporter) SaveToFile(content string, format string) (string, error) {
 	filepath := filepath.Join(exportDir, filename)
 
 	// Write file
-	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath, []byte(content), privfs.FilePerm); err != nil {
 		return "", fmt.Errorf("failed to write export file: %w", err)
 	}
 
