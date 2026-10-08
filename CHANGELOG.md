@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **sandbox:** a workspace `.celeste/config.json` is read only when it is a regular file; a symlink, FIFO or device there is reported and ignored instead of blocking startup (Aikido 806869299).
 * **images:** resizing an image for a provider decodes at most 24 MP (12 MP for 16-bit images), one image at a time, so several large images read in one turn cannot exhaust memory (Aikido 806869432).
 * **tools:** `read_file`, `search`, `patch_file` and `splice_file` read only regular files, so a FIFO or device in the workspace no longer blocks them, and never read more than they use: `read_file` reads up to its 512 KB ceiling (10 MB for images), and `patch_file` and `splice_file` refuse files over 16 MB (Aikido 806869908).
+* **tools:** `web_fetch` only connects to public addresses. The address is checked when each connection is made, redirects included, so loopback, private-network, link-local, CGNAT and cloud metadata addresses are refused by default, also when written as an IPv6 address that carries the IPv4 one (mapped, IPv4-compatible, NAT64, 6to4, Teredo). `"web_fetch_allow_private": true` in the config, or `CELESTE_WEB_FETCH_ALLOW_PRIVATE=1`, allows them for local docs servers. web_fetch no longer goes through an `HTTP(S)_PROXY` (Aikido 806869856).
+* **tools:** `collections_search` searches only the collections enabled with `/collections`; a `collection_id` outside them is refused (Aikido 806869660).
+* **wallet_security:** a scan reads every page of asset transfers in its block range. A range with more transfers than one scan reads (50 pages per direction) is scanned up to the last block it read completely, and the next scan continues from there; a single block with more than that fails the scan. Transfers are matched to a monitored wallet regardless of address letter case (Aikido 806869642).
+* **wallet_security:** a wallet scan that fails, a token-approval check included, no longer moves the scan checkpoint, so the same block range is scanned again next time. Checkpoints are kept per network (`last_checked_blocks`), each moved only as far as every wallet on it was scanned, and the next scan starts at the block after it, so a range cut off at the page cap always moves forward. An old file's single `last_checked_block` is moved to the first wallet's network once and no longer written; the monitor's state files are written atomically and readable only by you, and the monitor daemon reports a failed scan instead of "No threats detected" (Aikido 806869487).
+* **wallet_security:** the alerts log stores each on-chain event once (by network, wallet, alert type, transaction and transfer or log entry) and keeps the newest 1000 alerts; a scan reports only new alerts, and `get_security_alerts` returns the newest 100 with the total (Aikido 806869535).
 
 ### Features
 
@@ -145,6 +150,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * `celeste agent` runs on `agent_model` when one is set, as subagents and
   MCP agent mode already did.
+
+### Security
+
+* **release:** the release workflow now checks the pushed tag before any
+  job that holds a secret runs. The tag must be annotated, signed by the
+  release key (primary or its signing subkey, with the key read from
+  `main`), and on `main`; otherwise nothing is built, signed or published.
+  The workflow grants no token permissions by default, and only the publish
+  job can write (Aikido 806869730).
+* **ci:** every GitHub Action in the workflows is pinned to a full commit
+  SHA, and no checkout keeps the job token in the clone (Aikido 806869782,
+  806780680, 806780676).
+* **deps:** the indirect `github.com/libp2p/go-libp2p` requirement moves to
+  v0.27.8 (Aikido 806780137).
+* **build:** `make import-key` imports the repository's `whykusanagi.asc`
+  instead of fetching a key from Keybase, and fails unless the file holds
+  the release key and its signing subkey (Aikido 806869823).
 
 ## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
 
