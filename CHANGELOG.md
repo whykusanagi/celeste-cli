@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **mcp:** a Streamable HTTP response stream of exactly the size limit whose last `data:` line ends without a newline is accepted, instead of being refused as too large (CodeRabbit review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
 * **context:** the spill prunes (by age and for the total limit) and the total spill quota touch only spill session directories, so compaction's pruned tool-result store, which `recall_tool_result` reads, is never deleted with them; a session named like that store spills beside it (Aikido review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
 * **codegraph:** a call on the caller's own object (`self.m()`, `this.m()`) that its class does not define resolves to the method of its nearest base class, across files, before a same-named method of an unrelated class (CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
 * **codegraph:** a build or update whose workspace cannot be opened (gone, unreadable, or a directory on its path replaced by a symlink) fails before the index is changed, instead of reporting success with an empty or partial graph (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
