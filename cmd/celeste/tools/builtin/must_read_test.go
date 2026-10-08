@@ -163,9 +163,9 @@ func TestAtomicWriteNewFileGetsDefaultMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX modes")
 	}
-	dir := t.TempDir()
+	dir := realTempDir(t)
 	p := filepath.Join(dir, "new.txt")
-	if err := atomicWrite(p, []byte("x"), 0o644); err != nil {
+	if err := atomicWrite(filepath.Dir(p), p, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o644 {

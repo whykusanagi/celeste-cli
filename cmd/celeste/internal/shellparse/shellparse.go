@@ -123,8 +123,9 @@ func walk(cmd string, depth int, fn func(words []string) bool) Result {
 	return None
 }
 
-// shellValueOptions take the next word as their value.
-var shellValueOptions = map[string]bool{"-o": true, "+o": true, "-O": true, "+O": true, "--rcfile": true, "--init-file": true}
+// ShellValueOptions are a shell's options that take the next word as
+// their value.
+var ShellValueOptions = map[string]bool{"-o": true, "+o": true, "-O": true, "+O": true, "--rcfile": true, "--init-file": true}
 
 // commandStrings returns the command lines that name, run with args, would
 // execute itself: a shell's -c string, script's -c/--command, env's
@@ -148,7 +149,7 @@ func commandStrings(name string, args []string) []string {
 			if !strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "+") || a == "-" {
 				break
 			}
-			if shellValueOptions[a] {
+			if ShellValueOptions[a] {
 				k++
 				continue
 			}

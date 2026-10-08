@@ -15,7 +15,8 @@ import (
 // session buses among them, reach outside the sandbox) except the
 // directory /etc/resolv.conf points into (systemd's, NetworkManager's or
 // resolvconf's), read-only, then each
-// writable directory that exists bound read-write. --unshare-pid is what
+// writable directory that exists bound read-write, then each read-only
+// path that exists bound read-only over them. --unshare-pid is what
 // lets an unprivileged bwrap mount /proc; --new-session takes the command
 // off the terminal. bwrap itself leads the runner's new session and
 // process group, so a timeout kills it whole.
@@ -33,6 +34,14 @@ func BwrapArgs(p Policy, command string) []string {
 	for _, dir := range p.Writable {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			args = append(args, "--bind", dir, dir)
+		}
+	}
+	// After the writable binds, so they stay read-only inside them. Each is
+	// a mount point then, which cannot be renamed or removed, and a
+	// writable git dir is its own bind, so it cannot be moved aside either.
+	for _, ro := range p.ReadOnly {
+		if _, err := os.Lstat(ro); err == nil {
+			args = append(args, "--ro-bind", ro, ro)
 		}
 	}
 	if !p.Network {

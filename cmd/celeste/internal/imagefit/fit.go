@@ -60,9 +60,25 @@ const (
 	maxAttempts = 8
 	minEdge     = 64
 	// maxDecodePixels bounds the memory a decode can take (a small file
-	// can claim huge dimensions): 50 MP, about 200 MB as RGBA.
-	maxDecodePixels = 50_000_000
+	// can claim huge dimensions): 24 MP, about 96 MB as RGBA plus the
+	// decoder's own copy. A 16-bit image decodes at twice the bytes per
+	// pixel, so it gets half (maxDecodePixels16).
+	maxDecodePixels   = 24_000_000
+	maxDecodePixels16 = 12_000_000
 )
+
+// decodeSlots serializes the decode-and-resize step: read_file runs up to
+// 8 calls at once, and each decode can take a few hundred MB.
+var decodeSlots = make(chan struct{}, 1)
+
+// decodeHook runs inside a decode slot and returns its release (a test
+// seam).
+var decodeHook = func() func() { return func() {} }
+
+// wide reports a color model decoded at 16 bits per channel.
+func wide(m color.Model) bool {
+	return m == color.RGBA64Model || m == color.NRGBA64Model || m == color.Gray16Model
+}
 
 // isWebP reports a RIFF/WEBP header, whatever the file was called.
 func isWebP(data []byte) bool {
@@ -96,10 +112,17 @@ func Fit(data []byte, format string, lim Limits) (Result, error) {
 	if lim.Accepts(format) && B64Len(len(data)) <= lim.MaxB64 && within(cfg.Width, cfg.Height, lim.MaxDim) {
 		return Result{Data: data, Format: format, Width: cfg.Width, Height: cfg.Height}, nil
 	}
-	if int64(cfg.Width)*int64(cfg.Height) > maxDecodePixels {
+	budget := int64(maxDecodePixels)
+	if wide(cfg.ColorModel) {
+		budget = maxDecodePixels16
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > budget {
 		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format,
 			Reason: fmt.Sprintf("%d×%d is too many pixels to resize here; scale it down first", cfg.Width, cfg.Height)}
 	}
+	decodeSlots <- struct{}{}
+	defer func() { <-decodeSlots }()
+	defer decodeHook()()
 	decoded, note, err := decodeFirst(data, format)
 	if err != nil {
 		return Result{}, &FitError{Limits: lim, B64: B64Len(len(data)), Format: format, Reason: unreadable + err.Error()}
