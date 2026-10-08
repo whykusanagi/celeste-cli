@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // PermissionPromptModel renders an inline permission dialog.
@@ -203,8 +204,10 @@ func (m PermissionPromptModel) View() string {
 	topFill := max(inner-1-lipgloss.Width(title), 0)
 	lines = append(lines, borderStyle.Render("╭─")+titleStyle.Render(title)+borderStyle.Render(strings.Repeat("─", topFill)+"╮"))
 
-	row(textStyle.Render(fmt.Sprintf("%s wants to run: %s", m.toolName, m.inputSummary)))
-	row(textStyle.Render("Risk: ") + riskStyle.Render(m.riskLevel))
+	// The tool name and input come from the model: shown escaped, so no
+	// control in them can rewrite or hide what is being approved.
+	row(textStyle.Render(fmt.Sprintf("%s wants to run: %s", termsafe.Line(m.toolName), termsafe.Line(m.inputSummary))))
+	row(textStyle.Render("Risk: ") + riskStyle.Render(termsafe.Line(m.riskLevel)))
 	lines = append(lines, side+strings.Repeat(" ", inner)+side)
 
 	pattern := m.buildPattern()

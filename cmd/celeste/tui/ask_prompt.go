@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // AskPromptModel renders a structured question with selectable options and
@@ -208,7 +209,7 @@ func (m AskPromptModel) block(s string) string {
 
 // questionLines is the question as rendered, one entry per row.
 func (m AskPromptModel) questionLines() []string {
-	title := lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true).Render("? " + m.question)
+	title := lipgloss.NewStyle().Foreground(ColorAccentGlow).Bold(true).Render("? " + termsafe.Text(m.question))
 	return strings.Split(m.block(title), "\n")
 }
 
@@ -235,6 +236,9 @@ func (m AskPromptModel) optionsView() string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
+		// Labels and descriptions come from the model; the answer sent
+		// back keeps the label as given, only the view escapes it.
+		opt = AskOption{Label: termsafe.Line(opt.Label), Description: termsafe.Line(opt.Description)}
 		b.WriteString(optionRows(cursor+box, opt, m.width, style, lipgloss.NewStyle().Foreground(ColorTextMuted)))
 	}
 	return m.block(b.String())
