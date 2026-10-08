@@ -2238,7 +2238,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case MCPConnectResultMsg:
 		if msg.Err != nil {
-			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("MCP %s: %v", msg.Name, msg.Err))
+			m.chat = m.chat.AddSystemMessage(fmt.Sprintf("MCP %s: %s", termsafe.Line(msg.Name), termsafe.Line(msg.Err.Error())))
 		}
 		m.mcpPanel = m.mcpPanel.RefreshServers()
 		return m, nil

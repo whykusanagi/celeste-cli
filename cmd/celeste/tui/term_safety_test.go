@@ -90,3 +90,29 @@ func TestAppViewIsTerminalSafe(t *testing.T) {
 	m.statusLine = m.statusLine.SetProject("repo\x1b]52;c;Zm9v\x07" + hostile)
 	assertInert(t, "app view", m.View())
 }
+
+// Aikido 806869738: workspace server names and transports in the /mcp
+// panel are shown escaped.
+func TestMCPPanelEscapesControls(t *testing.T) {
+	p := NewMCPPanelModel()
+	p.SetSize(120, 40)
+	p.servers = []MCPServerInfo{
+		{Name: "a" + hostile, Transport: "stdio" + hostile, Connected: true, ToolCount: 1},
+		{Name: "b" + hostile, Enabled: true},
+	}
+	p.active = true
+	for cur := range p.servers {
+		p.cursor = cur
+		assertInert(t, "mcp panel", p.View())
+	}
+}
+
+// Aikido 806869747: model IDs and descriptions come from the provider's
+// model list and are shown escaped in the selector.
+func TestSelectorEscapesControls(t *testing.T) {
+	m := NewSelectorModel("Models", []SelectorItem{
+		{ID: "m1", DisplayName: "model" + hostile, Description: "desc" + hostile, Badge: "b" + hostile},
+		{ID: "m2", DisplayName: "other" + hostile},
+	})
+	assertInert(t, "selector", m.View())
+}
