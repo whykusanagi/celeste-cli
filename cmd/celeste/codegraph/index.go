@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -13,8 +14,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
 
 // SearchResult pairs a symbol with its similarity score and a set of
@@ -919,29 +918,41 @@ func (idx *Indexer) parseFile(relPath string) (*ParseResult, error) {
 }
 
 // readWorkspaceFile reads an indexed file for review: a regular file, not
-// a symlink, that resolves inside the workspace. A file replaced by a
-// symlink since it was indexed is refused, so review never quotes source
-// from outside the workspace.
+// a symlink, inside the workspace. It is opened through an os.Root on the
+// workspace (no symlink or ".." out of it, at any component) without
+// blocking, and checked on the open descriptor, so a file replaced by a
+// symlink or a FIFO since it was indexed is refused and review never
+// quotes source from outside the workspace.
 func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
-	info, err := os.Lstat(absFile)
+	rel, err := filepath.Rel(idx.workspace, absFile)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s is outside the workspace", absFile)
+	}
+	root, err := os.OpenRoot(idx.workspace)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
+	defer root.Close()
+	before, err := root.Lstat(rel)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", absFile)
 	}
-	real, err := filepath.EvalSymlinks(absFile)
+	f, err := root.OpenFile(rel, os.O_RDONLY|oNonblock, 0)
 	if err != nil {
 		return nil, err
 	}
-	ws, err := filepath.EvalSymlinks(idx.workspace)
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if !pathutil.Within(ws, real) {
-		return nil, fmt.Errorf("%s resolves outside the workspace", absFile)
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return nil, fmt.Errorf("%s changed while it was being opened", absFile)
 	}
-	return os.ReadFile(real)
+	return io.ReadAll(f)
 }
 
 // walkSourceFiles returns relative paths of all indexable source files.

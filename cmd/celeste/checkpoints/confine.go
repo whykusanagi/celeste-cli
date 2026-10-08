@@ -23,11 +23,18 @@ func confine(workspace, path string) (root, rel string, ok bool) {
 	if err != nil {
 		return "", "", false
 	}
-	realParent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	// The file as the write tools reach it: an existing path is resolved
+	// whole, so a change made through an in-workspace symlink (CLAUDE.md
+	// -> AGENTS.md) is undone on the file it changed, the link kept.
+	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", "", false
+		realParent, perr := filepath.EvalSymlinks(filepath.Dir(path))
+		if perr != nil {
+			return "", "", false
+		}
+		real = filepath.Join(realParent, filepath.Base(path))
 	}
-	rel, err = filepath.Rel(realBase, filepath.Join(realParent, filepath.Base(path)))
+	rel, err = filepath.Rel(realBase, real)
 	if err != nil || !filepath.IsLocal(rel) {
 		return "", "", false
 	}

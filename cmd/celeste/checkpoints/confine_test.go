@@ -51,3 +51,28 @@ func TestUndoDoesNotFollowAReplacedDirectory(t *testing.T) {
 		assert.Equal(t, "after", string(got), "existed=%v: the file outside was overwritten", existed)
 	}
 }
+
+// A change made through an in-workspace symlink is undone on the file it
+// changed; the symlink stays a symlink.
+func TestUndoThroughAnInWorkspaceSymlinkKeepsTheLink(t *testing.T) {
+	sm, dir := store(t)
+	ws := filepath.Join(dir, "ws")
+	require.NoError(t, os.MkdirAll(ws, 0o755))
+	target := filepath.Join(ws, "AGENTS.md")
+	link := filepath.Join(ws, "CLAUDE.md")
+	write(t, target, "before")
+	if err := os.Symlink("AGENTS.md", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	c, err := sm.CheckpointIn(ws, link, "call-1")
+	require.NoError(t, err)
+	write(t, target, "after")
+	require.NoError(t, c.Commit())
+
+	_, err = sm.RevertLast()
+	require.NoError(t, err)
+	fi, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.NotZero(t, fi.Mode()&os.ModeSymlink, "the symlink was replaced by a file")
+	assert.Equal(t, "before", read(t, target))
+}

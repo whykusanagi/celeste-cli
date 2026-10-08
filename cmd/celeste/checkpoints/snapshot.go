@@ -235,7 +235,15 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID, root, rel string) (
 	sm.reloadLocked()
 
 	e := Entry{MessageID: messageID, Path: path, Version: sm.nextVersionLocked(path), Time: time.Now().UTC(), Root: root, Rel: rel}
-	info, err := os.Stat(path)
+	// Read the file the way undo will reach it (through Root when set), so
+	// a directory swapped after confine cannot put another file's contents
+	// in the backup.
+	ref, err := openRef(e)
+	if err != nil {
+		return nil, fmt.Errorf("cannot snapshot %s: %w", path, err)
+	}
+	defer ref.close()
+	info, err := ref.stat()
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// A new file: undoing the change deletes it.
@@ -253,7 +261,7 @@ func (sm *SnapshotManager) checkpointLocked(path, messageID, root, rel string) (
 				return nil, fmt.Errorf("cannot snapshot %s: backup %s is in use by another checkpoint", path, e.Backup)
 			}
 		}
-		if err := backUp(path, filepath.Join(sm.dir, e.Backup), info); err != nil {
+		if err := backUp(ref, filepath.Join(sm.dir, e.Backup), info); err != nil {
 			return nil, err
 		}
 	}
@@ -849,13 +857,13 @@ func writeIndex(dir string, entries []Entry) error {
 // written atomically with src's mode plus owner write (so it can always be
 // replaced and removed, also on Windows); a leftover file or symlink under
 // its name is removed first, never written through.
-func backUp(src, dst string, before os.FileInfo) error {
-	data, err := os.ReadFile(src)
+func backUp(src fileRef, dst string, before os.FileInfo) error {
+	data, err := src.readFile()
 	if err != nil {
 		return fmt.Errorf("snapshot copy failed: %w", err)
 	}
-	if info, err := os.Stat(src); err == nil && !info.ModTime().Equal(before.ModTime()) {
-		if data, err = os.ReadFile(src); err != nil {
+	if info, err := src.stat(); err == nil && !info.ModTime().Equal(before.ModTime()) {
+		if data, err = src.readFile(); err != nil {
 			return fmt.Errorf("snapshot retry copy failed: %w", err)
 		}
 	}
