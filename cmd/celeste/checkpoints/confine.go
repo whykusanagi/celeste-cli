@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 )
 
 // confine names path inside a real directory for Entry.Root and Entry.Rel:
@@ -56,11 +57,15 @@ type fileRef struct {
 	rel  string
 }
 
+// testHookBeforeRootOpen runs between the root check and the open; tests
+// replace the root there.
+var testHookBeforeRootOpen func()
+
 // openRef opens e's file for undo; close it when done.
 func openRef(e Entry) (fileRef, error) {
 	if e.Root == "" {
 		if dir, rel, ok := confine("", e.Path); ok {
-			if root, err := os.OpenRoot(dir); err == nil {
+			if root, err := realroot.Open(dir); err == nil {
 				return fileRef{path: e.Path, root: root, rel: rel}, nil
 			}
 		}
@@ -70,11 +75,16 @@ func openRef(e Entry) (fileRef, error) {
 		return fileRef{}, fmt.Errorf("invalid checkpoint location for %s", e.Path)
 	}
 	// The root itself must still be the directory it was: one of its
-	// ancestors replaced by a symlink is refused here, before it is opened.
+	// ancestors replaced by a symlink is refused here, and realroot.Open
+	// refuses one replaced between this check and the open (Aikido review
+	// of #421).
 	if real, err := filepath.EvalSymlinks(e.Root); err != nil || real != e.Root {
 		return fileRef{}, fmt.Errorf("%s: its directory moved or was replaced since the change; not restored", e.Path)
 	}
-	root, err := os.OpenRoot(e.Root)
+	if testHookBeforeRootOpen != nil {
+		testHookBeforeRootOpen()
+	}
+	root, err := realroot.Open(e.Root)
 	if err != nil {
 		return fileRef{}, err
 	}
