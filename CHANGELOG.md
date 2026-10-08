@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tools:** notes, reminders, QR codes, wallet-monitor state, memories, cost records, the user identity file and agent run checkpoints under `~/.celeste` are owner-only; `celeste mcp install` creates a new MCP client config, and every backup it makes, owner-only (Aikido 806869849).
 * **agent:** resuming a run started with `--no-artifacts` keeps artifacts off; `--no-artifacts` on the resume still turns them off (Aikido 806869324).
 * **config:** celeste refuses to start without a home directory (`HOME`, or `USERPROFILE` on Windows, unset, empty or relative) instead of resolving `~/.celeste` against the current directory, and custom skills load only from an absolute directory (Aikido 806869780).
+* **tools:** `web_fetch` refuses the documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32, 3fff::/20), the retired 6to4 relay anycast, the IPv6 discard-only, IETF protocol assignment and SRv6 SID blocks, and the whole local-use NAT64 prefix 64:ff9b:1::/48, whose embedded IPv4 address cannot be read (Aikido review on #420).
 
 ### Breaking Changes
 
