@@ -85,6 +85,11 @@ func (m *MultiLangParser) ParseFile(path string) (*ParseResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	// A .h header holding C++ gets the C++ grammar, which has classes,
+	// namespaces and templates; the C grammar would miss them (#381).
+	if lang == "c" && IsCppHeader(path, data) {
+		lang, grammar, spec = "cpp", m.langs["cpp"], langSpecs["cpp"]
+	}
 
 	if err := m.parser.SetLanguage(grammar); err != nil {
 		return nil, fmt.Errorf("set language %s: %w", lang, err)
@@ -129,6 +134,42 @@ type multiWalker struct {
 	callSet           map[string]bool
 	decoratorSet      map[string]bool
 	currentClassBases string // base-class names for the innermost class being walked
+	// currentScope is the class chain the walk is directly inside
+	// ("Geo.Qux"), Symbol.Scope of what it declares there. A function body
+	// resets it: a function nested in a method has no class.
+	currentScope string
+}
+
+// rustImplType is the type a Rust impl block is for, without its path or
+// type arguments: "Foo" for `impl<T> Tr for Foo<T>`, "Pt" for
+// `impl X for geo::Pt`.
+//
+//	impl_item  trait: … (optional)  type: type_identifier | generic_type | scoped_type_identifier | …
+//	generic_type  type: type_identifier | scoped_type_identifier
+//	scoped_type_identifier  path: …  name: type_identifier
+func (w *multiWalker) rustImplType(node *tree_sitter.Node) string {
+	t := node.ChildByFieldName("type")
+	for t != nil {
+		switch t.Kind() {
+		case "generic_type":
+			t = t.ChildByFieldName("type")
+		case "scoped_type_identifier":
+			t = t.ChildByFieldName("name")
+		default:
+			return w.nodeText(t)
+		}
+	}
+	return ""
+}
+
+// joinScope appends class name to the class chain outer, '.'-separated. A
+// qualified name ("geo::Shape") is split the same way.
+func joinScope(outer, name string) string {
+	name = strings.ReplaceAll(name, "::", ".")
+	if outer == "" {
+		return name
+	}
+	return outer + "." + name
 }
 
 func (w *multiWalker) nodeText(n *tree_sitter.Node) string {
@@ -155,6 +196,11 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 	// Class/struct/enum/trait declarations
 	if w.classSet[kind] {
 		name := w.extractName(node)
+		if kind == "impl_item" {
+			// `impl Trait for Type` names the trait first; its methods
+			// belong to the type.
+			name = w.rustImplType(node)
+		}
 		bases := w.classBaseNames(node)
 		if name != "" {
 			symKind := w.classifyClassKind(kind)
@@ -164,16 +210,21 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				File:        w.path,
 				Line:        int(node.StartPosition().Row) + 1,
 				BaseClasses: bases,
+				Scope:       w.currentScope,
 			})
 		}
-		// Save and restore currentClassBases so nested classes don't leak.
-		prevBases := w.currentClassBases
+		// Save and restore currentClassBases and currentScope so nested
+		// classes don't leak.
+		prevBases, prevScope := w.currentClassBases, w.currentScope
 		w.currentClassBases = bases
+		if name != "" {
+			w.currentScope = joinScope(w.currentScope, name)
+		}
 		// Recurse into class body for methods
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), currentFn)
 		}
-		w.currentClassBases = prevBases
+		w.currentClassBases, w.currentScope = prevBases, prevScope
 		return
 	}
 
@@ -225,15 +276,19 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				Signature:   sig,
 				Decorators:  strings.Join(decNames, ","),
 				BaseClasses: w.currentClassBases,
+				Scope:       w.currentScope,
 			})
 		}
 		fnName := name
 		if fnName == "" {
 			fnName = currentFn
 		}
+		prevScope := w.currentScope
+		w.currentScope = ""
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			w.walk(node.NamedChild(i), fnName)
 		}
+		w.currentScope = prevScope
 		return
 	}
 

@@ -197,3 +197,38 @@ func TestCodeGraphTool_LookupWalksDepth(t *testing.T) {
 	assert.Contains(t, out, "<- main (calls)")
 	assert.Contains(t, out, "[hop 2, via Execute]")
 }
+
+// #406: qualified names are unique over every match, not just the ones a
+// limit keeps. Two packages named util both define Helper; with limit 1 the
+// printed name must still tell them apart.
+func TestCodeSearchTool_KeywordQualifiesBeforeLimit(t *testing.T) {
+	ws := t.TempDir()
+	files := map[string]string{
+		"go.mod":      "module example.com/m\n\ngo 1.22\n",
+		"a/util/u.go": "package util\n\nfunc Helper() {}\n",
+		"b/util/u.go": "package util\n\nfunc Helper() {}\n",
+		"main.go":     "package main\n\nfunc main() {}\n",
+	}
+	for name, body := range files {
+		p := filepath.Join(ws, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
+	idx, err := codegraph.NewIndexer(ws, filepath.Join(t.TempDir(), "cg.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	require.NoError(t, idx.Build())
+
+	full, err := NewCodeSearchTool(idx).Execute(context.Background(), map[string]any{"query": "Helper", "mode": "keyword", "limit": 10}, nil)
+	require.NoError(t, err)
+	res, err := NewCodeSearchTool(idx).Execute(context.Background(), map[string]any{"query": "Helper", "mode": "keyword", "limit": 1}, nil)
+	require.NoError(t, err)
+	assert.Contains(t, res.Content, "Found 1 symbols")
+	assert.NotContains(t, res.Content, "1. util.Helper ", res.Content)
+	line := strings.SplitN(strings.SplitN(res.Content, "1. ", 2)[1], " ", 2)[0]
+	assert.Contains(t, full.Content, "1. "+line+" ", "limited name must match the unlimited one")
+
+	// The printed name picks exactly one symbol.
+	g := runGraph(t, NewCodeGraphTool(idx), line, "callers")
+	assert.NotContains(t, g, "b/util", g)
+}

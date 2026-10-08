@@ -42,7 +42,9 @@ type funcSpan struct {
 	// Exported is true for the exported API of a library: an exported Go
 	// function or method outside package main and internal/, an exported
 	// JS/TS function or public method of an exported JS/TS class, a public
-	// method of a public Java class.
+	// method of a public Java class, a public method of a PHP or Ruby
+	// class, and a public member of a C++ class declared in a header (for
+	// a member declaration, that the member is one).
 	Exported bool
 	// Annotations lists Java annotation names (Override, Test); a C++
 	// `override` or `virtual` specifier is recorded as Override.
@@ -106,17 +108,14 @@ func (r *reviewer) load(relPath string, src []byte) *reviewFile {
 	tsLang := SupportedLanguage(strings.ToLower(path.Ext(strings.ReplaceAll(relPath, "\\", "/"))))
 	// A .h header is C to the indexer; one holding C++ (classes,
 	// namespaces) is parsed as C++ so its class declarations count.
-	if tsLang == "c" && strings.EqualFold(path.Ext(relPath), ".h") && cppHeader.Match(src) {
+	if tsLang == "c" && IsCppHeader(relPath, src) {
 		tsLang, f.lang = "cpp", "cpp"
 	}
-	if spans, bases, ok := r.treeSitterSpans(tsLang, src); ok {
+	if spans, bases, ok := r.treeSitterSpans(tsLang, relPath, src); ok {
 		f.spans, f.classBases = spans, bases
 	}
 	return f
 }
-
-// cppHeader matches C++-only syntax in a header.
-var cppHeader = regexp.MustCompile(`(?m)^\s*(?:class|namespace|template)\b|\b(?:public|private|protected)\s*:|\bvirtual\b|::`)
 
 // span returns the span of the function c: the parser's span with c's name
 // that starts on c's line, else the text-scan fallback from c's line.
@@ -482,6 +481,9 @@ type declSite struct {
 	classHasBases bool
 	// override is true for a C++ declaration marked override or virtual.
 	override bool
+	// exported is true for a public member of a C++ class declared in a
+	// header: its definition outside the class is library API.
+	exported bool
 }
 
 // declIndex holds every class member of the reviewed files by language and
@@ -522,6 +524,7 @@ func (d *declIndex) add(file string, f *reviewFile) {
 		d.members[k] = append(d.members[k], declSite{
 			file: file, class: s.Class, hasBody: s.HasBody,
 			classHasBases: s.ClassHasBases, override: hasAnnotation(s, "Override"),
+			exported: s.Exported,
 		})
 	}
 }
@@ -575,7 +578,8 @@ type reach struct {
 //     method defined outside its class is judged by its declaration in the
 //     class), an exported JS/TS function, a
 //     public method of an exported JS/TS class, a public method of a public
-//     Java class.
+//     Java class, a public method of a PHP or Ruby class, a public member
+//     of a C++ class declared in a header (in the class or outside it).
 func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls *declIndex) reach {
 	if f.lang == "go" {
 		switch {
@@ -615,7 +619,7 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls *declIndex) rea
 	// A C++ method defined outside its class (`void D::f() {}`) is a
 	// member of D: its declaration in D's body says whether D has bases
 	// and whether the method is marked override or virtual.
-	outOfClass := false
+	outOfClass, exported := false, s.Exported
 	if class == "" && (f.lang == "cpp" || f.lang == "c") {
 		if scope, member, ok := cppSplitMemberName(name); ok {
 			for _, d := range decls.members[declKey(f.lang, member)] {
@@ -623,6 +627,7 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls *declIndex) rea
 					class, name, outOfClass = scope, member, true
 					bases = bases || d.classHasBases
 					override = override || d.override
+					exported = exported || d.exported
 				}
 			}
 		}
@@ -659,7 +664,7 @@ func (f *reviewFile) reach(c FunctionEdgeInfo, s funcSpan, decls *declIndex) rea
 			return reach{reason: "overrides a base-class method"}
 		}
 	}
-	if s.Exported {
+	if exported {
 		return reach{reason: "exported API of a library package"}
 	}
 	return reach{}

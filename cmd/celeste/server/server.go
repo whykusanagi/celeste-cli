@@ -71,6 +71,11 @@ type Server struct {
 	// populated on first use via indexerFor. Released on Close.
 	indexerMu sync.Mutex
 	indexers  map[string]*codegraph.Indexer
+	// rebuilding marks the workspaces a celeste_index rebuild is
+	// rebuilding (guarded by indexerMu). indexerFor refuses to open their
+	// index until the rebuild has cached the rebuilt Indexer, so no call
+	// is left on the database the rebuild deletes (review of #393).
+	rebuilding map[string]bool
 
 	// runs tracks MCP agent runs that outlived the inline threshold, so a client
 	// can poll for a result instead of holding an HTTP call open for minutes.
@@ -94,12 +99,13 @@ type Server struct {
 // New creates a new MCP server with the given configuration.
 func New(cfg Config) *Server {
 	s := &Server{
-		config:   cfg,
-		handlers: make(map[string]ToolHandler),
-		done:     make(chan struct{}),
-		indexers: make(map[string]*codegraph.Indexer),
-		runs:     make(map[string]*BackgroundRun),
-		chatEnvs: newChatEnvs(),
+		config:     cfg,
+		handlers:   make(map[string]ToolHandler),
+		done:       make(chan struct{}),
+		indexers:   make(map[string]*codegraph.Indexer),
+		rebuilding: make(map[string]bool),
+		runs:       make(map[string]*BackgroundRun),
+		chatEnvs:   newChatEnvs(),
 	}
 	return s
 }
@@ -132,6 +138,9 @@ func (s *Server) Close() error {
 // store and queries will return empty results until the first index
 // is built.
 //
+// While a celeste_index rebuild of the workspace runs it fails with
+// indexBuildingError instead of opening the database the rebuild deletes.
+//
 // The bool return is true when the indexer already existed in the
 // cache (cache hit) and false when we just opened it (cache miss).
 // Tests use the flag; callers normally ignore it.
@@ -141,6 +150,9 @@ func (s *Server) indexerFor(workspace string) (*codegraph.Indexer, bool, error) 
 	}
 	s.indexerMu.Lock()
 	defer s.indexerMu.Unlock()
+	if s.rebuilding[workspace] {
+		return nil, false, indexBuildingError(workspace)
+	}
 	if idx, ok := s.indexers[workspace]; ok && idx != nil {
 		return idx, true, nil
 	}

@@ -119,13 +119,22 @@ func (t *CodeGraphTool) Execute(ctx context.Context, input map[string]any, progr
 			b.WriteString("  (approximate: this file did not type-check; its call edges may be incomplete or resolved by name)\n")
 		}
 
-		// Get edges
+		// Get edges. A failed query is the tool's error: a graph missing
+		// the branches it could not read is not a complete answer.
 		if direction == "callers" || direction == "both" {
-			writeGraphHops(&b, "Called by", "<-", walkGraph(store, sym, depth, true))
+			w, err := walkGraph(store, sym, depth, true)
+			if err != nil {
+				return tools.ToolResult{Error: true, Content: fmt.Sprintf("graph error for %s: %s", name, err)}, nil
+			}
+			writeGraphHops(&b, "Called by", "<-", w)
 		}
 
 		if direction == "callees" || direction == "both" {
-			writeGraphHops(&b, "Calls", "->", walkGraph(store, sym, depth, false))
+			w, err := walkGraph(store, sym, depth, false)
+			if err != nil {
+				return tools.ToolResult{Error: true, Content: fmt.Sprintf("graph error for %s: %s", name, err)}, nil
+			}
+			writeGraphHops(&b, "Calls", "->", w)
 		}
 		b.WriteString("\n")
 	}
@@ -186,8 +195,9 @@ type graphWalk struct {
 // walkGraph lists the symbols up to depth hops from root, callers (incoming
 // edges) or callees (outgoing), breadth first (#399). The first hop lists
 // every edge of root, as a one-hop query always has. Later hops list each
-// symbol once, at the hop it is first reached, and never root itself.
-func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers bool) graphWalk {
+// symbol once, at the hop it is first reached, and never root itself. A
+// failed edge query or symbol read stops the walk with that error.
+func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers bool) (graphWalk, error) {
 	var w graphWalk
 	later := 0 // entries past the first hop, which maxGraphHops caps
 	seen := map[int64]bool{root.ID: true}
@@ -204,7 +214,7 @@ func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers
 				edges, err = store.GetEdgesFrom(from.ID)
 			}
 			if err != nil {
-				continue
+				return w, fmt.Errorf("edges of %s: %w", codegraph.DisplayName(from), err)
 			}
 			for _, e := range edges {
 				otherID := e.TargetID
@@ -216,12 +226,12 @@ func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers
 				}
 				other, err := store.GetSymbol(otherID)
 				if err != nil {
-					continue
+					return w, fmt.Errorf("symbol %d (an edge of %s): %w", otherID, codegraph.DisplayName(from), err)
 				}
 				if hop > 1 {
 					if later == maxGraphHops {
 						w.truncated = true
-						return w
+						return w, nil
 					}
 					later++
 				}
@@ -239,7 +249,7 @@ func walkGraph(store *codegraph.Store, root codegraph.Symbol, depth int, callers
 		}
 		frontier = next
 	}
-	return w
+	return w, nil
 }
 
 // writeGraphHops renders one direction of a walk under heading. First-hop

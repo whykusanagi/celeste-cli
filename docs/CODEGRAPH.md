@@ -283,8 +283,15 @@ The `code_graph` tool (`celeste_code_graph` over MCP) accepts a symbol name, dir
    the exact name; a qualified name, in any form the tools print or a Go
    programmer writes (`(tui.AppModel).update`, `(*acp.session).update`,
    `AppModel.update`, `commands.Execute`, a full import path, and for other
-   languages the file stem or path, `core.add`); the name ignoring case; a
-   name that starts with or contains the query.
+   languages the file stem or path for a top-level symbol, `core.add`, and
+   the class for a member of one, `Foo.add`, `Foo::add`, `core.Foo.add` or
+   `Geo::Qux::add` for a class nested in a Ruby module or another class
+   (the tools print it as `core.Geo.Qux.add`); the name ignoring case; a
+   name that starts with or contains the query. A C++ namespace is not part
+   of the scope: a member of `geo::Pt` is found as `Pt::x`, `Pt.x` or
+   `file.Pt.x`, not `geo::Pt::x`. A C++ member defined outside its class is
+   found as `Shape::make` or `Shape.make`, and as the tools print it,
+   `shape.Shape::make`.
 2. Every symbol of that tier is kept, non-test files first. Up to 8 are shown
    with their edges: incoming (`GetEdgesTo`) for callers, outgoing
    (`GetEdgesFrom`) for callees, walked breadth first up to `depth` hops:
@@ -359,14 +366,20 @@ method with its edge counts and source body and reports these kinds:
   exported API of a library package (an exported Go function or method
   outside package `main` and outside any `internal/` directory, an exported
   JS/TS function, a public method of an exported JS/TS class, a public
-  method of a public Java class), and a function in a Go file with build
+  method of a public Java class, a public method of a PHP class (`public`
+  or no visibility modifier) or of a Ruby class or module (not after a bare
+  `private`/`protected`, not `private def x`, not named by `private :x`;
+  for `def self.x`, not named by `private_class_method`), and a public
+  member of a C++ class or struct declared in a header, defined in the
+  class or outside it as `void C::f() {}`), and a function in a Go file with build
   constraints (a `//go:build` line or a GOOS/GOARCH file name suffix), whose
   callers are in another platform's build. A base-class method that only
   raises "not implemented" while its own subclasses override it is an abstract
   declaration, not a STUB.
 
-  Public methods of PHP, Ruby and C++ classes are not treated as library
-  API: an uncalled one is reported as likely dead code.
+  Private and protected methods are still checked, and so are the members
+  of a C++ class defined only in a `.cpp` file, which no other translation
+  unit can call.
 - `LAZY_REDIRECT`: a function whose name implies work (an action verb) but
   which has at most two outgoing calls and redirects instead, for example by
   telling the user to use the CLI.
@@ -444,4 +457,4 @@ one node; they never cross languages.
 
 ## Supported Languages (indexable)
 
-Go (go/types, every build). TypeScript/TSX, JavaScript, PHP, Python, Rust, Java, C, C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`) and Ruby (tree-sitter in CGo builds, including release binaries). With `CGO_ENABLED=0` the same files go to the regex parser: Python, JavaScript, TypeScript, Rust and PHP have their own patterns; Java, C, C++ and Ruby get only the generic fallback.
+Go (go/types, every build). TypeScript/TSX, JavaScript, PHP, Python, Rust, Java, C, C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, and a `.h` header that uses C++-only syntax such as a class, namespace, template, access specifier, `virtual`, `::` outside an attribute, or a struct with a member function, constructor or destructor; other `.h` headers are C) and Ruby (tree-sitter in CGo builds, including release binaries). With `CGO_ENABLED=0` the same files go to the regex parser: Python, JavaScript, TypeScript, Rust and PHP have their own patterns; Java, C, C++ and Ruby get only the generic fallback.

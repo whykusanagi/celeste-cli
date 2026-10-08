@@ -1,8 +1,10 @@
 package codegraph
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -90,6 +92,65 @@ func DetectLanguage(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
 	return extensionToLanguage[ext]
 }
+
+// IsCppHeader reports whether relPath is a .h header whose content src is
+// C++: it uses C++-only syntax (a class, namespace or template declaration,
+// an access specifier, virtual, a :: scope, or a struct with a member
+// function, constructor or destructor) outside comments, literals and
+// attributes. Such a header is parsed with the C++ grammar; other .h
+// headers stay C (review of #381). Its language stays "c" in the index: C
+// and C++ resolve names as one family (languageFamily).
+func IsCppHeader(relPath string, src []byte) bool {
+	if !strings.EqualFold(filepath.Ext(relPath), ".h") {
+		return false
+	}
+	src = cppCommentsAndLiterals.ReplaceAll(src, []byte(" "))
+	// A C23 attribute ([[gnu::unused]]) has a "::" too; GNU attributes
+	// hold calls that read as member functions.
+	src = cAttributes.ReplaceAll(src, []byte(" "))
+	if cppHeaderSyntax.Match(src) {
+		return true
+	}
+	for _, m := range cStructBody.FindAllSubmatch(src, -1) {
+		name, body := m[1], m[2]
+		if cppMemberFunction.Match(body) {
+			return true
+		}
+		if len(name) == 0 {
+			continue
+		}
+		for _, c := range cBareCall.FindAllSubmatch(body, -1) {
+			if bytes.Equal(c[1], name) {
+				return true // a constructor
+			}
+		}
+	}
+	return false
+}
+
+// cBareCall matches a name and "(" at the start of a member declaration,
+// with no type before it: a constructor when it is the struct's name.
+var cBareCall = regexp.MustCompile(`(?:^|[\s;])([A-Za-z_]\w*)\s*\(`)
+
+// cppHeaderSyntax matches C++-only syntax in a header.
+var cppHeaderSyntax = regexp.MustCompile(`(?m)^\s*(?:class|namespace|template)\b|\b(?:public|private|protected)\s*:|\bvirtual\b|::`)
+
+// cAttributes matches C23 [[...]] attributes and GNU __attribute__((...)).
+var cAttributes = regexp.MustCompile(`(?s)\[\[.*?\]\]|\b__attribute__\s*\(\(.*?\)\)`)
+
+// cStructBody matches a struct definition: its name (empty when anonymous)
+// and its body up to the first nested brace, the part that declares
+// members.
+var cStructBody = regexp.MustCompile(`\bstruct\b(?:\s+([A-Za-z_]\w*))?\s*\{([^{}]*)`)
+
+// cppMemberFunction matches a member function in a struct body: a type
+// then a name and "(" that does not open a function pointer ("int f()",
+// not "int (*f)()"), or a destructor.
+var cppMemberFunction = regexp.MustCompile(`\b[A-Za-z_]\w*[\s*&]+[A-Za-z_]\w*\s*\(\s*[^*\s]|~\s*[A-Za-z_]\w*\s*\(`)
+
+// cppCommentsAndLiterals matches C/C++ comments and string and character
+// literals, which IsCppHeader ignores.
+var cppCommentsAndLiterals = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'`)
 
 // DetectProjectLanguage determines the primary language of a project
 // by checking for manifest files in the given directory.

@@ -86,6 +86,10 @@ func noIndexError(workspace string) error {
 	return softError("No code graph index for %s; run celeste_index (operation rebuild) or `celeste index` to build one.", workspace)
 }
 
+// testHookRebuildEvicted, when set, runs in indexRebuild right after it
+// evicts the cached Indexer and chat Env, before the rebuild starts.
+var testHookRebuildEvicted func()
+
 // indexBuildingError is the soft error the query tools return while an
 // indexer is building the workspace's graph and it is not yet queryable.
 func indexBuildingError(workspace string) error {
@@ -337,18 +341,38 @@ func (s *Server) indexUpdate(ctx context.Context, workspace string) ([]ContentBl
 // store schema changes between celeste versions or when the index is
 // suspected corrupt.
 func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentBlock, error) {
-	// Evict from cache so we hold no fds on the old file.
+	// Evict from cache so we hold no fds on the old file, and mark the
+	// workspace as rebuilding in the same step: until the rebuilt Indexer
+	// is cached, indexerFor opens no Indexer on the database the rebuild
+	// is about to delete (review of #393). A second rebuild of the same
+	// workspace is refused the same way.
 	s.indexerMu.Lock()
+	if s.rebuilding[workspace] {
+		s.indexerMu.Unlock()
+		return nil, indexBuildingError(workspace)
+	}
+	s.rebuilding[workspace] = true
 	if idx, ok := s.indexers[workspace]; ok && idx != nil {
 		_ = idx.Close()
 		delete(s.indexers, workspace)
 	}
 	s.indexerMu.Unlock()
-
+	cached := false
+	defer func() {
+		if !cached {
+			s.indexerMu.Lock()
+			delete(s.rebuilding, workspace)
+			s.indexerMu.Unlock()
+			s.chatEnvs.invalidate(workspace)
+		}
+	}()
 	// A cached MCP chat Env holds the same codegraph DB open. Retire it so
 	// the delete below succeeds (on Windows an open file can't be removed)
 	// and the next chat call opens the rebuilt index.
 	s.chatEnvs.invalidate(workspace)
+	if testHookRebuildEvicted != nil {
+		testHookRebuildEvicted()
+	}
 
 	// Remove the existing db + WAL files and build afresh. Rebuild holds
 	// the index lock from before the delete until the build ends, so a TUI
@@ -363,16 +387,20 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	if err != nil {
 		return nil, fmt.Errorf("rebuild: %w", err)
 	}
+	// Cache the rebuilt Indexer and clear the mark together, so the next
+	// indexerFor gets this one. Nothing else cached one meanwhile: the
+	// mark kept indexerFor from opening the old database.
 	s.indexerMu.Lock()
-	if cur, ok := s.indexers[workspace]; ok && cur != nil {
-		// A call opened the index while this rebuild ran; keep its
-		// Indexer, which other calls may be using.
-		_ = idx.Close()
-		idx = cur
-	} else {
-		s.indexers[workspace] = idx
-	}
+	s.indexers[workspace] = idx
+	delete(s.rebuilding, workspace)
+	cached = true
 	s.indexerMu.Unlock()
+	// A chat call that built its Env while the rebuild ran opened the old
+	// database (loop.Setup does not go through indexerFor), which the
+	// rebuild then deleted. Retire it, as above, so the next chat call
+	// builds an Env on the rebuilt index; a busy one closes on its last
+	// release (review of #393).
+	s.chatEnvs.invalidate(workspace)
 	elapsed := time.Since(start).Round(time.Millisecond)
 	SendProgress(ctx, fmt.Sprintf("rebuild complete in %s", elapsed), 1.0)
 	stats, err := idx.Stats()

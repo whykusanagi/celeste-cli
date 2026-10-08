@@ -117,3 +117,32 @@ func TestIndexState_PopulatedWithMark(t *testing.T) {
 	require.NoError(t, idx.Update())
 	assert.Equal(t, IndexBuilt, indexState(t, idx))
 }
+
+// Review of #407: a normal update of a built index holds the writer lock
+// while it changes rows without setting the build mark. The index is
+// updating while that lock is held, and built again once it is released.
+func TestIndexState_BuiltWhileUpdateHoldsLock(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	dbPath := filepath.Join(t.TempDir(), "cg.db")
+	idx, err := NewIndexer(dir, dbPath)
+	require.NoError(t, err)
+	defer idx.Close()
+	require.NoError(t, idx.Build())
+	require.Equal(t, IndexBuilt, indexState(t, idx))
+
+	lock, err := lockIndex(context.Background(), dbPath, false)
+	require.NoError(t, err)
+	assert.Equal(t, IndexUpdating, indexState(t, idx), "an update holds the lock on a built index")
+	lock.unlock()
+	assert.Equal(t, IndexBuilt, indexState(t, idx))
+
+	// A built store without a recorded graph version (an index from before
+	// graph versions) is updating under the lock too.
+	require.NoError(t, idx.store.SetMeta(metaGraphVersion, []byte{}))
+	require.Equal(t, IndexBuilt, indexState(t, idx))
+	lock, err = lockIndex(context.Background(), dbPath, false)
+	require.NoError(t, err)
+	assert.Equal(t, IndexUpdating, indexState(t, idx))
+	lock.unlock()
+}

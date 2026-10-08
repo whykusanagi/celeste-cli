@@ -140,3 +140,39 @@ func TestGitignoreFilter_Nil(t *testing.T) {
 	assert.False(t, filter.ShouldSkip("anything.go", false))
 	assert.False(t, filter.ShouldSkip("node_modules", true))
 }
+
+// Review of #381: a .h header is C++ when it uses C++-only syntax outside
+// comments and literals; other headers, and other extensions, are not.
+func TestIsCppHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      bool
+	}{
+		{"x.h", "namespace geo { int f(); }\n", true},
+		{"x.h", "class Shape {\npublic:\n  int f();\n};\n", true},
+		{"x.h", "template <typename T> T pick();\n", true},
+		{"x.h", "struct S { virtual int f(); };\n", true},
+		{"x.h", "int geo::f();\n", true},
+		{"X.H", "namespace geo {}\n", true},
+		{"x.h", "#ifdef __cplusplus\nextern \"C\" {\n#endif\nint add(int a, int b);\n", false},
+		{"x.h", "/* a class of helpers; see geo::f */\n// namespace note\nint add(int, int);\n", false},
+		{"x.h", "const char *s = \"std::string\";\nint class_count;\n", false},
+		// C23 attributes and GNU attributes are C too.
+		{"x.h", "[[gnu::unused]] static int x;\n[[deprecated]] int old(void);\n", false},
+		{"x.h", "struct S { int a; } __attribute__((packed));\nint f(int) __attribute__((nonnull(1)));\n", false},
+		{"x.h", "struct S {\n  int (*cb)(void *);\n  char buf[N(3)];\n  LIST_ENTRY(S) link;\n};\nstruct S *make(int n);\n", false},
+		{"x.h", "typedef struct {\n  void (*free)(void *);\n} ops;\n", false},
+		// A struct with a member function, constructor or destructor is C++.
+		{"x.h", "struct S { int f(); };\n", true},
+		{"x.h", "struct S {\n  S();\n  int a;\n};\n", true},
+		{"x.h", "struct S {\n  ~S();\n};\n", true},
+		{"x.h", "struct S {\n  int area() const { return 1; }\n};\n", true},
+		{"x.h", "[[nodiscard]] int f();\nint geo::g();\n", true},
+		{"x.hpp", "namespace geo {}\n", false},
+		{"x.c", "namespace geo {}\n", false},
+	} {
+		if got := IsCppHeader(tc.name, []byte(tc.src)); got != tc.want {
+			t.Errorf("IsCppHeader(%q, %q) = %v, want %v", tc.name, tc.src, got, tc.want)
+		}
+	}
+}
