@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,24 +141,52 @@ func TestCancelDuringPermissionPrompt(t *testing.T) {
 }
 
 // A cancel sent right after a prompt, before the prompt's goroutine got to
-// run, still cancels it.
+// run, still cancels it; so does one sent a moment later, while the model
+// request is out. The provider holds every reply until the request is
+// given up, so no turn can end on its own before its cancel is read: the
+// only way a try answers is the cancel (a lost one fails the 30s wait).
 func TestCancelRightAfterPrompt(t *testing.T) {
+	// One turn per try as well as the last prompt's: a try's request the
+	// agent gave up can reach the provider only after the hold is lifted.
 	var turns []fakeprovider.Turn
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 11; i++ {
 		turns = append(turns, fakeprovider.Turn{Text: "reply"})
 	}
 	srv := fakeprovider.NewOpenAI(t, turns...)
+	var hold atomic.Bool
+	hold.Store(true)
+	srv.HoldWhile(hold.Load)
 	c := newTestClient(t, testConfig(srv, 0))
 	sid := c.newSession(t.TempDir())
 	for i := 0; i < 10; i++ {
+		sent := len(srv.Requests())
 		ch := c.callAsync("session/prompt", textPrompt(sid, "hi"))
+		if i%2 == 1 {
+			// Odd tries cancel once the model request is out (it is
+			// recorded before it is held). This only picks which path the
+			// try covers: both answer "cancelled". A request a cancelled
+			// try gave up can still reach the provider late and end the
+			// wait early; that try then covers the other path.
+			deadline := time.Now().Add(30 * time.Second)
+			for len(srv.Requests()) == sent {
+				if time.Now().After(deadline) {
+					t.Fatalf("try %d: the model request never reached the provider", i)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
 		c.notify("session/cancel", map[string]any{"sessionId": sid})
-		r := <-ch
-		if r.err != nil || stopReason(t, r.result) != "cancelled" {
-			t.Fatalf("try %d: prompt then cancel = %s %v", i, r.result, r.err)
+		select {
+		case r := <-ch:
+			if r.err != nil || stopReason(t, r.result) != "cancelled" {
+				t.Fatalf("try %d: prompt then cancel = %s %v", i, r.result, r.err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("try %d: the cancel was lost: the prompt never answered", i)
 		}
 	}
 	// A cancel with no prompt in flight does not cancel a later prompt.
+	hold.Store(false)
 	c.notify("session/cancel", map[string]any{"sessionId": sid})
 	time.Sleep(50 * time.Millisecond)
 	if res, err := c.call("session/prompt", textPrompt(sid, "go")); err != nil || stopReason(t, res) != "end_turn" {
@@ -231,5 +260,104 @@ func TestPermissionWithoutCallIDIsUnique(t *testing.T) {
 	defer mu.Unlock()
 	if len(ids) != 2 || ids[0] == ids[1] || ids[0] == "" {
 		t.Fatalf("toolCallIds = %v, want two distinct", ids)
+	}
+}
+
+// A cancel that reaches a prompt after the model's reply finished streaming,
+// but before the prompt answered, still cancels it: the editor sent it while
+// the turn ran, and ACP answers such a turn "cancelled". The test holds the
+// session store so the prompt is parked in its save, past the loop's last
+// check of its context.
+func TestCancelAfterTheReplyStillCancels(t *testing.T) {
+	srv := fakeprovider.NewOpenAI(t, fakeprovider.Turn{Text: "reply"}, fakeprovider.Turn{Text: "next"})
+	c := newTestClient(t, testConfig(srv, 0))
+	sid := c.newSession(t.TempDir())
+	c.agent.storeMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			c.agent.storeMu.Unlock()
+		}
+	}()
+	ch := c.callAsync("session/prompt", textPrompt(sid, "hi"))
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(c.agentText(), "reply") {
+		if time.Now().After(deadline) {
+			t.Fatal("the reply never streamed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c.notify("session/cancel", map[string]any{"sessionId": sid})
+	// Notifications run on the agent's read loop before it reads the next
+	// line, so once a request sent after the cancel answers, the cancel
+	// was applied. initialize does not touch the held store.
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	c.agent.storeMu.Unlock()
+	locked = false
+	select {
+	case r := <-ch:
+		if r.err != nil || stopReason(t, r.result) != "cancelled" {
+			t.Fatalf("prompt cancelled after its reply = %s %v", r.result, r.err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the prompt never answered")
+	}
+	if res, err := c.call("session/prompt", textPrompt(sid, "again")); err != nil || stopReason(t, res) != "end_turn" {
+		t.Fatalf("next prompt = %s %v", res, err)
+	}
+}
+
+// A cancel that reaches a prompt after a guard stopped its loop, but before
+// the prompt answered, answers it "cancelled" without the guard's notice:
+// the editor is never told both "Stopped: ... send another message" and
+// that the turn was cancelled. The store is held so the prompt parks in its
+// save, after the loop returned and before the stop reason is mapped.
+func TestCancelAfterAGuardStopSendsNoNotice(t *testing.T) {
+	call := fakeprovider.Turn{ToolCalls: []fakeprovider.ToolCall{{ID: "l", Name: "list_files", Args: `{}`}}}
+	srv := fakeprovider.NewOpenAI(t, call, call, call, call, fakeprovider.Turn{Text: "next"})
+	c := newTestClient(t, testConfig(srv, 0))
+	sid := c.newSession(t.TempDir())
+	s := c.agent.session(sid)
+	c.agent.storeMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			c.agent.storeMu.Unlock()
+		}
+	}()
+	ch := c.callAsync("session/prompt", textPrompt(sid, "loop"))
+	// The prompt sets its history just before it saves it: once that is
+	// seen, the loop has returned.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		s.mu.Lock()
+		n := len(s.history)
+		s.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the loop never returned")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c.notify("session/cancel", map[string]any{"sessionId": sid})
+	if _, err := c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	c.agent.storeMu.Unlock()
+	locked = false
+	select {
+	case r := <-ch:
+		if r.err != nil || stopReason(t, r.result) != "cancelled" {
+			t.Fatalf("prompt cancelled after its guard stop = %s %v", r.result, r.err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the prompt never answered")
+	}
+	if strings.Contains(c.agentText(), "identical tool call") {
+		t.Fatalf("a cancelled turn sent the guard's notice: %q", c.agentText())
 	}
 }

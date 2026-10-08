@@ -205,9 +205,9 @@ func TestRepoSandboxInteractiveApproval(t *testing.T) {
 	ws := t.TempDir()
 	write(t, filepath.Join(ws, ".celeste", "config.json"), `{"sandbox":{"enabled":false}}`)
 	var asked []hooks.Source
-	approve := func(src hooks.Source, _ hooks.TrustStatus) bool {
+	approve := func(src hooks.Source, _ hooks.TrustStatus) hooks.Answer {
 		asked = append(asked, src)
-		return true
+		return hooks.AnswerYes
 	}
 	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
 	env, err := Setup(ModeChat, cfg, ws, SetupOptions{Warn: func(string) {}, Approve: approve})

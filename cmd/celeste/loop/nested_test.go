@@ -507,7 +507,7 @@ func TestNestedUnderTheChatDropsRepoMCPServers(t *testing.T) {
 	write(t, filepath.Join(ws, ".mcp.json"), strings.Replace(stubMCPConfig(t), `"probe"`, `"repo"`, 1))
 	// The person approves the repo's server when the chat asks.
 	w := &warnings{}
-	chat, err := Setup(ModeChat, testCfg(), ws, SetupOptions{Warn: w.add, Approve: func(hooks.Source, hooks.TrustStatus) bool { return true }})
+	chat, err := Setup(ModeChat, testCfg(), ws, SetupOptions{Warn: w.add, Approve: func(hooks.Source, hooks.TrustStatus) hooks.Answer { return hooks.AnswerYes }})
 	if err != nil {
 		t.Fatal(err)
 	}

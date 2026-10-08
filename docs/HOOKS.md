@@ -2,6 +2,8 @@
 
 Hooks run your own commands at points in a Celeste session. They can block a tool call, rewrite its input, or add context for the model. For regex rules on the model's own output (not on tool events), see [STEERING.md](STEERING.md); a project grimoire's `## Stream Rules` section is trusted with the same `celeste hooks trust`, as is a workspace `.celeste/config.json` whose `sandbox` settings loosen the sandbox (see [SANDBOX.md](SANDBOX.md)), and each server in a workspace `.mcp.json` or `.celeste/mcp.json`: the chat starts an enabled one only once approved, and asks again when its command, args, env or URL change.
 
+**A no is remembered.** When the chat asks and you answer no (or just press Enter), the decline is stored in `~/.celeste/trusted.json` under the same key as an approval would be, pinned to what you were shown. A declined hook file, stream-rules section, sandbox setting or MCP server never runs and is not asked about again; the chat prints a one-line warning saying how to approve it. If its content changes, the chat asks again. Closing the prompt without an answer (EOF) records nothing. To change your mind, `celeste hooks trust` shows each declined source and asks y/N before approving it, and `celeste mcp trust <server>` does the same for one MCP server (`celeste mcp untrust <server>` forgets the approval or decline, so the chat asks again). In the chat, `/mcp` marks a declined server and approves it with `a` (or `c`) after showing its command and asking for `y`. Answering no in `celeste hooks trust` leaves what is stored unchanged. An editor session (`celeste acp`) does not ask about a source you declined in the chat; its own "Skip" holds for that session only.
+
 **Where hooks load.** The chat UI (`celeste chat`, `celeste resume`), every agent run and MCP chat load hooks: `celeste agent`, the MCP server's `celeste` tool in both `mode: "agent"` and `mode: "chat"`, `/agent` in the chat, subagents, and `/orchestrate` lanes.
 
 Agent runs and MCP chat are **non-interactive**: they never ask you to trust a repo's hooks. Untrusted repo hooks are skipped with a warning (`hooks: skipping …`); approve them ahead of time with `celeste hooks trust`. Your global `~/.celeste/hooks.json` always runs, so a global guard now protects agent runs and MCP chat too. The MCP server returns these warnings in the tool result, under `## Warnings`. An editor session (`celeste acp`) asks through the editor instead, once per hook file at the session's first prompt; see [ACP.md](ACP.md).
@@ -40,6 +42,8 @@ Approve ahead of time:
 celeste hooks list                 # every source and its trust status
 celeste hooks trust                # approve this directory's untrusted sources (asks y/N)
 celeste hooks trust --yes [path]   # approve without asking: scripts, CI, mintty
+celeste mcp trust <server>         # approve one MCP server here, also a declined one (asks y/N)
+celeste mcp untrust <server>       # forget its approval or decline: the chat asks again
 ```
 
 `celeste hooks trust` with no path approves everything `celeste hooks list` would show for the current directory. A path argument can be a directory or a specific `hooks.json`/grimoire file (or a `.mcp.json` / `.celeste/mcp.json` for just its MCP servers) that Celeste would otherwise load; pointing it at a file Celeste doesn't read from (wrong name, wrong location) is an error, not a silent no-op.

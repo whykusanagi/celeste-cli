@@ -35,45 +35,116 @@ func DescribeSource(w io.Writer, src Source) {
 	}
 }
 
-// PromptApprover asks on out and reads a y/N answer from in. Anything but
-// y or yes (including Enter and EOF) declines.
+// Decide is the one trust step every repo source passes (hooks, stream
+// rules, sandbox settings, MCP servers): run reports whether src may run,
+// why says why not ("declined", "not trusted", ...). A Trusted source runs
+// and a Declined one does not, without asking; any other is put to approve
+// (nil in non-interactive runs: it then never runs), and a yes or a no is
+// recorded. err is a failure to record the answer: a yes then holds for
+// this session only, a no still skips the source.
+func Decide(store *TrustStore, src Source, approve ApproveFunc) (run bool, why string, err error) {
+	status := store.Status(src)
+	switch status {
+	case Trusted:
+		return true, "", nil
+	case Declined:
+		return false, "declined", nil
+	}
+	if approve != nil {
+		switch approve(src, status) {
+		case AnswerYes:
+			if err := store.Approve(src); err != nil {
+				return true, "", fmt.Errorf("%s approved for this session only: %w", strconv.Quote(src.Path), err)
+			}
+			return true, "", nil
+		case AnswerNo:
+			if err := store.Decline(src); err != nil {
+				return false, "declined", fmt.Errorf("%s declined for this session only: %w", strconv.Quote(src.Path), err)
+			}
+			return false, "declined", nil
+		}
+	}
+	switch status {
+	case Changed:
+		return false, "changed since you approved it", nil
+	case DeclinedChanged:
+		return false, "changed since you declined it", nil
+	}
+	return false, "not trusted", nil
+}
+
+// PromptApprover asks on out and reads a y/N answer from in. y or yes
+// approves; anything else on the line (Enter included) declines, and the
+// decline is remembered. EOF is no answer (AnswerLater).
 func PromptApprover(in io.Reader, out io.Writer) ApproveFunc {
+	return promptApprover(in, out, true)
+}
+
+// PromptApproverNoRemember is PromptApprover for a caller that records
+// only a yes (`celeste hooks trust`): the prompt says a no leaves the
+// stored decision as it was instead of claiming it is remembered.
+func PromptApproverNoRemember(in io.Reader, out io.Writer) ApproveFunc {
+	return promptApprover(in, out, false)
+}
+
+func promptApprover(in io.Reader, out io.Writer, rememberNo bool) ApproveFunc {
 	reader := bufio.NewReader(in)
-	return func(src Source, status TrustStatus) bool {
+	const unchanged = "A no leaves the stored decision unchanged.\n"
+	return func(src Source, status TrustStatus) Answer {
 		what := "are not trusted yet"
-		if status == Changed {
+		switch status {
+		case Changed:
 			what = "have changed since you approved them"
+		case DeclinedChanged:
+			what = "have changed since you declined them"
+		case Declined:
+			what = "were declined"
+		}
+		remembered := "A no is remembered; `celeste hooks trust` approves them later.\n"
+		if !rememberNo {
+			remembered = unchanged
 		}
 		switch src.Kind {
 		case KindRepoStreamRules:
 			fmt.Fprintf(out, "\nStream rules in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, streamRulesSuffix)), what)
 			DescribeSource(out, src)
-			fmt.Fprint(out, "These rules can stop replies, re-run turns and add instructions the model follows.\nTrust them? [y/N]: ")
+			fmt.Fprint(out, "These rules can stop replies, re-run turns and add instructions the model follows.\n"+remembered+"Trust them? [y/N]: ")
 		case KindRepoSandbox:
 			fmt.Fprintf(out, "\nSandbox settings in %s %s:\n", strconv.Quote(strings.TrimSuffix(src.Path, sandboxSuffix)), what)
 			DescribeSource(out, src)
-			fmt.Fprint(out, "These settings loosen the sandbox bash commands run in (more writable directories, the network, or no sandbox).\nTrust them? [y/N]: ")
+			fmt.Fprint(out, "These settings loosen the sandbox bash commands run in (more writable directories, the network, or no sandbox).\n"+remembered+"Trust them? [y/N]: ")
 		case KindRepoMCP:
 			// One server: singular verbs (C4).
 			what = "is not trusted yet"
-			if status == Changed {
+			switch status {
+			case Changed:
 				what = "has changed since you approved it"
+			case DeclinedChanged:
+				what = "has changed since you declined it"
+			case Declined:
+				what = "was declined"
 			}
 			fmt.Fprintf(out, "\nMCP server %s in %s %s:\n", strconv.Quote(MCPServerName(src)), strconv.Quote(SourceFile(src)), what)
 			DescribeSource(out, src)
-			fmt.Fprint(out, "Starting it runs this command on this machine with your permissions (or connects to this URL).\nTrust it? [y/N]: ")
+			mcpRemembered := fmt.Sprintf("A no is remembered; `celeste mcp trust %s` approves it later.\n", SafeText(MCPServerName(src)))
+			if !rememberNo {
+				mcpRemembered = unchanged
+			}
+			fmt.Fprint(out, "Starting it runs this command on this machine with your permissions (or connects to this URL).\n"+mcpRemembered+"Trust it? [y/N]: ")
 		default:
 			fmt.Fprintf(out, "\nHooks in %s (%s) %s:\n", strconv.Quote(src.Path), src.Kind, what)
 			DescribeSource(out, src)
-			fmt.Fprint(out, "These commands run on this machine with your permissions.\nTrust them? [y/N]: ")
+			fmt.Fprint(out, "These commands run on this machine with your permissions.\n"+remembered+"Trust them? [y/N]: ")
 		}
 		line, err := reader.ReadString('\n')
 		if err != nil && line == "" {
 			fmt.Fprintln(out)
-			return false
+			return AnswerLater
 		}
-		answer := strings.ToLower(strings.TrimSpace(line))
-		return answer == "y" || answer == "yes"
+		if answer := strings.ToLower(strings.TrimSpace(line)); answer == "y" || answer == "yes" {
+			return AnswerYes
+		}
+		return AnswerNo
 	}
 }
 

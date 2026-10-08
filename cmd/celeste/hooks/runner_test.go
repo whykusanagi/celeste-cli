@@ -208,7 +208,7 @@ func TestLoadApprovesInteractivelyAndPersists(t *testing.T) {
 	ws := t.TempDir()
 	writeFile(t, filepath.Join(ws, ".celeste", "hooks.json"), hooksJSON(t, v2(t, EventPreToolUse, "deny", "x")))
 	var statuses []TrustStatus
-	approve := func(src Source, st TrustStatus) bool { statuses = append(statuses, st); return true }
+	approve := func(src Source, st TrustStatus) Answer { statuses = append(statuses, st); return AnswerYes }
 	r, err := Load(Options{Workspace: ws, Home: home, Approve: approve, Warn: func(string) {}})
 	require.NoError(t, err)
 	assert.True(t, r.Has(EventPreToolUse))
@@ -225,12 +225,12 @@ func TestLoadChangedRepoHooksReprompt(t *testing.T) {
 	ws := t.TempDir()
 	path := filepath.Join(ws, ".celeste", "hooks.json")
 	writeFile(t, path, hooksJSON(t, v2(t, EventPreToolUse, "allow")))
-	_, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) bool { return true }, Warn: func(string) {}})
+	_, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) Answer { return AnswerYes }, Warn: func(string) {}})
 	require.NoError(t, err)
 
 	writeFile(t, path, hooksJSON(t, v2(t, EventPreToolUse, "deny", "changed")))
 	var got []TrustStatus
-	_, err = Load(Options{Workspace: ws, Home: home, Approve: func(_ Source, st TrustStatus) bool { got = append(got, st); return false }, Warn: func(string) {}})
+	_, err = Load(Options{Workspace: ws, Home: home, Approve: func(_ Source, st TrustStatus) Answer { got = append(got, st); return AnswerLater }, Warn: func(string) {}})
 	require.NoError(t, err)
 	assert.Equal(t, []TrustStatus{Changed}, got)
 
@@ -238,7 +238,7 @@ func TestLoadChangedRepoHooksReprompt(t *testing.T) {
 	r, err := Load(Options{Workspace: ws, Home: home, Warn: func(s string) { warnings = append(warnings, s) }})
 	require.NoError(t, err)
 	assert.False(t, r.Has(EventPreToolUse))
-	assert.Contains(t, strings.Join(warnings, "\n"), "changed since you approved them")
+	assert.Contains(t, strings.Join(warnings, "\n"), "changed since you approved it")
 }
 
 // Review Focus 4: a symlink to an approved file does not inherit its trust.
@@ -248,14 +248,14 @@ func TestLoadRefusesSymlinkToApprovedFile(t *testing.T) {
 	approvedWS := t.TempDir()
 	approved := filepath.Join(approvedWS, ".celeste", "hooks.json")
 	writeFile(t, approved, hooksJSON(t, v2(t, EventPreToolUse, "allow")))
-	_, err := Load(Options{Workspace: approvedWS, Home: home, Approve: func(Source, TrustStatus) bool { return true }, Warn: func(string) {}})
+	_, err := Load(Options{Workspace: approvedWS, Home: home, Approve: func(Source, TrustStatus) Answer { return AnswerYes }, Warn: func(string) {}})
 	require.NoError(t, err)
 
 	evil := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(evil, ".celeste"), 0o755))
 	require.NoError(t, os.Symlink(approved, filepath.Join(evil, ".celeste", "hooks.json")))
 	asked := 0
-	r, err := Load(Options{Workspace: evil, Home: home, Approve: func(Source, TrustStatus) bool { asked++; return true }, Warn: func(string) {}})
+	r, err := Load(Options{Workspace: evil, Home: home, Approve: func(Source, TrustStatus) Answer { asked++; return AnswerYes }, Warn: func(string) {}})
 	require.NoError(t, err)
 	assert.False(t, r.Has(EventPreToolUse))
 	assert.Zero(t, asked, "a refused file is never offered for approval")
@@ -265,7 +265,7 @@ func TestLoadDeclinedApprovalSkips(t *testing.T) {
 	home := testHome(t)
 	ws := t.TempDir()
 	writeFile(t, filepath.Join(ws, ".celeste", "hooks.json"), hooksJSON(t, v2(t, EventPreToolUse, "allow")))
-	r, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) bool { return false }, Warn: func(string) {}})
+	r, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) Answer { return AnswerLater }, Warn: func(string) {}})
 	require.NoError(t, err)
 	assert.False(t, r.Has(EventPreToolUse))
 	assert.NoFileExists(t, TrustPath(home))
@@ -280,7 +280,7 @@ func TestLoadApprovalSaveFailureRunsForSessionOnly(t *testing.T) {
 	r, err := Load(Options{
 		Workspace: ws,
 		Home:      home,
-		Approve:   func(Source, TrustStatus) bool { return true },
+		Approve:   func(Source, TrustStatus) Answer { return AnswerYes },
 		Warn:      func(s string) { warnings = append(warnings, s) },
 	})
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestLoadCorruptTrustStoreSkipsRepoHooksWithoutApprover(t *testing.T) {
 	home := testHome(t)
 	ws := t.TempDir()
 	writeFile(t, filepath.Join(ws, ".celeste", "hooks.json"), hooksJSON(t, v2(t, EventStop, "allow")))
-	_, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) bool { return true }, Warn: func(string) {}})
+	_, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) Answer { return AnswerYes }, Warn: func(string) {}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(TrustPath(home), []byte("{not json"), 0o600))
 
@@ -328,7 +328,7 @@ func TestLoadAncestorHookRunsInItsRoot(t *testing.T) {
 	require.NoError(t, os.MkdirAll(ws, 0o755))
 	writeFile(t, filepath.Join(parent, ".celeste", "hooks.json"),
 		hooksJSON(t, v2(t, EventStop, "record", "out.json"), v2(t, EventStop, "env", "env.json")))
-	r, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) bool { return true }, Warn: func(string) {}})
+	r, err := Load(Options{Workspace: ws, Home: home, Approve: func(Source, TrustStatus) Answer { return AnswerYes }, Warn: func(string) {}})
 	require.NoError(t, err)
 	r.Stop(context.Background(), "done")
 	assert.FileExists(t, filepath.Join(parent, "out.json"))

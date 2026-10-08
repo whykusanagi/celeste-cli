@@ -94,20 +94,18 @@ func (e *Env) trustRepoSandbox(path, body string) bool {
 		e.warn("sandbox: %v; repository sandbox settings stay untrusted until it is fixed or removed", err)
 	}
 	src := hooks.SandboxSource(path, body)
-	status := store.Status(src)
-	if status == hooks.Trusted {
+	var approve hooks.ApproveFunc
+	if store.Err() == nil {
+		approve = e.approver()
+	}
+	run, why, err := hooks.Decide(store, src, approve)
+	if err != nil {
+		e.warn("sandbox: %v", err)
+	}
+	if run {
 		return trusted()
 	}
-	if approve := e.approver(); approve != nil && store.Err() == nil && approve(src, status) {
-		if err := store.Approve(src); err != nil {
-			e.warn("sandbox: %s approved for this session only: %v", strconv.Quote(path), err)
-		}
-		return trusted()
-	}
-	if status == hooks.Changed {
-		return skip("changed since you approved it")
-	}
-	return skip("not trusted")
+	return skip(why)
 }
 
 // within reports whether path is dir or inside it.

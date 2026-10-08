@@ -64,19 +64,18 @@ func Trusted(home string, secs []Section, approve hooks.ApproveFunc, warn func(s
 			continue
 		}
 		src := hooks.StreamRulesSource(path, strings.Join(bodies[path], "\n"))
-		status := store.Status(src)
-		switch {
-		case status == hooks.Trusted:
+		ask := approve
+		if store.Err() != nil {
+			ask = nil
+		}
+		run, why, err := hooks.Decide(store, src, ask)
+		if err != nil {
+			warn(fmt.Sprintf("stream rules: %v", err))
+		}
+		if run {
 			allowed[path] = true
-		case approve != nil && store.Err() == nil && approve(src, status):
-			allowed[path] = true
-			if err := store.Approve(src); err != nil {
-				warn(fmt.Sprintf("stream rules: %s approved for this session only: %v", strconv.Quote(path), err))
-			}
-		case status == hooks.Changed:
-			skipped = append(skipped, strconv.Quote(path)+" (changed since you approved it)")
-		default:
-			skipped = append(skipped, strconv.Quote(path)+" (not trusted)")
+		} else {
+			skipped = append(skipped, strconv.Quote(path)+" ("+why+")")
 		}
 	}
 	if len(skipped) > 0 {

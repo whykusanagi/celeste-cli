@@ -9,9 +9,24 @@ import (
 	"strings"
 )
 
-// ApproveFunc asks a person whether an untrusted source may run. true
-// approves it and records the approval. Only interactive callers supply one.
-type ApproveFunc func(src Source, status TrustStatus) bool
+// Answer is a person's reply to a trust question.
+type Answer int
+
+const (
+	// AnswerLater is no answer (EOF, a cancelled prompt, a question queued
+	// for later): the source does not run and nothing is recorded.
+	AnswerLater Answer = iota
+	// AnswerYes approves the source; the approval is recorded.
+	AnswerYes
+	// AnswerNo declines it; the decline is recorded, so it is not asked
+	// about again until it changes (#411).
+	AnswerNo
+)
+
+// ApproveFunc asks a person whether an untrusted source may run. Only
+// interactive callers supply one. It is never asked about a Trusted or
+// Declined source.
+type ApproveFunc func(src Source, status TrustStatus) Answer
 
 // Options configures Load.
 type Options struct {
@@ -112,26 +127,14 @@ func Load(opts Options) (*Runner, error) {
 // admit decides whether a repo source runs. Without an approver it never
 // does: only a person approves hooks.
 func (r *Runner) admit(src Source, store *TrustStore, approve ApproveFunc) bool {
-	status := store.Status(src)
-	if status == Trusted {
-		return true
+	run, why, err := Decide(store, src, approve)
+	if err != nil {
+		r.warn(fmt.Sprintf("hooks: %v", err))
 	}
-	what := "not trusted"
-	if status == Changed {
-		what = "changed since you approved them"
+	if !run {
+		r.warn(fmt.Sprintf("hooks: skipping %d hook(s) in %s: %s; run `celeste hooks trust` to approve them", len(src.Hooks), strconv.Quote(src.Path), why))
 	}
-	if approve == nil {
-		r.warn(fmt.Sprintf("hooks: skipping %d hook(s) in %s: %s; run `celeste hooks trust` to approve them", len(src.Hooks), strconv.Quote(src.Path), what))
-		return false
-	}
-	if !approve(src, status) {
-		r.warn(fmt.Sprintf("hooks: skipping %d hook(s) in %s: not approved", len(src.Hooks), strconv.Quote(src.Path)))
-		return false
-	}
-	if err := store.Approve(src); err != nil {
-		r.warn(fmt.Sprintf("hooks: %s approved for this session only: %v", strconv.Quote(src.Path), err))
-	}
-	return true
+	return run
 }
 
 // Has reports whether any loaded hook listens for ev.

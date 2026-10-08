@@ -73,11 +73,11 @@ func TestSetupChatApprovesStreamRules(t *testing.T) {
 	ws := t.TempDir()
 	write(t, filepath.Join(ws, ".grimoire"), "## Stream Rules\n### repo-rule\n---\ncondition: bar\n---\nNo bar.\n")
 	asked := 0
-	approve := func(src hooks.Source, _ hooks.TrustStatus) bool {
+	approve := func(src hooks.Source, _ hooks.TrustStatus) hooks.Answer {
 		if src.Kind == hooks.KindRepoStreamRules {
 			asked++
 		}
-		return true
+		return hooks.AnswerYes
 	}
 	env, err := Setup(ModeChat, testCfg(), ws, SetupOptions{Warn: func(string) {}, Approve: approve})
 	if err != nil {

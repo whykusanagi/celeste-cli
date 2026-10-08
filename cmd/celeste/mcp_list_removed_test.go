@@ -22,7 +22,7 @@ func TestMCPRunsInServerRemovedSinceListing(t *testing.T) {
 		if e.name == "off" {
 			other = e.path
 		}
-		got := mcpRunsIn(e, "", other, show, true)
+		got := mcpRunsIn(e, "", other, show, "approved")
 		if strings.HasSuffix(got, "by ") || strings.Contains(got, "uses )") || !strings.Contains(got, "removed since listing") {
 			t.Errorf("%s: mcpRunsIn = %q, want it to say the server was removed since listing", e.name, got)
 		}
