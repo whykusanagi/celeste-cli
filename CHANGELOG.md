@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tui:** `/config set-key` and `/voice set-key` are kept in the input history as `set-key ***`, so the key is never saved with the session or in its exports; older sessions are redacted when loaded or exported. Exports are written owner-only (Aikido 806869355).
 * **logs:** `~/.celeste/logs` and its log files are owner-only, also when an older version created them with a looser mode (Aikido 806869872).
 * **agent:** run artifact bundles (run state, plan, steps, verification, summary, git status and diff) are owner-only (Aikido 806869790).
-* **tools:** notes, reminders, QR codes, wallet-monitor state, memories, cost records, the user identity file and agent run checkpoints under `~/.celeste` are owner-only (Aikido 806869849).
+* **tools:** notes, reminders, QR codes, wallet-monitor state, memories, cost records, the user identity file and agent run checkpoints under `~/.celeste` are owner-only; `celeste mcp install` creates a new MCP client config, and every backup it makes, owner-only (Aikido 806869849).
 * **agent:** resuming a run started with `--no-artifacts` keeps artifacts off; `--no-artifacts` on the resume still turns them off (Aikido 806869324).
 * **config:** celeste refuses to start without a home directory (`HOME`, or `USERPROFILE` on Windows, unset, empty or relative) instead of resolving `~/.celeste` against the current directory, and custom skills load only from an absolute directory (Aikido 806869780).
 
