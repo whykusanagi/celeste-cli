@@ -9,8 +9,9 @@ type PrimaryArger interface {
 }
 
 // primaryArgKeys are the fields a tool's primary argument is looked for
-// in, in the order permission rules have always checked them.
-var primaryArgKeys = []string{"command", "path", "content", "pattern"}
+// in: the order permission rules have always checked them, then url and
+// query.
+var primaryArgKeys = []string{"command", "path", "content", "pattern", "url", "query"}
 
 // PrimaryArg is the input field an argument-scoped permission rule
 // ("bash(git *)", "write_file(src/*)") is matched against, and the one a

@@ -1672,6 +1672,7 @@ Comprehensive documentation for developers and contributors:
 
 - **[MIGRATING-2.0.md](MIGRATING-2.0.md)** - Upgrading from 1.x: every change that can affect an existing setup
 - **[HOOKS.md](docs/HOOKS.md)** - `hooks.json`, grimoire hooks, approving a repository's hooks (`celeste hooks`)
+- **[PERMISSIONS.md](docs/PERMISSIONS.md)** - `permissions.json`: the rule order, argument-scoped rules and the permission prompt
 - **[SANDBOX.md](docs/SANDBOX.md)** - The optional OS sandbox for `bash`
 - **[SUBAGENTS.md](docs/SUBAGENTS.md)** - Typed subagents (`explore`, `review`, `general`)
 - **[PLAN_MODE.md](docs/PLAN_MODE.md)** - `/plan` and `celeste plan`

@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **config:** `skip_persona_prompt` and `celeste config --skip-persona` are removed: the persona is always on in chat and agent runs, for every provider. DigitalOcean agents, which have their own built-in persona, now also get Celeste's. A config with `"skip_persona_prompt": true` loses the key on load, with one note on stderr; `false` is ignored. See MIGRATING-2.0.md.
 
+### Security
+
+* **codegraph:** `code_impact` and `/graph impact` treat their diff base strictly as a git revision; a base that git would read as an option is refused. Audio files handed to `ffprobe`, `ffmpeg` and the audio players are always passed as file names (Aikido 806781859).
+* **subagents:** a `spawn_agent` workspace must be the parent's workspace or a directory inside it, symlinks resolved; anything else is refused (Aikido 806869384).
+* **acp:** each editor permission request is bound to the exact tool invocation that asks, with that call's own title and input, also when the model reuses a tool call ID (Aikido 806869799).
+* **permissions:** an argument-scoped rule such as `write_file(src/*)` is matched against the field the tool acts on (`command` for `bash`, `path` for the file tools), never an extra input field; a tool without such a field is never permitted by one and is still restricted by one (Aikido 806869489).
+* **permissions:** the permission prompt shows the full command and every argument of the call; only a value over 4 KiB is cut, with a marker saying how much is hidden (Aikido 806869560).
+* **config:** when the home directory cannot be resolved, celeste uses the default permissions (nothing saved) and loads no custom skills, home-level hooks or home-level MCP servers, instead of reading those files relative to the current directory (Aikido 806869372).
+* **permissions:** paths are cleaned before directory-scoped rules match them, so `..` cannot move a path into or out of a rule's directory; a command rule covers one command: an allow rule never matches a line that chains, pipes, substitutes or redirects, and a deny rule matches the denied command anywhere in the line (Aikido 806869445).
+* **tools:** a turn runs only the tools it offered the model; a call to a registered tool of another mode, or one hidden until `find_tools` activates it, is refused (Aikido 806869910).
+* **permissions:** in default mode, pattern rules apply before the read-only auto-allow, so a pattern deny or ask also covers read-only tools (Aikido 806869467).
+* **subagents:** a subagent killed while it was finishing stays failed, and its isolated worktree is not merged (Aikido 806869555).
+* **tools:** a failing custom tool's result names the tool instead of repeating its configured command (Aikido 806869917).
+
 ### Features
 
 * **acp:** `celeste acp`: an Agent Client Protocol agent for Zed and JetBrains, over stdio ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)). Each editor session gets the chat's tools, persona, hooks and project context for the editor's folder (plus the editor's stdio MCP servers) and is saved as a celeste session, its history updated after each prompt. Prompts run on celeste's tool loop: replies stream as message chunks, tool calls show with their kind, title and file, a `todo` result updates the editor's plan, and compaction notes arrive as thoughts. Tools that need approval ask through the editor's permission prompt (allow once, always allow for the session, reject); cancelling stops the turn, a pending permission prompt included. Editor threads can be reopened: `session/load` replays the conversation, tool calls included, and the next prompt continues it. An untrusted repository hook file is asked about once, at the session's first prompt, through the editor's permission prompt (its commands shown); trusting it stores the approval and the hooks run in that prompt, skipping runs without them. Celeste uses its own config and keys (`-config <name>` picks a profile); stdout carries only the protocol, and logs go to `~/.celeste/logs`. See `docs/ACP.md` for the Zed and JetBrains setup.

@@ -37,7 +37,8 @@ func TestRegistryRulesUseTheDeclaredPrimaryArgument(t *testing.T) {
 	for want, params := range map[string]string{
 		"command": `{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"number"}}}`,
 		"path":    `{"type":"object","properties":{"content":{"type":"string"},"path":{"type":"string"}}}`,
-		"url":     `{"type":"object","properties":{"url":{"type":"string"},"max":{"type":"number"}}}`,
+		"url":     `{"type":"object","properties":{"url":{"type":"string"},"format":{"type":"string"}}}`,
+		"text":    `{"type":"object","properties":{"text":{"type":"string"},"max":{"type":"number"}}}`,
 		"":        `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"}}}`,
 	} {
 		if got := PrimaryArg(&mockTool{params: json.RawMessage(params)}); got != want {
