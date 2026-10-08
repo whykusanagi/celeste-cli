@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,8 +24,10 @@ type fakeAlchemy struct {
 	// transfers returns one page for a direction ("from"/"to") and pageKey.
 	transfers func(direction, pageKey string) (page []any, next string)
 	// fail makes the named method return a transport error.
-	fail  map[string]bool
-	calls map[string]int
+	fail map[string]bool
+	// failNetwork makes every call to that network fail.
+	failNetwork string
+	calls       map[string]int
 }
 
 func (f *fakeAlchemy) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -39,7 +42,7 @@ func (f *fakeAlchemy) RoundTrip(req *http.Request) (*http.Response, error) {
 		f.calls = map[string]int{}
 	}
 	f.calls[body.Method]++
-	failing := f.fail[body.Method]
+	failing := f.fail[body.Method] || (f.failNetwork != "" && strings.HasPrefix(req.URL.Host, f.failNetwork+"."))
 	f.mu.Unlock()
 	if failing {
 		return nil, errors.New("simulated outage")

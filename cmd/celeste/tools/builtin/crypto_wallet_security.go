@@ -20,8 +20,11 @@ import (
 
 // WalletSecurityConfig holds wallet security configuration
 type WalletSecurityConfig struct {
-	MonitoredWallets    []MonitoredWallet `json:"monitored_wallets"`
-	LastCheckedBlock    string            `json:"last_checked_block"`
+	MonitoredWallets []MonitoredWallet `json:"monitored_wallets"`
+	LastCheckedBlock string            `json:"last_checked_block"`
+	// LastCheckedBlocks is the scan checkpoint per network (the last block
+	// fully scanned for every wallet on it).
+	LastCheckedBlocks   map[string]string `json:"last_checked_blocks,omitempty"`
 	PollIntervalSeconds int               `json:"poll_interval_seconds"`
 }
 
@@ -75,6 +78,9 @@ type AssetTransfer struct {
 // pages read per direction in one scan. A scan that needs more fails, so the
 // checkpoint stays put and the range is scanned again.
 const maxAssetTransferPages = 50
+
+// walletSecurityClient is the HTTP client a scan uses; tests swap it.
+var walletSecurityClient = func() *http.Client { return &http.Client{Timeout: 30 * time.Second} }
 
 // Storage path helpers
 func getWalletSecurityPath() string {
@@ -390,47 +396,66 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		), nil
 	}
 
-	// Create HTTP client
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := walletSecurityClient()
 
-	// Get current block
-	blockNumResult, err := alchemyRequest(ctx, client, alchemyConfig,
-		wsConfig.MonitoredWallets[0].Network,
-		"eth_blockNumber", []any{})
-	if err != nil {
-		return formatErrorResponse(
-			"api_error",
-			fmt.Sprintf("Failed to get current block: %v", err),
-			"",
-			map[string]any{
-				"skill": "wallet_security",
-			},
-		), nil
+	// Each network has its own block height, so each has its own checkpoint.
+	// A network's checkpoint moves only when every wallet on it was scanned.
+	networks := []string{}
+	byNetwork := map[string][]MonitoredWallet{}
+	for _, w := range wsConfig.MonitoredWallets {
+		if _, ok := byNetwork[w.Network]; !ok {
+			networks = append(networks, w.Network)
+		}
+		byNetwork[w.Network] = append(byNetwork[w.Network], w)
+	}
+	if wsConfig.LastCheckedBlocks == nil {
+		wsConfig.LastCheckedBlocks = map[string]string{}
+	}
+	firstNetwork := wsConfig.MonitoredWallets[0].Network
+	if wsConfig.LastCheckedBlock != "" {
+		// The legacy single checkpoint was taken on the first wallet's network.
+		if _, ok := wsConfig.LastCheckedBlocks[firstNetwork]; !ok {
+			wsConfig.LastCheckedBlocks[firstNetwork] = wsConfig.LastCheckedBlock
+		}
 	}
 
-	currentBlock := blockNumResult["result"].(string)
-
-	// Determine block range to check
-	fromBlock := wsConfig.LastCheckedBlock
-	if fromBlock == "" {
-		// First check: look back 100 blocks (~20 minutes)
-		currentBlockNum := new(big.Int)
-		currentBlockNum.SetString(currentBlock[2:], 16)
-		fromBlockNum := new(big.Int).Sub(currentBlockNum, big.NewInt(100))
-		fromBlock = fmt.Sprintf("0x%x", fromBlockNum)
-	}
-
-	// Check each wallet
 	allAlerts := []SecurityAlert{}
+	failed := []map[string]any{}
+	currentBlocks := map[string]string{}
 
-	for _, wallet := range wsConfig.MonitoredWallets {
-		alerts, err := checkWalletForThreats(ctx, client, alchemyConfig, wallet, fromBlock, "latest")
+	for _, network := range networks {
+		wallets := byNetwork[network]
+		currentBlock, err := currentBlockNumber(ctx, client, alchemyConfig, network)
 		if err != nil {
-			// Log error but continue checking other wallets
-			fmt.Printf("Warning: Error checking wallet %s: %v\n", wallet.Address, err)
+			for _, w := range wallets {
+				failed = append(failed, map[string]any{"wallet": w.Address, "network": network,
+					"error": fmt.Sprintf("failed to get current block: %v", err)})
+			}
 			continue
 		}
-		allAlerts = append(allAlerts, alerts...)
+		currentBlocks[network] = currentBlock
+
+		fromBlock := wsConfig.LastCheckedBlocks[network]
+		if fromBlock == "" {
+			// First check: look back 100 blocks (~20 minutes on mainnet).
+			fromBlock = lookBackBlocks(currentBlock, 100)
+		}
+
+		networkOK := true
+		for _, wallet := range wallets {
+			// The range ends at currentBlock, where the checkpoint moves to.
+			alerts, err := checkWalletForThreats(ctx, client, alchemyConfig, wallet, fromBlock, currentBlock)
+			if err != nil {
+				// Keep checking the other wallets, but the range is not done.
+				failed = append(failed, map[string]any{"wallet": wallet.Address, "network": network, "error": err.Error()})
+				networkOK = false
+				continue
+			}
+			allAlerts = append(allAlerts, alerts...)
+		}
+		if networkOK {
+			wsConfig.LastCheckedBlocks[network] = currentBlock
+		}
 	}
 
 	// Save alerts
@@ -447,8 +472,9 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		}
 	}
 
-	// Update last checked block
-	wsConfig.LastCheckedBlock = currentBlock
+	// Save the checkpoints that moved. The legacy field mirrors the first
+	// network's checkpoint.
+	wsConfig.LastCheckedBlock = wsConfig.LastCheckedBlocks[firstNetwork]
 	if err := saveWalletSecurityConfig(wsConfig); err != nil {
 		return formatErrorResponse(
 			"api_error",
@@ -460,14 +486,58 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		), nil
 	}
 
+	if len(failed) > 0 {
+		// A failed scan leaves its network's checkpoint where it was, so
+		// the same range is scanned again next time.
+		return map[string]any{
+			"success":         false,
+			"error":           true,
+			"error_type":      "scan_incomplete",
+			"wallets_checked": len(wsConfig.MonitoredWallets) - len(failed),
+			"wallets_failed":  failed,
+			"alerts_found":    len(allAlerts),
+			"alerts":          allAlerts,
+			"current_blocks":  currentBlocks,
+			"message": fmt.Sprintf("Scan incomplete: %d of %d wallet(s) could not be checked; their network's checkpoint was not advanced, so that range will be scanned again",
+				len(failed), len(wsConfig.MonitoredWallets)),
+		}, nil
+	}
+
 	return map[string]any{
 		"success":         true,
 		"wallets_checked": len(wsConfig.MonitoredWallets),
 		"alerts_found":    len(allAlerts),
 		"alerts":          allAlerts,
-		"current_block":   currentBlock,
+		"current_block":   currentBlocks[firstNetwork],
+		"current_blocks":  currentBlocks,
 		"message":         fmt.Sprintf("Checked %d wallet(s), found %d alert(s)", len(wsConfig.MonitoredWallets), len(allAlerts)),
 	}, nil
+}
+
+// currentBlockNumber returns a network's latest block as a 0x-hex string.
+func currentBlockNumber(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (string, error) {
+	res, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []any{})
+	if err != nil {
+		return "", err
+	}
+	block, _ := res["result"].(string)
+	if len(block) < 3 || block[:2] != "0x" {
+		return "", fmt.Errorf("unexpected eth_blockNumber result %q", block)
+	}
+	if _, ok := new(big.Int).SetString(block[2:], 16); !ok {
+		return "", fmt.Errorf("unexpected eth_blockNumber result %q", block)
+	}
+	return block, nil
+}
+
+// lookBackBlocks is block minus n (not below 0), as 0x-hex.
+func lookBackBlocks(block string, n int64) string {
+	num, _ := new(big.Int).SetString(block[2:], 16)
+	from := new(big.Int).Sub(num, big.NewInt(n))
+	if from.Sign() < 0 {
+		from.SetInt64(0)
+	}
+	return fmt.Sprintf("0x%x", from)
 }
 
 // checkWalletForThreats analyzes a wallet for security threats
@@ -547,11 +617,9 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	// Fetch and analyze token approvals
 	approvalAlerts, err := checkTokenApprovals(ctx, client, config, wallet, fromBlock, toBlock)
 	if err != nil {
-		// Log warning but don't fail - approvals are optional enhancement
-		fmt.Printf("Warning: Failed to check token approvals for %s: %v\n", wallet.Address, err)
-	} else {
-		alerts = append(alerts, approvalAlerts...)
+		return nil, fmt.Errorf("failed to check token approvals: %w", err)
 	}
+	alerts = append(alerts, approvalAlerts...)
 
 	return alerts, nil
 }

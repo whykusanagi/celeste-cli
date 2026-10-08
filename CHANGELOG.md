@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tools:** `web_fetch` only connects to public addresses. The address is checked when each connection is made, redirects included, so loopback, private-network, link-local, CGNAT and cloud metadata addresses are refused by default. `"web_fetch_allow_private": true` in the config, or `CELESTE_WEB_FETCH_ALLOW_PRIVATE=1`, allows them for local docs servers. web_fetch no longer goes through an `HTTP(S)_PROXY` (Aikido 806869856).
 * **tools:** `collections_search` searches only the collections enabled with `/collections`; a `collection_id` outside them is refused (Aikido 806869660).
 * **wallet_security:** a scan reads every page of asset transfers in its block range, and a scan that cannot read them all fails instead of reporting a partial result. Transfers are matched to a monitored wallet regardless of address letter case (Aikido 806869642).
+* **wallet_security:** a wallet scan that fails, a token-approval check included, no longer moves the scan checkpoint, so the same block range is scanned again next time. Checkpoints are kept per network (`last_checked_blocks`), each moved only when every wallet on it was scanned, and the monitor daemon reports a failed scan instead of "No threats detected" (Aikido 806869487).
 
 ### Features
 
