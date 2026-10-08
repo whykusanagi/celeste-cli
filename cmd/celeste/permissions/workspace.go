@@ -34,10 +34,11 @@ func newWorkspace(dir string) *workspace {
 // path as given and, with the workspace known, the workspace-relative path
 // it names lexically (an absolute path inside the workspace) and with
 // symlinks resolved; for a restricting rule, also that path's absolute
-// spellings under the workspace, so an absolute deny rule still matches. For a restricting rule a path that resolves outside
-// the workspace is also matched absolute, with symlinks resolved; for a
-// permitting one, a path inside the workspace that resolves outside it gets
-// a "../" form, which is never permitted.
+// spellings under the workspace, so an absolute deny rule still matches.
+// For a restricting rule a path that resolves outside the workspace is also
+// matched absolute, with symlinks resolved; for a permitting one, a path
+// inside the workspace that resolves outside it gets a "../" form, which is
+// never permitted.
 func pathForms(arg string, ws *workspace, restricting bool) []string {
 	forms := []string{path.Clean(filepath.ToSlash(arg))}
 	if ws == nil {

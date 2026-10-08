@@ -322,8 +322,6 @@ func Paths() (configDir, configFile, secretsFile, skillsFile string) {
 	return
 }
 
-// NamedConfigPath returns the path for a named config file.
-// If name is empty, returns the default config path.
 // ValidateProfileName reports whether name can name a profile file,
 // config.<name>.json in ~/.celeste: a plain file-name part, with no path
 // separator, drive or stream colon, NUL, or dot segment. A name read from
@@ -336,6 +334,8 @@ func ValidateProfileName(name string) error {
 	return nil
 }
 
+// NamedConfigPath returns the path for a named config file.
+// If name is empty, returns the default config path.
 func NamedConfigPath(name string) string {
 	homeDir, _ := os.UserHomeDir()
 	configDir := filepath.Join(homeDir, ".celeste")
