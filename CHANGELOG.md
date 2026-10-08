@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **mcp:** `celeste mcp list`, `celeste mcp trust` and `celeste hooks list` print configuration errors with control characters escaped (Aikido 806869793).
 * **tui:** the `/mcp` panel shows server names and transports from workspace configs escaped (Aikido 806869738).
 * **tui:** the model selector shows model names, badges and descriptions from a provider's model list escaped (Aikido 806869747).
-* **cli:** `celeste agent` escapes the final reply, the error, the artifact path, stored run goals in `--list-runs` and eval and benchmark case names and reasons; setup warnings on stderr, context-file warnings, `celeste grimoire`, `celeste memories` and, on a terminal, `celeste message` replies are escaped too (Aikido 806869282).
+* **cli:** `celeste agent` escapes each turn's reply, tool names, notices and warnings as they print (with `--verbose`, the default), the final reply, the error, the artifact path, stored run goals in `--list-runs` and eval and benchmark case names and reasons; setup warnings on stderr, context-file warnings, `celeste memories` and the `celeste session` list are escaped too, and on a terminal so are `celeste message` replies, `celeste skill` results and `celeste grimoire` (a pipe or file gets those byte for byte) (Aikido 806869282).
+* **tui:** `/diff`, `/undo`, `/agents`, `/agent` results and provider error lines escape workspace, model and provider text before it is styled, so not even a color sequence from that text reaches the screen (Aikido 806869437).
 * **hooks:** deny and ask reasons from hooks are escaped like hook errors before they are shown (Aikido 806869439).
 
 ### Features
