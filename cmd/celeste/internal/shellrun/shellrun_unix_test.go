@@ -164,3 +164,31 @@ func TestSandboxedRunHasItsOwnSession(t *testing.T) {
 		t.Fatalf("the sandboxed command shares celeste's session %d", mine)
 	}
 }
+
+// Review Important 1: bubblewrap cannot bind a missing .git/commondir
+// read-only, so the runner puts every watched path back after a
+// sandboxed command and says so. Here the policy leaves commondir
+// writable, as bubblewrap must, on either sandbox.
+func TestSandboxedRunPutsWatchedPathsBack(t *testing.T) {
+	if _, ok := sandbox.Available(); !ok {
+		t.Skip("no OS sandbox here")
+	}
+	ws := sandbox.Resolve(t.TempDir())
+	gitDir := filepath.Join(ws, ".git")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commondir := filepath.Join(gitDir, "commondir")
+	p := sandbox.Policy{Enabled: true, Workspace: ws, Writable: []string{ws}, Network: true, Watch: []string{commondir}}
+	res := Run(context.Background(), Options{Dir: ws, Command: "mkdir .fake && echo ../.fake > .git/commondir", Timeout: 10 * time.Second, Policy: &p})
+	if res.Sandbox == "" || res.Err == nil || !strings.Contains(res.Err.Error(), commondir) {
+		t.Fatalf("result = %+v", res)
+	}
+	if _, err := os.Lstat(commondir); err == nil {
+		t.Fatal("the planted commondir is still there")
+	}
+	res = Run(context.Background(), Options{Dir: ws, Command: "true", Timeout: 10 * time.Second, Policy: &p})
+	if res.Err != nil {
+		t.Fatalf("an unchanged pointer was reported: %v", res.Err)
+	}
+}

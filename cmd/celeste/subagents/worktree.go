@@ -1,10 +1,12 @@
 package subagents
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 )
 
 // Worktree is an isolated git worktree for a subagent.
@@ -13,9 +15,14 @@ type Worktree struct {
 	Branch string
 }
 
+// runGit runs git in dir with the repository's own programs off
+// (gitsafe): a lane shares the repository's config and hooks, which its
+// sandboxed commands can write.
 func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
+	cmd, err := gitsafe.Command(context.Background(), dir, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -61,7 +68,11 @@ func AddWorktree(repo, name string) (*Worktree, error) {
 // MergeWorktree merges the worktree's branch back into the repo's current branch.
 // Returns an error on conflict so the caller can surface it.
 func MergeWorktree(repo string, wt *Worktree) error {
-	_, err := runGit(repo, "merge", "--no-edit", wt.Branch)
+	opts, err := gitsafe.MergeOptions(context.Background(), repo)
+	if err != nil {
+		return err
+	}
+	_, err = runGit(repo, append(opts, "merge", "--no-edit", wt.Branch)...)
 	return err
 }
 

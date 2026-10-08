@@ -38,7 +38,7 @@ func TestCaptureGitWorkspaceArtifactsReadsStatusAndDiff(t *testing.T) {
 // child of git holding stdout does not keep the artifact bundle waiting.
 func TestCaptureGitWorkspaceArtifactsDoesNotWaitOnAPipeHolder(t *testing.T) {
 	bin := t.TempDir()
-	fake := "#!/bin/sh\ncase \"$1\" in\nrev-parse) echo true ;;\nstatus) sleep 15 & echo ' M f.txt' ;;\ndiff) echo '+b' ;;\nesac\n"
+	fake := "#!/bin/sh\nwhile [ \"$1\" = -c ]; do shift 2; done\ncase \"$1\" in\nrev-parse) echo true ;;\nstatus) sleep 15 & echo ' M f.txt' ;;\ndiff) echo '+b' ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestCaptureGitWorkspaceArtifactsDoesNotWaitOnAPipeHolder(t *testing.T) {
 func TestCaptureGitWorkspaceArtifactsKillsAPipeHolderAfterAFailingGit(t *testing.T) {
 	bin := t.TempDir()
 	pidfile := filepath.Join(t.TempDir(), "pid")
-	fake := "#!/bin/sh\ncase \"$1\" in\nrev-parse) echo true ;;\nstatus) sleep 15 & echo $! > '" + pidfile + "'; exit 1 ;;\ndiff) echo '+b' ;;\nesac\n"
+	fake := "#!/bin/sh\nwhile [ \"$1\" = -c ]; do shift 2; done\ncase \"$1\" in\nrev-parse) echo true ;;\nstatus) sleep 15 & echo $! > '" + pidfile + "'; exit 1 ;;\ndiff) echo '+b' ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o700); err != nil {
 		t.Fatal(err)
 	}
