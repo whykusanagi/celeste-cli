@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **grimoire:** a grimoire found in the workspace (`.grimoire`, `.grimoire.local`, `.celeste/grimoire/*.md`) is read only when it is a regular file inside the directory it was found in, never through a symlink, and at most 25 KB of it; its `@` includes must resolve inside the repository (outside `.git`), and `@~/` includes are allowed only in `~/.celeste/grimoire.md` (Aikido 806869326, 806781982).
 * **tools:** `write_file`, `patch_file` and `splice_file` create directories, write, append and clean up through a handle on the workspace directory, so a directory replaced by a symlink after the path check cannot move the write outside the workspace (Aikido 806869649, 806869673, 806869722).
+* **checkpoints:** `/undo`, `/rewind`, `celeste revert` and a failed write's rollback reach the file only through the workspace directory recorded with the change, so they cannot write or delete a file outside the workspace after a directory on the way was replaced by a symlink (Aikido 806869815).
 
 ### Features
 

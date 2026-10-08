@@ -135,7 +135,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 	// immediately before the write (2.0 F4).
 	var ckpt *checkpoints.Checkpoint
 	if t.snapMgr != nil {
-		c, err := t.snapMgr.Checkpoint(targetPath, tools.CallIDFromContext(ctx))
+		c, err := t.snapMgr.CheckpointIn(t.workspace, targetPath, tools.CallIDFromContext(ctx))
 		if err != nil {
 			return tools.ToolResult{Error: true, Content: fmt.Sprintf("snapshot failed: %s", err)}, nil
 		}

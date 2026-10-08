@@ -187,7 +187,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 		callID := tools.CallIDFromContext(ctx)
 		for _, p := range targets {
-			c, err := t.snapMgr.Checkpoint(p, callID)
+			c, err := t.snapMgr.CheckpointIn(t.workspace, p, callID)
 			if err != nil {
 				return errResult(rollback(fmt.Sprintf("snapshot %s: %s", p, err), ckpts...)), nil
 			}
