@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **sandbox:** each git directory's `config`, `config.worktree` and `hooks` stay read-only to sandboxed commands, the workspace's own `.git` included (a read-only bind on Linux, a deny rule on macOS). Celeste's own git commands run with `core.fsmonitor` off and no hooks, and the merge of a subagent's lane uses git's text merge in place of configured merge drivers. Under the sandbox, commands that change the repository's git config now fail (Aikido 806869318).
 * **bash:** the recursive-`rm` refusal now also covers a home-relative path (`~`, `$HOME`, `${HOME}`) that climbs to or above the home directory with `..` (Aikido 806869510).
 * **bash:** the privilege-escalation refusal (`sudo`, `su`, `doas`, `pkexec`) reads the command as a shell does, so quoting or escaping the command word, an absolute path to it, or nesting it in `sh -c` or `eval` is refused too (Aikido 806869897).
+* **permissions:** the permission prompt rates a shell that reads its script from stdin as destructive for every spelling of the input (an attached or numbered redirect, a heredoc, a here-string) and no longer takes a shell option's value for a script file (Aikido 806869720).
 
 ### Features
 

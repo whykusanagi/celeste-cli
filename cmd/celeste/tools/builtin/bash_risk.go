@@ -178,19 +178,31 @@ func destructiveGit(args []string) bool {
 }
 
 // shellReadsStdin reports a shell running a script nobody can see: one
-// reading it from stdin (curl … | sh, bash -s, bash < file) or from a
-// process substitution (bash <(curl …)). A shell given -c or a script file
-// was walked already.
+// reading it from stdin (curl … | sh, bash -s, bash < file, bash <file,
+// bash 0<file, a heredoc or here-string, or no script at all) or from a
+// process substitution (bash <(curl …)). An option's value (-o pipefail,
+// --rcfile file) is not a script, nor is an output redirect's target. A
+// shell given -c or a script file was walked already.
 func shellReadsStdin(args []string) bool {
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
-		case a == "-s" || a == "<" || strings.HasPrefix(a, "<("):
+		case a == "-s" || strings.HasPrefix(a, "<("):
 			return true
+		case shellparse.IsRedirect(a):
+			if strings.HasPrefix(strings.TrimLeft(a, "0123456789&"), "<") {
+				return true // input: <, <file, 0<file, <<EOF, <<<
+			}
+			if shellparse.RedirectTakesNext(a) {
+				i++ // > file: the target is not a script
+			}
 		case a == "--":
-			return false
-		case !strings.HasPrefix(a, "-"):
-			return false
-		case a == "-c":
+			continue
+		case shellparse.ShellValueOptions[a]:
+			i++
+		case !strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "+"):
+			return false // a script file
+		case a == "-c" || !strings.HasPrefix(a, "--") && strings.Contains(a[1:], "c"):
 			return false
 		}
 	}
