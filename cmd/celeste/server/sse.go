@@ -69,6 +69,8 @@ const (
 	maxSSEConnections = 16
 	// sseWriteTimeout drops a stream whose reader stopped reading.
 	sseWriteTimeout = 30 * time.Second
+	// maxMessageBytes caps a POST /message body.
+	maxMessageBytes = 1 << 20
 )
 
 // sseHandler serves GET /sse and POST /message for one SSE server.
@@ -209,8 +211,14 @@ func (h *sseHandler) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
+	// 1 MiB max: a larger body is refused, not cut and run.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMessageBytes))
 	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}

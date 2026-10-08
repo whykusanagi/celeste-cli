@@ -133,3 +133,14 @@ func TestSSERateLimitIsServerWide(t *testing.T) {
 		t.Fatalf("third POST across two streams = %d, want 429 (rate is server-wide)", codes[2])
 	}
 }
+
+// TestSSEPostRejectsOversizedBody: a POST body over 1 MiB is refused, not
+// cut to its first MiB and run.
+func TestSSEPostRejectsOversizedBody(t *testing.T) {
+	ts, _ := newSSETestServer(t, 60)
+	_, ep := openSSEStream(t, ts)
+	body := `{"jsonrpc":"2.0","id":1,"method":"notifications/initialized"}` + strings.Repeat(" ", 1<<20)
+	if code := postMessage(t, ts, ep, body); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("POST of an oversized body = %d, want 413", code)
+	}
+}

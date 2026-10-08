@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -28,6 +29,10 @@ type SSETransport struct {
 	// endpointErr is set when the server announced a POST endpoint on
 	// another origin; Send then fails rather than POST there.
 	endpointErr error
+	// streamEnded is closed when the event stream ends (closed by the
+	// server, failed, or a line over maxResponseBytes); streamErr says why.
+	streamEnded chan struct{}
+	streamErr   error
 }
 
 // NewSSETransport connects to an MCP server's SSE endpoint.
@@ -35,11 +40,12 @@ type SSETransport struct {
 func NewSSETransport(url string) (*SSETransport, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &SSETransport{
-		baseURL:    url,
-		client:     newMCPHTTPClient(),
-		responseCh: make(chan *Response, 100),
-		done:       make(chan struct{}),
-		cancel:     cancel,
+		baseURL:     url,
+		client:      newMCPHTTPClient(),
+		responseCh:  make(chan *Response, 100),
+		done:        make(chan struct{}),
+		streamEnded: make(chan struct{}),
+		cancel:      cancel,
 	}
 
 	// Connect to the SSE stream in a goroutine
@@ -49,19 +55,40 @@ func NewSSETransport(url string) (*SSETransport, error) {
 }
 
 // connectSSE establishes the SSE connection and reads events.
+//
+// When it returns, Receive stops waiting: streamEnded is closed, with the
+// reason in streamErr.
 func (t *SSETransport) connectSSE(ctx context.Context) {
+	streamErr := errors.New("MCP SSE stream ended")
+	defer func() {
+		t.mu.Lock()
+		t.streamErr = streamErr
+		t.mu.Unlock()
+		close(t.streamEnded)
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.baseURL, nil)
 	if err != nil {
+		streamErr = err
 		return
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
+		streamErr = fmt.Errorf("MCP SSE stream: %w", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxResponseBytes)
+	// The max token size is the larger of the two, so the initial buffer
+	// must not exceed the cap (Aikido 806869944).
+	scanner.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), maxResponseBytes)
+	defer func() {
+		if err := scanner.Err(); errors.Is(err, bufio.ErrTooLong) {
+			streamErr = errResponseTooLarge()
+		} else if err != nil {
+			streamErr = fmt.Errorf("MCP SSE stream: %w", err)
+		}
+	}()
 	var eventType string
 
 	for scanner.Scan() {
@@ -197,6 +224,8 @@ func (t *SSETransport) post(ctx context.Context, url string, data []byte) (*http
 // Receive reads the next JSON-RPC response from the SSE event stream.
 // It also returns once the transport is closed, so a Receive the client left
 // running for a cancelled call doesn't outlive Close.
+// It returns the stream's error once the stream has ended and every
+// response it delivered has been read.
 func (t *SSETransport) Receive() (*Response, error) {
 	select {
 	case resp, ok := <-t.responseCh:
@@ -206,6 +235,16 @@ func (t *SSETransport) Receive() (*Response, error) {
 		return resp, nil
 	case <-t.done:
 		return nil, fmt.Errorf("transport closed")
+	case <-t.streamEnded:
+		select {
+		case resp := <-t.responseCh:
+			return resp, nil
+		default:
+		}
+		t.mu.Lock()
+		err := t.streamErr
+		t.mu.Unlock()
+		return nil, err
 	}
 }
 

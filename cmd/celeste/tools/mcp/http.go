@@ -87,7 +87,7 @@ func (t *HTTPTransport) post(ctx context.Context, body []byte) error {
 func (t *HTTPTransport) drainSSE(body io.Reader) error {
 	lr := &io.LimitedReader{R: body, N: int64(maxResponseBytes) + 1}
 	sc := bufio.NewScanner(lr)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sc.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), min(1024*1024, maxResponseBytes))
 	for sc.Scan() {
 		if lr.N <= 0 {
 			return errResponseTooLarge()

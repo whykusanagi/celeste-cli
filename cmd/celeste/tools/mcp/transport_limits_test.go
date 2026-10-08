@@ -165,3 +165,29 @@ func TestMCPTransportsRefuseCrossOriginRedirects(t *testing.T) {
 
 	assert.Equal(t, int32(0), hits.Load(), "a redirect to another origin was followed")
 }
+
+// TestSSETransportOversizedEventFailsReceive: an event line over the limit
+// ends the stream, and Receive reports it instead of waiting forever
+// (Aikido 806869944).
+func TestSSETransportOversizedEventFailsReceive(t *testing.T) {
+	withResponseLimit(t, 1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", bigResult(8192))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	tr, err := NewSSETransport(srv.URL + "/sse")
+	require.NoError(t, err)
+	defer tr.Close()
+	done := make(chan error, 1)
+	go func() { _, err := tr.Receive(); done <- err }()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Receive blocked after the stream ended on an oversized event")
+	}
+}
