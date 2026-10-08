@@ -445,8 +445,9 @@ func (s *Session) GetProvider() string {
 }
 
 // secretCommand matches a TUI command that carries a key: /config set-key
-// and /voice set-key, with the key after them.
-var secretCommand = regexp.MustCompile(`(?s)^(\s*/(?:config|voice)\s+set-key)\s+\S.*$`)
+// and /voice set-key, with the key after them. Case is ignored, as
+// commands.Execute ignores it.
+var secretCommand = regexp.MustCompile(`(?is)^(\s*/(?:config|voice)\s+set-key)\s+\S.*$`)
 
 // RedactSecretCommand returns line with the key of a set-key command
 // replaced by ***, and any other line unchanged. Input history, which is
