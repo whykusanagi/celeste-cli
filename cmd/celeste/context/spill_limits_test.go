@@ -45,6 +45,71 @@ func TestCapToolResultSessionQuota(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "a spill over the session quota was written")
 }
 
+// TestCapToolResultRechecksTotalLimit: the limit on all sessions' spills
+// together holds for every spill of a run, not only at its first prune: a
+// spill that would pass it removes the oldest other sessions first
+// (CodeRabbit review of #424).
+func TestCapToolResultRechecksTotalLimit(t *testing.T) {
+	withSpillLimits(t, 1<<20, 5000)
+	oldT := maxTotalSpillBytes
+	maxTotalSpillBytes = 10000
+	t.Cleanup(func() { maxTotalSpillBytes = oldT })
+	base := t.TempDir()
+	for i, sess := range []string{"s1", "s2", "s3", "s4", "s5"} {
+		_, _, err := CapToolResult(strings.Repeat("x", 4000), 1024, sess, "c", base)
+		require.NoError(t, err, "spill %d", i)
+		var total int64
+		des, err := os.ReadDir(base)
+		require.NoError(t, err)
+		for _, d := range des {
+			total += dirBytes(filepath.Join(base, d.Name()))
+		}
+		assert.LessOrEqual(t, total, maxTotalSpillBytes, "after spill %d", i)
+		_, err = os.Stat(filepath.Join(base, sess, "c.txt"))
+		require.NoError(t, err, "the current session's spill was removed")
+		// Distinct modification times order the sessions.
+		past := time.Now().Add(time.Duration(i-10) * time.Minute)
+		require.NoError(t, os.Chtimes(filepath.Join(base, sess, "c.txt"), past, past))
+	}
+}
+
+// TestCapToolResultConcurrentSpillsKeepSessionQuota: two spills of one
+// session at once cannot both pass the quota check (Aikido review of #424).
+func TestCapToolResultConcurrentSpillsKeepSessionQuota(t *testing.T) {
+	withSpillLimits(t, 1<<20, 5000)
+	base := t.TempDir()
+	arrived := make(chan struct{}, 2)
+	testHookSpillChecked = func() {
+		arrived <- struct{}{}
+		// Wait for the other spill to pass its check too, unless a lock
+		// keeps it out.
+		deadline := time.After(300 * time.Millisecond)
+		for len(arrived) < 2 {
+			select {
+			case <-deadline:
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
+	t.Cleanup(func() { testHookSpillChecked = nil })
+	errs := make(chan error, 2)
+	for _, id := range []string{"a", "b"} {
+		go func() {
+			_, _, err := CapToolResult(strings.Repeat("x", 3000), 1024, "sess", id, base)
+			errs <- err
+		}()
+	}
+	failed := 0
+	for range 2 {
+		if <-errs != nil {
+			failed++
+		}
+	}
+	assert.Equal(t, 1, failed, "exactly one of two spills over the quota is refused")
+	assert.LessOrEqual(t, dirBytes(filepath.Join(base, "sess")), int64(5000))
+}
+
 // TestPruneToolResults: session spill directories older than the retention
 // age are removed; the current one and recent ones stay (Aikido 806869375).
 func TestPruneToolResults(t *testing.T) {

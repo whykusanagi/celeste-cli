@@ -33,13 +33,21 @@ var (
 	// maxSessionSpillBytes caps one session's spill files; past it a
 	// result is cut in memory and not spilled.
 	maxSessionSpillBytes int64 = 256 << 20
-	// maxTotalSpillBytes caps every session's spill files together; the
-	// startup prune removes the oldest sessions past it.
+	// maxTotalSpillBytes caps every session's spill files together: a
+	// spill that would pass it first removes the oldest other sessions,
+	// and is cut in memory if that is not enough.
 	maxTotalSpillBytes int64 = 1 << 30
 )
 
+// testHookSpillChecked, when set, runs in CapToolResult after the quota
+// checks pass, before the spill is written. Tests only.
+var testHookSpillChecked func()
+
 // prunedSpillBases records the spill bases pruned in this process.
 var prunedSpillBases sync.Map
+
+// spillMu serializes the quota checks and the write of each spill.
+var spillMu sync.Mutex
 
 // ToolResultsBaseDir returns the base directory for spilled tool results.
 // Default: ~/.celeste/tool-results
@@ -108,14 +116,31 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		saved = textutil.CutBytes(saved, int(maxSpillFileBytes))
 	}
 	// The file this write replaces (the same toolCallID spilled before)
-	// does not count toward the quota.
+	// does not count toward the quotas. The checks and the write happen
+	// under spillMu, so two spills at once cannot both pass a check that
+	// only one of them fits (Aikido review of #424).
+	spillMu.Lock()
+	defer spillMu.Unlock()
 	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
-	used := dirBytes(sessionDir)
+	var replaced int64
 	if fi, err := os.Lstat(spillPath); err == nil && fi.Mode().IsRegular() {
-		used -= fi.Size()
+		replaced = fi.Size()
 	}
-	if used+int64(len(saved)) > maxSessionSpillBytes {
+	size := int64(len(saved))
+	if dirBytes(sessionDir)-replaced+size > maxSessionSpillBytes {
 		return result, false, fmt.Errorf("this session's spilled tool results reached %d bytes", maxSessionSpillBytes)
+	}
+	// Every spill keeps all sessions' spills within maxTotalSpillBytes,
+	// not only the first of a run: past it, the oldest other sessions go
+	// first (CodeRabbit review of #424).
+	if totalSpillBytes(baseDir)-replaced+size > maxTotalSpillBytes {
+		_ = pruneToolResults(baseDir, sessionID, time.Now(), maxTotalSpillBytes-size+replaced)
+		if totalSpillBytes(baseDir)-replaced+size > maxTotalSpillBytes {
+			return result, false, fmt.Errorf("spilled tool results reached %d bytes in all", maxTotalSpillBytes)
+		}
+	}
+	if testHookSpillChecked != nil {
+		testHookSpillChecked()
 	}
 
 	if err := os.WriteFile(spillPath, []byte(saved), 0600); err != nil {
@@ -244,6 +269,12 @@ func dirBytes(dir string) int64 {
 // over maxTotalSpillBytes. keep (the session running now) always survives.
 // A missing baseDir is nothing to prune (Aikido 806869375).
 func PruneToolResults(baseDir, keep string, now time.Time) error {
+	return pruneToolResults(baseDir, keep, now, maxTotalSpillBytes)
+}
+
+// pruneToolResults is PruneToolResults removing the oldest sessions while
+// all of them together are over limit.
+func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 	if baseDir == "" {
 		var err error
 		if baseDir, err = ToolResultsBaseDir(); err != nil {
@@ -283,7 +314,7 @@ func PruneToolResults(baseDir, keep string, now time.Time) error {
 	total += dirBytes(filepath.Join(baseDir, keep))
 	sort.Slice(live, func(i, j int) bool { return live[i].changed.Before(live[j].changed) })
 	for _, s := range live {
-		if total <= maxTotalSpillBytes {
+		if total <= limit {
 			break
 		}
 		if err := os.RemoveAll(s.path); err != nil {
@@ -293,6 +324,21 @@ func PruneToolResults(baseDir, keep string, now time.Time) error {
 		total -= s.size
 	}
 	return errors.Join(errs...)
+}
+
+// totalSpillBytes is the size of every session's spill files under baseDir.
+func totalSpillBytes(baseDir string) int64 {
+	des, err := os.ReadDir(baseDir)
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, d := range des {
+		if d.IsDir() {
+			n += dirBytes(filepath.Join(baseDir, d.Name()))
+		}
+	}
+	return n
 }
 
 // lastSpill is when a session directory last changed: its newest file's
