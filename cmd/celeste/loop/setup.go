@@ -145,10 +145,13 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		return nil, fmt.Errorf("resolve workspace path: %w", err)
 	}
 	ws := filepath.Clean(abs)
-	home, _ := os.UserHomeDir()
 
 	if opts.Warn == nil {
 		opts.Warn = func(s string) { fmt.Fprintln(os.Stderr, "Warning: "+s) }
+	}
+	home := userHome()
+	if home == "" {
+		opts.Warn("no home directory: using the default permissions (nothing saved) with no custom skills or home-level hooks, MCP servers or stream rules")
 	}
 	if opts.Notice == nil {
 		opts.Notice = opts.Warn
@@ -172,9 +175,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	env.SandboxPolicy = env.resolveSandbox(env.userSandbox)
 	policy := env.SandboxPolicy
 	builtin.RegisterAll(env.Registry, ws, nil, env.Files, env.Snapshots, &policy)
-	if err := env.Registry.LoadCustomTools(filepath.Join(home, ".celeste", "skills")); err != nil {
-		env.warn("custom skills: %v", err)
-	}
+	env.loadCustomTools()
 	env.setupPermissions(home)
 	env.setupHooks(home)
 	env.setupMCP(ws, home)
@@ -190,7 +191,36 @@ func (e *Env) warn(format string, args ...any) {
 	e.opts.Warn(fmt.Sprintf(format, args...))
 }
 
+// userHome is the user's home directory, or "" when it cannot be
+// resolved to an absolute path (HOME unset in some CI and service
+// environments). Every home-level file is skipped then: joining "" with
+// .celeste would read the current directory, normally the repository.
+func userHome() string {
+	h, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(h) {
+		return ""
+	}
+	return h
+}
+
+// loadCustomTools loads the user's custom skills from the home directory,
+// none without one.
+func (e *Env) loadCustomTools() {
+	if e.home == "" {
+		return
+	}
+	if err := e.Registry.LoadCustomTools(filepath.Join(e.home, ".celeste", "skills")); err != nil {
+		e.warn("custom skills: %v", err)
+	}
+}
+
 func (e *Env) setupPermissions(home string) {
+	if home == "" {
+		// No home: the defaults, never a workspace-relative file.
+		d := permissions.DefaultConfig()
+		e.applyPermissions(&d)
+		return
+	}
 	path := filepath.Join(home, ".celeste", "permissions.json")
 	pc, err := permissions.LoadConfig(path)
 	if err != nil {
@@ -202,6 +232,11 @@ func (e *Env) setupPermissions(home string) {
 		d := permissions.DefaultConfig()
 		pc = &d
 	}
+	e.applyPermissions(pc)
+}
+
+// applyPermissions installs pc as the run's permission checker.
+func (e *Env) applyPermissions(pc *permissions.PermissionConfig) {
 	if e.Mode == ModeMCPChat {
 		// Headless: calling the tool is the approval, but the user's deny
 		// rules still apply (#187).
@@ -220,6 +255,11 @@ func (e *Env) setupPermissions(home string) {
 // passes a nil Approve, so untrusted hooks are skipped with a warning and
 // never auto-approved.
 func (e *Env) setupHooks(home string) {
+	if home == "" {
+		// hooks.Load would resolve the home itself, and could land on a
+		// relative one: no hooks without a home (Setup warned).
+		return
+	}
 	runner, err := hooks.Load(hooks.Options{
 		Workspace: e.Workspace,
 		Home:      home,
@@ -288,6 +328,9 @@ func withSessionContext(project, session string) string {
 // A rule that can't be saved (a damaged permissions.json is never
 // overwritten) still applies for this run, and the failure is warned.
 func (e *Env) PersistRules() {
+	if e.home == "" {
+		return // nowhere to save: never a workspace-relative file
+	}
 	e.Checker.SetConfigPath(filepath.Join(e.home, ".celeste", "permissions.json"))
 	e.Checker.SetPersistWarn(func(err error) { e.warn("%v", err) })
 }
@@ -317,7 +360,14 @@ func (e *Env) RefreshDiscovery() {
 // the chat, an enabled workspace server starts only once approved
 // (admitMCP): the repo sets "enabled" itself.
 func (e *Env) setupMCP(ws, home string) {
-	paths := mcp.DiscoverConfigPaths(ws, home)
+	var paths []string
+	for _, p := range mcp.DiscoverConfigPaths(ws, home) {
+		// Without a home the home-level candidates are relative: skip
+		// them rather than read the current directory.
+		if filepath.IsAbs(p) {
+			paths = append(paths, p)
+		}
+	}
 	if e.Mode != ModeChat || e.opts.GlobalMCPOnly {
 		paths = e.globalMCPConfigs(paths, home)
 	}

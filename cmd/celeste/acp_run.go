@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/acp"
@@ -62,7 +63,10 @@ func runACP(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer, 
 		logf("[persona] %s", n)
 	}
 
-	home, _ := os.UserHomeDir()
+	home, herr := os.UserHomeDir()
+	if herr != nil || !filepath.IsAbs(home) {
+		home = "" // never a relative, workspace-controlled trust store
+	}
 	agent := acp.NewAgent(acp.Deps{
 		Config:   loadConfig,
 		Sessions: config.NewSessionManager(),

@@ -114,9 +114,7 @@ func (e *Env) Nested(opts NestedOptions) (*Env, error) {
 	}
 	policy := c.SandboxPolicy
 	builtin.RegisterAll(c.Registry, ws, nil, c.Files, c.Snapshots, &policy)
-	if err := c.Registry.LoadCustomTools(filepath.Join(c.home, ".celeste", "skills")); err != nil {
-		c.warn("custom skills: %v", err)
-	}
+	c.loadCustomTools()
 	// Reloaded, not copied: a rule added since the parent was built applies,
 	// and siblings never share a checker's rule slices.
 	c.setupPermissions(c.home)
