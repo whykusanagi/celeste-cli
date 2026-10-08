@@ -138,6 +138,7 @@ func registerCelesteTool(s *Server) {
 		if err := validateWorkspace(workspace, s.config.Workspace); err != nil {
 			return nil, fmt.Errorf("workspace rejected: %w", err)
 		}
+		workspace = canonicalWorkspace(workspace)
 
 		cfg := s.config.CelesteConfig
 		if cfg == nil {
