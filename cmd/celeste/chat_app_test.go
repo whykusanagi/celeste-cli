@@ -350,3 +350,27 @@ func TestChatStartNoHintWithAContextFile(t *testing.T) {
 		}
 	}
 }
+
+// Aikido 806869764: a resumed session whose endpoint is another configured
+// profile talks to that profile, not to the startup provider the client
+// was built from, so the conversation goes where the header says.
+func TestRestoreEndpointSwitchesTheLiveClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeNamed(t, home, "venice", `{"api_key":"venice-k","base_url":"https://api.venice.ai/api/v1","model":"venice-uncensored-1-2"}`)
+	defer providers.SetCatalogForTest("venice", []providers.CatalogModel{{ID: "venice-uncensored-1-2", Default: true}})()
+	cfg := &config.Config{APIKey: "startup-k", BaseURL: "http://127.0.0.1:1", Model: "fake-model", Timeout: 10}
+	_, deps, err := newChatApp(cfg, t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChatDeps(t, deps)
+	s := &config.Session{}
+	s.SetEndpoint("venice")
+	restoreEndpoint(tui.NewApp(deps.adapter), cfg, deps.adapter, config.NewSessionManager(), s)
+	live := deps.adapter.client.GetConfig()
+	if live.BaseURL != "https://api.venice.ai/api/v1" || live.APIKey != "venice-k" {
+		t.Errorf("live client = %s (key %t), want the session's venice profile", live.BaseURL, live.APIKey == "venice-k")
+	}
+}

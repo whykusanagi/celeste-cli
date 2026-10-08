@@ -293,13 +293,13 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 	tui.LogInfo(fmt.Sprintf("Session endpoint from file: '%s'", sessionEndpoint))
 	tui.LogInfo(fmt.Sprintf("Config BaseURL: '%s'", providers.CleanBaseURL(cfg.BaseURL)))
 
+	restored := false
 	if sessionEndpoint != "" && sessionEndpoint != "default" {
-		// Use endpoint from session if it's valid
-		tui.LogInfo(fmt.Sprintf("✓ Using endpoint from session: %s", sessionEndpoint))
-		app = app.WithEndpoint(sessionEndpoint)
-		// Load the named config so baseConfig carries provider-specific settings
-		// (e.g. Orchestrator lanes). WithEndpoint only updates the UI; it does not
-		// update TUIClientAdapter.baseConfig.
+		// The live client was built from the startup config: switch it, not
+		// just the header, to the session's profile, or the resumed
+		// conversation would go to a provider other than the one shown.
+		// When the profile cannot be loaded, the startup provider stays and
+		// is what the header shows.
 		if namedCfg, loadErr := config.LoadNamed(sessionEndpoint); loadErr == nil {
 			// Its agent and small models drive /agent, /orchestrate and
 			// the summarizer: resolve them (we're not in the TUI yet).
@@ -307,28 +307,39 @@ func restoreEndpoint(app tui.AppModel, cfg *config.Config, a *TUIClientAdapter, 
 				providers.PrepareModels(context.Background(), providers.DetectProvider(namedCfg.BaseURL), namedCfg.BaseURL, namedCfg.APIKey, namedCfg.AgentModel, namedCfg.SmallModel)
 			}
 			a.baseConfig = servedAgentModels(namedCfg)
-			tui.LogInfo(fmt.Sprintf("✓ Loaded named config for restored endpoint: %s", sessionEndpoint))
+			a.client.UpdateConfig(llm.ConfigFrom(a.baseConfig))
+			a.summarize = nil // built for the startup endpoint's small model
+			a.applySystemPrompt()
+			app = app.WithEndpoint(sessionEndpoint)
+			restored = true
+			tui.LogInfo(fmt.Sprintf("✓ Using endpoint from session: %s", sessionEndpoint))
 		} else {
-			tui.LogInfo(fmt.Sprintf("⚠ Could not load named config for %s: %v", sessionEndpoint, loadErr))
+			tui.LogInfo(fmt.Sprintf("⚠ Could not load named config for %s, keeping the startup endpoint: %v", sessionEndpoint, loadErr))
 		}
+	}
+	if restored {
+		return app
+	}
+	// Detect provider from base URL in config
+	detectedProvider := providers.DetectProvider(cfg.BaseURL)
+	tui.LogInfo(fmt.Sprintf("DetectProvider() returned: '%s'", detectedProvider))
+	if detectedProvider == "unknown" {
+		tui.LogInfo("⚠ Could not detect provider from BaseURL")
+		return app
+	}
+	tui.LogInfo(fmt.Sprintf("✓ Setting endpoint to detected provider: %s", detectedProvider))
+	app = app.WithEndpoint(detectedProvider)
+	if sessionEndpoint != "" && sessionEndpoint != "default" {
+		// The session keeps the profile it was using, for a later resume
+		// once that profile loads again.
+		return app
+	}
+	// Also update the session with the detected endpoint
+	s.SetEndpoint(detectedProvider)
+	if err := sm.Save(s); err != nil {
+		log.Printf("Warning: Failed to save session with detected endpoint: %v", err)
 	} else {
-		// Detect provider from base URL in config
-		detectedProvider := providers.DetectProvider(cfg.BaseURL)
-		tui.LogInfo(fmt.Sprintf("DetectProvider() returned: '%s'", detectedProvider))
-		if detectedProvider != "unknown" {
-			tui.LogInfo(fmt.Sprintf("✓ Setting endpoint to detected provider: %s", detectedProvider))
-			app = app.WithEndpoint(detectedProvider)
-			// Also update the session with the detected endpoint
-			s.SetEndpoint(detectedProvider)
-			// Save the session with the detected endpoint
-			if err := sm.Save(s); err != nil {
-				log.Printf("Warning: Failed to save session with detected endpoint: %v", err)
-			} else {
-				tui.LogInfo(fmt.Sprintf("✓ Saved session with endpoint: %s", detectedProvider))
-			}
-		} else {
-			tui.LogInfo("⚠ Could not detect provider from BaseURL")
-		}
+		tui.LogInfo(fmt.Sprintf("✓ Saved session with endpoint: %s", detectedProvider))
 	}
 	return app
 }
