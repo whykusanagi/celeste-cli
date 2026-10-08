@@ -365,16 +365,21 @@ func (s *session) prompt(ctx context.Context, a *Agent, text string) (*PromptRes
 	s.mu.Unlock()
 	s.save(a, msgs)
 	out, rerr, notice := s.finish(st, l.Limits, res, err)
-	if notice != "" && pctx.Err() == nil {
-		// A turn a cancel already reached gets no "Stopped: ... send
-		// another message" notice: it answers "cancelled" below.
-		s.update(a, AgentMessageChunk("\n\n"+notice))
-	}
+	// The answer is decided before the notice is sent: a cancel read after
+	// end finds no prompt, so one arriving during the notice cannot turn
+	// a turn that told the editor "send another message" into "cancelled".
 	if s.end(pctx) {
 		// A session/cancel reached this prompt while it ran, even if only
-		// after the model's reply ended: ACP answers it "cancelled". A
-		// cancel read after end finds no prompt: the answer was decided.
+		// after the model's reply ended: ACP answers it "cancelled", with
+		// no "Stopped: ... send another message" notice. A failure it
+		// hides still goes to the log.
+		if rerr != nil {
+			a.logf("acp: session %s: cancelled turn also failed: %s", s.id, rerr.Message)
+		}
 		return &PromptResult{StopReason: StopCancelled}, nil
+	}
+	if notice != "" {
+		s.update(a, AgentMessageChunk("\n\n"+notice))
 	}
 	return out, rerr
 }

@@ -63,6 +63,14 @@ func newTestClient(t *testing.T, cfg func() (*config.Config, error)) *testClient
 // second agent in the same home sees the first one's sessions.
 func newTestClientIn(t *testing.T, cfg func() (*config.Config, error), home string) *testClient {
 	t.Helper()
+	return newTestClientOut(t, cfg, home, nil)
+}
+
+// newTestClientOut is newTestClientIn with the agent's output written
+// through wrap (nil: unwrapped), for tests that act while a write is in
+// flight.
+func newTestClientOut(t *testing.T, cfg func() (*config.Config, error), home string, wrap func(io.Writer) io.Writer) *testClient {
+	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	inR, inW := io.Pipe()
@@ -76,7 +84,11 @@ func newTestClientIn(t *testing.T, cfg func() (*config.Config, error), home stri
 	}
 	agent := NewAgent(Deps{Config: cfg, Sessions: config.NewSessionManager(), Home: home, Logf: logf})
 	c.agent = agent
-	conn := NewConn(inR, outW, agent)
+	var out io.Writer = outW
+	if wrap != nil {
+		out = wrap(outW)
+	}
+	conn := NewConn(inR, out, agent)
 	agent.Attach(conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	go conn.Serve(ctx)
