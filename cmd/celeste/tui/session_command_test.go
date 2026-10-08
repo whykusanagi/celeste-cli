@@ -309,3 +309,27 @@ func TestStartupResumeFallbackKeepsTheSessionsEndpoint(t *testing.T) {
 	assert.Equal(t, "venice", saved.GetEndpoint())
 	assert.Equal(t, "openai", m.endpoint)
 }
+
+// An explicit /set-model on a session resumed from another endpoint is a
+// choice made on the endpoint in use, and is recorded: a save after it
+// keeps that model (with the endpoint it was chosen on), so a later resume
+// does not bring the old one back (CodeRabbit review of #428).
+func TestSessionResumeExplicitModelChoiceIsRecorded(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	other.SetModel("venice-model")
+	require.NoError(t, mgr.mgr.Save(other))
+	m = m.WithEndpoint("openai")
+	m.model = "gpt-model"
+	m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+	require.Equal(t, "openai", m.endpoint)
+
+	m, _ = step(t, m, SendMessageMsg{Content: "/set-model chosen-model --force"})
+	require.Equal(t, "chosen-model", m.model)
+	m.persistSession()
+	saved, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "chosen-model", saved.GetModel(), "an explicit model choice was not recorded")
+	assert.Equal(t, "openai", saved.GetEndpoint())
+	assert.True(t, saved.GetModelPinned(), "the --force pin was not recorded")
+}

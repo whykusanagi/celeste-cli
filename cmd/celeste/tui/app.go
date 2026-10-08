@@ -1818,6 +1818,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						_ = config.Save(cfg)
 					}
 
+					// An explicit model choice is made on the endpoint in
+					// use, so a session resumed from another endpoint
+					// stops keeping that one's (heldSession), as after a
+					// turn: the save records the choice and its endpoint.
+					m.heldSession, m.heldOn = nil, ""
+
 					// Persist session state
 					m.persistSession()
 
