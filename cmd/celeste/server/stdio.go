@@ -12,6 +12,9 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
 )
 
+// testHookStdioLineReceived, when set, runs as the loop receives a line.
+var testHookStdioLineReceived func()
+
 // serveStdio runs the MCP server over stdin/stdout.
 // Each line on stdin is a JSON-RPC request. Responses are written as
 // single-line JSON to stdout. This is the transport used when Celeste is
@@ -61,6 +64,16 @@ func (s *Server) serveStdioStreams(ctx context.Context, r io.Reader, w io.Writer
 			log.Printf("[mcp-server] stdio transport shutting down")
 			return ctx.Err()
 		case next = <-lines:
+			if testHookStdioLineReceived != nil {
+				testHookStdioLineReceived()
+			}
+			// A cancel and the next line can both be ready when a
+			// dispatch returns, and select may pick the line: shutdown
+			// still wins, so no request starts under a canceled context.
+			if err := ctx.Err(); err != nil {
+				log.Printf("[mcp-server] stdio transport shutting down")
+				return err
+			}
 		}
 
 		if next.done {
