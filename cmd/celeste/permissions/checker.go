@@ -147,9 +147,11 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	toolName := ""
 	readOnly := false
+	primary := ""
 	if tool != nil {
 		toolName = tool.ToolName()
 		readOnly = tool.IsReadOnly()
+		primary = primaryArgOf(tool)
 	}
 
 	// Step 0: best-effort defence in depth. A model-authored shell command
@@ -174,7 +176,7 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	// Step 1: alwaysDeny rules (highest priority)
 	for i := range c.alwaysDeny {
-		if MatchRule(c.alwaysDeny[i], toolName, input) {
+		if matchRule(c.alwaysDeny[i], toolName, primary, input, true) {
 			return CheckResult{
 				Decision:    Deny,
 				MatchedRule: &c.alwaysDeny[i],
@@ -185,7 +187,7 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	// Step 2: alwaysAllow rules
 	for i := range c.alwaysAllow {
-		if MatchRule(c.alwaysAllow[i], toolName, input) {
+		if matchRule(c.alwaysAllow[i], toolName, primary, input, false) {
 			return CheckResult{
 				Decision:    Allow,
 				MatchedRule: &c.alwaysAllow[i],
@@ -204,7 +206,7 @@ func (c *Checker) Check(tool ToolInfo, input map[string]any) CheckResult {
 
 	// Step 4: Pattern rules
 	for i := range c.patternRules {
-		if MatchRule(c.patternRules[i], toolName, input) {
+		if matchRule(c.patternRules[i], toolName, primary, input, c.patternRules[i].Decision != Allow) {
 			return CheckResult{
 				Decision:    c.patternRules[i].Decision,
 				MatchedRule: &c.patternRules[i],

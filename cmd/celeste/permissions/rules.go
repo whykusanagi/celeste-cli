@@ -19,6 +19,36 @@ import (
 //     filepath.Match.
 //  5. All applicable patterns must match for the rule to match.
 func MatchRule(rule Rule, toolName string, input map[string]any) bool {
+	return matchRule(rule, toolName, argLegacy, input, false)
+}
+
+// argLegacy as matchRule's primary means the tool names no primary
+// argument mechanism at all: the rule's argument is ExtractFirstStringArg's.
+const argLegacy = "\x00legacy"
+
+// PrimaryArger is implemented by a ToolInfo that names the input field an
+// argument-scoped rule ("write_file(src/*)") is matched against: the field
+// the tool acts on (bash: command, the file tools: path).
+type PrimaryArger interface {
+	PrimaryArg() string
+}
+
+// primaryArgOf is tool's primary argument field: "" when it has none,
+// argLegacy when tool is not a PrimaryArger.
+func primaryArgOf(tool ToolInfo) string {
+	if pa, ok := tool.(PrimaryArger); ok {
+		return pa.PrimaryArg()
+	}
+	return argLegacy
+}
+
+// matchRule is MatchRule for a tool whose primary argument field is
+// primary. An argument glob is matched against that field only, so an
+// extra field the tool never reads cannot decide the rule; when the tool
+// has no primary field ("") or the call lacks it, a restricting rule
+// (absentMatches) still matches and a permitting one does not. With
+// primary argLegacy, the argument is ExtractFirstStringArg's.
+func matchRule(rule Rule, toolName, primary string, input map[string]any, absentMatches bool) bool {
 	// Step 1: Parse tool pattern
 	patternTool, argGlob := ParseToolPattern(rule.ToolPattern)
 
@@ -29,11 +59,19 @@ func MatchRule(rule Rule, toolName string, input map[string]any) bool {
 
 	// Step 3: Match argument glob if present
 	if argGlob != "" {
-		firstArg := ExtractFirstStringArg(input)
-		if firstArg == "" {
-			return false
+		var arg string
+		switch primary {
+		case argLegacy:
+			arg = ExtractFirstStringArg(input)
+		case "":
+		default:
+			arg, _ = input[primary].(string)
 		}
-		if !globMatch(argGlob, firstArg) {
+		if arg == "" {
+			if !absentMatches || primary == argLegacy {
+				return false
+			}
+		} else if !globMatch(argGlob, arg) {
 			return false
 		}
 	}

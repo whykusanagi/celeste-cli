@@ -136,8 +136,9 @@ type toolInfoAdapter struct {
 	input map[string]any
 }
 
-func (a *toolInfoAdapter) ToolName() string { return a.tool.Name() }
-func (a *toolInfoAdapter) IsReadOnly() bool { return PermissionReadOnly(a.tool, a.input) }
+func (a *toolInfoAdapter) ToolName() string   { return a.tool.Name() }
+func (a *toolInfoAdapter) IsReadOnly() bool   { return PermissionReadOnly(a.tool, a.input) }
+func (a *toolInfoAdapter) PrimaryArg() string { return PrimaryArg(a.tool) }
 
 // PreToolHookResult is the combined verdict of the PreToolUse hooks.
 type PreToolHookResult struct {
