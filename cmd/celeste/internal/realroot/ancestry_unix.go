@@ -17,7 +17,7 @@ const ancestryCheckable = true
 
 // openDirNoFollow opens the directory at path, refusing a symlink there.
 func openDirNoFollow(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	return os.OpenFile(path, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 }
 
 // ancestorIs reports whether the directory up levels above f (through
