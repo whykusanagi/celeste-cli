@@ -1509,8 +1509,9 @@ func runSkillExecuteCommand(args []string) {
 	clAdapter := newBuiltinConfigAdapter(config.NewConfigLoader(cfg))
 	execCwd, _ := os.Getwd()
 	builtin.RegisterAll(registry, execCwd, clAdapter, nil, nil, nil)
-	homeDir, _ := os.UserHomeDir()
-	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
+	if homeDir, err := config.HomeDir(); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
+	} else if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
 	}
 
@@ -1546,7 +1547,11 @@ func runSkillsCommand(args []string) {
 	_ = fs.Parse(args)
 
 	if *init {
-		initHome, _ := os.UserHomeDir()
+		initHome, err := config.HomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		skillsDir := filepath.Join(initHome, ".celeste", "skills")
 		if err := os.MkdirAll(skillsDir, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating skills directory: %v\n", err)
@@ -1562,7 +1567,11 @@ func runSkillsCommand(args []string) {
 	skillsCwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
 	builtin.RegisterAll(registry, skillsCwd, clAdapter, nil, nil, nil)
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := config.HomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	if err := registry.LoadCustomTools(filepath.Join(homeDir, ".celeste", "skills")); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: custom skills:", err)
 	}

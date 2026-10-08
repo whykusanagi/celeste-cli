@@ -145,7 +145,12 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 		return nil, fmt.Errorf("resolve workspace path: %w", err)
 	}
 	ws := filepath.Clean(abs)
-	home, _ := os.UserHomeDir()
+	// No home directory fails closed: ~/.celeste joined onto "" would read
+	// skills, hooks and permission rules from the workspace itself.
+	home, err := config.HomeDir()
+	if err != nil {
+		return nil, err
+	}
 
 	if opts.Warn == nil {
 		opts.Warn = func(s string) { fmt.Fprintln(os.Stderr, "Warning: "+s) }

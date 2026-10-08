@@ -191,6 +191,9 @@ func (e *Exporter) SaveToFile(content string, format string) (string, error) {
 
 	// Get export directory
 	exportDir := GetExportDir()
+	if exportDir == "" {
+		return "", ErrNoHome
+	}
 
 	// Ensure directory exists, owner-only: exports hold whole conversations.
 	if err := privfs.MkdirAll(exportDir); err != nil {
@@ -240,9 +243,9 @@ func (e *Exporter) ExportToFile(format string) (string, error) {
 
 // GetExportDir returns the path to the exports directory
 func GetExportDir() string {
-	homeDir, err := os.UserHomeDir()
+	homeDir, err := HomeDir()
 	if err != nil {
-		return filepath.Join(".celeste", "exports")
+		return "" // never the current directory
 	}
 	return filepath.Join(homeDir, ".celeste", "exports")
 }
