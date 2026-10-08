@@ -3,7 +3,9 @@ package permissions
 
 import (
 	"encoding/json"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -46,9 +48,11 @@ func primaryArgOf(tool ToolInfo) string {
 // primary. An argument glob is matched against that field only, so an
 // extra field the tool never reads cannot decide the rule; when the tool
 // has no primary field ("") or the call lacks it, a restricting rule
-// (absentMatches) still matches and a permitting one does not. With
-// primary argLegacy, the argument is ExtractFirstStringArg's.
-func matchRule(rule Rule, toolName, primary string, input map[string]any, absentMatches bool) bool {
+// (restricting: a deny or ask) still matches and a permitting one does
+// not. With primary argLegacy, the argument is ExtractFirstStringArg's.
+// argMatches decides the glob itself: paths are cleaned first and command
+// lines are matched command by command.
+func matchRule(rule Rule, toolName, primary string, input map[string]any, restricting bool) bool {
 	// Step 1: Parse tool pattern
 	patternTool, argGlob := ParseToolPattern(rule.ToolPattern)
 
@@ -59,19 +63,20 @@ func matchRule(rule Rule, toolName, primary string, input map[string]any, absent
 
 	// Step 3: Match argument glob if present
 	if argGlob != "" {
-		var arg string
+		var arg, key string
 		switch primary {
 		case argLegacy:
-			arg = ExtractFirstStringArg(input)
+			arg, key = extractFirstStringArg(input)
 		case "":
 		default:
 			arg, _ = input[primary].(string)
+			key = primary
 		}
 		if arg == "" {
-			if !absentMatches || primary == argLegacy {
+			if !restricting || primary == argLegacy {
 				return false
 			}
-		} else if !globMatch(argGlob, arg) {
+		} else if !argMatches(argGlob, key, arg, restricting) {
 			return false
 		}
 	}
@@ -115,28 +120,74 @@ func ParseToolPattern(pattern string) (toolName string, argGlob string) {
 // map. It checks keys in priority order: "command", "path", then returns the
 // first string value found by iterating the map.
 func ExtractFirstStringArg(input map[string]any) string {
+	s, _ := extractFirstStringArg(input)
+	return s
+}
+
+// extractFirstStringArg is ExtractFirstStringArg with the key it read.
+func extractFirstStringArg(input map[string]any) (string, string) {
 	if input == nil {
-		return ""
+		return "", ""
 	}
 
 	// Priority keys
 	for _, key := range []string{"command", "path", "content", "pattern"} {
 		if v, ok := input[key]; ok {
 			if s, ok := v.(string); ok {
-				return s
+				return s, key
 			}
 		}
 	}
 
 	// Fallback: first string value found
-	for _, v := range input {
+	for k, v := range input {
 		if s, ok := v.(string); ok {
-			return s
+			return s, k
 		}
 	}
 
-	return ""
+	return "", ""
 }
+
+// pathArgs are the input fields that hold a file path.
+var pathArgs = map[string]bool{"path": true, "file_path": true, "dir": true, "directory": true}
+
+// argMatches matches an argument glob against the value of input field
+// key. A path is cleaned first, so ".." can neither take an allowed path
+// out of the rule's directory nor a denied one past it; a cleaned path that
+// still climbs out ("../x") is never permitted. A command line is matched
+// one command at a time: a permitting rule never matches a line that
+// chains, pipes, substitutes or redirects (shellOperator), and a
+// restricting rule matches when any one command in it matches.
+func argMatches(glob, key, arg string, restricting bool) bool {
+	switch {
+	case pathArgs[key]:
+		p := path.Clean(filepath.ToSlash(arg))
+		if !restricting && (p == ".." || strings.HasPrefix(p, "../")) {
+			return false
+		}
+		return globMatch(glob, p)
+	case key == "command":
+		if !restricting {
+			return !shellOperator.MatchString(arg) && globMatch(glob, strings.TrimSpace(arg))
+		}
+		if globMatch(glob, arg) {
+			return true
+		}
+		for _, seg := range shellOperator.Split(arg, -1) {
+			if seg = strings.TrimSpace(seg); seg != "" && globMatch(glob, seg) {
+				return true
+			}
+		}
+		return false
+	}
+	return globMatch(glob, arg)
+}
+
+// shellOperator finds what makes one command line run more than one
+// command or write somewhere: ; & | (and && ||), a newline, backquotes,
+// ( ) (so $( and subshells), and < > redirections.
+var shellOperator = regexp.MustCompile("[;&|\n\r`<>()]")
 
 // globMatch performs a glob match that handles patterns with spaces and
 // multi-segment arguments. Standard filepath.Match only handles single path
