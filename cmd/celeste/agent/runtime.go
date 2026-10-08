@@ -1216,8 +1216,11 @@ func normalizeStateOptions(state *RunState, fallback Options) {
 	// false here is a decision, not a gap — restoring it would put the local
 	// planner back on top of a server-side conductor mid-run, which is the one
 	// state this design exists to prevent.
-	if !state.Options.EmitArtifacts && fallback.EmitArtifacts {
-		state.Options.EmitArtifacts = fallback.EmitArtifacts
+	// EmitArtifacts is persisted the same way: a false is the run's
+	// --no-artifacts and stays. A false fallback (--no-artifacts on the
+	// resume) turns artifacts off; a true one never turns them back on.
+	if !fallback.EmitArtifacts {
+		state.Options.EmitArtifacts = false
 	}
 	normalizeOptions(&state.Options)
 }

@@ -175,8 +175,31 @@ func TestNormalizeStateOptionsStillFillsAbsentFields(t *testing.T) {
 	if len(state.Options.VerificationCommands) != 1 {
 		t.Errorf("VerificationCommands = %v, want the fallback", state.Options.VerificationCommands)
 	}
-	if !state.Options.EmitArtifacts {
-		t.Error("EmitArtifacts = false, want the fallback")
+	// EmitArtifacts is persisted in full like the decision flags: a false
+	// is the run's --no-artifacts, never filled back in (Aikido 806869324).
+	if state.Options.EmitArtifacts {
+		t.Error("EmitArtifacts = true, want the run's own false")
+	}
+}
+
+// Aikido 806869324: resuming a run started with --no-artifacts keeps
+// artifacts off, and --no-artifacts on the resume turns them off.
+func TestNormalizeStateOptionsKeepsNoArtifacts(t *testing.T) {
+	state := &RunState{Options: DefaultOptions()}
+	state.Options.EmitArtifacts = false
+	fallback := DefaultOptions()
+	fallback.EmitArtifacts = true
+	normalizeStateOptions(state, fallback)
+	if state.Options.EmitArtifacts {
+		t.Error("a resume without --no-artifacts turned artifacts back on")
+	}
+
+	state = &RunState{Options: DefaultOptions()}
+	state.Options.EmitArtifacts = true
+	fallback.EmitArtifacts = false
+	normalizeStateOptions(state, fallback)
+	if state.Options.EmitArtifacts {
+		t.Error("--no-artifacts on the resume did not turn artifacts off")
 	}
 }
 
