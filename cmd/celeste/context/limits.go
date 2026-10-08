@@ -321,7 +321,8 @@ func dirBytes(dir string) int64 {
 
 // PruneToolResults deletes spilled tool results under baseDir ("" is
 // ToolResultsBaseDir): only spill session directories (isSpillSession),
-// never the compaction store beside them. Every session directory last changed more than
+// never the compaction store beside them, whose bodies expire one by one
+// after SpillKeepAge instead (expireCompactStore). Every session directory last changed more than
 // SpillKeepAge ago, then the oldest others idle for spillActiveAge while all
 // of them together are over maxTotalSpillBytes. keep (the session running
 // now) always survives, and so does any session that spilled within
@@ -355,6 +356,9 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 	var live []session
 	var total int64
 	var errs []error
+	if err := expireCompactStore(filepath.Join(baseDir, compactStoreDir), now); err != nil {
+		errs = append(errs, err)
+	}
 	for _, d := range des {
 		if !d.IsDir() || d.Name() == keep || !isSpillSession(d.Name()) {
 			continue
@@ -383,6 +387,34 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 			continue
 		}
 		total -= s.size
+	}
+	return errors.Join(errs...)
+}
+
+// expireCompactStore removes the compaction store's bodies (regular files
+// directly in dir) last written more than SpillKeepAge ago, so the store,
+// which the spill prunes and quotas leave alone, does not grow without
+// bound. The store itself and its recent bodies stay.
+func expireCompactStore(dir string, now time.Time) error {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, d := range des {
+		if !d.Type().IsRegular() {
+			continue
+		}
+		info, err := d.Info()
+		if err != nil || now.Sub(info.ModTime()) <= SpillKeepAge {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, d.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

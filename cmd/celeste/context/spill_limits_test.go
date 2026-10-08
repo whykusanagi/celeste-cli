@@ -256,8 +256,9 @@ func TestCapToolResultKeepsRecentlyActiveSessions(t *testing.T) {
 }
 
 // Aikido review of #430: the compaction recall store (tool-results/pruned)
-// and any directory that is not a spill session are never pruned, by age
-// or for the total limit, and do not count toward the total.
+// and any directory that is not a spill session are never removed by the
+// spill prunes, by age or for the total limit, and do not count toward the
+// total. The store's own bodies expire one by one after SpillKeepAge.
 func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
 	withSpillLimits(t, 1<<20, 1<<20)
 	oldT := maxTotalSpillBytes
@@ -271,10 +272,17 @@ func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 		p := filepath.Join(dir, "call_1.txt")
 		require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("p", 8000)), 0o600))
-		require.NoError(t, os.Chtimes(p, longAgo, longAgo))
+		if name != "pruned" {
+			require.NoError(t, os.Chtimes(p, longAgo, longAgo))
+		}
 		require.NoError(t, os.Chtimes(dir, longAgo, longAgo))
 		kept = append(kept, p)
 	}
+	// The store keeps its own retention: a body older than SpillKeepAge
+	// goes, one by one; the store and its recent bodies stay.
+	expired := filepath.Join(base, "pruned", "call_0.txt")
+	require.NoError(t, os.WriteFile(expired, []byte("old"), 0o600))
+	require.NoError(t, os.Chtimes(expired, longAgo, longAgo))
 
 	require.NoError(t, PruneToolResults(base, "sess", time.Now()))
 	_, _, err := CapToolResult(strings.Repeat("x", 4000), 1024, "sess", "a", base)
@@ -283,6 +291,8 @@ func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
 		_, err := os.Stat(p)
 		assert.NoError(t, err, "%s was pruned", p)
 	}
+	_, err = os.Stat(expired)
+	assert.True(t, os.IsNotExist(err), "an expired compaction body was kept")
 
 	// A session named like the store spills beside it, not into it.
 	_, _, err = CapToolResult(strings.Repeat("y", 2000), 1024, "pruned", "b", base)
