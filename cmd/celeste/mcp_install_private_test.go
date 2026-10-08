@@ -38,3 +38,48 @@ func TestUpsertJSONConfigKeepsConfigsPrivate(t *testing.T) {
 		}
 	}
 }
+
+// A .bak swapped for a symlink after the symlink check is replaced, not
+// written through: the file it points at keeps its content and mode
+// (Aikido review of #424).
+func TestBackupFileDoesNotFollowASymlinkSwappedIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "client.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testHookBackupChecked = func(bak string) {
+		if err := os.Symlink(victim, bak); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookBackupChecked = nil })
+	if err := backupFile(config); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep" || fi.Mode().Perm() != 0o644 {
+		t.Fatalf("the backup wrote through a symlink: victim %q mode %v", got, fi.Mode().Perm())
+	}
+	bi, err := os.Lstat(config + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bi.Mode().IsRegular() || bi.Mode().Perm() != 0o600 {
+		t.Fatalf(".bak is %v, want a regular 0600 file", bi.Mode())
+	}
+}

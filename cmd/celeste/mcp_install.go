@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
@@ -205,9 +206,9 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 }
 
 // backupFile copies path to path+".bak", readable only by the owner: the
-// config can hold API keys in env (Aikido 806869435). WriteFile applies its
-// mode only to a file it creates, so an existing .bak is chmod'd too, and a
-// .bak that is a symlink is refused rather than written through.
+// config can hold API keys in env (Aikido 806869435). The .bak is always a
+// new 0600 file, and a .bak that is a symlink is refused rather than
+// written through.
 func backupFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -217,11 +218,17 @@ func backupFile(path string) error {
 	if fi, err := os.Lstat(bak); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to write through symlink %s", bak)
 	}
-	if err := os.WriteFile(bak, data, privfs.FilePerm); err != nil {
-		return err
+	if testHookBackupChecked != nil {
+		testHookBackupChecked(bak)
 	}
-	return os.Chmod(bak, privfs.FilePerm)
+	// A new file renamed over bak: a symlink swapped in after the check
+	// above is replaced, never followed (Aikido review of #424).
+	return atomicfile.Replace(bak, data, privfs.FilePerm)
 }
+
+// testHookBackupChecked, when set, runs in backupFile after the symlink
+// check. Tests only.
+var testHookBackupChecked func(bak string)
 
 // printCodexBlock prints the TOML block to paste into ~/.codex/config.toml.
 func printCodexBlock(exe string, serveArgs []string) {
