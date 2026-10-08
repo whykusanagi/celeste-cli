@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
 
 // SearchResult pairs a symbol with its similarity score and a set of
@@ -916,6 +918,32 @@ func (idx *Indexer) parseFile(relPath string) (*ParseResult, error) {
 	return nil, nil // no parser for this language
 }
 
+// readWorkspaceFile reads an indexed file for review: a regular file, not
+// a symlink, that resolves inside the workspace. A file replaced by a
+// symlink since it was indexed is refused, so review never quotes source
+// from outside the workspace.
+func (idx *Indexer) readWorkspaceFile(absFile string) ([]byte, error) {
+	info, err := os.Lstat(absFile)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", absFile)
+	}
+	real, err := filepath.EvalSymlinks(absFile)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := filepath.EvalSymlinks(idx.workspace)
+	if err != nil {
+		return nil, err
+	}
+	if !pathutil.Within(ws, real) {
+		return nil, fmt.Errorf("%s resolves outside the workspace", absFile)
+	}
+	return os.ReadFile(real)
+}
+
 // walkSourceFiles returns relative paths of all indexable source files.
 func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	var files []string
@@ -943,6 +971,11 @@ func (idx *Indexer) walkSourceFiles() ([]string, error) {
 		}
 
 		if ShouldSkipPath(rel) {
+			return nil
+		}
+		// A symlink (to a file, or to a directory WalkDir does not enter)
+		// may lead out of the workspace: never index what it points to.
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if gitignore.ShouldSkip(rel, false) {
@@ -1598,7 +1631,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 		if _, seen := files[absFile]; seen {
 			continue
 		}
-		data, err := os.ReadFile(absFile)
+		data, err := idx.readWorkspaceFile(absFile)
 		if err != nil {
 			// No source, no body: nothing to judge.
 			files[absFile] = nil
@@ -1622,7 +1655,7 @@ func (idx *Indexer) FindCodeSmells(kinds []CodeSmellKind, maxResults int, includ
 			if _, seen := files[absFile]; seen {
 				continue
 			}
-			data, err := os.ReadFile(absFile)
+			data, err := idx.readWorkspaceFile(absFile)
 			if err != nil {
 				continue
 			}
