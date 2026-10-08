@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -59,19 +58,10 @@ type FileState struct {
 	SHA256 string `json:"sha256"`
 }
 
-// StateOf reads path's FileState.
+// StateOf reads path's FileState (a regular file only; a FIFO or device
+// is refused, never waited on).
 func StateOf(path string) (FileState, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return FileState{}, err
-	}
-	defer f.Close()
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return FileState{}, err
-	}
-	return FileState{Size: n, SHA256: hex.EncodeToString(h.Sum(nil))}, nil
+	return fileRef{path: path}.state()
 }
 
 // Changed reports whether e's file is no longer as e's change left it:

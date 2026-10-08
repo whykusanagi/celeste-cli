@@ -45,9 +45,11 @@ func confine(workspace, path string) (root, rel string, ok bool) {
 // set) every access goes through an os.Root on that directory, which
 // refuses a symlink or ".." leading out of it at any component, so a
 // directory replaced by a symlink after the change cannot send the restore
-// elsewhere (Aikido 806869815). Without one (an index written before
-// Entry.Root) it is the path, with the final component never followed on
-// a write.
+// elsewhere (Aikido 806869815). An entry from an index written before
+// Entry.Root is confined to its own directory the same way when its path
+// resolves inside it (so CLAUDE.md -> AGENTS.md is undone on AGENTS.md,
+// the link kept); otherwise it is the path, with the final component never
+// followed on a write.
 type fileRef struct {
 	path string
 	root *os.Root
@@ -57,6 +59,11 @@ type fileRef struct {
 // openRef opens e's file for undo; close it when done.
 func openRef(e Entry) (fileRef, error) {
 	if e.Root == "" {
+		if dir, rel, ok := confine("", e.Path); ok {
+			if root, err := os.OpenRoot(dir); err == nil {
+				return fileRef{path: e.Path, root: root, rel: rel}, nil
+			}
+		}
 		return fileRef{path: e.Path}, nil
 	}
 	if !filepath.IsLocal(e.Rel) {
@@ -87,11 +94,39 @@ func (f fileRef) open(flag int) (*os.File, error) {
 	return os.OpenFile(f.path, flag|oNoFollow, 0)
 }
 
-func (f fileRef) readFile() ([]byte, error) {
+// openRead opens the file for reading without waiting on a FIFO or
+// device, and refuses anything but a regular file (one swapped for a FIFO
+// since the change must not hang undo).
+func (f fileRef) openRead() (*os.File, error) {
+	var fh *os.File
+	var err error
 	if f.root != nil {
-		return f.root.ReadFile(f.rel)
+		fh, err = f.root.OpenFile(f.rel, os.O_RDONLY|oNonblock, 0)
+	} else {
+		fh, err = os.OpenFile(f.path, os.O_RDONLY|oNonblock, 0)
 	}
-	return os.ReadFile(f.path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := fh.Stat()
+	if err != nil {
+		_ = fh.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = fh.Close()
+		return nil, fmt.Errorf("%s is not a regular file", f.path)
+	}
+	return fh, nil
+}
+
+func (f fileRef) readFile() ([]byte, error) {
+	fh, err := f.openRead()
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+	return io.ReadAll(fh)
 }
 
 func (f fileRef) stat() (os.FileInfo, error) {
@@ -119,10 +154,7 @@ func (f fileRef) replace(data []byte, perm os.FileMode) error {
 
 // state is StateOf for the file as undo reaches it.
 func (f fileRef) state() (FileState, error) {
-	if f.root == nil {
-		return StateOf(f.path)
-	}
-	fh, err := f.root.Open(f.rel)
+	fh, err := f.openRead()
 	if err != nil {
 		return FileState{}, err
 	}
