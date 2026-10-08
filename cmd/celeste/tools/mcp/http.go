@@ -28,7 +28,7 @@ func NewHTTPTransport(url string) (*HTTPTransport, error) {
 	if url == "" {
 		return nil, fmt.Errorf("http transport requires a URL")
 	}
-	return &HTTPTransport{url: url, client: &http.Client{}}, nil
+	return &HTTPTransport{url: url, client: newMCPHTTPClient()}, nil
 }
 
 // SetProtocolVersion sets the value sent as the MCP-Protocol-Version header.
@@ -68,20 +68,30 @@ func (t *HTTPTransport) post(ctx context.Context, body []byte) error {
 	if strings.HasPrefix(ct, "text/event-stream") {
 		return t.drainSSE(resp.Body)
 	}
+	data, err := readLimited(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read http response: %w", err)
+	}
 	var r Response
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	if err := json.Unmarshal(data, &r); err != nil {
 		return fmt.Errorf("decode http response: %w", err)
 	}
-	t.enqueue(&r)
-	return nil
+	return t.enqueue(&r)
 }
 
 // drainSSE reads an SSE stream, queuing each JSON-RPC response carried on a
 // `data:` line. Non-response events (notifications/pings) are skipped.
+//
+// The stream is capped at maxResponseBytes in all, and at maxQueuedResponses
+// queued responses (Aikido 806869944).
 func (t *HTTPTransport) drainSSE(body io.Reader) error {
-	sc := bufio.NewScanner(body)
+	lr := &io.LimitedReader{R: body, N: int64(maxResponseBytes) + 1}
+	sc := bufio.NewScanner(lr)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
+		if lr.N <= 0 {
+			return errResponseTooLarge()
+		}
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data:") {
 			continue
@@ -94,15 +104,25 @@ func (t *HTTPTransport) drainSSE(body io.Reader) error {
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
 			continue
 		}
-		t.enqueue(&r)
+		if err := t.enqueue(&r); err != nil {
+			return err
+		}
+	}
+	if lr.N <= 0 {
+		return errResponseTooLarge()
 	}
 	return sc.Err()
 }
 
-func (t *HTTPTransport) enqueue(r *Response) {
+// enqueue queues r, failing once maxQueuedResponses are waiting.
+func (t *HTTPTransport) enqueue(r *Response) error {
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.queue) >= maxQueuedResponses {
+		return fmt.Errorf("MCP server sent more than %d unread responses", maxQueuedResponses)
+	}
 	t.queue = append(t.queue, r)
-	t.mu.Unlock()
+	return nil
 }
 
 // Send POSTs a request and queues the resulting response(s).

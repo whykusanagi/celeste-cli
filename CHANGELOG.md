@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **mcp:** a workspace MCP config that does not parse is skipped with a warning instead of stopping every MCP server in the chat; the home configs' servers still start, and `celeste mcp list` says so. A home config that does not parse still stops them (Aikido 806869709).
 * **mcp:** disconnecting an MCP server (or stopping them all) while it is still connecting now wins: the connect is cancelled, and one that finishes anyway closes its client and removes the tools it registered (Aikido 806869778).
 * **mcp:** `celeste mcp install` writes the `.bak` of a client config, and any config it creates, readable only by you (0600), and tightens an existing `.bak` (Aikido 806869435).
+* **mcp:** responses from an MCP server are capped at 16 MiB on every transport (a stdio line, an HTTP body, an HTTP event stream), and one HTTP request queues at most 256 responses; an oversized stdio line closes that server's connection. This also bounds a `tools/list` reply (Aikido 806869944, 806869726).
+* **mcp:** the SSE transport POSTs only to an endpoint on the configured server's own origin, and the SSE and HTTP transports follow redirects only within that origin (Aikido 806869691).
 
 ### Features
 

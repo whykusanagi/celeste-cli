@@ -4,6 +4,7 @@ package mcp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -115,17 +116,42 @@ func (t *StdioTransport) SendNotification(notif *Notification) error {
 }
 
 // Receive reads the next JSON line from stdout and parses it as a Response.
+// A line over maxResponseBytes fails and closes the transport: the rest of
+// it cannot be skipped reliably (Aikido 806869944).
 func (t *StdioTransport) Receive() (*Response, error) {
-	line, err := t.reader.ReadBytes('\n')
+	line, err := t.readLine()
 	if err != nil {
-		return nil, fmt.Errorf("read from stdout: %w", err)
+		return nil, err
 	}
 
 	var resp Response
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w (raw: %s)", err, string(line))
+		raw := line
+		if len(raw) > 200 {
+			raw = raw[:200]
+		}
+		return nil, fmt.Errorf("unmarshal response: %w (raw: %s)", err, string(raw))
 	}
 	return &resp, nil
+}
+
+// readLine reads one line of at most maxResponseBytes.
+func (t *StdioTransport) readLine() ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := t.reader.ReadSlice('\n')
+		if len(line)+len(chunk) > maxResponseBytes {
+			_ = t.Close()
+			return nil, fmt.Errorf("read from stdout: %w", errResponseTooLarge())
+		}
+		line = append(line, chunk...)
+		if err == nil {
+			return line, nil
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return nil, fmt.Errorf("read from stdout: %w", err)
+		}
+	}
 }
 
 // Close shuts down the child process and closes pipes.

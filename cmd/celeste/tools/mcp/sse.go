@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -24,6 +25,9 @@ type SSETransport struct {
 	closed     bool
 	done       chan struct{}
 	cancel     context.CancelFunc // ends the GET stream started by connectSSE
+	// endpointErr is set when the server announced a POST endpoint on
+	// another origin; Send then fails rather than POST there.
+	endpointErr error
 }
 
 // NewSSETransport connects to an MCP server's SSE endpoint.
@@ -32,7 +36,7 @@ func NewSSETransport(url string) (*SSETransport, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &SSETransport{
 		baseURL:    url,
-		client:     &http.Client{},
+		client:     newMCPHTTPClient(),
 		responseCh: make(chan *Response, 100),
 		done:       make(chan struct{}),
 		cancel:     cancel,
@@ -57,6 +61,7 @@ func (t *SSETransport) connectSSE(ctx context.Context) {
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxResponseBytes)
 	var eventType string
 
 	for scanner.Scan() {
@@ -79,22 +84,11 @@ func (t *SSETransport) connectSSE(ctx context.Context) {
 			switch eventType {
 			case "endpoint":
 				// The server tells us where to POST requests
+				// The server tells us where to POST. Only an endpoint on
+				// the base URL's own origin is used (Aikido 806869691).
+				postURL, err := resolveEndpoint(t.baseURL, data)
 				t.mu.Lock()
-				if strings.HasPrefix(data, "/") {
-					// Relative path -- combine with base URL
-					// Extract scheme+host from baseURL
-					parts := strings.SplitN(t.baseURL, "://", 2)
-					if len(parts) == 2 {
-						hostEnd := strings.Index(parts[1], "/")
-						if hostEnd == -1 {
-							t.postURL = t.baseURL + data
-						} else {
-							t.postURL = parts[0] + "://" + parts[1][:hostEnd] + data
-						}
-					}
-				} else {
-					t.postURL = data
-				}
+				t.postURL, t.endpointErr = postURL, err
 				t.mu.Unlock()
 
 			case "message":
@@ -126,8 +120,11 @@ func (t *SSETransport) SendContext(ctx context.Context, req *Request) error {
 		t.mu.Unlock()
 		return fmt.Errorf("transport is closed")
 	}
-	postURL := t.postURL
+	postURL, endpointErr := t.postURL, t.endpointErr
 	t.mu.Unlock()
+	if endpointErr != nil {
+		return endpointErr
+	}
 
 	if postURL == "" {
 		// If we have not yet received the endpoint event, POST to base URL
@@ -164,8 +161,11 @@ func (t *SSETransport) SendNotificationContext(ctx context.Context, notif *Notif
 		t.mu.Unlock()
 		return fmt.Errorf("transport is closed")
 	}
-	postURL := t.postURL
+	postURL, endpointErr := t.postURL, t.endpointErr
 	t.mu.Unlock()
+	if endpointErr != nil {
+		return endpointErr
+	}
 
 	if postURL == "" {
 		postURL = t.baseURL
@@ -221,4 +221,22 @@ func (t *SSETransport) Close() error {
 	close(t.done)
 	t.cancel()
 	return nil
+}
+
+// resolveEndpoint resolves the endpoint event's data against base and
+// returns it only when it is on base's origin (scheme and host).
+func resolveEndpoint(base, endpoint string) (string, error) {
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse MCP SSE URL: %w", err)
+	}
+	e, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return "", fmt.Errorf("MCP SSE server sent an invalid endpoint: %w", err)
+	}
+	r := b.ResolveReference(e)
+	if !sameOrigin(b, r) {
+		return "", fmt.Errorf("refusing the MCP SSE server's POST endpoint on another origin (%s)", r.Host)
+	}
+	return r.String(), nil
 }
