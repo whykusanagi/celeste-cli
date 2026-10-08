@@ -37,3 +37,18 @@ func TestWorkspaceFromArgs_OneKeyPerDirectory(t *testing.T) {
 	assert.Equal(t, true, payload["isError"])
 	assert.Contains(t, payloadText(t, payload), "being built")
 }
+
+// validateWorkspace compares paths with the OS separator, so a workspace
+// under home is accepted (and ~/.ssh refused) on Windows too.
+func TestValidateWorkspaceUsesOSSeparators(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	server := filepath.Join(home, "srv")
+	require.NoError(t, validateWorkspace(filepath.Join(home, "proj"), server))
+	require.NoError(t, validateWorkspace(server+string(filepath.Separator), server))
+	require.Error(t, validateWorkspace(home, server))
+	require.Error(t, validateWorkspace(filepath.Dir(home), server))
+	require.Error(t, validateWorkspace(filepath.Join(home, ".ssh", "x"), server))
+	require.Error(t, validateWorkspace(home+"x", server))
+}

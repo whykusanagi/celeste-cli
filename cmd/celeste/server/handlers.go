@@ -51,6 +51,9 @@ func validateWorkspace(requested, serverWorkspace string) error {
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
 	}
+	if absRequested == filepath.Clean(serverWorkspace) {
+		return nil
+	}
 
 	// Must be under user's home directory
 	homeDir, err := os.UserHomeDir()
@@ -58,14 +61,16 @@ func validateWorkspace(requested, serverWorkspace string) error {
 		return fmt.Errorf("cannot determine home directory")
 	}
 
-	if !strings.HasPrefix(absRequested, homeDir+"/") {
+	rel, err := filepath.Rel(homeDir, absRequested)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fmt.Errorf("workspace must be under home directory (%s)", homeDir)
 	}
 
-	// Reject sensitive directories
+	// Reject sensitive directories (slash form so Windows paths match too)
+	slashRel := "/" + filepath.ToSlash(rel)
 	sensitive := []string{".ssh", ".gnupg", ".aws", ".config/gcloud", ".kube"}
 	for _, dir := range sensitive {
-		if strings.Contains(absRequested, "/"+dir) {
+		if strings.Contains(slashRel, "/"+dir) {
 			return fmt.Errorf("access to %s is not allowed", dir)
 		}
 	}
