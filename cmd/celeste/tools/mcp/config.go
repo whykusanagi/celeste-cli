@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 )
 
 // MCPConfig is the top-level configuration for MCP servers.
@@ -133,6 +136,13 @@ func readConfigFile(path string) ([]byte, error) {
 // path and writes it back, preserving all other fields. Errors if the file or
 // the named server does not exist.
 func SetServerEnabled(path, name string, enabled bool) error {
+	// A config that is a symlink (a dotfile manager's) is read and
+	// rewritten at its target, resolved once: the rewrite replaces that
+	// path itself, so a symlink swapped in after the read is replaced, not
+	// written through (codex review of this branch).
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	cfg, err := LoadConfig(path)
 	if err != nil {
 		return err
@@ -149,10 +159,14 @@ func SetServerEnabled(path, name string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal MCP config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
+	if testHookConfigLoaded != nil {
+		testHookConfigLoaded()
 	}
-	// WriteFile keeps an existing file's mode: tighten it, as env values
-	// can be credentials (CodeRabbit review of #427).
-	return os.Chmod(path, 0o600)
+	// 0600, also for an existing file: env values can be credentials
+	// (CodeRabbit review of #427).
+	return atomicfile.Replace(path, data, 0o600)
 }
+
+// testHookConfigLoaded, when set, runs in SetServerEnabled between the
+// read and the rewrite. Tests only.
+var testHookConfigLoaded func()

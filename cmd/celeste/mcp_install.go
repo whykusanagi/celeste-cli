@@ -194,13 +194,11 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 			return "", err
 		}
 	}
-	// 0600: client configs can hold API keys in env (Aikido 806869435).
-	// WriteFile keeps an existing file's mode, so it is tightened too
-	// (CodeRabbit review of #427).
-	if err := os.WriteFile(path, out, privfs.FilePerm); err != nil {
-		return "", err
-	}
-	if err := os.Chmod(path, privfs.FilePerm); err != nil {
+	// 0600, also for an existing file: client configs can hold API keys in
+	// env (Aikido 806869435, CodeRabbit review of #427). A new file renamed
+	// over path: a symlink swapped in after the check above is replaced,
+	// never written through (codex review of this branch).
+	if err := atomicfile.Replace(path, out, privfs.FilePerm); err != nil {
 		return "", err
 	}
 	if existed {
