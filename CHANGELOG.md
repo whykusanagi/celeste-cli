@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 * **tools:** `web_fetch` only connects to public addresses. The address is checked when each connection is made, redirects included, so loopback, private-network, link-local, CGNAT and cloud metadata addresses are refused by default. `"web_fetch_allow_private": true` in the config, or `CELESTE_WEB_FETCH_ALLOW_PRIVATE=1`, allows them for local docs servers. web_fetch no longer goes through an `HTTP(S)_PROXY` (Aikido 806869856).
+* **tools:** `collections_search` searches only the collections enabled with `/collections`; a `collection_id` outside them is refused (Aikido 806869660).
 
 ### Features
 
