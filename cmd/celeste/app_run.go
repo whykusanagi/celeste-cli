@@ -363,9 +363,9 @@ Builds or updates the code graph index for the current directory.
 Starts the MCP server, on stdio by default.
   --sse          use the SSE transport instead of stdio
   --port N       the SSE port (default 8420)
-  --remote       bind to 0.0.0.0 for network access
-  --cert <file>  TLS certificate file for mTLS
-  --key <file>   TLS private key file for mTLS`,
+  --remote       bind to 0.0.0.0 for network access (needs --cert and --key)
+  --cert <file>  TLS certificate file
+  --key <file>   TLS private key file`,
 	"costs": `Usage: celeste costs
 
 Shows the cost breakdown of the current session.`,

@@ -67,6 +67,10 @@ type SubagentRun struct {
 	// /agents. Empty for an untyped run.
 	Summary string `json:"summary,omitempty"`
 
+	// killed is set by Kill: the run's end is the user's cancellation,
+	// whatever RunGoal returns after it (finishRun, mergeable).
+	killed bool
+
 	// sliders is the persona override for this run's voice modulation, or
 	// nil for slider.json. It replaces the slider block in the subagent's
 	// system prompt (#170).
@@ -686,11 +690,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		wt = w
 		execWorkspace = w.Path
 		defer func() {
-			// run.Status/Error may be written concurrently by Kill — guard reads/writes.
-			m.mu.Lock()
-			completed := run.Status == "completed"
-			m.mu.Unlock()
-			if completed {
+			if m.mergeable(run) {
 				m.mergeMu.Lock()
 				mErr := MergeWorktree(workspace, wt)
 				m.mergeMu.Unlock()
@@ -763,13 +763,32 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	defer runner.Close()
 
 	state, err := runner.RunGoal(ctx, markedGoal)
+	return run, m.finishRun(run, state, err, holder, outBuf.String())
+}
 
+// finishRun records how RunGoal ended on run, under m.mu, and returns the
+// error executeSubagent reports (nil for a completed run). out is the
+// agent's buffered output, the result when it gave no final reply.
+func (m *Manager) finishRun(run *SubagentRun, state *agent.RunState, err error, holder *resultHolder, out string) error {
 	m.mu.Lock()
 	run.EndedAt = time.Now()
 
 	// Always capture the checkpoint id so the caller can resume on failure.
 	if state != nil {
 		run.CheckpointID = state.RunID
+	}
+
+	// A kill that landed while RunGoal was returning wins: the run stays
+	// failed, so its isolated worktree is not merged (mergeable).
+	if run.killed {
+		run.Status = "failed"
+		run.Error = "killed by user"
+		if state != nil {
+			run.Turns = state.Turn
+		}
+		typedFailure(run, holder, lastResponse(state), run.Error)
+		m.mu.Unlock()
+		return fmt.Errorf("subagent execution: killed by user")
 	}
 
 	if err != nil {
@@ -786,7 +805,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		}
 		typedFailure(run, holder, lastResponse(state), err.Error())
 		m.mu.Unlock()
-		return run, fmt.Errorf("subagent execution: %w", err)
+		return fmt.Errorf("subagent execution: %w", err)
 	}
 
 	// RunGoal returns a nil error when it stops at max turns or for lack of
@@ -802,7 +821,7 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		}
 		typedFailure(run, holder, state.LastAssistantResponse, failure)
 		m.mu.Unlock()
-		return run, fmt.Errorf("subagent execution: %s", failure)
+		return fmt.Errorf("subagent execution: %s", failure)
 	}
 
 	run.Status = "completed"
@@ -810,8 +829,8 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 
 	// Collect the result
 	run.Result = state.LastAssistantResponse
-	if run.Result == "" && outBuf.Len() > 0 {
-		run.Result = outBuf.String()
+	if run.Result == "" && out != "" {
+		run.Result = out
 	}
 	if run.Result == "" {
 		run.Result = fmt.Sprintf("Subagent completed after %d turns (status: %s)", state.Turn, state.Status)
@@ -821,8 +840,16 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	}
 	run.Result = capSubagentResult(run.Result)
 	m.mu.Unlock()
+	return nil
+}
 
-	return run, nil
+// mergeable reports whether an isolated run's worktree is merged back:
+// only a completed run's. run.Status may be written concurrently by Kill,
+// so it is read under m.mu.
+func (m *Manager) mergeable(run *SubagentRun) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return run.Status == "completed" && !run.killed
 }
 
 // lastResponse is the run's last reply, or "" without a state.
@@ -983,8 +1010,9 @@ func (m *Manager) clearCancel(run *SubagentRun) {
 // (e.g. "mizu" or "water") — users refer to agents by the name on screen, not the
 // internal id (#d15ac448). Returns true if a cancellable run was found. The run's
 // context is cancelled (which the runtime honors — task 349f1f14) and its status
-// is marked failed so ListRuns reflects the kill immediately. A run that has
-// already finished is left untouched and returns false.
+// is marked failed so ListRuns reflects the kill immediately. A run whose
+// cancel is gone (it finished and was merged or discarded) is left
+// untouched and returns false.
 func (m *Manager) Kill(selector string) bool {
 	m.mu.Lock()
 	cancel := m.cancels[selector]
@@ -1006,10 +1034,16 @@ func (m *Manager) Kill(selector string) bool {
 		m.mu.Unlock()
 		return false
 	}
-	if run != nil && (run.Status == "running" || run.Status == "background" || run.Status == "waiting") {
-		run.Status = "failed"
-		run.Error = "killed by user"
-		run.EndedAt = time.Now()
+	// The cancel is registered until the run's merge has run, so a kill is
+	// honoured even after finishRun recorded "completed": Kill reports the
+	// kill, so the run must end failed and its worktree unmerged (mergeable).
+	if run != nil {
+		if run.Status != "failed" {
+			run.Status = "failed"
+			run.Error = "killed by user"
+			run.EndedAt = time.Now()
+		}
+		run.killed = true
 	}
 	m.mu.Unlock()
 

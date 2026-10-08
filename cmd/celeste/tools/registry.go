@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/permissions"
@@ -100,32 +102,111 @@ func riskLevel(tool Tool, name string, input map[string]any) string {
 	return classifyRiskLevel(name)
 }
 
-// inputSummary produces a short (<80 char) human-readable summary of the tool input.
-func inputSummary(input map[string]any) string {
+// maxSummaryValue caps one value in a permission prompt's summary. A
+// longer value is cut with an explicit "[N more chars]" marker, never
+// silently: what the user approves is what the tool gets.
+const maxSummaryValue = 4096
+
+// maxSummaryLines caps the lines (one per argument) of a permission
+// prompt's summary; the rest are counted in a final marker line.
+const maxSummaryLines = 24
+
+// visible makes every character of s that a terminal would act on rather
+// than print visible: a line break inside a value is ⏎ (so it can't push the
+// command out of view), a carriage return, tab or other C0/C1 control, DEL
+// or invisible format character (bidi overrides) is a \xNN or \uNNNN
+// escape (so an escape sequence can't hide part of the command), and so is
+// a byte that is not UTF-8.
+func visible(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&sb, `\x%02x`, s[i])
+		case r == '\n':
+			sb.WriteString("⏎")
+		case r == ' ' || unicode.IsGraphic(r):
+			sb.WriteRune(r)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case r < 0x100:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		}
+		i += size
+	}
+	return sb.String()
+}
+
+// capSummary makes s visible, then cuts it to maxSummaryValue bytes on a
+// rune boundary, saying how much it left out.
+func capSummary(s string) string {
+	s = visible(s)
+	if len(s) <= maxSummaryValue {
+		return s
+	}
+	cut := maxSummaryValue
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf("... [%d more chars]", len(s)-cut)
+}
+
+// inputSummary is what a permission prompt shows for a call: the tool's
+// primary argument (PrimaryArg) in full, then every other field as
+// "key: value", one per line. Nothing is cut short except a very large
+// value or very many arguments, which say so (capSummary,
+// maxSummaryLines), so the user approves the exact command or path; every
+// character a terminal would act on is shown escaped (visible).
+func inputSummary(tool Tool, input map[string]any) string {
 	if len(input) == 0 {
 		return "(no args)"
 	}
-	// Try priority keys first
-	for _, key := range []string{"command", "path", "content", "pattern", "query"} {
-		if v, ok := input[key]; ok {
-			if s, ok := v.(string); ok {
-				if len(s) > 60 {
-					s = s[:57] + "..."
-				}
-				return s
+	primary := ""
+	if tool != nil {
+		primary = PrimaryArg(tool)
+	}
+	var sb strings.Builder
+	if v, ok := input[primary].(string); ok && primary != "" {
+		sb.WriteString(capSummary(v))
+	}
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		if sb.Len() > 0 && k == primary {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := 0
+	if sb.Len() > 0 {
+		lines = 1
+	}
+	for i, k := range keys {
+		if lines == maxSummaryLines {
+			fmt.Fprintf(&sb, "\n... [%d more arguments not shown]", len(keys)-i)
+			break
+		}
+		lines++
+		v, ok := input[k].(string)
+		if !ok {
+			b, err := json.Marshal(input[k])
+			if err != nil {
+				v = "(unprintable)"
+			} else {
+				v = string(b)
 			}
 		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(capSummary(k) + ": " + capSummary(v))
 	}
-	// Fallback: JSON-encode with truncation
-	b, err := json.Marshal(input)
-	if err != nil {
-		return "(args)"
-	}
-	s := string(b)
-	if len(s) > 60 {
-		s = s[:57] + "..."
-	}
-	return s
+	return sb.String()
 }
 
 // toolInfoAdapter wraps a Tool to satisfy the permissions.ToolInfo interface.
@@ -136,8 +217,9 @@ type toolInfoAdapter struct {
 	input map[string]any
 }
 
-func (a *toolInfoAdapter) ToolName() string { return a.tool.Name() }
-func (a *toolInfoAdapter) IsReadOnly() bool { return PermissionReadOnly(a.tool, a.input) }
+func (a *toolInfoAdapter) ToolName() string   { return a.tool.Name() }
+func (a *toolInfoAdapter) IsReadOnly() bool   { return PermissionReadOnly(a.tool, a.input) }
+func (a *toolInfoAdapter) PrimaryArg() string { return PrimaryArg(a.tool) }
 
 // PreToolHookResult is the combined verdict of the PreToolUse hooks.
 type PreToolHookResult struct {
@@ -623,7 +705,7 @@ func (r *Registry) checkPermission(tool Tool, name string, input map[string]any,
 			Error:   true,
 		}, true
 	}
-	summary := inputSummary(input)
+	summary := inputSummary(tool, input)
 	if advice != "" {
 		summary = "[" + advice + "] " + summary
 	}
@@ -781,7 +863,9 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 		output += fmt.Sprintf("\n[output truncated at %d bytes]", shellrun.DefaultMaxOutput)
 	}
 	if failure != "" {
-		return ToolResult{Content: fmt.Sprintf("Command '%s' failed: %s\nOutput:\n%s", c.command, failure, output), Error: true}, nil
+		// The command is not echoed: it is the user's config and may hold a
+		// credential, and this result goes to the model.
+		return ToolResult{Content: fmt.Sprintf("Custom tool %q failed: %s\nOutput:\n%s", c.name, failure, output), Error: true}, nil
 	}
 	return ToolResult{Content: output}, nil
 }

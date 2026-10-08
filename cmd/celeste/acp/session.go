@@ -414,45 +414,81 @@ type promptState struct {
 	mu sync.Mutex
 	// blocked is why a UserPromptSubmit hook blocked the prompt.
 	blocked string
-	// calls are the prompt's tool calls by ID: the gate waits until the
-	// editor was sent a call's tool_call before asking about it.
+	// calls are the prompt's tool calls by invocation key
+	// (loop.ToolCall.Key), never by the model's ID, which may repeat or be
+	// empty: the gate waits until the editor was sent a call's tool_call
+	// before asking about it, and asks with that call's own details.
 	calls map[string]*callInfo
+	// ids are the toolCallIds already sent to the editor, so a repeated
+	// model ID gets one of its own.
+	ids map[string]bool
 }
 
 // callInfo is one tool call as the editor was shown it.
 type callInfo struct {
 	sent  chan struct{} // closed once its tool_call update was sent
+	id    string        // the toolCallId the editor knows it by
 	title string
 	kind  string
 	locs  []Location
 	input map[string]any
 }
 
-func newPromptState() *promptState { return &promptState{calls: map[string]*callInfo{}} }
+func newPromptState() *promptState {
+	return &promptState{calls: map[string]*callInfo{}, ids: map[string]bool{}}
+}
 
-// call returns the call's entry, creating it.
-func (st *promptState) call(id string) *callInfo {
+// call returns the call's entry by key, creating it.
+func (st *promptState) call(key string) *callInfo {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	ci := st.calls[id]
+	ci := st.calls[key]
 	if ci == nil {
 		ci = &callInfo{sent: make(chan struct{})}
-		st.calls[id] = ci
+		st.calls[key] = ci
 	}
 	return ci
 }
 
+// editorID is the toolCallId the editor is sent for the call with key:
+// the model's ID (or one made from the call's name) the first time it is
+// seen, and a unique one after that.
+func (st *promptState) editorID(key string, c loop.ToolCall) string {
+	ci := st.call(key)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if ci.id != "" {
+		return ci.id
+	}
+	id := callID(c)
+	for n := 2; st.ids[id]; n++ {
+		id = fmt.Sprintf("%s_%d", callID(c), n)
+	}
+	st.ids[id] = true
+	ci.id = id
+	return id
+}
+
 // shown records that the editor was sent the call's tool_call.
-func (st *promptState) shown(id string, info callInfo) {
-	ci := st.call(id)
+func (st *promptState) shown(key string, info callInfo) {
+	ci := st.call(key)
 	st.mu.Lock()
 	select {
-	case <-ci.sent: // a repeated ID: keep the first
+	case <-ci.sent: // the same invocation again: keep the first
 	default:
 		ci.title, ci.kind, ci.locs, ci.input = info.title, info.kind, info.locs, info.input
 		close(ci.sent)
 	}
 	st.mu.Unlock()
+}
+
+// callKey is the key promptState files an event's call under: its
+// invocation key, or its ID for a call that came without one.
+func callKey(c loop.ToolCall) string {
+	if c.Key != "" {
+		return c.Key
+	}
+	return "id:" + callID(c)
 }
 
 // update sends one session/update to the editor.
@@ -470,7 +506,8 @@ func (s *session) onEvent(a *Agent, st *promptState, ev loop.Event) {
 			s.update(a, AgentMessageChunk(ev.Text))
 		}
 	case loop.EventToolStart:
-		id := callID(ev.Call)
+		key := callKey(ev.Call)
+		id := st.editorID(key, ev.Call)
 		info := callInfo{
 			title: toolTitle(ev.Call.Name, ev.Call.Input),
 			kind:  toolKind(ev.Call.Name),
@@ -486,7 +523,7 @@ func (s *session) onEvent(a *Agent, st *promptState, ev loop.Event) {
 			Locations:     info.locs,
 			RawInput:      info.input,
 		})
-		st.shown(id, info)
+		st.shown(key, info)
 	case loop.EventToolResult:
 		status := ToolStatusCompleted
 		if ev.IsError {
@@ -494,7 +531,7 @@ func (s *session) onEvent(a *Agent, st *promptState, ev loop.Event) {
 		}
 		s.update(a, ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
-			ToolCallID:    callID(ev.Call),
+			ToolCallID:    st.editorID(callKey(ev.Call), ev.Call),
 			Status:        status,
 			Content:       []ToolCallContent{TextToolContent(capText(ev.Text, maxToolContent))},
 		})
@@ -604,13 +641,15 @@ func (s *session) gate(a *Agent, st *promptState) loop.Gate {
 			return allow
 		}
 		tc := ToolCallUpdate{Title: summaryTitle(req.ToolName, req.InputSummary), Kind: toolKind(req.ToolName), Status: ToolStatusPending}
-		if id := tools.CallIDFromContext(ctx); id != "" {
-			tc.ToolCallID = id
-			ci := st.call(id)
+		// The ask is bound to the invocation that asks (its key), so two
+		// calls that share a model ID are each asked with their own details.
+		if key := tools.CallKeyFromContext(ctx); key != "" {
+			ci := st.call(key)
 			wait := time.NewTimer(shownWait)
 			select {
 			case <-ci.sent:
 				st.mu.Lock()
+				tc.ToolCallID = ci.id
 				tc.Title, tc.Kind, tc.Locations, tc.RawInput = ci.title, ci.kind, ci.locs, ci.input
 				st.mu.Unlock()
 			case <-wait.C:
@@ -619,8 +658,10 @@ func (s *session) gate(a *Agent, st *promptState) loop.Gate {
 				return deny
 			}
 			wait.Stop()
-		} else {
-			// No call ID to show: one of its own, unique in the session.
+		}
+		if tc.ToolCallID == "" {
+			// No shown call to point at: an ID of its own, unique in the
+			// session, with the request's own summary as the title.
 			tc.ToolCallID = fmt.Sprintf("perm_%s_%d", req.ToolName, s.permSeq.Add(1))
 		}
 		params := RequestPermissionParams{

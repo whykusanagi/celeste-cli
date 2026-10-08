@@ -113,3 +113,16 @@ func TestURIPathDecodes(t *testing.T) {
 		}
 	}
 }
+
+// A permission request's fallback title is the summary's first line only:
+// the summary lists every argument, one per line, each up to 4 KiB.
+func TestSummaryTitleIsFirstLine(t *testing.T) {
+	summary := "go test ./...\ntimeout: 600\nworkdir: " + strings.Repeat("x", 4096)
+	got := summaryTitle("bash", summary)
+	if got != "bash: go test ./..." {
+		t.Fatalf("summaryTitle = %q", got)
+	}
+	if got := summaryTitle("bash", "a\rb\nc"); strings.ContainsAny(got, "\r\n") {
+		t.Fatalf("summaryTitle kept a line break: %q", got)
+	}
+}

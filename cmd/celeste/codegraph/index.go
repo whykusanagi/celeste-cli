@@ -197,8 +197,12 @@ func (idx *Indexer) persistHasherSeeds() error {
 }
 
 // Close releases the underlying database connection and any native
-// resources held by the tree-sitter TS parser.
+// resources held by the tree-sitter TS parser. It waits for a Build or
+// Update running on this Indexer to finish first, so it never frees the
+// parsers or the store under one (Aikido 806869451).
 func (idx *Indexer) Close() error {
+	idx.buildMu.Lock()
+	defer idx.buildMu.Unlock()
 	if idx.tsParser != nil {
 		idx.tsParser.Close()
 		idx.tsParser = nil

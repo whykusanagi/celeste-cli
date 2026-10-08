@@ -20,7 +20,10 @@ type HTTPTransport struct {
 	client   *http.Client
 	protoVer string
 	mu       sync.Mutex
-	queue    []*Response
+	queue    []queuedResponse
+	// queuedBytes is the size of the responses in queue, capped at
+	// maxResponseBytes in all (Aikido 806869944).
+	queuedBytes int
 }
 
 // NewHTTPTransport creates a Streamable-HTTP transport for the given endpoint.
@@ -28,7 +31,7 @@ func NewHTTPTransport(url string) (*HTTPTransport, error) {
 	if url == "" {
 		return nil, fmt.Errorf("http transport requires a URL")
 	}
-	return &HTTPTransport{url: url, client: &http.Client{}}, nil
+	return &HTTPTransport{url: url, client: newMCPHTTPClient()}, nil
 }
 
 // SetProtocolVersion sets the value sent as the MCP-Protocol-Version header.
@@ -68,20 +71,30 @@ func (t *HTTPTransport) post(ctx context.Context, body []byte) error {
 	if strings.HasPrefix(ct, "text/event-stream") {
 		return t.drainSSE(resp.Body)
 	}
+	data, err := readLimited(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read http response: %w", err)
+	}
 	var r Response
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	if err := json.Unmarshal(data, &r); err != nil {
 		return fmt.Errorf("decode http response: %w", err)
 	}
-	t.enqueue(&r)
-	return nil
+	return t.enqueue(&r, len(data))
 }
 
 // drainSSE reads an SSE stream, queuing each JSON-RPC response carried on a
 // `data:` line. Non-response events (notifications/pings) are skipped.
+//
+// The stream is capped at maxResponseBytes in all, and at maxQueuedResponses
+// queued responses (Aikido 806869944).
 func (t *HTTPTransport) drainSSE(body io.Reader) error {
-	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lr := &io.LimitedReader{R: body, N: int64(maxResponseBytes) + 1}
+	sc := bufio.NewScanner(lr)
+	sc.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), min(1024*1024, maxResponseBytes))
 	for sc.Scan() {
+		if lr.N <= 0 {
+			return errResponseTooLarge()
+		}
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data:") {
 			continue
@@ -94,15 +107,30 @@ func (t *HTTPTransport) drainSSE(body io.Reader) error {
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
 			continue
 		}
-		t.enqueue(&r)
+		if err := t.enqueue(&r, len(payload)); err != nil {
+			return err
+		}
+	}
+	if lr.N <= 0 {
+		return errResponseTooLarge()
 	}
 	return sc.Err()
 }
 
-func (t *HTTPTransport) enqueue(r *Response) {
+// enqueue queues r (size bytes encoded), failing once maxQueuedResponses
+// are waiting or the unread responses would pass maxResponseBytes in all.
+func (t *HTTPTransport) enqueue(r *Response, size int) error {
 	t.mu.Lock()
-	t.queue = append(t.queue, r)
-	t.mu.Unlock()
+	defer t.mu.Unlock()
+	if len(t.queue) >= maxQueuedResponses {
+		return fmt.Errorf("MCP server sent more than %d unread responses", maxQueuedResponses)
+	}
+	if t.queuedBytes+size > maxResponseBytes {
+		return errTooManyUnread()
+	}
+	t.queue = append(t.queue, queuedResponse{resp: r, size: size})
+	t.queuedBytes += size
+	return nil
 }
 
 // Send POSTs a request and queues the resulting response(s).
@@ -149,9 +177,11 @@ func (t *HTTPTransport) Receive() (*Response, error) {
 	if len(t.queue) == 0 {
 		return nil, fmt.Errorf("no queued response")
 	}
-	r := t.queue[0]
+	q := t.queue[0]
+	t.queue[0] = queuedResponse{}
 	t.queue = t.queue[1:]
-	return r, nil
+	t.queuedBytes -= q.size
+	return q.resp, nil
 }
 
 // Close is a no-op for the stateless HTTP transport.

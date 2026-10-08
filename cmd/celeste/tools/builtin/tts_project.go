@@ -333,12 +333,12 @@ func (t *AudioProjectTool) handleRender(ctx context.Context, filePath string, pr
 	if len(project.Tracks) == 1 {
 		// Single track — just apply volume filter, no amix needed
 		filterGraph := filterParts[0]
-		args = append(args, "-filter_complex", filterGraph, "-map", "[t0]", "-y", resolvedOutput)
+		args = append(args, "-filter_complex", filterGraph, "-map", "[t0]", "-y", positionalFile(resolvedOutput))
 	} else {
 		filterGraph := strings.Join(filterParts, ";") + ";" +
 			strings.Join(mixInputs, "") +
 			fmt.Sprintf("amix=inputs=%d:duration=first:normalize=0", len(project.Tracks))
-		args = append(args, "-filter_complex", filterGraph, "-y", resolvedOutput)
+		args = append(args, "-filter_complex", filterGraph, "-y", positionalFile(resolvedOutput))
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
@@ -595,7 +595,7 @@ func validateProject(p *AudioProject, workspace string) []string {
 
 // probeAudioDuration uses ffprobe to get duration. Returns 0 on failure.
 func probeAudioDuration(filename string) float64 {
-	out, err := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", filename).Output()
+	out, err := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", positionalFile(filename)).Output()
 	if err != nil {
 		return 0
 	}

@@ -1,23 +1,28 @@
 package mcp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DiscoverConfigPaths returns the MCP config files that exist on disk, ordered
 // from lowest to highest precedence. Later paths override earlier ones on
-// server-name collision (see LoadMerged). Non-existent candidates are skipped,
-// so an empty slice means no MCP config anywhere.
+// server-name collision (see LoadMerged). Non-existent candidates, and any
+// that is not a regular file, are skipped, so an empty slice means no MCP
+// config anywhere.
 func DiscoverConfigPaths(cwd, home string) []string {
 	candidates := append(GlobalConfigPaths(home),
 		filepath.Join(cwd, ".mcp.json"),
 		filepath.Join(cwd, ".celeste", "mcp.json"),
 	)
 
+	// Only regular files (a link is followed): a FIFO or a link to a
+	// device would block or never end when read (Aikido 806869859).
 	var found []string
 	for _, p := range candidates {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
 			found = append(found, p)
 		}
 	}
@@ -70,4 +75,77 @@ func LoadMerged(paths []string) (*MCPConfig, error) {
 	}
 
 	return merged, nil
+}
+
+// LoadMergedLenient is LoadMerged, except that a workspace config (a path
+// not among home's GlobalConfigPaths) that fails to load or parse is
+// skipped, its error returned in skipped, instead of failing the whole
+// load: a broken repository .mcp.json must not turn off the user's own
+// servers (Aikido 806869709). A home config that fails still fails it.
+func LoadMergedLenient(paths []string, home string) (cfg *MCPConfig, skipped []error, err error) {
+	merged := &MCPConfig{Servers: make(map[string]ServerConfig)}
+	for _, p := range paths {
+		c, err := LoadConfig(p)
+		if err != nil {
+			if IsGlobalConfig(home, p) {
+				return nil, skipped, err
+			}
+			skipped = append(skipped, &SkippedConfigError{Path: p, Err: err})
+			continue
+		}
+		for name, sc := range c.Servers {
+			sc.Origin = p
+			merged.Servers[name] = sc
+		}
+	}
+	return merged, skipped, nil
+}
+
+// ErrWorkspaceConfigSkipped matches (errors.Is) the error of a workspace
+// MCP config that did not load and was skipped: a warning, not a failure,
+// since the other configs' servers still start.
+var ErrWorkspaceConfigSkipped = errors.New("skipped workspace MCP config")
+
+// SkippedConfigError is one workspace MCP config LoadMergedLenient skipped.
+type SkippedConfigError struct {
+	Path string
+	Err  error // names Path too (LoadConfig's errors do)
+}
+
+func (e *SkippedConfigError) Error() string {
+	msg := e.Err.Error()
+	if !strings.Contains(msg, e.Path) {
+		msg = e.Path + ": " + msg
+	}
+	return "skipped workspace MCP config (its servers did not start): " + msg
+}
+
+func (e *SkippedConfigError) Unwrap() error { return e.Err }
+
+// Is makes every SkippedConfigError match ErrWorkspaceConfigSkipped.
+func (e *SkippedConfigError) Is(target error) bool { return target == ErrWorkspaceConfigSkipped }
+
+// SkippedConfigs returns the skipped configs err carries (Start's error).
+func SkippedConfigs(err error) []*SkippedConfigError {
+	var out []*SkippedConfigError
+	var walk func(error)
+	walk = func(err error) {
+		if err == nil {
+			return
+		}
+		if sk, ok := err.(*SkippedConfigError); ok {
+			out = append(out, sk)
+			return
+		}
+		switch u := err.(type) {
+		case interface{ Unwrap() []error }:
+			for _, e := range u.Unwrap() {
+				walk(e)
+			}
+		case interface{ Unwrap() error }:
+			walk(u.Unwrap())
+		}
+	}
+	walk(err)
+	return out
 }

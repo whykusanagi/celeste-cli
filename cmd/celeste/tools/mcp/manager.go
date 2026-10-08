@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -32,10 +33,11 @@ type Manager struct {
 	clients     map[string]*Client
 	toolCounts  map[string]int
 	transports  map[string]string
-	toolNames   map[string][]string // per-server registered tool names, for exact Disconnect
-	origins     map[string]string   // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
-	home        string              // the user's home: its configs alone may set "trusted"
-	connecting  map[string]bool     // servers with a connectClient in flight
+	toolNames   map[string][]string        // per-server registered tool names, for exact Disconnect
+	origins     map[string]string          // per-server config file (ServerConfig.Origin), for RegisterGlobalInto
+	home        string                     // the user's home: its configs alone may set "trusted"
+	connecting  map[string]*connectAttempt // servers with a connectClient in flight
+	skipped     []error                    // workspace configs the last load skipped (they did not parse)
 	admit       func(name string, cfg ServerConfig) bool
 	mu          sync.Mutex
 }
@@ -53,7 +55,7 @@ func NewManager(configPath string, registry *tools.Registry) *Manager {
 		toolNames:  make(map[string][]string),
 		origins:    make(map[string]string),
 		home:       userHome(),
-		connecting: make(map[string]bool),
+		connecting: make(map[string]*connectAttempt),
 	}
 }
 
@@ -109,10 +111,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		return fmt.Errorf("load MCP config: %w", err)
 	}
 
-	if len(cfg.Servers) == 0 {
-		return nil
-	}
-
 	totalTools := 0
 	connectedServers := 0
 
@@ -134,6 +132,14 @@ func (m *Manager) Start(ctx context.Context) error {
 		log.Printf("[mcp] connected to %d server(s), %d tool(s) discovered", connectedServers, totalTools)
 	}
 
+	// The other configs' servers started; say which workspace configs were
+	// skipped.
+	m.mu.Lock()
+	skipped := m.skipped
+	m.mu.Unlock()
+	if len(skipped) > 0 {
+		return errors.Join(skipped...)
+	}
 	return nil
 }
 
@@ -157,7 +163,14 @@ func startOrder(servers map[string]ServerConfig) []string {
 // RegisterGlobalInto know where it came from).
 func (m *Manager) loadConfig() (*MCPConfig, error) {
 	if len(m.configPaths) > 0 {
-		return LoadMerged(m.configPaths)
+		cfg, skipped, err := LoadMergedLenient(m.configPaths, m.home)
+		if err != nil {
+			return nil, err
+		}
+		m.mu.Lock()
+		m.skipped = skipped
+		m.mu.Unlock()
+		return cfg, nil
 	}
 	cfg, err := LoadConfig(m.configPath)
 	if err != nil {
@@ -172,6 +185,29 @@ func (m *Manager) loadConfig() (*MCPConfig, error) {
 	return cfg, nil
 }
 
+// connectAttempt is one connectClient in flight. Disconnect and Stop revoke
+// it: its context is cancelled, and when it finishes it installs nothing
+// (Aikido 806869778).
+type connectAttempt struct {
+	cancel  context.CancelFunc
+	revoked bool          // guarded by Manager.mu
+	done    chan struct{} // closed once the attempt has ended and given up its slot
+}
+
+// testHookConnectEnding, when set, runs as a connect ends, before it gives
+// up its in-flight slot. Tests only.
+var testHookConnectEnding func()
+
+// revokeLocked revokes name's connect in flight, if any. m.mu must be held.
+func (m *Manager) revokeLocked(name string) {
+	if a := m.connecting[name]; a != nil {
+		a.revoked = true
+		if a.cancel != nil {
+			a.cancel()
+		}
+	}
+}
+
 // connectClient initializes an already-built client, discovers + registers its
 // tools, and records bookkeeping. The caller holds no lock; connectClient locks
 // only while mutating manager maps. trusted honours the tools' readOnlyHint.
@@ -179,19 +215,46 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 	// One connect per server at a time: a second one racing it would
 	// register nothing (Add refuses the names the first holds) yet replace
 	// its client, leaving tools Disconnect never removes.
+	//
+	// A connect that Disconnect or Stop revoked is ending: wait for it
+	// (it has dropped its tools by then) instead of refusing, so a server
+	// switched off and straight back on reconnects.
 	m.mu.Lock()
-	_, live := m.clients[name]
-	if live || m.connecting[name] {
+	for {
+		_, live := m.clients[name]
+		prev := m.connecting[name]
+		if live || (prev != nil && !prev.revoked) {
+			m.mu.Unlock()
+			client.Close()
+			return fmt.Errorf("connect %q: already connected or connecting", name)
+		}
+		if prev == nil {
+			break
+		}
 		m.mu.Unlock()
-		client.Close()
-		return fmt.Errorf("connect %q: already connected or connecting", name)
+		select {
+		case <-prev.done:
+		case <-ctx.Done():
+			client.Close()
+			return fmt.Errorf("connect %q: %w", name, ctx.Err())
+		}
+		m.mu.Lock()
 	}
-	m.connecting[name] = true
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	attempt := &connectAttempt{cancel: cancel, done: make(chan struct{})}
+	m.connecting[name] = attempt
 	m.mu.Unlock()
 	defer func() {
+		if testHookConnectEnding != nil {
+			testHookConnectEnding()
+		}
 		m.mu.Lock()
-		delete(m.connecting, name)
+		if m.connecting[name] == attempt {
+			delete(m.connecting, name)
+		}
 		m.mu.Unlock()
+		close(attempt.done)
 	}()
 
 	if err := client.Initialize(ctx); err != nil {
@@ -205,6 +268,16 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 	}
 
 	m.mu.Lock()
+	if attempt.revoked {
+		// Disconnect or Stop ran while this connect was in flight: it
+		// wins, so drop the tools this connect registered and its client.
+		m.mu.Unlock()
+		for _, tn := range names {
+			m.registry.Unregister(tn)
+		}
+		client.Close()
+		return fmt.Errorf("connect %q: disconnected while connecting", name)
+	}
 	defer m.mu.Unlock()
 	m.clients[name] = client
 	m.toolCounts[name] = len(names)
@@ -261,6 +334,9 @@ func (m *Manager) Disconnect(name string) error {
 	client, ok := m.clients[name]
 	names := m.toolNames[name]
 	if !ok {
+		// Not connected yet: a connect in flight must not finish after this
+		// (Aikido 806869778).
+		m.revokeLocked(name)
 		m.mu.Unlock()
 		return nil
 	}
@@ -364,6 +440,11 @@ func (m *Manager) createTransport(cfg ServerConfig) (Transport, error) {
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Connects still in flight install nothing (Aikido 806869778).
+	for name := range m.connecting {
+		m.revokeLocked(name)
+	}
 
 	for name, client := range m.clients {
 		if err := client.Close(); err != nil {

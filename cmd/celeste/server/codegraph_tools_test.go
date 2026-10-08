@@ -120,13 +120,15 @@ func TestIndexerFor_LazyCaching(t *testing.T) {
 	// the same *codegraph.Indexer (cache hit on second call).
 	srv, dir := newTestServerWithWorkspace(t)
 
-	idx1, cached1, err := srv.indexerFor(dir)
+	idx1, release1, cached1, err := srv.indexerFor(dir)
 	require.NoError(t, err)
+	defer release1()
 	require.NotNil(t, idx1)
 	assert.False(t, cached1, "first call must be a cache miss")
 
-	idx2, cached2, err := srv.indexerFor(dir)
+	idx2, release2, cached2, err := srv.indexerFor(dir)
 	require.NoError(t, err)
+	defer release2()
 	assert.True(t, cached2, "second call must be a cache hit")
 	assert.Same(t, idx1, idx2, "cached lookup must return the same indexer instance")
 }

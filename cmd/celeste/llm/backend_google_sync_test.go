@@ -115,7 +115,9 @@ func TestGoogleResponseBytesKeepTheStallWatchAlive(t *testing.T) {
 		fl := w.(http.Flusher)
 		w.WriteHeader(http.StatusOK)
 		fl.Flush()
-		for i := 0; i < 8; i++ {
+		// 16 x 40ms outlasts the 400ms stall timeout, with room for a
+		// slow CI runner's scheduling between bytes.
+		for i := 0; i < 16; i++ {
 			select {
 			case <-r.Context().Done():
 				return
@@ -128,7 +130,7 @@ func TestGoogleResponseBytesKeepTheStallWatchAlive(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewClient(&Config{APIKey: "k", BaseURL: srv.URL, Model: "gemini-test", Backend: BackendTypeGoogle, Timeout: 150 * time.Millisecond}, nil)
+	client := NewClient(&Config{APIKey: "k", BaseURL: srv.URL, Model: "gemini-test", Backend: BackendTypeGoogle, Timeout: 400 * time.Millisecond}, nil)
 	res, err := client.SendMessageSync(context.Background(), []tui.ChatMessage{{Role: "user", Content: "hi"}}, nil)
 	require.NoError(t, err, "the response was still sending bytes")
 	assert.Equal(t, "done", res.Content)

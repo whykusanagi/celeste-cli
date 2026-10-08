@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
@@ -194,8 +193,8 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 			return "", err
 		}
 	}
-	// A new file is owner-only: MCP configs can hold server env values. An
-	// existing one keeps its mode.
+	// 0600 for a file this creates: client configs can hold API keys in
+	// env (Aikido 806869435). An existing file keeps its mode.
 	if err := os.WriteFile(path, out, privfs.FilePerm); err != nil {
 		return "", err
 	}
@@ -205,19 +204,23 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 	return "created", nil
 }
 
-// backupFile copies path to path+".bak", owner-only (the original's owner
-// bits, at most): the copy is never more readable than an owner-only
-// original, also over an older .bak.
+// backupFile copies path to path+".bak", readable only by the owner: the
+// config can hold API keys in env (Aikido 806869435). WriteFile applies its
+// mode only to a file it creates, so an existing .bak is chmod'd too, and a
+// .bak that is a symlink is refused rather than written through.
 func backupFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	perm := privfs.FilePerm
-	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o700 != 0 {
-		perm = fi.Mode().Perm() & 0o700
+	bak := path + ".bak"
+	if fi, err := os.Lstat(bak); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write through symlink %s", bak)
 	}
-	return atomicfile.Write(path+".bak", data, perm)
+	if err := os.WriteFile(bak, data, privfs.FilePerm); err != nil {
+		return err
+	}
+	return os.Chmod(bak, privfs.FilePerm)
 }
 
 // printCodexBlock prints the TOML block to paste into ~/.codex/config.toml.

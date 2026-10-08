@@ -76,6 +76,14 @@ func (s *Server) workspaceFromArgs(args map[string]any) (string, error) {
 	if err := validateWorkspace(workspace, s.config.Workspace); err != nil {
 		return "", fmt.Errorf("workspace rejected: %w", err)
 	}
+	// Only an existing directory: an index is opened (and its directory
+	// created) per workspace, so a made-up path must not get one
+	// (Aikido 806869934).
+	if workspace != "" {
+		if fi, err := os.Stat(workspace); err != nil || !fi.IsDir() {
+			return "", softError("workspace rejected: %s is not an existing directory", workspace)
+		}
+	}
 	return workspace, nil
 }
 
@@ -103,42 +111,44 @@ func indexBuildingError(workspace string) error {
 // upgrade, a rescope, a resumed build) is served, with note saying its
 // results may be incomplete. A workspace with no index database on disk is
 // answered without opening one, so a query never creates the database.
-func (s *Server) queryIndexer(workspace string) (idx *codegraph.Indexer, cached bool, note string, err error) {
-	s.indexerMu.Lock()
-	open := s.indexers[workspace] != nil
-	s.indexerMu.Unlock()
-	if !open {
+// On success the caller must call release when done with idx.
+func (s *Server) queryIndexer(workspace string) (idx *codegraph.Indexer, release func(), cached bool, note string, err error) {
+	if !s.indexerCached(workspace) {
 		dbPath := codegraph.IndexPath(workspace)
 		if _, err := os.Stat(dbPath); errors.Is(err, fs.ErrNotExist) {
 			// A rebuild deletes the database and holds the lock until
 			// the new one is built.
 			if codegraph.IndexWriterActive(dbPath) {
-				return nil, false, "", indexBuildingError(workspace)
+				return nil, nil, false, "", indexBuildingError(workspace)
 			}
-			return nil, false, "", noIndexError(workspace)
+			return nil, nil, false, "", noIndexError(workspace)
 		}
 	}
-	idx, cached, err = s.indexerFor(workspace)
+	idx, release, cached, err = s.indexerFor(workspace)
 	if err != nil {
-		return nil, false, "", err
+		return nil, nil, false, "", err
+	}
+	fail := func(err error) (*codegraph.Indexer, func(), bool, string, error) {
+		release()
+		return nil, nil, false, "", err
 	}
 	state, err := idx.State()
 	if err != nil {
-		return nil, false, "", fmt.Errorf("read index: %w", err)
+		return fail(fmt.Errorf("read index: %w", err))
 	}
 	switch state {
 	case codegraph.IndexBuilt:
-		return idx, cached, "", nil
+		return idx, release, cached, "", nil
 	case codegraph.IndexUpdating:
-		return idx, cached, fmt.Sprintf("Note: the code graph index for %s is being updated; results may be incomplete until the update finishes.", workspace), nil
+		return idx, release, cached, fmt.Sprintf("Note: the code graph index for %s is being updated; results may be incomplete until the update finishes.", workspace), nil
 	case codegraph.IndexUpdateUnfinished:
-		return idx, cached, fmt.Sprintf("Note: the last update of the code graph index for %s did not finish, so results may be incomplete; run celeste_index (operation update) to finish it.", workspace), nil
+		return idx, release, cached, fmt.Sprintf("Note: the last update of the code graph index for %s did not finish, so results may be incomplete; run celeste_index (operation update) to finish it.", workspace), nil
 	case codegraph.IndexBuilding:
-		return nil, false, "", indexBuildingError(workspace)
+		return fail(indexBuildingError(workspace))
 	case codegraph.IndexInterrupted:
-		return nil, false, "", softError("The code graph index build for %s did not finish; run celeste_index (operation update) to finish it.", workspace)
+		return fail(softError("The code graph index build for %s did not finish; run celeste_index (operation update) to finish it.", workspace))
 	default:
-		return nil, false, "", noIndexError(workspace)
+		return fail(noIndexError(workspace))
 	}
 }
 
@@ -159,10 +169,11 @@ func (s *Server) makeDirectToolHandler(toolName string, buildTool func(*codegrap
 		// would fail their ValidateInput checks if they ever get one.
 		delete(args, "workspace")
 
-		idx, cached, note, err := s.queryIndexer(workspace)
+		idx, release, cached, note, err := s.queryIndexer(workspace)
 		if err != nil {
 			return nil, err
 		}
+		defer release()
 		if !cached {
 			SendProgress(ctx, fmt.Sprintf("opened codegraph for %s", workspace), 0)
 		}
@@ -264,10 +275,11 @@ func (s *Server) handleCelesteIndex(ctx context.Context, args map[string]any) ([
 // indexStatus reports the stored stats without mutating the graph.
 // Safe to call at any time — zero cost beyond a single sqlite SELECT.
 func (s *Server) indexStatus(ctx context.Context, workspace string) ([]ContentBlock, error) {
-	idx, _, err := s.indexerFor(workspace)
+	idx, release, _, err := s.indexerFor(workspace)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	stats, err := idx.Stats()
 	if err != nil {
 		return nil, fmt.Errorf("stats: %w", err)
@@ -299,10 +311,11 @@ func (s *Server) indexStatus(ctx context.Context, workspace string) ([]ContentBl
 // their symbols dropped. Progress events are forwarded to the MCP
 // client so the caller sees "scanning X/Y files" in real time.
 func (s *Server) indexUpdate(ctx context.Context, workspace string) ([]ContentBlock, error) {
-	idx, _, err := s.indexerFor(workspace)
+	idx, release, _, err := s.indexerFor(workspace)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	SendProgress(ctx, fmt.Sprintf("starting incremental update on %s", workspace), 0)
 	start := time.Now()
 	// Another indexer (a TUI, a chat, another MCP server) writing this
@@ -345,17 +358,24 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	// workspace as rebuilding in the same step: until the rebuilt Indexer
 	// is cached, indexerFor opens no Indexer on the database the rebuild
 	// is about to delete (review of #393). A second rebuild of the same
-	// workspace is refused the same way.
+	// workspace is refused the same way. A call still using the old
+	// Indexer keeps it open until it releases it; the rebuild waits for
+	// that instead of closing it under the call (Aikido 806869451).
 	s.indexerMu.Lock()
 	if s.rebuilding[workspace] {
 		s.indexerMu.Unlock()
 		return nil, indexBuildingError(workspace)
 	}
 	s.rebuilding[workspace] = true
-	if idx, ok := s.indexers[workspace]; ok && idx != nil {
-		_ = idx.Close()
-		delete(s.indexers, workspace)
+	var old *indexerEntry
+	closeOld := false
+	if e, ok := s.indexers[workspace]; ok {
+		old = e
+		closeOld = s.retireIndexerLocked(workspace, e)
 	}
+	// Every entry of this workspace still in use, the one just retired and
+	// any an eviction retired earlier, must close before the delete.
+	waits := append([]*indexerEntry(nil), s.retiredBusy[workspace]...)
 	s.indexerMu.Unlock()
 	cached := false
 	defer func() {
@@ -366,6 +386,16 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 			s.chatEnvs.invalidate(workspace)
 		}
 	}()
+	if closeOld {
+		closeIndexerEntries([]*indexerEntry{old})
+	}
+	for _, e := range waits {
+		select {
+		case <-e.idle:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("rebuild: waiting for running queries: %w", ctx.Err())
+		}
+	}
 	// A cached MCP chat Env holds the same codegraph DB open. Retire it so
 	// the delete below succeeds (on Windows an open file can't be removed)
 	// and the next chat call opens the rebuilt index.
@@ -391,10 +421,15 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 	// indexerFor gets this one. Nothing else cached one meanwhile: the
 	// mark kept indexerFor from opening the old database.
 	s.indexerMu.Lock()
-	s.indexers[workspace] = idx
+	stale := s.evictIndexersLocked()
+	e := &indexerEntry{idx: idx, idle: make(chan struct{})}
+	s.indexers[workspace] = e
+	release := s.acquireIndexerLocked(e)
 	delete(s.rebuilding, workspace)
 	cached = true
 	s.indexerMu.Unlock()
+	defer release()
+	closeIndexerEntries(stale)
 	// A chat call that built its Env while the rebuild ran opened the old
 	// database (loop.Setup does not go through indexerFor), which the
 	// rebuild then deleted. Retire it, as above, so the next chat call

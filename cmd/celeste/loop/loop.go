@@ -194,6 +194,7 @@ func (l *Loop) Run(ctx context.Context, history []Message) (msgs []Message, res 
 		}
 		msgs = append(msgs, turnMsg)
 		l.emit(Event{Kind: EventCallsRecorded, Turn: turn, History: cloneHistory(msgs)})
+		l.offered = rep.offered
 		out := l.runCalls(ctx, calls, lim)
 		msgs = append(msgs, out.messages...)
 		res.ToolCallsLastTurn = len(calls)
@@ -310,6 +311,22 @@ type reply struct {
 	blocks  *tui.ProviderBlocks // EventMessageDone's; nil when the backend keeps none
 	// blocksRejected: the provider refused the replayed blocks (2.0 F3).
 	blocksRejected bool
+	// offered are the tools the request offered (offeredNames).
+	offered map[string]bool
+}
+
+// offeredNames is the set of tool names skills offers the model. nil
+// skills (an LLM that does not say: test stubs) is nil, no restriction; a
+// real client always returns a slice, empty when it offers no tools.
+func offeredNames(skills []tui.SkillDefinition) map[string]bool {
+	if skills == nil {
+		return nil
+	}
+	names := make(map[string]bool, len(skills))
+	for _, s := range skills {
+		names[s.Name] = true
+	}
+	return names
 }
 
 // rerun drops an interrupted turn's reply (EventRuleInterrupt, with the
@@ -362,7 +379,9 @@ func (l *Loop) request(ctx context.Context, msgs []Message, lim Limits, turn int
 	var text strings.Builder
 	acc := llm.NewToolUseAccumulator()
 	start := time.Now()
-	err := l.Client.SendMessageStreamEvents(reqCtx, withHookContext(msgs), l.Client.GetSkills(), func(ev llm.StreamEvent) {
+	skills := l.Client.GetSkills()
+	r.offered = offeredNames(skills)
+	err := l.Client.SendMessageStreamEvents(reqCtx, withHookContext(msgs), skills, func(ev llm.StreamEvent) {
 		switch ev.Type {
 		case llm.EventContentDelta:
 			text.WriteString(ev.ContentDelta)

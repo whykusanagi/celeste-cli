@@ -123,8 +123,12 @@ func toolTitle(name string, input map[string]any) string {
 
 // summaryTitle is a title from a permission request's input summary, used
 // when the call's own title is not known.
+// Only the summary's first line is used (it lists every argument, one per
+// line), cut at a carriage return too.
 func summaryTitle(name, summary string) string {
-	return toolTitle(name, map[string]any{"path": summary})
+	first, _, _ := strings.Cut(summary, "\n")
+	first, _, _ = strings.Cut(first, "\r")
+	return toolTitle(name, map[string]any{"path": first})
 }
 
 // toolLocations is the file a call touches, when its input has a path:
