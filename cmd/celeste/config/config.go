@@ -324,6 +324,18 @@ func Paths() (configDir, configFile, secretsFile, skillsFile string) {
 
 // NamedConfigPath returns the path for a named config file.
 // If name is empty, returns the default config path.
+// ValidateProfileName reports whether name can name a profile file,
+// config.<name>.json in ~/.celeste: a plain file-name part, with no path
+// separator, drive or stream colon, NUL, or dot segment. A name read from
+// elsewhere (a resumed session's endpoint) otherwise could load or write
+// a file outside the config directory.
+func ValidateProfileName(name string) error {
+	if name == "." || name == ".." || strings.ContainsAny(name, "/\\:\x00") {
+		return fmt.Errorf("invalid profile name %q", name)
+	}
+	return nil
+}
+
 func NamedConfigPath(name string) string {
 	homeDir, _ := os.UserHomeDir()
 	configDir := filepath.Join(homeDir, ".celeste")
@@ -485,6 +497,9 @@ func LoadNamed(name string) (*Config, error) {
 		}
 	}
 
+	if err := ValidateProfileName(name); err != nil {
+		return nil, err
+	}
 	config := DefaultConfig()
 	config.profile = name
 	configPath := NamedConfigPath(name)
@@ -646,6 +661,9 @@ func ResolveDefaultName() string {
 func SetDefaultProfile(name string) error {
 	if name == "" {
 		return fmt.Errorf("default profile must be a named config, not the bare default")
+	}
+	if err := ValidateProfileName(name); err != nil {
+		return err
 	}
 	target := NamedConfigPath(name)
 	if _, err := os.Stat(target); err != nil {
@@ -1015,6 +1033,9 @@ func Save(config *Config) error {
 func SaveNamed(name string, config *Config) error {
 	if name == "" {
 		return Save(config)
+	}
+	if err := ValidateProfileName(name); err != nil {
+		return err
 	}
 	config = config.forSave()
 
