@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **permissions:** deny and ask rules written with an absolute path inside the workspace match again once the workspace is known, for the path given absolute (as given or with symlinks resolved) or relative (Aikido, #425 review).
+* **subagents:** a subagent's workspace is checked against the parent's again when the run starts or resumes, so a directory replaced by a symlink out of the parent after `spawn_agent` checked it ends the run (Aikido, #425 review).
+* **subagents:** once an isolated run's worktree merge is decided, a kill of that run is refused, so a run reported killed is never merged (Aikido, #425 review).
+* **loop:** without a home directory, project memories and the code graph are skipped instead of read or created under the current directory's `.celeste` (Aikido, #425 review).
+* **config:** profile names are plain file names (no separators, colons or dot segments), so a resumed session's endpoint cannot load or write a config outside `~/.celeste` (Aikido, #427 review).
 * **serve:** a workspace named in an MCP tool call is checked with the platform's path separator, so on Windows a workspace under the home folder is accepted and the protected folders under home (`.ssh`, `.aws` and the rest) are refused, as on macOS and Linux.
 * **git:** celeste's own git commands (`git_status`, `git_log`, a subagent's isolated worktree, the lane merge, the status line, code graph diffs) refuse a repository whose `.git` celeste does not trust (a symlink, or a `gitdir:` file that is not a linked worktree's or a submodule's) with a clear error, instead of letting git follow that pointer to another repository. The error says why: a linked worktree that was moved is told to run `git worktree repair` there, and a `git init --separate-git-dir` layout is named as not supported (Aikido review of [#422](https://github.com/whykusanagi/celeste-cli/pull/422)).
 * **checkpoints:** a checkpoint from an index written before the workspace was recorded, whose file is a symlink leading out of its directory, is never read through: undo refuses to read it instead of reading the file the link points to (CodeRabbit review of [#421](https://github.com/whykusanagi/celeste-cli/pull/421)).
@@ -24,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tools:** notes, reminders, QR codes, wallet-monitor state, memories, cost records, the user identity file and agent run checkpoints under `~/.celeste` are owner-only; `celeste mcp install` creates a new MCP client config, and every backup it makes, owner-only (Aikido 806869849).
 * **agent:** resuming a run started with `--no-artifacts` keeps artifacts off; `--no-artifacts` on the resume still turns them off (Aikido 806869324).
 * **config:** celeste refuses to start without a home directory (`HOME`, or `USERPROFILE` on Windows, unset, empty or relative) instead of resolving `~/.celeste` against the current directory, and custom skills load only from an absolute directory (Aikido 806869780).
+* **tools:** `web_fetch` refuses the documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32, 3fff::/20), the retired 6to4 relay anycast, the IPv6 discard-only, IETF protocol assignment and SRv6 SID blocks, and the whole local-use NAT64 prefix 64:ff9b:1::/48, whose embedded IPv4 address cannot be read (Aikido review on #420).
+* **release:** the release workflow publishes a pushed tag only when the signed tag object names that same tag, so a ref pointing at a tag signed for another (older) release is refused (Aikido review on #423).
+* **tui:** a conceal sequence written in the colon form (`ESC[8:…m`) is escaped like the semicolon form, so workspace, tool or model text in a system line or frame cannot hide the text after it (Aikido review on #426).
+* **tui:** `/grimoire` and `/init` show `.grimoire`, AGENTS.md, CLAUDE.md and workspace paths with every escape sequence escaped, so a color sequence in a context file cannot hide what follows it (CodeRabbit review on #426).
 * **hooks:** approving, declining and forgetting a repository hook, sandbox, stream-rules or MCP source now read and rewrite `~/.celeste/trusted.json` under a lock shared by every celeste process, so a `celeste mcp untrust` that finishes while another process is deciding is no longer undone by that process's stale copy. An answer to the trust prompt cut off by end of input (anything but `y`/`yes` with no newline) is no answer, not a remembered decline (Aikido and CodeRabbit review of #413).
 * **mcp:** without a home directory the `/mcp` panel shows a workspace MCP server as pending and refuses to approve it (there is no trust store to record it in), instead of connecting it without approval (Aikido review of #413).
 * **mcp:** disconnecting an MCP server while celeste is still starting its process or opening its connection now wins too: the connect is cancelled before the server's tools are installed (Aikido review of #424).
@@ -32,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **server:** a stdio `celeste serve` that is shut down while a request is running no longer starts the next request it had already read (Aikido review of #424).
 * **mcp:** `/mcp` enable/disable and `celeste mcp install` leave a rewritten MCP config readable only by you (0600), also when it was readable by others before, as its `env` values can be credentials (CodeRabbit review of #427). The rewrite is a new file renamed into place, so a symlink put at the config path after it was read is replaced, never written through; a config that was a symlink when read is still rewritten at its target.
 * **server:** a `celeste_index` rebuild also waits for an evicted code graph index that is still closing, so it never deletes the database under that close (Aikido review of #424).
+
+### Bug Fixes
+
+* **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
+* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 
 ### Breaking Changes
 
@@ -134,6 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Bug Fixes
 
 * **providers:** an error the OpenAI Responses stream reports (no credits left, a rate limit, an unknown model) is shown with its code and message; OpenAI nests them under `error`, and celeste printed an empty `openai responses: ` instead.
+* **hooks:** a PreToolUse, Stop or UserPromptSubmit hook's reason reaches the model as the hook wrote it, several lines included, instead of as a quoted Go string; wherever celeste shows a hook's reason (the chat, `celeste agent` and `/agent` warnings, the orchestrator's action feed and ACP notes), its escape sequences are escaped (Aikido review on #426).
 * **server:** a `workspace` argument names one directory however it is spelled: `/w/`, `/w/.` and `/w` share one code graph index, one rebuild gate and one chat cache entry, so a query spelled differently from a running rebuild waits for it instead of using a stale index (CodeRabbit review of [#414](https://github.com/whykusanagi/celeste-cli/pull/414)).
 * **codegraph:** outside Go, call edges keep the class of the method they start from: same-named methods of different classes in one file each get their own outgoing edges instead of all going to the first one, and a call on the caller's own object goes to `m` of the caller's own class: `self.m()` / `this.m()`, PHP `$this->m()`, `self::m()` and `static::m()`, and in Java, Ruby and C++ also a call with no receiver (Aikido review of [#414](https://github.com/whykusanagi/celeste-cli/pull/414)). The graph version is bumped, so the next update of an existing index resolves its edges again.
 * **mcp:** an event-stream line from a Streamable HTTP MCP server may be as long as the 16 MiB response limit (it was cut at 1 MiB), and a longer one fails the call as too large (CodeRabbit review of #424).

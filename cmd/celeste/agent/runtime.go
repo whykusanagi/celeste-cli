@@ -142,7 +142,9 @@ func (r *Runner) compactMessages(ctx context.Context, msgs []tui.ChatMessage, me
 		cancel()
 		if reason := blocked(); reason != "" {
 			// Always reported, not only in verbose output (TUI parity).
-			r.warning("compaction blocked by a PreCompact hook: " + reason)
+			// The reason is hook output: escaped here, where it becomes
+			// display text, since not every warning sink escapes it.
+			r.warning("compaction blocked by a PreCompact hook: " + termsafe.Line(reason))
 			return msgs, notes, changed
 		}
 		if err != nil {

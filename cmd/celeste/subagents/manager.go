@@ -70,6 +70,10 @@ type SubagentRun struct {
 	// killed is set by Kill: the run's end is the user's cancellation,
 	// whatever RunGoal returns after it (finishRun, mergeable).
 	killed bool
+	// merging is set, under m.mu, when the deferred merge decides to merge
+	// the run's worktree: from then on Kill refuses the run, so a run
+	// reported killed is never merged.
+	merging bool
 
 	// sliders is the persona override for this run's voice modulation, or
 	// nil for slider.json. It replaces the slider block in the subagent's
@@ -659,6 +663,21 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		}
 	}
 
+	// The workspace spawn_agent checked is checked again now, as the run
+	// starts (a DAG entry may have waited): a directory swapped for a
+	// symlink out of the parent in between ends the run.
+	checked, err := recheckWorkspace(m.workspace, workspace)
+	if err != nil {
+		m.mu.Lock()
+		run.Status = "failed"
+		run.Error = err.Error()
+		run.EndedAt = time.Now()
+		typedFailure(run, holderFor(run.Type), "", run.Error)
+		m.mu.Unlock()
+		return run, err
+	}
+	workspace = checked
+
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)
@@ -844,12 +863,18 @@ func (m *Manager) finishRun(run *SubagentRun, state *agent.RunState, err error, 
 }
 
 // mergeable reports whether an isolated run's worktree is merged back:
-// only a completed run's. run.Status may be written concurrently by Kill,
-// so it is read under m.mu.
+// only a completed, unkilled run's. A true answer is the merge decision:
+// it marks the run merging in the same critical section, so a Kill after
+// it is refused instead of reporting a run killed whose changes merge.
+// run.Status may be written concurrently by Kill, so it is read under m.mu.
 func (m *Manager) mergeable(run *SubagentRun) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return run.Status == "completed" && !run.killed
+	if run.Status != "completed" || run.killed {
+		return false
+	}
+	run.merging = true
+	return true
 }
 
 // lastResponse is the run's last reply, or "" without a state.
@@ -1030,7 +1055,10 @@ func (m *Manager) Kill(selector string) bool {
 			}
 		}
 	}
-	if cancel == nil {
+	if cancel == nil || (run != nil && run.merging) {
+		// No cancellable run, or one whose worktree merge was already
+		// decided: it completed, and killing it now would report a kill
+		// whose changes still merge.
 		m.mu.Unlock()
 		return false
 	}
@@ -1082,6 +1110,12 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		}
 	}
 	m.mu.Unlock()
+	// The run's workspace is checked against the parent's again, as on
+	// spawn: it may have been replaced since.
+	workspace, err := recheckWorkspace(m.workspace, workspace)
+	if err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 
 	parent, err := m.parentEnv()
 	if err != nil {

@@ -41,8 +41,8 @@ type Options struct {
 
 // Outcome is the combined verdict of every hook that ran for one event.
 type Outcome struct {
-	Decision          Decision // Allow when no hook matched
-	Reason            string
+	Decision          Decision       // Allow when no hook matched
+	Reason            string         // as the hook wrote it: escape it to show it on a terminal
 	AdditionalContext string         // returned to the model
 	UpdatedInput      map[string]any // PreToolUse only; nil = unchanged
 }
@@ -231,12 +231,14 @@ func (r *Runner) run(ctx context.Context, ev Event, tool string, payload map[str
 			out.UpdatedInput = res.updated
 			payload["tool_input"] = res.updated
 		}
+		// The reason is the hook's instruction to the model and is kept
+		// as written; whatever shows it on a terminal escapes it there.
 		if res.decision == Deny && ev.decides() {
-			out.Decision, out.Reason = Deny, SafeText(res.reason)
+			out.Decision, out.Reason = Deny, res.reason
 			break
 		}
 		if res.decision == Ask && ev.decides() && out.Decision == Allow {
-			out.Decision, out.Reason = Ask, SafeText(res.reason)
+			out.Decision, out.Reason = Ask, res.reason
 		}
 	}
 	out.AdditionalContext = truncate(strings.Join(contexts, "\n"), maxContext)

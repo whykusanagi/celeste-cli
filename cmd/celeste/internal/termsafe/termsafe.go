@@ -144,15 +144,21 @@ func sgrLen(s string) int {
 	return 0
 }
 
-// conceals reports whether SGR parameters params turn on conceal (8). The
+// conceals reports whether SGR parameters params turn on conceal (8),
+// also in the colon form 8:… a terminal may read as conceal. The
 // operands of an extended color (38, 48, 58: 5;n or 2;r;g;b) are skipped,
 // so a color component of 8 is not mistaken for it.
 func conceals(params string) bool {
 	ps := strings.Split(params, ";")
 	for i := 0; i < len(ps); i++ {
 		p := strings.TrimLeft(ps[i], "0")
-		if strings.Contains(ps[i], ":") {
-			continue // colon form keeps its operands inside one parameter
+		if j := strings.IndexByte(p, ':'); j >= 0 {
+			// Colon form: the operands stay inside this parameter, and
+			// its first field is the attribute (8:… is conceal too).
+			if p[:j] == "8" {
+				return true
+			}
+			continue
 		}
 		switch p {
 		case "8":

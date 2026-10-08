@@ -247,3 +247,65 @@ func TestSessionResumeKeepsTheEndpointInUse(t *testing.T) {
 	assert.Contains(t, sessChatText(m), "venice")
 	assert.Contains(t, sessChatText(m), "/endpoint venice")
 }
+
+// A session resumed on another endpoint than its own keeps its endpoint
+// and model through passive saves (CodeRabbit, #427): saving it before a
+// switch or on quit does not rewrite it to the endpoint in use, so a
+// later startup resume still goes to the session's profile. An explicit
+// endpoint change is recorded.
+func TestSessionResumeKeepsTheSessionsEndpointOnPassiveSaves(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	other.SetModel("venice-model")
+	require.NoError(t, mgr.mgr.Save(other))
+	m = m.WithEndpoint("openai")
+	m.model = "gpt-model"
+	m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+	require.Equal(t, "openai", m.endpoint)
+
+	m.persistSession()
+	saved, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "venice", saved.GetEndpoint(), "a passive save rewrote the session's endpoint")
+	assert.Equal(t, "venice-model", saved.GetModel(), "a passive save rewrote the session's model")
+
+	// Switching endpoints is recorded.
+	m.endpoint = "grok"
+	m.persistSession()
+	saved, err = mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "grok", saved.GetEndpoint())
+	assert.Equal(t, "gpt-model", saved.GetModel())
+}
+
+// A turn sent on the endpoint in use makes it the session's: the resumed
+// conversation continues there, so its saves record that endpoint and model
+// (review follow-up).
+func TestSessionResumeContinuedOnTheEndpointInUseRecordsIt(t *testing.T) {
+	m, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	other.SetModel("venice-model")
+	require.NoError(t, mgr.mgr.Save(other))
+	m = m.WithEndpoint("openai")
+	m.model = "gpt-model"
+	m, _ = step(t, m, SendMessageMsg{Content: "/session resume " + other.ID})
+	m, _ = step(t, m, SendMessageMsg{Content: "carry on"})
+	saved, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", saved.GetEndpoint())
+	assert.Equal(t, "gpt-model", saved.GetModel())
+}
+
+// The same at startup: a session whose profile could not be loaded stays
+// on the startup endpoint without losing its own.
+func TestStartupResumeFallbackKeepsTheSessionsEndpoint(t *testing.T) {
+	_, mgr, other := newSessionTestApp(t)
+	other.SetEndpoint("venice")
+	require.NoError(t, mgr.mgr.Save(other))
+	m := NewApp(&fakeCompactClient{}).WithEndpoint("openai").SetSessionManager(mgr, other)
+	m.persistSession()
+	saved, err := mgr.mgr.Load(other.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "venice", saved.GetEndpoint())
+	assert.Equal(t, "openai", m.endpoint)
+}

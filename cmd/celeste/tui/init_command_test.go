@@ -85,3 +85,32 @@ func TestGrimoireCommandFallsBackToTheSessionContext(t *testing.T) {
 		t.Fatalf("/grimoire with nothing on disk:\n%s", last)
 	}
 }
+
+// CodeRabbit review on #426: /grimoire shows workspace files, so their
+// escape sequences are escaped before the system line keeps its colors;
+// a color pair that hides text (black on black) is not kept either.
+func TestGrimoireCommandEscapesWorkspaceText(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte("shown\x1b[30;40mhidden\x1b[0m"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := newCompactTestApp(t)
+	m = m.SetWorkDir(ws).WithGrimoireContent("SESSION \x1b[8mCONTEXT")
+	m, _ = step(t, m, SendMessageMsg{Content: "/grimoire"})
+	msgs := m.DebugMessages()
+	last := msgs[len(msgs)-1].Content
+	if strings.Contains(last, "\x1b") || !strings.Contains(last, `shown\x1b[30;40mhidden`) {
+		t.Fatalf("/grimoire kept a live escape sequence:\n%q", last)
+	}
+	if err := os.Remove(filepath.Join(ws, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = step(t, m, SendMessageMsg{Content: "/grimoire"})
+	msgs = m.DebugMessages()
+	if last := msgs[len(msgs)-1].Content; strings.Contains(last, "\x1b") {
+		t.Fatalf("/grimoire kept a live escape sequence in the session context:\n%q", last)
+	}
+}

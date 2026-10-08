@@ -158,3 +158,31 @@ func TestAbsoluteRulesOutsideTheWorkspace(t *testing.T) {
 		t.Errorf("absolute allow outside the workspace: %v, want Allow", got)
 	}
 }
+
+// A deny rule written with the workspace's absolute path keeps matching
+// once the checker knows the workspace (Aikido, #425): absolute paths
+// inside it are matched absolute too, as given and with symlinks
+// resolved, and a relative spelling of the same file is denied as well.
+func TestAbsoluteDenyRulesInsideTheWorkspace(t *testing.T) {
+	ws := t.TempDir()
+	realWS, err := filepath.EvalSymlinks(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{ws, realWS} {
+		c := NewChecker(PermissionConfig{
+			Mode:       ModeTrust,
+			AlwaysDeny: []Rule{{ToolPattern: "write_file(" + filepath.ToSlash(root) + "/secrets/*)", Decision: Deny}},
+		})
+		c.SetWorkspace(ws)
+		for _, p := range []string{
+			filepath.Join(ws, "secrets", "k"),
+			filepath.Join(realWS, "secrets", "k"),
+			"secrets/k",
+		} {
+			if got := c.Check(fileWriter(), map[string]any{"path": p, "content": "x"}).Decision; got != Deny {
+				t.Errorf("rule on %s, path %s: %v, want Deny", root, p, got)
+			}
+		}
+	}
+}

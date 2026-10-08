@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -352,15 +353,23 @@ func TestDisabledWarning(t *testing.T) {
 	}
 }
 
-// Aikido 806869439: a deny or ask reason can echo model text; it is shown
-// in the chat, so it comes back terminal-safe like a failure message.
-func TestRunnerReasonIsTerminalSafe(t *testing.T) {
-	// No \r: Windows drops it from the hook's command-line argument.
-	raw := "blocked: x\x1b]0;t\x07y"
+// Aikido review on #426: a deny, ask or Stop reason is an instruction for
+// the model and reaches it as the hook wrote it (several lines included);
+// only what shows it on a terminal escapes it (the TUI, the agent's
+// warnings), as Aikido 806869439 asked.
+func TestRunnerReasonReachesTheModelAsWritten(t *testing.T) {
+	// No \r: Windows drops it from the hook's command-line argument, and
+	// a newline ends the argument there, so Windows checks one line.
+	raw := "blocked: line one\nline two\x1b]0;t\x07y"
+	if runtime.GOOS == "windows" {
+		raw = "blocked: line one\x1b]0;t\x07y"
+	}
 	for _, decision := range []string{"deny", "ask"} {
 		r, _ := testRunner(t, v2(t, EventPreToolUse, decision, raw))
 		out := r.PreToolUse(context.Background(), "bash", nil)
-		assert.Equal(t, SafeText(raw), out.Reason, decision)
-		assert.NotContains(t, out.Reason, "\x1b", decision)
+		assert.Equal(t, raw, out.Reason, decision)
 	}
+	r, _ := testRunner(t, v2(t, EventStop, "deny", raw))
+	instr, _ := StopContinuation(r.Stop(context.Background(), "done"), false, 1, StopScope{Event: "Stop", Actor: "the chat", Unit: "turn"})
+	assert.Equal(t, raw, instr)
 }

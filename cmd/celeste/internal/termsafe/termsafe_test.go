@@ -81,3 +81,19 @@ func TestStyledDropsConceal(t *testing.T) {
 		}
 	}
 }
+
+// Aikido review on #426: conceal written in the colon (sub-parameter) form
+// is conceal too; other colon forms (extended colors, underline styles)
+// stay.
+func TestStyledDropsColonFormConceal(t *testing.T) {
+	for _, in := range []string{"a\x1b[8:1mhidden", "a\x1b[08:0mhidden", "a\x1b[1;8:mhidden", "a\x1b[38:5:1;8:2mhidden"} {
+		if got := Styled(in); strings.Contains(got, "\x1b[") {
+			t.Errorf("Styled(%q) = %q keeps a conceal sequence", in, got)
+		}
+	}
+	for _, in := range []string{"\x1b[38:5:8mgrey\x1b[0m", "\x1b[38:2::8:8:8mdark\x1b[0m", "\x1b[4:3mcurly\x1b[4:0m", "\x1b[58:5:8mx\x1b[m"} {
+		if got := Styled(in); got != in {
+			t.Errorf("Styled(%q) = %q, want it kept", in, got)
+		}
+	}
+}

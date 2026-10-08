@@ -99,6 +99,27 @@ func TestAgentPreCompactBlocksSummary(t *testing.T) {
 	}
 }
 
+// A PreCompact reason is hook output: the warning that carries it reaches
+// sinks that show it as is (the orchestrator's action feed, the TUI /agent
+// system line), so it is escaped where it becomes display text.
+func TestAgentPreCompactReasonEscapedInWarning(t *testing.T) {
+	backend := &windowBackend{window: 64_000, turns: 20}
+	runner, _ := newCompactionRunner(t, backend, 64_000)
+	runner.pruned = nil
+	runner.hooks = loadHooks(t, map[string]any{"event": "PreCompact", "command": hooktest.Command(t, "canned", "escape-deny")})
+	warns := &sink{}
+	runner.warn = warns.add
+	runner.summarize = func(context.Context, string, string) (string, error) { return "## Goal\nx", nil }
+	_, _ = runner.RunGoal(context.Background(), "read every file")
+	got := warns.all()
+	if !strings.Contains(got, "compaction blocked by a PreCompact hook: ") {
+		t.Fatalf("warnings = %q, want the block reported", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\a") {
+		t.Fatalf("warnings = %q, want the hook's escape sequences escaped", got)
+	}
+}
+
 func TestAgentCompactionHooksAroundSummary(t *testing.T) {
 	backend := &windowBackend{window: 64_000, turns: 20}
 	runner, _ := newCompactionRunner(t, backend, 64_000)

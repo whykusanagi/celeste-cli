@@ -9,6 +9,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
@@ -87,7 +88,7 @@ func (c *compactor) Compact(ctx context.Context, history []tui.ChatMessage, usag
 	out, sres, err := compact.Summarize(sctx, msgs, compact.SummaryOptions{Window: c.budget.ModelLimit, Overhead: overhead}, summarize)
 	cancel()
 	if reason := blocked(); reason != "" {
-		notes = append(notes, "compaction blocked by a PreCompact hook: "+reason)
+		notes = append(notes, "compaction blocked by a PreCompact hook: "+termsafe.Line(reason)) // hook output
 		return msgs, notes, changed
 	}
 	if err != nil {
