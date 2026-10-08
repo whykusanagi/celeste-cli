@@ -872,7 +872,14 @@ func (c *customToolWrapper) Execute(ctx context.Context, input map[string]any, p
 
 // LoadCustomTools loads JSON tool definitions from a directory.
 // This provides backwards compatibility with ~/.celeste/skills/*.json files.
+//
+// dir must be absolute: a relative one comes from an unset or empty home
+// directory, and would load (and later run) commands from the current
+// directory, which may be an untrusted checkout.
 func (r *Registry) LoadCustomTools(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("custom tools directory %q is not absolute (no home directory?); not loading it", dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

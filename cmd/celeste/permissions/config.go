@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // PermissionConfig holds the persistent permission configuration.
@@ -105,7 +106,7 @@ func LoadConfig(path string) (*PermissionConfig, error) {
 // SaveConfig writes a PermissionConfig to disk as formatted JSON.
 // Parent directories are created if they don't exist.
 func SaveConfig(path string, config *PermissionConfig) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), privfs.DirPerm); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 
@@ -125,7 +126,7 @@ func SaveConfig(path string, config *PermissionConfig) error {
 	data = append(data, '\n')
 
 	// An existing file keeps its mode; a new one is 0600.
-	if err := atomicfile.WriteKeepMode(path, data, 0o600); err != nil {
+	if err := atomicfile.WriteKeepMode(path, data, privfs.FilePerm); err != nil {
 		return fmt.Errorf("write permissions config: %w", err)
 	}
 

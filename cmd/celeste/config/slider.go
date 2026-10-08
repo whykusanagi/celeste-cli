@@ -16,6 +16,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // SliderConfig holds the user's personality slider state.
@@ -102,10 +105,10 @@ func (s *SliderConfig) Save() error {
 		return fmt.Errorf("marshal slider config: %w", err)
 	}
 	dir := filepath.Dir(SliderPath())
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := privfs.MkdirAll(dir); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	return os.WriteFile(SliderPath(), data, 0644)
+	return atomicfile.Write(SliderPath(), data, privfs.FilePerm)
 }
 
 // LoadPreset restores slider values from a named preset.

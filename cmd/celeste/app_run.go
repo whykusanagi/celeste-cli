@@ -81,6 +81,13 @@ func main() {
 	// A `go install` build becomes the official release binary first (W5
 	// rulings 25–27); on success this does not return on unix.
 	newUpgradeHook().beforeRun(os.Args)
+	// No home directory fails closed (Aikido 806869780): every
+	// ~/.celeste path would otherwise resolve against the current
+	// directory, trusting a checkout's ./.celeste as the user's own.
+	if err := config.CheckHome(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 	// A local server's reported context window replaces the 8,192 guess
 	// (#310). Only the binary asks: tests talk to fake servers.
 	config.EnableLocalWindowProbe()

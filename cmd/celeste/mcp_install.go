@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // mcpServerName is the key celeste registers itself under in client configs.
@@ -193,7 +195,7 @@ func upsertJSONConfig(path, serverName string, entry map[string]any, dryRun bool
 	}
 	// 0600 for a file this creates: client configs can hold API keys in
 	// env (Aikido 806869435). An existing file keeps its mode.
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	if err := os.WriteFile(path, out, privfs.FilePerm); err != nil {
 		return "", err
 	}
 	if existed {
@@ -215,10 +217,10 @@ func backupFile(path string) error {
 	if fi, err := os.Lstat(bak); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to write through symlink %s", bak)
 	}
-	if err := os.WriteFile(bak, data, 0o600); err != nil {
+	if err := os.WriteFile(bak, data, privfs.FilePerm); err != nil {
 		return err
 	}
-	return os.Chmod(bak, 0o600)
+	return os.Chmod(bak, privfs.FilePerm)
 }
 
 // printCodexBlock prints the TOML block to paste into ~/.codex/config.toml.

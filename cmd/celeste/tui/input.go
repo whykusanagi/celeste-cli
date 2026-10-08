@@ -9,6 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 )
 
 // knownCommands is the authoritative list of slash commands for typeahead.
@@ -293,7 +295,7 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			if strings.TrimSpace(value) == "" {
 				return m, nil
 			}
-			m.history = append(m.history, value)
+			m.history = append(m.history, config.RedactSecretCommand(value))
 			m.historyIndex = len(m.history)
 			m.tempInput = ""
 			m.textArea.Reset()
@@ -303,8 +305,9 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		case "enter":
 			value := m.textArea.Value()
 			if strings.TrimSpace(value) != "" {
-				// Add to history
-				m.history = append(m.history, value)
+				// Add to history; a set-key command's key is never kept
+				// (the history is saved with the session).
+				m.history = append(m.history, config.RedactSecretCommand(value))
 				m.historyIndex = len(m.history)
 				m.tempInput = ""
 				m.suggestions = nil

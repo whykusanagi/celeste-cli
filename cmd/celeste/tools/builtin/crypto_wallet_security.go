@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // WalletSecurityConfig holds wallet security configuration
@@ -1202,7 +1203,7 @@ func saveWalletSecurityConfig(config *WalletSecurityConfig) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := privfs.MkdirAll(dir); err != nil {
 		return err
 	}
 
@@ -1211,7 +1212,7 @@ func saveWalletSecurityConfig(config *WalletSecurityConfig) error {
 		return err
 	}
 
-	return atomicfile.Write(path, data, 0o600)
+	return atomicfile.Write(path, data, privfs.FilePerm)
 }
 
 func loadAlertsLog() (*AlertsLog, error) {
@@ -1234,7 +1235,7 @@ func saveAlertsLog(log *AlertsLog) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := privfs.MkdirAll(dir); err != nil {
 		return err
 	}
 
@@ -1243,7 +1244,7 @@ func saveAlertsLog(log *AlertsLog) error {
 		return err
 	}
 
-	return atomicfile.Write(path, data, 0o600)
+	return atomicfile.Write(path, data, privfs.FilePerm)
 }
 
 // appendAlerts stores the alerts whose event is not stored yet and returns

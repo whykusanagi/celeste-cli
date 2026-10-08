@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -106,7 +108,7 @@ func (t *NoteSaveTool) Execute(ctx context.Context, input map[string]any, progre
 		}
 	}
 
-	os.MkdirAll(filepath.Dir(notesPath), 0755)
+	_ = privfs.MkdirAll(filepath.Dir(notesPath))
 	data, err := json.MarshalIndent(notes, "", "  ")
 	if err != nil {
 		return resultFromMap(formatErrorResponse(
@@ -119,7 +121,7 @@ func (t *NoteSaveTool) Execute(ctx context.Context, input map[string]any, progre
 			},
 		))
 	}
-	if err := os.WriteFile(notesPath, data, 0644); err != nil {
+	if err := atomicfile.Write(notesPath, data, privfs.FilePerm); err != nil {
 		return resultFromMap(formatErrorResponse(
 			"internal_error",
 			"Failed to save note file",

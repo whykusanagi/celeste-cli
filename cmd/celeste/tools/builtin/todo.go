@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -65,13 +66,14 @@ func (s *TodoStore) save() {
 	if s.filePath == "" {
 		return
 	}
-	os.MkdirAll(filepath.Dir(s.filePath), 0755)
+	// Owner-only; an existing project .celeste directory is left as it is.
+	os.MkdirAll(filepath.Dir(s.filePath), privfs.DirPerm)
 	state := struct {
 		Tasks  []TodoItem `json:"tasks"`
 		NextID int        `json:"next_id"`
 	}{Tasks: s.tasks, NextID: s.nextID}
 	data, _ := json.MarshalIndent(state, "", "  ")
-	_ = atomicfile.Write(s.filePath, data, 0644)
+	_ = atomicfile.Write(s.filePath, data, privfs.FilePerm)
 }
 
 // Create adds a new todo item and returns it.

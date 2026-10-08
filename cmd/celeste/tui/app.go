@@ -2989,12 +2989,10 @@ func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel
 	m.sessionManager = sm
 	m.currentSession = session
 
-	// Restore endpoint/model from session if available
+	// Restore the model from the session if available. The endpoint is not
+	// taken from it: restoreEndpoint has already set it, through
+	// WithEndpoint, to the one the client was switched to (Aikido 806869764).
 	if session != nil {
-		if endpoint := session.GetEndpoint(); endpoint != "" {
-			m.endpoint = endpoint
-			m.header = m.header.SetEndpoint(endpoint)
-		}
 		if model := session.GetModel(); model != "" {
 			m.model = model
 			// A /set-model --force pin outlives the resume.
@@ -3360,10 +3358,16 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 					}
 				}
 
-				// Restore state
-				if endpoint := s.GetEndpoint(); endpoint != "" {
-					m.endpoint = endpoint
-					m.header = m.header.SetEndpoint(m.endpoint)
+				// Restore state. The client is not switched, so the
+				// endpoint in use stays, and the header with it (Aikido
+				// 806869764); the chat says when the session used another.
+				endpointNote := ""
+				if endpoint := s.GetEndpoint(); endpoint != "" && endpoint != "default" && endpoint != m.endpoint {
+					current := m.endpoint
+					if current == "" {
+						current = "the current endpoint"
+					}
+					endpointNote = fmt.Sprintf("⚠ This session used %s; staying on %s (/endpoint %s to switch)", endpoint, current, endpoint)
 				}
 				m.nsfwMode = s.GetNSFWMode()
 				m.header = m.header.SetNSFWMode(m.nsfwMode)
@@ -3376,6 +3380,9 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 				}
 				m.chat = m.chat.AddSystemMessage(
 					fmt.Sprintf("📂 Resumed session (%d messages)", msgCount))
+				if endpointNote != "" {
+					m.chat = m.chat.AddSystemMessage(endpointNote)
+				}
 				m = m.withPlanResumeNote(m.chat.messages)
 			}
 		} else {

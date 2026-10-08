@@ -26,3 +26,7 @@ func (m AppModel) DebugInput() string { return m.input.Value() }
 
 // DebugAskPromptActive reports whether the ask modal is open.
 func (m AppModel) DebugAskPromptActive() bool { return m.askPrompt.Active() }
+
+// DebugEndpoint returns the endpoint the chat holds and the one its header
+// shows.
+func (m AppModel) DebugEndpoint() (state, header string) { return m.endpoint, m.header.endpoint }

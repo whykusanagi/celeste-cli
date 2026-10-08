@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// Save writes atomically: a new config.json is private (it can hold an API
-// key) and an existing one keeps the mode the user gave it.
+// Save writes atomically: config.json is private (it can hold an API key),
+// new or existing, and an existing one keeps only its owner bits (Aikido
+// 806869312).
 func TestSaveModes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits")
@@ -36,7 +37,7 @@ func TestSaveModes(t *testing.T) {
 	if err := Save(&Config{Model: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err = os.Stat(path); err != nil || fi.Mode().Perm() != 0o640 {
-		t.Fatalf("existing config mode = %v, want 0640 kept", fi.Mode().Perm())
+	if fi, err = os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("existing config mode = %v, want 0600", fi.Mode().Perm())
 	}
 }

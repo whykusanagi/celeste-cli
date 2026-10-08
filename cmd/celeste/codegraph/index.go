@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // SearchResult pairs a symbol with its similarity score and a set of
@@ -93,7 +95,7 @@ type Indexer struct {
 // polluting the project directory, and creates that directory.
 func DefaultIndexPath(projectRoot string) string {
 	path := IndexPath(projectRoot)
-	os.MkdirAll(filepath.Dir(path), 0755)
+	_ = privfs.MkdirAll(filepath.Dir(path)) // the index of a private repo is private
 	return path
 }
 

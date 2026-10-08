@@ -11,6 +11,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
@@ -37,7 +38,7 @@ func NewCheckpointStore(baseDir string) (*CheckpointStore, error) {
 	}
 
 	runsDir := filepath.Join(baseDir, "agent", "runs")
-	if err := os.MkdirAll(runsDir, 0755); err != nil {
+	if err := privfs.MkdirAll(runsDir); err != nil {
 		return nil, fmt.Errorf("create checkpoint dir: %w", err)
 	}
 

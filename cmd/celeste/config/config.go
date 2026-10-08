@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/providers"
 )
 
@@ -493,6 +494,8 @@ func LoadNamed(name string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config '%s' not found at %s: %w", name, configPath, err)
 	}
+	tightenPrivate(filepath.Dir(configPath))
+	tightenPrivate(configPath)
 	data = migrateFile(configPath, data)
 
 	if err := json.Unmarshal(data, config); err != nil {
@@ -703,11 +706,24 @@ func ListConfigs() ([]string, error) {
 // Load loads configuration from file and environment.
 func Load() (*Config, error) {
 	config := DefaultConfig()
-	configDir, configFile, secretsFile, _ := Paths()
+	configDir, configFile, secretsFile, skillsFile := Paths()
 
-	// Ensure config directory exists
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	// Ensure config directory exists, owner-only: it holds every key,
+	// log and transcript. An older version made it 0755, and made the
+	// files below 0644; tighten those too.
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)
+	}
+	tightenPrivate(configDir)
+	tightenPrivate(configFile)
+	tightenPrivate(secretsFile)
+	tightenPrivate(skillsFile)
+	// Named profiles hold keys too, and one an older version wrote 0644 may
+	// never be opened by LoadNamed.
+	if profiles, err := filepath.Glob(filepath.Join(configDir, "config.*.json")); err == nil {
+		for _, p := range profiles {
+			tightenPrivate(p)
+		}
 	}
 
 	// Load main config file
@@ -899,8 +915,32 @@ func persistReconciled(path string, config *Config) error {
 	if err != nil {
 		return err
 	}
-	// Atomic; an existing profile keeps its mode, a new one is 0600.
-	return atomicfile.WriteKeepMode(path, out, 0600)
+	// Atomic and owner-only: the profile can hold an API key.
+	return writePrivate(path, out)
+}
+
+// writePrivate replaces a credential-bearing file atomically with an
+// owner-only mode (0600 when new; an existing file keeps only its owner
+// bits, so a read-only one stays read-only), and says so when an older
+// file was readable by other users.
+func writePrivate(path string, data []byte) error {
+	loosened, err := privfs.WriteFile(path, data)
+	if err == nil && loosened {
+		log.Printf("[config] %s was readable by other users; it is now owner-only", path)
+	}
+	return err
+}
+
+// tightenPrivate strips the group and other bits from an existing
+// credential-bearing file or directory, with a warning when it had them.
+func tightenPrivate(path string) {
+	changed, err := privfs.Tighten(path)
+	switch {
+	case err != nil:
+		log.Printf("[config] could not make %s owner-only: %v", path, err)
+	case changed:
+		log.Printf("[config] %s was readable by other users; it is now owner-only", path)
+	}
 }
 
 // deprecatedModels maps the Grok models xAI routes to the cost-prohibitive
@@ -963,11 +1003,9 @@ func Save(config *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	// Atomic, so a crash or a concurrent reader never sees half a config. An
-	// existing file keeps its mode (as os.WriteFile did). A new one is 0600:
-	// the temp file's mode is set exactly, not through the umask, and the
-	// config can hold an API key.
-	return atomicfile.WriteKeepMode(configFile, data, 0600)
+	// Atomic, so a crash or a concurrent reader never sees half a config,
+	// and owner-only, new or existing: the config can hold an API key.
+	return writePrivate(configFile, data)
 }
 
 // SaveNamed writes the config to a named profile file (config.<name>.json).
@@ -991,9 +1029,8 @@ func SaveNamed(name string, config *Config) error {
 		return fmt.Errorf("failed to create config dir: %w", err)
 	}
 
-	// 0600: a named profile carries the API key inline. An existing file
-	// keeps its mode, as os.WriteFile did.
-	return atomicfile.WriteKeepMode(path, data, 0600)
+	// Owner-only: a named profile carries the API key inline.
+	return writePrivate(path, data)
 }
 
 // SaveCollections writes cfg's collections block back to the file cfg was
@@ -1041,8 +1078,8 @@ func SaveCollections(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	// Atomic; an existing file keeps its mode, a new one is 0600.
-	return atomicfile.WriteKeepMode(path, out, 0600)
+	// Atomic and owner-only: the file can hold an API key.
+	return writePrivate(path, out)
 }
 
 // SaveSecrets saves API key to secrets file (backward compatibility).
