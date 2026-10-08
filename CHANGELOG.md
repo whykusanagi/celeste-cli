@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **mcp:** `celeste mcp install` writes the `.bak` of a client config, and any config it creates, readable only by you (0600), and tightens an existing `.bak` (Aikido 806869435).
 * **mcp:** responses from an MCP server are capped at 16 MiB on every transport (a stdio line, an HTTP body, an HTTP event stream), and one HTTP request queues at most 256 responses; an oversized stdio line closes that server's connection. This also bounds a `tools/list` reply (Aikido 806869944, 806869726).
 * **mcp:** the SSE transport POSTs only to an endpoint on the configured server's own origin, and the SSE and HTTP transports follow redirects only within that origin (Aikido 806869691).
+* **context:** spilled tool results (`~/.celeste/tool-results`) are bounded: one file keeps at most the first 32 MiB of a result, one session spills at most 256 MiB (past that a result is cut in memory with a note), and the first spill of a run deletes sessions' spills last changed over 30 days ago, then the oldest while all of them are over 1 GiB (Aikido 806869375).
 
 ### Features
 

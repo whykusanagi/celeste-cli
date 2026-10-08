@@ -1,11 +1,15 @@
 package ctxmgr
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
@@ -15,7 +19,27 @@ const (
 	// DefaultMaxToolResultBytes is the maximum size in bytes for a single tool
 	// result before it gets capped and spilled to disk: 128 KiB.
 	DefaultMaxToolResultBytes = 128 * 1024
+
+	// SpillKeepAge is how long a session's spilled tool results are kept
+	// after its last spill.
+	SpillKeepAge = 30 * 24 * time.Hour
 )
+
+// Spill limits (Aikido 806869375). Vars so tests can lower them.
+var (
+	// maxSpillFileBytes caps one spill file: a larger result spills only
+	// its first part.
+	maxSpillFileBytes int64 = 32 << 20
+	// maxSessionSpillBytes caps one session's spill files; past it a
+	// result is cut in memory and not spilled.
+	maxSessionSpillBytes int64 = 256 << 20
+	// maxTotalSpillBytes caps every session's spill files together; the
+	// startup prune removes the oldest sessions past it.
+	maxTotalSpillBytes int64 = 1 << 30
+)
+
+// prunedSpillBases records the spill bases pruned in this process.
+var prunedSpillBases sync.Map
 
 // ToolResultsBaseDir returns the base directory for spilled tool results.
 // Default: ~/.celeste/tool-results
@@ -58,6 +82,12 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		}
 	}
 
+	// Once per process and base, before the first spill: drop old
+	// sessions' spill files, so they do not pile up across sessions.
+	if _, done := prunedSpillBases.LoadOrStore(baseDir, true); !done {
+		_ = PruneToolResults(baseDir, sessionID, time.Now())
+	}
+
 	// 0700/0600: a spilled tool result may hold secrets (env dumps, API
 	// responses, file contents), so keep it readable only by the owner.
 	// MkdirAll/WriteFile only apply their mode to a path they create, so an
@@ -71,8 +101,18 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		return result, false, fmt.Errorf("secure tool-results dir: %w", err)
 	}
 
+	// A result over the per-file limit spills only its first part, and a
+	// session past its quota spills no more.
+	saved := result
+	if int64(len(saved)) > maxSpillFileBytes {
+		saved = textutil.CutBytes(saved, int(maxSpillFileBytes))
+	}
+	if used := dirBytes(sessionDir); used+int64(len(saved)) > maxSessionSpillBytes {
+		return result, false, fmt.Errorf("this session's spilled tool results reached %d bytes", maxSessionSpillBytes)
+	}
+
 	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
-	if err := os.WriteFile(spillPath, []byte(result), 0600); err != nil {
+	if err := os.WriteFile(spillPath, []byte(saved), 0600); err != nil {
 		return result, false, fmt.Errorf("write spill file: %w", err)
 	}
 	if err := os.Chmod(spillPath, 0600); err != nil {
@@ -89,8 +129,13 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	// The longest note that still fits beside the tail: a small cap or a
 	// long spill path drops the path, then the recall id, rather than
 	// overflow maxBytes.
+	what := "full output"
+	if len(saved) < len(result) {
+		what = fmt.Sprintf("first %d bytes", len(saved))
+	}
 	notes := []string{
-		fmt.Sprintf("TRUNCATED: %d bytes total, full output saved to: %s%s", len(result), spillPath, recall),
+		fmt.Sprintf("TRUNCATED: %d bytes total, %s saved to: %s%s", len(result), what, spillPath, recall),
+		fmt.Sprintf("TRUNCATED: %d bytes total, %s saved%s", len(result), what, recall),
 		fmt.Sprintf("TRUNCATED: %d bytes total%s", len(result), recall),
 		"TRUNCATED",
 	}
@@ -170,4 +215,92 @@ func SnipToolResult(result string, maxBytes int, note string) string {
 		return out
 	}
 	return textutil.CutBytes(result, maxBytes)
+}
+
+// dirBytes is the total size of the regular files directly in dir.
+func dirBytes(dir string) int64 {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, d := range des {
+		if info, err := d.Info(); err == nil && info.Mode().IsRegular() {
+			n += info.Size()
+		}
+	}
+	return n
+}
+
+// PruneToolResults deletes spilled tool results under baseDir ("" is
+// ToolResultsBaseDir): every session directory last changed more than
+// SpillKeepAge ago, then the oldest others while all of them together are
+// over maxTotalSpillBytes. keep (the session running now) always survives.
+// A missing baseDir is nothing to prune (Aikido 806869375).
+func PruneToolResults(baseDir, keep string, now time.Time) error {
+	if baseDir == "" {
+		var err error
+		if baseDir, err = ToolResultsBaseDir(); err != nil {
+			return err
+		}
+	}
+	des, err := os.ReadDir(baseDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	type session struct {
+		path    string
+		changed time.Time
+		size    int64
+	}
+	var live []session
+	var total int64
+	var errs []error
+	for _, d := range des {
+		if !d.IsDir() || d.Name() == keep {
+			continue
+		}
+		path := filepath.Join(baseDir, d.Name())
+		s := session{path: path, changed: lastSpill(path), size: dirBytes(path)}
+		if now.Sub(s.changed) > SpillKeepAge {
+			if err := os.RemoveAll(path); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		live = append(live, s)
+		total += s.size
+	}
+	total += dirBytes(filepath.Join(baseDir, keep))
+	sort.Slice(live, func(i, j int) bool { return live[i].changed.Before(live[j].changed) })
+	for _, s := range live {
+		if total <= maxTotalSpillBytes {
+			break
+		}
+		if err := os.RemoveAll(s.path); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		total -= s.size
+	}
+	return errors.Join(errs...)
+}
+
+// lastSpill is when a session directory last changed: its newest file's
+// modification time, or the directory's own.
+func lastSpill(dir string) time.Time {
+	var t time.Time
+	if info, err := os.Stat(dir); err == nil {
+		t = info.ModTime()
+	}
+	des, _ := os.ReadDir(dir)
+	for _, d := range des {
+		if info, err := d.Info(); err == nil && info.ModTime().After(t) {
+			t = info.ModTime()
+		}
+	}
+	return t
 }
