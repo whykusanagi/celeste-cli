@@ -80,6 +80,12 @@ type Server struct {
 	// index until the rebuild has cached the rebuilt Indexer, so no call
 	// is left on the database the rebuild deletes (review of #393).
 	rebuilding map[string]bool
+	// retiredBusy holds, per workspace, the entries taken out of the cache
+	// (by eviction, a rebuild or Close) while calls still use them, until
+	// they close (guarded by indexerMu). A rebuild waits for these as well
+	// as the cached entry, so it never deletes a database a call evicted
+	// from the cache is still reading (Aikido 806869451).
+	retiredBusy map[string][]*indexerEntry
 
 	// runs tracks MCP agent runs that outlived the inline threshold, so a client
 	// can poll for a result instead of holding an HTTP call open for minutes.
@@ -103,13 +109,14 @@ type Server struct {
 // New creates a new MCP server with the given configuration.
 func New(cfg Config) *Server {
 	s := &Server{
-		config:     cfg,
-		handlers:   make(map[string]ToolHandler),
-		done:       make(chan struct{}),
-		indexers:   make(map[string]*indexerEntry),
-		rebuilding: make(map[string]bool),
-		runs:       make(map[string]*BackgroundRun),
-		chatEnvs:   newChatEnvs(),
+		config:      cfg,
+		handlers:    make(map[string]ToolHandler),
+		done:        make(chan struct{}),
+		indexers:    make(map[string]*indexerEntry),
+		rebuilding:  make(map[string]bool),
+		retiredBusy: make(map[string][]*indexerEntry),
+		runs:        make(map[string]*BackgroundRun),
+		chatEnvs:    newChatEnvs(),
 	}
 	return s
 }
@@ -121,6 +128,7 @@ const maxIndexers = 8
 // indexerEntry is one cached Indexer and the calls using it.
 type indexerEntry struct {
 	idx     *codegraph.Indexer
+	path    string // the workspace it is cached under
 	inUse   int
 	lastUse uint64
 	retired bool          // out of the cache: closed when the last call releases it
@@ -159,7 +167,28 @@ func (s *Server) retireIndexerLocked(path string, e *indexerEntry) bool {
 		return false
 	}
 	e.retired = true
-	return e.inUse == 0
+	e.path = path
+	if e.inUse > 0 {
+		s.retiredBusy[path] = append(s.retiredBusy[path], e)
+		return false
+	}
+	return true
+}
+
+// dropRetiredBusyLocked forgets e once its last call released it.
+func (s *Server) dropRetiredBusyLocked(e *indexerEntry) {
+	list := s.retiredBusy[e.path]
+	for i, r := range list {
+		if r == e {
+			list = append(list[:i:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(list) == 0 {
+		delete(s.retiredBusy, e.path)
+	} else {
+		s.retiredBusy[e.path] = list
+	}
 }
 
 func closeIndexerEntries(entries []*indexerEntry) {
@@ -176,6 +205,9 @@ func (s *Server) releaseIndexer(e *indexerEntry) {
 	s.indexerMu.Lock()
 	e.inUse--
 	closeNow := e.retired && e.inUse == 0
+	if closeNow {
+		s.dropRetiredBusyLocked(e)
+	}
 	s.indexerMu.Unlock()
 	if closeNow {
 		closeIndexerEntries([]*indexerEntry{e})

@@ -117,3 +117,54 @@ func TestIndexToolRejectsMissingWorkspace(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "an index directory was created for a missing workspace")
 	assert.False(t, srv.indexerCached(missing))
 }
+
+// TestIndexRebuildWaitsForEvictedBusyIndexer: an Indexer a call still uses
+// stays waited on after eviction drops it from the cache, so a rebuild of
+// its workspace does not delete the database under the call
+// (Aikido 806869451).
+func TestIndexRebuildWaitsForEvictedBusyIndexer(t *testing.T) {
+	srv, dir := newTestServerWithWorkspace(t)
+	writeTSFile(t, dir, "a.ts", "export function alpha() { return 1 }\n")
+	home := os.Getenv("HOME")
+
+	idx, release, _, err := srv.indexerFor(dir)
+	require.NoError(t, err)
+	released := false
+	defer func() {
+		if !released {
+			release()
+		}
+	}()
+	// Fill the cache with busy entries: the oldest busy one, dir's, is
+	// evicted while still in use.
+	for i := 0; i < maxIndexers; i++ {
+		d := filepath.Join(home, "busy"+strconv.Itoa(i))
+		require.NoError(t, os.MkdirAll(d, 0o755))
+		_, hold, _, err := srv.indexerFor(d)
+		require.NoError(t, err)
+		defer hold()
+	}
+	require.False(t, srv.indexerCached(dir), "the busy Indexer was not evicted")
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		_, payload := callTool(t, srv, "celeste_index", map[string]any{"operation": "rebuild"})
+		done <- payload
+	}()
+	select {
+	case <-done:
+		t.Fatal("rebuild finished while a call still held the evicted Indexer")
+	case <-time.After(500 * time.Millisecond):
+	}
+	_, stateErr := idx.State()
+	require.NoError(t, stateErr, "the evicted Indexer was closed while in use")
+	release()
+	released = true
+
+	select {
+	case payload := <-done:
+		require.NotEqual(t, true, payload["isError"], payloadText(t, payload))
+	case <-time.After(60 * time.Second):
+		t.Fatal("rebuild did not finish after the call released its Indexer")
+	}
+}

@@ -373,6 +373,9 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 		old = e
 		closeOld = s.retireIndexerLocked(workspace, e)
 	}
+	// Every entry of this workspace still in use, the one just retired and
+	// any an eviction retired earlier, must close before the delete.
+	waits := append([]*indexerEntry(nil), s.retiredBusy[workspace]...)
 	s.indexerMu.Unlock()
 	cached := false
 	defer func() {
@@ -383,12 +386,12 @@ func (s *Server) indexRebuild(ctx context.Context, workspace string) ([]ContentB
 			s.chatEnvs.invalidate(workspace)
 		}
 	}()
-	if old != nil {
-		if closeOld {
-			closeIndexerEntries([]*indexerEntry{old})
-		}
+	if closeOld {
+		closeIndexerEntries([]*indexerEntry{old})
+	}
+	for _, e := range waits {
 		select {
-		case <-old.idle:
+		case <-e.idle:
 		case <-ctx.Done():
 			return nil, fmt.Errorf("rebuild: waiting for running queries: %w", ctx.Err())
 		}
