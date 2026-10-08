@@ -299,10 +299,10 @@ func TestSessionResumeContinuedOnTheEndpointInUseRecordsIt(t *testing.T) {
 // The same at startup: a session whose profile could not be loaded stays
 // on the startup endpoint without losing its own.
 func TestStartupResumeFallbackKeepsTheSessionsEndpoint(t *testing.T) {
-	m, mgr, other := newSessionTestApp(t)
+	_, mgr, other := newSessionTestApp(t)
 	other.SetEndpoint("venice")
 	require.NoError(t, mgr.mgr.Save(other))
-	m = NewApp(&fakeCompactClient{}).WithEndpoint("openai").SetSessionManager(mgr, other)
+	m := NewApp(&fakeCompactClient{}).WithEndpoint("openai").SetSessionManager(mgr, other)
 	m.persistSession()
 	saved, err := mgr.mgr.Load(other.ID)
 	require.NoError(t, err)
