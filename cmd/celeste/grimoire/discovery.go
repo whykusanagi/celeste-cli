@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
@@ -136,9 +137,11 @@ func LoadAll(startDir string) (*Grimoire, error) {
 
 	var grimoires []*Grimoire
 	repo := repoScope(startDir)
+	owned := userOwnedDirs(startDir)
 	st := newIncludeState()
 	for _, src := range sources {
-		data, err := readSource(src)
+		userOwned := src.dir == "" || owned(src.dir)
+		data, err := readSource(src, userOwned)
 		if err != nil {
 			log.Printf("grimoire: skipping %s: %v", src.Path, err)
 			continue
@@ -153,9 +156,9 @@ func LoadAll(startDir string) (*Grimoire, error) {
 			g.StreamRules[i].Source = src.Path
 		}
 		// Includes resolve against startDir; only the user's own
-		// grimoire may reach outside the repository (see includeScope).
+		// grimoires may reach outside the repository (see includeScope).
 		scope := repo
-		if src.dir == "" {
+		if userOwned {
 			scope = includeScope{global: true}
 		}
 		resolveIncludesIn(g, startDir, scope, st)
@@ -169,14 +172,47 @@ func LoadAll(startDir string) (*Grimoire, error) {
 	return Merge(grimoires...), nil
 }
 
-// readSource reads one grimoire source, at most MaxSize bytes of it. A
-// source found in the workspace is repository content: it must be a
-// regular file, not a symlink, in a directory that resolves inside the
-// one it was found in, so a cloned repository cannot point it at a file
-// elsewhere. The global ~/.celeste/grimoire.md may be a symlink.
-func readSource(src GrimoireSource) (string, error) {
+// userOwnedDirs reports which directories of the upward walk from
+// startDir hold the user's own grimoires rather than repository content:
+// the home directory and its ancestors, and, inside a git repository,
+// every directory above its root (~/Development/.grimoire, say). Outside
+// a repository only home and its ancestors are the user's: a parent of
+// the workspace may be an extracted archive.
+func userOwnedDirs(startDir string) func(dir string) bool {
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return filepath.Clean(p)
+	}
+	var home string
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		home = resolve(h)
+	}
+	var gitRoot string
+	if abs, err := filepath.Abs(startDir); err == nil {
+		if r, ok := GitRoot(abs); ok {
+			gitRoot = resolve(r)
+		}
+	}
+	return func(dir string) bool {
+		d := resolve(dir)
+		if home != "" && pathutil.Within(d, home) {
+			return true // home itself or one of its ancestors
+		}
+		return gitRoot != "" && !pathutil.Within(gitRoot, d)
+	}
+}
+
+// readSource reads one grimoire source, at most MaxSize bytes of it, cut
+// on a rune boundary. A source in the repository is repository content:
+// it must be a regular file, not a symlink, in a directory that resolves
+// inside the one it was found in, so a cloned repository cannot point it
+// at a file elsewhere. The user's own grimoires (userOwned: the global
+// ~/.celeste/grimoire.md and those userOwnedDirs names) may be symlinks.
+func readSource(src GrimoireSource, userOwned bool) (string, error) {
 	path := src.Path
-	if src.dir == "" {
+	if userOwned {
 		real, err := filepath.EvalSymlinks(path)
 		if err != nil {
 			return "", err
@@ -214,6 +250,13 @@ func readSource(src GrimoireSource) (string, error) {
 	if len(data) > MaxSize {
 		log.Printf("grimoire: %s is over %d KB; reading the first %d KB", src.Path, MaxSize/1024, MaxSize/1024)
 		data = data[:MaxSize]
+		// The cut may split the last rune: drop its leading bytes.
+		for i := 0; i < utf8.UTFMax-1 && len(data) > 0; i++ {
+			if r, n := utf8.DecodeLastRune(data); r != utf8.RuneError || n != 1 {
+				break
+			}
+			data = data[:len(data)-1]
+		}
 	}
 	return string(data), nil
 }
