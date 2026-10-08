@@ -107,11 +107,17 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	if int64(len(saved)) > maxSpillFileBytes {
 		saved = textutil.CutBytes(saved, int(maxSpillFileBytes))
 	}
-	if used := dirBytes(sessionDir); used+int64(len(saved)) > maxSessionSpillBytes {
+	// The file this write replaces (the same toolCallID spilled before)
+	// does not count toward the quota.
+	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
+	used := dirBytes(sessionDir)
+	if fi, err := os.Lstat(spillPath); err == nil && fi.Mode().IsRegular() {
+		used -= fi.Size()
+	}
+	if used+int64(len(saved)) > maxSessionSpillBytes {
 		return result, false, fmt.Errorf("this session's spilled tool results reached %d bytes", maxSessionSpillBytes)
 	}
 
-	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
 	if err := os.WriteFile(spillPath, []byte(saved), 0600); err != nil {
 		return result, false, fmt.Errorf("write spill file: %w", err)
 	}

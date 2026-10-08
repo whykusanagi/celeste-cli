@@ -68,3 +68,15 @@ func TestPruneToolResults(t *testing.T) {
 	_, err = os.Stat(current)
 	assert.NoError(t, err, "the current session's spills were pruned")
 }
+
+// TestCapToolResultQuotaIgnoresOverwrittenFile: rewriting the spill file of
+// the same tool call id does not count the file it replaces toward the
+// session quota.
+func TestCapToolResultQuotaIgnoresOverwrittenFile(t *testing.T) {
+	withSpillLimits(t, 1<<20, 5000)
+	base := t.TempDir()
+	for i := 0; i < 3; i++ {
+		_, _, err := CapToolResult(strings.Repeat("x", 3000), 1024, "sess", "same", base)
+		require.NoError(t, err, "spill %d of the same id", i)
+	}
+}
