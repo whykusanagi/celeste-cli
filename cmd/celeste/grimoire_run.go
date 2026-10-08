@@ -9,8 +9,9 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
-	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // runInitCommand handles "celeste init [--agents]".
@@ -65,15 +66,17 @@ func runGrimoireCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
 		os.Exit(1)
 	}
-	if err := showGrimoire(cwd, os.Stdout); err != nil {
+	if err := showGrimoire(cwd, os.Stdout, term.IsTerminal(int(os.Stdout.Fd()))); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading grimoire: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// showGrimoire prints grimoire.Describe, the text /grimoire shows.
-func showGrimoire(dir string, out io.Writer) error {
+// showGrimoire prints grimoire.Describe, the text /grimoire shows. It is
+// repository files: escaped for a terminal, as given for a pipe or file
+// (replyFor, as `celeste message` does).
+func showGrimoire(dir string, out io.Writer, terminal bool) error {
 	text, _ := grimoire.Describe(dir)
-	_, err := fmt.Fprintln(out, termsafe.Text(strings.TrimRight(text, "\n"))) // repository files: escaped
+	_, err := fmt.Fprintln(out, replyFor(terminal, strings.TrimRight(text, "\n")))
 	return err
 }

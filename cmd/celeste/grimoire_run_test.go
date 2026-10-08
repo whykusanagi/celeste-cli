@@ -56,7 +56,7 @@ func TestShowGrimoireIncludesContextFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := showGrimoire(ws, &out); err != nil {
+	if err := showGrimoire(ws, &out, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "# Project instructions") || !strings.Contains(out.String(), "use tabs") {

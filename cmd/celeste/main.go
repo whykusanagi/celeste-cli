@@ -1522,17 +1522,26 @@ func runSkillExecuteCommand(args []string) {
 
 	toolResult, err := registry.Execute(ctx, skillName, skillArgs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing skill '%s': %v\n", skillName, err)
+		fmt.Fprintf(os.Stderr, "Error executing skill %s: %s\n", termsafe.Line(skillName), termsafe.Text(err.Error()))
 		os.Exit(1)
 	}
 
-	// Display result
-	if !toolResult.Error {
-		fmt.Println(toolResult.Content)
-	} else {
-		fmt.Fprintf(os.Stderr, "Skill '%s' failed: %s\n", skillName, toolResult.Content)
-		os.Exit(1)
+	if code := printSkillResult(os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdout.Fd())), skillName, toolResult); code != 0 {
+		os.Exit(code)
 	}
+}
+
+// printSkillResult shows a tool result as `celeste skill` prints it and
+// returns the exit code. The content is a fetched page, a file or command
+// output: escaped for a terminal, as given for a pipe (replyFor). A
+// failure goes to stderr, always escaped.
+func printSkillResult(stdout, stderr io.Writer, terminal bool, name string, res tools.ToolResult) int {
+	if res.Error {
+		fmt.Fprintf(stderr, "Skill %s failed: %s\n", termsafe.Line(name), termsafe.Text(res.Content))
+		return 1
+	}
+	fmt.Fprintln(stdout, replyFor(terminal, res.Content))
+	return 0
 }
 
 // runSkillsCommand handles skill-related commands.
@@ -1702,7 +1711,7 @@ func sessionCLI(args []string, manager *config.SessionManager, stdout, stderr io
 			fmt.Fprintf(stderr, "Error loading session: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "Loaded session: %s (%d messages)\n", session.ID, len(session.Messages))
+		fmt.Fprintf(stdout, "Loaded session: %s (%d messages)\n", termsafe.Line(session.ID), len(session.Messages))
 		return 0
 	}
 
@@ -1718,12 +1727,12 @@ func sessionCLI(args []string, manager *config.SessionManager, stdout, stderr io
 	fmt.Fprintf(stdout, "\nSaved Sessions (%d):\n", len(sessions))
 	for _, s := range sessions {
 		summary := s.Summarize()
-		fmt.Fprintf(stdout, "\n  ID: %s\n", summary.ID)
+		fmt.Fprintf(stdout, "\n  ID: %s\n", termsafe.Line(summary.ID))
 		fmt.Fprintf(stdout, "    Messages: %d\n", summary.MessageCount)
 		fmt.Fprintf(stdout, "    Created:  %s\n", summary.CreatedAt.Format("2006-01-02 15:04"))
 		fmt.Fprintf(stdout, "    Updated:  %s\n", summary.UpdatedAt.Format("2006-01-02 15:04"))
 		if summary.FirstMessage != "" {
-			fmt.Fprintf(stdout, "    Preview:  %s\n", summary.FirstMessage)
+			fmt.Fprintf(stdout, "    Preview:  %s\n", termsafe.Line(summary.FirstMessage)) // pasted content: escaped
 		}
 	}
 	fmt.Fprintln(stdout)
