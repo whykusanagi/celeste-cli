@@ -89,3 +89,13 @@ func TestCheckDangerousCommand_SafeCommands(t *testing.T) {
 	assert.Empty(t, checkDangerousCommand("find . -name '*.go' | wc -l"))
 	assert.Empty(t, checkDangerousCommand("diff file1.go file2.go"))
 }
+
+// Aikido 806869510: the recursive-rm refusal covers a home path that climbs
+// out of the home directory.
+func TestCheckDangerousCommand_HomeTraversal(t *testing.T) {
+	for _, cmd := range []string{"rm -rf ~/../someuser", "rm -rf $HOME/../someuser", "rm -r ~/x/../.."} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("checkDangerousCommand(%q) allowed it", cmd)
+		}
+	}
+}
