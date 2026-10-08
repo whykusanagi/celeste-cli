@@ -105,3 +105,61 @@ func TestConnectInFlightHonoursDisconnectAndStop(t *testing.T) {
 		})
 	}
 }
+
+// TestReconnectAfterDisconnectDuringConnect: switching a server off while it
+// connects and straight back on is not refused as "already connecting"; the
+// new connect waits for the revoked one to end and keeps every tool.
+func TestReconnectAfterDisconnectDuringConnect(t *testing.T) {
+	registry := tools.NewRegistry()
+	m := NewManager("", registry)
+	gt := &gatedTransport{
+		inner:   &mockTransport{responses: []*Response{makeInitResponse(), makeToolsListResponse("t1")}},
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	first := make(chan error, 1)
+	go func() {
+		first <- m.connectClient(context.Background(), "srv", NewClient(gt, "celeste", "1.0"), "stdio", false)
+	}()
+	select {
+	case <-gt.reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connect never reached tools/list")
+	}
+	// Hold the revoked connect just before it ends, as a slow one would.
+	hookReached, hookRelease := make(chan struct{}), make(chan struct{})
+	testHookConnectEnding = func() { close(hookReached); <-hookRelease }
+	t.Cleanup(func() { testHookConnectEnding = nil })
+	_ = m.Disconnect("srv")
+	close(gt.release)
+	select {
+	case <-hookReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the revoked connect never ended")
+	}
+	testHookConnectEnding = nil
+
+	second := make(chan error, 1)
+	go func() {
+		mt := &mockTransport{responses: []*Response{makeInitResponse(), makeToolsListResponse("t1")}}
+		second <- m.connectClient(context.Background(), "srv", NewClient(mt, "celeste", "1.0"), "stdio", false)
+	}()
+	// Let the reconnect reach the in-flight check before the revoked one ends.
+	time.Sleep(50 * time.Millisecond)
+	close(hookRelease)
+	<-first
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatalf("reconnect after a disconnect was refused: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconnect did not return")
+	}
+	if !m.IsConnected("srv") {
+		t.Fatal("the reconnect installed no client")
+	}
+	if n := registry.Count(); n != 1 {
+		t.Fatalf("after the reconnect %d tools are registered, want 1", n)
+	}
+}

@@ -190,8 +190,13 @@ func (m *Manager) loadConfig() (*MCPConfig, error) {
 // (Aikido 806869778).
 type connectAttempt struct {
 	cancel  context.CancelFunc
-	revoked bool // guarded by Manager.mu
+	revoked bool          // guarded by Manager.mu
+	done    chan struct{} // closed once the attempt has ended and given up its slot
 }
+
+// testHookConnectEnding, when set, runs as a connect ends, before it gives
+// up its in-flight slot. Tests only.
+var testHookConnectEnding func()
 
 // revokeLocked revokes name's connect in flight, if any. m.mu must be held.
 func (m *Manager) revokeLocked(name string) {
@@ -210,24 +215,46 @@ func (m *Manager) connectClient(ctx context.Context, name string, client *Client
 	// One connect per server at a time: a second one racing it would
 	// register nothing (Add refuses the names the first holds) yet replace
 	// its client, leaving tools Disconnect never removes.
+	//
+	// A connect that Disconnect or Stop revoked is ending: wait for it
+	// (it has dropped its tools by then) instead of refusing, so a server
+	// switched off and straight back on reconnects.
 	m.mu.Lock()
-	_, live := m.clients[name]
-	if live || m.connecting[name] != nil {
+	for {
+		_, live := m.clients[name]
+		prev := m.connecting[name]
+		if live || (prev != nil && !prev.revoked) {
+			m.mu.Unlock()
+			client.Close()
+			return fmt.Errorf("connect %q: already connected or connecting", name)
+		}
+		if prev == nil {
+			break
+		}
 		m.mu.Unlock()
-		client.Close()
-		return fmt.Errorf("connect %q: already connected or connecting", name)
+		select {
+		case <-prev.done:
+		case <-ctx.Done():
+			client.Close()
+			return fmt.Errorf("connect %q: %w", name, ctx.Err())
+		}
+		m.mu.Lock()
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	attempt := &connectAttempt{cancel: cancel}
+	attempt := &connectAttempt{cancel: cancel, done: make(chan struct{})}
 	m.connecting[name] = attempt
 	m.mu.Unlock()
 	defer func() {
+		if testHookConnectEnding != nil {
+			testHookConnectEnding()
+		}
 		m.mu.Lock()
 		if m.connecting[name] == attempt {
 			delete(m.connecting, name)
 		}
 		m.mu.Unlock()
+		close(attempt.done)
 	}()
 
 	if err := client.Initialize(ctx); err != nil {
