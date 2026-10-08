@@ -300,3 +300,23 @@ func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
 	_, err = os.Stat(filepath.Join(base, "pruned", "b.txt"))
 	assert.True(t, os.IsNotExist(err), "a session spilled into the compaction store")
 }
+
+// A spill session directory an older celeste left with a name longer than
+// a session id may now be (it did not cap the length) is still a spill
+// session: it is pruned by age and counts toward the total.
+func TestPruneRemovesLongNamedLegacySessionDirs(t *testing.T) {
+	withSpillLimits(t, 1<<20, 1<<20)
+	base := t.TempDir()
+	longAgo := time.Now().Add(-2 * SpillKeepAge)
+	dir := filepath.Join(base, strings.Repeat("L", 200))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	p := filepath.Join(dir, "call_1.txt")
+	require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("p", 8000)), 0o600))
+	assert.EqualValues(t, 8000, totalSpillBytes(base), "a long-named session is not counted")
+	require.NoError(t, os.Chtimes(p, longAgo, longAgo))
+	require.NoError(t, os.Chtimes(dir, longAgo, longAgo))
+
+	require.NoError(t, PruneToolResults(base, "sess", time.Now()))
+	_, err := os.Stat(dir)
+	assert.True(t, os.IsNotExist(err), "an old long-named session was not pruned")
+}

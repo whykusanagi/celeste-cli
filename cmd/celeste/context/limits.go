@@ -66,13 +66,25 @@ const compactStoreDir = "pruned"
 // spillSessionName is the name of a session's spill directory. Only such a
 // directory is pruned or counted toward the spill total; anything else
 // under the base (the compaction store, a directory another tool made) is
-// left alone.
-var spillSessionName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+// left alone. Older celeste versions did not cap the length, so a longer
+// name of the same characters is still a session's (spillSessionDir); a
+// new spill takes only names up to 128 characters (isSpillSession).
+var spillSessionName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// isSpillSession reports whether the directory name under the spill base
-// is a spill session's.
-func isSpillSession(name string) bool {
+// maxSpillSessionName is the longest session id a new spill takes, the
+// length recall_tool_result ids allow (spillIDPattern).
+const maxSpillSessionName = 128
+
+// spillSessionDir reports whether the directory name under the spill base
+// is a spill session's, including one an older version left with a longer
+// name: the prunes and quotas cover these.
+func spillSessionDir(name string) bool {
 	return name != compactStoreDir && spillSessionName.MatchString(name)
+}
+
+// isSpillSession reports whether name is a session id a new spill takes.
+func isSpillSession(name string) bool {
+	return len(name) <= maxSpillSessionName && spillSessionDir(name)
 }
 
 // spillLockPath is the lock file of the spill base baseDir. It sits beside
@@ -320,7 +332,7 @@ func dirBytes(dir string) int64 {
 }
 
 // PruneToolResults deletes spilled tool results under baseDir ("" is
-// ToolResultsBaseDir): only spill session directories (isSpillSession),
+// ToolResultsBaseDir): only spill session directories (spillSessionDir),
 // never the compaction store beside them, whose bodies expire one by one
 // after SpillKeepAge instead (expireCompactStore). Every session directory last changed more than
 // SpillKeepAge ago, then the oldest others idle for spillActiveAge while all
@@ -360,7 +372,7 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 		errs = append(errs, err)
 	}
 	for _, d := range des {
-		if !d.IsDir() || d.Name() == keep || !isSpillSession(d.Name()) {
+		if !d.IsDir() || d.Name() == keep || !spillSessionDir(d.Name()) {
 			continue
 		}
 		path := filepath.Join(baseDir, d.Name())
@@ -374,7 +386,7 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 		live = append(live, s)
 		total += s.size
 	}
-	if isSpillSession(keep) {
+	if spillSessionDir(keep) {
 		total += dirBytes(filepath.Join(baseDir, keep))
 	}
 	sort.Slice(live, func(i, j int) bool { return live[i].changed.Before(live[j].changed) })
@@ -427,7 +439,7 @@ func totalSpillBytes(baseDir string) int64 {
 	}
 	var n int64
 	for _, d := range des {
-		if d.IsDir() && isSpillSession(d.Name()) {
+		if d.IsDir() && spillSessionDir(d.Name()) {
 			n += dirBytes(filepath.Join(baseDir, d.Name()))
 		}
 	}

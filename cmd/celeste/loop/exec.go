@@ -2,6 +2,8 @@ package loop
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -322,6 +324,22 @@ func safeName(id string, fallback string) string {
 	return name
 }
 
+// maxSpillName is the longest spill session directory or spill file name
+// (without .txt) the spill store and recall_tool_result accept.
+const maxSpillName = 128
+
+// fitSpillName shortens a safeName result longer than maxSpillName to a
+// stable name that fits: its first 100 characters, "-" and 16 hex
+// characters of the SHA-256 of the whole name, so long ids still spill and
+// can be recalled, and two long ids do not share a name.
+func fitSpillName(name string) string {
+	if len(name) <= maxSpillName {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return name[:100] + "-" + hex.EncodeToString(sum[:])[:16]
+}
+
 // spillFailedNote goes in the cut marker when the spill file could not be
 // written: the middle of the output is gone, so recall cannot bring it back.
 const spillFailedNote = "The full output could not be saved, so it cannot be recalled. " +
@@ -331,7 +349,7 @@ func (l *Loop) spill(content, id string, idx int, lim Limits) string {
 	if lim.SpillBytes <= 0 || len(content) <= lim.SpillBytes {
 		return content
 	}
-	name := fmt.Sprintf("%s-%d", safeName(id, "call-"+strconv.Itoa(idx)), l.nextSpill())
+	name := fitSpillName(fmt.Sprintf("%s-%d", safeName(id, "call-"+strconv.Itoa(idx)), l.nextSpill()))
 	capped, _, err := ctxmgr.CapToolResult(content, lim.SpillBytes, l.sessionID(), name, l.SpillDir)
 	if err != nil {
 		// The cap still applies (2.0 F3: nothing trims a result after it
@@ -345,7 +363,7 @@ func (l *Loop) spill(content, id string, idx int, lim Limits) string {
 
 func (l *Loop) sessionID() string {
 	if l.SessionID != "" {
-		return safeName(l.SessionID, "loop")
+		return fitSpillName(safeName(l.SessionID, "loop"))
 	}
 	return "loop-" + strconv.Itoa(os.Getpid())
 }
