@@ -153,6 +153,12 @@ type AppModel struct {
 	// Session persistence (optional)
 	sessionManager SessionManager
 	currentSession Session
+	// heldSession is a session loaded on another endpoint than its own
+	// without switching to it (heldOn, the endpoint in use then): until the
+	// endpoint changes, saves keep its endpoint and model, so a later
+	// startup resume still goes to its profile.
+	heldSession Session
+	heldOn      string
 
 	// Configuration (for context limits, etc.)
 	config *config.Config
@@ -2988,6 +2994,7 @@ type SessionSummary = config.SessionSummary
 func (m AppModel) SetSessionManager(sm SessionManager, session Session) AppModel {
 	m.sessionManager = sm
 	m.currentSession = session
+	m.holdEndpoint(session)
 
 	// Restore the model from the session if available. The endpoint is not
 	// taken from it: restoreEndpoint has already set it, through
@@ -3217,10 +3224,15 @@ func (m *AppModel) saveSession() error {
 	}
 
 	m.claimWorkspace(m.currentSession)
-	m.currentSession.SetEndpoint(m.endpoint)
-	m.currentSession.SetModel(m.model)
-	m.currentSession.SetModelPinned(m.modelPinned)
-	m.currentSession.SetModelUnverified(m.modelPinned && m.header.modelUnverified)
+	if m.heldSession == nil || m.heldSession != m.currentSession || m.heldOn != m.endpoint {
+		// The endpoint in use is the session's: a session loaded on
+		// another endpoint keeps its own until the endpoint changes.
+		m.heldSession, m.heldOn = nil, ""
+		m.currentSession.SetEndpoint(m.endpoint)
+		m.currentSession.SetModel(m.model)
+		m.currentSession.SetModelPinned(m.modelPinned)
+		m.currentSession.SetModelUnverified(m.modelPinned && m.header.modelUnverified)
+	}
 	m.currentSession.SetNSFWMode(m.nsfwMode)
 	if hist := m.input.GetHistory(); len(hist) > 0 {
 		m.currentSession.SetCommandHistory(hist)
@@ -3233,6 +3245,19 @@ func (m *AppModel) saveSession() error {
 	// Save synchronously: Save mutates and marshals the session, and Update
 	// keeps mutating it, so a goroutine here races.
 	return m.sessionManager.Save(m.currentSession)
+}
+
+// holdEndpoint records whether s, just loaded, uses another endpoint than
+// the one in use: the client is not switched to it, and saves keep s's
+// endpoint and model until the endpoint changes (heldSession).
+func (m *AppModel) holdEndpoint(s Session) {
+	m.heldSession, m.heldOn = nil, ""
+	if s == nil {
+		return
+	}
+	if ep := s.GetEndpoint(); ep != "" && ep != "default" && ep != m.endpoint {
+		m.heldSession, m.heldOn = s, m.endpoint
+	}
 }
 
 // saveBeforeSwitch saves the current session before an action replaces it
@@ -3345,6 +3370,7 @@ func (m AppModel) handleSessionAction(action *commands.SessionAction) AppModel {
 			if s, ok := loaded.(Session); ok {
 				m.claimWorkspace(s)
 				m.currentSession = s
+				m.holdEndpoint(s)
 
 				// Clear current chat, and the old session's ⚙ tool status
 				m.chat = m.chat.Clear()
