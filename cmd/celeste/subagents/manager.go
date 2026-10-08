@@ -666,8 +666,8 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	// The workspace spawn_agent checked is checked again now, as the run
 	// starts (a DAG entry may have waited): a directory swapped for a
 	// symlink out of the parent in between ends the run.
-	checked, err := recheckWorkspace(m.workspace, workspace)
-	if err != nil {
+	checked, stillPinned, err := recheckWorkspace(m.workspace, workspace)
+	failPinned := func(err error) (*SubagentRun, error) {
 		m.mu.Lock()
 		run.Status = "failed"
 		run.Error = err.Error()
@@ -676,7 +676,13 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		m.mu.Unlock()
 		return run, err
 	}
+	if err != nil {
+		return failPinned(err)
+	}
 	workspace = checked
+	if testHookWorkspaceRechecked != nil {
+		testHookWorkspaceRechecked(workspace)
+	}
 
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
@@ -692,6 +698,11 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 	execWorkspace := workspace
 	var wt *Worktree
 	if isolate {
+		// git works in the workspace from here: it must still be the
+		// directory checked.
+		if err := stillPinned(); err != nil {
+			return failPinned(err)
+		}
 		wtName := run.Element
 		if wtName == "" {
 			wtName = run.ID
@@ -780,6 +791,11 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		return run, fmt.Errorf("create subagent: %w", err)
 	}
 	defer runner.Close()
+	// The subagent is built for the checked path; it runs only if the
+	// path still names the directory checked.
+	if err := stillPinned(); err != nil {
+		return failPinned(err)
+	}
 
 	state, err := runner.RunGoal(ctx, markedGoal)
 	return run, m.finishRun(run, state, err, holder, outBuf.String())
@@ -1112,9 +1128,12 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	m.mu.Unlock()
 	// The run's workspace is checked against the parent's again, as on
 	// spawn: it may have been replaced since.
-	workspace, err := recheckWorkspace(m.workspace, workspace)
+	workspace, stillPinned, err := recheckWorkspace(m.workspace, workspace)
 	if err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
+	}
+	if testHookWorkspaceRechecked != nil {
+		testHookWorkspaceRechecked(workspace)
 	}
 
 	parent, err := m.parentEnv()
@@ -1129,6 +1148,9 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		return nil, fmt.Errorf("create runner for resume: %w", err)
 	}
 	defer runner.Close()
+	if err := stillPinned(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 
 	run := &SubagentRun{
 		ID:           checkpointID,
@@ -1211,3 +1233,7 @@ func capSubagentResult(result string) string {
 	}
 	return textutil.CutBytes(result, maxResultBytes) + "\n\n[Result truncated at 100k chars]"
 }
+
+// testHookWorkspaceRechecked, when set, runs right after a run's workspace
+// is checked again, before the subagent is built.
+var testHookWorkspaceRechecked func(workspace string)

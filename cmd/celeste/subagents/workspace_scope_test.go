@@ -147,3 +147,61 @@ func TestSubagentWorkspaceReplacedAfterTheCheckIsRefused(t *testing.T) {
 		t.Fatalf("status = %q, want failed", status)
 	}
 }
+
+// The workspace recheck pins the directory it checked: one replaced by a
+// symlink out of the parent after the recheck, before the subagent is built
+// and run, ends the run instead of redirecting it (Aikido review of #428).
+func TestSubagentWorkspaceReplacedAfterTheRecheckIsRefused(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(root, "repo")
+	sub := filepath.Join(parent, "pkg")
+	outside := filepath.Join(root, "elsewhere")
+	for _, d := range []string{sub, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scoped, err := scopeWorkspace(parent, "pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	swapped := false
+	testHookWorkspaceRechecked = func(ws string) {
+		if ws != scoped || swapped {
+			return
+		}
+		swapped = true
+		if err := os.Rename(sub, sub+".old"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink(outside, sub); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookWorkspaceRechecked = nil })
+
+	m := NewManager(&config.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1/v1", Model: "fake-model", Timeout: 5}, parent, false)
+	run := &SubagentRun{ID: "sub-ws-pin", Status: "running", Workspace: scoped}
+	m.mu.Lock()
+	m.runs[run.ID] = run
+	m.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = m.executeSubagent(ctx, run, "g", scoped, nil, 1, false)
+	if !swapped {
+		t.Fatal("hook never ran")
+	}
+	if err == nil || !strings.Contains(err.Error(), "changed after it was checked") {
+		t.Fatalf("executeSubagent = %v; want the swapped workspace refused", err)
+	}
+	m.mu.Lock()
+	status := run.Status
+	m.mu.Unlock()
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed", status)
+	}
+}
