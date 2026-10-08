@@ -590,17 +590,21 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	allTransfers := append(outgoing, incoming...)
 
 	// Get current balance for large transfer detection
-	balanceResult, _ := alchemyRequest(ctx, client, config, wallet.Network,
+	// (it decides large-transfer detection, so a failure fails the scan).
+	balanceResult, err := alchemyRequest(ctx, client, config, wallet.Network,
 		"eth_getBalance", []any{wallet.Address, "latest"})
-	balanceETH := 0.0
-	if balanceResult != nil {
-		if resultData, ok := balanceResult["result"].(string); ok {
-			weiBalance := new(big.Int)
-			weiBalance.SetString(resultData[2:], 16)
-			balanceETHStr := WeiToEther(weiBalance)
-			balanceETH, _ = strconv.ParseFloat(balanceETHStr, 64)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
+	resultData, _ := balanceResult["result"].(string)
+	weiBalance, ok := new(big.Int), len(resultData) > 2 && resultData[:2] == "0x"
+	if ok {
+		_, ok = weiBalance.SetString(resultData[2:], 16)
+	}
+	if !ok {
+		return nil, fmt.Errorf("unexpected eth_getBalance result %q", resultData)
+	}
+	balanceETH, _ := strconv.ParseFloat(WeiToEther(weiBalance), 64)
 
 	// Analyze each transfer for threats
 	alerts := []SecurityAlert{}

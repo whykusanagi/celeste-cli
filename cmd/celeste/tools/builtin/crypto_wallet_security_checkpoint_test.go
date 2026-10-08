@@ -33,7 +33,7 @@ func useFakeAlchemy(t *testing.T, f *fakeAlchemy) {
 // Aikido 806869487: a scan that fails for any wallet leaves the checkpoint
 // where it was, so the range is scanned again next time.
 func TestWalletCheckpointHeldOnFailedScan(t *testing.T) {
-	for _, method := range []string{"alchemy_getAssetTransfers", "eth_getLogs"} {
+	for _, method := range []string{"alchemy_getAssetTransfers", "eth_getLogs", "eth_getBalance"} {
 		t.Run(method, func(t *testing.T) {
 			f := &fakeAlchemy{fail: map[string]bool{method: true}}
 			useFakeAlchemy(t, f)
