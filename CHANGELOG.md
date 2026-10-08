@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **checkpoints:** `/undo`, `/rewind`, `celeste revert` and a failed write's rollback reach the file only through the workspace directory recorded with the change, so they cannot write or delete a file outside the workspace after a directory on the way was replaced by a symlink (Aikido 806869815).
 * **codegraph:** the index skips symlinked files, and code review reads only regular files that resolve inside the workspace, so a symlink in a repository cannot bring outside source into the index or into review snippets (Aikido 806869369).
 * **sandbox:** a workspace `.celeste/config.json` is read only when it is a regular file; a symlink, FIFO or device there is reported and ignored instead of blocking startup (Aikido 806869299).
+* **images:** resizing an image for a provider decodes at most 24 MP (12 MP for 16-bit images), one image at a time, so several large images read in one turn cannot exhaust memory (Aikido 806869432).
 
 ### Features
 
