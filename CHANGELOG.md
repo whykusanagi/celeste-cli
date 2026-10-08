@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 * **server:** `celeste serve --sse --remote` refuses to start without `--cert` and `--key`, so the bearer token is never served over plaintext HTTP beyond loopback; a certificate without its key (or the reverse) is refused too. The token check is constant-time, and the log and help say TLS, not mTLS (Aikido 806869827).
+* **server:** the SSE transport no longer lets a stalled or closed event stream hold a `POST /message` forever, and drops a stream whose reader stops reading (Aikido 806869667).
+* **server:** the SSE transport holds at most 16 event streams at once, and its request rate limit applies across all of them as well as per stream (Aikido 806869493).
 
 ### Features
 

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools/mcp"
@@ -62,6 +63,199 @@ type sseConnection struct {
 	done   chan struct{}
 }
 
+const (
+	// maxSSEConnections caps the event streams open at once, so a client
+	// cannot hold an unbounded number of them (Aikido 806869493).
+	maxSSEConnections = 16
+	// sseWriteTimeout drops a stream whose reader stopped reading.
+	sseWriteTimeout = 30 * time.Second
+)
+
+// sseHandler serves GET /sse and POST /message for one SSE server.
+type sseHandler struct {
+	s     *Server
+	ctx   context.Context
+	token string
+	mux   *http.ServeMux
+
+	connections sync.Map // id -> *sseConnection
+	connCounter atomic.Int64
+	// slots holds one token per open event stream (maxSSEConnections).
+	slots chan struct{}
+	// global admits POST /message work across every stream, so opening
+	// more streams does not multiply the configured rate (Aikido 806869493).
+	global *tokenBucket
+}
+
+func (s *Server) newSSEHandler(ctx context.Context, token string) *sseHandler {
+	h := &sseHandler{
+		s:      s,
+		ctx:    ctx,
+		token:  token,
+		mux:    http.NewServeMux(),
+		slots:  make(chan struct{}, maxSSEConnections),
+		global: newTokenBucket(s.config.RateLimit),
+	}
+	h.mux.HandleFunc("GET /sse", h.handleStream)
+	h.mux.HandleFunc("POST /message", h.handleMessage)
+	return h
+}
+
+func (h *sseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
+
+// handleStream establishes an SSE event stream.
+func (h *sseHandler) handleStream(w http.ResponseWriter, r *http.Request) {
+	if !validateBearerToken(r, h.token) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		return
+	}
+
+	select {
+	case h.slots <- struct{}{}:
+		defer func() { <-h.slots }()
+	default:
+		http.Error(w, "too many open streams", http.StatusServiceUnavailable)
+		return
+	}
+
+	connID := fmt.Sprintf("conn-%d", h.connCounter.Add(1))
+	conn := &sseConnection{
+		id:     connID,
+		events: make(chan []byte, 64),
+		bucket: newTokenBucket(h.s.config.RateLimit),
+		done:   make(chan struct{}),
+	}
+	h.connections.Store(connID, conn)
+	defer func() {
+		h.connections.Delete(connID)
+		close(conn.done)
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Each write gets a deadline: a reader that stops reading ends its
+	// stream instead of holding the handler forever (Aikido 806869667).
+	rc := http.NewResponseController(w)
+	write := func(format string, args ...any) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+		if _, err := fmt.Fprintf(w, format, args...); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// Send endpoint event so client knows where to POST
+	if !write("event: endpoint\ndata: /message?connectionId=%s\n\n", connID) {
+		return
+	}
+
+	log.Printf("[mcp-server] SSE connection established: %s", connID)
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-r.Context().Done():
+			log.Printf("[mcp-server] SSE connection closed: %s", connID)
+			return
+		case data := <-conn.events:
+			if !write("event: message\ndata: %s\n\n", data) {
+				return
+			}
+		case <-ticker.C:
+			if !write(": keepalive\n\n") {
+				return
+			}
+		}
+	}
+}
+
+// handleMessage receives a JSON-RPC request and routes its response to the
+// connection's SSE stream.
+func (h *sseHandler) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if !validateBearerToken(r, h.token) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	connID := r.URL.Query().Get("connectionId")
+	if connID == "" {
+		http.Error(w, "missing connectionId", http.StatusBadRequest)
+		return
+	}
+
+	connVal, ok := h.connections.Load(connID)
+	if !ok {
+		http.Error(w, "unknown connection", http.StatusNotFound)
+		return
+	}
+	conn := connVal.(*sseConnection)
+
+	// Rate limit check: the connection's own bucket and the server-wide one.
+	if !conn.bucket.allow() || !h.global.allow() {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+
+	var req mcp.Request
+	if err := json.Unmarshal(body, &req); err != nil {
+		errResp := h.s.errorResponse(0, -32700, "parse error", nil)
+		data, _ := json.Marshal(errResp)
+		conn.send(r.Context(), data)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// Dispatch the request
+	resp, err := h.s.dispatch(r.Context(), &req)
+	if err != nil {
+		errResp := h.s.errorResponse(req.ID, -32603, err.Error(), nil)
+		data, _ := json.Marshal(errResp)
+		conn.send(r.Context(), data)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	if resp != nil {
+		data, _ := json.Marshal(resp)
+		conn.send(r.Context(), data)
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// send queues data on the connection's stream. It gives up once the stream
+// has closed or the POST's request has gone, so a stalled or departed
+// reader never blocks a POST goroutine for good (Aikido 806869667).
+func (c *sseConnection) send(ctx context.Context, data []byte) bool {
+	select {
+	case c.events <- data:
+		return true
+	case <-c.done:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // serveSSE starts the HTTP server for SSE transport.
 func (s *Server) serveSSE(ctx context.Context) error {
 	// Decide the address and TLS before anything else, so a remote server
@@ -78,130 +272,7 @@ func (s *Server) serveSSE(ctx context.Context) error {
 		return fmt.Errorf("token setup: %w", err)
 	}
 
-	connections := &sync.Map{} // id -> *sseConnection
-	var connCounter int
-	var connMu sync.Mutex
-
-	mux := http.NewServeMux()
-
-	// GET /sse -- establish SSE event stream
-	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
-		if !validateBearerToken(r, token) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "SSE not supported", http.StatusInternalServerError)
-			return
-		}
-
-		connMu.Lock()
-		connCounter++
-		connID := fmt.Sprintf("conn-%d", connCounter)
-		connMu.Unlock()
-
-		conn := &sseConnection{
-			id:     connID,
-			events: make(chan []byte, 64),
-			bucket: newTokenBucket(s.config.RateLimit),
-			done:   make(chan struct{}),
-		}
-		connections.Store(connID, conn)
-		defer func() {
-			connections.Delete(connID)
-			close(conn.done)
-		}()
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		// Send endpoint event so client knows where to POST
-		fmt.Fprintf(w, "event: endpoint\ndata: /message?connectionId=%s\n\n", connID)
-		flusher.Flush()
-
-		log.Printf("[mcp-server] SSE connection established: %s", connID)
-
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-r.Context().Done():
-				log.Printf("[mcp-server] SSE connection closed: %s", connID)
-				return
-			case data := <-conn.events:
-				fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
-				flusher.Flush()
-			case <-ticker.C:
-				fmt.Fprintf(w, ": keepalive\n\n")
-				flusher.Flush()
-			}
-		}
-	})
-
-	// POST /message -- receive JSON-RPC requests, route responses to SSE stream
-	mux.HandleFunc("POST /message", func(w http.ResponseWriter, r *http.Request) {
-		if !validateBearerToken(r, token) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		connID := r.URL.Query().Get("connectionId")
-		if connID == "" {
-			http.Error(w, "missing connectionId", http.StatusBadRequest)
-			return
-		}
-
-		connVal, ok := connections.Load(connID)
-		if !ok {
-			http.Error(w, "unknown connection", http.StatusNotFound)
-			return
-		}
-		conn := connVal.(*sseConnection)
-
-		// Rate limit check
-		if !conn.bucket.allow() {
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024)) // 1MB max
-		if err != nil {
-			http.Error(w, "read error", http.StatusBadRequest)
-			return
-		}
-
-		var req mcp.Request
-		if err := json.Unmarshal(body, &req); err != nil {
-			errResp := s.errorResponse(0, -32700, "parse error", nil)
-			data, _ := json.Marshal(errResp)
-			conn.events <- data
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-
-		// Dispatch the request
-		resp, err := s.dispatch(r.Context(), &req)
-		if err != nil {
-			errResp := s.errorResponse(req.ID, -32603, err.Error(), nil)
-			data, _ := json.Marshal(errResp)
-			conn.events <- data
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-
-		if resp != nil {
-			data, _ := json.Marshal(resp)
-			conn.events <- data
-		}
-
-		w.WriteHeader(http.StatusAccepted)
-	})
+	mux := s.newSSEHandler(ctx, token)
 
 	httpServer := &http.Server{
 		Addr:    bindAddr,
