@@ -29,24 +29,50 @@ func (s *Server) serveStdioStreams(ctx context.Context, r io.Reader, w io.Writer
 
 	log.Printf("[mcp-server] stdio transport started")
 
+	// The read runs on its own goroutine so a cancel is seen even while
+	// stdin has no data: a blocking Read cannot be interrupted, so the loop
+	// waits on the next line or the cancel, whichever comes first.
+	// ponytail: the reader goroutine stays parked in Read after a cancel
+	// until stdin yields or closes; the process exits soon after anyway.
+	type scanned struct {
+		line []byte
+		done bool
+		err  error
+	}
+	lines := make(chan scanned)
+	go func() {
+		for scanner.Scan() {
+			select {
+			case lines <- scanned{line: append([]byte(nil), scanner.Bytes()...)}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		select {
+		case lines <- scanned{done: true, err: scanner.Err()}:
+		case <-ctx.Done():
+		}
+	}()
+
 	for {
+		var next scanned
 		select {
 		case <-ctx.Done():
 			log.Printf("[mcp-server] stdio transport shutting down")
 			return ctx.Err()
-		default:
+		case next = <-lines:
 		}
 
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return fmt.Errorf("stdin read error: %w", err)
+		if next.done {
+			if next.err != nil {
+				return fmt.Errorf("stdin read error: %w", next.err)
 			}
 			// EOF -- client disconnected
 			log.Printf("[mcp-server] stdin closed (EOF)")
 			return nil
 		}
 
-		line := scanner.Bytes()
+		line := next.line
 		if len(line) == 0 {
 			continue // skip empty lines
 		}

@@ -41,7 +41,7 @@ func TestRebuild_ConcurrentQueryNeverGetsOldIndex(t *testing.T) {
 	<-evicted
 
 	// Mid-rebuild: every way in to the index is refused, not opened.
-	if _, _, err := srv.indexerFor(ws); assert.Error(t, err) {
+	if _, _, _, err := srv.indexerFor(ws); assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "being built")
 	}
 	for _, tc := range queryToolCalls {

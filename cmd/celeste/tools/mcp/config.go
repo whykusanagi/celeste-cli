@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -58,8 +59,12 @@ type ServerConfig struct {
 // LoadConfig reads and parses the MCP configuration from a JSON file.
 // If the file does not exist, returns an empty config (not an error).
 // This allows celeste to start without any MCP servers configured.
+//
+// Only a regular file of at most maxConfigBytes is read: a workspace's
+// .mcp.json is untrusted, and a FIFO or a link to a device would block or
+// never end (Aikido 806869859).
 func LoadConfig(path string) (*MCPConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &MCPConfig{Servers: make(map[string]ServerConfig)}, nil
@@ -85,6 +90,43 @@ func LoadConfig(path string) (*MCPConfig, error) {
 	}
 
 	return &config, nil
+}
+
+// maxConfigBytes caps an MCP config file. Real ones are a few KiB.
+const maxConfigBytes = 1 << 20
+
+// readConfigFile reads path if it is a regular file of at most
+// maxConfigBytes. It checks the file before opening it (opening a FIFO
+// blocks), opens it non-blocking where the OS has that, and checks the
+// opened file again.
+func readConfigFile(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonBlock, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	ofi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !ofi.Mode().IsRegular() || !os.SameFile(fi, ofi) {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxConfigBytes {
+		return nil, fmt.Errorf("file too large (over %d bytes)", maxConfigBytes)
+	}
+	return data, nil
 }
 
 // SetServerEnabled flips the `enabled` flag of one server in the config file at
