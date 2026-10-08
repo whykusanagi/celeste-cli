@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 )
 
 // MaxIncludeDepth is the maximum nesting depth for @include resolution.
@@ -69,12 +70,14 @@ func newIncludeState() *includeState {
 	return &includeState{visited: make(map[string]bool), roots: make(map[string]*os.Root)}
 }
 
-// root is dir opened as an os.Root, opened on first use.
+// root is dir (a resolved path) opened as an os.Root on first use, by
+// realroot.Open: the repository root or a directory above it replaced by
+// a symlink after the containment check is refused, not followed.
 func (st *includeState) root(dir string) (*os.Root, error) {
 	if r, ok := st.roots[dir]; ok {
 		return r, nil
 	}
-	r, err := os.OpenRoot(dir)
+	r, err := realroot.Open(dir)
 	if err != nil {
 		return nil, err
 	}

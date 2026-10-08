@@ -95,3 +95,55 @@ func TestIndexingReadsRegularWorkspaceFile(t *testing.T) {
 		t.Errorf("hashFile: %v", err)
 	}
 }
+
+// The workspace, or a directory above it, replaced by a symlink after the
+// indexer was opened on it is refused, not followed: the indexer keeps
+// the real workspace it was opened on and opens it without following a
+// symlink on its path.
+func TestIndexingRefusesWorkspaceSwappedForSymlink(t *testing.T) {
+	for _, swapParent := range []bool{false, true} {
+		base, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(base, "p")
+		ws := filepath.Join(parent, "ws")
+		if err := os.MkdirAll(ws, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, "a.py"), []byte("def inside_fn():\n    pass\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		evil := filepath.Join(base, "evil")
+		if err := os.MkdirAll(filepath.Join(evil, "ws"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(evil, "ws", "a.py"), []byte("def outside_only_secret():\n    pass\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		store, err := NewStore(filepath.Join(t.TempDir(), "idx.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx := NewIndexerWithStore(store, ws)
+
+		swapped, target := ws, filepath.Join(evil, "ws")
+		if swapParent {
+			swapped, target = parent, evil
+		}
+		if err := os.Rename(swapped, swapped+".moved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, swapped); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if res, err := idx.parseFile("a.py"); err == nil && res != nil {
+			for _, s := range res.Symbols {
+				if strings.Contains(s.Name, "outside") {
+					t.Errorf("swapParent=%v: parsed %q through a replaced workspace", swapParent, s.Name)
+				}
+			}
+		}
+		store.Close()
+	}
+}

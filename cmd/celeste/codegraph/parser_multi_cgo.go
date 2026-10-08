@@ -329,6 +329,7 @@ func (w *multiWalker) walk(node *tree_sitter.Node, currentFn string) {
 				SourceScope: w.fnScope,
 				TargetName:  target,
 				Kind:        EdgeCalls,
+				SelfCall:    w.fnScope != "" && w.isSelfCall(node),
 			})
 		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -482,6 +483,53 @@ func (w *multiWalker) extractCallTarget(node *tree_sitter.Node) string {
 		return w.identFromExpr(node.NamedChild(0))
 	}
 	return ""
+}
+
+// isSelfCall reports whether a call node calls a method of the caller's
+// own class: $this->m(), self::m() and static::m() in PHP; this.m() and a
+// call with no receiver in Java; self.m and a receiverless call in Ruby;
+// this->m() and an unqualified call in C++ (Aikido review of #414).
+// Python and JS/TS spell the receiver out (self.m, this.m), which
+// selfCallee reads from the target name instead.
+func (w *multiWalker) isSelfCall(node *tree_sitter.Node) bool {
+	switch w.lang {
+	case "php":
+		switch node.Kind() {
+		case "member_call_expression", "nullsafe_member_call_expression":
+			obj := node.ChildByFieldName("object")
+			return obj != nil && w.nodeText(obj) == "$this"
+		case "scoped_call_expression":
+			scope := node.ChildByFieldName("scope")
+			if scope == nil {
+				return false
+			}
+			s := strings.ToLower(w.nodeText(scope))
+			return s == "self" || s == "static"
+		}
+	case "java":
+		if node.Kind() == "method_invocation" {
+			obj := node.ChildByFieldName("object")
+			return obj == nil || obj.Kind() == "this"
+		}
+	case "ruby":
+		if node.Kind() == "call" {
+			recv := node.ChildByFieldName("receiver")
+			return recv == nil || recv.Kind() == "self"
+		}
+	case "cpp":
+		fn := node.ChildByFieldName("function")
+		if fn == nil {
+			return false
+		}
+		switch fn.Kind() {
+		case "identifier":
+			return true
+		case "field_expression":
+			arg := fn.ChildByFieldName("argument")
+			return arg != nil && arg.Kind() == "this"
+		}
+	}
+	return false
 }
 
 // phpCallTarget returns the callee name of a PHP call node. PHP names are

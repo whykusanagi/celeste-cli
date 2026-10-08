@@ -88,8 +88,34 @@ func TestUpdate_ScopedMethodEdgesKeepTheirClass(t *testing.T) {
 func unscoped(edges []RawEdge) []RawEdge {
 	out := make([]RawEdge, len(edges))
 	for i, e := range edges {
-		e.SourceScope = ""
+		e.SourceScope, e.SelfCall = "", false
 		out[i] = e
 	}
 	return out
+}
+
+// A call on this/self (or, where that means a method of the caller's own
+// class, with no receiver) ends at the method of the caller's class in
+// PHP, Java, Ruby and C++ too, not at the first same-named method.
+func TestBuild_SelfCallsKeepTheirClassAcrossLanguages(t *testing.T) {
+	files := map[string]string{
+		"m.php": "<?php\nclass A { function helper() {} function go() { $this->helper(); } function st() { self::helper(); } }\n" +
+			"class B { function helper() {} function go() { $this->helper(); } function st() { static::helper(); } }\n",
+		"M.java": "class A { void helper() {} void go() { this.helper(); } void st() { helper(); } }\n" +
+			"class B { void helper() {} void go() { this.helper(); } void st() { helper(); } }\n",
+		"m.rb": "class A\n  def helper\n  end\n  def go\n    self.helper\n  end\n  def st\n    helper()\n  end\nend\n" +
+			"class B\n  def helper\n  end\n  def go\n    self.helper\n  end\n  def st\n    helper()\n  end\nend\n",
+		"m.cpp": "class A { void helper() {} void go() { this->helper(); } void st() { helper(); } };\n" +
+			"class B { void helper() {} void go() { this->helper(); } void st() { helper(); } };\n",
+	}
+	idx, _ := buildFixture(t, files)
+	for file := range files {
+		got := scopedEdgeKeys(t, idx, file)
+		for _, want := range []string{"A.go -> A.helper", "B.go -> B.helper", "A.st -> A.helper", "B.st -> B.helper"} {
+			assert.True(t, got[want], "%s: missing edge %s (got %v)", file, want, got)
+		}
+		for _, bad := range []string{"B.go -> A.helper", "B.st -> A.helper", "A.go -> B.helper", "A.st -> B.helper"} {
+			assert.False(t, got[bad], "%s: edge attributed to the wrong class: %s", file, bad)
+		}
+	}
 }

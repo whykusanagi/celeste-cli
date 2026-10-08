@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 )
 
 // goload.go loads the workspace's Go packages and type-checks them with
@@ -70,8 +72,12 @@ type goFile struct {
 type goLoader struct {
 	ctx       context.Context
 	workspace string
-	fset      *token.FileSet
-	bctx      build.Context
+	// root is the workspace, resolved and opened once for the pass by
+	// realroot.Open (nil when it cannot be); sources are read through it
+	// (readIn).
+	root *os.Root
+	fset *token.FileSet
+	bctx build.Context
 
 	units  map[string]*goUnit // importable units by import path
 	tunits []*goUnit          // test-augmented units
@@ -110,6 +116,10 @@ func loadGo(ctx context.Context, workspace string, relFiles []string) (*goLoader
 		listed:     map[string]listedPkg{},
 		importMaps: map[string]map[string]string{},
 		ext:        map[string]*extPkg{},
+	}
+	if r, err := realroot.Open(resolveWorkspace(workspace)); err == nil {
+		l.root = r
+		defer func() { _ = r.Close(); l.root = nil }()
 	}
 	// go/build shells out to `go list` for module imports unless a file
 	// system hook is set; setting one keeps the fallback in-process (GOROOT
@@ -210,7 +220,10 @@ func (l *goLoader) loadDir(absDir, importPath string, rels []string) {
 		abs := filepath.Join(l.workspace, rel)
 		// Read through the workspace root: a file replaced by a symlink
 		// or a FIFO since the walk is skipped (Aikido review of #421).
-		src, err := readConfined(l.workspace, rel)
+		if l.root == nil {
+			continue
+		}
+		src, err := readIn(l.root, rel)
 		if err != nil {
 			continue
 		}

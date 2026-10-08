@@ -25,6 +25,11 @@ type RawEdge struct {
 	SourceScope string
 	TargetName  string
 	Kind        EdgeKind
+	// SelfCall marks a call on the caller's own object written without
+	// the receiver in TargetName ($this->m() in PHP, an unqualified call
+	// in a Java, Ruby or C++ method): it resolves to the method of
+	// SourceScope first, like a self.m / this.m target.
+	SelfCall bool
 	// SourceFile is the workspace-relative file the edge was parsed from.
 	// Parsers leave it empty; the indexer sets it so both ends resolve
 	// against that file's symbols before any same-named symbol elsewhere.
