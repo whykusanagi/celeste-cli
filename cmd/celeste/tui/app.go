@@ -1312,7 +1312,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "init":
 				// 2.0 W4 (ruling 7): the only writers of .grimoire (and
 				// AGENTS.md) besides `celeste init`; nothing is overwritten.
-				m.chat = m.chat.AddSystemMessage(runInitCommand(m.projectDir(), cmd.Args))
+				m.chat = m.chat.AddSystemMessage(termsafe.Text(runInitCommand(m.projectDir(), cmd.Args))) // names workspace paths
 				return m, nil
 
 			case "grimoire":
@@ -1324,7 +1324,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !found && m.grimoireContent != "" {
 					text += "\n\nNo project context on disk now; this session loaded at start:\n\n" + m.grimoireContent
 				}
-				m.chat = m.chat.AddSystemMessage(text)
+				// Workspace files: escaped before the system line's styling,
+				// which keeps SGR (a color pair can still hide text).
+				m.chat = m.chat.AddSystemMessage(termsafe.Text(text))
 				return m, nil
 
 			case "index":
