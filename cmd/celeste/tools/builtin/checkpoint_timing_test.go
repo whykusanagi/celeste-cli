@@ -30,12 +30,12 @@ func failWritesAfter(t *testing.T, ok int) {
 	t.Helper()
 	orig := writeFileFunc
 	n := 0
-	writeFileFunc = func(name string, data []byte, perm os.FileMode) error {
+	writeFileFunc = func(ws, name string, data []byte, perm os.FileMode) error {
 		n++
 		if n <= ok {
-			return orig(name, data, perm)
+			return orig(ws, name, data, perm)
 		}
-		_ = orig(name, []byte("partial"), perm)
+		_ = orig(ws, name, []byte("partial"), perm)
 		return errors.New("disk full")
 	}
 	t.Cleanup(func() { writeFileFunc = orig })

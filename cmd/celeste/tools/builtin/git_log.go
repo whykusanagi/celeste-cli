@@ -3,11 +3,11 @@ package builtin
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -84,9 +84,11 @@ func (t *GitLogTool) Execute(ctx context.Context, input map[string]any, progress
 		args = append(args, "--", p)
 	}
 
-	cmd := exec.CommandContext(timeout, "git", args...)
-	cmd.Dir = t.workspace
-	out, err := cmd.Output()
+	var out []byte
+	cmd, err := gitsafe.Command(timeout, t.workspace, args...)
+	if err == nil {
+		out, err = cmd.Output()
+	}
 	if err != nil {
 		errResult := map[string]any{"error": "git log failed: " + err.Error()}
 		data, _ := json.Marshal(errResult)

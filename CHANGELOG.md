@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **mcp:** responses from an MCP server are capped at 16 MiB on every transport (a stdio line, an HTTP body, an HTTP event stream), and the responses no call has read yet are capped at 16 MiB in all (and 256 responses on HTTP); an oversized stdio line closes that server's connection, and an SSE stream that ends (on an oversized event or otherwise) fails the waiting call instead of leaving it hanging. This also bounds a `tools/list` reply (Aikido 806869944, 806869726).
 * **mcp:** the SSE transport POSTs only to an endpoint on the configured server's own origin, and the SSE and HTTP transports follow redirects only within that origin. An explicit default port (`:443`, `:80`) counts as the same origin, and a redirect from http to https on the same host is followed (Aikido 806869691).
 * **context:** spilled tool results (`~/.celeste/tool-results`) are bounded: one file keeps at most the first 32 MiB of a result, one session spills at most 256 MiB (past that a result is cut in memory with a note; rewriting a spill file does not count the file it replaces), and the first spill of a run deletes sessions' spills last changed over 30 days ago, then the oldest while all of them are over 1 GiB (Aikido 806869375).
+* **sandbox:** the git directories made writable for a workspace are taken from its `.git` only when they check out: a symlinked `.git` is ignored, and a `.git` file must name a linked worktree's or a submodule's git dir that points back to the workspace. A git directory that is the root or contains the workspace or the home directory is never made writable (Aikido 806869303).
+* **sandbox:** each git directory's `config`, `config.worktree` and `hooks` stay read-only to sandboxed commands, the workspace's own `.git` included (a read-only bind on Linux, a deny rule on macOS). Celeste's own git commands run with `core.fsmonitor` off and no hooks, and the merge of a subagent's lane uses git's text merge in place of configured merge drivers. So do the pointers that lead git to a git directory, whose config git would otherwise take from one a command planted: each git directory's `commondir` and `gitdir`, a linked worktree's `.git` file, and a `.git` in a workspace below the repository's root (on Linux, where bubblewrap cannot bind a missing one, celeste removes or restores it after each sandboxed command and reports it). Celeste's own git names the git directory it verified (`GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE`) and runs with no filter driver from the repository's own config, no signature check, no submodule recursion, and no textconv or external diff. Under the sandbox, commands that change the repository's git config now fail (Aikido 806869318).
+* **bash:** the recursive-`rm` refusal now also covers a home-relative path (`~`, `$HOME`, `${HOME}`) that climbs to or above the home directory with `..` (Aikido 806869510).
+* **bash:** the privilege-escalation refusal (`sudo`, `su`, `doas`, `pkexec`) reads the command as a shell does, so quoting or escaping the command word, an absolute path to it, or nesting it in `sh -c`, `eval`, a wrapper (`env`, `nohup`, `timeout 5`, `xargs`, ...) or `find -exec` is refused too; a quoted argument that only names one (`grep -rn "sudo" scripts/`) is not (Aikido 806869897).
+* **permissions:** the permission prompt rates a shell that reads its script from stdin as destructive for every spelling of the input (an attached or numbered redirect, a heredoc, a here-string) and no longer takes a shell option's value for a script file (Aikido 806869720).
+* **grimoire:** a grimoire found in the repository (`.grimoire`, `.grimoire.local`, `.celeste/grimoire/*.md`) is read only when it is a regular file inside the directory it was found in, never through a symlink, and at most 25 KB of it (cut on a character boundary); its `@` includes must resolve inside the repository (outside `.git`), and `@~/` includes are allowed only in the user's own grimoires: `~/.celeste/grimoire.md`, and those in the home directory, its `~/.celeste/grimoire/` fragments and directories above the git root, which may also be symlinks (Aikido 806869326, 806781982).
+* **tools:** `write_file`, `patch_file` and `splice_file` create directories, write, append and clean up through a handle on the workspace directory, so a directory replaced by a symlink after the path check cannot move the write outside the workspace (Aikido 806869649, 806869673, 806869722).
+* **checkpoints:** `/undo`, `/rewind`, `celeste revert` and a failed write's rollback reach the file only through the workspace directory recorded with the change, so they cannot write or delete a file outside the workspace after a directory on the way was replaced by a symlink, and a file replaced by a FIFO no longer hangs them (Aikido 806869815).
+* **codegraph:** the index skips symlinked files, FIFOs and devices, and code review reads only regular files that resolve inside the workspace, so a symlink in a repository cannot bring outside source into the index or into review snippets (Aikido 806869369).
+* **sandbox:** a workspace `.celeste/config.json` is read only when it is a regular file; a symlink, FIFO or device there is reported and ignored instead of blocking startup (Aikido 806869299).
+* **images:** resizing an image for a provider decodes at most 24 MP (12 MP for 16-bit images), one image at a time, so several large images read in one turn cannot exhaust memory (Aikido 806869432).
+* **tools:** `read_file`, `search`, `patch_file` and `splice_file` read only regular files, so a FIFO or device in the workspace no longer blocks them, and never read more than they use: `read_file` reads up to its 512 KB ceiling (10 MB for images), and `patch_file` and `splice_file` refuse files over 16 MB (Aikido 806869908).
+* **tools:** `web_fetch` only connects to public addresses. The address is checked when each connection is made, redirects included, so loopback, private-network, link-local, CGNAT and cloud metadata addresses are refused by default, also when written as an IPv6 address that carries the IPv4 one (mapped, IPv4-compatible, NAT64, 6to4, Teredo). `"web_fetch_allow_private": true` in the config, or `CELESTE_WEB_FETCH_ALLOW_PRIVATE=1`, allows them for local docs servers. web_fetch no longer goes through an `HTTP(S)_PROXY` (Aikido 806869856).
+* **tools:** `collections_search` searches only the collections enabled with `/collections`; a `collection_id` outside them is refused (Aikido 806869660).
+* **wallet_security:** a scan reads every page of asset transfers in its block range. A range with more transfers than one scan reads (50 pages per direction) is scanned up to the last block it read completely, and the next scan continues from there; a single block with more than that fails the scan. Transfers are matched to a monitored wallet regardless of address letter case (Aikido 806869642).
+* **wallet_security:** a wallet scan that fails, a token-approval check included, no longer moves the scan checkpoint, so the same block range is scanned again next time. Checkpoints are kept per network (`last_checked_blocks`), each moved only as far as every wallet on it was scanned, and the next scan starts at the block after it, so a range cut off at the page cap always moves forward. An old file's single `last_checked_block` is moved to the first wallet's network once and no longer written; the monitor's state files are written atomically and readable only by you, and the monitor daemon reports a failed scan instead of "No threats detected" (Aikido 806869487).
+* **wallet_security:** the alerts log stores each on-chain event once (by network, wallet, alert type, transaction and transfer or log entry) and keeps the newest 1000 alerts; a scan reports only new alerts, and `get_security_alerts` returns the newest 100 with the total (Aikido 806869535).
 
 ### Features
 
@@ -150,6 +167,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * `celeste agent` runs on `agent_model` when one is set, as subagents and
   MCP agent mode already did.
+
+### Security
+
+* **release:** the release workflow now checks the pushed tag before any
+  job that holds a secret runs. The tag must be annotated, signed by the
+  release key (primary or its signing subkey, with the key read from
+  `main`), and on `main`; otherwise nothing is built, signed or published.
+  The workflow grants no token permissions by default, and only the publish
+  job can write (Aikido 806869730).
+* **ci:** every GitHub Action in the workflows is pinned to a full commit
+  SHA, and no checkout keeps the job token in the clone (Aikido 806869782,
+  806780680, 806780676).
+* **deps:** the indirect `github.com/libp2p/go-libp2p` requirement moves to
+  v0.27.8 (Aikido 806780137).
+* **build:** `make import-key` imports the repository's `whykusanagi.asc`
+  instead of fetching a key from Keybase, and fails unless the file holds
+  the release key and its signing subkey (Aikido 806869823).
 
 ## [1.16.0](https://github.com/whykusanagi/celeste-cli/compare/v1.15.1...v1.16.0) (2026-08-19)
 

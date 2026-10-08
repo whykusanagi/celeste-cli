@@ -14,8 +14,5 @@ func hardLinked(_ string, fi os.FileInfo) bool {
 	return ok && fi.Mode().IsRegular() && st.Nlink > 1
 }
 
-// openInPlace opens path for an in-place rewrite without following a
-// symlink swapped in at it.
-func openInPlace(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0)
-}
+// oNoFollow makes an open fail on a symlink in the final component.
+const oNoFollow = syscall.O_NOFOLLOW

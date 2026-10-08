@@ -11,15 +11,17 @@ import (
 
 type workflowFile struct {
 	On          map[string]any `yaml:"on"`
+	Permissions any            `yaml:"permissions"`
 	Concurrency struct {
 		Group            string `yaml:"group"`
 		CancelInProgress bool   `yaml:"cancel-in-progress"`
 	} `yaml:"concurrency"`
 	Jobs map[string]struct {
-		If       string `yaml:"if"`
-		Needs    any    `yaml:"needs"`
-		RunsOn   any    `yaml:"runs-on"`
-		Strategy struct {
+		If          string `yaml:"if"`
+		Needs       any    `yaml:"needs"`
+		RunsOn      any    `yaml:"runs-on"`
+		Permissions any    `yaml:"permissions"`
+		Strategy    struct {
 			Matrix struct {
 				Include []map[string]string `yaml:"include"`
 			} `yaml:"matrix"`
@@ -30,6 +32,7 @@ type workflowFile struct {
 			Uses string            `yaml:"uses"`
 			Run  string            `yaml:"run"`
 			Env  map[string]string `yaml:"env"`
+			With map[string]any    `yaml:"with"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
@@ -112,8 +115,8 @@ func TestReleaseWorkflowDryRunNeverPublishes(t *testing.T) {
 				if !strings.Contains(job.If, "github.event_name == 'push'") || !strings.Contains(job.If, "refs/tags/v") {
 					t.Errorf("job %s signs or publishes but its if is %q: a dry run would reach it", name, job.If)
 				}
-				if job.Needs != "build" {
-					t.Errorf("job %s needs %v, want build", name, job.Needs)
+				if !needsAll(job.Needs, "verify-tag", "build") {
+					t.Errorf("job %s needs %v, want verify-tag and build", name, job.Needs)
 				}
 			}
 		}

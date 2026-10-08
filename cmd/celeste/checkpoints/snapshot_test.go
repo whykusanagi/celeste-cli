@@ -617,7 +617,7 @@ func TestRestoreWritesInPlaceWhenNoTempFileCanBeCreated(t *testing.T) {
 	require.NoError(t, err)
 
 	old := atomicWrite
-	atomicWrite = func(string, []byte, os.FileMode) error {
+	atomicWrite = func(fileRef, []byte, os.FileMode) error {
 		return &atomicfile.TempError{Err: os.ErrPermission}
 	}
 	t.Cleanup(func() { atomicWrite = old })
@@ -796,7 +796,7 @@ func TestRestoreDoesNotWriteInPlaceOnOtherTempErrors(t *testing.T) {
 	write(t, f, "after")
 	noSpace := errors.New("no space left on device")
 	old := atomicWrite
-	atomicWrite = func(string, []byte, os.FileMode) error { return &atomicfile.TempError{Err: noSpace} }
+	atomicWrite = func(fileRef, []byte, os.FileMode) error { return &atomicfile.TempError{Err: noSpace} }
 	t.Cleanup(func() { atomicWrite = old })
 	_, err := sm.RevertLast()
 	assert.ErrorIs(t, err, noSpace)

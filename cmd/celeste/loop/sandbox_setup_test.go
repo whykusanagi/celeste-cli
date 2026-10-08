@@ -261,13 +261,8 @@ func TestRepoSandboxSymlinkIsNeverTrusted(t *testing.T) {
 func TestNestedWorktreeLaneCanWriteTheGitDirs(t *testing.T) {
 	setupHome(t)
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".git", "objects"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
-	gitdir := filepath.Join(repo, ".git", "worktrees", "fire")
-	write(t, filepath.Join(lane, ".git"), "gitdir: "+gitdir+"\n")
-	write(t, filepath.Join(gitdir, "commondir"), "../..\n")
+	gitdir := fakeWorktree(t, filepath.Join(repo, ".git"), lane)
 
 	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
 	env, _ := setupWithCfg(t, ModeAgent, cfg, repo)
@@ -336,5 +331,73 @@ func TestNestedLaneReusesTheParentsSandboxTrust(t *testing.T) {
 	defer child3.Close()
 	if child3.SandboxPolicy.Network {
 		t.Fatalf("a workspace outside the parent's needs its own trust: %+v", child3.SandboxPolicy)
+	}
+}
+
+// fakeWorktree lays out a linked worktree at lane of the repository whose
+// common dir is common, as git worktree add does, and returns its admin
+// dir.
+func fakeWorktree(t *testing.T, common, lane string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(common, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(common, "HEAD"), "ref: refs/heads/main\n")
+	admin := filepath.Join(common, "worktrees", filepath.Base(lane))
+	write(t, filepath.Join(lane, ".git"), "gitdir: "+admin+"\n")
+	write(t, filepath.Join(admin, "gitdir"), filepath.Join(lane, ".git")+"\n")
+	write(t, filepath.Join(admin, "commondir"), "../..\n")
+	write(t, filepath.Join(admin, "HEAD"), "ref: refs/heads/lane\n")
+	return admin
+}
+
+// Aikido 806869303: a git dir the workspace's metadata names is never made
+// writable when it is the root or contains the workspace or the home
+// directory, even when it is shaped like a real repository.
+func TestGitDirsNeverMakeAnAncestorOfTheWorkspaceWritable(t *testing.T) {
+	home := setupHome(t)
+	for _, common := range []string{t.TempDir(), home} {
+		ws := filepath.Join(common, "ws")
+		fakeWorktree(t, common, ws)
+		cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
+		env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
+		if slices.Contains(env.SandboxPolicy.Writable, sandbox.Resolve(common)) {
+			t.Errorf("Writable holds %s, an ancestor of the workspace or home: %v", common, env.SandboxPolicy.Writable)
+		}
+		// Nor does celeste create anything there itself (Linux binds).
+		if _, err := os.Stat(filepath.Join(common, "hooks")); err == nil {
+			t.Errorf("celeste created hooks in %s, which it refused to make writable", common)
+		}
+	}
+}
+
+// Aikido 806869318: the policy keeps every git dir's config, hooks and
+// commondir read-only, the workspace's own .git included.
+func TestSandboxKeepsGitConfigAndHooksReadOnly(t *testing.T) {
+	setupHome(t)
+	repo := t.TempDir()
+	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
+	admin := fakeWorktree(t, filepath.Join(repo, ".git"), lane)
+	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
+	for ws, dirs := range map[string][]string{repo: {filepath.Join(repo, ".git")}, lane: {filepath.Join(repo, ".git"), admin}} {
+		env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
+		for _, d := range dirs {
+			for _, name := range []string{"config", "hooks", "commondir", "gitdir"} {
+				if want := sandbox.Resolve(filepath.Join(d, name)); !slices.Contains(env.SandboxPolicy.ReadOnly, want) {
+					t.Errorf("workspace %s: ReadOnly lacks %s: %v", ws, want, env.SandboxPolicy.ReadOnly)
+				}
+			}
+			// commondir is what bubblewrap cannot bind while it is missing.
+			if want := sandbox.Resolve(filepath.Join(d, "commondir")); !slices.Contains(env.SandboxPolicy.Watch, want) {
+				t.Errorf("workspace %s: Watch lacks %s: %v", ws, want, env.SandboxPolicy.Watch)
+			}
+		}
+	}
+	// Review Important 1: a lane's .git file names its git dir; it stays
+	// read-only and watched too.
+	env, _ := setupWithCfg(t, ModeAgent, cfg, lane)
+	dotGit := sandbox.Resolve(filepath.Join(lane, ".git"))
+	if !slices.Contains(env.SandboxPolicy.ReadOnly, dotGit) || !slices.Contains(env.SandboxPolicy.Watch, dotGit) {
+		t.Errorf("the lane's .git file is not protected: ReadOnly %v, Watch %v", env.SandboxPolicy.ReadOnly, env.SandboxPolicy.Watch)
 	}
 }

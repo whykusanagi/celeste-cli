@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/shellrun"
 )
 
@@ -160,8 +161,8 @@ func captureGitWorkspaceArtifacts(workspace string, timeout time.Duration) (stri
 		return "", ""
 	}
 
-	statusOut, _ := runGit(workspace, timeout, "status", "--porcelain")
-	diffOut, _ := runGit(workspace, timeout, "diff", "--no-ext-diff")
+	statusOut, _ := runGit(workspace, timeout, "status", "--porcelain", "--ignore-submodules=dirty")
+	diffOut, _ := runGit(workspace, timeout, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty")
 	return statusOut, diffOut
 }
 
@@ -175,7 +176,13 @@ var gitMaxOutput = 64 << 20
 // Output over gitMaxOutput ends with a trailer saying it was cut, so a cut
 // patch is never taken for a whole one.
 func runGit(workdir string, timeout time.Duration, args ...string) (string, error) {
-	res := shellrun.Run(context.Background(), shellrun.Options{Dir: workdir, Args: append([]string{"git"}, args...), Timeout: timeout, MaxOutput: gitMaxOutput})
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	argv, env, err := gitsafe.Prepare(ctx, workdir, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	res := shellrun.Run(ctx, shellrun.Options{Dir: workdir, Args: append([]string{"git"}, argv...), Env: env, Timeout: timeout, MaxOutput: gitMaxOutput})
 	if res.Truncated {
 		res.Output += fmt.Sprintf("\n# celeste: output truncated at %d bytes\n", gitMaxOutput)
 	}

@@ -7,12 +7,14 @@
 package codegraph
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/gitsafe"
 )
 
 // Snapshot captures the graph state at a point in time.
@@ -155,8 +157,10 @@ func (idx *Indexer) LatestSnapshot() (*Snapshot, error) {
 }
 
 func detectGitCommit(workspace string) string {
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
-	cmd.Dir = workspace
+	cmd, err := gitsafe.Command(context.Background(), workspace, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "unknown"
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
