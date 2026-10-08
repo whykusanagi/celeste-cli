@@ -82,3 +82,17 @@ func TestShowGrimoireIsTerminalSafe(t *testing.T) {
 	}
 	assertCLIInert(t, "grimoire", out.String())
 }
+
+// The artifact path in the run summary is shown escaped too.
+func TestRunSummaryArtifactPathIsTerminalSafe(t *testing.T) {
+	var b bytes.Buffer
+	printRunSummary(&b, &agent.RunState{RunID: "r1", ArtifactBundlePath: "/tmp/a" + hostileCLI})
+	assertCLIInert(t, "artifact path", b.String())
+}
+
+// `celeste agent --list-runs` shows stored goals escaped.
+func TestRunListIsTerminalSafe(t *testing.T) {
+	var b bytes.Buffer
+	printRunList(&b, []agent.RunSummary{{RunID: "r1", Status: "s" + hostileCLI, Goal: "goal " + hostileCLI}})
+	assertCLIInert(t, "run list", b.String())
+}

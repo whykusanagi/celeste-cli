@@ -15,6 +15,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
 type stringSliceFlag []string
@@ -79,15 +80,7 @@ func runAgentCommand(args []string) {
 			return
 		}
 
-		fmt.Printf("Recent Agent Runs (%d):\n", len(runs))
-		for _, r := range runs {
-			goalPreview := strings.TrimSpace(r.Goal)
-			if len(goalPreview) > 60 {
-				goalPreview = goalPreview[:60] + "..."
-			}
-			fmt.Printf("- %s [%s] turns=%d tools=%d updated=%s\n  goal: %s\n",
-				r.RunID, r.Status, r.Turn, r.ToolCalls, r.UpdatedAt.Format("2006-01-02 15:04:05"), goalPreview)
-		}
+		printRunList(os.Stdout, runs)
 		return
 	}
 
@@ -295,6 +288,20 @@ func runAgentCommand(args []string) {
 	}
 }
 
+// printRunList lists stored runs. Goals come from the user or a goal file
+// and are shown escaped.
+func printRunList(w io.Writer, runs []agent.RunSummary) {
+	fmt.Fprintf(w, "Recent Agent Runs (%d):\n", len(runs))
+	for _, r := range runs {
+		goalPreview := strings.TrimSpace(r.Goal)
+		if len(goalPreview) > 60 {
+			goalPreview = textutil.CutBytes(goalPreview, 60) + "..."
+		}
+		fmt.Fprintf(w, "- %s [%s] turns=%d tools=%d updated=%s\n  goal: %s\n",
+			termsafe.Line(r.RunID), termsafe.Line(r.Status), r.Turn, r.ToolCalls, r.UpdatedAt.Format("2006-01-02 15:04:05"), termsafe.Line(goalPreview))
+	}
+}
+
 // printEvalResults writes one line per eval case and the summary, and
 // returns how many passed.
 func printEvalResults(w io.Writer, results []agent.EvalResult) int {
@@ -315,12 +322,12 @@ func printRunSummary(w io.Writer, state *agent.RunState) {
 	if state == nil {
 		return
 	}
-	fmt.Fprintf(w, "\nRun ID: %s\n", state.RunID)
+	fmt.Fprintf(w, "\nRun ID: %s\n", termsafe.Line(state.RunID))
 	fmt.Fprintf(w, "Status: %s\n", termsafe.Line(state.Status))
 	fmt.Fprintf(w, "Turns: %d\n", state.Turn)
 	fmt.Fprintf(w, "Tool Calls: %d\n", state.ToolCallCount)
 	if strings.TrimSpace(state.ArtifactBundlePath) != "" {
-		fmt.Fprintf(w, "Artifacts: %s\n", state.ArtifactBundlePath)
+		fmt.Fprintf(w, "Artifacts: %s\n", termsafe.Line(state.ArtifactBundlePath))
 	}
 	if state.LastAssistantResponse != "" {
 		fmt.Fprintf(w, "\nFinal Response:\n%s\n", termsafe.Text(state.LastAssistantResponse))

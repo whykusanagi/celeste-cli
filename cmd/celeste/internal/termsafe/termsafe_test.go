@@ -66,3 +66,18 @@ func FuzzText(f *testing.F) {
 		}
 	})
 }
+
+// Styled keeps colors but never the SGR that hides text (conceal, 8):
+// untrusted text in a system line could otherwise make itself invisible.
+func TestStyledDropsConceal(t *testing.T) {
+	for _, in := range []string{"a\x1b[8mhidden", "a\x1b[0;8mhidden", "a\x1b[1;8;31mhidden"} {
+		if got := Styled(in); strings.Contains(got, "\x1b[") {
+			t.Errorf("Styled(%q) = %q keeps a conceal sequence", in, got)
+		}
+	}
+	for _, in := range []string{"\x1b[38;5;8mgrey\x1b[0m", "\x1b[38;2;8;8;8mdark\x1b[0m", "\x1b[48;2;1;8;3mx\x1b[m"} {
+		if got := Styled(in); got != in {
+			t.Errorf("Styled(%q) = %q, want it kept", in, got)
+		}
+	}
+}

@@ -63,7 +63,7 @@ func Text(s string) string {
 
 // Styled is Text for text celeste composed itself that may carry its own
 // colors around untrusted parts: a well-formed SGR sequence (ESC [ digits
-// and separators m: color and weight only) is kept, every other ESC
+// and separators m: color and weight; never conceal) is kept, every other ESC
 // sequence and control is escaped as Text escapes it.
 func Styled(s string) string {
 	return sanitize(s, true)
@@ -123,7 +123,8 @@ func textUnsafe(r rune) bool {
 }
 
 // sgrLen returns the length of the SGR sequence s starts with
-// (ESC [ [0-9;:]* m), or 0.
+// (ESC [ [0-9;:]* m), or 0. A sequence that conceals text (parameter 8)
+// is not kept: it could hide what follows.
 func sgrLen(s string) int {
 	if len(s) < 3 || s[0] != 0x1b || s[1] != '[' {
 		return 0
@@ -131,6 +132,9 @@ func sgrLen(s string) int {
 	for i := 2; i < len(s) && i < 64; i++ {
 		switch c := s[i]; {
 		case c == 'm':
+			if conceals(s[2:i]) {
+				return 0
+			}
 			return i + 1
 		case c >= '0' && c <= '9', c == ';', c == ':':
 		default:
@@ -138,4 +142,31 @@ func sgrLen(s string) int {
 		}
 	}
 	return 0
+}
+
+// conceals reports whether SGR parameters params turn on conceal (8). The
+// operands of an extended color (38, 48, 58: 5;n or 2;r;g;b) are skipped,
+// so a color component of 8 is not mistaken for it.
+func conceals(params string) bool {
+	ps := strings.Split(params, ";")
+	for i := 0; i < len(ps); i++ {
+		p := strings.TrimLeft(ps[i], "0")
+		if strings.Contains(ps[i], ":") {
+			continue // colon form keeps its operands inside one parameter
+		}
+		switch p {
+		case "8":
+			return true
+		case "38", "48", "58":
+			if i+1 < len(ps) {
+				switch ps[i+1] {
+				case "5":
+					i += 2
+				case "2":
+					i += 4
+				}
+			}
+		}
+	}
+	return false
 }
