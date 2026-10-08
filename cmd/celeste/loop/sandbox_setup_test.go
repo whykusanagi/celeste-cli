@@ -261,13 +261,8 @@ func TestRepoSandboxSymlinkIsNeverTrusted(t *testing.T) {
 func TestNestedWorktreeLaneCanWriteTheGitDirs(t *testing.T) {
 	setupHome(t)
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".git", "objects"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
-	gitdir := filepath.Join(repo, ".git", "worktrees", "fire")
-	write(t, filepath.Join(lane, ".git"), "gitdir: "+gitdir+"\n")
-	write(t, filepath.Join(gitdir, "commondir"), "../..\n")
+	gitdir := fakeWorktree(t, filepath.Join(repo, ".git"), lane)
 
 	cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
 	env, _ := setupWithCfg(t, ModeAgent, cfg, repo)
@@ -336,5 +331,38 @@ func TestNestedLaneReusesTheParentsSandboxTrust(t *testing.T) {
 	defer child3.Close()
 	if child3.SandboxPolicy.Network {
 		t.Fatalf("a workspace outside the parent's needs its own trust: %+v", child3.SandboxPolicy)
+	}
+}
+
+// fakeWorktree lays out a linked worktree at lane of the repository whose
+// common dir is common, as git worktree add does, and returns its admin
+// dir.
+func fakeWorktree(t *testing.T, common, lane string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(common, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(common, "HEAD"), "ref: refs/heads/main\n")
+	admin := filepath.Join(common, "worktrees", filepath.Base(lane))
+	write(t, filepath.Join(lane, ".git"), "gitdir: "+admin+"\n")
+	write(t, filepath.Join(admin, "gitdir"), filepath.Join(lane, ".git")+"\n")
+	write(t, filepath.Join(admin, "commondir"), "../..\n")
+	write(t, filepath.Join(admin, "HEAD"), "ref: refs/heads/lane\n")
+	return admin
+}
+
+// Aikido 806869303: a git dir the workspace's metadata names is never made
+// writable when it is the root or contains the workspace or the home
+// directory, even when it is shaped like a real repository.
+func TestGitDirsNeverMakeAnAncestorOfTheWorkspaceWritable(t *testing.T) {
+	home := setupHome(t)
+	for _, common := range []string{t.TempDir(), home} {
+		ws := filepath.Join(common, "ws")
+		fakeWorktree(t, common, ws)
+		cfg := sandboxCfg(&config.Sandbox{Enabled: boolPtr(true)})
+		env, _ := setupWithCfg(t, ModeAgent, cfg, ws)
+		if slices.Contains(env.SandboxPolicy.Writable, sandbox.Resolve(common)) {
+			t.Errorf("Writable holds %s, an ancestor of the workspace or home: %v", common, env.SandboxPolicy.Writable)
+		}
 	}
 }

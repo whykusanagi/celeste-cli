@@ -19,45 +19,142 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
+// fakeRepo makes a repository's common dir at repo/.git (HEAD, objects)
+// and returns it.
+func fakeRepo(t *testing.T, repo string) string {
+	t.Helper()
+	common := filepath.Join(repo, ".git")
+	if err := os.MkdirAll(filepath.Join(common, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(common, "HEAD"), "ref: refs/heads/main\n")
+	return common
+}
+
+// fakeLane makes a linked worktree at lane of the repository whose common
+// dir is common, as git worktree add does: the lane's .git file names the
+// admin dir common/worktrees/<name>, whose gitdir file points back and
+// whose commondir is "../..". It returns the admin dir.
+func fakeLane(t *testing.T, common, lane, name string) string {
+	t.Helper()
+	admin := filepath.Join(common, "worktrees", name)
+	writeFile(t, filepath.Join(lane, ".git"), "gitdir: "+admin+"\n")
+	writeFile(t, filepath.Join(admin, "gitdir"), filepath.Join(lane, ".git")+"\n")
+	writeFile(t, filepath.Join(admin, "commondir"), "../..\n")
+	writeFile(t, filepath.Join(admin, "HEAD"), "ref: refs/heads/"+name+"\n")
+	return admin
+}
+
 // A linked worktree's git dir and the repository's common dir are outside
 // the worktree: git add and git commit write there.
 func TestGitDirsOfALinkedWorktree(t *testing.T) {
 	repo := Resolve(t.TempDir())
-	if err := os.MkdirAll(filepath.Join(repo, ".git", "objects"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	common := fakeRepo(t, repo)
 	lane := filepath.Join(repo, ".celeste", "worktrees", "fire")
-	gitdir := filepath.Join(repo, ".git", "worktrees", "fire")
-	writeFile(t, filepath.Join(lane, ".git"), "gitdir: "+gitdir+"\n")
-	writeFile(t, filepath.Join(gitdir, "commondir"), "../..\n")
+	gitdir := fakeLane(t, common, lane, "fire")
 
 	got := GitDirs(filepath.Join(lane, "sub")) // a subdirectory finds it too
-	if !slices.Equal(got, []string{filepath.Join(repo, ".git"), gitdir}) {
+	if !slices.Equal(got, []string{common, gitdir}) {
 		t.Fatalf("GitDirs = %v", got)
 	}
 }
 
 func TestGitDirsOfAPlainRepoAndNoRepo(t *testing.T) {
 	repo := Resolve(t.TempDir())
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := GitDirs(filepath.Join(repo, "a", "b")); !slices.Equal(got, []string{filepath.Join(repo, ".git")}) {
+	common := fakeRepo(t, repo)
+	if got := GitDirs(filepath.Join(repo, "a", "b")); !slices.Equal(got, []string{common}) {
 		t.Fatalf("GitDirs(subdir) = %v", got)
 	}
-	// A relative gitdir: line resolves against the .git file's directory.
+	// A submodule: a relative gitdir: line resolves against the .git file's
+	// directory, and the module's core.worktree points back.
 	sub := filepath.Join(repo, "mod")
+	module := filepath.Join(common, "modules", "mod")
 	writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../.git/modules/mod\n")
-	if err := os.MkdirAll(filepath.Join(repo, ".git", "modules", "mod"), 0o755); err != nil {
+	writeFile(t, filepath.Join(module, "HEAD"), "ref: refs/heads/main\n")
+	writeFile(t, filepath.Join(module, "config"), "[core]\n\tbare = false\n\tworktree = ../../../mod\n")
+	if err := os.MkdirAll(filepath.Join(module, "objects"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := GitDirs(sub); !slices.Equal(got, []string{filepath.Join(repo, ".git", "modules", "mod")}) {
+	if got := GitDirs(sub); !slices.Equal(got, []string{module}) {
 		t.Fatalf("GitDirs(submodule) = %v", got)
 	}
 	if got := GitDirs(t.TempDir()); len(got) != 0 {
 		// t.TempDir is under the system temp dir, never inside a repository.
 		t.Fatalf("GitDirs(no repo) = %v", got)
 	}
+}
+
+// Aikido 806869303: a .git the workspace's own content controls names
+// nothing outside it. A symlinked .git, a gitdir: line naming a directory
+// that is not a linked worktree's or a submodule's git dir pointing back
+// here, and a commondir that is not the admin dir's repository are all
+// refused.
+func TestGitDirsRefusesGitMetadataThatDoesNotPointBack(t *testing.T) {
+	outside := Resolve(t.TempDir()) // stands in for / or the home directory
+	if err := os.MkdirAll(filepath.Join(outside, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(outside, "HEAD"), "ref: refs/heads/main\n")
+
+	t.Run("symlinked .git", func(t *testing.T) {
+		ws := Resolve(t.TempDir())
+		if err := os.Symlink(outside, filepath.Join(ws, ".git")); err != nil {
+			t.Skip("no symlinks here:", err)
+		}
+		if got := GitDirs(ws); len(got) != 0 {
+			t.Fatalf("GitDirs = %v, want none", got)
+		}
+	})
+	t.Run("gitdir names an arbitrary directory", func(t *testing.T) {
+		for _, target := range []string{string(filepath.Separator), outside} {
+			ws := Resolve(t.TempDir())
+			writeFile(t, filepath.Join(ws, ".git"), "gitdir: "+target+"\n")
+			if got := GitDirs(ws); len(got) != 0 {
+				t.Fatalf("gitdir: %s: GitDirs = %v, want none", target, got)
+			}
+		}
+	})
+	t.Run("admin dir that points elsewhere", func(t *testing.T) {
+		repo := Resolve(t.TempDir())
+		common := fakeRepo(t, repo)
+		real := filepath.Join(repo, "real")
+		admin := fakeLane(t, common, real, "x")
+		ws := Resolve(t.TempDir())
+		writeFile(t, filepath.Join(ws, ".git"), "gitdir: "+admin+"\n")
+		if got := GitDirs(ws); len(got) != 0 {
+			t.Fatalf("GitDirs = %v, want none: the admin dir belongs to another worktree", got)
+		}
+	})
+	t.Run("forged commondir", func(t *testing.T) {
+		repo := Resolve(t.TempDir())
+		common := fakeRepo(t, repo)
+		lane := filepath.Join(repo, "lane")
+		admin := fakeLane(t, common, lane, "lane")
+		writeFile(t, filepath.Join(admin, "commondir"), outside+"\n")
+		if got := GitDirs(lane); len(got) != 0 {
+			t.Fatalf("GitDirs = %v, want none", got)
+		}
+	})
+	t.Run("commondir in a plain .git dir", func(t *testing.T) {
+		repo := Resolve(t.TempDir())
+		common := fakeRepo(t, repo)
+		writeFile(t, filepath.Join(common, "commondir"), outside+"\n")
+		if got := GitDirs(repo); !slices.Equal(got, []string{common}) {
+			t.Fatalf("GitDirs = %v, want only %s", got, common)
+		}
+	})
+	t.Run("submodule whose worktree is elsewhere", func(t *testing.T) {
+		repo := Resolve(t.TempDir())
+		common := fakeRepo(t, repo)
+		module := filepath.Join(common, "modules", "m")
+		writeFile(t, filepath.Join(module, "HEAD"), "ref: refs/heads/main\n")
+		writeFile(t, filepath.Join(module, "config"), "[core]\n\tworktree = ../../../other\n")
+		ws := filepath.Join(repo, "m")
+		writeFile(t, filepath.Join(ws, ".git"), "gitdir: ../.git/modules/m\n")
+		if got := GitDirs(ws); len(got) != 0 {
+			t.Fatalf("GitDirs = %v, want none", got)
+		}
+	})
 }
 
 // Review Important 1: git commit in a linked worktree works under the

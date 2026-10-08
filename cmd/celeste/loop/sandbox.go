@@ -61,7 +61,17 @@ func (e *Env) resolveSandbox(user *config.Sandbox) sandbox.Policy {
 	p.Workspace = sandbox.Resolve(e.Workspace)
 	// The repository's git dirs: outside a linked worktree (an isolated
 	// subagent's lane) or above a subdirectory, and git commit writes there.
-	extra = append(extra, sandbox.GitDirs(p.Workspace)...)
+	// Never the root or a directory holding the workspace or home, however
+	// the repository's metadata got there (GitDirs refuses what does not
+	// point back; this is the backstop).
+	home := sandbox.Resolve(e.home)
+	for _, dir := range sandbox.GitDirs(p.Workspace) {
+		if filepath.Dir(dir) == dir || within(dir, p.Workspace) || (e.home != "" && within(dir, home)) {
+			e.warn("sandbox: not making %s writable: it contains the workspace or the home directory", strconv.Quote(dir))
+			continue
+		}
+		extra = append(extra, dir)
+	}
 	p.Writable = sandbox.Normalize(append(sandbox.DefaultWritable(e.home, p.Workspace), e.writablePaths(extra)...))
 	e.warnMissingSandbox(p)
 	return p
