@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **config:** celeste refuses to start without a home directory (`HOME`, or `USERPROFILE` on Windows, unset, empty or relative) instead of resolving `~/.celeste` against the current directory, and custom skills load only from an absolute directory (Aikido 806869780).
 * **tools:** `web_fetch` refuses the documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32, 3fff::/20), the retired 6to4 relay anycast, the IPv6 discard-only, IETF protocol assignment and SRv6 SID blocks, and the whole local-use NAT64 prefix 64:ff9b:1::/48, whose embedded IPv4 address cannot be read (Aikido review on #420).
 * **release:** the release workflow publishes a pushed tag only when the signed tag object names that same tag, so a ref pointing at a tag signed for another (older) release is refused (Aikido review on #423).
+* **tui:** a conceal sequence written in the colon form (`ESC[8:…m`) is escaped like the semicolon form, so workspace, tool or model text in a system line or frame cannot hide the text after it (Aikido review on #426).
 
 ### Breaking Changes
 
