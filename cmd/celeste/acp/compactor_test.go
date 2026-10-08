@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/fakeprovider"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/hooktest"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
 
@@ -148,5 +151,47 @@ func TestCompactorSummaryDeadlineIsTheClientCap(t *testing.T) {
 		if left < tc.min || left > tc.max {
 			t.Fatalf("timeout %v: summary deadline %v away, want within [%v, %v]", tc.cfg.GetTimeout(), left, tc.min, tc.max)
 		}
+	}
+}
+
+// A PreCompact reason is hook output: the note that carries it is escaped
+// like every other text celeste shows from outside.
+func TestCompactorPreCompactReasonEscaped(t *testing.T) {
+	home := t.TempDir()
+	b, err := json.Marshal(map[string]any{"hooks": []any{map[string]any{
+		"event": "PreCompact", "command": hooktest.Command(t, "canned", "escape-deny"),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".celeste"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".celeste", "hooks.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := hooks.Load(hooks.Options{Workspace: t.TempDir(), Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("word ", 4000)
+	var history []tui.ChatMessage
+	for i := 0; i < 8; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		history = append(history, tui.ChatMessage{Role: role, Content: big})
+	}
+	summarize := func(context.Context, string, string) (string, error) { return "the summary", nil }
+	cfg := &config.Config{Model: "fake-model", ContextLimit: 20000}
+	c := newCompactor(cfg, "system", &compact.Store{Dir: t.TempDir()}, summarize, h, t.Logf)
+	_, notes, _ := c.Compact(context.Background(), history, nil, false)
+	got := strings.Join(notes, "\n")
+	if !strings.Contains(got, "compaction blocked by a PreCompact hook: ") {
+		t.Fatalf("notes = %q, want the block reported", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\a") {
+		t.Fatalf("notes = %q, want the hook's escape sequences escaped", got)
 	}
 }
