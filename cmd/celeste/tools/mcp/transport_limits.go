@@ -48,9 +48,39 @@ func readLimited(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// sameOrigin reports whether a and b have the same scheme and host:port.
+// sameOrigin reports whether a and b have the same scheme, host and port,
+// a missing port counting as the scheme's default (https://h is
+// https://h:443).
 func sameOrigin(a, b *url.URL) bool {
-	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectivePort(a) == effectivePort(b)
+}
+
+// effectivePort is u's port, or its scheme's default port.
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
+}
+
+// redirectAllowed reports whether a redirect from "from" to "to" may be
+// followed: on the same origin, or an upgrade from http to https on the
+// same host and default ports.
+func redirectAllowed(from, to *url.URL) bool {
+	if sameOrigin(from, to) {
+		return true
+	}
+	return strings.EqualFold(from.Scheme, "http") && strings.EqualFold(to.Scheme, "https") &&
+		strings.EqualFold(from.Hostname(), to.Hostname()) &&
+		effectivePort(from) == "80" && effectivePort(to) == "443"
 }
 
 // newMCPHTTPClient is the HTTP client of the SSE and HTTP transports. It
@@ -62,7 +92,7 @@ func newMCPHTTPClient() *http.Client {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
-		if !sameOrigin(via[0].URL, req.URL) {
+		if !redirectAllowed(via[0].URL, req.URL) {
 			return fmt.Errorf("refusing redirect to another origin (%s)", req.URL.Host)
 		}
 		return nil

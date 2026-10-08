@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -255,4 +256,30 @@ func TestHTTPTransportBoundsQueuedBytes(t *testing.T) {
 		}
 	}
 	require.NoError(t, tr.Send(&Request{JSONRPC: "2.0", ID: 1, Method: "tools/list"}))
+}
+
+// TestOriginChecksNormaliseDefaultPorts: an explicit default port is the
+// same origin as none, and a same-host http to https upgrade redirect is
+// followed; another host or port still is not.
+func TestOriginChecksNormaliseDefaultPorts(t *testing.T) {
+	u := func(s string) *url.URL {
+		t.Helper()
+		p, err := url.Parse(s)
+		require.NoError(t, err)
+		return p
+	}
+	assert.True(t, sameOrigin(u("https://h/sse"), u("https://h:443/msg")))
+	assert.True(t, sameOrigin(u("http://H:80/sse"), u("http://h/msg")))
+	assert.False(t, sameOrigin(u("https://h/sse"), u("https://h:8443/msg")))
+	assert.False(t, sameOrigin(u("https://h/sse"), u("https://other/msg")))
+	assert.False(t, sameOrigin(u("http://h/sse"), u("https://h/msg")))
+
+	_, err := resolveEndpoint("https://h/sse", "https://h:443/msg")
+	assert.NoError(t, err)
+
+	assert.True(t, redirectAllowed(u("http://h/sse"), u("https://h/sse")), "same-host https upgrade")
+	assert.True(t, redirectAllowed(u("http://h:80/sse"), u("https://h:443/sse")))
+	assert.False(t, redirectAllowed(u("https://h/sse"), u("http://h/sse")), "a downgrade")
+	assert.False(t, redirectAllowed(u("http://h/sse"), u("https://other/sse")))
+	assert.False(t, redirectAllowed(u("http://h:8080/sse"), u("https://h:8443/sse")))
 }
