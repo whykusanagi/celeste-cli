@@ -24,6 +24,9 @@ type Message = tui.ChatMessage
 // LLM is the part of *llm.Client the loop uses.
 type LLM interface {
 	SendMessageStreamEvents(ctx context.Context, messages []tui.ChatMessage, tools []tui.SkillDefinition, cb llm.StreamEventCallback) error
+	// GetSkills is the tools a request offers, and so the only ones the
+	// loop runs: an implementation that offers none returns an empty,
+	// non-nil slice (nil places no restriction; test stubs only).
 	GetSkills() []tui.SkillDefinition
 }
 
@@ -171,6 +174,11 @@ type ToolCall struct {
 	ID    string
 	Name  string
 	Input map[string]any
+	// Key names this one invocation, unique in the process: a model's IDs
+	// may repeat or be empty, so whatever binds a permission ask to the
+	// call it shows (ACP) keys on Key, never on ID. It is also on the
+	// call's context (tools.CallKeyFromContext). Empty outside runCalls.
+	Key string
 }
 
 // Gate answers a permission Ask for one run. Its lifetime differs by mode
@@ -284,6 +292,11 @@ type Loop struct {
 	// chat's plan mode, 2.0 W4e). It can only take calls away. It runs on
 	// Run's goroutine and is read at call time.
 	Refuse func(name string) string
+	// offered is the current turn's offered tool names (reply.offered):
+	// a call to a registered tool the turn did not offer (another runtime
+	// mode's, or one hidden until find_tools activates it) is refused.
+	// nil: no restriction.
+	offered map[string]bool
 	// Tool hooks run inside Tools (F0); the loop fires no hooks itself.
 	// SessionID names the spill directory for oversized results.
 	SessionID string

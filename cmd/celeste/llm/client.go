@@ -527,6 +527,11 @@ func (c *Client) GetSkills() []tui.SkillDefinition {
 	c.mu.Lock()
 	c.lastFit, c.lastWindow = fit, window
 	c.mu.Unlock()
+	if fit.Defs == nil {
+		// Empty, never nil: the loop runs only the tools offered, and nil
+		// would place no restriction (loop.LLM).
+		return []tui.SkillDefinition{}
+	}
 	return fit.Defs
 }
 

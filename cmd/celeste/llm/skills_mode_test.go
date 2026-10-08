@@ -84,7 +84,8 @@ func TestGetSkillsHonoursDiscoveryHiding(t *testing.T) {
 }
 
 func TestGetSkillsNilRegistry(t *testing.T) {
-	if got := (&Client{}).GetSkills(); got != nil {
-		t.Errorf("GetSkills with no registry = %v, want nil", got)
+	// Empty, not nil: the loop reads nil as "no restriction" (loop.LLM).
+	if got := (&Client{}).GetSkills(); got == nil || len(got) != 0 {
+		t.Errorf("GetSkills with no registry = %#v, want an empty slice", got)
 	}
 }
