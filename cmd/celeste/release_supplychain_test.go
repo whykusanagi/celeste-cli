@@ -2,7 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -148,5 +152,65 @@ func TestReleaseWorkflowKeyFileHoldsExactlyThePrimary(t *testing.T) {
 	}
 	if strings.Contains(script, `*"$PRIMARY"*`) {
 		t.Error("verify-tag still accepts a key file that merely mentions the primary")
+	}
+}
+
+// Aikido review on #423: a v* ref can point at a signed tag object made for
+// another tag name. verify-tag reads the name the tag object was signed
+// for (its own header, never its message) and requires it to be the ref's.
+func TestReleaseWorkflowBindsTheSignedTagNameToTheRef(t *testing.T) {
+	_, wf := readWorkflow(t, "release.yml")
+	var run strings.Builder
+	for _, s := range wf.Jobs["verify-tag"].Steps {
+		run.WriteString(s.Run)
+	}
+	script := run.String()
+	if !strings.Contains(script, `[ "$signed_tag" != "$GITHUB_REF_NAME" ]`) {
+		t.Fatal("verify-tag does not compare the tag object's own name with GITHUB_REF_NAME")
+	}
+	line := regexp.MustCompile(`(?m)^\s*(signed_tag="\$\(.*\)")\s*$`).FindStringSubmatch(script)
+	if line == nil {
+		t.Fatal("verify-tag does not read signed_tag from the tag object")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("runs the extracted shell line with bash")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	dir := t.TempDir()
+	env := []string{"HOME=" + dir, "PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + filepath.Join(dir, "gitconfig"),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid"}
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "c")
+	// The old tag's message itself mentions another name on a "tag " line.
+	git("tag", "-a", "v1.0.0", "-m", "release\n\ntag v2.0.0")
+	obj := git("rev-parse", "refs/tags/v1.0.0")
+	git("update-ref", "refs/tags/v2.0.0", obj)
+	for ref, want := range map[string]string{"refs/tags/v2.0.0": "v1.0.0", "refs/tags/v1.0.0": "v1.0.0"} {
+		cmd := exec.Command(bash, "-c", "set -euo pipefail; "+line[1]+`; printf '%s' "$signed_tag"`)
+		cmd.Dir = dir
+		cmd.Env = append(env, "GITHUB_REF="+ref)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if string(out) != want {
+			t.Errorf("signed_tag for %s = %q, want %q", ref, out, want)
+		}
 	}
 }
