@@ -663,6 +663,21 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		}
 	}
 
+	// The workspace spawn_agent checked is checked again now, as the run
+	// starts (a DAG entry may have waited): a directory swapped for a
+	// symlink out of the parent in between ends the run.
+	checked, err := recheckWorkspace(m.workspace, workspace)
+	if err != nil {
+		m.mu.Lock()
+		run.Status = "failed"
+		run.Error = err.Error()
+		run.EndedAt = time.Now()
+		typedFailure(run, holderFor(run.Type), "", run.Error)
+		m.mu.Unlock()
+		return run, err
+	}
+	workspace = checked
+
 	// Build the subagent goal with recursion marker so child agents
 	// cannot spawn further subagents.
 	markedGoal := fmt.Sprintf("%s %s", recursionMarker, goal)
@@ -1095,6 +1110,12 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 		}
 	}
 	m.mu.Unlock()
+	// The run's workspace is checked against the parent's again, as on
+	// spawn: it may have been replaced since.
+	workspace, err := recheckWorkspace(m.workspace, workspace)
+	if err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 
 	parent, err := m.parentEnv()
 	if err != nil {
