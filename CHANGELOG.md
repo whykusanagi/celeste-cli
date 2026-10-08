@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **serve:** a workspace named in an MCP tool call is judged by the directory it really names: a symlink under home that leads outside home or into a protected folder is refused, every alias of one directory shares one index, rebuild gate and chat cache, and on Windows and macOS the protected folders (`.ssh`, `.aws` and the rest) are matched regardless of case (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
 * **permissions:** deny and ask rules written with an absolute path inside the workspace match again once the workspace is known, for the path given absolute (as given or with symlinks resolved) or relative (Aikido, #425 review).
 * **subagents:** a subagent's workspace is checked against the parent's again when the run starts or resumes, so a directory replaced by a symlink out of the parent after `spawn_agent` checked it ends the run (Aikido, #425 review).
 * **subagents:** once an isolated run's worktree merge is decided, a kill of that run is refused, so a run reported killed is never merged (Aikido, #425 review).

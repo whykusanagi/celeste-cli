@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -39,43 +40,117 @@ func (s *Server) servedConfig(ctx context.Context, cfg *config.Config) *config.C
 	return &c
 }
 
+// workspaceCaseInsensitive is true where the filesystem usually ignores
+// case (Windows, macOS): there ~/.SSH names ~/.ssh, so protected
+// directories are matched case-insensitively.
+var workspaceCaseInsensitive = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+// protectedWorkspaceDirs are the directories under home a workspace may not
+// be in.
+var protectedWorkspaceDirs = []string{".ssh", ".gnupg", ".aws", ".config/gcloud", ".kube"}
+
 // validateWorkspace ensures the workspace path is safe.
 // Rejects paths outside the server's original workspace or the user's home directory.
 func validateWorkspace(requested, serverWorkspace string) error {
-	if requested == "" || requested == serverWorkspace {
-		return nil
+	_, err := resolveWorkspace(requested, serverWorkspace)
+	return err
+}
+
+// resolveWorkspace validates requested and returns the one key for its
+// directory. The server's own workspace (under any spelling or symlink
+// alias) keys as its clean absolute path. Any other workspace is judged by
+// the directory it really names, symlinks resolved, so an alias under home
+// that points outside home or into a protected directory is refused, and
+// keys as that real path, so aliases of one directory share one index,
+// rebuild gate and chat cache. "" stays "".
+func resolveWorkspace(requested, serverWorkspace string) (string, error) {
+	if requested == "" {
+		return "", nil
+	}
+	serverAbs := canonicalWorkspace(serverWorkspace)
+	if requested == serverWorkspace {
+		return serverAbs, nil
 	}
 
 	// Resolve to absolute path
 	absRequested, err := filepath.Abs(requested)
 	if err != nil {
-		return fmt.Errorf("invalid path: %w", err)
+		return "", fmt.Errorf("invalid path: %w", err)
 	}
-	if absRequested == filepath.Clean(serverWorkspace) {
-		return nil
+	if absRequested == serverAbs {
+		return serverAbs, nil
+	}
+	real := realPath(absRequested)
+	if serverAbs != "" && real == realPath(serverAbs) {
+		return serverAbs, nil
 	}
 
 	// Must be under user's home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("cannot determine home directory")
+		return "", fmt.Errorf("cannot determine home directory")
 	}
+	// The spelling the caller gave must not name a protected directory,
+	// and neither may the directory it resolves to.
+	if rel, ok := relUnder(homeDir, absRequested); ok {
+		if err := checkProtected(rel); err != nil {
+			return "", err
+		}
+	}
+	rel, ok := relUnder(realPath(homeDir), real)
+	if !ok {
+		return "", fmt.Errorf("workspace must be under home directory (%s)", homeDir)
+	}
+	if err := checkProtected(rel); err != nil {
+		return "", err
+	}
+	return real, nil
+}
 
-	rel, err := filepath.Rel(homeDir, absRequested)
+// relUnder is path relative to base, and whether path is strictly below it.
+func relUnder(base, path string) (string, bool) {
+	rel, err := filepath.Rel(base, path)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("workspace must be under home directory (%s)", homeDir)
+		return "", false
 	}
+	return rel, true
+}
 
-	// Reject sensitive directories (slash form so Windows paths match too)
+// checkProtected refuses a home-relative path inside a protected directory
+// (slash form so Windows paths match too).
+func checkProtected(rel string) error {
 	slashRel := "/" + filepath.ToSlash(rel)
-	sensitive := []string{".ssh", ".gnupg", ".aws", ".config/gcloud", ".kube"}
-	for _, dir := range sensitive {
+	if workspaceCaseInsensitive {
+		slashRel = strings.ToLower(slashRel)
+	}
+	for _, dir := range protectedWorkspaceDirs {
 		if strings.Contains(slashRel, "/"+dir) {
 			return fmt.Errorf("access to %s is not allowed", dir)
 		}
 	}
-
 	return nil
+}
+
+// realPath is the absolute path p with symlinks resolved. When p does not
+// exist yet its deepest existing ancestor is resolved and the rest joined
+// on, so a not-yet-created directory under a symlink is judged by where it
+// will really be.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	dir, rest := p, ""
+	for {
+		parent := filepath.Dir(dir)
+		rest = filepath.Join(filepath.Base(dir), rest)
+		if parent == dir {
+			return p
+		}
+		dir = parent
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+	}
 }
 
 // RegisterHandlers registers all MCP tool handlers on the server.
@@ -140,10 +215,10 @@ func registerCelesteTool(s *Server) {
 
 		// Security: validate workspace is a safe directory
 		// Reject absolute paths outside of user's home to prevent directory traversal
-		if err := validateWorkspace(workspace, s.config.Workspace); err != nil {
+		workspace, err := resolveWorkspace(workspace, s.config.Workspace)
+		if err != nil {
 			return nil, fmt.Errorf("workspace rejected: %w", err)
 		}
-		workspace = canonicalWorkspace(workspace)
 
 		cfg := s.config.CelesteConfig
 		if cfg == nil {
