@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/filelock"
 )
 
 func withSpillLimits(t *testing.T, file, session int64) {
@@ -108,6 +110,31 @@ func TestCapToolResultConcurrentSpillsKeepSessionQuota(t *testing.T) {
 	}
 	assert.Equal(t, 1, failed, "exactly one of two spills over the quota is refused")
 	assert.LessOrEqual(t, dirBytes(filepath.Join(base, "sess")), int64(5000))
+}
+
+// TestCapToolResultWaitsForAnotherProcessSpill: the quota checks and the
+// write also exclude other celeste processes spilling under the same base
+// (codex review of this branch).
+func TestCapToolResultWaitsForAnotherProcessSpill(t *testing.T) {
+	if !filelock.Supported {
+		t.Skip("no file lock on this platform")
+	}
+	base := filepath.Join(t.TempDir(), "tool-results")
+	unlock, err := filelock.Lock(spillLockPath(base), time.Second)
+	require.NoError(t, err) // another process, mid-spill
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := CapToolResult(strings.Repeat("x", 3000), 1024, "sess", "a", base)
+		done <- err
+	}()
+	select {
+	case <-done:
+		unlock()
+		t.Fatal("a spill went ahead while another process held the spill lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	require.NoError(t, <-done)
 }
 
 // TestPruneToolResults: session spill directories older than the retention

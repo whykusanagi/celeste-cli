@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/filelock"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/textutil"
 )
 
@@ -46,8 +47,14 @@ var testHookSpillChecked func()
 // prunedSpillBases records the spill bases pruned in this process.
 var prunedSpillBases sync.Map
 
-// spillMu serializes the quota checks and the write of each spill.
+// spillMu serializes the quota checks and the write of each spill in this
+// process; spillLockPath, a lock file beside the spill base, does the same
+// across celeste processes.
 var spillMu sync.Mutex
+
+// spillLockPath is the lock file of the spill base baseDir. It sits beside
+// the base, not in it, so the base holds only session directories.
+func spillLockPath(baseDir string) string { return filepath.Clean(baseDir) + ".lock" }
 
 // ToolResultsBaseDir returns the base directory for spilled tool results.
 // Default: ~/.celeste/tool-results
@@ -121,6 +128,11 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	// only one of them fits (Aikido review of #424).
 	spillMu.Lock()
 	defer spillMu.Unlock()
+	unlock, err := filelock.Lock(spillLockPath(baseDir), 10*time.Second)
+	if err != nil {
+		return result, false, fmt.Errorf("lock tool-results dir: %w", err)
+	}
+	defer unlock()
 	spillPath := filepath.Join(sessionDir, toolCallID+".txt")
 	var replaced int64
 	if fi, err := os.Lstat(spillPath); err == nil && fi.Mode().IsRegular() {
