@@ -55,6 +55,14 @@ func (tb *tokenBucket) allow() bool {
 	return true
 }
 
+// refund gives back a token allow took for a request that was refused
+// anyway.
+func (tb *tokenBucket) refund() {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	tb.tokens = min(tb.tokens+1, tb.maxTokens)
+}
+
 // sseConnection tracks state for a single SSE client.
 type sseConnection struct {
 	id     string
@@ -205,8 +213,15 @@ func (h *sseHandler) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	conn := connVal.(*sseConnection)
 
-	// Rate limit check: the connection's own bucket and the server-wide one.
-	if !conn.bucket.allow() || !h.global.allow() {
+	// Rate limit check: the connection's own bucket and the server-wide
+	// one. A request the server-wide bucket refuses gives its stream's
+	// token back.
+	if !conn.bucket.allow() {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	if !h.global.allow() {
+		conn.bucket.refund()
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}

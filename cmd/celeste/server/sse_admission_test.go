@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,34 @@ func TestSSEPostRejectsOversizedBody(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"notifications/initialized"}` + strings.Repeat(" ", 1<<20)
 	if code := postMessage(t, ts, ep, body); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("POST of an oversized body = %d, want 413", code)
+	}
+}
+
+// TestSSEGlobalRejectionKeepsStreamToken: a POST the server-wide bucket
+// refuses does not use up a token of its own stream's bucket.
+func TestSSEGlobalRejectionKeepsStreamToken(t *testing.T) {
+	ts, h := newSSETestServer(t, 2)
+	_, ep1 := openSSEStream(t, ts)
+	_, ep2 := openSSEStream(t, ts)
+	body := `{"jsonrpc":"2.0","id":1,"method":"notifications/initialized"}`
+	postMessage(t, ts, ep1, body)
+	postMessage(t, ts, ep1, body)
+	if code := postMessage(t, ts, ep2, body); code != http.StatusTooManyRequests {
+		t.Fatalf("POST with the server-wide bucket empty = %d, want 429", code)
+	}
+	u, err := url.Parse(ep2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := h.connections.Load(u.Query().Get("connectionId"))
+	if !ok {
+		t.Fatal("stream 2 not found")
+	}
+	b := v.(*sseConnection).bucket
+	b.mu.Lock()
+	tokens := b.tokens
+	b.mu.Unlock()
+	if tokens < 1.99 {
+		t.Fatalf("stream 2 has %.2f tokens after a server-wide rejection, want 2 (refunded)", tokens)
 	}
 }
