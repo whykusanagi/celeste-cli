@@ -118,12 +118,14 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any, progre
 		return t.readImageFile(targetPath, realPath, path, ext)
 	}
 
-	data, err := readFileNoFollow(realPath)
+	// Read no more than the ceiling (plus one byte to see it is passed):
+	// a huge or sparse file is never pulled into memory whole.
+	data, size, err := readFilePrefix(realPath, maxReadBytes+1)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 
-	totalBytes := len(data)
+	totalBytes := int(size)
 	readTruncated := false
 	if len(data) > maxReadBytes {
 		data = data[:lineAlignedCut(data, maxReadBytes)]
@@ -244,15 +246,15 @@ func isImageExtension(ext string) bool {
 // content in the Metadata map, enabling downstream consumers (LLM client / TUI
 // adapter) to convert it into provider-specific image content blocks.
 func (t *ReadFileTool) readImageFile(targetPath, realPath, relPath, ext string) (tools.ToolResult, error) {
-	data, err := readFileNoFollow(realPath)
+	data, size, err := readFilePrefix(realPath, maxImageBytes+1)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
 
-	if len(data) > maxImageBytes {
+	if size > maxImageBytes {
 		return tools.ToolResult{
 			Error:   true,
-			Content: fmt.Sprintf("image file too large: %d bytes (max %d)", len(data), maxImageBytes),
+			Content: fmt.Sprintf("image file too large: %d bytes (max %d)", size, maxImageBytes),
 		}, nil
 	}
 

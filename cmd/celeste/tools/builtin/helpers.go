@@ -87,15 +87,59 @@ func resolveExisting(path string) (string, error) {
 	}
 }
 
-// readFileNoFollow reads the whole file at real (resolvePathReal's second
-// result) through openNoFollow.
-func readFileNoFollow(real string) ([]byte, error) {
+// maxEditBytes caps the file patch_file and splice_file (and the
+// .grimoire stamp) read into memory.
+const maxEditBytes = 16 << 20
+
+// openRegularFile opens real (resolvePathReal's second result) through
+// openNoFollow and refuses anything but a regular file: a FIFO or device
+// in the workspace is never read, so it cannot block a tool.
+func openRegularFile(real string) (*os.File, error) {
 	f, err := openNoFollow(real)
 	if err != nil {
 		return nil, err
 	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Base(real))
+	}
+	return f, nil
+}
+
+// readFilePrefix reads at most n bytes of the regular file at real, and
+// reports its size (at least the bytes read).
+func readFilePrefix(real string, n int64) (data []byte, size int64, err error) {
+	f, err := openRegularFile(real)
+	if err != nil {
+		return nil, 0, err
+	}
 	defer f.Close()
-	return io.ReadAll(f)
+	if info, err := f.Stat(); err == nil {
+		size = info.Size()
+	}
+	data, err = io.ReadAll(io.LimitReader(f, n))
+	if err != nil {
+		return nil, 0, err
+	}
+	return data, max(size, int64(len(data))), nil
+}
+
+// readFileNoFollow reads the whole regular file at real, refusing one over
+// limit bytes before reading it into memory.
+func readFileNoFollow(real string, limit int64) ([]byte, error) {
+	data, size, err := readFilePrefix(real, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	if size > limit {
+		return nil, fmt.Errorf("file is too large: %d bytes (max %d)", size, limit)
+	}
+	return data, nil
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {

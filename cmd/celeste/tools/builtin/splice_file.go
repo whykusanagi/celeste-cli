@@ -125,7 +125,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 		}
 	}
 
-	srcData, err := readFileNoFollow(sourceReal)
+	srcData, err := readFileNoFollow(sourceReal, maxEditBytes)
 	if err != nil {
 		return errResult(fmt.Sprintf("read source: %s", err)), nil
 	}
@@ -151,7 +151,7 @@ func (t *SpliceFileTool) Execute(ctx context.Context, input map[string]any, prog
 	if sameFile {
 		dest = sourceAfter
 	} else {
-		if b, rerr := readFileNoFollow(destReal); rerr == nil {
+		if b, rerr := readFileNoFollow(destReal, maxEditBytes); rerr == nil {
 			dest = string(b)
 		} else if !os.IsNotExist(rerr) {
 			return errResult(fmt.Sprintf("read dest: %s", rerr)), nil

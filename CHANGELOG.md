@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **codegraph:** the index skips symlinked files, and code review reads only regular files that resolve inside the workspace, so a symlink in a repository cannot bring outside source into the index or into review snippets (Aikido 806869369).
 * **sandbox:** a workspace `.celeste/config.json` is read only when it is a regular file; a symlink, FIFO or device there is reported and ignored instead of blocking startup (Aikido 806869299).
 * **images:** resizing an image for a provider decodes at most 24 MP (12 MP for 16-bit images), one image at a time, so several large images read in one turn cannot exhaust memory (Aikido 806869432).
+* **tools:** `read_file`, `search`, `patch_file` and `splice_file` read only regular files, so a FIFO or device in the workspace no longer blocks them, and never read more than they use: `read_file` reads up to its 512 KB ceiling (10 MB for images), and `patch_file` and `splice_file` refuse files over 16 MB (Aikido 806869908).
 
 ### Features
 

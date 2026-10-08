@@ -18,7 +18,7 @@ import (
 // belongs to); realPath is the checked path the edit wrote, and the stamp
 // reads and writes that one through writeFileFunc, as the edit did.
 func stampGrimoireMetadata(workspace, targetPath, realPath string) {
-	data, err := readFileNoFollow(realPath)
+	data, err := readFileNoFollow(realPath, maxEditBytes)
 	if err != nil {
 		return
 	}

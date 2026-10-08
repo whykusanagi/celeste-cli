@@ -120,7 +120,7 @@ func (t *PatchFileTool) Execute(ctx context.Context, input map[string]any, progr
 		return tools.ToolResult{Error: true, Content: msg}, nil
 	}
 
-	data, err := readFileNoFollow(realPath)
+	data, err := readFileNoFollow(realPath, maxEditBytes)
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: err.Error()}, nil
 	}
