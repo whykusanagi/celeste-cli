@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // logMu guards logFile and logFilePath: runs and /agent and /orch
@@ -42,8 +44,10 @@ func InitLogging() error {
 		return err
 	}
 
+	// Owner-only: the log holds tool arguments and results. An existing
+	// directory or file an older version left open is tightened.
 	logDir := filepath.Join(homeDir, ".celeste", "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := privfs.MkdirAll(logDir); err != nil {
 		return err
 	}
 
@@ -52,7 +56,7 @@ func InitLogging() error {
 	logMu.Lock()
 	logFilePath = path
 	logMu.Unlock()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := privfs.OpenAppend(path)
 	if err != nil {
 		return err
 	}
