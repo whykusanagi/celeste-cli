@@ -14,6 +14,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/codegraph"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/memories"
 )
 
@@ -42,10 +43,16 @@ func runMemoriesCommand(args []string) {
 		fmt.Println("No memories found for this project.")
 		return
 	}
-	fmt.Printf("Memories (%d):\n\n", len(mems))
+	printMemories(os.Stdout, mems)
+}
+
+// printMemories lists memories. A memory can be written by the model (the
+// memory tool), so its fields are shown escaped.
+func printMemories(w io.Writer, mems []*memories.Memory) {
+	fmt.Fprintf(w, "Memories (%d):\n\n", len(mems))
 	for _, m := range mems {
-		fmt.Printf("  [%s] %s\n", m.Type, m.Name)
-		fmt.Printf("    %s\n\n", m.Description)
+		fmt.Fprintf(w, "  [%s] %s\n", termsafe.Line(m.Type), termsafe.Line(m.Name))
+		fmt.Fprintf(w, "    %s\n\n", termsafe.Line(m.Description))
 	}
 }
 

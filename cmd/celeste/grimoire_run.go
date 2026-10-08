@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/grimoire"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // runInitCommand handles "celeste init [--agents]".
@@ -73,6 +74,6 @@ func runGrimoireCommand(args []string) {
 // showGrimoire prints grimoire.Describe, the text /grimoire shows.
 func showGrimoire(dir string, out io.Writer) error {
 	text, _ := grimoire.Describe(dir)
-	_, err := fmt.Fprintln(out, strings.TrimRight(text, "\n"))
+	_, err := fmt.Fprintln(out, termsafe.Text(strings.TrimRight(text, "\n"))) // repository files: escaped
 	return err
 }

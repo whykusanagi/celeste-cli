@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **config:** `skip_persona_prompt` and `celeste config --skip-persona` are removed: the persona is always on in chat and agent runs, for every provider. DigitalOcean agents, which have their own built-in persona, now also get Celeste's. A config with `"skip_persona_prompt": true` loses the key on load, with one note on stderr; `false` is ignored. See MIGRATING-2.0.md.
 
+### Security
+
+* **tui:** the tool-approval and question prompts show the tool name, its input, the question and each option with control characters escaped, so the text approved is the text shown (Aikido 806869890).
+* **tui:** chat replies, user input, system lines and the Ctrl+K tool log show workspace, tool and model text with control characters escaped; celeste's own colors are kept, and every frame keeps only color and weight sequences (Aikido 806869437).
+* **mcp:** `celeste mcp list` prints configuration errors with control characters escaped (Aikido 806869793).
+* **tui:** the `/mcp` panel shows server names and transports from workspace configs escaped (Aikido 806869738).
+* **tui:** the model selector shows model names, badges and descriptions from a provider's model list escaped (Aikido 806869747).
+* **cli:** `celeste agent` escapes the final reply, the error and eval and benchmark case names and reasons; setup warnings on stderr, context-file warnings, `celeste grimoire`, `celeste memories` and, on a terminal, `celeste message` replies are escaped too (Aikido 806869282).
+* **hooks:** deny and ask reasons from hooks are escaped like hook errors before they are shown (Aikido 806869439).
+
 ### Features
 
 * **acp:** `celeste acp`: an Agent Client Protocol agent for Zed and JetBrains, over stdio ([#176](https://github.com/whykusanagi/celeste-cli/issues/176)). Each editor session gets the chat's tools, persona, hooks and project context for the editor's folder (plus the editor's stdio MCP servers) and is saved as a celeste session, its history updated after each prompt. Prompts run on celeste's tool loop: replies stream as message chunks, tool calls show with their kind, title and file, a `todo` result updates the editor's plan, and compaction notes arrive as thoughts. Tools that need approval ask through the editor's permission prompt (allow once, always allow for the session, reject); cancelling stops the turn, a pending permission prompt included. Editor threads can be reopened: `session/load` replays the conversation, tool calls included, and the next prompt continues it. An untrusted repository hook file is asked about once, at the session's first prompt, through the editor's permission prompt (its commands shown); trusting it stores the approval and the hooks run in that prompt, skipping runs without them. Celeste uses its own config and keys (`-config <name>` picks a profile); stdout carries only the protocol, and logs go to `~/.celeste/logs`. See `docs/ACP.md` for the Zed and JetBrains setup.

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/checkpoints"
@@ -30,6 +31,7 @@ import (
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/costs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/jev"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
@@ -1797,7 +1799,16 @@ func runSingleMessage(message string) {
 		os.Exit(1)
 	}
 
-	fmt.Println(result.Content)
+	fmt.Println(replyFor(term.IsTerminal(int(os.Stdout.Fd())), result.Content))
+}
+
+// replyFor is the model's reply as `celeste message` prints it: escaped
+// for a terminal (termsafe.Text), as given for a pipe or file.
+func replyFor(terminal bool, reply string) string {
+	if terminal {
+		return termsafe.Text(reply)
+	}
+	return reply
 }
 
 // SessionManagerAdapter adapts config.SessionManager to tui.SessionManager interface.
