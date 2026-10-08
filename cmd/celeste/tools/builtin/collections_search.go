@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
@@ -20,13 +21,19 @@ type CollectionsSearchTool struct {
 	BaseTool
 	apiKey        string
 	collectionIDs []string
+	// endpoint is the documents/search URL; tests point it at a fake.
+	endpoint string
 }
+
+// collectionsSearchEndpoint is xAI's documents/search API.
+const collectionsSearchEndpoint = "https://api.x.ai/v1/documents/search"
 
 // NewCollectionsSearchTool creates a collections search tool.
 func NewCollectionsSearchTool(cfg *config.Config) *CollectionsSearchTool {
 	var collIDs []string
 	if cfg.Collections != nil {
-		collIDs = cfg.Collections.ActiveCollections
+		// A copy: the tool's scope is what was active when it was built.
+		collIDs = append([]string(nil), cfg.Collections.ActiveCollections...)
 	}
 
 	return &CollectionsSearchTool{
@@ -47,7 +54,7 @@ func NewCollectionsSearchTool(cfg *config.Config) *CollectionsSearchTool {
 					},
 					"collection_id": {
 						"type": "string",
-						"description": "Specific collection ID to search (optional — searches all active if omitted)"
+						"description": "One of the active collections to search (optional — searches all active if omitted)"
 					}
 				},
 				"required": ["query"]
@@ -57,6 +64,7 @@ func NewCollectionsSearchTool(cfg *config.Config) *CollectionsSearchTool {
 		},
 		apiKey:        cfg.APIKey,
 		collectionIDs: collIDs,
+		endpoint:      collectionsSearchEndpoint,
 	}
 }
 
@@ -75,6 +83,10 @@ func (t *CollectionsSearchTool) Execute(ctx context.Context, input map[string]an
 
 	collIDs := t.collectionIDs
 	if specificID := getStringArg(input, "collection_id", ""); specificID != "" {
+		if !slices.Contains(t.collectionIDs, specificID) {
+			return tools.ToolResult{Error: true, Content: fmt.Sprintf(
+				"collection %q is not an active collection; search one of the active collections or omit collection_id. Use /collections to enable more.", specificID)}, nil
+		}
 		collIDs = []string{specificID}
 	}
 
@@ -98,7 +110,7 @@ func (t *CollectionsSearchTool) Execute(ctx context.Context, input map[string]an
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("marshal error: %v", err)}, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.x.ai/v1/documents/search", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", t.endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return tools.ToolResult{Error: true, Content: fmt.Sprintf("request error: %v", err)}, nil
 	}

@@ -137,6 +137,14 @@ func (d *Daemon) checkWallets() {
 	// Check for alerts
 	if resultMap, ok := result.(map[string]interface{}); ok {
 		alertsFound, _ := resultMap["alerts_found"].(int)
+		if isErr, _ := resultMap["error"].(bool); isErr {
+			msg, _ := resultMap["message"].(string)
+			fmt.Printf("[%s] Wallet check failed: %s\n", time.Now().Format(time.RFC3339), msg)
+			if alertsFound > 0 {
+				fmt.Printf("[%s] ⚠️  %d security alert(s) detected!\n", time.Now().Format(time.RFC3339), alertsFound)
+			}
+			return
+		}
 
 		if alertsFound > 0 {
 			fmt.Printf("[%s] ⚠️  %d security alert(s) detected!\n", time.Now().Format(time.RFC3339), alertsFound)

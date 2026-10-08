@@ -31,7 +31,7 @@ func TestWebFetchTool_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewWebFetchTool()
+	tool := newLoopbackWebFetchTool()
 	result, err := tool.Execute(context.Background(), map[string]any{"url": srv.URL}, nil)
 	require.NoError(t, err)
 	assert.False(t, result.Error)
@@ -46,7 +46,7 @@ func TestWebFetchTool_WithPrompt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewWebFetchTool()
+	tool := newLoopbackWebFetchTool()
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"url":    srv.URL,
 		"prompt": "Extract the main content",
@@ -62,9 +62,17 @@ func TestWebFetchTool_NotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewWebFetchTool()
+	tool := newLoopbackWebFetchTool()
 	result, err := tool.Execute(context.Background(), map[string]any{"url": srv.URL}, nil)
 	require.NoError(t, err)
 	assert.True(t, result.Error)
 	assert.Contains(t, result.Content, "404")
+}
+
+// newLoopbackWebFetchTool is a web_fetch with the private-address opt-in on,
+// for tests that fetch from an httptest server on loopback.
+func newLoopbackWebFetchTool() *WebFetchTool {
+	tool := NewWebFetchTool()
+	tool.allowPrivate = func() bool { return true }
+	return tool
 }
