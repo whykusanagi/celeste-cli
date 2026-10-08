@@ -65,3 +65,34 @@ func TestKillAfterCompletionStopsMerge(t *testing.T) {
 		t.Fatalf("status = %q (%q), want failed (killed by user)", status, why)
 	}
 }
+
+// Once the deferred merge has decided to merge a completed run, a kill
+// can no longer report it killed (Aikido, #425): the decision and the
+// kill are serialized, so the run that is merged stays completed and Kill
+// reports nothing to kill, instead of a "killed" run whose changes merge.
+func TestKillAfterTheMergeDecisionIsRefused(t *testing.T) {
+	m := NewManager(&config.Config{}, t.TempDir(), false)
+	run := &SubagentRun{ID: "sub-3", Element: "earth", Status: "running"}
+	m.mu.Lock()
+	m.runs[run.ID] = run
+	m.cancels[run.ID] = func() {}
+	m.mu.Unlock()
+
+	state := &agent.RunState{Status: agent.StatusCompleted, Turn: 2, LastAssistantResponse: "done"}
+	if err := m.finishRun(run, state, nil, nil, ""); err != nil {
+		t.Fatalf("finishRun: %v", err)
+	}
+	if !m.mergeable(run) {
+		t.Fatal("a completed run was not mergeable")
+	}
+	// The merge is now under way: a kill in this window must not succeed.
+	if m.Kill(run.ID) {
+		t.Fatal("Kill reported a kill for a run whose merge was already decided")
+	}
+	m.mu.Lock()
+	status, killed := run.Status, run.killed
+	m.mu.Unlock()
+	if status != "completed" || killed {
+		t.Fatalf("status = %q, killed = %v; want completed and not killed", status, killed)
+	}
+}

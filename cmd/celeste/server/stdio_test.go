@@ -182,3 +182,32 @@ func (r *blockingReader) Read(p []byte) (int, error) {
 	r.once.Do(func() { close(r.reading) })
 	select {}
 }
+
+// TestStdioCancelBeforeQueuedRequestSkipsIt: when a cancel and the next
+// line are both ready once a dispatch returns, the loop may receive the
+// line first; it must still stop instead of dispatching that request
+// under the canceled context (Aikido review of #424).
+func TestStdioCancelBeforeQueuedRequestSkipsIt(t *testing.T) {
+	srv := New(DefaultConfig())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ran := false
+	srv.RegisterTool(mcp.MCPToolDef{
+		Name: "queued", InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, map[string]any) ([]ContentBlock, error) {
+		ran = true
+		return []ContentBlock{{Type: "text", Text: "ok"}}, nil
+	})
+	// The select chose the line although the cancel had landed too.
+	testHookStdioLineReceived = cancel
+	t.Cleanup(func() { testHookStdioLineReceived = nil })
+
+	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"queued","arguments":{}}}` + "\n")
+	err := srv.serveStdioStreams(ctx, input, &bytes.Buffer{})
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if ran {
+		t.Fatal("a request received alongside a cancel was dispatched")
+	}
+}

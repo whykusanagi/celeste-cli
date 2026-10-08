@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -13,9 +14,10 @@ import (
 type mcpPanelApproval struct{ home string }
 
 // source is the trust source of a workspace server; ok is false for a
-// server that needs no approval (a home config, or no known file).
+// server that needs no approval (a home config, or no known file). With
+// no home every config is a workspace one, as at startup.
 func (a mcpPanelApproval) source(name string, cfg mcp.ServerConfig) (hooks.Source, bool) {
-	if a.home == "" || cfg.Origin == "" || mcp.IsGlobalConfig(a.home, cfg.Origin) {
+	if cfg.Origin == "" || mcp.IsGlobalConfig(a.home, cfg.Origin) {
 		return hooks.Source{}, false
 	}
 	return hooks.MCPSource(cfg.Origin, name, cfg.TrustSummary(), cfg.TrustHash()), true
@@ -25,6 +27,9 @@ func (a mcpPanelApproval) State(name string, cfg mcp.ServerConfig) string {
 	src, ok := a.source(name, cfg)
 	if !ok {
 		return ""
+	}
+	if a.home == "" {
+		return "pending" // no trust store: never approved (Aikido review of #413)
 	}
 	switch hooks.LoadTrust(a.home).Status(src) {
 	case hooks.Trusted:
@@ -54,6 +59,11 @@ func (a mcpPanelApproval) Approve(name string, cfg mcp.ServerConfig) error {
 	src, ok := a.source(name, cfg)
 	if !ok {
 		return nil
+	}
+	if a.home == "" {
+		// Startup admits no workspace server without a trust store; the
+		// panel does not either.
+		return errors.New("no home directory to record the approval in")
 	}
 	store := hooks.LoadTrust(a.home)
 	if err := store.Err(); err != nil {

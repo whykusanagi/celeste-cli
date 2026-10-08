@@ -163,3 +163,43 @@ func TestReconnectAfterDisconnectDuringConnect(t *testing.T) {
 		t.Fatalf("after the reconnect %d tools are registered, want 1", n)
 	}
 }
+
+// TestDisconnectDuringTransportCreationWins: a Disconnect that lands while
+// Connect is still building the transport (spawning the process, before
+// any client exists) is not missed: the connect installs nothing and
+// closes the transport (Aikido review of #424).
+func TestDisconnectDuringTransportCreationWins(t *testing.T) {
+	registry := tools.NewRegistry()
+	m := NewManager("", registry)
+	mt := &mockTransport{responses: []*Response{makeInitResponse(), makeToolsListResponse("t1")}}
+	testHookNewTransport = func(ServerConfig) (Transport, error) {
+		_ = m.Disconnect("srv") // the person switched it off meanwhile
+		return mt, nil
+	}
+	t.Cleanup(func() { testHookNewTransport = nil })
+
+	err := m.Connect(context.Background(), "srv", ServerConfig{Command: "x"})
+	if err == nil {
+		t.Fatal("a connect disconnected while its transport was created succeeded")
+	}
+	if m.IsConnected("srv") {
+		t.Fatal("a connect disconnected while its transport was created installed its client")
+	}
+	if n := registry.Count(); n != 0 {
+		t.Fatalf("it left %d tools registered", n)
+	}
+	if !mt.closed {
+		t.Fatal("it left its transport open")
+	}
+
+	// The server can be switched back on.
+	testHookNewTransport = func(ServerConfig) (Transport, error) {
+		return &mockTransport{responses: []*Response{makeInitResponse(), makeToolsListResponse("t1")}}, nil
+	}
+	if err := m.Connect(context.Background(), "srv", ServerConfig{Command: "x"}); err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	if !m.IsConnected("srv") {
+		t.Fatal("the reconnect installed no client")
+	}
+}

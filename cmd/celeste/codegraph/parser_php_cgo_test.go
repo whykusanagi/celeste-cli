@@ -69,7 +69,7 @@ trait Loggable {
 	assert.Equal(t, SymbolClass, kinds["SessionValidator"])
 	assert.Equal(t, SymbolMethod, kinds["check"])
 	assert.Equal(t, SymbolFunction, kinds["refresh_session"])
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "validate", TargetName: "check", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "validate", TargetName: "check", Kind: EdgeCalls})
 
 	// #347: enums and traits are declarations too.
 	assert.Equal(t, SymbolType, kinds["Status"])
@@ -79,13 +79,13 @@ trait Loggable {
 
 	// #347: plain function calls produce edges; a namespaced call resolves
 	// to its last segment, the name the declaration is indexed under.
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "validate", TargetName: "refresh_session", Kind: EdgeCalls})
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "check", TargetName: "strlen", Kind: EdgeCalls})
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "refresh_session", TargetName: "log_refresh", Kind: EdgeCalls})
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "label", TargetName: "ucfirst", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "validate", TargetName: "refresh_session", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "check", TargetName: "strlen", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "refresh_session", TargetName: "log_refresh", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "label", TargetName: "ucfirst", Kind: EdgeCalls})
 	// Static and nullsafe method calls.
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "refresh_session", TargetName: "now", Kind: EdgeCalls})
-	assert.Contains(t, result.Edges, RawEdge{SourceName: "log", TargetName: "write", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "refresh_session", TargetName: "now", Kind: EdgeCalls})
+	assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: "log", TargetName: "write", Kind: EdgeCalls})
 	for _, e := range result.Edges {
 		assert.NotEmpty(t, e.TargetName)
 		assert.NotContains(t, e.TargetName, "$", "a variable is not a call target: %+v", e)

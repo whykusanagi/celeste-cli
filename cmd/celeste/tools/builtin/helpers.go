@@ -12,6 +12,7 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/checkpoints"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 )
 
 // resolvePath checks that the resolved absolute path stays within the workspace.
@@ -204,7 +205,13 @@ func fileSize(info os.FileInfo) int64 {
 // I/O through it: os.Root refuses, at every component and without a race,
 // a symlink or ".." leading out of the workspace, so a directory swapped
 // for a symlink after resolvePathReal's check cannot take a write outside
-// (Aikido 806869649).
+// (Aikido 806869649). The root itself is opened by realroot.Open, so the
+// workspace or a directory above it replaced by a symlink after the check
+// is refused too (Aikido review of #421).
+// testHookBeforeWorkspaceOpen runs between the workspace check and the
+// open; tests replace the workspace there.
+var testHookBeforeWorkspaceOpen func()
+
 func workspaceRoot(workspace, real string) (*os.Root, string, error) {
 	ws := filepath.Clean(workspace)
 	if r, err := filepath.EvalSymlinks(ws); err == nil {
@@ -214,7 +221,10 @@ func workspaceRoot(workspace, real string) (*os.Root, string, error) {
 	if err != nil || !filepath.IsLocal(rel) {
 		return nil, "", fmt.Errorf("%s is outside the workspace", real)
 	}
-	root, err := os.OpenRoot(ws)
+	if testHookBeforeWorkspaceOpen != nil {
+		testHookBeforeWorkspaceOpen()
+	}
+	root, err := realroot.Open(ws)
 	if err != nil {
 		return nil, "", err
 	}

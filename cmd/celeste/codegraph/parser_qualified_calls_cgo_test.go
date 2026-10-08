@@ -47,7 +47,7 @@ func TestMultiLangParser_QualifiedCalls(t *testing.T) {
 			result, err := p.ParseFile(writeTempFile(t, tc.file, tc.src))
 			require.NoError(t, err)
 			for _, target := range tc.targets {
-				assert.Contains(t, result.Edges, RawEdge{SourceName: tc.caller, TargetName: target, Kind: EdgeCalls})
+				assert.Contains(t, unscoped(result.Edges), RawEdge{SourceName: tc.caller, TargetName: target, Kind: EdgeCalls})
 			}
 		})
 	}

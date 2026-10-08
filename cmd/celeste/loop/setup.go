@@ -151,7 +151,7 @@ func Setup(mode Mode, cfg *config.Config, workspace string, opts SetupOptions) (
 	}
 	home := userHome()
 	if home == "" {
-		opts.Warn("no home directory: using the default permissions (nothing saved) with no custom skills or home-level hooks, MCP servers or stream rules")
+		opts.Warn("no home directory: using the default permissions (nothing saved) with no custom skills, memories, code graph or home-level hooks, MCP servers or stream rules")
 	}
 	if opts.Notice == nil {
 		opts.Notice = opts.Warn
@@ -514,9 +514,13 @@ func (e *Env) setupContext(ws string) {
 	}
 	warn := func(s string) { e.warn("%s", s) }
 	e.Rules = rules.Load(e.home, rules.Trusted(e.home, ruleSections, e.approver(), warn), warn)
-	store := memories.NewStore(ws)
-	if idx, err := memories.LoadIndex(filepath.Join(store.BaseDir(), "MEMORY.md")); err == nil && len(idx.Entries()) > 0 {
-		e.Memories = "# Project Memories\n\n" + idx.Render()
+	// Memories live under the home directory: without one there are none,
+	// never a current-directory .celeste a repository could plant.
+	if e.home != "" {
+		store := memories.NewStore(ws)
+		if idx, err := memories.LoadIndex(filepath.Join(store.BaseDir(), "MEMORY.md")); err == nil && len(idx.Entries()) > 0 {
+			e.Memories = "# Project Memories\n\n" + idx.Render()
+		}
 	}
 	e.GrimoireContext = text
 	if e.Memories != "" {
@@ -571,6 +575,11 @@ func (e *Env) reportIndexUpdate(err error) {
 }
 
 func (e *Env) setupCodeGraph(ws string) string {
+	if e.home == "" {
+		// The index lives under the home directory: without one, no code
+		// graph rather than a database in the current directory.
+		return ""
+	}
 	idx, err := codegraph.NewIndexer(ws, codegraph.DefaultIndexPath(ws))
 	if err != nil {
 		e.warn("code graph init failed: %v", err)

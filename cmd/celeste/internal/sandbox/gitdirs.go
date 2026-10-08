@@ -13,6 +13,7 @@ type Repo struct {
 	DotGit    string // that .git, a directory or a file
 	GitDir    string // "" when the .git was refused
 	CommonDir string // the GitDir itself unless it is a linked worktree's
+	Refusal   string // why the .git was refused, and what to do; "" when it was not
 }
 
 // FindRepo returns the repository dir is in, resolved: found is false
@@ -25,9 +26,9 @@ type Repo struct {
 // admin dir (<common>/worktrees/<name>, whose gitdir file points back to
 // this .git and whose commondir is <common>, a real git dir) or a
 // submodule's git dir (whose core.worktree points back to this
-// directory). A refused .git gives a Repo with no GitDir. A plain .git
-// directory is its own git dir and common dir; a commondir file in it is
-// ignored.
+// directory). A refused .git gives a Repo with no GitDir, and Refusal
+// says why. A plain .git directory is its own git dir and common dir; a
+// commondir file in it is ignored.
 func FindRepo(dir string) (r Repo, found bool) {
 	for dir = Resolve(dir); ; dir = filepath.Dir(dir) {
 		dotGit := filepath.Join(dir, ".git")
@@ -38,9 +39,11 @@ func FindRepo(dir string) (r Repo, found bool) {
 			case info.IsDir():
 				r.GitDir, r.CommonDir = dotGit, dotGit
 			case info.Mode().IsRegular():
-				r.GitDir, r.CommonDir = gitFileDirs(dir, dotGit)
+				r.GitDir, r.CommonDir, r.Refusal = gitFileDirs(dir, dotGit)
+			default:
+				// Anything else (a symlink) is a .git celeste does not read.
+				r.Refusal = "its .git is a symlink"
 			}
-			// Anything else (a symlink) is a .git git would not read.
 			return r, true
 		}
 		if filepath.Dir(dir) == dir {
@@ -133,42 +136,48 @@ func MakeGitProtected(gitDirs []string) {
 }
 
 // gitFileDirs returns the git dir and common dir a ".git" file in dir
-// names, "" unless they check out (FindRepo).
-func gitFileDirs(dir, dotGit string) (gitDir, commonDir string) {
+// names, or "" and why not unless they check out (FindRepo).
+func gitFileDirs(dir, dotGit string) (gitDir, commonDir, refusal string) {
 	named := readGitDirFile(dotGit)
 	if named == "" {
-		return "", ""
+		return "", "", "its .git file names no git dir"
 	}
 	gitDir = Resolve(named)
 	if !isGitDir(gitDir) {
-		return "", ""
+		return "", "", "its .git file names " + gitDir + ", which is not a git dir"
 	}
 	if filepath.Base(filepath.Dir(gitDir)) == "worktrees" {
 		// A linked worktree's admin dir: <common>/worktrees/<name>.
 		back := readRelative(gitDir, "gitdir")
 		common := readRelative(gitDir, "commondir")
 		want := filepath.Dir(filepath.Dir(gitDir))
-		if back == "" || Resolve(back) != Resolve(dotGit) ||
-			common == "" || Resolve(common) != want || !isGitDir(want) {
-			return "", ""
+		if common == "" || Resolve(common) != want || !isGitDir(want) {
+			return "", "", "its .git file names " + gitDir + ", which is not a linked worktree's admin dir in the repository holding it"
 		}
-		return gitDir, want
+		if back == "" || Resolve(back) != Resolve(dotGit) {
+			// git still finds a moved worktree through its .git file
+			// until the admin dir is repaired; celeste does not.
+			return "", "", "it is a linked worktree whose admin dir " + gitDir +
+				" points to another place (the worktree was moved or copied); run `git worktree repair` in " + dir +
+				" to point it back here"
+		}
+		return gitDir, want, ""
 	}
 	// A submodule's git dir: no commondir, and core.worktree names dir.
 	if _, err := os.Lstat(filepath.Join(gitDir, "commondir")); err == nil {
-		return "", ""
+		return "", "", "its .git file names " + gitDir + ", which has a commondir but is not a linked worktree's admin dir"
 	}
 	wt := coreWorktree(filepath.Join(gitDir, "config"))
 	if wt == "" {
-		return "", ""
+		return "", "", "its .git file names " + gitDir + ", a git dir that is neither a linked worktree's nor a submodule's; a `git init --separate-git-dir` layout is not supported"
 	}
 	if !filepath.IsAbs(wt) {
 		wt = filepath.Join(gitDir, wt)
 	}
 	if Resolve(wt) != dir {
-		return "", ""
+		return "", "", "its .git file names " + gitDir + ", whose core.worktree is another directory"
 	}
-	return gitDir, gitDir
+	return gitDir, gitDir, ""
 }
 
 // isGitDir reports a directory holding HEAD and objects, as every real git
