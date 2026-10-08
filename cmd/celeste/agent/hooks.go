@@ -7,6 +7,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/compact"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/hooks"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/loop"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tui"
 )
@@ -52,7 +53,7 @@ func (r *Runner) warning(s string) {
 		r.warn(s)
 		return
 	}
-	write := func() { fmt.Fprintf(r.errOut, "Warning: %s\n", s) }
+	write := func() { fmt.Fprintf(r.errOut, "Warning: %s\n", termsafe.Text(s)) }
 	if r.gate != nil {
 		r.gate.do(write)
 		return

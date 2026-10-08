@@ -238,7 +238,7 @@ func runAgentCommand(args []string) {
 	if *resume != "" {
 		state, err := runner.Resume(ctx, *resume)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Resume failed: %v\n", err)
+			printAgentFailure(os.Stderr, "Resume failed", err)
 			os.Exit(1)
 		}
 		printRunSummary(os.Stdout, state)
@@ -275,7 +275,7 @@ func runAgentCommand(args []string) {
 
 	state, err := runner.RunGoal(ctx, finalGoal)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Agent failed: %v\n", err)
+		printAgentFailure(os.Stderr, "Agent failed", err)
 		if state != nil {
 			printRunSummary(os.Stdout, state)
 		}
@@ -286,6 +286,12 @@ func runAgentCommand(args []string) {
 	if state.Status != agent.StatusCompleted {
 		os.Exit(1)
 	}
+}
+
+// printAgentFailure writes "what: err". The error carries provider and
+// model text, so it is shown escaped.
+func printAgentFailure(w io.Writer, what string, err error) {
+	fmt.Fprintf(w, "%s: %s\n", what, termsafe.Text(err.Error()))
 }
 
 // printRunList lists stored runs. Goals come from the user or a goal file

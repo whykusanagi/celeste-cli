@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,4 +96,15 @@ func TestRunListIsTerminalSafe(t *testing.T) {
 	var b bytes.Buffer
 	printRunList(&b, []agent.RunSummary{{RunID: "r1", Status: "s" + hostileCLI, Goal: "goal " + hostileCLI}})
 	assertCLIInert(t, "run list", b.String())
+}
+
+// Aikido 806869282: a resume or run failure carries provider and model
+// error text; it is printed escaped.
+func TestAgentFailureIsTerminalSafe(t *testing.T) {
+	var b bytes.Buffer
+	printAgentFailure(&b, "Agent failed", errors.New("provider said "+hostileCLI))
+	assertCLIInert(t, "agent failure", b.String())
+	if !strings.HasPrefix(b.String(), "Agent failed: provider said") {
+		t.Errorf("failure line: %q", b.String())
+	}
 }
