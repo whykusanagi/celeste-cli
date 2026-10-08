@@ -10,8 +10,9 @@ on:
   # below only runs for a pushed v* tag.
   workflow_dispatch:
 
-permissions:
-  contents: write
+# Nothing by default: each job asks for what it needs, and only the release
+# job can write.
+permissions: {}
 
 # One run per tag (or dry-run branch) at a time. A second run waits; a run
 # that is signing or publishing is never cancelled halfway.
@@ -20,6 +21,81 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Runs before any job that holds a secret (Aikido 806869730). A pushed tag
+  # publishes only if it is an annotated tag signed by the release key, and
+  # the commit it names is on main. The key comes from main's tree, never
+  # from the tag's, so a tag cannot bring its own key. A workflow_dispatch
+  # dry run from a branch has no tag and publishes nothing: it skips the
+  # check. A dispatch from a tag is checked like a push.
+  verify-tag:
+    name: Verify the release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        persist-credentials: false  # no git writes here
+
+    - name: Verify the tag signature and ancestry
+      run: |
+        set -euo pipefail
+        if [ "$GITHUB_EVENT_NAME" != push ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+          echo "dry run on $GITHUB_REF: no tag to verify, and nothing is published"
+          exit 0
+        fi
+        case "$GITHUB_REF" in
+          refs/tags/v*) ;;
+          *) echo "::error::$GITHUB_REF is not a release tag"; exit 1 ;;
+        esac
+        # actions/checkout can leave an annotated tag as a lightweight
+        # one: fetch the tag object itself, and main to compare against.
+        git fetch --force --no-tags origin "+${GITHUB_REF}:${GITHUB_REF}"
+        git fetch --force --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+        if [ "$(git cat-file -t "$GITHUB_REF")" != tag ]; then
+          echo "::error::$GITHUB_REF is a lightweight tag; release tags must be signed (git tag -s)"
+          exit 1
+        fi
+        if [ "$(git rev-parse "${GITHUB_REF}^{commit}")" != "$GITHUB_SHA" ]; then
+          echo "::error::$GITHUB_REF does not point at the commit this run builds"
+          exit 1
+        fi
+        # A keyring of its own holding only the release key, read from
+        # main. Releases are signed by the signing subkey; accept it or
+        # the primary.
+        PRIMARY=940490EF09DA31322BF7FD83875849AB1D541C55
+        SUBKEY=F4C254F6EE5D7F086C921DEBA6BB54DDC70EE8FB
+        GNUPGHOME="$(mktemp -d)"
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        git show origin/main:whykusanagi.asc > "$RUNNER_TEMP/release-key.asc"
+        fprs="$(gpg --batch --with-colons --import-options show-only --import "$RUNNER_TEMP/release-key.asc" | awk -F: '$1 == "fpr" {print $10}')"
+        case "$fprs" in
+          *"$PRIMARY"*) ;;
+          *) echo "::error::main's whykusanagi.asc is not the release key"; exit 1 ;;
+        esac
+        gpg --batch --import "$RUNNER_TEMP/release-key.asc"
+        # --raw prints gpg's machine-readable status lines on stderr. The
+        # first VALIDSIG field is the key that made the signature.
+        if ! status="$(git verify-tag --raw "$GITHUB_REF" 2>&1 >/dev/null)"; then
+          printf '%s\n' "$status"
+          echo "::error::$GITHUB_REF has no valid signature by the release key"
+          exit 1
+        fi
+        signer="$(printf '%s\n' "$status" | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" {print $3; exit}')"
+        if [ "$signer" != "$PRIMARY" ] && [ "$signer" != "$SUBKEY" ]; then
+          printf '%s\n' "$status"
+          echo "::error::$GITHUB_REF is not signed by the release key (VALIDSIG ${signer:-missing})"
+          exit 1
+        fi
+        if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          echo "::error::$GITHUB_REF tags a commit that is not on main"
+          exit 1
+        fi
+        echo "$GITHUB_REF: signed by $signer, on main"
+
   # One job per target, each on a runner of that OS and architecture, so CGo
   # compiles the tree-sitter parsers (TypeScript, PHP, Python, Rust, Java,
   # C/C++, Ruby) into the binary with the runner's own C compiler (#376).
@@ -27,6 +103,7 @@ jobs:
   # fallback.
   build:
     name: Build ${{ matrix.target }}
+    needs: verify-tag
     runs-on: ${{ matrix.runner }}
     # Builds only read the repository; the release job alone writes.
     permissions:
@@ -244,17 +321,21 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [verify-tag, build]
     # Only a pushed v* tag publishes. A workflow_dispatch dry run stops after
     # the build job, even when started from a tag.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # The only job that writes: it publishes the release.
+    permissions:
+      contents: write
 
     steps:
     - name: Check out code
       uses: actions/checkout@v7
       with:
         fetch-depth: 0
+        persist-credentials: false  # publishing goes through the API token
 
     - name: Set up Go
       uses: actions/setup-go@v7
