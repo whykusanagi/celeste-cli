@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ctxmgr "github.com/whykusanagi/celeste-cli/v2/cmd/celeste/context"
@@ -17,6 +18,11 @@ import (
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/llm"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
+
+// callKeys numbers tool invocations for ToolCall.Key.
+var callKeys atomic.Uint64
+
+func nextCallKey() string { return "k" + strconv.FormatUint(callKeys.Add(1), 10) }
 
 // pending is one tool call on its way to a result message.
 type pending struct {
@@ -45,7 +51,7 @@ func (l *Loop) runCalls(ctx context.Context, calls []llm.ToolCallResult, lim Lim
 	var out callsOutcome
 	ps := make([]*pending, len(calls))
 	for i, c := range calls {
-		p := &pending{call: ToolCall{ID: c.ID, Name: c.Name}}
+		p := &pending{call: ToolCall{ID: c.ID, Name: c.Name, Key: nextCallKey()}}
 		ps[i] = p
 		switch {
 		case c.ArgsError != "":
@@ -118,7 +124,7 @@ func (l *Loop) runGroup(ctx context.Context, group []*pending, lim Limits) {
 		// The tool sees the model's call ID (2.0 F4: its checkpoint's
 		// message_id), not the executor's group index.
 		i, _ := strconv.Atoi(id)
-		return l.invoke(tools.WithCallID(ectx, group[i].call.ID), t, input, lim)
+		return l.invoke(tools.WithCallKey(tools.WithCallID(ectx, group[i].call.ID), group[i].call.Key), t, input, lim)
 	})
 	for i, p := range group {
 		b, _ := json.Marshal(p.call.Input)

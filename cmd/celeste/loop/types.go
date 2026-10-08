@@ -171,6 +171,11 @@ type ToolCall struct {
 	ID    string
 	Name  string
 	Input map[string]any
+	// Key names this one invocation, unique in the process: a model's IDs
+	// may repeat or be empty, so whatever binds a permission ask to the
+	// call it shows (ACP) keys on Key, never on ID. It is also on the
+	// call's context (tools.CallKeyFromContext). Empty outside runCalls.
+	Key string
 }
 
 // Gate answers a permission Ask for one run. Its lifetime differs by mode
