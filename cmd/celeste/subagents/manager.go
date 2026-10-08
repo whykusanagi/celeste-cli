@@ -777,6 +777,12 @@ func (m *Manager) executeSubagent(ctx context.Context, run *SubagentRun, goal st
 		m.mu.Unlock()
 		return run, fmt.Errorf("create subagent: %w", err)
 	}
+	// Building the subagent loads the workspace's config, hooks and
+	// context: the path must still name the directory checked, before the
+	// build and again after it.
+	if err := stillPinned(); err != nil {
+		return failPinned(err)
+	}
 	agentOpts := m.buildAgentOptions(execWorkspace, maxTurns, turnCb, run.sliders, run.ID, parent, run.Type)
 	holder := withSubmitResult(&agentOpts, run.Type)
 
@@ -1139,6 +1145,9 @@ func (m *Manager) Resume(ctx context.Context, checkpointID string, turnCb TurnCa
 	parent, err := m.parentEnv()
 	if err != nil {
 		return nil, fmt.Errorf("create runner for resume: %w", err)
+	}
+	if err := stillPinned(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
 	}
 	agentOpts := m.buildAgentOptions(workspace, 0, turnCb, sliders, agentID, parent, typ)
 	holder := withSubmitResult(&agentOpts, typ)
