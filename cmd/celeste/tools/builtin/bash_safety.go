@@ -85,6 +85,96 @@ func privilegeWord(w string) bool {
 	return privilegeCommands[w] || strings.HasPrefix(w, "/") && privilegeCommands[path.Base(w)]
 }
 
+// privilegeWrappers run the command their arguments name, each with the
+// options among those arguments that take the next word as their value.
+// After one, the command word follows its options (and, for env, its
+// NAME=value assignments; for timeout, the duration).
+var privilegeWrappers = map[string]map[string]bool{
+	"env":        {"-u": true, "--unset": true, "-C": true, "--chdir": true},
+	"command":    {},
+	"builtin":    {},
+	"exec":       {"-a": true},
+	"nice":       {"-n": true, "--adjustment": true},
+	"nohup":      {},
+	"time":       {"-f": true, "--format": true, "-o": true, "--output": true},
+	"timeout":    {"-s": true, "--signal": true, "-k": true, "--kill-after": true},
+	"xargs":      {"-I": true, "-n": true, "--max-args": true, "-P": true, "--max-procs": true, "-L": true, "--max-lines": true, "-s": true, "--max-chars": true, "-d": true, "--delimiter": true, "-E": true, "-a": true, "--arg-file": true},
+	"stdbuf":     {"-i": true, "--input": true, "-o": true, "--output": true, "-e": true, "--error": true},
+	"setsid":     {},
+	"ionice":     {"-c": true, "--class": true, "-n": true, "--classdata": true, "-p": true, "--pid": true},
+	"chrt":       {},
+	"caffeinate": {"-t": true, "-w": true},
+}
+
+// findExec are find's actions whose next word is a command.
+var findExec = map[string]bool{"-exec": true, "-execdir": true, "-ok": true, "-okdir": true}
+
+// privilegeCommand reports whether a simple command (a word list, quotes
+// removed) runs one of privilegeCommands: as its command word, after
+// leading assignments and redirections, after a wrapper that runs its
+// arguments (env, nohup, timeout 5, xargs, ...), or as find's -exec
+// command. A word that is only an argument (grep "sudo" scripts/) is not.
+func privilegeCommand(words []string) bool {
+	for i := 0; i < len(words); {
+		w := words[i]
+		if privilegeWord(w) {
+			return true
+		}
+		switch {
+		case shellparse.IsRedirect(w):
+			i++
+			if shellparse.RedirectTakesNext(w) {
+				i++
+			}
+			continue
+		case strings.Contains(w, "=") && !strings.HasPrefix(w, "-"):
+			i++ // an assignment before the command
+			continue
+		}
+		name := shellparse.CommandName(w)
+		if name == "find" {
+			for k := i + 1; k+1 < len(words); k++ {
+				if findExec[words[k]] && privilegeCommand(words[k+1:]) {
+					return true
+				}
+			}
+			return false
+		}
+		valued, ok := privilegeWrappers[name]
+		if !ok {
+			return false
+		}
+		i++
+		for i < len(words) {
+			a := words[i]
+			switch {
+			case a == "--":
+				i++
+			case strings.HasPrefix(a, "-") && len(a) > 1:
+				i++
+				if valued[a] && i < len(words) {
+					if privilegeWord(words[i]) {
+						return true
+					}
+					i++
+				}
+				continue
+			case name == "env" && strings.Contains(a, "="):
+				i++
+				continue
+			}
+			break
+		}
+		if name == "timeout" && i < len(words) {
+			if privilegeWord(words[i]) {
+				return true
+			}
+			i++ // the duration
+		}
+	}
+	return false
+}
+
 // forkLoopPattern: a fork in an endless loop.
 var forkLoopPattern = regexp.MustCompile(`\bfork\b.*\bwhile\b.*\btrue\b`)
 
@@ -98,24 +188,18 @@ func checkDangerousCommand(command string) string {
 	}
 
 	// === PRIVILEGE ESCALATION ===
-	// Block sudo/su anywhere in the command, not just as first word:
-	// sudo X, command sudo X, env sudo X, and, read as a shell reads it
-	// (quotes and escapes removed, nested sh -c, eval and $( ) walked),
-	// bash -c "sudo X" or sud''o X. The plain word check stays as a
-	// backstop.
+	// Block an unquoted sudo/su word anywhere in the command, not just as
+	// the first word (sudo X, command sudo X), and, read as a shell reads
+	// it (quotes and escapes removed, nested sh -c, eval and $( ) walked),
+	// one in a command position: sud''o X, "sudo" X, /usr/bin/sudo X,
+	// env sudo X, bash -c "sudo X". A quoted argument that only names one
+	// (grep -rn "sudo" scripts/, git commit -m 'su') is not refused.
 	for _, f := range fields {
 		if privilegeCommands[f] {
 			return privilegeReason
 		}
 	}
-	if shellparse.Walk(command, func(words []string) bool {
-		for _, w := range words {
-			if privilegeWord(w) {
-				return true
-			}
-		}
-		return false
-	}) == shellparse.Found {
+	if shellparse.Walk(command, privilegeCommand) == shellparse.Found {
 		return privilegeReason
 	}
 
