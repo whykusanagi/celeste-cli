@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **deps:** golang.org/x/net is updated to v0.60.0 for GO-2026-6617 (an HTTP/2 HPACK encoder race), which celeste's HTTP/2 client paths reach.
+
 * **permissions:** deny and ask rules written with an absolute path inside the workspace match again once the workspace is known, for the path given absolute (as given or with symlinks resolved) or relative (Aikido, #425 review).
 * **subagents:** a subagent's workspace is checked against the parent's again when the run starts or resumes, so a directory replaced by a symlink out of the parent after `spawn_agent` checked it ends the run (Aikido, #425 review).
 * **subagents:** once an isolated run's worktree merge is decided, a kill of that run is refused, so a run reported killed is never merged (Aikido, #425 review).
