@@ -1,10 +1,15 @@
 package grimoire
 
 import (
+	"fmt"
+	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
 )
 
 // Priority levels for grimoire sources (lowest to highest).
@@ -19,6 +24,8 @@ const (
 type GrimoireSource struct {
 	Path     string
 	Priority int
+	// dir is the directory the source was found in; "" for the global one.
+	dir string
 }
 
 // Discover walks upward from startDir to the filesystem root, collecting
@@ -84,6 +91,7 @@ func discoverAtDir(dir string, depth int) []GrimoireSource {
 		sources = append(sources, GrimoireSource{
 			Path:     grimPath,
 			Priority: PriorityProject + depthFactor,
+			dir:      dir,
 		})
 	}
 
@@ -97,6 +105,7 @@ func discoverAtDir(dir string, depth int) []GrimoireSource {
 				sources = append(sources, GrimoireSource{
 					Path:     m,
 					Priority: PriorityFragment + depthFactor,
+					dir:      dir,
 				})
 			}
 		}
@@ -108,6 +117,7 @@ func discoverAtDir(dir string, depth int) []GrimoireSource {
 		sources = append(sources, GrimoireSource{
 			Path:     localPath,
 			Priority: PriorityLocal + depthFactor,
+			dir:      dir,
 		})
 	}
 
@@ -125,13 +135,15 @@ func LoadAll(startDir string) (*Grimoire, error) {
 	}
 
 	var grimoires []*Grimoire
+	repo := repoScope(startDir)
+	st := newIncludeState()
 	for _, src := range sources {
-		data, err := os.ReadFile(src.Path)
+		data, err := readSource(src)
 		if err != nil {
 			log.Printf("grimoire: skipping %s: %v", src.Path, err)
 			continue
 		}
-		g, err := Parse(string(data), filepath.Dir(src.Path))
+		g, err := Parse(data, filepath.Dir(src.Path))
 		if err != nil {
 			log.Printf("grimoire: parse error in %s: %v", src.Path, err)
 			continue
@@ -140,6 +152,13 @@ func LoadAll(startDir string) (*Grimoire, error) {
 		for i := range g.StreamRules {
 			g.StreamRules[i].Source = src.Path
 		}
+		// Includes resolve against startDir; only the user's own
+		// grimoire may reach outside the repository (see includeScope).
+		scope := repo
+		if src.dir == "" {
+			scope = includeScope{global: true}
+		}
+		resolveIncludesIn(g, startDir, scope, st)
 		grimoires = append(grimoires, g)
 	}
 
@@ -147,15 +166,56 @@ func LoadAll(startDir string) (*Grimoire, error) {
 		return &Grimoire{RawSections: make(map[string]string)}, nil
 	}
 
-	result := Merge(grimoires...)
+	return Merge(grimoires...), nil
+}
 
-	// Resolve includes using the startDir as base
-	if err := ResolveIncludes(result, startDir); err != nil {
-		// Non-fatal: include resolution errors are recorded on individual refs
-		_ = err
+// readSource reads one grimoire source, at most MaxSize bytes of it. A
+// source found in the workspace is repository content: it must be a
+// regular file, not a symlink, in a directory that resolves inside the
+// one it was found in, so a cloned repository cannot point it at a file
+// elsewhere. The global ~/.celeste/grimoire.md may be a symlink.
+func readSource(src GrimoireSource) (string, error) {
+	path := src.Path
+	if src.dir == "" {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", err
+		}
+		path = real
+	} else {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", fmt.Errorf("not a regular file (repository grimoires may not be symlinks)")
+		}
+		realDir, err := filepath.EvalSymlinks(src.dir)
+		if err != nil {
+			return "", err
+		}
+		realParent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return "", err
+		}
+		if !pathutil.Within(realDir, realParent) {
+			return "", fmt.Errorf("its directory links outside %s", src.dir)
+		}
 	}
-
-	return result, nil
+	f, _, err := openRegular(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxSize+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > MaxSize {
+		log.Printf("grimoire: %s is over %d KB; reading the first %d KB", src.Path, MaxSize/1024, MaxSize/1024)
+		data = data[:MaxSize]
+	}
+	return string(data), nil
 }
 
 func fileExists(path string) bool {
