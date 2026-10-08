@@ -69,9 +69,11 @@ func TestCapToolResultRechecksTotalLimit(t *testing.T) {
 		assert.LessOrEqual(t, total, maxTotalSpillBytes, "after spill %d", i)
 		_, err = os.Stat(filepath.Join(base, sess, "c.txt"))
 		require.NoError(t, err, "the current session's spill was removed")
-		// Distinct modification times order the sessions.
-		past := time.Now().Add(time.Duration(i-10) * time.Minute)
+		// Distinct modification times, all past spillActiveAge, order the
+		// sessions.
+		past := time.Now().Add(time.Duration(i-10) * time.Hour)
 		require.NoError(t, os.Chtimes(filepath.Join(base, sess, "c.txt"), past, past))
+		require.NoError(t, os.Chtimes(filepath.Join(base, sess), past, past))
 	}
 }
 
@@ -171,4 +173,84 @@ func TestCapToolResultQuotaIgnoresOverwrittenFile(t *testing.T) {
 		_, _, err := CapToolResult(strings.Repeat("x", 3000), 1024, "sess", "same", base)
 		require.NoError(t, err, "spill %d of the same id", i)
 	}
+}
+
+// TestCapToolResultPrunesUnderSpillLock: the first spill's prune of old
+// sessions and the creation of its own session directory happen under the
+// spill lock, so another process's prune cannot remove a session directory
+// between its creation and its spill (review of the round 2 branch).
+func TestCapToolResultPrunesUnderSpillLock(t *testing.T) {
+	if !filelock.Supported {
+		t.Skip("no file lock on this platform")
+	}
+	base := filepath.Join(t.TempDir(), "tool-results")
+	expired := filepath.Join(base, "expired")
+	require.NoError(t, os.MkdirAll(expired, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(expired, "c.txt"), []byte("data"), 0o600))
+	longAgo := time.Now().Add(-2 * SpillKeepAge)
+	require.NoError(t, os.Chtimes(filepath.Join(expired, "c.txt"), longAgo, longAgo))
+	require.NoError(t, os.Chtimes(expired, longAgo, longAgo))
+
+	unlock, err := filelock.Lock(spillLockPath(base), time.Second)
+	require.NoError(t, err) // another process, mid-spill
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := CapToolResult(strings.Repeat("x", 3000), 1024, "sess", "a", base)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("a spill went ahead while another process held the spill lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	_, err = os.Stat(expired)
+	assert.NoError(t, err, "the prune ran outside the spill lock")
+	_, err = os.Stat(filepath.Join(base, "sess"))
+	assert.True(t, os.IsNotExist(err), "the session directory was created outside the spill lock")
+	unlock()
+	require.NoError(t, <-done)
+	_, err = os.Stat(expired)
+	assert.True(t, os.IsNotExist(err), "the expired session was kept")
+	_, err = os.Stat(filepath.Join(base, "sess", "a.txt"))
+	assert.NoError(t, err)
+}
+
+// TestCapToolResultKeepsRecentlyActiveSessions: the prune a spill runs to
+// stay within the total limit removes only sessions idle for a while, not
+// one another celeste process may still be using; if that is not enough,
+// the result is cut in memory instead (review of the round 2 branch).
+func TestCapToolResultKeepsRecentlyActiveSessions(t *testing.T) {
+	withSpillLimits(t, 1<<20, 1<<20)
+	oldT := maxTotalSpillBytes
+	maxTotalSpillBytes = 10000
+	t.Cleanup(func() { maxTotalSpillBytes = oldT })
+	base := t.TempDir()
+	write := func(sess string, age time.Duration) string {
+		dir := filepath.Join(base, sess)
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		p := filepath.Join(dir, "c.txt")
+		require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("o", 4000)), 0o600))
+		at := time.Now().Add(-age)
+		require.NoError(t, os.Chtimes(p, at, at))
+		require.NoError(t, os.Chtimes(dir, at, at))
+		return dir
+	}
+	idle := write("idle", 2*time.Hour)
+	active := write("active", 10*time.Second)
+
+	_, _, err := CapToolResult(strings.Repeat("x", 4000), 1024, "sess", "a", base)
+	require.NoError(t, err)
+	_, err = os.Stat(idle)
+	assert.True(t, os.IsNotExist(err), "the idle session was kept past the total limit")
+	_, err = os.Stat(active)
+	require.NoError(t, err, "a recently active session was pruned")
+
+	_, capped, err := CapToolResult(strings.Repeat("y", 4000), 1024, "sess", "b", base)
+	require.Error(t, err, "a spill past the total limit went ahead")
+	assert.False(t, capped)
+	_, err = os.Stat(active)
+	assert.NoError(t, err, "a recently active session was pruned")
+	_, err = os.Stat(filepath.Join(base, "sess", "b.txt"))
+	assert.True(t, os.IsNotExist(err))
 }
