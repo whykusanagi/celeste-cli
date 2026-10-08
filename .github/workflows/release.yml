@@ -22,8 +22,8 @@ concurrency:
 
 jobs:
   # Runs before any job that holds a secret (Aikido 806869730). A pushed tag
-  # publishes only if it is an annotated tag signed by the release key, and
-  # the commit it names is on main. The key comes from main's tree, never
+  # publishes only if it is an annotated tag signed by the release key for
+  # that same tag name, and the commit it names is on main. The key comes from main's tree, never
   # from the tag's, so a tag cannot bring its own key. A workflow_dispatch
   # dry run from a branch has no tag and publishes nothing: it skips the
   # check. A dispatch from a tag is checked like a push.
@@ -60,6 +60,16 @@ jobs:
         fi
         if [ "$(git rev-parse "${GITHUB_REF}^{commit}")" != "$GITHUB_SHA" ]; then
           echo "::error::$GITHUB_REF does not point at the commit this run builds"
+          exit 1
+        fi
+        # The signature covers the tag object, which names the tag it was
+        # made for: a ref pointing at a tag signed for another name (an
+        # older release's) is refused. Only the header is read, up to the
+        # first blank line, never the message; sed reads to the end, so
+        # git never writes into a closed pipe.
+        signed_tag="$(git cat-file tag "$GITHUB_REF" | sed -n '/^$/,$d; s/^tag //p')"
+        if [ "$signed_tag" != "$GITHUB_REF_NAME" ]; then
+          echo "::error::$GITHUB_REF points at a tag signed for ${signed_tag:-no name}, not $GITHUB_REF_NAME"
           exit 1
         fi
         # A keyring of its own holding only the release key, read from

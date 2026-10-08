@@ -97,3 +97,22 @@ func TestIsPublicAddr(t *testing.T) {
 		assert.True(t, isPublicAddr(netip.MustParseAddr(s)), s)
 	}
 }
+
+// Aikido PR #420 review: documentation, benchmarking and other reserved
+// ranges are not public, nor is the local-use NAT64 prefix (RFC 8215),
+// whose embedded IPv4 address cannot be read without knowing the
+// network's own translation layout.
+func TestIsPublicAddrRefusesReservedAndLocalNAT64(t *testing.T) {
+	for _, s := range []string{
+		"192.0.2.1", "198.51.100.7", "203.0.113.200", "192.88.99.1",
+		"2001:db8::1", "3fff::1", "100::1", "2001:2::1", "2001:10::1",
+		"2001:20::1", "5f00::1",
+		"64:ff9b:1::a00:1", "64:ff9b:1:ffff::a9fe:a9fe", "64:ff9b:1::808:808",
+		"64:ff9b::c000:201", // NAT64 to a documentation address
+	} {
+		assert.False(t, isPublicAddr(netip.MustParseAddr(s)), s)
+	}
+	for _, s := range []string{"2001:4860:4860::8888", "2a00:1450:4001::1", "203.0.114.1", "198.51.101.1"} {
+		assert.True(t, isPublicAddr(netip.MustParseAddr(s)), s)
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/agent"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/prompts"
 )
 
@@ -19,18 +20,26 @@ type realAgentRunner struct {
 	lane    laneInheritance
 }
 
+// laneWarn is a lane's warning sink: the caller's event stream, or errOut
+// when there is none. Warnings carry hook and setup text from outside
+// celeste, and neither the action feed nor stderr escapes it, so it is
+// escaped here.
+func laneWarn(onEvent func(OrchestratorEvent), model string, errOut io.Writer) func(string) {
+	if onEvent != nil {
+		return func(s string) {
+			onEvent(OrchestratorEvent{Kind: EventAction, Model: model, Text: "⚠ " + termsafe.Text(s)})
+		}
+	}
+	return func(s string) { fmt.Fprintln(errOut, "Warning: "+termsafe.Text(s)) }
+}
+
 func (r *realAgentRunner) RunGoal(ctx context.Context, goal string) (string, error) {
 	cfg := *r.cfg
 	cfg.Model = r.model
 	opts := laneAgentOptions()
 	// Setup and hook warnings go to the caller's event stream, never
 	// io.Discard (and never raw stderr under the TUI).
-	if r.onEvent != nil {
-		emit := r.onEvent
-		opts.Warn = func(s string) { emit(OrchestratorEvent{Kind: EventAction, Model: r.model, Text: "⚠ " + s}) }
-	} else {
-		opts.Warn = func(s string) { fmt.Fprintln(os.Stderr, "Warning: "+s) }
-	}
+	opts.Warn = laneWarn(r.onEvent, r.model, os.Stderr)
 	if cwd, err := os.Getwd(); err == nil {
 		opts.Workspace = cwd
 	}

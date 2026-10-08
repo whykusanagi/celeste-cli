@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/commands"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/termsafe"
 )
 
 // The chat turn protocol (2.0 F2d). A turn is one loop.Loop run, started by
@@ -318,7 +319,7 @@ func (m AppModel) onTurnEvent(ev TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.status = m.status.SetText(StreamingSpinner(0) + " " + ThinkingAnimation(0))
 		}
 		m.stopHookRunning, m.heldReady = false, ""
-		m.chat = m.chat.AddSystemMessage("↻ A Stop hook asked to continue: " + msg.Reason)
+		m.chat = m.chat.AddSystemMessage("↻ A Stop hook asked to continue: " + termsafe.Text(msg.Reason)) // sent to the model as written
 		m.chat = m.chat.AppendLLM(msg.Message)
 	case StopHookStartMsg:
 		// Input typed now waits for the turn; say why instead of "Ready".
@@ -460,7 +461,7 @@ func (m AppModel) onPromptBlocked(msg PromptBlockedMsg) AppModel {
 		m.chat = m.chat.DropUser(msg.Content, msg.Timestamp)
 		m.persistSession()
 	}
-	m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + msg.Reason)
+	m.chat = m.chat.AddSystemMessage("Prompt blocked by a UserPromptSubmit hook: " + termsafe.Text(msg.Reason))
 	return m
 }
 

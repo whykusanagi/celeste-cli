@@ -102,3 +102,24 @@ func TestOrchestratorLanesSendTheOffPersona(t *testing.T) {
 		})
 	}
 }
+
+// A lane's warnings carry hook and setup text from outside celeste; the
+// action feed and the stderr fallback get it with its controls escaped.
+func TestLaneWarnEscapesControls(t *testing.T) {
+	const raw = "compaction blocked by a PreCompact hook: no\x1b]0;t\anow \x1b[30;40mhidden"
+	var events []OrchestratorEvent
+	laneWarn(func(e OrchestratorEvent) { events = append(events, e) }, "m", nil)(raw)
+	if len(events) != 1 || events[0].Kind != EventAction || events[0].Model != "m" {
+		t.Fatalf("events = %+v", events)
+	}
+	var errOut strings.Builder
+	laneWarn(nil, "m", &errOut)(raw)
+	for _, got := range []string{events[0].Text, errOut.String()} {
+		if !strings.Contains(got, "compaction blocked by a PreCompact hook") {
+			t.Fatalf("warning = %q, want the text kept", got)
+		}
+		if strings.ContainsAny(got, "\x1b\a") {
+			t.Fatalf("warning = %q, want controls escaped", got)
+		}
+	}
+}

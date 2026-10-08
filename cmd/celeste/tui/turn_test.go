@@ -608,3 +608,25 @@ func TestCompactionDuringATurnSurvivesAFailedTurn(t *testing.T) {
 	}
 	assert.True(t, found, "the saved session lacks the pruned result")
 }
+
+// Aikido review on #426: a hook's reason reaches the model as written, so
+// the chat escapes it when it shows it: lines stay, escape sequences do not.
+func TestHookReasonsAreEscapedInTheChat(t *testing.T) {
+	reason := "line one\nline two\x1b[30;40mhidden\x1b]0;t\x07"
+	m, _ := newQueueTestApp()
+	m, _ = step(t, m, SendMessageMsg{Content: "go"})
+	require.NotNil(t, m.turn)
+	cont := ChatMessage{Role: "user", Content: reason, Metadata: map[string]any{"hidden": true, MetaPromptHookDone: true}}
+	m, _ = feed(t, m, StopContinueMsg{Message: cont, Reason: reason})
+	m = m.onPromptBlocked(PromptBlockedMsg{Reason: reason, Steer: true})
+	var shown int
+	for _, msg := range m.chat.GetMessages() {
+		if msg.Role != "system" || !strings.Contains(msg.Content, "line one\nline two") {
+			continue
+		}
+		shown++
+		assert.NotContains(t, msg.Content, "\x1b", "a hook reason kept a live escape sequence")
+		assert.Contains(t, msg.Content, `\x1b[30;40mhidden`)
+	}
+	assert.Equal(t, 2, shown, "both the Stop and the UserPromptSubmit reason are shown")
+}

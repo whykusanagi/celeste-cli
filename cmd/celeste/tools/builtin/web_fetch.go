@@ -27,7 +27,7 @@ const maxFetchBytes = 32 * 1024
 // Only public addresses are fetched: the address a connection actually goes
 // to is checked when it is dialed (every redirect hop included), so a host
 // name that resolves, or later re-resolves, to a loopback, private-network,
-// link-local or metadata address is refused. "web_fetch_allow_private": true
+// link-local, metadata, documentation or other reserved address is refused. "web_fetch_allow_private": true
 // in the config, or CELESTE_WEB_FETCH_ALLOW_PRIVATE=1, lifts that for local
 // docs servers.
 type WebFetchTool struct {
@@ -48,19 +48,33 @@ const webFetchMaxRedirects = 10
 var errNonPublicAddress = errors.New("destination is not a public address")
 
 // nonPublicPrefixes are the ranges netip's predicates do not cover:
-// "this network", CGNAT, IETF protocol assignments, benchmarking, the
-// reserved 240/4 block (broadcast included), deprecated site-local IPv6,
-// and two IPv6 forms that carry an IPv4 address: the deprecated
-// IPv4-compatible ::/96 (:: and ::1 are caught before) and Teredo.
+// "this network", CGNAT, IETF protocol assignments, the documentation
+// ranges, the retired 6to4 relay anycast, benchmarking, the reserved 240/4
+// block (broadcast included), the IPv6 discard-only, IETF protocol
+// assignment (Teredo, benchmarking, ORCHID and the rest of 2001::/23),
+// documentation and SRv6 SID blocks, deprecated site-local IPv6, the
+// deprecated IPv4-compatible ::/96 (:: and ::1 are caught before), and the
+// local-use NAT64 prefix 64:ff9b:1::/48 (RFC 8215): a network chooses its
+// own layout under it, so the IPv4 address it carries cannot be read and
+// the whole prefix is refused.
 var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
 	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("fec0::/10"),
 	netip.MustParsePrefix("::/96"),
-	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("5f00::/16"),
+	netip.MustParsePrefix("fec0::/10"),
 }
 
 var (
@@ -69,7 +83,10 @@ var (
 )
 
 // isPublicAddr reports whether addr is a globally routable unicast address.
-// IPv4 embedded in IPv6 (mapped, NAT64, 6to4) is judged by the IPv4 part.
+// IPv4 embedded in IPv6 (mapped, well-known NAT64, 6to4) is judged by the
+// IPv4 part. A network-specific NAT64 prefix outside 64:ff9b::/96 and
+// 64:ff9b:1::/48 looks like any other global address and cannot be told
+// apart here: a network that uses one filters at its translator.
 func isPublicAddr(addr netip.Addr) bool {
 	addr = addr.Unmap()
 	if addr.Is6() {
