@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tools:** `collections_search` searches only the collections enabled with `/collections`; a `collection_id` outside them is refused (Aikido 806869660).
 * **wallet_security:** a scan reads every page of asset transfers in its block range, and a scan that cannot read them all fails instead of reporting a partial result. Transfers are matched to a monitored wallet regardless of address letter case (Aikido 806869642).
 * **wallet_security:** a wallet scan that fails, a token-approval check included, no longer moves the scan checkpoint, so the same block range is scanned again next time. Checkpoints are kept per network (`last_checked_blocks`), each moved only when every wallet on it was scanned, and the monitor daemon reports a failed scan instead of "No threats detected" (Aikido 806869487).
+* **wallet_security:** the alerts log stores each on-chain event once (by network, wallet, alert type, transaction and transfer or log entry) and keeps the newest 1000 alerts; a scan reports only new alerts, and `get_security_alerts` returns the newest 100 with the total (Aikido 806869535).
 
 ### Features
 

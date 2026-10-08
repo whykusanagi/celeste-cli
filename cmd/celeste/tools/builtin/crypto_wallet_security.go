@@ -49,6 +49,29 @@ type SecurityAlert struct {
 	DetectedAt     time.Time      `json:"detected_at"`
 	Acknowledged   bool           `json:"acknowledged"`
 	AcknowledgedAt *time.Time     `json:"acknowledged_at,omitempty"`
+	// Key identifies the on-chain event (network, wallet, type, tx and the
+	// transfer or log within it); an event is stored once.
+	Key string `json:"key,omitempty"`
+}
+
+// maxStoredAlerts bounds the alerts log; the oldest are dropped first.
+const maxStoredAlerts = 1000
+
+// maxReturnedAlerts bounds what get_security_alerts returns (newest first).
+const maxReturnedAlerts = 100
+
+// alertKey is a's dedup key; alerts saved before keys existed fall back to
+// wallet, type, tx and block.
+func alertKey(a SecurityAlert) string {
+	if a.Key != "" {
+		return a.Key
+	}
+	return strings.Join([]string{"legacy", strings.ToLower(a.WalletAddress), a.AlertType, strings.ToLower(a.TxHash), a.BlockNumber}, "|")
+}
+
+// eventKey builds a SecurityAlert.Key.
+func eventKey(network, wallet, alertType, txHash, sub string) string {
+	return strings.Join([]string{network, strings.ToLower(wallet), alertType, strings.ToLower(txHash), sub}, "|")
 }
 
 // AlertsLog stores all security alerts
@@ -65,6 +88,7 @@ type AssetTransfer struct {
 	Value           float64
 	Asset           string
 	Hash            string
+	UniqueID        string // Alchemy's per-transfer id within the tx
 	RawContract     struct{ Address string }
 	TokenId         string
 	ERC721TokenId   string
@@ -460,7 +484,8 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 
 	// Save alerts
 	if len(allAlerts) > 0 {
-		if err := appendAlerts(allAlerts); err != nil {
+		added, err := appendAlerts(allAlerts)
+		if err != nil {
 			return formatErrorResponse(
 				"api_error",
 				fmt.Sprintf("Failed to save alerts: %v", err),
@@ -470,6 +495,8 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 				},
 			), nil
 		}
+		// Report only events not seen before (a rescanned range repeats).
+		allAlerts = added
 	}
 
 	// Save the checkpoints that moved. The legacy field mirrors the first
@@ -584,6 +611,11 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			continue
 		}
 		transfer := parseAssetTransfer(data)
+		transferSub := transfer.UniqueID
+		if transferSub == "" {
+			transferSub = strings.Join([]string{transfer.Category, strings.ToLower(transfer.From), strings.ToLower(transfer.To),
+				transfer.Asset, strings.ToLower(transfer.RawContract.Address), transfer.TokenId, strconv.FormatFloat(transfer.Value, 'g', -1, 64)}, "/")
+		}
 
 		// Run detection algorithms
 		if alert := detectDustAttack(transfer, wallet.Address); alert != nil {
@@ -591,6 +623,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			alert.TxHash = transfer.Hash
 			alert.BlockNumber = transfer.BlockNum
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, transfer.Hash, transferSub)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -600,6 +633,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			alert.TxHash = transfer.Hash
 			alert.BlockNumber = transfer.BlockNum
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, transfer.Hash, transferSub)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -609,6 +643,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			alert.TxHash = transfer.Hash
 			alert.BlockNumber = transfer.BlockNum
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, transfer.Hash, transferSub)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -709,6 +744,7 @@ func checkTokenApprovals(ctx context.Context, client *http.Client, config Alchem
 			alert.TxHash = approval.TxHash
 			alert.BlockNumber = approval.BlockNumber
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, approval.TxHash, "log:"+approval.LogIndex)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -725,6 +761,7 @@ type ApprovalEvent struct {
 	TokenContract string   // ERC20 contract address
 	TxHash        string
 	BlockNumber   string
+	LogIndex      string
 	IsUnlimited   bool // True if value == max uint256
 }
 
@@ -739,6 +776,8 @@ func parseApprovalEvent(logData map[string]any, ownerAddr string) ApprovalEvent 
 		BlockNumber:   logData["blockNumber"].(string),
 		TokenContract: logData["address"].(string),
 	}
+
+	event.LogIndex, _ = logData["logIndex"].(string)
 
 	// Topic2 is spender address (indexed, padded to 32 bytes)
 	if len(topics) > 2 {
@@ -951,11 +990,23 @@ func handleGetSecurityAlerts(args map[string]any) (any, error) {
 		return filteredAlerts[i].DetectedAt.After(filteredAlerts[j].DetectedAt)
 	})
 
+	total := len(filteredAlerts)
+	truncated := total > maxReturnedAlerts
+	if truncated {
+		filteredAlerts = filteredAlerts[:maxReturnedAlerts]
+	}
+	message := fmt.Sprintf("Found %d alert(s)", total)
+	if truncated {
+		message = fmt.Sprintf("Found %d alert(s); showing the newest %d", total, maxReturnedAlerts)
+	}
+
 	return map[string]any{
-		"success": true,
-		"alerts":  filteredAlerts,
-		"count":   len(filteredAlerts),
-		"message": fmt.Sprintf("Found %d alert(s)", len(filteredAlerts)),
+		"success":   true,
+		"alerts":    filteredAlerts,
+		"count":     len(filteredAlerts),
+		"total":     total,
+		"truncated": truncated,
+		"message":   message,
 	}, nil
 }
 
@@ -1092,7 +1143,9 @@ func saveAlertsLog(log *AlertsLog) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func appendAlerts(newAlerts []SecurityAlert) error {
+// appendAlerts stores the alerts whose event is not stored yet and returns
+// them. The log keeps the newest maxStoredAlerts.
+func appendAlerts(newAlerts []SecurityAlert) ([]SecurityAlert, error) {
 	log, err := loadAlertsLog()
 	if err != nil {
 		// Create new log if doesn't exist
@@ -1101,9 +1154,28 @@ func appendAlerts(newAlerts []SecurityAlert) error {
 		}
 	}
 
-	log.Alerts = append(log.Alerts, newAlerts...)
+	seen := make(map[string]bool, len(log.Alerts)+len(newAlerts))
+	for _, a := range log.Alerts {
+		seen[alertKey(a)] = true
+	}
+	added := []SecurityAlert{}
+	for _, a := range newAlerts {
+		k := alertKey(a)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		added = append(added, a)
+	}
+	if len(added) == 0 {
+		return added, nil
+	}
 
-	return saveAlertsLog(log)
+	log.Alerts = append(log.Alerts, added...)
+	if over := len(log.Alerts) - maxStoredAlerts; over > 0 {
+		log.Alerts = append([]SecurityAlert(nil), log.Alerts[over:]...)
+	}
+	return added, saveAlertsLog(log)
 }
 
 // Utility functions
@@ -1139,6 +1211,9 @@ func parseAssetTransfer(data map[string]any) AssetTransfer {
 	}
 	if hash, ok := data["hash"].(string); ok {
 		transfer.Hash = hash
+	}
+	if uid, ok := data["uniqueId"].(string); ok {
+		transfer.UniqueID = uid
 	}
 	if rawContract, ok := data["rawContract"].(map[string]any); ok {
 		if address, ok := rawContract["address"].(string); ok {
