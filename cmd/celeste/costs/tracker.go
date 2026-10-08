@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // CostSummary is a snapshot of cumulative session costs.
@@ -98,7 +101,7 @@ func (t *SessionTracker) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return atomicfile.Write(path, data, privfs.FilePerm)
 }
 
 // Load deserialises tracker state from a JSON file.

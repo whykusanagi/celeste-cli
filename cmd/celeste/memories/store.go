@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // Store manages memory files on disk under a project-specific directory.
@@ -38,11 +41,11 @@ func (s *Store) Save(memory *Memory) error {
 	if memory.Name == "" {
 		return fmt.Errorf("memory name is required")
 	}
-	if err := os.MkdirAll(s.baseDir, 0755); err != nil {
+	if err := privfs.MkdirAll(s.baseDir); err != nil {
 		return fmt.Errorf("failed to create memories directory: %w", err)
 	}
 	path := filepath.Join(s.baseDir, sanitizeFilename(memory.Name)+".md")
-	return os.WriteFile(path, memory.Serialize(), 0644)
+	return atomicfile.Write(path, memory.Serialize(), privfs.FilePerm)
 }
 
 // Load reads a memory by name from disk.

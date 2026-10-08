@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // IndexEntry represents a single entry in the MEMORY.md index.
@@ -92,7 +95,7 @@ func (idx *Index) Render() string {
 
 // Save writes the index to disk as MEMORY.md.
 func (idx *Index) Save() error {
-	if err := os.MkdirAll(filepath.Dir(idx.path), 0755); err != nil {
+	if err := privfs.MkdirAll(filepath.Dir(idx.path)); err != nil {
 		return err
 	}
 
@@ -104,7 +107,7 @@ func (idx *Index) Save() error {
 		sb.WriteString(fmt.Sprintf("- **%s** | `%s` | %s\n", e.Name, e.File, e.Description))
 	}
 
-	return os.WriteFile(idx.path, []byte(sb.String()), 0644)
+	return atomicfile.Write(idx.path, []byte(sb.String()), privfs.FilePerm)
 }
 
 // parseIndex parses a MEMORY.md file into entries.

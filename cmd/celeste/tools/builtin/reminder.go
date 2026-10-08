@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -157,7 +159,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 	reminders = append(reminders, reminder)
 
 	// Save reminders
-	os.MkdirAll(filepath.Dir(remindersPath), 0755)
+	_ = privfs.MkdirAll(filepath.Dir(remindersPath))
 	data, err := json.MarshalIndent(reminders, "", "  ")
 	if err != nil {
 		return resultFromMap(formatErrorResponse(
@@ -170,7 +172,7 @@ func (t *ReminderSetTool) Execute(ctx context.Context, input map[string]any, pro
 			},
 		))
 	}
-	if err := os.WriteFile(remindersPath, data, 0644); err != nil {
+	if err := atomicfile.Write(remindersPath, data, privfs.FilePerm); err != nil {
 		return resultFromMap(formatErrorResponse(
 			"internal_error",
 			"Failed to save reminder file",

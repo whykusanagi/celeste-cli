@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/skip2/go-qrcode"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -97,12 +98,12 @@ func (t *QRCodeTool) Execute(ctx context.Context, input map[string]any, progress
 
 	homeDir, _ := os.UserHomeDir()
 	qrDir := filepath.Join(homeDir, ".celeste", "qr_codes")
-	os.MkdirAll(qrDir, 0755)
+	_ = privfs.MkdirAll(qrDir)
 
 	filename := fmt.Sprintf("qr_%d.png", time.Now().Unix())
 	filePath := filepath.Join(qrDir, filename)
 
-	if err := os.WriteFile(filePath, pngData, 0644); err != nil {
+	if err := os.WriteFile(filePath, pngData, privfs.FilePerm); err != nil {
 		return resultFromMap(formatErrorResponse(
 			"internal_error",
 			"Failed to save QR code file",

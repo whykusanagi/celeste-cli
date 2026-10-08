@@ -14,6 +14,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // UserIdentity holds the current user's identity for prompt calibration.
@@ -81,8 +84,8 @@ func (u *UserIdentity) Save() error {
 		return fmt.Errorf("marshal user identity: %w", err)
 	}
 	dir := filepath.Dir(UserPath())
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := privfs.MkdirAll(dir); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	return os.WriteFile(UserPath(), data, 0644)
+	return atomicfile.Write(UserPath(), data, privfs.FilePerm)
 }
