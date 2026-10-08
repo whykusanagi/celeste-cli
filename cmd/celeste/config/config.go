@@ -713,6 +713,13 @@ func Load() (*Config, error) {
 	tightenPrivate(configFile)
 	tightenPrivate(secretsFile)
 	tightenPrivate(skillsFile)
+	// Named profiles hold keys too, and one an older version wrote 0644 may
+	// never be opened by LoadNamed.
+	if profiles, err := filepath.Glob(filepath.Join(configDir, "config.*.json")); err == nil {
+		for _, p := range profiles {
+			tightenPrivate(p)
+		}
+	}
 
 	// Load main config file
 	if data, err := os.ReadFile(configFile); err == nil {

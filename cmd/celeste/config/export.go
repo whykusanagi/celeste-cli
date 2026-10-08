@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -206,7 +205,9 @@ func (e *Exporter) SaveToFile(content string, format string) (string, error) {
 	filepath := filepath.Join(exportDir, filename)
 
 	// Write file
-	if err := os.WriteFile(filepath, []byte(content), privfs.FilePerm); err != nil {
+	// privfs.WriteFile, not os.WriteFile: a leftover file of the same name
+	// keeps its mode under os.WriteFile.
+	if _, err := privfs.WriteFile(filepath, []byte(content)); err != nil {
 		return "", fmt.Errorf("failed to write export file: %w", err)
 	}
 

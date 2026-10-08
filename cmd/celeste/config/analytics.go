@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/privfs"
 )
 
 // GlobalAnalytics tracks cumulative usage across all sessions
@@ -108,7 +109,7 @@ func (ga *GlobalAnalytics) Save() error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(analyticsPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := privfs.MkdirAll(dir); err != nil {
 		return fmt.Errorf("failed to create analytics directory: %w", err)
 	}
 
