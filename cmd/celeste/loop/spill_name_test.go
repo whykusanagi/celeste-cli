@@ -47,7 +47,8 @@ func TestLoopLongIDsStillSpillAndRecall(t *testing.T) {
 	// The shortened name is stable for one id and differs between ids.
 	a := &Loop{SessionID: strings.Repeat("s", 200)}
 	b := &Loop{SessionID: strings.Repeat("s", 199) + "t"}
-	if a.sessionID() != a.sessionID() || a.sessionID() == b.sessionID() || len(a.sessionID()) > 128 {
+	a2 := &Loop{SessionID: strings.Repeat("s", 200)}
+	if a.sessionID() != a2.sessionID() || a.sessionID() == b.sessionID() || len(a.sessionID()) > 128 {
 		t.Fatalf("shortened session ids: %q, %q", a.sessionID(), b.sessionID())
 	}
 }
