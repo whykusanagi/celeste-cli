@@ -826,10 +826,12 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 		var targetID int64
 		ok2 := false
 		// self.m() / this.m() inside a method calls m of the same class.
+		// One the class does not define is looked for in its base classes
+		// before any same-named method of an unrelated class.
 		if tail, ok := selfCallee(edge.TargetName); ok && edge.SourceScope != "" {
-			targetID, ok2 = idx.store.symbolIDInFile(tail, edge.SourceScope, edge.SourceFile)
+			targetID, ok2 = idx.resolveSelfCall(tail, edge.SourceScope, edge.SourceFile)
 		} else if edge.SelfCall && edge.SourceScope != "" {
-			targetID, ok2 = idx.store.symbolIDInFile(edge.TargetName, edge.SourceScope, edge.SourceFile)
+			targetID, ok2 = idx.resolveSelfCall(edge.TargetName, edge.SourceScope, edge.SourceFile)
 		}
 		if !ok2 {
 			targetID, ok2 = idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
@@ -854,6 +856,79 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 		}
 	}
 	return out
+}
+
+// maxHierarchyClasses bounds the classes resolveSelfCall visits, so a
+// cyclic or very wide hierarchy cannot make one edge expensive.
+const maxHierarchyClasses = 64
+
+// resolveSelfCall resolves a call to name on the caller's own object from
+// a method of the class scope (in file): the method of that class first,
+// then the nearest one of its base classes, transitively (breadth first,
+// each base found by name in the caller's language, its file preferred).
+func (idx *Indexer) resolveSelfCall(name, scope, file string) (int64, bool) {
+	if id, ok := idx.store.symbolIDInFile(name, scope, file); ok {
+		return id, true
+	}
+	outer, class := "", scope
+	if i := strings.LastIndex(scope, "."); i >= 0 {
+		outer, class = scope[:i], scope[i+1:]
+	}
+	start, ok := idx.store.classInFile(class, outer, file)
+	if !ok {
+		return 0, false
+	}
+	seen := map[classRef]bool{start: true}
+	queue := []classRef{start}
+	for len(queue) > 0 && len(seen) <= maxHierarchyClasses {
+		c := queue[0]
+		queue = queue[1:]
+		for _, base := range strings.Split(c.bases, ",") {
+			base = baseClassName(base)
+			if base == "" {
+				continue
+			}
+			b, ok := idx.store.classByName(base, c.file)
+			if !ok || seen[b] {
+				continue
+			}
+			if id, ok := idx.store.symbolIDInFile(name, joinScope(b.scope, b.name), b.file); ok {
+				return id, true
+			}
+			seen[b] = true
+			queue = append(queue, b)
+		}
+	}
+	return 0, false
+}
+
+// joinScope appends class name to the class chain outer, '.'-separated. A
+// qualified name ("geo::Shape") is split the same way.
+func joinScope(outer, name string) string {
+	name = strings.ReplaceAll(name, "::", ".")
+	if outer == "" {
+		return name
+	}
+	return outer + "." + name
+}
+
+// baseClassName is the class name a base-class entry refers to: its last
+// dotted or "::" segment, without generic arguments.
+func baseClassName(base string) string {
+	base = strings.TrimSpace(base)
+	if i := strings.IndexAny(base, "<[("); i >= 0 {
+		base = base[:i]
+	}
+	if i := strings.LastIndex(base, "::"); i >= 0 {
+		base = base[i+2:]
+	}
+	if i := strings.LastIndex(base, "."); i >= 0 {
+		base = base[i+1:]
+	}
+	if f := strings.Fields(base); len(f) > 0 {
+		base = f[len(f)-1]
+	}
+	return base
 }
 
 // resolveSource looks up an edge's source in its file. Outside Go a class
