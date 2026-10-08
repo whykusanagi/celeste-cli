@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Security
+
+* **config:** `config.json`, named profiles, `secrets.json`, `skills.json` and `~/.celeste` are owner-only (0600 files, 0700 directory). Files and a directory an older version created with a looser mode are tightened when celeste loads them, with a note in the log, and every save keeps them owner-only (Aikido 806869312).
+* **chat:** resuming a session that used another configured profile switches the chat to that profile, not only the header; when the profile cannot be loaded, the startup provider stays and the header shows it (Aikido 806869764).
+* **tui:** `/config set-key` and `/voice set-key` are kept in the input history as `set-key ***`, so the key is never saved with the session or in its exports; older sessions are redacted when loaded or exported. Exports are written owner-only (Aikido 806869355).
+* **logs:** `~/.celeste/logs` and its log files are owner-only, also when an older version created them with a looser mode (Aikido 806869872).
+* **agent:** run artifact bundles (run state, plan, steps, verification, summary, git status and diff) are owner-only (Aikido 806869790).
+* **tools:** notes, reminders, QR codes, wallet-monitor state, memories, cost records, the user identity file and agent run checkpoints under `~/.celeste` are owner-only (Aikido 806869849).
+* **agent:** resuming a run started with `--no-artifacts` keeps artifacts off; `--no-artifacts` on the resume still turns them off (Aikido 806869324).
+* **config:** celeste refuses to start without a home directory (`HOME`, or `USERPROFILE` on Windows, unset, empty or relative) instead of resolving `~/.celeste` against the current directory, and custom skills load only from an absolute directory (Aikido 806869780).
+
 ### Breaking Changes
 
 * **config:** `skip_persona_prompt` and `celeste config --skip-persona` are removed: the persona is always on in chat and agent runs, for every provider. DigitalOcean agents, which have their own built-in persona, now also get Celeste's. A config with `"skip_persona_prompt": true` loses the key on load, with one note on stderr; `false` is ignored. See MIGRATING-2.0.md.
