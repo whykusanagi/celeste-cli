@@ -29,9 +29,9 @@ func TestGrimoireStampWritesTheCheckedPath(t *testing.T) {
 
 	var paths []string
 	orig := writeFileFunc
-	writeFileFunc = func(name string, data []byte, perm os.FileMode) error {
+	writeFileFunc = func(ws, name string, data []byte, perm os.FileMode) error {
 		paths = append(paths, name)
-		return orig(name, data, perm)
+		return orig(ws, name, data, perm)
 	}
 	t.Cleanup(func() { writeFileFunc = orig })
 

@@ -89,3 +89,61 @@ func TestCheckDangerousCommand_SafeCommands(t *testing.T) {
 	assert.Empty(t, checkDangerousCommand("find . -name '*.go' | wc -l"))
 	assert.Empty(t, checkDangerousCommand("diff file1.go file2.go"))
 }
+
+// Aikido 806869510: the recursive-rm refusal covers a home path that climbs
+// out of the home directory.
+func TestCheckDangerousCommand_HomeTraversal(t *testing.T) {
+	for _, cmd := range []string{"rm -rf ~/../someuser", "rm -rf $HOME/../someuser", "rm -r ~/x/../.."} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("checkDangerousCommand(%q) allowed it", cmd)
+		}
+	}
+}
+
+// Aikido 806869897: the privilege-escalation refusal reads the command as
+// a shell does, so quoting or escaping the command word, or nesting it in
+// sh -c, does not slip past.
+func TestCheckDangerousCommand_PrivilegeEscalationQuoted(t *testing.T) {
+	for _, cmd := range []string{
+		`sud''o id`, `s\udo id`, `"sudo" id`, `bash -c 'sud""o id'`,
+		`\su -`, `'doas' id`, `sh -c "pk'exec' id"`, `eval 'su""do id'`,
+		`env "/usr/bin/sudo" id`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("checkDangerousCommand(%q) allowed it", cmd)
+		}
+	}
+	for _, cmd := range []string{"echo pseudo sudoku", "git checkout feature/su", "ls ./su"} {
+		if r := checkDangerousCommand(cmd); r != "" {
+			t.Errorf("checkDangerousCommand(%q) refused a harmless line: %s", cmd, r)
+		}
+	}
+}
+
+// Review Minor 1: the privilege check reads command words only, so a
+// quoted argument that merely names sudo, su or pkexec is not refused,
+// while a command word that is one still is, however it is spelled or
+// wrapped.
+func TestCheckDangerousCommand_PrivilegeWordAsArgument(t *testing.T) {
+	for _, cmd := range []string{
+		`grep -rn "sudo" scripts/`, `rg 'pkexec' .`, `git commit -m 'su'`,
+		`git log --grep='doas'`, `find . -name 'sudo'`, `env FOO='sudo' ls`,
+		`echo 'su' | xargs echo`, `timeout 5 grep 'sudo' f`,
+	} {
+		if r := checkDangerousCommand(cmd); r != "" {
+			t.Errorf("checkDangerousCommand(%q) refused a quoted argument: %s", cmd, r)
+		}
+	}
+	for _, cmd := range []string{
+		`sud''o id`, `"sudo" id`, `/usr/bin/sudo id`, `bash -c 'sud""o x'`, `env sudo id`,
+		`env -i FOO=1 "sudo" id`, `env -u HOME 'sudo' id`, `command 'sudo' id`, `exec 'su' -`,
+		`nice -n 5 'sudo' id`, `nohup "sudo" id &`, `time 'sudo' id`, `timeout 5 'sudo' id`,
+		`timeout -s KILL 5 'sudo' id`, `ls | xargs 'sudo' rm`, `xargs -n 1 'sudo' rm`,
+		`stdbuf -oL 'sudo' id`, `FOO=1 'sudo' id`, `2>/dev/null 'sudo' id`,
+		`find . -exec 'sudo' rm {} ';'`, `nohup env 'doas' id`, `echo $('sudo' id)`,
+	} {
+		if checkDangerousCommand(cmd) == "" {
+			t.Errorf("checkDangerousCommand(%q) allowed it", cmd)
+		}
+	}
+}

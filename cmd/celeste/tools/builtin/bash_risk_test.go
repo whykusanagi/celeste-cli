@@ -141,3 +141,35 @@ func TestRegistryPromptCarriesBashRiskLevel(t *testing.T) {
 		}
 	}
 }
+
+// Aikido 806869720: a shell reading its script from stdin is rated
+// destructive however the input is spelled (an attached or numbered
+// redirect, a heredoc or here-string), and an option's value is not taken
+// for a script file. A shell given a script file or -c is not.
+func TestBashRiskLevelStdinScriptForms(t *testing.T) {
+	b := NewBashTool(t.TempDir(), nil)
+	for _, cmd := range []string{
+		"bash <payload",
+		"bash 0<payload",
+		"sh < payload",
+		"bash --rcfile /dev/null",
+		"bash -o pipefail <payload",
+		"bash >log",
+		"bash <<'EOF'\necho hi\nEOF",
+		"bash <<< 'echo hi'",
+	} {
+		if got := b.RiskLevel(map[string]any{"command": cmd}); got != "destructive" {
+			t.Errorf("RiskLevel(%q) = %q, want destructive", cmd, got)
+		}
+	}
+	for _, cmd := range []string{
+		"bash script.sh <input",
+		"bash -o pipefail script.sh",
+		"bash --rcfile rc script.sh",
+		"bash -c 'echo hi' <input",
+	} {
+		if got := b.RiskLevel(map[string]any{"command": cmd}); got != "write" {
+			t.Errorf("RiskLevel(%q) = %q, want write", cmd, got)
+		}
+	}
+}

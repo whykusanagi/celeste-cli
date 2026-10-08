@@ -15,7 +15,7 @@ import (
 // A directory swapped higher up between check and open remains a residual
 // race.
 func openNoFollow(real string) (*os.File, error) {
-	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		// Linux and macOS report ELOOP; FreeBSD and NetBSD EMLINK.
 		if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.EMLINK) {

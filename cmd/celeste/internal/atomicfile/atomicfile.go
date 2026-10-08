@@ -4,6 +4,10 @@
 package atomicfile
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -108,4 +112,64 @@ func ReplaceKeepMode(path string, data []byte, defaultPerm os.FileMode) error {
 		perm = fi.Mode().Perm()
 	}
 	return replace(path, data, perm)
+}
+
+// ReplaceIn is ReplaceKeepMode for rel inside root: the temp file is
+// created next to rel and renamed over it through root, so no symlink or
+// ".." in any component, swapped in at any time, can take the write out of
+// root's directory. A symlink at rel itself is replaced, not followed. A
+// regular file at rel keeps its mode; anything else gets defaultPerm.
+func ReplaceIn(root *os.Root, rel string, data []byte, defaultPerm os.FileMode) (err error) {
+	perm := defaultPerm
+	if fi, err := root.Lstat(rel); err == nil && fi.Mode().IsRegular() {
+		perm = fi.Mode().Perm()
+	}
+	dir, base := filepath.Dir(rel), filepath.Base(rel)
+	var tmp *os.File
+	var tmpName string
+	for i := 0; i < 10; i++ {
+		tmpName = filepath.Join(dir, "."+base+".tmp-"+randomSuffix())
+		tmp, err = root.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if !errors.Is(err, fs.ErrExist) {
+			break
+		}
+	}
+	if err != nil {
+		return &TempError{Err: err}
+	}
+	defer func() {
+		if err != nil {
+			_ = root.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	for i := 0; i < renameAttempts; i++ {
+		if err = root.Rename(tmpName, rel); err == nil {
+			return nil
+		}
+		if i < renameAttempts-1 {
+			time.Sleep(retryDelay)
+		}
+	}
+	return err
+}
+
+func randomSuffix() string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

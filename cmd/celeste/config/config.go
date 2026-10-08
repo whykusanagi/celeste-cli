@@ -106,6 +106,10 @@ type Config struct {
 	// sent as written even if the provider no longer lists them. Same as
 	// CELESTE_PIN_MODEL=1.
 	PinModel bool `json:"pin_model,omitempty"`
+	// WebFetchAllowPrivate lets web_fetch reach loopback, private-network,
+	// link-local and other non-public addresses, which it refuses by default.
+	// For local docs servers. Same as CELESTE_WEB_FETCH_ALLOW_PRIVATE=1.
+	WebFetchAllowPrivate bool `json:"web_fetch_allow_private,omitempty"`
 	// JevPrune turns on TypeSafe Jev as a judge for context pruning (#175).
 	// "shadow" asks Jev in the background and only logs what it would have
 	// pruned; "on" (2.0 W3) elides the least-needed results first, asking
@@ -464,6 +468,7 @@ func LoadNamedWithEnv(name string) (*Config, error) {
 		return nil, err
 	}
 	ApplyEnvOverrides(cfg)
+	sessionWebFetchAllowPrivate.Store(cfg.WebFetchAllowPrivate)
 	return cfg, nil
 }
 

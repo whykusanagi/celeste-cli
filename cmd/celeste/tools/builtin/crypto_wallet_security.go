@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/atomicfile"
@@ -22,8 +23,13 @@ import (
 
 // WalletSecurityConfig holds wallet security configuration
 type WalletSecurityConfig struct {
-	MonitoredWallets    []MonitoredWallet `json:"monitored_wallets"`
-	LastCheckedBlock    string            `json:"last_checked_block"`
+	MonitoredWallets []MonitoredWallet `json:"monitored_wallets"`
+	// LastCheckedBlock is the single checkpoint of the old file format. It
+	// is read only from a file without LastCheckedBlocks and never written.
+	LastCheckedBlock string `json:"last_checked_block,omitempty"`
+	// LastCheckedBlocks is the scan checkpoint per network: the last block
+	// fully scanned for every wallet on it. The next scan starts after it.
+	LastCheckedBlocks   map[string]string `json:"last_checked_blocks,omitempty"`
 	PollIntervalSeconds int               `json:"poll_interval_seconds"`
 }
 
@@ -48,6 +54,29 @@ type SecurityAlert struct {
 	DetectedAt     time.Time      `json:"detected_at"`
 	Acknowledged   bool           `json:"acknowledged"`
 	AcknowledgedAt *time.Time     `json:"acknowledged_at,omitempty"`
+	// Key identifies the on-chain event (network, wallet, type, tx and the
+	// transfer or log within it); an event is stored once.
+	Key string `json:"key,omitempty"`
+}
+
+// maxStoredAlerts bounds the alerts log; the oldest are dropped first.
+const maxStoredAlerts = 1000
+
+// maxReturnedAlerts bounds what get_security_alerts returns (newest first).
+const maxReturnedAlerts = 100
+
+// alertKey is a's dedup key; alerts saved before keys existed fall back to
+// wallet, type, tx and block.
+func alertKey(a SecurityAlert) string {
+	if a.Key != "" {
+		return a.Key
+	}
+	return strings.Join([]string{"legacy", strings.ToLower(a.WalletAddress), a.AlertType, strings.ToLower(a.TxHash), a.BlockNumber}, "|")
+}
+
+// eventKey builds a SecurityAlert.Key.
+func eventKey(network, wallet, alertType, txHash, sub string) string {
+	return strings.Join([]string{network, strings.ToLower(wallet), alertType, strings.ToLower(txHash), sub}, "|")
 }
 
 // AlertsLog stores all security alerts
@@ -64,6 +93,7 @@ type AssetTransfer struct {
 	Value           float64
 	Asset           string
 	Hash            string
+	UniqueID        string // Alchemy's per-transfer id within the tx
 	RawContract     struct{ Address string }
 	TokenId         string
 	ERC721TokenId   string
@@ -72,6 +102,14 @@ type AssetTransfer struct {
 		Value   string
 	}
 }
+
+// maxAssetTransferPages bounds the alchemy_getAssetTransfers continuation
+// pages read per direction in one scan. A range that needs more is scanned
+// up to the last complete block, and the next scan continues from there.
+const maxAssetTransferPages = 50
+
+// walletSecurityClient is the HTTP client a scan uses; tests swap it.
+var walletSecurityClient = func() *http.Client { return &http.Client{Timeout: 30 * time.Second} }
 
 // Storage path helpers
 func getWalletSecurityPath() string {
@@ -387,52 +425,90 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		), nil
 	}
 
-	// Create HTTP client
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := walletSecurityClient()
 
-	// Get current block
-	blockNumResult, err := alchemyRequest(ctx, client, alchemyConfig,
-		wsConfig.MonitoredWallets[0].Network,
-		"eth_blockNumber", []any{})
-	if err != nil {
-		return formatErrorResponse(
-			"api_error",
-			fmt.Sprintf("Failed to get current block: %v", err),
-			"",
-			map[string]any{
-				"skill": "wallet_security",
-			},
-		), nil
+	// Each network has its own block height, so each has its own checkpoint.
+	// A network's checkpoint moves only when every wallet on it was scanned.
+	networks := []string{}
+	byNetwork := map[string][]MonitoredWallet{}
+	for _, w := range wsConfig.MonitoredWallets {
+		if _, ok := byNetwork[w.Network]; !ok {
+			networks = append(networks, w.Network)
+		}
+		byNetwork[w.Network] = append(byNetwork[w.Network], w)
 	}
-
-	currentBlock := blockNumResult["result"].(string)
-
-	// Determine block range to check
-	fromBlock := wsConfig.LastCheckedBlock
-	if fromBlock == "" {
-		// First check: look back 100 blocks (~20 minutes)
-		currentBlockNum := new(big.Int)
-		currentBlockNum.SetString(currentBlock[2:], 16)
-		fromBlockNum := new(big.Int).Sub(currentBlockNum, big.NewInt(100))
-		fromBlock = fmt.Sprintf("0x%x", fromBlockNum)
+	firstNetwork := wsConfig.MonitoredWallets[0].Network
+	if len(wsConfig.LastCheckedBlocks) == 0 && wsConfig.LastCheckedBlock != "" {
+		// An old-format file: its single checkpoint was taken on the first
+		// wallet's network. Only such a file is migrated, so a network that
+		// has never completed a scan cannot inherit another chain's height.
+		wsConfig.LastCheckedBlocks = map[string]string{firstNetwork: wsConfig.LastCheckedBlock}
 	}
+	if wsConfig.LastCheckedBlocks == nil {
+		wsConfig.LastCheckedBlocks = map[string]string{}
+	}
+	wsConfig.LastCheckedBlock = ""
 
-	// Check each wallet
 	allAlerts := []SecurityAlert{}
+	failed := []map[string]any{}
+	currentBlocks := map[string]string{}
+	partial := map[string]string{} // network -> block scanned to, short of current
 
-	for _, wallet := range wsConfig.MonitoredWallets {
-		alerts, err := checkWalletForThreats(ctx, client, alchemyConfig, wallet, fromBlock, "latest")
+	for _, network := range networks {
+		wallets := byNetwork[network]
+		currentBlock, err := currentBlockNumber(ctx, client, alchemyConfig, network)
 		if err != nil {
-			// Log error but continue checking other wallets
-			fmt.Printf("Warning: Error checking wallet %s: %v\n", wallet.Address, err)
+			for _, w := range wallets {
+				failed = append(failed, map[string]any{"wallet": w.Address, "network": network,
+					"error": fmt.Sprintf("failed to get current block: %v", err)})
+			}
 			continue
 		}
-		allAlerts = append(allAlerts, alerts...)
+		currentBlocks[network] = currentBlock
+
+		// The checkpoint was scanned through, so the scan starts after it.
+		var fromBlock string
+		if cp, ok := parseHexBlock(wsConfig.LastCheckedBlocks[network]); ok {
+			from := new(big.Int).Add(cp, big.NewInt(1))
+			if cur, _ := parseHexBlock(currentBlock); from.Cmp(cur) > 0 {
+				continue // no new blocks since the last scan
+			}
+			fromBlock = fmt.Sprintf("0x%x", from)
+		} else {
+			// First check: look back 100 blocks (~20 minutes on mainnet).
+			fromBlock = lookBackBlocks(currentBlock, 100)
+		}
+
+		networkOK := true
+		// The checkpoint moves to the last block every wallet on the
+		// network was fully scanned to: currentBlock, or less for a wallet
+		// with more transfers than one scan reads.
+		checkpoint, _ := parseHexBlock(currentBlock)
+		for _, wallet := range wallets {
+			alerts, scannedTo, err := checkWalletForThreats(ctx, client, alchemyConfig, wallet, fromBlock, currentBlock)
+			if err != nil {
+				// Keep checking the other wallets, but the range is not done.
+				failed = append(failed, map[string]any{"wallet": wallet.Address, "network": network, "error": err.Error()})
+				networkOK = false
+				continue
+			}
+			allAlerts = append(allAlerts, alerts...)
+			if b, ok := parseHexBlock(scannedTo); ok && b.Cmp(checkpoint) < 0 {
+				checkpoint = b
+			}
+		}
+		if networkOK {
+			wsConfig.LastCheckedBlocks[network] = fmt.Sprintf("0x%x", checkpoint)
+			if hex := fmt.Sprintf("0x%x", checkpoint); hex != currentBlocks[network] {
+				partial[network] = hex
+			}
+		}
 	}
 
 	// Save alerts
 	if len(allAlerts) > 0 {
-		if err := appendAlerts(allAlerts); err != nil {
+		added, err := appendAlerts(allAlerts)
+		if err != nil {
 			return formatErrorResponse(
 				"api_error",
 				fmt.Sprintf("Failed to save alerts: %v", err),
@@ -442,10 +518,11 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 				},
 			), nil
 		}
+		// Report only events not seen before (a rescanned range repeats).
+		allAlerts = added
 	}
 
-	// Update last checked block
-	wsConfig.LastCheckedBlock = currentBlock
+	// Save the checkpoints that moved.
 	if err := saveWalletSecurityConfig(wsConfig); err != nil {
 		return formatErrorResponse(
 			"api_error",
@@ -457,85 +534,163 @@ func handleCheckWalletSecurity(ctx context.Context, configLoader ConfigLoader) (
 		), nil
 	}
 
-	return map[string]any{
+	if len(failed) > 0 {
+		// A failed scan leaves its network's checkpoint where it was, so
+		// the same range is scanned again next time.
+		return map[string]any{
+			"success":         false,
+			"error":           true,
+			"error_type":      "scan_incomplete",
+			"wallets_checked": len(wsConfig.MonitoredWallets) - len(failed),
+			"wallets_failed":  failed,
+			"alerts_found":    len(allAlerts),
+			"alerts":          allAlerts,
+			"current_blocks":  currentBlocks,
+			"message": fmt.Sprintf("Scan incomplete: %d of %d wallet(s) could not be checked; their network's checkpoint was not advanced, so that range will be scanned again",
+				len(failed), len(wsConfig.MonitoredWallets)),
+		}, nil
+	}
+
+	message := fmt.Sprintf("Checked %d wallet(s), found %d alert(s)", len(wsConfig.MonitoredWallets), len(allAlerts))
+	if len(partial) > 0 {
+		message += "; some networks had more transfers than one scan reads and were scanned part of the way, the next scan continues from there"
+	}
+	out := map[string]any{
 		"success":         true,
 		"wallets_checked": len(wsConfig.MonitoredWallets),
 		"alerts_found":    len(allAlerts),
 		"alerts":          allAlerts,
-		"current_block":   currentBlock,
-		"message":         fmt.Sprintf("Checked %d wallet(s), found %d alert(s)", len(wsConfig.MonitoredWallets), len(allAlerts)),
-	}, nil
+		"current_block":   currentBlocks[firstNetwork],
+		"current_blocks":  currentBlocks,
+		"message":         message,
+	}
+	if len(partial) > 0 {
+		out["scanned_to"] = partial
+	}
+	return out, nil
 }
 
-// checkWalletForThreats analyzes a wallet for security threats
-func checkWalletForThreats(ctx context.Context, client *http.Client, config AlchemyConfig,
-	wallet MonitoredWallet, fromBlock, toBlock string) ([]SecurityAlert, error) {
+// currentBlockNumber returns a network's latest block as a 0x-hex string.
+func currentBlockNumber(ctx context.Context, client *http.Client, config AlchemyConfig, network string) (string, error) {
+	res, err := alchemyRequest(ctx, client, config, network, "eth_blockNumber", []any{})
+	if err != nil {
+		return "", err
+	}
+	block, _ := res["result"].(string)
+	if len(block) < 3 || block[:2] != "0x" {
+		return "", fmt.Errorf("unexpected eth_blockNumber result %q", block)
+	}
+	if _, ok := new(big.Int).SetString(block[2:], 16); !ok {
+		return "", fmt.Errorf("unexpected eth_blockNumber result %q", block)
+	}
+	return block, nil
+}
 
-	// Fetch asset transfers (both incoming and outgoing)
+// lookBackBlocks is block minus n (not below 0), as 0x-hex.
+func lookBackBlocks(block string, n int64) string {
+	num, _ := new(big.Int).SetString(block[2:], 16)
+	from := new(big.Int).Sub(num, big.NewInt(n))
+	if from.Sign() < 0 {
+		from.SetInt64(0)
+	}
+	return fmt.Sprintf("0x%x", from)
+}
+
+// checkWalletForThreats analyzes a wallet for security threats in the
+// blocks fromBlock..toBlock (0x-hex, inclusive). It returns the alerts and
+// the last block it fully scanned: toBlock, or earlier when the range holds
+// more transfers than maxAssetTransferPages pages, in which case the rest
+// is left for the next scan.
+func checkWalletForThreats(ctx context.Context, client *http.Client, config AlchemyConfig,
+	wallet MonitoredWallet, fromBlock, toBlock string) ([]SecurityAlert, string, error) {
+	from, okFrom := parseHexBlock(fromBlock)
+	to, okTo := parseHexBlock(toBlock)
+	if !okFrom || !okTo {
+		return nil, "", fmt.Errorf("invalid block range %q..%q", fromBlock, toBlock)
+	}
+
+	// Fetch asset transfers (both incoming and outgoing), oldest first
 	params := map[string]any{
 		"fromBlock": fromBlock,
 		"toBlock":   toBlock,
+		"order":     "asc",
 		"category":  []string{"external", "internal", "erc20", "erc721", "erc1155"},
 	}
 
-	// We need both directions, so we'll make two calls
-	// First: outgoing transfers
-	paramsOutgoing := make(map[string]any)
-	for k, v := range params {
-		paramsOutgoing[k] = v
-	}
-	paramsOutgoing["fromAddress"] = wallet.Address
-
-	resultOutgoing, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"alchemy_getAssetTransfers", []any{paramsOutgoing})
+	// Both directions, every continuation page of each.
+	outgoing, outDone, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "fromAddress", wallet.Address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get outgoing transfers: %w", err)
+		return nil, "", fmt.Errorf("failed to get outgoing transfers: %w", err)
 	}
-
-	// Second: incoming transfers
-	paramsIncoming := make(map[string]any)
-	for k, v := range params {
-		paramsIncoming[k] = v
-	}
-	paramsIncoming["toAddress"] = wallet.Address
-
-	resultIncoming, err := alchemyRequest(ctx, client, config, wallet.Network,
-		"alchemy_getAssetTransfers", []any{paramsIncoming})
+	incoming, inDone, err := fetchAssetTransfers(ctx, client, config, wallet.Network, params, "toAddress", wallet.Address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get incoming transfers: %w", err)
+		return nil, "", fmt.Errorf("failed to get incoming transfers: %w", err)
 	}
 
-	// Combine transfers
-	allTransfers := []any{}
-	if outgoingData, ok := resultOutgoing["result"].(map[string]any); ok {
-		if transfers, ok := outgoingData["transfers"].([]any); ok {
-			allTransfers = append(allTransfers, transfers...)
+	// A direction cut off at the page cap was read up to some block; the
+	// block before the last one seen is complete. The scan ends there.
+	scannedTo := new(big.Int).Set(to)
+	for _, cut := range []struct {
+		done bool
+		list []any
+	}{{outDone, outgoing}, {inDone, incoming}} {
+		if cut.done {
+			continue
+		}
+		last, ok := lastTransferBlock(cut.list)
+		if !ok {
+			return nil, "", fmt.Errorf("more than %d pages of transfers without block numbers", maxAssetTransferPages)
+		}
+		if bound := new(big.Int).Sub(last, big.NewInt(1)); bound.Cmp(scannedTo) < 0 {
+			scannedTo = bound
 		}
 	}
-	if incomingData, ok := resultIncoming["result"].(map[string]any); ok {
-		if transfers, ok := incomingData["transfers"].([]any); ok {
-			allTransfers = append(allTransfers, transfers...)
-		}
+	if scannedTo.Cmp(from) < 0 {
+		// Not even the first block was read completely: no progress.
+		return nil, "", fmt.Errorf("more than %d pages of transfers in block %s", maxAssetTransferPages, fromBlock)
 	}
+	allTransfers := make([]any, 0, len(outgoing)+len(incoming))
+	for _, t := range append(outgoing, incoming...) {
+		if m, ok := t.(map[string]any); ok {
+			if b, ok := parseHexBlock(stringField(m, "blockNum")); ok && b.Cmp(scannedTo) > 0 {
+				continue // past the scanned range: read again next scan
+			}
+		}
+		allTransfers = append(allTransfers, t)
+	}
+	toBlock = fmt.Sprintf("0x%x", scannedTo)
 
 	// Get current balance for large transfer detection
-	balanceResult, _ := alchemyRequest(ctx, client, config, wallet.Network,
+	// (it decides large-transfer detection, so a failure fails the scan).
+	balanceResult, err := alchemyRequest(ctx, client, config, wallet.Network,
 		"eth_getBalance", []any{wallet.Address, "latest"})
-	balanceETH := 0.0
-	if balanceResult != nil {
-		if resultData, ok := balanceResult["result"].(string); ok {
-			weiBalance := new(big.Int)
-			weiBalance.SetString(resultData[2:], 16)
-			balanceETHStr := WeiToEther(weiBalance)
-			balanceETH, _ = strconv.ParseFloat(balanceETHStr, 64)
-		}
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get balance: %w", err)
 	}
+	resultData, _ := balanceResult["result"].(string)
+	weiBalance, ok := new(big.Int), len(resultData) > 2 && resultData[:2] == "0x"
+	if ok {
+		_, ok = weiBalance.SetString(resultData[2:], 16)
+	}
+	if !ok {
+		return nil, "", fmt.Errorf("unexpected eth_getBalance result %q", resultData)
+	}
+	balanceETH, _ := strconv.ParseFloat(WeiToEther(weiBalance), 64)
 
 	// Analyze each transfer for threats
 	alerts := []SecurityAlert{}
 
 	for _, t := range allTransfers {
-		transfer := parseAssetTransfer(t.(map[string]any))
+		data, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		transfer := parseAssetTransfer(data)
+		transferSub := transfer.UniqueID
+		if transferSub == "" {
+			transferSub = strings.Join([]string{transfer.Category, strings.ToLower(transfer.From), strings.ToLower(transfer.To),
+				transfer.Asset, strings.ToLower(transfer.RawContract.Address), transfer.TokenId, strconv.FormatFloat(transfer.Value, 'g', -1, 64)}, "/")
+		}
 
 		// Run detection algorithms
 		if alert := detectDustAttack(transfer, wallet.Address); alert != nil {
@@ -543,6 +698,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			alert.TxHash = transfer.Hash
 			alert.BlockNumber = transfer.BlockNum
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, transfer.Hash, transferSub)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -552,6 +708,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			alert.TxHash = transfer.Hash
 			alert.BlockNumber = transfer.BlockNum
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, transfer.Hash, transferSub)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -561,6 +718,7 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 			alert.TxHash = transfer.Hash
 			alert.BlockNumber = transfer.BlockNum
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, transfer.Hash, transferSub)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -569,13 +727,79 @@ func checkWalletForThreats(ctx context.Context, client *http.Client, config Alch
 	// Fetch and analyze token approvals
 	approvalAlerts, err := checkTokenApprovals(ctx, client, config, wallet, fromBlock, toBlock)
 	if err != nil {
-		// Log warning but don't fail - approvals are optional enhancement
-		fmt.Printf("Warning: Failed to check token approvals for %s: %v\n", wallet.Address, err)
-	} else {
-		alerts = append(alerts, approvalAlerts...)
+		return nil, "", fmt.Errorf("failed to check token approvals: %w", err)
 	}
+	alerts = append(alerts, approvalAlerts...)
 
-	return alerts, nil
+	return alerts, toBlock, nil
+}
+
+// parseHexBlock parses a 0x-hex block number.
+func parseHexBlock(s string) (*big.Int, bool) {
+	if len(s) < 3 || (s[:2] != "0x" && s[:2] != "0X") {
+		return nil, false
+	}
+	n, ok := new(big.Int).SetString(s[2:], 16)
+	return n, ok && n.Sign() >= 0
+}
+
+func stringField(m map[string]any, k string) string {
+	v, _ := m[k].(string)
+	return v
+}
+
+// lastTransferBlock is the highest blockNum among transfers.
+func lastTransferBlock(transfers []any) (*big.Int, bool) {
+	var last *big.Int
+	for _, t := range transfers {
+		m, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		if b, ok := parseHexBlock(stringField(m, "blockNum")); ok && (last == nil || b.Cmp(last) > 0) {
+			last = b
+		}
+	}
+	return last, last != nil
+}
+
+// fetchAssetTransfers reads the pages of alchemy_getAssetTransfers for one
+// direction (addrField is "fromAddress" or "toAddress"), following pageKey
+// up to maxAssetTransferPages. complete is false when pages remain.
+func fetchAssetTransfers(ctx context.Context, client *http.Client, config AlchemyConfig,
+	network string, base map[string]any, addrField, address string) (transfers []any, complete bool, err error) {
+	var all []any
+	pageKey := ""
+	for page := 0; page < maxAssetTransferPages; page++ {
+		p := make(map[string]any, len(base)+2)
+		for k, v := range base {
+			p[k] = v
+		}
+		p[addrField] = address
+		if pageKey != "" {
+			p["pageKey"] = pageKey
+		}
+		result, err := alchemyRequest(ctx, client, config, network, "alchemy_getAssetTransfers", []any{p})
+		if err != nil {
+			return nil, false, err
+		}
+		data, ok := result["result"].(map[string]any)
+		if !ok {
+			return nil, false, fmt.Errorf("unexpected alchemy_getAssetTransfers response")
+		}
+		if page, ok := data["transfers"].([]any); ok {
+			all = append(all, page...)
+		}
+		next, _ := data["pageKey"].(string)
+		if next == "" {
+			return all, true, nil
+		}
+		if next == pageKey {
+			return nil, false, fmt.Errorf("alchemy_getAssetTransfers repeated page key")
+		}
+		pageKey = next
+	}
+	return all, false, nil
 }
 
 // checkTokenApprovals fetches and analyzes ERC20 token approvals
@@ -624,6 +848,7 @@ func checkTokenApprovals(ctx context.Context, client *http.Client, config Alchem
 			alert.TxHash = approval.TxHash
 			alert.BlockNumber = approval.BlockNumber
 			alert.ID = generateAlertID()
+			alert.Key = eventKey(wallet.Network, wallet.Address, alert.AlertType, approval.TxHash, "log:"+approval.LogIndex)
 			alert.DetectedAt = time.Now()
 			alerts = append(alerts, *alert)
 		}
@@ -640,6 +865,7 @@ type ApprovalEvent struct {
 	TokenContract string   // ERC20 contract address
 	TxHash        string
 	BlockNumber   string
+	LogIndex      string
 	IsUnlimited   bool // True if value == max uint256
 }
 
@@ -654,6 +880,8 @@ func parseApprovalEvent(logData map[string]any, ownerAddr string) ApprovalEvent 
 		BlockNumber:   logData["blockNumber"].(string),
 		TokenContract: logData["address"].(string),
 	}
+
+	event.LogIndex, _ = logData["logIndex"].(string)
 
 	// Topic2 is spender address (indexed, padded to 32 bytes)
 	if len(topics) > 2 {
@@ -725,7 +953,7 @@ func detectDangerousApproval(approval ApprovalEvent) *SecurityAlert {
 // detectDustAttack detects tiny value transfers (potential address poisoning)
 func detectDustAttack(transfer AssetTransfer, monitoredAddr string) *SecurityAlert {
 	// Dust attack: incoming transfer with very small value
-	if transfer.To != monitoredAddr {
+	if !strings.EqualFold(transfer.To, monitoredAddr) {
 		return nil // Not incoming
 	}
 
@@ -764,7 +992,7 @@ func detectDustAttack(transfer AssetTransfer, monitoredAddr string) *SecurityAle
 // detectNFTScam detects unsolicited NFT transfers
 func detectNFTScam(transfer AssetTransfer, monitoredAddr string) *SecurityAlert {
 	// NFT scam: incoming NFT from unknown address
-	if transfer.To != monitoredAddr {
+	if !strings.EqualFold(transfer.To, monitoredAddr) {
 		return nil
 	}
 
@@ -791,7 +1019,7 @@ func detectNFTScam(transfer AssetTransfer, monitoredAddr string) *SecurityAlert 
 // detectLargeTransfer detects significant outgoing transfers
 func detectLargeTransfer(transfer AssetTransfer, monitoredAddr string, balanceETH float64) *SecurityAlert {
 	// Large transfer: outgoing transfer exceeding threshold
-	if transfer.From != monitoredAddr {
+	if !strings.EqualFold(transfer.From, monitoredAddr) {
 		return nil
 	}
 
@@ -866,11 +1094,23 @@ func handleGetSecurityAlerts(args map[string]any) (any, error) {
 		return filteredAlerts[i].DetectedAt.After(filteredAlerts[j].DetectedAt)
 	})
 
+	total := len(filteredAlerts)
+	truncated := total > maxReturnedAlerts
+	if truncated {
+		filteredAlerts = filteredAlerts[:maxReturnedAlerts]
+	}
+	message := fmt.Sprintf("Found %d alert(s)", total)
+	if truncated {
+		message = fmt.Sprintf("Found %d alert(s); showing the newest %d", total, maxReturnedAlerts)
+	}
+
 	return map[string]any{
-		"success": true,
-		"alerts":  filteredAlerts,
-		"count":   len(filteredAlerts),
-		"message": fmt.Sprintf("Found %d alert(s)", len(filteredAlerts)),
+		"success":   true,
+		"alerts":    filteredAlerts,
+		"count":     len(filteredAlerts),
+		"total":     total,
+		"truncated": truncated,
+		"message":   message,
 	}, nil
 }
 
@@ -1007,7 +1247,9 @@ func saveAlertsLog(log *AlertsLog) error {
 	return atomicfile.Write(path, data, privfs.FilePerm)
 }
 
-func appendAlerts(newAlerts []SecurityAlert) error {
+// appendAlerts stores the alerts whose event is not stored yet and returns
+// them. The log keeps the newest maxStoredAlerts.
+func appendAlerts(newAlerts []SecurityAlert) ([]SecurityAlert, error) {
 	log, err := loadAlertsLog()
 	if err != nil {
 		// Create new log if doesn't exist
@@ -1016,9 +1258,28 @@ func appendAlerts(newAlerts []SecurityAlert) error {
 		}
 	}
 
-	log.Alerts = append(log.Alerts, newAlerts...)
+	seen := make(map[string]bool, len(log.Alerts)+len(newAlerts))
+	for _, a := range log.Alerts {
+		seen[alertKey(a)] = true
+	}
+	added := []SecurityAlert{}
+	for _, a := range newAlerts {
+		k := alertKey(a)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		added = append(added, a)
+	}
+	if len(added) == 0 {
+		return added, nil
+	}
 
-	return saveAlertsLog(log)
+	log.Alerts = append(log.Alerts, added...)
+	if over := len(log.Alerts) - maxStoredAlerts; over > 0 {
+		log.Alerts = append([]SecurityAlert(nil), log.Alerts[over:]...)
+	}
+	return added, saveAlertsLog(log)
 }
 
 // Utility functions
@@ -1054,6 +1315,9 @@ func parseAssetTransfer(data map[string]any) AssetTransfer {
 	}
 	if hash, ok := data["hash"].(string); ok {
 		transfer.Hash = hash
+	}
+	if uid, ok := data["uniqueId"].(string); ok {
+		transfer.UniqueID = uid
 	}
 	if rawContract, ok := data["rawContract"].(map[string]any); ok {
 		if address, ok := rawContract["address"].(string); ok {

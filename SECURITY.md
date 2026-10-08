@@ -85,7 +85,7 @@ chmod +x verify.sh
 ```
 
 **Manual Verification Steps**:
-1. Import public key from Keybase or GitHub
+1. Import `whykusanagi.asc` from this repository (`gpg --import whykusanagi.asc`, or `make import-key` in a clone), then cross-check the primary fingerprint against GitHub or Keybase
 2. Verify key fingerprint matches exactly
 3. Verify GPG signature on `checksums.txt`: `gpg --verify checksums.txt.asc checksums.txt`
 4. Verify file checksum: `sha256sum --check --ignore-missing checksums.txt`
