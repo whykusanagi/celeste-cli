@@ -12,12 +12,12 @@ import (
 )
 
 func TestBashToolName(t *testing.T) {
-	bt := NewBashTool("/tmp", nil)
+	bt := NewBashTool(t.TempDir(), nil)
 	assert.Equal(t, "bash", bt.Name())
 }
 
 func TestBashToolProperties(t *testing.T) {
-	bt := NewBashTool("/tmp", nil)
+	bt := NewBashTool(t.TempDir(), nil)
 	assert.False(t, bt.IsReadOnly())
 	assert.False(t, bt.IsConcurrencySafe(nil))
 	assert.Equal(t, tools.InterruptCancel, bt.InterruptBehavior())
@@ -41,7 +41,7 @@ func TestBashToolExecuteSimpleCommand(t *testing.T) {
 }
 
 func TestBashToolSudoBlocking(t *testing.T) {
-	bt := NewBashTool("/tmp", nil)
+	bt := NewBashTool(t.TempDir(), nil)
 	result, err := bt.Execute(context.Background(), map[string]any{
 		"command": "sudo rm -rf /",
 	}, nil)
@@ -51,7 +51,7 @@ func TestBashToolSudoBlocking(t *testing.T) {
 }
 
 func TestBashToolSuBlocking(t *testing.T) {
-	bt := NewBashTool("/tmp", nil)
+	bt := NewBashTool(t.TempDir(), nil)
 	result, err := bt.Execute(context.Background(), map[string]any{
 		"command": "su root",
 	}, nil)
@@ -61,7 +61,7 @@ func TestBashToolSuBlocking(t *testing.T) {
 }
 
 func TestBashToolRequiredFieldValidation(t *testing.T) {
-	bt := NewBashTool("/tmp", nil)
+	bt := NewBashTool(t.TempDir(), nil)
 	result, err := bt.Execute(context.Background(), map[string]any{}, nil)
 	require.NoError(t, err)
 	assert.True(t, result.Error)
