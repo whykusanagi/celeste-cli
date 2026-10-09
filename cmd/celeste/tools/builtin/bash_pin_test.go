@@ -36,3 +36,15 @@ func TestBashRefusesASwappedWorkspace(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(outside, "escaped"))
 	require.True(t, os.IsNotExist(statErr), "the command must not run in the swapped directory")
 }
+
+// A workspace that could not be read when the tool was built has no pin,
+// and bash refuses rather than running unchecked.
+func TestBashRefusesWithoutAPin(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "later")
+	tool := NewBashTool(ws, nil)
+	require.NoError(t, os.Mkdir(ws, 0o755))
+	res, err := tool.Execute(context.Background(), map[string]any{"command": "echo ok"}, nil)
+	require.NoError(t, err)
+	require.True(t, res.Error)
+	require.Contains(t, res.Content, "workspace directory changed")
+}

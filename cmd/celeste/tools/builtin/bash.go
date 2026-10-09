@@ -88,8 +88,10 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 		timeoutSeconds = 300
 	}
 
-	if t.pinned != nil {
-		if cur, err := os.Stat(t.workspace); err != nil || !os.SameFile(t.pinned, cur) {
+	if t.workspace != "" {
+		// No pin (the workspace could not be read when the tool was built)
+		// fails closed too.
+		if cur, err := os.Stat(t.workspace); err != nil || t.pinned == nil || !os.SameFile(t.pinned, cur) {
 			return tools.ToolResult{Error: true, Content: "the workspace directory changed since this session started (it was moved or replaced); bash will not run there. Restart celeste in the workspace."}, nil
 		}
 	}
