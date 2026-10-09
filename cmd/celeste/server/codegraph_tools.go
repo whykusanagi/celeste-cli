@@ -74,10 +74,10 @@ func (s *Server) workspaceFromArgs(args map[string]any) (string, error) {
 	if workspace == "" {
 		workspace = s.config.Workspace
 	}
-	if err := validateWorkspace(workspace, s.config.Workspace); err != nil {
+	workspace, err := resolveWorkspace(workspace, s.config.Workspace)
+	if err != nil {
 		return "", fmt.Errorf("workspace rejected: %w", err)
 	}
-	workspace = canonicalWorkspace(workspace)
 	// Only an existing directory: an index is opened (and its directory
 	// created) per workspace, so a made-up path must not get one
 	// (Aikido 806869934).

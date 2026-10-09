@@ -1818,6 +1818,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						_ = config.Save(cfg)
 					}
 
+					// An explicit model choice is made on the endpoint in
+					// use, so a session resumed from another endpoint
+					// stops keeping that one's (heldSession), as after a
+					// turn: the save records the choice and its endpoint.
+					m.heldSession, m.heldOn = nil, ""
+
 					// Persist session state
 					m.persistSession()
 
@@ -2586,6 +2592,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cfg.Model = modelName
 						_ = config.Save(cfg)
 					}
+
+					// A picked model is an explicit choice on the endpoint in
+					// use, as with /set-model: it ends the hold so the save
+					// records the model and the endpoint it was picked on.
+					m.heldSession, m.heldOn = nil, ""
 
 					// Persist the change to session
 					m.persistSession()

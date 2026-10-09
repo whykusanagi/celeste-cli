@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **bash:** the bash tool refuses to run once its workspace directory has been moved or replaced (for example swapped for a symlink) since the session or subagent started, instead of running there by path, so a subagent's commands and its sandbox stay in the directory that was checked (Aikido review of [#433](https://github.com/whykusanagi/celeste-cli/pull/433)).
+
+* **subagents:** the directory a subagent's workspace check accepted is pinned: it is opened without following a symlink on its path, and the subagent is built, its run (or resume) starts, and an isolated run's worktree is made, only while that path still opens to the same directory, so a rename to a symlink after the check fails the run instead of redirecting it (Aikido review of [#428](https://github.com/whykusanagi/celeste-cli/pull/428)).
+* **tools:** below a directory on the workspace path that can be entered but not listed, the directory reached by path is checked against its real parents (read on its own descriptor) up to the last directory opened, so one of those parents replaced by a symlink while the workspace is opened fails the open instead of being followed. On Windows such a directory fails the open (Aikido review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
+* **serve:** a workspace named in an MCP tool call is judged by the directory it really names: a symlink under home that leads outside home or into a protected folder is refused, every alias of one directory (a symlink, or on Windows and macOS a spelling in another case) shares one index, rebuild gate and chat cache, and on Windows and macOS the protected folders (`.ssh`, `.aws` and the rest) are matched regardless of case (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
 * **build:** release and CI builds use Go 1.26.9, which fixes GO-2026-6617 in the standard library's net/http.
 
 * **deps:** golang.org/x/net is updated to v0.60.0 for GO-2026-6617 (an HTTP/2 HPACK encoder race), which celeste's HTTP/2 client paths reach.
@@ -48,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **tui:** on a session resumed from another endpoint, an explicit model choice made with `/set-model` or the model picker is saved with the session (with the endpoint it was made on and, for `/set-model`, its `--force` pin), so quitting before the next turn no longer brings the old model back on resume (CodeRabbit review of [#428](https://github.com/whykusanagi/celeste-cli/pull/428)).
+* **mcp:** a Streamable HTTP response stream of exactly the size limit whose last `data:` line ends without a newline is accepted, instead of being refused as too large (CodeRabbit review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
+* **context:** the spill prunes (by age and for the total limit) and the total spill quota touch only spill session directories, so compaction's pruned tool-result store, which `recall_tool_result` reads, is never deleted with them (its own bodies expire one by one after 30 days, as spills do); a session named like that store spills beside it, a session or call id longer than 128 characters spills under a shortened name that can still be recalled, and session directories an older version left with longer names are still pruned and counted (Aikido review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
+* **codegraph:** a call on the caller's own object (`self.m()`, `this.m()`) that its class does not define resolves to the method of its nearest base class, across files, before a same-named method of an unrelated class (CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
+* **codegraph:** a build or update whose workspace cannot be opened (gone, unreadable, or a directory on its path replaced by a symlink) fails before the index is changed, instead of reporting success with an empty or partial graph, and the files a build or update indexes or drops are listed through the workspace root it opened, not by path (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
 * **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
 * **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 

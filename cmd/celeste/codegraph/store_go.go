@@ -363,3 +363,28 @@ func (s *Store) symbolIDInFile(name, scope, file string) (int64, bool) {
 	}
 	return id, true
 }
+
+// classRef is a stored class-like symbol: its name, scope, file and
+// comma-separated base classes.
+type classRef struct {
+	name, scope, file, bases string
+}
+
+// classKinds are the symbol kinds a self call's hierarchy is made of.
+const classKinds = `kind IN ('class', 'struct', 'interface', 'type')`
+
+// classInFile is the class-like symbol named name in scope in exactly file.
+func (s *Store) classInFile(name, scope, file string) (classRef, bool) {
+	c := classRef{name: name, scope: scope, file: file}
+	err := s.db.QueryRow(`SELECT COALESCE(base_classes, '') FROM symbols WHERE name = ? AND COALESCE(scope, '') = ? AND file = ? AND `+classKinds+` ORDER BY line, id LIMIT 1`, name, scope, file).Scan(&c.bases)
+	return c, err == nil
+}
+
+// classByName is the class-like symbol named name in fromFile's language,
+// one in fromFile preferred, then the first stored.
+func (s *Store) classByName(name, fromFile string) (classRef, bool) {
+	c := classRef{name: name}
+	err := s.db.QueryRow(`SELECT COALESCE(scope, ''), file, COALESCE(base_classes, '') FROM symbols WHERE name = ? AND `+classKinds+sameLanguage(fromFile)+`
+		ORDER BY CASE WHEN file = ? THEN 0 ELSE 1 END, id LIMIT 1`, name, fromFile).Scan(&c.scope, &c.file, &c.bases)
+	return c, err == nil
+}

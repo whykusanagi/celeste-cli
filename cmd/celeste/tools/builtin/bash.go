@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,10 @@ type BashTool struct {
 	BaseTool
 	workspace string
 	policy    *sandbox.Policy // nil: no OS sandbox (the denylist alone)
+	// pinned is the directory workspace named when the tool was built.
+	// Commands run (and the sandbox binds) by path, so a workspace swapped
+	// for another directory or a symlink since then is refused.
+	pinned os.FileInfo
 }
 
 // NewBashTool creates a BashTool bound to the given workspace directory.
@@ -50,7 +55,19 @@ func NewBashTool(workspace string, policy *sandbox.Policy) *BashTool {
 		},
 		workspace: workspace,
 		policy:    policy,
+		pinned:    statOrNil(workspace),
 	}
+}
+
+func statOrNil(dir string) os.FileInfo {
+	if dir == "" {
+		return nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil
+	}
+	return info
 }
 
 func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress chan<- tools.ProgressEvent) (tools.ToolResult, error) {
@@ -69,6 +86,14 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any, progress c
 	}
 	if timeoutSeconds > 300 {
 		timeoutSeconds = 300
+	}
+
+	if t.workspace != "" {
+		// No pin (the workspace could not be read when the tool was built)
+		// fails closed too.
+		if cur, err := os.Stat(t.workspace); err != nil || t.pinned == nil || !os.SameFile(t.pinned, cur) {
+			return tools.ToolResult{Error: true, Content: "the workspace directory changed since this session started (it was moved or replaced); bash will not run there. Restart celeste in the workspace."}, nil
+		}
 	}
 
 	res := RunShell(ctx, ShellOptions{Dir: t.workspace, Command: command, Timeout: time.Duration(timeoutSeconds) * time.Second, Policy: t.policy})

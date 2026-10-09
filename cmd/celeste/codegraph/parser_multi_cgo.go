@@ -170,16 +170,6 @@ func (w *multiWalker) rustImplType(node *tree_sitter.Node) string {
 	return ""
 }
 
-// joinScope appends class name to the class chain outer, '.'-separated. A
-// qualified name ("geo::Shape") is split the same way.
-func joinScope(outer, name string) string {
-	name = strings.ReplaceAll(name, "::", ".")
-	if outer == "" {
-		return name
-	}
-	return outer + "." + name
-}
-
 func (w *multiWalker) nodeText(n *tree_sitter.Node) string {
 	if n == nil {
 		return ""

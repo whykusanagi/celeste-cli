@@ -57,6 +57,36 @@ var prunedSpillBases sync.Map
 // across celeste processes.
 var spillMu sync.Mutex
 
+// compactStoreDir is the directory under the spill base where compaction
+// keeps pruned tool-result bodies for recall_tool_result
+// (compact.DefaultStore). It is not a spill session: the spill prunes and
+// quotas leave it alone, and no session spills into it.
+const compactStoreDir = "pruned"
+
+// spillSessionName is the name of a session's spill directory. Only such a
+// directory is pruned or counted toward the spill total; anything else
+// under the base (the compaction store, a directory another tool made) is
+// left alone. Older celeste versions did not cap the length, so a longer
+// name of the same characters is still a session's (spillSessionDir); a
+// new spill takes only names up to 128 characters (isSpillSession).
+var spillSessionName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// maxSpillSessionName is the longest session id a new spill takes, the
+// length recall_tool_result ids allow (spillIDPattern).
+const maxSpillSessionName = 128
+
+// spillSessionDir reports whether the directory name under the spill base
+// is a spill session's, including one an older version left with a longer
+// name: the prunes and quotas cover these.
+func spillSessionDir(name string) bool {
+	return name != compactStoreDir && spillSessionName.MatchString(name)
+}
+
+// isSpillSession reports whether name is a session id a new spill takes.
+func isSpillSession(name string) bool {
+	return len(name) <= maxSpillSessionName && spillSessionDir(name)
+}
+
 // spillLockPath is the lock file of the spill base baseDir. It sits beside
 // the base, not in it, so the base holds only session directories.
 func spillLockPath(baseDir string) string { return filepath.Clean(baseDir) + ".lock" }
@@ -92,6 +122,16 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 
 	if len(result) <= maxBytes {
 		return result, false, nil
+	}
+
+	// A session spills into a directory the prunes and quotas see: one
+	// named like the compaction store gets its own name beside it, and a
+	// name no session directory has is refused.
+	if sessionID == compactStoreDir {
+		sessionID = compactStoreDir + "-session"
+	}
+	if !isSpillSession(sessionID) {
+		return result, false, fmt.Errorf("invalid spill session id %q", sessionID)
 	}
 
 	// Determine spill directory
@@ -292,7 +332,9 @@ func dirBytes(dir string) int64 {
 }
 
 // PruneToolResults deletes spilled tool results under baseDir ("" is
-// ToolResultsBaseDir): every session directory last changed more than
+// ToolResultsBaseDir): only spill session directories (spillSessionDir),
+// never the compaction store beside them, whose bodies expire one by one
+// after SpillKeepAge instead (expireCompactStore). Every session directory last changed more than
 // SpillKeepAge ago, then the oldest others idle for spillActiveAge while all
 // of them together are over maxTotalSpillBytes. keep (the session running
 // now) always survives, and so does any session that spilled within
@@ -326,8 +368,11 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 	var live []session
 	var total int64
 	var errs []error
+	if err := expireCompactStore(filepath.Join(baseDir, compactStoreDir), now); err != nil {
+		errs = append(errs, err)
+	}
 	for _, d := range des {
-		if !d.IsDir() || d.Name() == keep {
+		if !d.IsDir() || d.Name() == keep || !spillSessionDir(d.Name()) {
 			continue
 		}
 		path := filepath.Join(baseDir, d.Name())
@@ -341,7 +386,9 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 		live = append(live, s)
 		total += s.size
 	}
-	total += dirBytes(filepath.Join(baseDir, keep))
+	if spillSessionDir(keep) {
+		total += dirBytes(filepath.Join(baseDir, keep))
+	}
 	sort.Slice(live, func(i, j int) bool { return live[i].changed.Before(live[j].changed) })
 	for _, s := range live {
 		if total <= limit || now.Sub(s.changed) < spillActiveAge {
@@ -356,6 +403,34 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 	return errors.Join(errs...)
 }
 
+// expireCompactStore removes the compaction store's bodies (regular files
+// directly in dir) last written more than SpillKeepAge ago, so the store,
+// which the spill prunes and quotas leave alone, does not grow without
+// bound. The store itself and its recent bodies stay.
+func expireCompactStore(dir string, now time.Time) error {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, d := range des {
+		if !d.Type().IsRegular() {
+			continue
+		}
+		info, err := d.Info()
+		if err != nil || now.Sub(info.ModTime()) <= SpillKeepAge {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, d.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // totalSpillBytes is the size of every session's spill files under baseDir.
 func totalSpillBytes(baseDir string) int64 {
 	des, err := os.ReadDir(baseDir)
@@ -364,7 +439,7 @@ func totalSpillBytes(baseDir string) int64 {
 	}
 	var n int64
 	for _, d := range des {
-		if d.IsDir() {
+		if d.IsDir() && spillSessionDir(d.Name()) {
 			n += dirBytes(filepath.Join(baseDir, d.Name()))
 		}
 	}

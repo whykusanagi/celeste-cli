@@ -254,3 +254,69 @@ func TestCapToolResultKeepsRecentlyActiveSessions(t *testing.T) {
 	_, err = os.Stat(filepath.Join(base, "sess", "b.txt"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+// Aikido review of #430: the compaction recall store (tool-results/pruned)
+// and any directory that is not a spill session are never removed by the
+// spill prunes, by age or for the total limit, and do not count toward the
+// total. The store's own bodies expire one by one after SpillKeepAge.
+func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
+	withSpillLimits(t, 1<<20, 1<<20)
+	oldT := maxTotalSpillBytes
+	maxTotalSpillBytes = 10000
+	t.Cleanup(func() { maxTotalSpillBytes = oldT })
+	base := t.TempDir()
+	longAgo := time.Now().Add(-2 * SpillKeepAge)
+	var kept []string
+	for _, name := range []string{"pruned", ".hidden", "notes.d"} {
+		dir := filepath.Join(base, name)
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		p := filepath.Join(dir, "call_1.txt")
+		require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("p", 8000)), 0o600))
+		if name != "pruned" {
+			require.NoError(t, os.Chtimes(p, longAgo, longAgo))
+		}
+		require.NoError(t, os.Chtimes(dir, longAgo, longAgo))
+		kept = append(kept, p)
+	}
+	// The store keeps its own retention: a body older than SpillKeepAge
+	// goes, one by one; the store and its recent bodies stay.
+	expired := filepath.Join(base, "pruned", "call_0.txt")
+	require.NoError(t, os.WriteFile(expired, []byte("old"), 0o600))
+	require.NoError(t, os.Chtimes(expired, longAgo, longAgo))
+
+	require.NoError(t, PruneToolResults(base, "sess", time.Now()))
+	_, _, err := CapToolResult(strings.Repeat("x", 4000), 1024, "sess", "a", base)
+	require.NoError(t, err, "the compaction store counted toward the spill total")
+	for _, p := range kept {
+		_, err := os.Stat(p)
+		assert.NoError(t, err, "%s was pruned", p)
+	}
+	_, err = os.Stat(expired)
+	assert.True(t, os.IsNotExist(err), "an expired compaction body was kept")
+
+	// A session named like the store spills beside it, not into it.
+	_, _, err = CapToolResult(strings.Repeat("y", 2000), 1024, "pruned", "b", base)
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(base, "pruned", "b.txt"))
+	assert.True(t, os.IsNotExist(err), "a session spilled into the compaction store")
+}
+
+// A spill session directory an older celeste left with a name longer than
+// a session id may now be (it did not cap the length) is still a spill
+// session: it is pruned by age and counts toward the total.
+func TestPruneRemovesLongNamedLegacySessionDirs(t *testing.T) {
+	withSpillLimits(t, 1<<20, 1<<20)
+	base := t.TempDir()
+	longAgo := time.Now().Add(-2 * SpillKeepAge)
+	dir := filepath.Join(base, strings.Repeat("L", 200))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	p := filepath.Join(dir, "call_1.txt")
+	require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("p", 8000)), 0o600))
+	assert.EqualValues(t, 8000, totalSpillBytes(base), "a long-named session is not counted")
+	require.NoError(t, os.Chtimes(p, longAgo, longAgo))
+	require.NoError(t, os.Chtimes(dir, longAgo, longAgo))
+
+	require.NoError(t, PruneToolResults(base, "sess", time.Now()))
+	_, err := os.Stat(dir)
+	assert.True(t, os.IsNotExist(err), "an old long-named session was not pruned")
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/config"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/pathutil"
+	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/internal/realroot"
 	"github.com/whykusanagi/celeste-cli/v2/cmd/celeste/tools"
 )
 
@@ -198,11 +199,44 @@ func scopeWorkspace(parent, ws string) (string, error) {
 // scopeWorkspace's answer is only a path: a directory on it replaced by a
 // symlink out of the parent since would otherwise lead the subagent's
 // tools outside. The parent's own workspace (or none) needs no check.
-func recheckWorkspace(parent, ws string) (string, error) {
+//
+// The directory checked is pinned: it is opened without following a
+// symlink anywhere on its path, and stillPinned reports an error unless
+// the path still opens, the same way, to that same directory. The caller
+// calls it once the subagent is built and before anything runs in the
+// workspace, so a rename-to-symlink after this check fails the run
+// instead of redirecting it; the subagent's file writes open the
+// workspace the same way for each change.
+func recheckWorkspace(parent, ws string) (resolved string, stillPinned func() error, err error) {
 	if parent == "" || ws == "" || filepath.Clean(ws) == filepath.Clean(parent) {
-		return ws, nil
+		return ws, func() error { return nil }, nil
 	}
-	return scopeWorkspace(parent, ws)
+	resolved, err = scopeWorkspace(parent, ws)
+	if err != nil {
+		return "", nil, err
+	}
+	want, err := workspaceIdentity(resolved)
+	if err != nil {
+		return "", nil, fmt.Errorf("workspace %q: %w", ws, err)
+	}
+	return resolved, func() error {
+		got, err := workspaceIdentity(resolved)
+		if err != nil || !os.SameFile(want, got) {
+			return fmt.Errorf("workspace %q changed after it was checked", ws)
+		}
+		return nil
+	}, nil
+}
+
+// workspaceIdentity is the directory ws names, opened without following a
+// symlink anywhere on its path.
+func workspaceIdentity(ws string) (os.FileInfo, error) {
+	r, err := realroot.Open(ws)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Stat(".")
 }
 
 func isEmptyMap(v any) bool {

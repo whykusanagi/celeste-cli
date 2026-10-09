@@ -309,3 +309,27 @@ func TestHTTPTransportSSELineLimitIsTheResponseLimit(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
 }
+
+// CodeRabbit review of #430: an SSE stream of exactly the limit whose last
+// data: line ends at EOF is accepted and queued; one byte more is refused.
+func TestHTTPTransportSSEExactLimitFinalLine(t *testing.T) {
+	withResponseLimit(t, 4096)
+	line := "data: " + bigResult(0)
+	pad := maxResponseBytes - len(line)
+	exact := "data: " + bigResult(pad)
+	require.Len(t, exact, maxResponseBytes)
+
+	tr, err := NewHTTPTransport("http://127.0.0.1:1")
+	require.NoError(t, err)
+	require.NoError(t, tr.drainSSE(strings.NewReader(exact)))
+	tr.mu.Lock()
+	n := len(tr.queue)
+	tr.mu.Unlock()
+	assert.Equal(t, 1, n)
+
+	tr2, err := NewHTTPTransport("http://127.0.0.1:1")
+	require.NoError(t, err)
+	err = tr2.drainSSE(strings.NewReader("data: " + bigResult(pad+1)))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}

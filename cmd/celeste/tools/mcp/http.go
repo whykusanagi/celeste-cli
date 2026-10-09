@@ -92,8 +92,12 @@ func (t *HTTPTransport) drainSSE(body io.Reader) error {
 	lr := &io.LimitedReader{R: body, N: int64(maxResponseBytes) + 1}
 	sc := bufio.NewScanner(lr)
 	// One line may take the whole response limit, as a JSON body may
-	// (CodeRabbit review of #424).
-	sc.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes)), maxResponseBytes)
+	// (CodeRabbit review of #424). The buffer holds one byte more than the
+	// limit: a scanner whose buffer is exactly full reports ErrTooLong
+	// before it sees EOF, which would refuse a final line of exactly the
+	// limit (CodeRabbit review of #430). The limit itself is enforced by
+	// lr, which lets through at most one byte past it.
+	sc.Buffer(make([]byte, 0, min(64*1024, maxResponseBytes+1)), maxResponseBytes+1)
 	for sc.Scan() {
 		if lr.N <= 0 {
 			return errResponseTooLarge()

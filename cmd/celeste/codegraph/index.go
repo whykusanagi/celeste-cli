@@ -268,7 +268,11 @@ func (idx *Indexer) BuildWithContext(ctx context.Context) error {
 // partial graph until it finishes; Update never empties the index, and
 // finishes a build that was interrupted (metaBuildInProgress) in place.
 func (idx *Indexer) buildLocked(ctx context.Context) error {
-	defer idx.openPass()()
+	closePass, err := idx.openPass()
+	if err != nil {
+		return err
+	}
+	defer closePass()
 	files, err := idx.walkSourceFiles()
 	if err != nil {
 		return fmt.Errorf("walk files: %w", err)
@@ -382,7 +386,11 @@ func (idx *Indexer) UpdateWithContext(ctx context.Context) error {
 
 // updateLocked is UpdateWithContext with buildMu and the index lock held.
 func (idx *Indexer) updateLocked(ctx context.Context) error {
-	defer idx.openPass()()
+	closePass, err := idx.openPass()
+	if err != nil {
+		return err
+	}
+	defer closePass()
 	// A full build that never finished left file records whose hashes
 	// match while edges are missing (#388). The graph is not emptied and
 	// rebuilt: on a repo whose build outlasts each run (an Env closed
@@ -818,10 +826,12 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 		var targetID int64
 		ok2 := false
 		// self.m() / this.m() inside a method calls m of the same class.
+		// One the class does not define is looked for in its base classes
+		// before any same-named method of an unrelated class.
 		if tail, ok := selfCallee(edge.TargetName); ok && edge.SourceScope != "" {
-			targetID, ok2 = idx.store.symbolIDInFile(tail, edge.SourceScope, edge.SourceFile)
+			targetID, ok2 = idx.resolveSelfCall(tail, edge.SourceScope, edge.SourceFile)
 		} else if edge.SelfCall && edge.SourceScope != "" {
-			targetID, ok2 = idx.store.symbolIDInFile(edge.TargetName, edge.SourceScope, edge.SourceFile)
+			targetID, ok2 = idx.resolveSelfCall(edge.TargetName, edge.SourceScope, edge.SourceFile)
 		}
 		if !ok2 {
 			targetID, ok2 = idx.resolveTarget(edge.TargetName, edge.Kind, edge.SourceFile)
@@ -846,6 +856,79 @@ func (idx *Indexer) resolveEdges(edges []RawEdge) []Edge {
 		}
 	}
 	return out
+}
+
+// maxHierarchyClasses bounds the classes resolveSelfCall visits, so a
+// cyclic or very wide hierarchy cannot make one edge expensive.
+const maxHierarchyClasses = 64
+
+// resolveSelfCall resolves a call to name on the caller's own object from
+// a method of the class scope (in file): the method of that class first,
+// then the nearest one of its base classes, transitively (breadth first,
+// each base found by name in the caller's language, its file preferred).
+func (idx *Indexer) resolveSelfCall(name, scope, file string) (int64, bool) {
+	if id, ok := idx.store.symbolIDInFile(name, scope, file); ok {
+		return id, true
+	}
+	outer, class := "", scope
+	if i := strings.LastIndex(scope, "."); i >= 0 {
+		outer, class = scope[:i], scope[i+1:]
+	}
+	start, ok := idx.store.classInFile(class, outer, file)
+	if !ok {
+		return 0, false
+	}
+	seen := map[classRef]bool{start: true}
+	queue := []classRef{start}
+	for len(queue) > 0 && len(seen) <= maxHierarchyClasses {
+		c := queue[0]
+		queue = queue[1:]
+		for _, base := range strings.Split(c.bases, ",") {
+			base = baseClassName(base)
+			if base == "" {
+				continue
+			}
+			b, ok := idx.store.classByName(base, c.file)
+			if !ok || seen[b] {
+				continue
+			}
+			if id, ok := idx.store.symbolIDInFile(name, joinScope(b.scope, b.name), b.file); ok {
+				return id, true
+			}
+			seen[b] = true
+			queue = append(queue, b)
+		}
+	}
+	return 0, false
+}
+
+// joinScope appends class name to the class chain outer, '.'-separated. A
+// qualified name ("geo::Shape") is split the same way.
+func joinScope(outer, name string) string {
+	name = strings.ReplaceAll(name, "::", ".")
+	if outer == "" {
+		return name
+	}
+	return outer + "." + name
+}
+
+// baseClassName is the class name a base-class entry refers to: its last
+// dotted or "::" segment, without generic arguments.
+func baseClassName(base string) string {
+	base = strings.TrimSpace(base)
+	if i := strings.IndexAny(base, "<[("); i >= 0 {
+		base = base[:i]
+	}
+	if i := strings.LastIndex(base, "::"); i >= 0 {
+		base = base[i+2:]
+	}
+	if i := strings.LastIndex(base, "."); i >= 0 {
+		base = base[i+1:]
+	}
+	if f := strings.Fields(base); len(f) > 0 {
+		base = f[len(f)-1]
+	}
+	return base
 }
 
 // resolveSource looks up an edge's source in its file. Outside Go a class
@@ -993,20 +1076,26 @@ func (idx *Indexer) readSource(rel string) ([]byte, error) {
 }
 
 // openPass opens the workspace root for a Build or Update (called under
-// buildMu); the returned func closes it.
-func (idx *Indexer) openPass() func() {
+// buildMu); the returned func closes it. A workspace that cannot be opened
+// (gone, unreadable, or a directory on its path replaced by a symlink)
+// fails the pass before it changes the store, so it never commits an
+// empty or partial index.
+func (idx *Indexer) openPass() (func(), error) {
 	if idx.passRoot != nil {
-		return func() {} // an update that runs a full build
+		return func() {}, nil // an update that runs a full build
 	}
 	r, err := realroot.Open(idx.realWorkspace)
 	if err != nil {
-		return func() {}
+		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 	idx.passRoot = r
+	if testHookPassOpened != nil {
+		testHookPassOpened()
+	}
 	return func() {
 		idx.passRoot = nil
 		_ = r.Close()
-	}
+	}, nil
 }
 
 // readIn reads rel from root: a regular file, not a symlink, opened
@@ -1038,17 +1127,28 @@ func readIn(root *os.Root, rel string) ([]byte, error) {
 }
 
 // walkSourceFiles returns relative paths of all indexable source files.
+// During a Build or Update the files are listed through the root the pass
+// opened, the one its reads go through, so a workspace directory replaced
+// after the open decides neither what is indexed nor what is dropped.
 func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	var files []string
 
 	gitignore := LoadGitignore(idx.workspace)
 
-	err := filepath.WalkDir(idx.workspace, func(path string, d fs.DirEntry, err error) error {
+	walk := func(fn fs.WalkDirFunc) error { return filepath.WalkDir(idx.workspace, fn) }
+	relOf := func(path string) (string, error) { return filepath.Rel(idx.workspace, path) }
+	if idx.passRoot != nil {
+		fsys := idx.passRoot.FS()
+		walk = func(fn fs.WalkDirFunc) error { return fs.WalkDir(fsys, ".", fn) }
+		relOf = func(path string) (string, error) { return filepath.FromSlash(path), nil }
+	}
+
+	err := walk(func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip errored entries
 		}
 
-		rel, err := filepath.Rel(idx.workspace, path)
+		rel, err := relOf(path)
 		if err != nil {
 			return nil
 		}
@@ -2397,3 +2497,7 @@ func contentHash(data []byte) string {
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash[:8]) // first 8 bytes is enough
 }
+
+// testHookPassOpened, when set, runs right after openPass opens the
+// workspace root. Tests only.
+var testHookPassOpened func()
