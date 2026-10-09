@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **build:** release and CI builds use Go 1.26.9, which fixes GO-2026-6617 in the standard library's net/http.
+
 * **deps:** golang.org/x/net is updated to v0.60.0 for GO-2026-6617 (an HTTP/2 HPACK encoder race), which celeste's HTTP/2 client paths reach.
 
 * **permissions:** deny and ask rules written with an absolute path inside the workspace match again once the workspace is known, for the path given absolute (as given or with symlinks resolved) or relative (Aikido, #425 review).
