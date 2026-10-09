@@ -25,7 +25,7 @@ jobs:
         # #224-#226 before the tag), a manual run, or a PR labelled
         # `full-ci` for OS-specific changes.
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
-        go: ['1.26.6']
+        go: ['1.26.9']
 
     steps:
     - name: Check out code
@@ -90,7 +90,7 @@ jobs:
         esac
 
     - name: Check coverage threshold
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.6'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.9'
       run: |
         coverage=$(go tool cover -func=coverage.txt | grep total | awk '{print $3}' | sed 's/%//')
         echo "Total coverage: ${coverage}%"
@@ -101,7 +101,7 @@ jobs:
         echo "✅ Coverage ${coverage}% meets 5% threshold"
 
     - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.6'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.9'
       uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         files: ./coverage.txt
@@ -121,7 +121,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.26.6'
+        go-version: '1.26.9'
         cache: true
 
     - name: Run golangci-lint
@@ -148,7 +148,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.26.6'
+        go-version: '1.26.9'
         cache: true
 
     - name: Build, vet and test without CGo
@@ -174,7 +174,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.26.6'
+        go-version: '1.26.9'
         cache: true
 
     # No key and no private corpus here, ever (W5 rulings 15, 19): this checks
@@ -248,7 +248,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.26.6'
+        go-version: '1.26.9'
         cache: true
 
     - name: Run Gitleaks
@@ -280,7 +280,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.26.6'
+        go-version: '1.26.9'
         cache: true
 
     - name: Build for multiple platforms

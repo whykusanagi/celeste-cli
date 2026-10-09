@@ -152,13 +152,13 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        # 1.26.6 fixes 7 stdlib vulns that govulncheck reports as CALLED on
+        # 1.26.9 fixes GO-2026-6617 (net/http); 1.26.6 fixed 7 stdlib vulns reported as CALLED on
         # 1.26.5: crypto/tls, net/http (x2), net/url, html/template,
         # encoding/xml, encoding/asn1. Release binaries are the reason this
         # matters — v1.15.0 shipped built on 1.26.5 and carries them. Keep this
         # in lockstep with the CI Security Scan toolchain, or the scan passes
         # while the artifacts users download stay vulnerable.
-        go-version: '1.26.6'
+        go-version: '1.26.9'
         # A release compiles every C object from scratch: no build cache
         # shared with CI runs, whose objects carry other flags.
         cache: false
@@ -353,7 +353,7 @@ jobs:
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         # Lockstep with the build job (see the comment there).
-        go-version: '1.26.6'
+        go-version: '1.26.9'
 
     - name: Get version from tag
       id: get_version
@@ -425,7 +425,7 @@ jobs:
           --version "${{ steps.get_version.outputs.VERSION }}" \
           --commit "${{ github.sha }}" \
           --tag "v${{ steps.get_version.outputs.VERSION }}" \
-          --go-version "1.26.6" \
+          --go-version "1.26.9" \
           --dist-dir dist \
           --output dist/manifest.json
 
