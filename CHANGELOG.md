@@ -5,7 +5,11 @@ All notable changes to Celeste CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [2.0.0](https://github.com/whykusanagi/celeste-cli/compare/v1.16.0...v2.0.0) (2026-10-09)
+
+### Breaking Changes
+
+* **config:** `skip_persona_prompt` and `celeste config --skip-persona` are removed: the persona is always on in chat and agent runs, for every provider. DigitalOcean agents, which have their own built-in persona, now also get Celeste's. A config with `"skip_persona_prompt": true` loses the key on load, with one note on stderr; `false` is ignored. See MIGRATING-2.0.md.
 
 ### Security
 
@@ -50,23 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **server:** a stdio `celeste serve` that is shut down while a request is running no longer starts the next request it had already read (Aikido review of #424).
 * **mcp:** `/mcp` enable/disable and `celeste mcp install` leave a rewritten MCP config readable only by you (0600), also when it was readable by others before, as its `env` values can be credentials (CodeRabbit review of #427). The rewrite is a new file renamed into place, so a symlink put at the config path after it was read is replaced, never written through; a config that was a symlink when read is still rewritten at its target.
 * **server:** a `celeste_index` rebuild also waits for an evicted code graph index that is still closing, so it never deletes the database under that close (Aikido review of #424).
-
-### Bug Fixes
-
-* **tui:** on a session resumed from another endpoint, an explicit model choice made with `/set-model` or the model picker is saved with the session (with the endpoint it was made on and, for `/set-model`, its `--force` pin), so quitting before the next turn no longer brings the old model back on resume (CodeRabbit review of [#428](https://github.com/whykusanagi/celeste-cli/pull/428)).
-* **mcp:** a Streamable HTTP response stream of exactly the size limit whose last `data:` line ends without a newline is accepted, instead of being refused as too large (CodeRabbit review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
-* **context:** the spill prunes (by age and for the total limit) and the total spill quota touch only spill session directories, so compaction's pruned tool-result store, which `recall_tool_result` reads, is never deleted with them (its own bodies expire one by one after 30 days, as spills do); a session named like that store spills beside it, a session or call id longer than 128 characters spills under a shortened name that can still be recalled, and session directories an older version left with longer names are still pruned and counted (Aikido review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
-* **codegraph:** a call on the caller's own object (`self.m()`, `this.m()`) that its class does not define resolves to the method of its nearest base class, across files, before a same-named method of an unrelated class (CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
-* **codegraph:** a build or update whose workspace cannot be opened (gone, unreadable, or a directory on its path replaced by a symlink) fails before the index is changed, instead of reporting success with an empty or partial graph, and the files a build or update indexes or drops are listed through the workspace root it opened, not by path (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
-* **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
-* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
-
-### Breaking Changes
-
-* **config:** `skip_persona_prompt` and `celeste config --skip-persona` are removed: the persona is always on in chat and agent runs, for every provider. DigitalOcean agents, which have their own built-in persona, now also get Celeste's. A config with `"skip_persona_prompt": true` loses the key on load, with one note on stderr; `false` is ignored. See MIGRATING-2.0.md.
-
-### Security
-
 * **tui:** the tool-approval and question prompts show the tool name, its input, the question and each option with control characters escaped, so the text approved is the text shown (Aikido 806869890).
 * **tui:** chat replies, user input, system lines and the Ctrl+K tool log show workspace, tool and model text with control characters escaped; celeste's own colors are kept, and every frame keeps only color and weight sequences, never one that hides text (Aikido 806869437).
 * **mcp:** `celeste mcp list`, `celeste mcp trust` and `celeste hooks list` print configuration errors with control characters escaped (Aikido 806869793).
@@ -115,6 +102,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **wallet_security:** a scan reads every page of asset transfers in its block range. A range with more transfers than one scan reads (50 pages per direction) is scanned up to the last block it read completely, and the next scan continues from there; a single block with more than that fails the scan. Transfers are matched to a monitored wallet regardless of address letter case (Aikido 806869642).
 * **wallet_security:** a wallet scan that fails, a token-approval check included, no longer moves the scan checkpoint, so the same block range is scanned again next time. Checkpoints are kept per network (`last_checked_blocks`), each moved only as far as every wallet on it was scanned, and the next scan starts at the block after it, so a range cut off at the page cap always moves forward. An old file's single `last_checked_block` is moved to the first wallet's network once and no longer written; the monitor's state files are written atomically and readable only by you, and the monitor daemon reports a failed scan instead of "No threats detected" (Aikido 806869487).
 * **wallet_security:** the alerts log stores each on-chain event once (by network, wallet, alert type, transaction and transfer or log entry) and keeps the newest 1000 alerts; a scan reports only new alerts, and `get_security_alerts` returns the newest 100 with the total (Aikido 806869535).
+* **release:** the release workflow now checks the pushed tag before any
+  job that holds a secret runs. The tag must be annotated, signed by the
+  release key (primary or its signing subkey, with the key read from
+  `main`), and on `main`; otherwise nothing is built, signed or published.
+  The workflow grants no token permissions by default, and only the publish
+  job can write (Aikido 806869730).
+* **ci:** every GitHub Action in the workflows is pinned to a full commit
+  SHA, and no checkout keeps the job token in the clone (Aikido 806869782,
+  806780680, 806780676).
+* **deps:** the indirect `github.com/libp2p/go-libp2p` requirement moves to
+  v0.27.8 (Aikido 806780137).
+* **build:** `make import-key` imports the repository's `whykusanagi.asc`
+  instead of fetching a key from Keybase, and fails unless the file holds
+  the release key and its signing subkey (Aikido 806869823).
 
 ### Features
 
@@ -161,6 +162,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **tui:** on a session resumed from another endpoint, an explicit model choice made with `/set-model` or the model picker is saved with the session (with the endpoint it was made on and, for `/set-model`, its `--force` pin), so quitting before the next turn no longer brings the old model back on resume (CodeRabbit review of [#428](https://github.com/whykusanagi/celeste-cli/pull/428)).
+* **mcp:** a Streamable HTTP response stream of exactly the size limit whose last `data:` line ends without a newline is accepted, instead of being refused as too large (CodeRabbit review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
+* **context:** the spill prunes (by age and for the total limit) and the total spill quota touch only spill session directories, so compaction's pruned tool-result store, which `recall_tool_result` reads, is never deleted with them (its own bodies expire one by one after 30 days, as spills do); a session named like that store spills beside it, a session or call id longer than 128 characters spills under a shortened name that can still be recalled, and session directories an older version left with longer names are still pruned and counted (Aikido review of [#430](https://github.com/whykusanagi/celeste-cli/pull/430)).
+* **codegraph:** a call on the caller's own object (`self.m()`, `this.m()`) that its class does not define resolves to the method of its nearest base class, across files, before a same-named method of an unrelated class (CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
+* **codegraph:** a build or update whose workspace cannot be opened (gone, unreadable, or a directory on its path replaced by a symlink) fails before the index is changed, instead of reporting success with an empty or partial graph, and the files a build or update indexes or drops are listed through the workspace root it opened, not by path (Aikido and CodeRabbit review of [#431](https://github.com/whykusanagi/celeste-cli/pull/431)).
+* **acp:** a turn's "cancelled" answer is decided before a guard's "Stopped" notice is sent, so the editor is never told both; a provider error on a cancelled turn is logged (CodeRabbit, #412 review).
+* **tui:** a session resumed on another endpoint than its own keeps its endpoint and model through saves until the endpoint is changed or a message is sent on the endpoint in use, so a later resume still uses the session's profile (CodeRabbit, #427 review).
 * **providers:** an error the OpenAI Responses stream reports (no credits left, a rate limit, an unknown model) is shown with its code and message; OpenAI nests them under `error`, and celeste printed an empty `openai responses: ` instead.
 * **hooks:** a PreToolUse, Stop or UserPromptSubmit hook's reason reaches the model as the hook wrote it, several lines included, instead of as a quoted Go string; wherever celeste shows a hook's reason (the chat, `celeste agent` and `/agent` warnings, the orchestrator's action feed and ACP notes), its escape sequences are escaped (Aikido review on #426).
 * **server:** a `workspace` argument names one directory however it is spelled: `/w/`, `/w/.` and `/w` share one code graph index, one rebuild gate and one chat cache entry, so a query spelled differently from a running rebuild waits for it instead of using a stale index (CodeRabbit review of [#414](https://github.com/whykusanagi/celeste-cli/pull/414)).
@@ -246,33 +254,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `celeste agent` runs on `agent_model` when one is set, as subagents and
   MCP agent mode already did.
 
-### Security
+### Commits
 
-* **release:** the release workflow now checks the pushed tag before any
-  job that holds a secret runs. The tag must be annotated, signed by the
-  release key (primary or its signing subkey, with the key read from
-  `main`), and on `main`; otherwise nothing is built, signed or published.
-  The workflow grants no token permissions by default, and only the publish
-  job can write (Aikido 806869730).
-* **ci:** every GitHub Action in the workflows is pinned to a full commit
-  SHA, and no checkout keeps the job token in the clone (Aikido 806869782,
-  806780680, 806780676).
-* **deps:** the indirect `github.com/libp2p/go-libp2p` requirement moves to
-  v0.27.8 (Aikido 806780137).
-* **build:** `make import-key` imports the repository's `whykusanagi.asc`
-  instead of fetching a key from Keybase, and fails unless the file holds
-  the release key and its signing subkey (Aikido 806869823).
-
-## [2.0.0](https://github.com/whykusanagi/celeste-cli/compare/v1.16.0...v2.0.0) (2026-10-09)
-
-
-### ⚠ BREAKING CHANGES
+#### ⚠ BREAKING CHANGES
 
 * install with go install github.com/whykusanagi/celeste-cli/v2/cmd/celeste@latest; importers use /v2/.
 * **config:** remove skip_persona_prompt; the persona is always on in chat and agent runs (W5) ([#253](https://github.com/whykusanagi/celeste-cli/issues/253))
 * remove the classic/claw runtime mode; keyless local endpoints; Venice per-model tools (W6b) ([#231](https://github.com/whykusanagi/celeste-cli/issues/231))
 
-### Features
+#### Features
 
 * **acp:** Agent Client Protocol transport and handshake (W4f-1) ([#285](https://github.com/whykusanagi/celeste-cli/issues/285)) ([1e9dc95](https://github.com/whykusanagi/celeste-cli/commit/1e9dc957ae2979b4fbbf126d579964270a75f28f))
 * **acp:** editor sessions over ACP — prompt, tool calls, permissions and cancel; celeste acp (W4f-2) ([#288](https://github.com/whykusanagi/celeste-cli/issues/288)) ([2fe75b7](https://github.com/whykusanagi/celeste-cli/commit/2fe75b70788ad3eea3501ac40e8d85b743e7df24))
@@ -320,7 +310,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **update:** go install builds fetch the official signed release; celeste update (W5-D) ([#259](https://github.com/whykusanagi/celeste-cli/issues/259)) ([826f348](https://github.com/whykusanagi/celeste-cli/commit/826f34866e7ed8dd43029a916be643893d5a2d1e))
 
 
-### Bug Fixes
+#### Bug Fixes
 
 * /clear keeps the old session resumable; failed and MCP-error tools show ✗; tool status resets with the session ([#398](https://github.com/whykusanagi/celeste-cli/issues/398)) ([#404](https://github.com/whykusanagi/celeste-cli/issues/404)) ([8694c70](https://github.com/whykusanagi/celeste-cli/commit/8694c70f752f5ff9a08314911b5e15c85aff7ec0))
 * **acp:** a cancel right after a prompt always cancels that turn (TestCancelRightAfterPrompt flake) ([#412](https://github.com/whykusanagi/celeste-cli/issues/412)) ([a9b24a4](https://github.com/whykusanagi/celeste-cli/commit/a9b24a466a1c7db468f10f5c8320ff8baa8591eb))
@@ -430,12 +420,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * working `celeste resume`; default allow rule names the real search tool ([#191](https://github.com/whykusanagi/celeste-cli/issues/191)) ([a940139](https://github.com/whykusanagi/celeste-cli/commit/a9401390ce6706de303624a344b4ac86ed63e508))
 
 
-### Performance Improvements
+#### Performance Improvements
 
 * **codegraph:** Go index builds on Windows no longer pay ~60 s of go tooling per build ([#385](https://github.com/whykusanagi/celeste-cli/issues/385)) ([#387](https://github.com/whykusanagi/celeste-cli/issues/387)) ([b2d2f28](https://github.com/whykusanagi/celeste-cli/commit/b2d2f28dfbb96f1a2413b6b675f1a44948e4f269))
 
 
-### Miscellaneous Chores
+#### Miscellaneous Chores
 
 * the module path is github.com/whykusanagi/celeste-cli/v2 (W7) ([#296](https://github.com/whykusanagi/celeste-cli/issues/296)) ([b04dda3](https://github.com/whykusanagi/celeste-cli/commit/b04dda31496ab00bb5c09405991e9b36c1c327bb))
 
