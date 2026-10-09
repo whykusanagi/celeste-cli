@@ -2,7 +2,7 @@ module github.com/whykusanagi/celeste-cli/v2
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.26.9
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
