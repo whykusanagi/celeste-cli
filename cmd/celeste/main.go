@@ -1452,14 +1452,12 @@ func createConfigTemplate(name string) error {
 	return nil
 }
 
+// maskKey reports configuration status without disclosing any credential bytes.
 func maskKey(key string) string {
 	if key == "" {
 		return "(not set)"
 	}
-	if len(key) <= 8 {
-		return "****"
-	}
-	return key[:4] + "..." + key[len(key)-4:]
+	return "set"
 }
 
 // runSkillExecuteCommand executes a single skill from the command line.

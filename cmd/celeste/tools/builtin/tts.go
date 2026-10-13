@@ -141,11 +141,7 @@ func (t *TTSTool) Execute(ctx context.Context, input map[string]any, progress ch
 			// Show current config
 			maskedKey := "not set"
 			if apiKey != "" {
-				if len(apiKey) > 8 {
-					maskedKey = apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
-				} else {
-					maskedKey = "***"
-				}
+				maskedKey = "set"
 			}
 			voice := defaultVoice
 			if voice == "" {
