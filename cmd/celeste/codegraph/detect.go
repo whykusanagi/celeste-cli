@@ -237,6 +237,12 @@ func LoadGitignore(projectRoot string) *GitignoreFilter {
 		return nil
 	}
 
+	return parseGitignore(data)
+}
+
+// parseGitignore keeps filtering independent of how the indexer opened the
+// file: a Build/Update pass reads it through the same pinned root it walks.
+func parseGitignore(data []byte) *GitignoreFilter {
 	var patterns []gitignorePattern
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)

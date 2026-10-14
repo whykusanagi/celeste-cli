@@ -117,3 +117,68 @@ func TestBuildWalksThePinnedRoot(t *testing.T) {
 		t.Errorf("indexed %v, want the pinned root's [a.py]", got)
 	}
 }
+
+// Build and Update must read .gitignore from the same pinned tree they walk.
+// A replacement workspace path can have different ignore rules.
+func TestBuildAndUpdateReadGitignoreFromPinnedRoot(t *testing.T) {
+	for _, operation := range []string{"build", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws := filepath.Join(base, "ws")
+			if err := os.Mkdir(ws, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{
+				".gitignore": "a.py\n",
+				"a.py":       "def ignored():\n    return 1\n",
+				"b.py":       "def retained():\n    return 2\n",
+			} {
+				if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			idx, err := NewIndexer(ws, filepath.Join(t.TempDir(), "cg.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer idx.Close()
+			if operation == "update" {
+				if err := idx.Build(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			testHookPassOpened = func() {
+				if err := os.Rename(ws, ws+".old"); err != nil {
+					t.Error(err)
+					return
+				}
+				if err := os.Mkdir(ws, 0o755); err != nil {
+					t.Error(err)
+					return
+				}
+				if err := os.WriteFile(filepath.Join(ws, ".gitignore"), []byte("b.py\n"), 0o644); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { testHookPassOpened = nil })
+			if operation == "update" {
+				err = idx.Update()
+			} else {
+				err = idx.Build()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			files, err := idx.store.GetAllFiles()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != 1 || files[0].Path != "b.py" {
+				t.Fatalf("%s indexed %+v, want pinned b.py only", operation, files)
+			}
+		})
+	}
+}

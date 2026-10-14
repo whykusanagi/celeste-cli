@@ -570,12 +570,16 @@ func handleConfig(cmd *Command) *CommandResult {
 				Message: fmt.Sprintf("❌ Failed to save config: %v", err),
 			}
 		}
-		// Also save to secrets file for backward compat
-		_ = config.SaveSecrets(cfg)
-		masked := key[:4] + "..." + key[len(key)-4:]
+		// Keep the legacy secrets file in sync; its value overrides config.json on load.
+		if err := config.SaveSecrets(cfg); err != nil {
+			return &CommandResult{
+				Success: false, ShouldRender: true,
+				Message: fmt.Sprintf("❌ Failed to save secrets: %v", err),
+			}
+		}
 		return &CommandResult{
 			Success: true, ShouldRender: true,
-			Message: fmt.Sprintf("⚙️  API key updated: %s\nRestart or /config to apply.", masked),
+			Message: "⚙️  API key updated.\nRestart or /config to apply.",
 		}
 
 	case "set-model":

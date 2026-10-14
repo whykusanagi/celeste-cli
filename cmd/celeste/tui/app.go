@@ -1523,11 +1523,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Show current voice config
 					key := "not set"
 					if cfg.ElevenLabsAPIKey != "" {
-						if len(cfg.ElevenLabsAPIKey) > 8 {
-							key = cfg.ElevenLabsAPIKey[:4] + "..." + cfg.ElevenLabsAPIKey[len(cfg.ElevenLabsAPIKey)-4:]
-						} else {
-							key = "***"
-						}
+						key = "set"
 					}
 					voice := cfg.ElevenLabsVoiceID
 					if voice == "" {

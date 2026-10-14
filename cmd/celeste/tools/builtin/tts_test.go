@@ -148,3 +148,16 @@ func TestExecuteBatchRejectsEscapingClipNameBeforeNetwork(t *testing.T) {
 		t.Fatalf("escaped batch output stat err = %v, want not exist", err)
 	}
 }
+
+func TestTTSSetupStatusDoesNotRevealKeyFragments(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("ELEVEN_LABS_API_KEY", "sk-sensitive-1234567890")
+	t.Setenv("ELEVENLABS_API_KEY", "")
+	result, err := NewTTSTool(t.TempDir()).Execute(context.Background(), map[string]any{"action": "setup"}, nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Content, "API Key: set")
+	assert.NotContains(t, result.Content, "sk-s")
+	assert.NotContains(t, result.Content, "7890")
+}
