@@ -3,6 +3,7 @@ package ctxmgr
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,21 +64,21 @@ var spillMu sync.Mutex
 // quotas leave it alone, and no session spills into it.
 const compactStoreDir = "pruned"
 
-// spillSessionName is the name of a session's spill directory. Only such a
-// directory is pruned or counted toward the spill total; anything else
-// under the base (the compaction store, a directory another tool made) is
-// left alone. Older celeste versions did not cap the length, so a longer
-// name of the same characters is still a session's (spillSessionDir); a
-// new spill takes only names up to 128 characters (isSpillSession).
+// spillSessionName validates new spill names. It does not confer ownership:
+// only a directory created by CapToolResult with a valid marker may be pruned.
 var spillSessionName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // maxSpillSessionName is the longest session id a new spill takes, the
 // length recall_tool_result ids allow (spillIDPattern).
 const maxSpillSessionName = 128
 
-// spillSessionDir reports whether the directory name under the spill base
-// is a spill session's, including one an older version left with a longer
-// name: the prunes and quotas cover these.
+const (
+	spillMarkerName = ".celeste-spill-v1"
+	spillMarkerBody = "celeste-spill-session-v1\n"
+)
+
+// spillSessionDir checks syntax, not ownership. Older versions accepted longer
+// names, but unmarked legacy directories are never pruned automatically.
 func spillSessionDir(name string) bool {
 	return name != compactStoreDir && spillSessionName.MatchString(name)
 }
@@ -85,6 +86,91 @@ func spillSessionDir(name string) bool {
 // isSpillSession reports whether name is a session id a new spill takes.
 func isSpillSession(name string) bool {
 	return len(name) <= maxSpillSessionName && spillSessionDir(name)
+}
+
+// ownedSpillDir checks the exact marker in a real directory, without following
+// symlinks in the marker path. A missing or malformed marker means leave the
+// directory alone, including old Celeste spill directories without markers.
+func ownedSpillDir(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	current, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, current) {
+		return false
+	}
+	before, err := root.Lstat(spillMarkerName)
+	if err != nil || !before.Mode().IsRegular() || before.Size() != int64(len(spillMarkerBody)) {
+		return false
+	}
+	file, err := root.Open(spillMarkerName)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(file, int64(len(spillMarkerBody)+1)))
+	return err == nil && string(body) == spillMarkerBody
+}
+
+// createSpillDir refuses a pre-existing unowned directory. An old version's
+// spill remains recallable, but a new write must not silently claim and later
+// prune arbitrary contents merely because its name resembles a session ID.
+func createSpillDir(path string) error {
+	if err := os.Mkdir(path, 0700); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if !ownedSpillDir(path) {
+			return fmt.Errorf("spill directory already exists without a Celeste ownership marker")
+		}
+		root, err := os.OpenRoot(path)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		// Chmod the directory we checked, not a path that can be swapped
+		// for a symlink between ownership verification and the chmod.
+		file, err := root.Open(".")
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return file.Chmod(0700)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	// A directory replaced with a symlink after Mkdir must never receive
+	// Celeste's ownership marker (or writes) outside this spill base.
+	before, err := os.Lstat(path)
+	if err != nil || !before.IsDir() {
+		return fmt.Errorf("spill directory changed before it could be marked")
+	}
+	current, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, current) {
+		return fmt.Errorf("spill directory changed before it could be marked")
+	}
+	file, err := root.OpenFile(spillMarkerName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(spillMarkerBody); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // spillLockPath is the lock file of the spill base baseDir. It sits beside
@@ -124,9 +210,9 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		return result, false, nil
 	}
 
-	// A session spills into a directory the prunes and quotas see: one
-	// named like the compaction store gets its own name beside it, and a
-	// name no session directory has is refused.
+	// A session spills into a marked directory the prunes and quotas see:
+	// one named like the compaction store gets its own name beside it, and
+	// a name no session directory has is refused.
 	if sessionID == compactStoreDir {
 		sessionID = compactStoreDir + "-session"
 	}
@@ -173,11 +259,8 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 	// already-existing dir or file (an old binary's spill, or a reused
 	// sessionID/toolCallID) is chmod'd explicitly too.
 	sessionDir := filepath.Join(baseDir, sessionID)
-	if err := os.MkdirAll(sessionDir, 0700); err != nil {
+	if err := createSpillDir(sessionDir); err != nil {
 		return result, false, fmt.Errorf("create tool-results dir: %w", err)
-	}
-	if err := os.Chmod(sessionDir, 0700); err != nil {
-		return result, false, fmt.Errorf("secure tool-results dir: %w", err)
 	}
 
 	// A result over the per-file limit spills only its first part, and a
@@ -324,6 +407,9 @@ func dirBytes(dir string) int64 {
 	}
 	var n int64
 	for _, d := range des {
+		if d.Name() == spillMarkerName {
+			continue
+		}
 		if info, err := d.Info(); err == nil && info.Mode().IsRegular() {
 			n += info.Size()
 		}
@@ -331,11 +417,12 @@ func dirBytes(dir string) int64 {
 	return n
 }
 
-// PruneToolResults deletes spilled tool results under baseDir ("" is
-// ToolResultsBaseDir): only spill session directories (spillSessionDir),
-// never the compaction store beside them, whose bodies expire one by one
-// after SpillKeepAge instead (expireCompactStore). Every session directory last changed more than
-// SpillKeepAge ago, then the oldest others idle for spillActiveAge while all
+// PruneToolResults deletes only marked spill session directories under baseDir
+// ("" is ToolResultsBaseDir), never the compaction store beside them, whose
+// bodies expire one by one after SpillKeepAge (expireCompactStore). Unmarked
+// legacy directories remain for manual cleanup. Every owned session directory
+// last changed more than SpillKeepAge ago is removed, then the oldest others
+// idle for spillActiveAge are removed while all
 // of them together are over maxTotalSpillBytes. keep (the session running
 // now) always survives, and so does any session that spilled within
 // spillActiveAge, as another celeste process may still be using it.
@@ -376,6 +463,9 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 			continue
 		}
 		path := filepath.Join(baseDir, d.Name())
+		if !ownedSpillDir(path) {
+			continue
+		}
 		s := session{path: path, changed: lastSpill(path), size: dirBytes(path)}
 		if now.Sub(s.changed) > SpillKeepAge {
 			if err := os.RemoveAll(path); err != nil {
@@ -386,7 +476,7 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 		live = append(live, s)
 		total += s.size
 	}
-	if spillSessionDir(keep) {
+	if spillSessionDir(keep) && ownedSpillDir(filepath.Join(baseDir, keep)) {
 		total += dirBytes(filepath.Join(baseDir, keep))
 	}
 	sort.Slice(live, func(i, j int) bool { return live[i].changed.Before(live[j].changed) })
@@ -439,7 +529,7 @@ func totalSpillBytes(baseDir string) int64 {
 	}
 	var n int64
 	for _, d := range des {
-		if d.IsDir() && spillSessionDir(d.Name()) {
+		if d.IsDir() && spillSessionDir(d.Name()) && ownedSpillDir(filepath.Join(baseDir, d.Name())) {
 			n += dirBytes(filepath.Join(baseDir, d.Name()))
 		}
 	}
@@ -455,6 +545,9 @@ func lastSpill(dir string) time.Time {
 	}
 	des, _ := os.ReadDir(dir)
 	for _, d := range des {
+		if d.Name() == spillMarkerName {
+			continue
+		}
 		if info, err := d.Info(); err == nil && info.ModTime().After(t) {
 			t = info.ModTime()
 		}

@@ -139,6 +139,12 @@ func TestCapToolResultWaitsForAnotherProcessSpill(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
+// markTestSpill models a spill directory written by a marker-aware Celeste.
+func markTestSpill(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, spillMarkerName), []byte(spillMarkerBody), 0o600))
+}
+
 // TestPruneToolResults: session spill directories older than the retention
 // age are removed; the current one and recent ones stay (Aikido 806869375).
 func TestPruneToolResults(t *testing.T) {
@@ -149,6 +155,7 @@ func TestPruneToolResults(t *testing.T) {
 	for _, d := range []string{old, recent, current} {
 		require.NoError(t, os.MkdirAll(d, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(d, "c.txt"), []byte("data"), 0o600))
+		markTestSpill(t, d)
 	}
 	longAgo := time.Now().Add(-2 * SpillKeepAge)
 	for _, p := range []string{old, filepath.Join(old, "c.txt"), current, filepath.Join(current, "c.txt")} {
@@ -187,6 +194,7 @@ func TestCapToolResultPrunesUnderSpillLock(t *testing.T) {
 	expired := filepath.Join(base, "expired")
 	require.NoError(t, os.MkdirAll(expired, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(expired, "c.txt"), []byte("data"), 0o600))
+	markTestSpill(t, expired)
 	longAgo := time.Now().Add(-2 * SpillKeepAge)
 	require.NoError(t, os.Chtimes(filepath.Join(expired, "c.txt"), longAgo, longAgo))
 	require.NoError(t, os.Chtimes(expired, longAgo, longAgo))
@@ -231,6 +239,7 @@ func TestCapToolResultKeepsRecentlyActiveSessions(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 		p := filepath.Join(dir, "c.txt")
 		require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("o", 4000)), 0o600))
+		markTestSpill(t, dir)
 		at := time.Now().Add(-age)
 		require.NoError(t, os.Chtimes(p, at, at))
 		require.NoError(t, os.Chtimes(dir, at, at))
@@ -301,22 +310,19 @@ func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "a session spilled into the compaction store")
 }
 
-// A spill session directory an older celeste left with a name longer than
-// a session id may now be (it did not cap the length) is still a spill
-// session: it is pruned by age and counts toward the total.
-func TestPruneRemovesLongNamedLegacySessionDirs(t *testing.T) {
-	withSpillLimits(t, 1<<20, 1<<20)
+// A pre-marker spill is still readable by its recall id, but must not be
+// counted or automatically deleted: its name does not prove ownership.
+func TestPruneLeavesUnmarkedLegacyLongSessionDir(t *testing.T) {
 	base := t.TempDir()
-	longAgo := time.Now().Add(-2 * SpillKeepAge)
 	dir := filepath.Join(base, strings.Repeat("L", 200))
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	p := filepath.Join(dir, "call_1.txt")
 	require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("p", 8000)), 0o600))
-	assert.EqualValues(t, 8000, totalSpillBytes(base), "a long-named session is not counted")
+	assert.Zero(t, totalSpillBytes(base))
+	longAgo := time.Now().Add(-2 * SpillKeepAge)
 	require.NoError(t, os.Chtimes(p, longAgo, longAgo))
 	require.NoError(t, os.Chtimes(dir, longAgo, longAgo))
-
 	require.NoError(t, PruneToolResults(base, "sess", time.Now()))
-	_, err := os.Stat(dir)
-	assert.True(t, os.IsNotExist(err), "an old long-named session was not pruned")
+	_, err := os.Stat(p)
+	require.NoError(t, err, "unmarked legacy contents should remain for manual cleanup")
 }

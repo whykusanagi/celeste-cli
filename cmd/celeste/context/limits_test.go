@@ -135,6 +135,9 @@ func TestCapToolResult_TightensExistingLoosePermissions(t *testing.T) {
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(sessionDir, spillMarkerName), []byte(spillMarkerBody), 0o600); err != nil {
+		t.Fatalf("setup marker: %v", err)
+	}
 	spillPath := filepath.Join(sessionDir, "tc-old.txt")
 	if err := os.WriteFile(spillPath, []byte("stale"), 0644); err != nil {
 		t.Fatalf("setup: %v", err)
