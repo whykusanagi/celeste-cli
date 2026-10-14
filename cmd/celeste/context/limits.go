@@ -61,7 +61,7 @@ var spillMu sync.Mutex
 // compactStoreDir is the directory under the spill base where compaction
 // keeps pruned tool-result bodies for recall_tool_result
 // (compact.DefaultStore). It is not a spill session: the spill prunes and
-// quotas leave it alone, and no session spills into it.
+// quotas leave it alone, and all case variants of this name are reserved.
 const compactStoreDir = "pruned"
 
 // spillSessionName validates new spill names. It does not confer ownership:
@@ -80,7 +80,7 @@ const (
 // spillSessionDir checks syntax, not ownership. Older versions accepted longer
 // names, but unmarked legacy directories are never pruned automatically.
 func spillSessionDir(name string) bool {
-	return name != compactStoreDir && spillSessionName.MatchString(name)
+	return !strings.EqualFold(name, compactStoreDir) && spillSessionName.MatchString(name)
 }
 
 // isSpillSession reports whether name is a session id a new spill takes.
@@ -210,12 +210,9 @@ func CapToolResult(result string, maxBytes int, sessionID, toolCallID, baseDir s
 		return result, false, nil
 	}
 
-	// A session spills into a marked directory the prunes and quotas see:
-	// one named like the compaction store gets its own name beside it, and
-	// a name no session directory has is refused.
-	if sessionID == compactStoreDir {
-		sessionID = compactStoreDir + "-session"
-	}
+	// Reject the compaction store's name, including case variants, rather
+	// than remapping it to a name an ordinary session can also use.
+	// The caller can use SnipToolResult to keep a bounded in-memory result.
 	if !isSpillSession(sessionID) {
 		return result, false, fmt.Errorf("invalid spill session id %q", sessionID)
 	}
@@ -349,6 +346,9 @@ func LoadSpilled(baseDir, id string) (string, error) {
 		}
 	}
 	session, name, _ := strings.Cut(id, "/")
+	if !spillSessionDir(session) {
+		return "", fmt.Errorf("invalid spilled tool result id %q", id)
+	}
 	b, err := os.ReadFile(filepath.Join(baseDir, session, name+".txt"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -455,8 +455,16 @@ func pruneToolResults(baseDir, keep string, now time.Time, limit int64) error {
 	var live []session
 	var total int64
 	var errs []error
-	if err := expireCompactStore(filepath.Join(baseDir, compactStoreDir), now); err != nil {
-		errs = append(errs, err)
+	// On case-insensitive filesystems, a directory spelled PRUNED can be
+	// opened by the path "pruned". Only expire the actual compaction store
+	// when its on-disk name has the exact reserved spelling.
+	for _, d := range des {
+		if d.Name() == compactStoreDir && d.IsDir() {
+			if err := expireCompactStore(filepath.Join(baseDir, d.Name()), now); err != nil {
+				errs = append(errs, err)
+			}
+			break
+		}
 	}
 	for _, d := range des {
 		if !d.IsDir() || d.Name() == keep || !spillSessionDir(d.Name()) {

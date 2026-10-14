@@ -52,3 +52,21 @@ func TestLoopLongIDsStillSpillAndRecall(t *testing.T) {
 		t.Fatalf("shortened session ids: %q, %q", a.sessionID(), b.sessionID())
 	}
 }
+
+func TestLoopReservedSessionFallsBackWithoutClobberingOtherSpill(t *testing.T) {
+	content := strings.Repeat("q", 200*1024)
+	big := &fakeTool{name: "big", run: func(context.Context, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: content}, nil
+	}}
+	for _, session := range []string{"pruned", "PRUNED"} {
+		t.Run(session, func(t *testing.T) {
+			l := execLoop(t, big)
+			l.SessionID = session
+			out := run(l, llm.ToolCallResult{ID: "id", Name: "big", Arguments: `{}`})
+			got := out.messages[0].Content
+			if !strings.Contains(got, "could not be saved") || recallIDInNote.MatchString(got) {
+				t.Fatalf("reserved session should fall back to an in-memory cut, not spill")
+			}
+		})
+	}
+}

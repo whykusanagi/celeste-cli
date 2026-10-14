@@ -303,9 +303,10 @@ func TestPruneNeverRemovesNonSessionDirs(t *testing.T) {
 	_, err = os.Stat(expired)
 	assert.True(t, os.IsNotExist(err), "an expired compaction body was kept")
 
-	// A session named like the store spills beside it, not into it.
+	// A session named like the store is refused: remapping it to a valid
+	// session name would allow two sessions to share a spill file.
 	_, _, err = CapToolResult(strings.Repeat("y", 2000), 1024, "pruned", "b", base)
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, err = os.Stat(filepath.Join(base, "pruned", "b.txt"))
 	assert.True(t, os.IsNotExist(err), "a session spilled into the compaction store")
 }
