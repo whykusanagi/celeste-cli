@@ -58,6 +58,9 @@ var (
 	hunkPattern     = regexp.MustCompile(`^@@ .+? \+(\d+)(?:,(\d+))? @@`)
 )
 
+// maxImpactDepth bounds the transitive blast radius and its query cost.
+const maxImpactDepth = 3
+
 // securityKeywords trigger elevated risk scores.
 var securityKeywords = []string{
 	"auth", "login", "password", "token", "secret", "key",
@@ -129,16 +132,16 @@ func (idx *Indexer) AnalyzeChanges(base string) (*ImpactResult, error) {
 	// Find directly changed symbols
 	changedFiles := make(map[string]bool)
 	var directlyChanged []ImpactSymbol
-	changedNames := make(map[string]bool)
+	changedIDs := make(map[int64]bool)
 
 	for _, r := range ranges {
 		changedFiles[r.File] = true
 		symbols := idx.store.SymbolsInLineRange(r.File, r.StartLine, r.EndLine)
 		for _, sym := range symbols {
-			if changedNames[sym.Name] {
+			if changedIDs[sym.ID] {
 				continue
 			}
-			changedNames[sym.Name] = true
+			changedIDs[sym.ID] = true
 			risk := computeRiskScore(sym.Name, idx.store)
 			directlyChanged = append(directlyChanged, ImpactSymbol{
 				Name:      sym.Name,
@@ -152,30 +155,41 @@ func (idx *Indexer) AnalyzeChanges(base string) (*ImpactResult, error) {
 
 	// Find callers of changed symbols (blast radius)
 	var affectedCallers []ImpactSymbol
-	callerNames := make(map[string]bool)
-	for name := range changedNames {
-		callers := idx.store.CallersOf(name)
-		for _, caller := range callers {
-			if changedNames[caller.Name] || callerNames[caller.Name] {
-				continue
+	seen := make(map[int64]bool)
+	frontier := make([]int64, 0, len(changedIDs))
+	for id := range changedIDs {
+		frontier = append(frontier, id)
+	}
+	sort.Slice(frontier, func(i, j int) bool { return frontier[i] < frontier[j] })
+	for depth := 0; depth < maxImpactDepth && len(frontier) > 0; depth++ {
+		var nextFrontier []int64
+		for _, id := range frontier {
+			callers := idx.store.CallersOfID(id)
+			for _, caller := range callers {
+				if changedIDs[caller.ID] || seen[caller.ID] {
+					continue
+				}
+				seen[caller.ID] = true
+				risk := computeRiskScore(caller.Name, idx.store)
+				affectedCallers = append(affectedCallers, ImpactSymbol{
+					Name:      caller.Name,
+					Kind:      caller.Kind,
+					File:      caller.File,
+					Line:      caller.Line,
+					RiskScore: risk,
+				})
+				nextFrontier = append(nextFrontier, caller.ID)
 			}
-			callerNames[caller.Name] = true
-			risk := computeRiskScore(caller.Name, idx.store)
-			affectedCallers = append(affectedCallers, ImpactSymbol{
-				Name:      caller.Name,
-				Kind:      caller.Kind,
-				File:      caller.File,
-				Line:      caller.Line,
-				RiskScore: risk,
-			})
 		}
+		frontier = nextFrontier
 	}
 
 	// Sort by risk score descending
 	sort.Slice(directlyChanged, func(i, j int) bool {
 		return directlyChanged[i].RiskScore > directlyChanged[j].RiskScore
 	})
-	sort.Slice(affectedCallers, func(i, j int) bool {
+	// Stable so equal-risk callers keep BFS order: direct callers before deeper ones.
+	sort.SliceStable(affectedCallers, func(i, j int) bool {
 		return affectedCallers[i].RiskScore > affectedCallers[j].RiskScore
 	})
 

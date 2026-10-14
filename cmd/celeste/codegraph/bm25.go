@@ -47,15 +47,10 @@ type BM25CorpusStats struct {
 // desirable because negative contributions from common terms would
 // create ranking anomalies.
 func bm25Idf(df, numDocs int) float64 {
-	if df <= 0 || numDocs <= 0 {
+	if df <= 0 || numDocs <= 0 || df > numDocs {
 		return 0
 	}
-	return math.Log(float64(numDocs-df)/float64(df)+1) + math.Log(2) // = log((N-df+0.5)/(df+0.5) + 1)
-	// Implementation note: the standard form uses +0.5 smoothing in both numerator and
-	// denominator. Using log(a/b) + log(2) is equivalent when we want the "+1"
-	// variant to dampen the floor. Keeping the simpler expression here since
-	// exact calibration doesn't matter for rank-fusion (relative order is
-	// preserved under monotonic transforms).
+	return math.Log((float64(numDocs-df)+0.5)/(float64(df)+0.5) + 1)
 }
 
 // ComputeBM25Score computes the BM25 score for a single symbol against
