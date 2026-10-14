@@ -1133,7 +1133,14 @@ func readIn(root *os.Root, rel string) ([]byte, error) {
 func (idx *Indexer) walkSourceFiles() ([]string, error) {
 	var files []string
 
-	gitignore := LoadGitignore(idx.workspace)
+	var gitignore *GitignoreFilter
+	if idx.passRoot != nil {
+		if data, err := readIn(idx.passRoot, ".gitignore"); err == nil {
+			gitignore = parseGitignore(data)
+		}
+	} else {
+		gitignore = LoadGitignore(idx.workspace)
+	}
 
 	walk := func(fn fs.WalkDirFunc) error { return filepath.WalkDir(idx.workspace, fn) }
 	relOf := func(path string) (string, error) { return filepath.Rel(idx.workspace, path) }
