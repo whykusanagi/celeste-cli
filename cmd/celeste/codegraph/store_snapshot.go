@@ -92,7 +92,7 @@ func (s *Store) LatestSnapshot() ([]byte, error) {
 // SymbolsInLineRange returns symbols in a file whose line range overlaps [startLine, endLine].
 func (s *Store) SymbolsInLineRange(file string, startLine, endLine int) []Symbol {
 	rows, err := s.db.Query(`
-		SELECT name, kind, file, line, COALESCE(signature, '')
+		SELECT id, name, kind, file, line, COALESCE(signature, '')
 		FROM symbols
 		WHERE file = ? AND line >= ? AND line <= ?
 	`, file, startLine, endLine)
@@ -104,7 +104,7 @@ func (s *Store) SymbolsInLineRange(file string, startLine, endLine int) []Symbol
 	var syms []Symbol
 	for rows.Next() {
 		var sym Symbol
-		if err := rows.Scan(&sym.Name, &sym.Kind, &sym.File, &sym.Line, &sym.Signature); err != nil {
+		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.File, &sym.Line, &sym.Signature); err != nil {
 			continue
 		}
 		syms = append(syms, sym)
@@ -130,6 +130,31 @@ func (s *Store) CallersOf(targetName string) []Symbol {
 	for rows.Next() {
 		var sym Symbol
 		if err := rows.Scan(&sym.Name, &sym.Kind, &sym.File, &sym.Line, &sym.Signature); err != nil {
+			continue
+		}
+		syms = append(syms, sym)
+	}
+	return syms
+}
+
+// CallersOfID returns symbols that have a "calls" edge targeting the symbol with the given id.
+func (s *Store) CallersOfID(targetID int64) []Symbol {
+	rows, err := s.db.Query(`
+		SELECT s1.id, s1.name, s1.kind, s1.file, s1.line, COALESCE(s1.signature, '')
+		FROM edges e
+		JOIN symbols s1 ON e.source_id = s1.id
+		WHERE e.target_id = ? AND e.kind = 'calls'
+		ORDER BY s1.id
+	`, targetID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var syms []Symbol
+	for rows.Next() {
+		var sym Symbol
+		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Kind, &sym.File, &sym.Line, &sym.Signature); err != nil {
 			continue
 		}
 		syms = append(syms, sym)
