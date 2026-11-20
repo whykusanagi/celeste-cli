@@ -150,7 +150,7 @@ jobs:
         persist-credentials: false  # no git writes here
 
     - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         # 1.26.9 fixes GO-2026-6617 (net/http); 1.26.6 fixed 7 stdlib vulns reported as CALLED on
         # 1.26.5: crypto/tls, net/http (x2), net/url, html/template,
@@ -350,7 +350,7 @@ jobs:
         persist-credentials: false  # publishing goes through the API token
 
     - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         # Lockstep with the build job (see the comment there).
         go-version: '1.26.9'
